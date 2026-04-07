@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Second Brain</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Second Brain</h1>
+      <nav>
+        <button class="tab-btn active" data-tab="ingest">Ingest</button>
+        <button class="tab-btn" data-tab="query">Query</button>
+        <button class="tab-btn" data-tab="wiki">Wiki</button>
+      </nav>
+    </header>
+
+    <!-- INGEST TAB -->
+    <section id="tab-ingest" class="tab active">
+      <h2>Ingest a Source</h2>
+      <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. Claude will read it and update the wiki automatically.</p>
+      <div class="form-group">
+        <label for="ingest-domain">Domain</label>
+        <select id="ingest-domain"></select>
+      </div>
+      <div class="form-group">
+        <label for="ingest-file">File</label>
+        <div class="drop-zone" id="drop-zone">
+          <span id="drop-label">Drop file here or <label for="ingest-file" class="link">browse</label></span>
+          <input type="file" id="ingest-file" accept=".txt,.md,.pdf" hidden />
+        </div>
+        <span id="file-name" class="file-name"></span>
+      </div>
+      <button id="ingest-btn" class="btn primary" disabled>Ingest</button>
+      <div id="ingest-status" class="status hidden"></div>
+      <div id="ingest-result" class="result hidden"></div>
+    </section>
+
+    <!-- QUERY TAB -->
+    <section id="tab-query" class="tab hidden">
+      <h2>Ask Your Brain</h2>
+      <div class="form-group">
+        <label for="query-domain">Domain</label>
+        <select id="query-domain"></select>
+      </div>
+      <div class="form-group">
+        <label for="query-text">Question</label>
+        <textarea id="query-text" rows="4" placeholder="What do you want to know?"></textarea>
+      </div>
+      <button id="query-btn" class="btn primary">Ask</button>
+      <div id="query-status" class="status hidden"></div>
+      <div id="query-result" class="result hidden"></div>
+    </section>
+
+    <!-- WIKI TAB -->
+    <section id="tab-wiki" class="tab hidden">
+      <h2>Browse Wiki</h2>
+      <div class="form-group inline">
+        <label for="wiki-domain">Domain</label>
+        <select id="wiki-domain"></select>
+        <button id="wiki-load-btn" class="btn">Load</button>
+      </div>
+      <div id="wiki-browser" class="wiki-browser hidden">
+        <aside id="wiki-sidebar"></aside>
+        <article id="wiki-content"></article>
+      </div>
+      <div id="wiki-empty" class="hint hidden">No pages found. Ingest some sources first.</div>
+    </section>
+  </div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
