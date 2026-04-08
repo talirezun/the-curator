@@ -102,6 +102,49 @@ nav {
   margin-bottom: 8px;
 }
 
+/* DUPLICATE BANNER */
+.duplicate-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 16px 18px;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.dup-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+
+.dup-body { flex: 1; color: var(--text); }
+
+.dup-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn.dup-overwrite {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #fcd34d;
+  font-size: 13px;
+  padding: 6px 14px;
+}
+
+.btn.dup-overwrite:hover {
+  background: rgba(234, 179, 8, 0.25);
+  border-color: #fcd34d;
+}
+
+.btn.dup-cancel {
+  font-size: 13px;
+  padding: 6px 14px;
+  color: var(--text-muted);
+}
+
 /* FORM */
 .form-group {
   margin-bottom: 18px;

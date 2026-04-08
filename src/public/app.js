@@ -86,21 +86,33 @@ dropZone.addEventListener('drop', e => {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
 
-ingestBtn.addEventListener('click', async () => {
+ingestBtn.addEventListener('click', () => submitIngest(false));
+
+async function submitIngest(overwrite) {
   if (!selectedFile) return;
 
   const domain = document.getElementById('ingest-domain').value;
   ingestBtn.disabled = true;
-  showStatus(ingestStatus, 'loading', 'Ingesting — Second Brain is reading your source and updating the wiki...');
   hideEl(ingestResult);
+  hideDuplicateBanner();
+  showStatus(ingestStatus, 'loading', 'Ingesting — Second Brain is reading your source and updating the wiki...');
 
   const formData = new FormData();
   formData.append('domain', domain);
   formData.append('file', selectedFile);
+  if (overwrite) formData.append('overwrite', 'true');
 
   try {
     const res = await fetch('/api/ingest', { method: 'POST', body: formData });
     const data = await res.json();
+
+    // ── Duplicate detected ──────────────────────────────────────────────────
+    if (res.status === 409 && data.duplicate) {
+      hideEl(ingestStatus);
+      showDuplicateBanner(data.filename, domain);
+      ingestBtn.disabled = false;
+      return;
+    }
 
     if (!res.ok) throw new Error(data.error || 'Ingest failed');
 
@@ -116,11 +128,46 @@ ingestBtn.addEventListener('click', async () => {
     showStatus(ingestStatus, 'error', err.message);
     ingestBtn.disabled = false;
   }
-});
+}
+
+function showDuplicateBanner(filename, domain) {
+  let banner = document.getElementById('duplicate-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'duplicate-banner';
+    banner.className = 'duplicate-banner';
+    ingestResult.parentNode.insertBefore(banner, ingestResult);
+  }
+  banner.innerHTML = `
+    <div class="dup-icon">⚠️</div>
+    <div class="dup-body">
+      <strong>${escHtml(filename)}</strong> has already been ingested into this domain.
+      <div class="dup-actions">
+        <button class="btn dup-overwrite">Re-ingest &amp; update wiki</button>
+        <button class="btn dup-cancel">Cancel</button>
+      </div>
+    </div>`;
+  showEl(banner);
+
+  banner.querySelector('.dup-overwrite').addEventListener('click', () => {
+    hideDuplicateBanner();
+    submitIngest(true);
+  });
+  banner.querySelector('.dup-cancel').addEventListener('click', () => {
+    hideDuplicateBanner();
+    ingestBtn.disabled = false;
+  });
+}
+
+function hideDuplicateBanner() {
+  const banner = document.getElementById('duplicate-banner');
+  if (banner) banner.remove();
+}
 
 function showIngestResult(data) {
+  const label = data.wasOverwrite ? 'Re-ingested &amp; updated:' : 'Ingested:';
   ingestResult.innerHTML = `
-    <h3>Ingested: ${escHtml(data.title)}</h3>
+    <h3>${label} ${escHtml(data.title)}</h3>
     <ul>
       ${data.pagesWritten.map(p => `<li><span>${escHtml(p)}</span></li>`).join('')}
     </ul>

@@ -47,13 +47,17 @@ function parseJSON(raw) {
   );
 }
 
-function buildPrompt(today, index, originalName, text, strict) {
+function buildPrompt(today, index, originalName, text, strict, isOverwrite = false) {
   const conciseness = strict
     ? 'CRITICAL: Maximum 3 bullet points per page. No prose. Single-word tags only. The shorter the better.'
     : 'Keep each page concise — 3 to 8 bullet points or sentences max. No long prose.';
 
-  return `Today's date: ${today}
+  const overwriteNote = isOverwrite
+    ? 'NOTE: This document has been ingested before. Update any existing wiki pages with new or changed information rather than duplicating content. Merge carefully.'
+    : '';
 
+  return `Today's date: ${today}
+${overwriteNote ? '\n' + overwriteNote : ''}
 Current wiki index:
 ${index || '(empty — this is the first ingest)'}
 
@@ -82,7 +86,7 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 }`;
 }
 
-export async function ingestFile(domain, filePath, originalName) {
+export async function ingestFile(domain, filePath, originalName, isOverwrite = false) {
   // Save to raw/
   const rawDir = rawPath(domain);
   await mkdir(rawDir, { recursive: true });
@@ -105,17 +109,15 @@ export async function ingestFile(domain, filePath, originalName) {
   let raw;
   let result;
 
-  raw = (await generateText(schema, buildPrompt(today, index, originalName, text, false), 65536, 'json')).trim();
+  raw = (await generateText(schema, buildPrompt(today, index, originalName, text, false, isOverwrite), 65536, 'json')).trim();
 
   try {
     result = parseJSON(raw);
   } catch (firstErr) {
     // ── Attempt 2: stricter brevity prompt ───────────────────────────────────
-    // Triggered when the model produced malformed JSON (e.g. unescaped chars
-    // in content, or still-truncated output on a very dense document).
     console.warn(`[ingest] First parse failed (${firstErr.message.slice(0, 120)}). Retrying with strict brevity...`);
 
-    raw = (await generateText(schema, buildPrompt(today, index, originalName, text, true), 65536, 'json')).trim();
+    raw = (await generateText(schema, buildPrompt(today, index, originalName, text, true, isOverwrite), 65536, 'json')).trim();
 
     try {
       result = parseJSON(raw);
