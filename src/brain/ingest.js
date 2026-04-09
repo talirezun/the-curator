@@ -174,11 +174,11 @@ const BATCH_SIZE = 10;
 
 async function ingestMultiPhase(schema, today, index, originalName, text, isOverwrite) {
   // Phase 1: outline
-  console.log('[ingest] Large document — using two-phase ingest. Phase 1: outline...');
+  console.log('[ingest] Large document — using multi-phase ingest. Phase 1: outline...');
   const outlineRaw = (await generateText(
     schema,
     buildOutlinePrompt(today, index, originalName, text, isOverwrite),
-    4096,
+    16384,   // increased from 4096 — large docs can have 30+ pages in the outline
     'json'
   )).trim();
 
@@ -198,7 +198,7 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
     const batchRaw = (await generateText(
       schema,
       buildBatchPrompt(today, originalName, text, batch),
-      16384,
+      32768,   // increased from 16384 — each batch can contain rich content
       'json'
     )).trim();
 
@@ -228,6 +228,12 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
 // 200 000 chars ≈ 50k tokens — safely below the 65 536 ceiling.
 const SINGLE_PASS_CHAR_LIMIT = 200_000;
 
+// Skip single-pass entirely for large input documents.
+// At 40 000+ chars of source text the response routinely approaches the output
+// token ceiling and gets truncated mid-JSON — wasting two API calls before the
+// fallback triggers. Going straight to multi-phase is faster and more reliable.
+const MULTI_PHASE_INPUT_THRESHOLD = 40_000;
+
 export async function ingestFile(domain, filePath, originalName, isOverwrite = false) {
   // Save to raw/
   const rawDir = rawPath(domain);
@@ -251,7 +257,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   let usedMultiPhase = false;
   let singlePassFailed = false;
 
-  try {
+  // Large inputs reliably overflow the output token window in single-pass.
+  // Skip straight to multi-phase to avoid two wasted API calls.
+  if (text.length > MULTI_PHASE_INPUT_THRESHOLD) {
+    console.log(`[ingest] Input text ${text.length} chars — skipping single-pass, going straight to multi-phase.`);
+    singlePassFailed = true;
+  }
+
+  if (!singlePassFailed) try {
     const raw = (await generateText(
       schema,
       buildPrompt(today, index, originalName, text, false, isOverwrite),
