@@ -16,6 +16,7 @@
         <button class="tab-btn active" data-tab="ingest">Ingest</button>
         <button class="tab-btn" data-tab="chat">Chat</button>
         <button class="tab-btn" data-tab="wiki">Wiki</button>
+        <button class="tab-btn" data-tab="sync">Sync</button>
       </nav>
       <button id="stop-btn" class="btn stop" title="Stop the server">&#9632; Stop</button>
     </header>
@@ -74,6 +75,255 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- SYNC TAB -->
+    <section id="tab-sync" class="tab hidden">
+
+      <!-- Initial status check -->
+      <div id="sync-checking" class="sync-checking">
+        <span class="spinner"></span>
+        <span>Checking sync status…</span>
+      </div>
+
+      <!-- NOT CONFIGURED: landing + wizard -->
+      <div id="sync-unconfigured" class="hidden">
+
+        <!-- Landing -->
+        <div id="sync-landing" class="sync-landing">
+          <div class="sync-hero">
+            <div class="sync-hero-icon">🔄</div>
+            <h2>Sync your Second Brain</h2>
+            <p>Keep your wiki and chat history in sync across all your computers —
+               powered by a private GitHub repository that only you control.</p>
+          </div>
+          <div class="sync-what-grid">
+            <div class="sync-what-col sync-what-yes">
+              <div class="sync-what-label">What gets synced</div>
+              <div>✓&nbsp; All wiki pages</div>
+              <div>✓&nbsp; Chat conversations</div>
+              <div>✓&nbsp; Domain schemas</div>
+            </div>
+            <div class="sync-what-col sync-what-no">
+              <div class="sync-what-label">Stays on this computer</div>
+              <div>✗&nbsp; Source files (large)</div>
+              <div>✗&nbsp; Your API key</div>
+              <div>✗&nbsp; App code</div>
+            </div>
+          </div>
+          <button id="open-wizard-btn" class="btn primary sync-start-btn">Set Up Sync — takes 3 minutes</button>
+        </div>
+
+        <!-- Wizard -->
+        <div id="sync-wizard" class="sync-wizard hidden">
+
+          <!-- Step progress -->
+          <div class="sync-progress" id="sync-progress">
+            <div class="sync-progress-step active" data-step="1">1</div>
+            <div class="sync-progress-line"></div>
+            <div class="sync-progress-step" data-step="2">2</div>
+            <div class="sync-progress-line"></div>
+            <div class="sync-progress-step" data-step="3">3</div>
+          </div>
+
+          <!-- Step 1: Repo URL -->
+          <div id="sync-step-1" class="sync-step">
+            <h3 class="sync-step-title">Create a private GitHub repository</h3>
+            <p class="hint">This is where your knowledge will live. It's private — only you can access it.</p>
+            <div class="sync-instructions">
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">1</span>
+                <span>Go to GitHub and create a new repository</span>
+                <a href="https://github.com/new" target="_blank" rel="noopener" class="btn sync-open-btn">Open GitHub ↗</a>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">2</span>
+                <span>Name it anything — e.g. <code>my-brain</code></span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">3</span>
+                <span>Make sure <strong>Private</strong> is selected</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">4</span>
+                <span>Click "Create repository" — leave everything else as-is</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">5</span>
+                <span>Copy the URL from your browser's address bar and paste it below</span>
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:24px">
+              <label for="sync-repo-url">Repository URL</label>
+              <input type="url" id="sync-repo-url" class="sync-input"
+                     placeholder="https://github.com/your-username/my-brain" />
+            </div>
+            <div class="sync-step-actions">
+              <button id="wizard-back-1" class="btn">← Cancel</button>
+              <button id="wizard-next-1" class="btn primary">Continue →</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Token -->
+          <div id="sync-step-2" class="sync-step hidden">
+            <h3 class="sync-step-title">Create a Personal Access Token</h3>
+            <p class="hint">This gives Second Brain permission to read and write your private repository on GitHub.</p>
+            <div class="sync-instructions">
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">1</span>
+                <span>Open the GitHub token page</span>
+                <a href="https://github.com/settings/tokens/new?scopes=repo&description=second-brain"
+                   target="_blank" rel="noopener" class="btn sync-open-btn">Open Token Page ↗</a>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">2</span>
+                <span>Give it any name — e.g. <code>second-brain</code></span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">3</span>
+                <span>Under "Select scopes", make sure <strong>repo</strong> is checked ☑</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">4</span>
+                <span>Scroll down and click "Generate token"</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">5</span>
+                <span>Copy the token shown — it starts with <code>ghp_</code></span>
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:24px">
+              <label for="sync-token">Personal Access Token</label>
+              <div class="sync-token-row">
+                <input type="password" id="sync-token" class="sync-input"
+                       placeholder="ghp_…" autocomplete="off" spellcheck="false" />
+                <button id="sync-token-toggle" class="btn" type="button">Show</button>
+              </div>
+            </div>
+            <div class="sync-security-note">
+              🔒 Stored locally on this computer only. Never transmitted anywhere except GitHub.
+            </div>
+            <div class="sync-step-actions">
+              <button id="wizard-back-2" class="btn">← Back</button>
+              <button id="wizard-next-2" class="btn primary">Continue →</button>
+            </div>
+          </div>
+
+          <!-- Step 3: Mode -->
+          <div id="sync-step-3" class="sync-step hidden">
+            <h3 class="sync-step-title">Which computer is this?</h3>
+            <p class="hint">Choose whether to upload your current knowledge or download from GitHub.</p>
+            <div class="sync-mode-cards">
+              <button class="sync-mode-card" id="mode-push" data-mode="push">
+                <div class="sync-mode-icon">📤</div>
+                <div class="sync-mode-title">First computer</div>
+                <div class="sync-mode-desc">I have knowledge here already — push it to GitHub so I can access it on other computers.</div>
+              </button>
+              <button class="sync-mode-card" id="mode-pull" data-mode="pull">
+                <div class="sync-mode-icon">📥</div>
+                <div class="sync-mode-title">Other computers</div>
+                <div class="sync-mode-desc">I've already synced on another computer — pull my knowledge from GitHub to this machine.</div>
+              </button>
+            </div>
+            <div class="sync-step-actions">
+              <button id="wizard-back-3" class="btn">← Back</button>
+            </div>
+          </div>
+
+          <!-- Processing -->
+          <div id="sync-processing" class="sync-step hidden">
+            <div class="sync-centered">
+              <div class="sync-proc-icon">⚙️</div>
+              <h3 class="sync-step-title">Setting up sync…</h3>
+              <p class="hint">Connecting to GitHub and syncing your knowledge.<br>This may take a moment.</p>
+              <div class="sync-proc-spinner-row">
+                <span class="spinner"></span>
+                <span id="sync-proc-msg">Connecting to GitHub…</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div id="sync-error" class="sync-step hidden">
+            <div class="sync-centered">
+              <div style="font-size:40px;margin-bottom:16px">⚠️</div>
+              <h3 class="sync-step-title">Something went wrong</h3>
+              <p id="sync-error-msg" class="sync-error-msg"></p>
+              <div style="margin-top:24px;display:flex;gap:12px;justify-content:center">
+                <button id="sync-try-again" class="btn">← Change details</button>
+                <button id="sync-retry-same" class="btn primary">Try again</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Success -->
+          <div id="sync-success" class="sync-step hidden">
+            <div class="sync-centered">
+              <div style="font-size:48px;margin-bottom:16px">✅</div>
+              <h3 class="sync-step-title">Sync is ready!</h3>
+              <p id="sync-success-repo" class="sync-success-repo"></p>
+              <div class="sync-success-next">
+                <strong>To sync on another computer:</strong>
+                <ol>
+                  <li>Install Second Brain on that computer</li>
+                  <li>Open the <strong>Sync</strong> tab</li>
+                  <li>Enter the same repository URL and token</li>
+                  <li>Choose <strong>Other computers — Pull</strong></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /#sync-wizard -->
+      </div><!-- /#sync-unconfigured -->
+
+      <!-- CONFIGURED panel -->
+      <div id="sync-configured" class="hidden">
+        <h2 class="sync-section-title">Sync</h2>
+
+        <div class="sync-status-card">
+          <div class="sync-connected-row">
+            <span class="sync-connected-badge">✅ Connected</span>
+            <a id="sync-repo-link" href="#" target="_blank" rel="noopener" class="sync-repo-link"></a>
+          </div>
+          <div class="sync-status-meta">
+            <span id="sync-last-sync-label">Last synced: never</span>
+            <span id="sync-changes-label" class="sync-changes-label"></span>
+          </div>
+        </div>
+
+        <div class="sync-action-cards">
+          <div class="sync-action-card">
+            <div class="sync-action-header">
+              <span class="sync-action-arrow">↑</span>
+              <span class="sync-action-title">Sync Up</span>
+            </div>
+            <p class="sync-action-desc">Push your local changes to GitHub so they're available on all your computers.</p>
+            <button id="sync-push-btn" class="btn primary sync-action-btn">↑ Sync Up</button>
+          </div>
+          <div class="sync-action-card">
+            <div class="sync-action-header">
+              <span class="sync-action-arrow">↓</span>
+              <span class="sync-action-title">Sync Down</span>
+            </div>
+            <p class="sync-action-desc">Pull the latest changes from GitHub to this computer.</p>
+            <button id="sync-pull-btn" class="btn sync-action-btn">↓ Sync Down</button>
+          </div>
+        </div>
+
+        <div id="sync-op-status" class="status hidden"></div>
+
+        <div class="sync-tip">
+          <strong>Workflow tip:</strong> Always <em>Sync Up</em> on the computer you just worked on,
+          then <em>Sync Down</em> on any other computer before you start a new session.
+        </div>
+
+        <div class="sync-danger-zone">
+          <button id="sync-disconnect-btn" class="btn sync-disconnect-btn">Disconnect sync</button>
+          <span class="sync-disconnect-note">Removes the link to GitHub from this computer only. Your GitHub repository is not affected.</span>
+        </div>
+      </div><!-- /#sync-configured -->
+
     </section>
 
     <!-- WIKI TAB -->

@@ -95,6 +95,9 @@ second-brain/
 │       │   └── summaries/      One page per ingested source
 │       └── conversations/      Saved chat threads (JSON, gitignored)
 ├── docs/                       This documentation
+│   ├── user-guide.md           End-to-end guide for non-technical users
+│   ├── architecture.md         This file — system internals
+│   └── sync.md                 Step-by-step guide to the GitHub sync feature
 ├── package.json
 ├── .env                        API key (never committed)
 └── .gitignore
@@ -288,5 +291,8 @@ Ingest requires structured output (pages + index as a JSON object) that must be 
 **Why save conversations as JSON files instead of a database?**
 Consistent with the project's "no external database" principle. JSON files are human-readable, portable, and trivially backed up or shared. SQLite would add a dependency and binary file for a feature that doesn't need relational queries. Each conversation is a self-contained document.
 
-**Why are conversations gitignored?**
-Conversations are personal knowledge — specific to each user's ingested documents and questions. Including them in the repo would either expose private data or create constant noise in the git history. Each student or user maintains their own local conversation history.
+**Why are conversations gitignored from the app repo but synced through the knowledge repo?**
+Conversations are personal knowledge — specific to each user's ingested documents and questions. They are gitignored from the app's own repository (so contributors don't accidentally commit private data), but they live inside `domains/*/conversations/` which is included in the knowledge repository managed by the Sync feature. This means conversations travel with the rest of your knowledge when you sync across computers, while still being invisible to anyone looking at the app's source code on GitHub.
+
+**Why use git with `--git-dir` / `--work-tree` for sync instead of a library or dedicated sync service?**
+Git is already a prerequisite for installing the app (`git clone`), so no new dependency is introduced. Using a bare repository at `.knowledge-git/` with `domains/` as the work-tree keeps the knowledge repository completely separate from the app's own git history — users can sync their notes without touching the app's commit log, and developers can work on the app without polluting the knowledge repo. For authentication, a Personal Access Token embedded in the remote URL is the simplest possible mechanism for non-developers: paste once, forget about it. Alternatives considered were rsync (no conflict resolution, no history), a dedicated sync library (new runtime dependency, no offline support), and Dropbox/iCloud folder syncing (platform-specific, unreliable with git-tracked folders, requires a separate account). Plain git gives version history, conflict detection, and works the same way on every platform.

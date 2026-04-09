@@ -18,3 +18,7 @@ domains/*/conversations/
 
 # Mac launcher app (local only)
 "Second Brain.app"
+
+# Sync feature (local only — never commit)
+.knowledge-git/
+.sync-config.json

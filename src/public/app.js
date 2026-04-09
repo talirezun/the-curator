@@ -375,6 +375,296 @@ chatSendBtn.addEventListener('click', async () => {
   }
 });
 
+// ── SYNC TAB ──────────────────────────────────────────────────────────────────
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const syncChecking    = document.getElementById('sync-checking');
+const syncUnconfigured = document.getElementById('sync-unconfigured');
+const syncConfigured  = document.getElementById('sync-configured');
+const syncLanding     = document.getElementById('sync-landing');
+const syncWizard      = document.getElementById('sync-wizard');
+
+// Wizard step panels
+const syncStep1       = document.getElementById('sync-step-1');
+const syncStep2       = document.getElementById('sync-step-2');
+const syncStep3       = document.getElementById('sync-step-3');
+const syncProcessing  = document.getElementById('sync-processing');
+const syncError       = document.getElementById('sync-error');
+const syncSuccess     = document.getElementById('sync-success');
+
+// Wizard fields
+const syncRepoUrlInput = document.getElementById('sync-repo-url');
+const syncTokenInput   = document.getElementById('sync-token');
+
+// Persisted across wizard steps
+let wizardRepoUrl = '';
+let wizardToken   = '';
+let wizardLastMode = 'push';
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function initSyncTab() {
+  showEl(syncChecking);
+  hideEl(syncUnconfigured);
+  hideEl(syncConfigured);
+
+  try {
+    const res = await fetch('/api/sync/status');
+    const status = await res.json();
+    hideEl(syncChecking);
+    if (status.configured) {
+      renderSyncConfigured(status);
+    } else {
+      showEl(syncUnconfigured);
+      showEl(syncLanding);
+      hideEl(syncWizard);
+    }
+  } catch {
+    hideEl(syncChecking);
+    showEl(syncUnconfigured);
+    showEl(syncLanding);
+    hideEl(syncWizard);
+  }
+}
+
+// Only initialise when the Sync tab is first opened (lazy)
+let syncTabInitialised = false;
+document.querySelector('[data-tab="sync"]').addEventListener('click', () => {
+  if (!syncTabInitialised) {
+    syncTabInitialised = true;
+    initSyncTab();
+  }
+});
+
+// ── Configured panel ──────────────────────────────────────────────────────────
+function renderSyncConfigured(status) {
+  hideEl(syncUnconfigured);
+  showEl(syncConfigured);
+
+  const repoUrl = status.repoUrl || '';
+  const link = document.getElementById('sync-repo-link');
+  link.textContent = repoUrl;
+  link.href = repoUrl.startsWith('http') ? repoUrl : `https://${repoUrl}`;
+
+  const lastSyncEl = document.getElementById('sync-last-sync-label');
+  if (status.lastSync) {
+    const d = new Date(status.lastSync);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    lastSyncEl.textContent = `Last synced: ${isToday ? 'Today at ' + timeStr : d.toLocaleDateString()}`;
+  } else {
+    lastSyncEl.textContent = 'Last synced: never';
+  }
+
+  const changesEl = document.getElementById('sync-changes-label');
+  if (status.changesCount > 0) {
+    changesEl.textContent = `${status.changesCount} local change${status.changesCount !== 1 ? 's' : ''} not yet pushed`;
+  } else {
+    changesEl.textContent = '';
+  }
+}
+
+// ── Sync Up ───────────────────────────────────────────────────────────────────
+document.getElementById('sync-push-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('sync-push-btn');
+  const statusEl = document.getElementById('sync-op-status');
+  btn.disabled = true;
+  showStatus(statusEl, 'loading', 'Syncing up — pushing your changes to GitHub…');
+
+  try {
+    const res = await fetch('/api/sync/push', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    if (data.pushed) {
+      showStatus(statusEl, 'success',
+        `✓ Synced ${data.changesCount} change${data.changesCount !== 1 ? 's' : ''} to GitHub.`);
+    } else {
+      showStatus(statusEl, 'success', `✓ ${data.message}`);
+    }
+    // Refresh status
+    const s = await fetch('/api/sync/status').then(r => r.json());
+    renderSyncConfigured(s);
+  } catch (err) {
+    showStatus(statusEl, 'error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Sync Down ─────────────────────────────────────────────────────────────────
+document.getElementById('sync-pull-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('sync-pull-btn');
+  const statusEl = document.getElementById('sync-op-status');
+  btn.disabled = true;
+  showStatus(statusEl, 'loading', 'Syncing down — pulling latest changes from GitHub…');
+
+  try {
+    const res = await fetch('/api/sync/pull', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    showStatus(statusEl, 'success',
+      '✓ Pulled successfully. Reload the Wiki or Chat tab to see updated content.');
+    const s = await fetch('/api/sync/status').then(r => r.json());
+    renderSyncConfigured(s);
+  } catch (err) {
+    showStatus(statusEl, 'error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── Disconnect ────────────────────────────────────────────────────────────────
+document.getElementById('sync-disconnect-btn').addEventListener('click', async () => {
+  if (!confirm('Disconnect sync from this computer? Your GitHub repository will not be affected.')) return;
+  try {
+    await fetch('/api/sync/disconnect', { method: 'DELETE' });
+    hideEl(syncConfigured);
+    showEl(syncUnconfigured);
+    showSyncLanding();
+    syncTabInitialised = false; // allow re-init next time
+  } catch (err) {
+    alert('Failed to disconnect: ' + err.message);
+  }
+});
+
+// ── Wizard helpers ────────────────────────────────────────────────────────────
+function showSyncLanding() {
+  showEl(syncLanding);
+  hideEl(syncWizard);
+}
+
+function showWizardStep(stepEl) {
+  [syncStep1, syncStep2, syncStep3, syncProcessing, syncError, syncSuccess].forEach(el => {
+    el.classList.add('hidden');
+  });
+  stepEl.classList.remove('hidden');
+}
+
+function setProgressStep(n) {
+  document.querySelectorAll('.sync-progress-step').forEach(el => {
+    const s = parseInt(el.dataset.step);
+    el.classList.toggle('active', s === n);
+    el.classList.toggle('done', s < n);
+  });
+}
+
+// ── Wizard: open ─────────────────────────────────────────────────────────────
+document.getElementById('open-wizard-btn').addEventListener('click', () => {
+  hideEl(syncLanding);
+  showEl(syncWizard);
+  showWizardStep(syncStep1);
+  setProgressStep(1);
+  syncRepoUrlInput.value = wizardRepoUrl;
+  syncTokenInput.value   = wizardToken;
+});
+
+// ── Wizard: Step 1 → Step 2 ───────────────────────────────────────────────────
+document.getElementById('wizard-next-1').addEventListener('click', () => {
+  const url = syncRepoUrlInput.value.trim();
+  if (!url || !url.includes('github.com')) {
+    syncRepoUrlInput.focus();
+    syncRepoUrlInput.style.borderColor = 'var(--error)';
+    setTimeout(() => syncRepoUrlInput.style.borderColor = '', 1500);
+    return;
+  }
+  wizardRepoUrl = url;
+  showWizardStep(syncStep2);
+  setProgressStep(2);
+});
+
+document.getElementById('wizard-back-1').addEventListener('click', () => {
+  showSyncLanding();
+});
+
+// ── Wizard: Token show/hide ───────────────────────────────────────────────────
+document.getElementById('sync-token-toggle').addEventListener('click', () => {
+  const input = syncTokenInput;
+  const btn   = document.getElementById('sync-token-toggle');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = 'Hide';
+  } else {
+    input.type = 'password';
+    btn.textContent = 'Show';
+  }
+});
+
+// ── Wizard: Step 2 → Step 3 ───────────────────────────────────────────────────
+document.getElementById('wizard-next-2').addEventListener('click', () => {
+  const tok = syncTokenInput.value.trim();
+  if (!tok || tok.length < 10) {
+    syncTokenInput.focus();
+    syncTokenInput.style.borderColor = 'var(--error)';
+    setTimeout(() => syncTokenInput.style.borderColor = '', 1500);
+    return;
+  }
+  wizardToken = tok;
+  showWizardStep(syncStep3);
+  setProgressStep(3);
+});
+
+document.getElementById('wizard-back-2').addEventListener('click', () => {
+  showWizardStep(syncStep1);
+  setProgressStep(1);
+});
+
+document.getElementById('wizard-back-3').addEventListener('click', () => {
+  showWizardStep(syncStep2);
+  setProgressStep(2);
+});
+
+// ── Wizard: Mode cards → submit ───────────────────────────────────────────────
+document.querySelectorAll('.sync-mode-card').forEach(card => {
+  card.addEventListener('click', () => submitSyncSetup(card.dataset.mode));
+});
+
+async function submitSyncSetup(mode) {
+  wizardLastMode = mode;
+  showWizardStep(syncProcessing);
+
+  const msgEl = document.getElementById('sync-proc-msg');
+  msgEl.textContent = mode === 'push'
+    ? 'Connecting to GitHub and pushing your knowledge…'
+    : 'Connecting to GitHub and pulling your knowledge…';
+
+  try {
+    const res = await fetch('/api/sync/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl: wizardRepoUrl, token: wizardToken, mode }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Setup failed');
+
+    // Show success
+    document.getElementById('sync-success-repo').textContent = data.repoUrl || wizardRepoUrl;
+    showWizardStep(syncSuccess);
+
+    // Auto-transition to configured panel after 4 seconds
+    setTimeout(async () => {
+      const s = await fetch('/api/sync/status').then(r => r.json());
+      hideEl(syncUnconfigured);
+      renderSyncConfigured(s);
+    }, 4000);
+
+  } catch (err) {
+    document.getElementById('sync-error-msg').textContent = err.message;
+    showWizardStep(syncError);
+  }
+}
+
+// ── Error recovery ────────────────────────────────────────────────────────────
+document.getElementById('sync-try-again').addEventListener('click', () => {
+  showWizardStep(syncStep1);
+  setProgressStep(1);
+});
+
+document.getElementById('sync-retry-same').addEventListener('click', () => {
+  submitSyncSetup(wizardLastMode);
+});
+
 // ── WIKI TAB ──────────────────────────────────────────────────────────────────
 const wikiLoadBtn = document.getElementById('wiki-load-btn');
 const wikiBrowser = document.getElementById('wiki-browser');

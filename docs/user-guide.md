@@ -19,7 +19,8 @@ This guide covers everything from first-time setup to daily use. No technical ba
 11. [See your knowledge graph in Obsidian](#11-see-your-knowledge-graph-in-obsidian)
 12. [Two ways to explore your knowledge](#12-two-ways-to-explore-your-knowledge)
 13. [Daily workflow](#13-daily-workflow)
-14. [Troubleshooting](#14-troubleshooting)
+14. [Sync across computers](#14-sync-across-computers)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -444,7 +445,106 @@ Here is the recommended way to use Second Brain day-to-day:
 
 ---
 
-## 14. Troubleshooting
+## 14. Sync across computers
+
+The **Sync** tab keeps your wiki and chat history in sync across all your computers using a free, private GitHub repository — no subscription, no third-party service. Your notes never touch any server you don't control.
+
+### What gets synced
+
+| Gets synced | Stays local only |
+|-------------|-----------------|
+| ✓ All wiki pages | ✗ Original source files (PDFs, etc.) |
+| ✓ Chat conversations | ✗ Your Gemini/Claude API key |
+| ✓ Domain schemas | ✗ App code |
+
+### First-time setup (~3 minutes)
+
+You only do this once. After that, syncing is two button clicks.
+
+#### Step 1 — Create a private GitHub repository
+
+1. Go to **[github.com/new](https://github.com/new)** (create a free account if you don't have one)
+2. Name the repository anything — e.g. `my-brain`
+3. Make sure **Private** is selected
+4. Click **Create repository** — leave everything else as default
+5. Copy the URL from your browser (e.g. `https://github.com/your-username/my-brain`)
+
+#### Step 2 — Create a Personal Access Token
+
+This is how Second Brain gets permission to read and write your private repository.
+
+1. Go to **[github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=repo&description=second-brain)** (you may need to sign in)
+2. Give the token any name — e.g. `second-brain`
+3. Under **Select scopes**, check the **repo** box ☑
+4. Set **Expiration** to "No expiration" (recommended — so you don't need to regenerate it)
+5. Scroll down and click **Generate token**
+6. **Copy the token immediately** — GitHub only shows it once. It starts with `ghp_`
+
+#### Step 3 — Connect in the app
+
+1. Click the **Sync** tab in Second Brain
+2. Click **Set Up Sync — takes 3 minutes**
+3. **Step 1 of 3:** Paste your repository URL → click Continue
+4. **Step 2 of 3:** Paste your token → click Continue
+5. **Step 3 of 3:** Choose your role:
+   - **First computer** — you have knowledge here already; push it to GitHub
+   - **Other computers** — you've already synced on another machine; pull from GitHub
+
+The wizard connects to GitHub, creates the initial snapshot, and confirms when done. The whole process takes about 30 seconds once your details are entered.
+
+### Daily workflow
+
+**Golden rule:** always Sync Up on the machine you just worked on, Sync Down before you start on a different machine.
+
+```
+Computer A (worked here)    →  click Sync Up  →  GitHub
+                                                      ↓
+Computer B (starting here)  ←  click Sync Down ←  GitHub
+```
+
+**What the buttons do:**
+
+| Button | What happens |
+|--------|-------------|
+| **↑ Sync Up** | Saves all your local changes as a snapshot and sends them to GitHub |
+| **↓ Sync Down** | Downloads the latest snapshot from GitHub to this computer |
+
+After Sync Down, refresh the Chat or Wiki tab to see the newly arrived pages.
+
+### Setting up a second (or third) computer
+
+On any additional computer:
+
+1. Install the app (`git clone` + `npm install` — same as the first setup)
+2. Start the server and go to `http://localhost:3333`
+3. Click the **Sync** tab
+4. Click **Set Up Sync**
+5. Enter the **same repository URL** and the **same token** as before
+6. Choose **Other computers — Pull**
+
+The wizard downloads all your wiki pages and conversations from GitHub. Done.
+
+### What happens if you forget to sync
+
+If you worked on Computer A without syncing, then worked on Computer B without syncing first, the app handles it gracefully:
+
+- When you click **Sync Down** on either machine, it automatically saves your local changes first before pulling from GitHub
+- In most cases this resolves itself cleanly
+- In rare cases (same page edited on two machines), you may see a conflict message — the fix is always: go to the machine where you last synced, Sync Up from there, then Sync Down on the other
+
+### Disconnecting
+
+If you want to remove the sync connection from one computer (without affecting GitHub or other computers):
+
+1. Go to the **Sync** tab
+2. Scroll to the bottom and click **Disconnect sync**
+3. Confirm the prompt
+
+Your GitHub repository is not changed. You can reconnect at any time using the wizard.
+
+---
+
+## 15. Troubleshooting
 
 **"command not found: node" when I type `node src/server.js`**
 
