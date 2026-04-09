@@ -21,7 +21,7 @@ export function rawPath(domain) {
 export async function listDomains() {
   const entries = await readdir(DOMAINS_DIR, { withFileTypes: true });
   return entries
-    .filter(e => e.isDirectory())
+    .filter(e => e.isDirectory() && !e.name.startsWith('.'))
     .map(e => e.name);
 }
 

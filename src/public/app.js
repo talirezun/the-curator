@@ -2,13 +2,13 @@
 document.getElementById('stop-btn').addEventListener('click', async () => {
   const btn = document.getElementById('stop-btn');
   btn.disabled = true;
-  btn.textContent = 'Stopping…';
+  btn.innerHTML = '<span style="opacity:.6">Stopping…</span>';
   try {
     await fetch('/api/shutdown', { method: 'POST' });
   } catch {
     // Expected — the server closes before it can finish the response
   }
-  btn.textContent = '✓ Stopped';
+  btn.innerHTML = '✓ Stopped';
   document.body.innerHTML = `
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
                 height:100vh;gap:16px;font-family:system-ui;color:#e2e8f0;background:#0f1117;">
@@ -763,6 +763,97 @@ function renderMarkdown(md) {
   wikiContent.innerHTML = `<p>${html}</p>`;
 }
 
+// ── Custom Select ─────────────────────────────────────────────────────────────
+class CustomSelect {
+  constructor(nativeSelect) {
+    this.native  = nativeSelect;
+    this.wrap    = null;
+    this.btn     = null;
+    this.dropdown = null;
+    this.isOpen  = false;
+    this._build();
+    this._observe();
+  }
+
+  _build() {
+    this.native.classList.add('cs-native');
+
+    this.wrap = document.createElement('div');
+    this.wrap.className = 'cs-wrap';
+    // Inherit classes that affect sizing (e.g. chat-domain-select)
+    if (this.native.classList.contains('chat-domain-select')) {
+      this.wrap.classList.add('chat-domain-select-wrap');
+    }
+    this.native.parentNode.insertBefore(this.wrap, this.native);
+    this.wrap.appendChild(this.native);
+
+    this.btn = document.createElement('button');
+    this.btn.type = 'button';
+    this.btn.className = 'cs-btn';
+    this.wrap.insertBefore(this.btn, this.native);
+
+    this.dropdown = document.createElement('div');
+    this.dropdown.className = 'cs-dropdown';
+    this.wrap.appendChild(this.dropdown);
+
+    this.btn.addEventListener('click', e => { e.stopPropagation(); this.toggle(); });
+    document.addEventListener('click', () => this.close());
+
+    this.refresh();
+  }
+
+  refresh() {
+    const opts    = Array.from(this.native.options);
+    const selOpt  = opts[this.native.selectedIndex] || opts[0];
+
+    this.btn.innerHTML = `
+      <span class="cs-value">${selOpt ? escHtml(selOpt.text) : '—'}</span>
+      <svg class="cs-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+           stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+    this.dropdown.innerHTML = opts.map((opt, i) => `
+      <div class="cs-option${opt.selected ? ' selected' : ''}" data-index="${i}">
+        ${opt.selected
+          ? `<svg class="cs-check" width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+               stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+          : '<span class="cs-check-placeholder"></span>'}
+        ${escHtml(opt.text)}
+      </div>`).join('');
+
+    this.dropdown.querySelectorAll('.cs-option').forEach(optEl => {
+      optEl.addEventListener('click', e => {
+        e.stopPropagation();
+        this.native.selectedIndex = parseInt(optEl.dataset.index);
+        this.native.dispatchEvent(new Event('change', { bubbles: true }));
+        this.refresh();
+        this.close();
+      });
+    });
+  }
+
+  toggle() { this.isOpen ? this.close() : this.open(); }
+
+  open() {
+    document.querySelectorAll('.cs-wrap.open').forEach(w => {
+      if (w !== this.wrap) w.classList.remove('open');
+    });
+    this.wrap.classList.add('open');
+    this.isOpen = true;
+  }
+
+  close() {
+    this.wrap.classList.remove('open');
+    this.isOpen = false;
+  }
+
+  _observe() {
+    new MutationObserver(() => this.refresh())
+      .observe(this.native, { childList: true, subtree: true });
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function showEl(el) { el.classList.remove('hidden'); }
 function hideEl(el) { el.classList.add('hidden'); }
@@ -784,5 +875,8 @@ function escHtml(str) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+// Upgrade all <select> elements to custom dropdowns before loading data
+document.querySelectorAll('select').forEach(sel => new CustomSelect(sel));
+
 loadDomains();
 loadChatDomains();

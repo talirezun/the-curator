@@ -6,25 +6,46 @@
   <title>Second Brain</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
     <header>
-      <h1>Second Brain</h1>
+      <div class="logo">
+        <span class="logo-icon">🧠</span>
+        <span class="logo-text">Second Brain</span>
+      </div>
       <nav>
-        <button class="tab-btn active" data-tab="ingest">Ingest</button>
-        <button class="tab-btn" data-tab="chat">Chat</button>
-        <button class="tab-btn" data-tab="wiki">Wiki</button>
-        <button class="tab-btn" data-tab="sync">Sync</button>
+        <button class="tab-btn active" data-tab="ingest">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          Ingest
+        </button>
+        <button class="tab-btn" data-tab="chat">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Chat
+        </button>
+        <button class="tab-btn" data-tab="wiki">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Wiki
+        </button>
+        <button class="tab-btn" data-tab="sync">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          Sync
+        </button>
       </nav>
-      <button id="stop-btn" class="btn stop" title="Stop the server">&#9632; Stop</button>
+      <button id="stop-btn" class="btn stop" title="Stop the server">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        Stop
+      </button>
     </header>
 
     <!-- INGEST TAB -->
     <section id="tab-ingest" class="tab active">
       <h2>Ingest a Source</h2>
-      <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. Claude will read it and update the wiki automatically.</p>
+      <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. Second Brain will read it and update the wiki automatically.</p>
       <div class="form-group">
         <label for="ingest-domain">Domain</label>
         <select id="ingest-domain"></select>
@@ -37,7 +58,10 @@
         </div>
         <span id="file-name" class="file-name"></span>
       </div>
-      <button id="ingest-btn" class="btn primary" disabled>Ingest</button>
+      <button id="ingest-btn" class="btn primary pill" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Ingest
+      </button>
       <div id="ingest-status" class="status hidden"></div>
       <div id="ingest-result" class="result hidden"></div>
     </section>
@@ -49,7 +73,10 @@
         <aside class="chat-sidebar">
           <div class="chat-sidebar-top">
             <select id="chat-domain" class="chat-domain-select"></select>
-            <button id="new-chat-btn" class="btn primary new-chat-btn">+ New Chat</button>
+            <button id="new-chat-btn" class="btn primary new-chat-btn pill">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="margin-right:5px;vertical-align:-1px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              New Chat
+            </button>
           </div>
           <div id="conversation-list" class="conversation-list"></div>
         </aside>
@@ -71,7 +98,10 @@
               rows="1"
               placeholder="Ask anything… (⌘↵ to send)"
             ></textarea>
-            <button id="chat-send-btn" class="btn primary chat-send-btn">Send</button>
+            <button id="chat-send-btn" class="btn primary chat-send-btn pill">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              Send
+            </button>
           </div>
         </div>
       </div>
@@ -299,7 +329,10 @@
               <span class="sync-action-title">Sync Up</span>
             </div>
             <p class="sync-action-desc">Push your local changes to GitHub so they're available on all your computers.</p>
-            <button id="sync-push-btn" class="btn primary sync-action-btn">↑ Sync Up</button>
+            <button id="sync-push-btn" class="btn primary sync-action-btn">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-1px"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              Sync Up
+            </button>
           </div>
           <div class="sync-action-card">
             <div class="sync-action-header">
@@ -307,7 +340,10 @@
               <span class="sync-action-title">Sync Down</span>
             </div>
             <p class="sync-action-desc">Pull the latest changes from GitHub to this computer.</p>
-            <button id="sync-pull-btn" class="btn sync-action-btn">↓ Sync Down</button>
+            <button id="sync-pull-btn" class="btn sync-action-btn">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-1px"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+              Sync Down
+            </button>
           </div>
         </div>
 
@@ -332,7 +368,10 @@
       <div class="form-group inline">
         <label for="wiki-domain">Domain</label>
         <select id="wiki-domain"></select>
-        <button id="wiki-load-btn" class="btn">Load</button>
+        <button id="wiki-load-btn" class="btn pill">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Browse
+        </button>
       </div>
       <div id="wiki-browser" class="wiki-browser hidden">
         <aside id="wiki-sidebar"></aside>

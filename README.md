@@ -1,5 +1,9 @@
 # Second Brain
 
+<p align="center">
+  <img src="images/icon-192.png" alt="Second Brain" width="96" height="96" />
+</p>
+
 A local, AI-powered knowledge system. Feed it documents — articles, PDFs, notes — and it automatically builds an interlinked wiki of key people, tools, and ideas. Have a multi-turn AI conversation with your knowledge. Explore everything as a visual knowledge graph in Obsidian. Sync seamlessly across computers via a private GitHub repository.
 
 Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) concept: instead of one general-purpose second brain that tries to cover everything, you maintain **dedicated wikis per domain** (e.g. AI/Tech, Business, Personal Growth). Each one gets smarter with every source you add.
@@ -136,6 +140,7 @@ second-brain/
 │       ├── raw/            Your original uploaded files (local only)
 │       ├── wiki/           Auto-generated knowledge pages
 │       └── conversations/  Saved chat threads
+├── images/                 App icon in multiple sizes (32, 180, 192 px)
 └── docs/                   Full documentation
 ```
 
@@ -150,6 +155,16 @@ second-brain/
 | [Domain Schemas](docs/domain-schemas.md) | Customise how the AI structures knowledge |
 | [API Reference](docs/api-reference.md) | REST API documentation |
 | [Architecture](docs/architecture.md) | System design for developers |
+
+## App icon
+
+The Second Brain icon is available in the [`images/`](images/) folder for reference, customisation, and use in launchers or documentation:
+
+| File | Size | Use |
+|------|------|-----|
+| [`images/icon-32.png`](images/icon-32.png) | 32×32 | Browser favicon |
+| [`images/icon-192.png`](images/icon-192.png) | 192×192 | General purpose / Android |
+| [`images/icon-180.png`](images/icon-180.png) | 180×180 | Apple touch icon / iOS |
 
 ## Security
 
