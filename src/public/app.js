@@ -880,3 +880,328 @@ document.querySelectorAll('select').forEach(sel => new CustomSelect(sel));
 
 loadDomains();
 loadChatDomains();
+
+// ── DOMAINS TAB ───────────────────────────────────────────────────────────────
+
+let domainsTabInitialised = false;
+
+document.querySelector('[data-tab="domains"]').addEventListener('click', () => {
+  if (!domainsTabInitialised) {
+    domainsTabInitialised = true;
+    loadDomainList();
+  }
+});
+
+async function loadDomainList() {
+  const listEl = document.getElementById('domain-list');
+  listEl.innerHTML = '<div class="domain-loading"><span class="spinner"></span> Loading…</div>';
+  try {
+    const res = await fetch('/api/domains');
+    const { domains } = await res.json();
+
+    if (domains.length === 0) {
+      listEl.innerHTML = '<div class="domain-empty">No domains yet. Create one above.</div>';
+      return;
+    }
+
+    const statsResults = await Promise.allSettled(
+      domains.map(d => fetch(`/api/domains/${encodeURIComponent(d)}/stats`).then(r => r.json()))
+    );
+
+    listEl.innerHTML = '';
+    domains.forEach((slug, i) => {
+      const stats = statsResults[i].status === 'fulfilled'
+        ? statsResults[i].value
+        : { slug, displayName: formatDomain(slug), pageCount: '?', conversationCount: '?', lastIngestDate: null };
+      listEl.appendChild(buildDomainCard(stats));
+    });
+  } catch (err) {
+    listEl.innerHTML = `<div class="status error">${escHtml(err.message)}</div>`;
+  }
+}
+
+function buildDomainCard(stats) {
+  const card = document.createElement('div');
+  card.className = 'domain-card';
+  card.dataset.slug = stats.slug;
+
+  const lastIngest = stats.lastIngestDate
+    ? `Last ingest: ${stats.lastIngestDate}`
+    : 'No ingests yet';
+
+  const firstLetter = (stats.displayName || stats.slug)[0].toUpperCase();
+
+  card.innerHTML = `
+    <div class="domain-card-icon">${escHtml(firstLetter)}</div>
+    <div class="domain-card-body">
+      <div class="domain-card-name">${escHtml(stats.displayName)}</div>
+      <div class="domain-card-slug">domains/${escHtml(stats.slug)}/</div>
+      <div class="domain-card-stats">
+        <span>${stats.pageCount} wiki pages</span>
+        <span class="domain-stat-dot">·</span>
+        <span>${stats.conversationCount} conversations</span>
+        <span class="domain-stat-dot">·</span>
+        <span>${escHtml(lastIngest)}</span>
+      </div>
+    </div>
+    <div class="domain-card-actions">
+      <button class="btn domain-rename-btn" title="Rename">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </button>
+      <button class="btn domain-delete-btn" title="Delete">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>
+    </div>
+    <div class="domain-card-panel hidden"></div>
+  `;
+
+  card.querySelector('.domain-rename-btn').addEventListener('click', () => showRenamePanel(card, stats));
+  card.querySelector('.domain-delete-btn').addEventListener('click', () => showDeletePanel(card, stats));
+
+  return card;
+}
+
+function showRenamePanel(cardEl, stats) {
+  // Close any other open panels first
+  document.querySelectorAll('.domain-card-panel').forEach(p => {
+    if (p !== cardEl.querySelector('.domain-card-panel')) {
+      p.classList.add('hidden');
+      p.innerHTML = '';
+    }
+  });
+
+  const panel = cardEl.querySelector('.domain-card-panel');
+  panel.innerHTML = `
+    <div class="domain-inline-form">
+      <label class="domain-inline-label">New display name</label>
+      <input type="text" class="domain-rename-input" value="${escHtml(stats.displayName)}" />
+      <span class="domain-slug-preview"></span>
+      <div class="domain-inline-actions">
+        <button class="btn domain-rename-cancel" type="button">Cancel</button>
+        <button class="btn primary domain-rename-submit pill" type="button">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>
+          Rename
+        </button>
+      </div>
+      <div class="domain-inline-status status hidden"></div>
+    </div>
+  `;
+  panel.classList.remove('hidden');
+
+  const input = panel.querySelector('.domain-rename-input');
+  const preview = panel.querySelector('.domain-slug-preview');
+  input.select();
+  input.focus();
+
+  input.addEventListener('input', () => {
+    const slug = clientGenerateSlug(input.value);
+    preview.textContent = slug ? `New folder: domains/${slug}/` : '';
+  });
+
+  panel.querySelector('.domain-rename-cancel').addEventListener('click', () => {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+  });
+
+  panel.querySelector('.domain-rename-submit').addEventListener('click', async () => {
+    const newName = input.value.trim();
+    if (!newName) return;
+    const submitBtn = panel.querySelector('.domain-rename-submit');
+    const statusEl = panel.querySelector('.domain-inline-status');
+    submitBtn.disabled = true;
+    showStatus(statusEl, 'loading', 'Renaming…');
+
+    try {
+      const res = await fetch(`/api/domains/${encodeURIComponent(stats.slug)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: newName }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      await Promise.all([loadDomains(), loadChatDomains(), loadDomainList()]);
+
+      if (data.syncWarning) {
+        // Brief advisory before the card refreshes away
+        showStatus(statusEl, 'success', `✓ Renamed to "${newName}". Since sync is configured, run Sync Up soon to reflect this on GitHub.`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    } catch (err) {
+      showStatus(statusEl, 'error', err.message);
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+function showDeletePanel(cardEl, stats) {
+  // Close any other open panels
+  document.querySelectorAll('.domain-card-panel').forEach(p => {
+    if (p !== cardEl.querySelector('.domain-card-panel')) {
+      p.classList.add('hidden');
+      p.innerHTML = '';
+    }
+  });
+
+  const panel = cardEl.querySelector('.domain-card-panel');
+  panel.innerHTML = `
+    <div class="domain-delete-warning">
+      <div class="domain-delete-icon">⚠️</div>
+      <div class="domain-delete-body">
+        <strong class="domain-delete-title">Delete "${escHtml(stats.displayName)}"?</strong>
+        <div class="domain-delete-counts">
+          This will permanently delete <strong>${stats.pageCount} wiki pages</strong>,
+          <strong>${stats.conversationCount} conversations</strong>, and all source files for this domain.
+          This cannot be undone.
+        </div>
+        <div class="domain-delete-sync-note hidden"></div>
+        <div class="domain-inline-actions">
+          <button class="btn domain-delete-cancel" type="button">Cancel</button>
+          <button class="btn domain-delete-confirm" type="button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            Yes, delete permanently
+          </button>
+        </div>
+        <div class="domain-delete-status status hidden"></div>
+      </div>
+    </div>
+  `;
+  panel.classList.remove('hidden');
+
+  // Async sync check
+  fetch('/api/sync/status').then(r => r.json()).then(s => {
+    if (s.configured) {
+      const noteEl = panel.querySelector('.domain-delete-sync-note');
+      noteEl.textContent = 'This domain will also be removed from GitHub on the next Sync Up.';
+      noteEl.classList.remove('hidden');
+    }
+  }).catch(() => {});
+
+  panel.querySelector('.domain-delete-cancel').addEventListener('click', () => {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+  });
+
+  panel.querySelector('.domain-delete-confirm').addEventListener('click', async () => {
+    const confirmBtn = panel.querySelector('.domain-delete-confirm');
+    const statusEl = panel.querySelector('.domain-delete-status');
+    confirmBtn.disabled = true;
+    showStatus(statusEl, 'loading', 'Deleting…');
+
+    try {
+      const res = await fetch(`/api/domains/${encodeURIComponent(stats.slug)}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      // Fade out the card
+      cardEl.style.transition = 'opacity 0.3s, transform 0.3s';
+      cardEl.style.opacity = '0';
+      cardEl.style.transform = 'translateX(-8px)';
+      setTimeout(() => cardEl.remove(), 300);
+
+      await Promise.all([loadDomains(), loadChatDomains()]);
+    } catch (err) {
+      showStatus(statusEl, 'error', err.message);
+      confirmBtn.disabled = false;
+    }
+  });
+}
+
+function clientGenerateSlug(name) {
+  if (!name) return '';
+  let slug = name
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, '-and-')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  if (slug.length > 32) {
+    slug = slug.slice(0, 32);
+    const lastDash = slug.lastIndexOf('-');
+    if (lastDash > 0) slug = slug.slice(0, lastDash);
+  }
+  return slug;
+}
+
+// ── New Domain Form ───────────────────────────────────────────────────────────
+
+const newDomainBtn   = document.getElementById('new-domain-btn');
+const newDomainForm  = document.getElementById('new-domain-form');
+const ndDisplayName  = document.getElementById('nd-display-name');
+const ndDescription  = document.getElementById('nd-description');
+const ndSlugPreview  = document.querySelector('.nd-slug-preview');
+const ndStatus       = document.getElementById('nd-status');
+const ndCreateBtn    = document.getElementById('nd-create-btn');
+const templateGrid   = document.getElementById('template-grid');
+let selectedTemplate = 'tech';
+
+newDomainBtn.addEventListener('click', () => {
+  showEl(newDomainForm);
+  ndDisplayName.value = '';
+  ndDescription.value = '';
+  ndSlugPreview.textContent = '';
+  hideEl(ndStatus);
+  // Reset template selection
+  templateGrid.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+  templateGrid.querySelector('[data-template="tech"]').classList.add('selected');
+  selectedTemplate = 'tech';
+  ndDisplayName.focus();
+  newDomainForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+document.getElementById('nd-cancel-btn').addEventListener('click', () => {
+  hideEl(newDomainForm);
+});
+
+ndDisplayName.addEventListener('input', () => {
+  const slug = clientGenerateSlug(ndDisplayName.value);
+  ndSlugPreview.textContent = slug ? `Folder: domains/${slug}/` : '';
+});
+
+templateGrid.querySelectorAll('.template-card').forEach(card => {
+  card.addEventListener('click', () => {
+    templateGrid.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    selectedTemplate = card.dataset.template;
+  });
+});
+
+ndCreateBtn.addEventListener('click', async () => {
+  const displayName = ndDisplayName.value.trim();
+  if (!displayName) {
+    ndDisplayName.focus();
+    ndDisplayName.style.borderColor = 'var(--error)';
+    setTimeout(() => ndDisplayName.style.borderColor = '', 1500);
+    return;
+  }
+
+  ndCreateBtn.disabled = true;
+  showStatus(ndStatus, 'loading', 'Creating domain…');
+
+  try {
+    const res = await fetch('/api/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        displayName,
+        description: ndDescription.value.trim(),
+        template: selectedTemplate,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    hideEl(newDomainForm);
+    await Promise.all([loadDomains(), loadChatDomains(), loadDomainList()]);
+    showStatus(ndStatus, 'success', `✓ Domain "${data.displayName}" created at domains/${data.slug}/`);
+    showEl(ndStatus);
+  } catch (err) {
+    showStatus(ndStatus, 'error', err.message);
+  } finally {
+    ndCreateBtn.disabled = false;
+  }
+});

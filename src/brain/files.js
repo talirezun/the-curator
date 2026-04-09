@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir, unlink } from 'fs/promises';
+import { readdir, readFile, writeFile, mkdir, unlink, rm, rename as fsRename } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -121,3 +121,360 @@ export async function deleteConversation(domain, id) {
   const file = path.join(conversationsPath(domain), `${id}.json`);
   if (existsSync(file)) await unlink(file);
 }
+
+// ── Domain Management ─────────────────────────────────────────────────────────
+
+function generateClaudemd(slug, displayName, description, template) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const templateConfig = {
+    tech: {
+      scope: description || 'Artificial intelligence, machine learning, software engineering, developer tools, programming languages, research papers, open-source projects, and the people and companies behind them.',
+      entityTypes: 'person | tool | company | dataset',
+      entitiesDesc: 'One page per notable person, tool, framework, company, or dataset (e.g., `entities/andrej-karpathy.md`, `entities/langchain.md`).',
+      entityKeyField: 'Key Facts',
+      conceptMiddle: `## How It Works
+Explanation with examples.
+
+## Applications
+- Use case 1
+- Use case 2`,
+      ingestEntity: 'Create or update entity pages for every person, tool, company, or dataset mentioned.',
+      ingestConcept: 'Create or update concept pages for every key idea or technique.',
+    },
+    business: {
+      scope: description || 'Startups, venture capital, investing, markets, macroeconomics, business strategy, company analysis, financial instruments, and the people and organizations shaping the business world.',
+      entityTypes: 'person | company | fund | institution',
+      entitiesDesc: 'One page per notable person, company, fund, or institution (e.g., `entities/sam-altman.md`, `entities/sequoia.md`).',
+      entityKeyField: 'Key Facts',
+      conceptMiddle: `## Why It Matters
+Business significance and applications.
+
+## Examples
+- Example 1
+- Example 2`,
+      ingestEntity: 'Create or update entity pages for every person, company, fund, or institution mentioned.',
+      ingestConcept: 'Create or update concept pages for every key business idea or financial concept.',
+    },
+    personal: {
+      scope: description || 'Self-improvement, mental models, habits, learning techniques, decision-making, books, psychology, philosophy, productivity systems, and the thinkers behind them.',
+      entityTypes: 'person | book | framework',
+      entitiesDesc: 'One page per notable person, book, or framework (e.g., `entities/james-clear.md`, `entities/atomic-habits.md`).',
+      entityKeyField: 'Key Ideas',
+      conceptMiddle: `## Why It Matters
+How this applies to personal growth.
+
+## How to Apply It
+Practical steps or examples.`,
+      ingestEntity: 'Create or update entity pages for every person, book, or notable framework mentioned.',
+      ingestConcept: 'Create or update concept pages for every key idea, mental model, or principle.',
+    },
+    generic: {
+      scope: description || 'A focused knowledge domain for collecting, connecting, and querying information on this topic.',
+      entityTypes: 'person | item | organization',
+      entitiesDesc: 'One page per notable person, item, tool, or organization related to this domain.',
+      entityKeyField: 'Key Points',
+      conceptMiddle: `## Overview
+Detailed explanation with context.
+
+## Examples
+- Example 1
+- Example 2`,
+      ingestEntity: 'Create or update entity pages for every person, item, or organization mentioned.',
+      ingestConcept: 'Create or update concept pages for every key idea, framework, or technique.',
+    },
+  };
+
+  const cfg = templateConfig[template] || templateConfig.generic;
+
+  return `# Domain: ${displayName}
+
+This is a dedicated second brain for ${displayName.toLowerCase()} topics.
+
+## Scope
+${cfg.scope}
+
+## Wiki Conventions
+
+### Page Types
+- **entities/** — ${cfg.entitiesDesc}
+- **concepts/** — One page per idea, technique, or framework concept.
+- **summaries/** — One page per ingested source (e.g., \`summaries/article-title.md\`).
+
+### Page Format
+
+**Entity page:**
+\`\`\`
+# [Entity Name]
+Type: ${cfg.entityTypes}
+Tags: [comma-separated]
+
+## Summary
+One-paragraph description.
+
+## ${cfg.entityKeyField}
+- Bullet facts
+
+## Related
+- [[concept-name]] — why related
+- [[other-entity]] — why related
+\`\`\`
+
+**Concept page:**
+\`\`\`
+# [Concept Name]
+Tags: [comma-separated]
+
+## Definition
+Clear, concise definition.
+
+${cfg.conceptMiddle}
+
+## Related
+- [[entity-or-concept]] — why related
+\`\`\`
+
+**Summary page:**
+\`\`\`
+# [Source Title]
+Source: [filename or description]
+Date Ingested: [YYYY-MM-DD]
+Tags: [comma-separated]
+
+## Key Takeaways
+- Bullet list of main points
+
+## Concepts Introduced or Referenced
+- [[concept-name]]
+
+## Entities Mentioned
+- [[entity-name]]
+
+## Notes
+Any additional commentary.
+\`\`\`
+
+## Cross-Referencing Rules
+- Always use \`[[page-name]]\` syntax for internal links (without the folder prefix).
+- When you create or update a summary, update the corresponding entity and concept pages to reference it.
+- Every entity or concept mentioned in a source gets either a new page or an update to an existing page.
+
+## index.md Format
+\`\`\`
+# Wiki Index — ${displayName}
+Last updated: [YYYY-MM-DD]
+
+| Page | Type | Summary |
+|------|------|---------|
+| [[page-name]] | concept/entity/summary | One-line description |
+\`\`\`
+
+## log.md Format
+Append one entry per ingest:
+\`\`\`
+## [YYYY-MM-DD] ingest | [Source Title]
+Pages created or updated: list them
+\`\`\`
+
+## Instructions for the AI
+When ingesting a source:
+1. Write a summary page under \`summaries/\`.
+2. ${cfg.ingestEntity}
+3. ${cfg.ingestConcept}
+4. Add cross-references between all related pages.
+5. Return the full list of pages to create/update as JSON.
+
+When answering a query:
+- Cite specific pages using \`[source: path/to/page.md]\`.
+- Synthesize across multiple pages rather than quoting verbatim.
+`;
+}
+
+async function generateUniqueSlug(displayName, excludeSlug = null) {
+  let base = displayName
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/&/g, '-and-')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  // Truncate at 32 chars on a word boundary
+  if (base.length > 32) {
+    base = base.slice(0, 32).replace(/-[^-]*$/, '') || base.slice(0, 32).replace(/[^a-z0-9]/g, '');
+  }
+
+  if (!base) throw new Error('Could not generate a valid folder name from that display name');
+
+  // Collision detection
+  const candidate = async (slug) => {
+    if (slug === excludeSlug) return slug; // renaming to same — caller handles this
+    if (!existsSync(domainPath(slug))) return slug;
+    return null;
+  };
+
+  const first = await candidate(base);
+  if (first !== null) return first;
+
+  for (let i = 2; i <= 9; i++) {
+    const s = `${base.slice(0, 30)}-${i}`;
+    const r = await candidate(s);
+    if (r !== null) return r;
+  }
+
+  throw new Error('A domain with a very similar name already exists. Choose a more distinct name.');
+}
+
+export async function createDomain(slug, displayName, description, template) {
+  // Security guard
+  if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\\') || slug.startsWith('.')) {
+    throw new Error('Invalid domain name');
+  }
+
+  if (existsSync(domainPath(slug))) {
+    throw new Error('Domain already exists');
+  }
+
+  const base = domainPath(slug);
+  try {
+    await mkdir(path.join(base, 'raw'), { recursive: true });
+    await mkdir(path.join(base, 'wiki', 'entities'), { recursive: true });
+    await mkdir(path.join(base, 'wiki', 'concepts'), { recursive: true });
+    await mkdir(path.join(base, 'wiki', 'summaries'), { recursive: true });
+    await mkdir(path.join(base, 'conversations'), { recursive: true });
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    await writeFile(
+      path.join(base, 'wiki', 'index.md'),
+      `# Wiki Index — ${displayName}\nLast updated: ${today}\n\n| Page | Type | Summary |\n|------|------|---------|`,
+      'utf8'
+    );
+    await writeFile(
+      path.join(base, 'wiki', 'log.md'),
+      `# Ingest Log — ${displayName}\n`,
+      'utf8'
+    );
+    await writeFile(
+      path.join(base, 'CLAUDE.md'),
+      generateClaudemd(slug, displayName, description, template),
+      'utf8'
+    );
+  } catch (err) {
+    // Clean up partial directory
+    try { await rm(base, { recursive: true, force: true }); } catch {}
+    throw err;
+  }
+}
+
+export async function deleteDomain(slug) {
+  if (!slug || slug.includes('..') || slug.includes('/') || slug.includes('\\') || slug.startsWith('.')) {
+    throw new Error('Invalid domain name');
+  }
+  if (!existsSync(domainPath(slug))) {
+    throw new Error('Domain not found');
+  }
+  await rm(domainPath(slug), { recursive: true, force: true });
+}
+
+export async function renameDomain(oldSlug, newSlug, newDisplayName) {
+  for (const s of [oldSlug, newSlug]) {
+    if (!s || s.includes('..') || s.includes('/') || s.includes('\\') || s.startsWith('.')) {
+      throw new Error('Invalid domain name');
+    }
+  }
+  if (!existsSync(domainPath(oldSlug))) throw new Error('Domain not found');
+  if (oldSlug !== newSlug && existsSync(domainPath(newSlug))) throw new Error('A domain with that name already exists');
+
+  if (oldSlug !== newSlug) {
+    await fsRename(domainPath(oldSlug), domainPath(newSlug));
+  }
+
+  // Update conversation domain fields
+  const convDir = path.join(domainPath(newSlug), 'conversations');
+  try {
+    const files = await readdir(convDir);
+    await Promise.all(
+      files.filter(f => f.endsWith('.json')).map(async f => {
+        const fullPath = path.join(convDir, f);
+        try {
+          const conv = JSON.parse(await readFile(fullPath, 'utf8'));
+          conv.domain = newSlug;
+          await writeFile(fullPath, JSON.stringify(conv, null, 2), 'utf8');
+        } catch {}
+      })
+    );
+  } catch {}
+
+  // Update display name in CLAUDE.md
+  const claudePath = path.join(domainPath(newSlug), 'CLAUDE.md');
+  try {
+    const content = await readFile(claudePath, 'utf8');
+    const updated = content.replace(/^# Domain: .+$/m, `# Domain: ${newDisplayName}`);
+    await writeFile(claudePath, updated, 'utf8');
+  } catch {}
+
+  // Update wiki/index.md header
+  const indexPath = path.join(domainPath(newSlug), 'wiki', 'index.md');
+  try {
+    const content = await readFile(indexPath, 'utf8');
+    const updated = content.replace(/^# Wiki Index — .+$/m, `# Wiki Index — ${newDisplayName}`);
+    await writeFile(indexPath, updated, 'utf8');
+  } catch {}
+
+  // Update wiki/log.md header
+  const logPath = path.join(domainPath(newSlug), 'wiki', 'log.md');
+  try {
+    const content = await readFile(logPath, 'utf8');
+    const updated = content.replace(/^# Ingest Log — .+$/m, `# Ingest Log — ${newDisplayName}`);
+    await writeFile(logPath, updated, 'utf8');
+  } catch {}
+}
+
+export async function getDomainStats(slug) {
+  const base = domainPath(slug);
+
+  const [displayName, pageCount, conversationCount, lastIngestDate] = await Promise.all([
+    // Display name from CLAUDE.md first line
+    readFile(path.join(base, 'CLAUDE.md'), 'utf8')
+      .then(content => {
+        const firstLine = content.split('\n')[0];
+        return firstLine.replace(/^# Domain:\s*/, '').trim() || slug;
+      })
+      .catch(() => slug),
+
+    // Page count: recursive .md files in wiki/ excluding index.md and log.md
+    (async () => {
+      let count = 0;
+      async function countMd(dir) {
+        try {
+          const entries = await readdir(dir, { withFileTypes: true });
+          for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) await countMd(full);
+            else if (e.name.endsWith('.md') && e.name !== 'index.md' && e.name !== 'log.md') count++;
+          }
+        } catch {}
+      }
+      await countMd(path.join(base, 'wiki'));
+      return count;
+    })(),
+
+    // Conversation count
+    readdir(path.join(base, 'conversations'))
+      .then(files => files.filter(f => f.endsWith('.json')).length)
+      .catch(() => 0),
+
+    // Last ingest date from log.md
+    readFile(path.join(base, 'wiki', 'log.md'), 'utf8')
+      .then(content => {
+        const match = content.match(/^## \[(\d{4}-\d{2}-\d{2})\]/m);
+        return match ? match[1] : null;
+      })
+      .catch(() => null),
+  ]);
+
+  return { slug, displayName, pageCount, conversationCount, lastIngestDate };
+}
+
+export { generateUniqueSlug };

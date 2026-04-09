@@ -825,4 +825,303 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 #wiki-content table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px; }
 #wiki-content th, #wiki-content td { border: 1px solid var(--border-subtle); padding: 7px 12px; text-align: left; }
 #wiki-content th { background: var(--accent-dim); font-weight: 600; color: var(--text-2); }
+
+/* ── Domains Tab ── */
+.domains-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.domains-vault-hint {
+  margin-bottom: 28px;
+}
+
+.domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.domain-loading,
+.domain-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.domain-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.domain-card:hover {
+  border-color: var(--border);
+  box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+}
+
+.domain-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent-glow);
+  color: var(--accent-2);
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.domain-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.domain-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  margin-bottom: 2px;
+}
+
+.domain-card-slug {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.domain-card-stats {
+  font-size: 12px;
+  color: var(--text-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.domain-stat-dot {
+  color: var(--text-faint);
+}
+
+.domain-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.domain-rename-btn,
+.domain-delete-btn {
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.domain-delete-btn {
+  color: var(--error);
+  border-color: rgba(243,139,168,0.2);
+}
+.domain-delete-btn:hover {
+  background: var(--error-dim);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.domain-card-panel {
+  width: 100%;
+}
+
+/* Inline forms (rename + delete panels) */
+.domain-inline-form {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.domain-inline-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  display: block;
+  margin-bottom: 0;
+}
+
+.domain-rename-input {
+  width: 100%;
+}
+
+.domain-slug-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  margin-top: -4px;
+}
+
+.domain-inline-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Delete warning panel */
+.domain-delete-warning {
+  background: var(--error-dim);
+  border: 1px solid rgba(243,139,168,0.25);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+
+.domain-delete-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.domain-delete-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.domain-delete-title {
+  font-size: 14px;
+  color: var(--error);
+  display: block;
+}
+
+.domain-delete-counts {
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.domain-delete-sync-note {
+  font-size: 12px;
+  color: var(--warning);
+  line-height: 1.5;
+}
+
+.domain-delete-confirm {
+  color: var(--error);
+  border-color: rgba(243,139,168,0.35);
+  display: flex;
+  align-items: center;
+}
+.domain-delete-confirm:hover {
+  background: var(--error-dim);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* Create domain form panel */
+.domain-form-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px 28px;
+  margin-bottom: 28px;
+}
+
+.domain-form-panel h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  letter-spacing: -0.2px;
+}
+
+.domain-form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.nd-slug-preview {
+  display: block;
+  margin-top: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  min-height: 16px;
+}
+
+.form-optional {
+  font-weight: 400;
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+/* Template grid */
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 680px) {
+  .template-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.template-card {
+  background: var(--bg-alt);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 12px;
+  cursor: pointer;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  font-family: var(--font);
+}
+
+.template-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.template-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.template-icon { font-size: 22px; line-height: 1; }
+.template-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.template-desc { font-size: 10px; color: var(--text-muted); line-height: 1.4; }
 #wiki-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 16px 0; }
