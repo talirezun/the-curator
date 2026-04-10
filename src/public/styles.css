@@ -362,6 +362,56 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   font-family: var(--mono);
 }
 
+/* ── Ingest progress bar ── */
+.ingest-progress {
+  margin: 14px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.progress-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.progress-pct {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent-2);
+  margin-left: 10px;
+  flex-shrink: 0;
+}
+.progress-track {
+  height: 3px;
+  background: var(--bg-alt);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 99px;
+  transition: width 0.35s ease;
+}
+/* Subtle pulse when waiting on the AI (added via JS class) */
+.progress-fill.waiting {
+  animation: progress-pulse 1.4s ease-in-out infinite;
+}
+@keyframes progress-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* ── Buttons ── */
 .btn {
   background: var(--surface);

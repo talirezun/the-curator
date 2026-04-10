@@ -23,43 +23,59 @@ const upload = multer({
 });
 
 router.post('/', upload.single('file'), async (req, res) => {
+  const { domain, overwrite } = req.body;
+
+  // ── Validation (plain JSON responses before switching to SSE) ──────────────
+  if (!domain) return res.status(400).json({ error: 'domain is required' });
+
+  const domains = await listDomains();
+  if (!domains.includes(domain)) {
+    return res.status(400).json({ error: `Unknown domain: ${domain}` });
+  }
+
+  if (!req.file) return res.status(400).json({ error: 'file is required' });
+
+  // ── Duplicate check ────────────────────────────────────────────────────────
+  const existingPath = path.join(rawPath(domain), req.file.originalname);
+  if (existsSync(existingPath) && overwrite !== 'true') {
+    return res.status(409).json({
+      duplicate: true,
+      filename: req.file.originalname,
+      message: `"${req.file.originalname}" has already been ingested into this domain.`,
+    });
+  }
+
+  // ── Switch to Server-Sent Events streaming ─────────────────────────────────
+  // All validation passed — from here on we stream progress events to the client.
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders(); // Send headers immediately so the client opens the stream
+
+  const emit = (data) => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   try {
-    const { domain, overwrite } = req.body;
-    if (!domain) return res.status(400).json({ error: 'domain is required' });
-
-    const domains = await listDomains();
-    if (!domains.includes(domain)) {
-      return res.status(400).json({ error: `Unknown domain: ${domain}` });
-    }
-
-    if (!req.file) return res.status(400).json({ error: 'file is required' });
-
-    // ── Duplicate check ───────────────────────────────────────────────────
-    const existingPath = path.join(rawPath(domain), req.file.originalname);
-    if (existsSync(existingPath) && overwrite !== 'true') {
-      return res.status(409).json({
-        duplicate: true,
-        filename: req.file.originalname,
-        message: `"${req.file.originalname}" has already been ingested into this domain.`,
-      });
-    }
-
     const result = await ingestFile(
       domain,
       req.file.path,
       req.file.originalname,
-      overwrite === 'true'
+      overwrite === 'true',
+      emit  // onProgress callback → emits {type, pct, message} events
     );
 
-    res.json({
-      success: true,
+    emit({
+      type: 'done',
       title: result.title,
       pagesWritten: result.pagesWritten,
       wasOverwrite: overwrite === 'true',
     });
   } catch (err) {
     console.error('Ingest error:', err);
-    res.status(500).json({ error: err.message });
+    emit({ type: 'error', message: err.message });
+  } finally {
+    res.end();
   }
 });
 

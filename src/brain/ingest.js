@@ -87,6 +87,18 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 }`;
 }
 
+// ── Progress helper ───────────────────────────────────────────────────────────
+
+/**
+ * Wraps a raw progress emitter into a typed progress call.
+ * onProgress signature: ({ type, pct, message }) => void
+ */
+function makeProgress(onProgress) {
+  return (pct, message, type = 'progress') => {
+    onProgress?.({ type, pct, message });
+  };
+}
+
 // ── Phase 2: page content (batched) ──────────────────────────────────────────
 
 function buildBatchPrompt(today, originalName, text, pageBatch) {
@@ -206,34 +218,39 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 
 const BATCH_SIZE = 10;
 
-async function ingestMultiPhase(schema, today, index, originalName, text, isOverwrite) {
+async function ingestMultiPhase(schema, today, index, originalName, text, isOverwrite, progress) {
   // Phase 1: outline
   console.log('[ingest] Large document — using multi-phase ingest. Phase 1: outline...');
+  progress(12, 'Phase 1: planning wiki structure…');
   const outlineRaw = (await generateText(
     schema,
     buildOutlinePrompt(today, index, originalName, text, isOverwrite),
-    16384,   // increased from 4096 — large docs can have 30+ pages in the outline
-    'json'
+    16384,
+    'json',
+    (msg) => progress(12, msg, 'wait')
   )).trim();
 
   const outline = parseJSON(outlineRaw);
   const allPages = outline.pages; // [{path, summary}]
+  const totalBatches = Math.ceil(allPages.length / BATCH_SIZE);
   console.log(`[ingest] Phase 1 complete — ${allPages.length} pages planned.`);
 
-  // Phase 2: batched content
+  // Phase 2: batched content  (20% → 78%)
   const writtenPages = []; // [{path, content}]
 
   for (let i = 0; i < allPages.length; i += BATCH_SIZE) {
     const batch = allPages.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(allPages.length / BATCH_SIZE);
+    const batchPct = Math.round(20 + (batchNum / totalBatches) * 58);
     console.log(`[ingest] Phase 2 — batch ${batchNum}/${totalBatches} (${batch.length} pages)...`);
+    progress(batchPct, `Phase 2: writing content, batch ${batchNum} of ${totalBatches}…`);
 
     const batchRaw = (await generateText(
       schema,
       buildBatchPrompt(today, originalName, text, batch),
-      32768,   // increased from 16384 — each batch can contain rich content
-      'json'
+      32768,
+      'json',
+      (msg) => progress(batchPct, msg, 'wait')
     )).trim();
 
     const batchResult = parseJSON(batchRaw);
@@ -242,11 +259,13 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
 
   // Phase 3: index
   console.log('[ingest] Phase 3: updating index...');
+  progress(82, 'Phase 3: updating wiki index…');
   const newIndex = (await generateText(
     schema,
     buildIndexPrompt(index, allPages),
     4096,
-    'text'
+    'text',
+    (msg) => progress(82, msg, 'wait')
   )).trim();
 
   return {
@@ -268,8 +287,11 @@ const SINGLE_PASS_CHAR_LIMIT = 200_000;
 // fallback triggers. Going straight to multi-phase is faster and more reliable.
 const MULTI_PHASE_INPUT_THRESHOLD = 40_000;
 
-export async function ingestFile(domain, filePath, originalName, isOverwrite = false) {
+export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null) {
+  const progress = makeProgress(onProgress);
+
   // Save to raw/
+  progress(4, 'Saving source file…');
   const rawDir = rawPath(domain);
   await mkdir(rawDir, { recursive: true });
   const destPath = path.join(rawDir, originalName);
@@ -277,6 +299,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   await writeFile(destPath, buffer);
 
   // Extract text — cap at 80 000 chars to stay within input limits
+  progress(8, 'Extracting text from document…');
   const fullText = await extractText(destPath);
   const text = fullText.slice(0, 80000);
 
@@ -299,11 +322,13 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   }
 
   if (!singlePassFailed) try {
+    progress(15, 'AI is analyzing the document…');
     const raw = (await generateText(
       schema,
       buildPrompt(today, index, originalName, text, false, isOverwrite),
       65536,
-      'json'
+      'json',
+      (msg) => progress(15, msg, 'wait')
     )).trim();
 
     if (raw.length > SINGLE_PASS_CHAR_LIMIT) {
@@ -318,12 +343,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       } catch (firstErr) {
         // Retry with stricter brevity
         console.warn(`[ingest] First parse failed (${firstErr.message.slice(0, 120)}). Retrying with strict brevity...`);
+        progress(15, 'Retrying with brevity constraints…');
 
         const raw2 = (await generateText(
           schema,
           buildPrompt(today, index, originalName, text, true, isOverwrite),
           65536,
-          'json'
+          'json',
+          (msg) => progress(15, msg, 'wait')
         )).trim();
 
         if (raw2.length > SINGLE_PASS_CHAR_LIMIT) {
@@ -347,15 +374,20 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // ── Multi-phase fallback ───────────────────────────────────────────────────
   if (singlePassFailed) {
     usedMultiPhase = true;
-    result = await ingestMultiPhase(schema, today, index, originalName, text, isOverwrite);
+    if (!result) {
+      progress(10, 'Large document — switching to multi-phase ingest…');
+    }
+    result = await ingestMultiPhase(schema, today, index, originalName, text, isOverwrite, progress);
   }
 
   // Write all wiki pages
+  progress(90, `Writing ${result.pages.length} wiki pages to disk…`);
   for (const page of result.pages) {
     await writePage(domain, page.path, page.content);
   }
 
   // Write updated index
+  progress(96, 'Updating index…');
   await writePage(domain, 'index.md', result.index);
 
   // Append to log
@@ -363,6 +395,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const logEntry = `## [${today}] ingest | ${result.title}\nPages created or updated:\n${pageList}\n`;
   await appendLog(domain, logEntry);
 
+  progress(100, 'Done!');
   return {
     title: result.title,
     pagesWritten: result.pages.map(p => p.path),

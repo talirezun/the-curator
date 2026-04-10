@@ -104,14 +104,35 @@ fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
 
 ingestBtn.addEventListener('click', () => submitIngest(false));
 
+// ── Progress bar helpers ───────────────────────────────────────────────────
+const ingestProgress = document.getElementById('ingest-progress');
+const progressFill   = document.getElementById('progress-fill');
+const progressLabel  = document.getElementById('progress-label');
+const progressPct    = document.getElementById('progress-pct');
+
+function showProgress(pct, label, waiting = false) {
+  ingestProgress.classList.remove('hidden');
+  progressFill.style.width = pct + '%';
+  progressFill.classList.toggle('waiting', waiting);
+  progressLabel.textContent = label;
+  progressPct.textContent = pct + '%';
+}
+
+function hideProgress() {
+  ingestProgress.classList.add('hidden');
+  progressFill.style.width = '0%';
+  progressFill.classList.remove('waiting');
+}
+
 async function submitIngest(overwrite) {
   if (!selectedFile) return;
 
   const domain = document.getElementById('ingest-domain').value;
   ingestBtn.disabled = true;
   hideEl(ingestResult);
+  hideEl(ingestStatus);
   hideDuplicateBanner();
-  showStatus(ingestStatus, 'loading', 'Ingesting — Second Brain is reading your source and updating the wiki...');
+  showProgress(2, 'Starting…');
 
   const formData = new FormData();
   formData.append('domain', domain);
@@ -120,27 +141,69 @@ async function submitIngest(overwrite) {
 
   try {
     const res = await fetch('/api/ingest', { method: 'POST', body: formData });
-    const data = await res.json();
 
-    // ── Duplicate detected ──────────────────────────────────────────────────
-    if (res.status === 409 && data.duplicate) {
-      hideEl(ingestStatus);
-      showDuplicateBanner(data.filename, domain);
-      ingestBtn.disabled = false;
-      return;
+    // ── Non-streaming responses (validation errors, duplicate) ──────────────
+    if (!res.headers.get('content-type')?.includes('text/event-stream')) {
+      const data = await res.json();
+      if (res.status === 409 && data.duplicate) {
+        hideProgress();
+        showDuplicateBanner(data.filename, domain);
+        ingestBtn.disabled = false;
+        return;
+      }
+      throw new Error(data.error || 'Ingest failed');
     }
 
-    if (!res.ok) throw new Error(data.error || 'Ingest failed');
+    // ── Stream SSE progress events ──────────────────────────────────────────
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let finalData = null;
 
-    hideEl(ingestStatus);
-    showIngestResult(data);
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
 
-    // Reset
+      // SSE lines are separated by '\n'; events are terminated by '\n\n'
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep the incomplete trailing line
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+
+        if (ev.type === 'progress') {
+          showProgress(ev.pct, ev.message, false);
+        } else if (ev.type === 'wait') {
+          // AI is retrying — pulse the bar and show the wait message
+          showProgress(ev.pct, ev.message, true);
+        } else if (ev.type === 'done') {
+          finalData = ev;
+          break outer;
+        } else if (ev.type === 'error') {
+          throw new Error(ev.message);
+        }
+      }
+    }
+
+    if (!finalData) throw new Error('Ingest did not complete successfully');
+
+    // Brief "100%" flash before showing results
+    showProgress(100, 'Done!');
+    await new Promise(r => setTimeout(r, 500));
+    hideProgress();
+    showIngestResult(finalData);
+
+    // Reset file selection
     selectedFile = null;
     fileNameEl.textContent = '';
     fileInput.value = '';
     ingestBtn.disabled = true;
+
   } catch (err) {
+    hideProgress();
     showStatus(ingestStatus, 'error', err.message);
     ingestBtn.disabled = false;
   }

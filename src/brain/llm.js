@@ -60,49 +60,65 @@ function is429(err) {
   return msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('RESOURCE_EXHAUSTED');
 }
 
+function is503(err) {
+  const msg = err?.message ?? '';
+  return msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('high demand') || msg.includes('overloaded');
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
  * Call the active LLM with a system prompt and user message.
- * Automatically retries on 429 rate-limit errors using the delay
- * specified by the API in the error response.
+ * Automatically retries on:
+ *   - 429 rate-limit errors (respects the Retry-After delay from the API)
+ *   - 503 service unavailable (exponential backoff: 3 s → 9 s → 27 s)
  *
  * @param {string} systemPrompt
  * @param {string} userPrompt
  * @param {number} maxTokens
- * @param {'text'|'json'} responseFormat - 'json' enables native JSON mode (Gemini only)
+ * @param {'text'|'json'} responseFormat  - 'json' enables native JSON mode (Gemini only)
+ * @param {function|null} onWait          - optional callback(message) called before each retry wait
  * @returns {Promise<string>}
  */
-export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text') {
-  const MAX_RETRIES = 3;
+export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null) {
+  const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat);
     } catch (err) {
-      if (is429(err) && attempt < MAX_RETRIES) {
-        const delayMs = parseRetryDelay(err);
-        const delaySec = Math.ceil(delayMs / 1000);
-        console.warn(
-          `[llm] Rate limit hit (attempt ${attempt}/${MAX_RETRIES}). ` +
-          `Waiting ${delaySec}s before retrying...`
-        );
-        await sleep(delayMs);
-        continue;
+      const retryable = is429(err) || is503(err);
+      if (!retryable || attempt === MAX_RETRIES) {
+        // Out of retries or non-retryable error — surface a clean message
+        if (is429(err)) {
+          const delaySec = Math.ceil(parseRetryDelay(err) / 1000);
+          throw new Error(
+            `Rate limit reached: the Gemini free tier allows 20 requests per day. ` +
+            `Please wait ${delaySec} seconds and try again, or upgrade your Gemini API plan at https://ai.dev/rate-limit`
+          );
+        }
+        if (is503(err)) {
+          throw new Error(
+            `The AI service is temporarily overloaded. Please wait a moment and try again.`
+          );
+        }
+        throw err;
       }
 
-      // Not a 429, or out of retries — throw a clean error
-      if (is429(err)) {
-        const delaySec = Math.ceil(parseRetryDelay(err) / 1000);
-        throw new Error(
-          `Rate limit reached: the Gemini free tier allows 20 requests per day. ` +
-          `Please wait ${delaySec} seconds and try again, or upgrade your Gemini API plan at https://ai.dev/rate-limit`
-        );
-      }
+      // Calculate delay: 429 respects API hint; 503 uses exponential backoff (3s, 9s, 27s)
+      const delayMs = is429(err)
+        ? parseRetryDelay(err)
+        : Math.min(3000 * Math.pow(3, attempt - 1), 60_000);
 
-      throw err;
+      const delaySec = Math.ceil(delayMs / 1000);
+      const reason = is429(err) ? 'Rate limit' : 'Service busy';
+      console.warn(
+        `[llm] ${reason} (attempt ${attempt}/${MAX_RETRIES}). Waiting ${delaySec}s...`
+      );
+      onWait?.(`${reason} — retrying in ${delaySec}s… (attempt ${attempt}/${MAX_RETRIES - 1})`);
+      await sleep(delayMs);
     }
   }
 }

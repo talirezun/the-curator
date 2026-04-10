@@ -67,6 +67,15 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-1px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Ingest
       </button>
+      <div id="ingest-progress" class="ingest-progress hidden">
+        <div class="progress-header">
+          <span id="progress-label" class="progress-label">Preparing…</span>
+          <span id="progress-pct" class="progress-pct">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+      </div>
       <div id="ingest-status" class="status hidden"></div>
       <div id="ingest-result" class="result hidden"></div>
     </section>
