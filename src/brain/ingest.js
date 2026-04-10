@@ -50,6 +50,7 @@ function parseJSON(raw) {
   try {
     return JSON.parse(jsonrepair(candidate));
   } catch (repairErr) {
+    console.error('[ingest] jsonrepair also failed:', repairErr.message.slice(0, 200));
     throw new Error(
       `Could not parse JSON response. Response length: ${raw.length} chars. ` +
       `Last 200 chars: ${raw.slice(-200)}`
@@ -119,11 +120,9 @@ ${pageList}
 
 Guidelines:
 - Each page: 3–8 concise bullet points or sentences. No long prose.
-- YAML frontmatter: start every page with a --- block containing type, tags (array), and created (today's date).
-  - entities/ pages:  type: entity,  tags must include type/entity
-  - concepts/ pages:  type: concept, tags must include type/concept
-  - summaries/ pages: type: summary, tags must include type/summary, also add source and date fields
-- Do NOT use inline "Type:" or "Tags:" fields in the body — put them in the YAML only.
+- Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
+- Entity pages: include a line "Type: <type>" and a line "Tags: tag1, tag2" in the body.
+- Concept and summary pages: include a line "Tags: tag1, tag2" in the body.
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
@@ -185,22 +184,12 @@ Your task:
 
 ${conciseness}
 
-YAML frontmatter rules (apply to every entity, concept, and summary page):
-- Start every page with a --- block. Example for a concept:
-  ---
-  type: concept
-  tags: [machine-learning, nlp, type/concept]
-  created: ${today}
-  ---
-- entities/ → type: entity,  tags include type/entity
-- concepts/ → type: concept, tags include type/concept
-- summaries/ → type: summary, tags include type/summary; also add source and date fields
-- Do NOT use inline "Type:" or "Tags:" lines in the body — YAML only.
-- index.md has NO frontmatter.
-
-Link rules:
-- Always write [[page-name]] — NEVER use folder prefix (write [[rag]] not [[concepts/rag]]).
-- In index.md table, use [[page-name]] (no folder prefix, no duplicates).
+Page body rules:
+- Do NOT include YAML frontmatter (--- blocks) — it is added automatically after generation.
+- Entity pages: include a "Type: <entity-type>" line and a "Tags: tag1, tag2" line in the body.
+- Concept and summary pages: include a "Tags: tag1, tag2" line in the body.
+- Links: always write [[page-name]] — NEVER use folder prefix (write [[rag]] not [[concepts/rag]]).
+- In the index.md table, use [[page-name]] (no folder prefix, no duplicates).
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {

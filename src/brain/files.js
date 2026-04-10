@@ -52,9 +52,15 @@ async function collectMarkdown(baseDir, dir, pages) {
 }
 
 /**
- * Ensure every wiki page in entities/, concepts/, summaries/ has YAML frontmatter.
- * Called as a post-processing step in writePage() — if the LLM already included
- * frontmatter this is a no-op; if it forgot, we inject it from the path + inline tags.
+ * Inject YAML frontmatter into every wiki page before writing.
+ *
+ * Strategy:
+ *   - LLM is instructed NOT to produce YAML (--- blocks) — it stays inside
+ *     safe markdown territory so nothing can break the JSON response.
+ *   - This function extracts any inline Tags:/Type:/Source: fields the LLM
+ *     did write, builds a clean YAML block, prepends it, and removes the
+ *     now-redundant inline fields from the body.
+ *   - If the LLM somehow included a --- block anyway, we leave it as-is.
  */
 function injectFrontmatter(content, relativePath, today) {
   const type = relativePath.startsWith('summaries/') ? 'summary'
@@ -65,25 +71,38 @@ function injectFrontmatter(content, relativePath, today) {
   if (!type) return content;                                   // index.md, log.md — skip
   if (content.trimStart().startsWith('---')) return content;  // YAML already present — skip
 
-  // Pull existing inline Tags: field and convert to an array
+  // Extract inline Tags: field → YAML tags array
   const tagsMatch = content.match(/^Tags:\s*(.+)$/m);
   const existing = tagsMatch
     ? tagsMatch[1].split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
     : [];
 
-  // Pull source/date for summary pages
+  // Extract inline Source: and Date Ingested: for summary pages
   const sourceMatch = content.match(/^Source:\s*(.+)$/m);
   const dateMatch   = content.match(/^Date Ingested:\s*(.+)$/m);
 
-  // Merge existing tags with type tag, deduplicate
+  // Merge extracted tags with the mandatory type tag, deduplicate
   const tags = [...new Set([...existing, `type/${type}`])];
 
+  // Build YAML block
   const yamlLines = ['---', `type: ${type}`];
-  if (type === 'summary' && sourceMatch) yamlLines.push(`source: "${sourceMatch[1].trim()}"`);
-  if (type === 'summary' && dateMatch)   yamlLines.push(`date: ${dateMatch[1].trim()}`);
+  if (type === 'summary' && sourceMatch) {
+    // Sanitise value: strip surrounding quotes the LLM may have added
+    const src = sourceMatch[1].trim().replace(/^["']|["']$/g, '');
+    yamlLines.push(`source: ${src}`);
+  }
+  if (type === 'summary' && dateMatch) yamlLines.push(`date: ${dateMatch[1].trim()}`);
   yamlLines.push(`tags: [${tags.join(', ')}]`, `created: ${today}`, '---', '');
 
-  return yamlLines.join('\n') + content;
+  // Strip the now-redundant inline fields from the body
+  let body = content
+    .replace(/^Tags:\s*.+\n?/m, '')
+    .replace(/^Type:\s*.+\n?/m, '')
+    .replace(/^Source:\s*.+\n?/m, '')
+    .replace(/^Date Ingested:\s*.+\n?/m, '')
+    .trimStart();                        // remove any leading blank lines left behind
+
+  return yamlLines.join('\n') + body;
 }
 
 export async function writePage(domain, relativePath, content) {
