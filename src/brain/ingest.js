@@ -207,7 +207,9 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 
 // ── Multi-phase ingest (large documents) ─────────────────────────────────────
 
-const BATCH_SIZE = 10;
+// Smaller batches produce shorter JSON responses, dramatically reducing parse
+// failures from accumulated unescaped quotes in dense documents.
+const BATCH_SIZE = 4;
 
 async function ingestMultiPhase(schema, today, index, originalName, text, isOverwrite, progress) {
   // Phase 1: outline
@@ -239,12 +241,42 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
     const batchRaw = (await generateText(
       schema,
       buildBatchPrompt(today, originalName, text, batch),
-      32768,
+      16384,
       'json',
       (msg) => progress(batchPct, msg, 'wait')
     )).trim();
 
-    const batchResult = parseJSON(batchRaw);
+    let batchResult;
+    try {
+      batchResult = parseJSON(batchRaw);
+    } catch (batchErr) {
+      // Batch parse failed — fall back to writing one page at a time.
+      // A 1-page response is only ~300–800 chars: essentially impossible to fail.
+      console.warn(`[ingest] Batch ${batchNum} parse failed (${batchRaw.length} chars) — retrying page-by-page...`);
+      batchResult = { pages: [] };
+      for (const singlePage of batch) {
+        try {
+          const singleRaw = (await generateText(
+            schema,
+            buildBatchPrompt(today, originalName, text, [singlePage]),
+            4096,
+            'json',
+            (msg) => progress(batchPct, msg, 'wait')
+          )).trim();
+          const singleResult = parseJSON(singleRaw);
+          batchResult.pages.push(...singleResult.pages);
+          console.log(`[ingest]   ✓ ${singlePage.path}`);
+        } catch (singleErr) {
+          // Absolute last resort — create a stub page so the ingest completes.
+          console.warn(`[ingest]   ✗ ${singlePage.path} — stub created.`);
+          batchResult.pages.push({
+            path: singlePage.path,
+            content: `# ${singlePage.path.replace(/^.*\//, '').replace('.md', '')}\n\n${singlePage.summary}\n`,
+          });
+        }
+      }
+    }
+
     writtenPages.push(...batchResult.pages);
   }
 
