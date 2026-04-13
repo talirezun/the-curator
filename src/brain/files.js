@@ -4,7 +4,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DOMAINS_DIR = path.resolve(__dirname, '../../domains');
+// DOMAINS_PATH env var lets the wiki folder live anywhere on the user's system.
+// Defaults to ./domains inside the app folder if not set.
+const DOMAINS_DIR = process.env.DOMAINS_PATH
+  ? path.resolve(process.env.DOMAINS_PATH)
+  : path.resolve(__dirname, '../../domains');
 
 export function domainPath(domain) {
   return path.join(DOMAINS_DIR, domain);

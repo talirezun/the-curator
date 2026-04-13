@@ -1,2 +1,0 @@
-# Ingest Log — Business
-

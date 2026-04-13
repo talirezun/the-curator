@@ -1,24 +1,33 @@
 node_modules/
 .env
-domains/*/raw/
 .DS_Store
 .claude/
 
-# Obsidian config (local to each machine)
+# ── Obsidian config (local to each machine) ───────────────────────────────────
 .obsidian/
 **/.obsidian/
 
-# Wiki content is personal — students generate their own
-domains/*/wiki/concepts/
-domains/*/wiki/entities/
-domains/*/wiki/summaries/
+# ── Obsidian leftover files (created when vault root is wrong) ────────────────
+Untitled.md
+Untitled.canvas
+Untitled.base
+"Untitled 1.md"
+"Untitled 1.canvas"
+behind-the_curtain.md
+*.canvas
+*.base
 
-# Conversations are personal — not tracked in git
-domains/*/conversations/
+# ── Mac launcher app (local only — never commit) ──────────────────────────────
+*.app/
+The Curator.app/
+Second Brain.app/
 
-# Mac launcher app (local only)
-"Second Brain.app"
-
-# Sync feature (local only — never commit)
+# ── Sync feature (local only — never commit) ──────────────────────────────────
 .knowledge-git/
 .sync-config.json
+
+# ── Domains folder (personal wiki data — lives outside the app repo) ──────────
+# The wiki is managed separately (via the Sync tab / a private GitHub repo).
+# Clone this repo to get the app; your wiki folder is pointed to by DOMAINS_PATH.
+domains/*
+!domains/.gitkeep
