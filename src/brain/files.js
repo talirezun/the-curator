@@ -138,6 +138,13 @@ function injectBulletsIntoSection(content, sectionName, extraBullets) {
   const newBullets = extraBullets.filter(b => !seen.has(dedupKey(b)));
   if (!newBullets.length) return content;
 
+  // If section doesn't exist at all, append it so backlinks are never silently dropped.
+  // Use the 'm' (multiline) flag so ^ and $ match line boundaries in the full content.
+  const sectionExistsRe = new RegExp('^##\\s+' + sectionName + '\\s*$', 'im');
+  if (!sectionExistsRe.test(content)) {
+    return content.trimEnd() + `\n\n## ${sectionName}\n` + newBullets.join('\n') + '\n';
+  }
+
   // Re-scan and inject at end of section, before any trailing blank lines
   const result = [];
   inSection = false;
