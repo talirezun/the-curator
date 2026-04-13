@@ -74,17 +74,23 @@ function slugTag(t) {
 
 /**
  * Normalise LLM-returned paths to the three canonical folders.
- * Handles cases where the LLM drifts into "people/", "tools/", or drops
- * files in the wiki root instead of a subfolder.
+ * Any folder the LLM invents (people/, tools/, models/, companies/, etc.)
+ * is redirected to entities/ since invented categories are almost always
+ * entity-like. Root-level .md files (no subfolder) go to concepts/.
  */
+const CANONICAL = new Set(['entities', 'concepts', 'summaries']);
+
 function normalizePath(relativePath) {
-  if (relativePath.startsWith('people/'))  return 'entities/' + relativePath.slice(7);
-  if (relativePath.startsWith('tools/'))   return 'entities/' + relativePath.slice(6);
-  // Root-level .md files (no sub-folder) that aren't index/log → concepts/
+  // Root-level files that aren't index/log → concepts/
   if (!relativePath.includes('/') &&
       relativePath !== 'index.md' &&
       relativePath !== 'log.md') {
     return 'concepts/' + relativePath;
+  }
+  // If the first path segment is not one of the three canonical folders → entities/
+  const folder = relativePath.split('/')[0];
+  if (!CANONICAL.has(folder)) {
+    return 'entities/' + relativePath.slice(folder.length + 1);
   }
   return relativePath;
 }

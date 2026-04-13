@@ -18,6 +18,7 @@
  *   --delay=N   Delay N ms between files (default: 3000) to avoid rate limits
  */
 
+import 'dotenv/config';
 import { readdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
