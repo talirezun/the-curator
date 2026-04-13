@@ -472,6 +472,16 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress);
   }
 
+  // Deduplicate result.pages — multi-phase ingest can return the same path in
+  // multiple batches (the LLM sometimes adds extra pages it wasn't asked for).
+  // Keep the LAST occurrence so the most-complete LLM version wins; writePage's
+  // mergeWikiPage will still union it with any existing on-disk content.
+  {
+    const seen = new Map();
+    for (const page of result.pages) seen.set(page.path, page);
+    result.pages = [...seen.values()];
+  }
+
   // Write all wiki pages
   progress(90, `Writing ${result.pages.length} wiki pages to disk…`);
   for (const page of result.pages) {

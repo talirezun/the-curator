@@ -189,6 +189,44 @@ function injectBulletsIntoSection(content, sectionName, extraBullets) {
  *   - Sections only in existing: preserved via bullet injection logic above.
  */
 /**
+ * Remove duplicate bullets from all accumulating sections.
+ * Safety net: catches any case where the dedup logic in injectBulletsIntoSection
+ * is bypassed (e.g. multi-phase ingest returning the same page in multiple batches,
+ * causing writePage() to write the file twice with partially overlapping content).
+ * Keyed on the same dedupKey() as the injection logic — link target for Related-
+ * style bullets, full text otherwise.
+ */
+function deduplicateBulletSections(content) {
+  const ACCUMULATE = new Set([
+    'Key Facts', 'Key Ideas', 'Key Points', 'Related',
+    'Key Takeaways', 'Entities Mentioned',
+    'Concepts Introduced or Referenced', 'Applications', 'Examples',
+  ]);
+  const lines = content.split('\n');
+  const result = [];
+  let inSection = false;
+  let seenInSection = new Set();
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch && headingMatch[1] === '##') {
+      inSection = ACCUMULATE.has(headingMatch[2].trim());
+      seenInSection = new Set();
+      result.push(line);
+      continue;
+    }
+    if (inSection && line.startsWith('- ')) {
+      const key = dedupKey(line);
+      if (seenInSection.has(key)) continue; // drop duplicate bullet
+      seenInSection.add(key);
+    }
+    result.push(line);
+  }
+
+  return result.join('\n');
+}
+
+/**
  * Remove blank lines that appear inside bullet-list sections.
  * The LLM sometimes emits two groups of bullets separated by a blank line;
  * this causes the merge logic to place injected bullets after the gap.
@@ -305,7 +343,8 @@ export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
 
   // Inject missing entity bullets (dedup logic inside injectBulletsIntoSection)
   const updated = injectBulletsIntoSection(summaryContent, 'Entities Mentioned', entityBullets);
-  const cleaned = stripBlanksInBulletSections(updated);
+  const stripped = stripBlanksInBulletSections(updated);
+  const cleaned = deduplicateBulletSections(stripped);
 
   await writeFile(summaryFile, cleaned, 'utf8');
 
@@ -518,6 +557,12 @@ export async function writePage(domain, relativePath, content) {
   //    emits two groups of bullets separated by a blank line. Remove those gaps
   //    so sections stay clean on both first-write and merge paths.
   if (!skipMerge) final = stripBlanksInBulletSections(final);
+
+  // 5a. Remove duplicate bullets from all accumulating sections. Safety net for
+  //     cases where the same page is written more than once in a multi-phase
+  //     ingest (the LLM returns a page in multiple batches), causing mergeWikiPage
+  //     to produce duplicate bullets before the regular dedup can catch them.
+  if (!skipMerge) final = deduplicateBulletSections(final);
 
   // 5b. Strip folder prefixes from [[wiki-links]] — the LLM sometimes writes
   //     [[concepts/rag]], [[entities/tali-rezun]], or [[summaries/foo]] instead
