@@ -79,6 +79,13 @@ ${text}
 Your task: Plan which wiki pages to create or update for this source.
 Produce ONLY a JSON outline — do NOT write any page content yet.
 
+CRITICAL — Valid folder prefixes for page paths:
+  • summaries/  — one summary page per source document
+  • entities/   — every person, tool, company, framework, dataset, project
+  • concepts/   — every idea, technique, principle, methodology
+NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
+Every path MUST start with one of the three prefixes above.
+
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
   "title": "human-readable title of this source",
@@ -126,6 +133,13 @@ Guidelines:
 - Entity pages: include a line "Type: <type>" and a line "Tags: tag1, tag2" in the body.
 - Concept and summary pages: include a line "Tags: tag1, tag2" in the body.
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
+
+CRITICAL — Valid folder prefixes for page paths:
+  • summaries/  — one summary page per source document
+  • entities/   — every person, tool, company, framework, dataset, project
+  • concepts/   — every idea, technique, principle, methodology
+NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
+Every path MUST start with one of the three prefixes above.
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
@@ -192,6 +206,13 @@ Page body rules:
 - Concept and summary pages: include a "Tags: tag1, tag2" line in the body.
 - Links: always write [[page-name]] — NEVER use folder prefix (write [[rag]] not [[concepts/rag]]).
 - In the index.md table, use [[page-name]] (no folder prefix, no duplicates).
+
+CRITICAL — Valid folder prefixes for page paths:
+  • summaries/  — one summary page per source document
+  • entities/   — every person, tool, company, framework, dataset, project
+  • concepts/   — every idea, technique, principle, methodology
+NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
+Every path MUST start with one of the three prefixes above.
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {

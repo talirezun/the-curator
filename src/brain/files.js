@@ -72,10 +72,101 @@ function slugTag(t) {
     .replace(/^-|-$/g, '');         // trim leading/trailing hyphens
 }
 
+/**
+ * Normalise LLM-returned paths to the three canonical folders.
+ * Handles cases where the LLM drifts into "people/", "tools/", or drops
+ * files in the wiki root instead of a subfolder.
+ */
+function normalizePath(relativePath) {
+  if (relativePath.startsWith('people/'))  return 'entities/' + relativePath.slice(7);
+  if (relativePath.startsWith('tools/'))   return 'entities/' + relativePath.slice(6);
+  // Root-level .md files (no sub-folder) that aren't index/log → concepts/
+  if (!relativePath.includes('/') &&
+      relativePath !== 'index.md' &&
+      relativePath !== 'log.md') {
+    return 'concepts/' + relativePath;
+  }
+  return relativePath;
+}
+
+/** Extract bullet lines (starting with "- ") from a named ## section of a wiki page. */
+function extractBulletsFromSection(content, sectionName) {
+  const lines = content.split('\n');
+  const bullets = [];
+  let inSection = false;
+  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
+  for (const line of lines) {
+    if (re.test(line))            { inSection = true;  continue; }
+    if (inSection && /^##/.test(line)) { inSection = false; }
+    if (inSection && line.startsWith('- ')) bullets.push(line);
+  }
+  return bullets;
+}
+
+/** Inject extra bullet lines into a named ## section, skipping duplicates. */
+function injectBulletsIntoSection(content, sectionName, extraBullets) {
+  if (!extraBullets.length) return content;
+  const re = new RegExp(`^##\\s+${sectionName}\\s*$`, 'i');
+  const lines = content.split('\n');
+
+  // Collect bullets already present so we don't duplicate
+  const seen = new Set();
+  let inSection = false;
+  for (const line of lines) {
+    if (re.test(line))                 { inSection = true;  continue; }
+    if (inSection && /^##/.test(line)) { inSection = false; }
+    if (inSection && line.startsWith('- ')) seen.add(line.toLowerCase().trim());
+  }
+  const newBullets = extraBullets.filter(b => !seen.has(b.toLowerCase().trim()));
+  if (!newBullets.length) return content;
+
+  // Re-scan and inject at end of section
+  const result = [];
+  inSection = false;
+  let injected = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (re.test(line)) { inSection = true; result.push(line); continue; }
+    if (inSection && /^##/.test(line) && !injected) {
+      result.push(...newBullets);
+      injected = true;
+      inSection = false;
+    }
+    result.push(line);
+  }
+  if (inSection && !injected) result.push(...newBullets); // section was last
+  return result.join('\n');
+}
+
+/**
+ * Merge an existing wiki page with newly-generated content.
+ * Strategy:
+ *   - Bullet-accumulating sections (Key Facts, Related, etc.): union of bullets.
+ *   - Prose sections (Summary, Definition, etc.): use incoming (LLM had full doc context).
+ *   - Sections only in existing: preserved via bullet injection logic above.
+ */
+function mergeWikiPage(existingContent, incomingContent) {
+  const ACCUMULATE = [
+    'Related',
+    'Key Facts', 'Key Ideas', 'Key Points',
+    'Key Takeaways',
+    'Entities Mentioned',
+    'Concepts Introduced or Referenced',
+    'Applications', 'Examples',
+  ];
+  let merged = incomingContent;
+  for (const section of ACCUMULATE) {
+    const existing = extractBulletsFromSection(existingContent, section);
+    if (existing.length) merged = injectBulletsIntoSection(merged, section, existing);
+  }
+  return merged;
+}
+
 function injectFrontmatter(content, relativePath, today) {
-  const type = relativePath.startsWith('summaries/') ? 'summary'
-             : relativePath.startsWith('concepts/')  ? 'concept'
-             : relativePath.startsWith('entities/')  ? 'entity'
+  const normed = normalizePath(relativePath);
+  const type = normed.startsWith('summaries/') ? 'summary'
+             : normed.startsWith('concepts/')  ? 'concept'
+             : normed.startsWith('entities/')  ? 'entity'
              : null;
 
   if (!type) return content;  // index.md, log.md — skip
@@ -125,11 +216,28 @@ function injectFrontmatter(content, relativePath, today) {
 
 export async function writePage(domain, relativePath, content) {
   const today = new Date().toISOString().slice(0, 10);
-  const processed = injectFrontmatter(content, relativePath, today);
-  const fullPath = path.join(wikiPath(domain), relativePath);
+  // Redirect mis-filed paths to canonical folders
+  const canonPath = normalizePath(relativePath);
+  const processed = injectFrontmatter(content, canonPath, today);
+  const fullPath = path.join(wikiPath(domain), canonPath);
   const dir = path.dirname(fullPath);
   await mkdir(dir, { recursive: true });
-  await writeFile(fullPath, processed, 'utf8');
+
+  // Merge with existing content instead of overwriting — this makes the
+  // wiki grow: bullet-list sections (Key Facts, Related, etc.) accumulate
+  // knowledge across multiple ingests of different source documents.
+  let final = processed;
+  const skipMerge = canonPath === 'index.md' || canonPath === 'log.md';
+  if (!skipMerge && existsSync(fullPath)) {
+    try {
+      const existing = await readFile(fullPath, 'utf8');
+      final = mergeWikiPage(existing, processed);
+    } catch {
+      // If merge fails, fall back to plain write — better than crashing
+    }
+  }
+
+  await writeFile(fullPath, final, 'utf8');
 }
 
 export async function appendLog(domain, entry) {
