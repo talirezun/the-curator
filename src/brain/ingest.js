@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { generateText } from './llm.js';
@@ -6,6 +6,7 @@ import {
   readSchema,
   readIndex,
   rawPath,
+  wikiPath,
   writePage,
   appendLog,
 } from './files.js';
@@ -62,13 +63,30 @@ function parseJSON(raw) {
 
 // ── Phase 1: outline ──────────────────────────────────────────────────────────
 
-function buildOutlinePrompt(today, index, originalName, text, isOverwrite) {
+function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite) {
   const overwriteNote = isOverwrite
     ? 'NOTE: This document has been ingested before. Update existing pages rather than duplicating content.'
     : '';
 
+  const entityFileList = existingFiles.entities.length
+    ? existingFiles.entities.map(f => `  entities/${f}`).join('\n')
+    : '  (none yet)';
+  const conceptFileList = existingFiles.concepts.length
+    ? existingFiles.concepts.map(f => `  concepts/${f}`).join('\n')
+    : '  (none yet)';
+
   return `Today's date: ${today}
 ${overwriteNote ? '\n' + overwriteNote : ''}
+EXISTING WIKI FILES — reuse these exact filenames for known entities/concepts.
+Do NOT invent variants (e.g. if "lumina-ai.md" exists, do NOT create "lumina.md" or "lumina-ai-platform.md").
+Only create a new file for a genuinely new entity/concept not already in these lists.
+
+Existing entity files:
+${entityFileList}
+
+Existing concept files:
+${conceptFileList}
+
 Current wiki index:
 ${index || '(empty — this is the first ingest)'}
 
@@ -111,7 +129,7 @@ function makeProgress(onProgress) {
 
 // ── Phase 2: page content (batched) ──────────────────────────────────────────
 
-function buildBatchPrompt(today, originalName, text, pageBatch) {
+function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }) {
   const pageList = pageBatch
     .map(p => `  { "path": "${p.path}", "summary": "${p.summary}" }`)
     .join(',\n');
@@ -133,6 +151,10 @@ Guidelines:
 - Entity pages: include a line "Type: <type>" and a line "Tags: tag1, tag2" in the body.
 - Concept and summary pages: include a line "Tags: tag1, tag2" in the body.
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
+
+EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
+Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
+Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(', ')}
 
 CRITICAL — Valid folder prefixes for page paths:
   • summaries/  — one summary page per source document
@@ -173,7 +195,7 @@ Return ONLY the raw markdown text for index.md (no JSON, no fences).`;
 
 // ── Single-pass prompt (small documents) ─────────────────────────────────────
 
-function buildPrompt(today, index, originalName, text, strict, isOverwrite = false) {
+function buildPrompt(today, index, existingFiles, originalName, text, strict, isOverwrite = false) {
   const conciseness = strict
     ? 'CRITICAL: Maximum 3 bullet points per page. No prose. The shorter the better.'
     : 'Keep each page concise — 3 to 8 bullet points or sentences max. No long prose.';
@@ -182,8 +204,25 @@ function buildPrompt(today, index, originalName, text, strict, isOverwrite = fal
     ? 'NOTE: This document has been ingested before. Update any existing wiki pages with new or changed information rather than duplicating content. Merge carefully.'
     : '';
 
+  const entityFileList = existingFiles.entities.length
+    ? existingFiles.entities.map(f => `  entities/${f}`).join('\n')
+    : '  (none yet)';
+  const conceptFileList = existingFiles.concepts.length
+    ? existingFiles.concepts.map(f => `  concepts/${f}`).join('\n')
+    : '  (none yet)';
+
   return `Today's date: ${today}
 ${overwriteNote ? '\n' + overwriteNote : ''}
+EXISTING WIKI FILES — reuse these exact filenames for known entities/concepts.
+Do NOT invent variants (e.g. if "lumina-ai.md" exists, do NOT create "lumina.md" or "lumina-ai-platform.md").
+Only create a new file for a genuinely new entity/concept not already in these lists.
+
+Existing entity files:
+${entityFileList}
+
+Existing concept files:
+${conceptFileList}
+
 Current wiki index:
 ${index || '(empty — this is the first ingest)'}
 
@@ -232,13 +271,13 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 // failures from accumulated unescaped quotes in dense documents.
 const BATCH_SIZE = 4;
 
-async function ingestMultiPhase(schema, today, index, originalName, text, isOverwrite, progress) {
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress) {
   // Phase 1: outline
   console.log('[ingest] Large document — using multi-phase ingest. Phase 1: outline...');
   progress(12, 'Phase 1: planning wiki structure…');
   const outlineRaw = (await generateText(
     schema,
-    buildOutlinePrompt(today, index, originalName, text, isOverwrite),
+    buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite),
     16384,
     'json',
     (msg) => progress(12, msg, 'wait')
@@ -261,7 +300,7 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
 
     const batchRaw = (await generateText(
       schema,
-      buildBatchPrompt(today, originalName, text, batch),
+      buildBatchPrompt(today, originalName, text, batch, existingFiles),
       16384,
       'json',
       (msg) => progress(batchPct, msg, 'wait')
@@ -279,7 +318,7 @@ async function ingestMultiPhase(schema, today, index, originalName, text, isOver
         try {
           const singleRaw = (await generateText(
             schema,
-            buildBatchPrompt(today, originalName, text, [singlePage]),
+            buildBatchPrompt(today, originalName, text, [singlePage], existingFiles),
             4096,
             'json',
             (msg) => progress(batchPct, msg, 'wait')
@@ -355,6 +394,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const index = await readIndex(domain);
   const today = new Date().toISOString().slice(0, 10);
 
+  // Read existing entity/concept filenames — passed to LLM prompts so it reuses
+  // existing pages rather than creating near-duplicate files on every ingest.
+  const wikiDir = wikiPath(domain);
+  const existingFiles = {
+    entities: await readdir(path.join(wikiDir, 'entities')).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
+    concepts:  await readdir(path.join(wikiDir, 'concepts')).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
+  };
+
   let result;
 
   // ── Single-pass attempt (works for most documents) ─────────────────────────
@@ -372,7 +419,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     progress(15, 'AI is analyzing the document…');
     const raw = (await generateText(
       schema,
-      buildPrompt(today, index, originalName, text, false, isOverwrite),
+      buildPrompt(today, index, existingFiles, originalName, text, false, isOverwrite),
       65536,
       'json',
       (msg) => progress(15, msg, 'wait')
@@ -396,7 +443,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
 
         const raw2 = (await generateText(
           schema,
-          buildPrompt(today, index, originalName, text, true, isOverwrite),
+          buildPrompt(today, index, existingFiles, originalName, text, true, isOverwrite),
           65536,
           'json',
           (msg) => progress(15, msg, 'wait')
@@ -421,7 +468,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (!result) {
       progress(10, 'Large document — switching to multi-phase ingest…');
     }
-    result = await ingestMultiPhase(schema, today, index, originalName, text, isOverwrite, progress);
+    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress);
   }
 
   // Write all wiki pages
