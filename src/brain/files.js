@@ -188,6 +188,57 @@ function injectBulletsIntoSection(content, sectionName, extraBullets) {
  *   - Prose sections (Summary, Definition, etc.): use incoming (LLM had full doc context).
  *   - Sections only in existing: preserved via bullet injection logic above.
  */
+/**
+ * Remove blank lines that appear inside bullet-list sections.
+ * The LLM sometimes emits two groups of bullets separated by a blank line;
+ * this causes the merge logic to place injected bullets after the gap.
+ * Running this after every write keeps sections clean unconditionally.
+ */
+function stripBlanksInBulletSections(content) {
+  const ACCUMULATE = new Set([
+    'Key Facts', 'Key Ideas', 'Key Points', 'Related',
+    'Key Takeaways', 'Entities Mentioned',
+    'Concepts Introduced or Referenced', 'Applications', 'Examples',
+  ]);
+  const lines = content.split('\n');
+  const result = [];
+  let inSection = false;
+  let pendingBlanks = [];
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch && headingMatch[1] === '##') {
+      if (inSection && pendingBlanks.length) {
+        // Flush trailing blanks before next heading (keep one for spacing)
+        result.push('');
+        pendingBlanks = [];
+      }
+      inSection = ACCUMULATE.has(headingMatch[2].trim());
+      result.push(line);
+      continue;
+    }
+
+    if (inSection) {
+      if (line.trim() === '') {
+        pendingBlanks.push(line);
+        continue;
+      }
+      if (line.startsWith('- ')) {
+        // Drop blanks that appeared between bullets — they're LLM artifacts
+        pendingBlanks = [];
+      } else {
+        result.push(...pendingBlanks);
+        pendingBlanks = [];
+      }
+    }
+
+    result.push(line);
+  }
+
+  result.push(...pendingBlanks);
+  return result.join('\n');
+}
+
 function mergeWikiPage(existingContent, incomingContent) {
   const ACCUMULATE = [
     'Related',
@@ -303,6 +354,11 @@ export async function writePage(domain, relativePath, content) {
       // If merge fails, fall back to plain write — better than crashing
     }
   }
+
+  // 5. Strip blank lines that appear inside bullet sections — the LLM sometimes
+  //    emits two groups of bullets separated by a blank line. Remove those gaps
+  //    so sections stay clean on both first-write and merge paths.
+  if (!skipMerge) final = stripBlanksInBulletSections(final);
 
   await writeFile(fullPath, final, 'utf8');
 }
