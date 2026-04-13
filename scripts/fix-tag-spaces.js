@@ -17,7 +17,12 @@ const DRY_RUN = !process.argv.includes('--write');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const slugTag = (t) => t.trim().toLowerCase().replace(/\s+/g, '-');
+const slugTag = (t) => t.trim().toLowerCase()
+  .replace(/&/g, 'and')
+  .replace(/\s+/g, '-')
+  .replace(/[^a-z0-9\-_/]/g, '')
+  .replace(/-{2,}/g, '-')
+  .replace(/^-|-$/g, '');
 
 /** Fix inline tags: [foo bar, baz quux, ok] → [foo-bar, baz-quux, ok] */
 function fixInlineTags(line) {

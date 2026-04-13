@@ -62,19 +62,37 @@ async function collectMarkdown(baseDir, dir, pages) {
  *     now-redundant inline fields from the body.
  *   - If the LLM somehow included a --- block anyway, we leave it as-is.
  */
+/** Normalise a single tag to a valid Obsidian tag (no spaces, no special chars). */
+function slugTag(t) {
+  return t.trim().toLowerCase()
+    .replace(/&/g, 'and')           // "r&d" → "rand" → then dedupe dashes → "rand"... actually better: "r-and-d"
+    .replace(/\s+/g, '-')           // spaces → hyphens
+    .replace(/[^a-z0-9\-_/]/g, '')  // strip anything else (keep / for type/concept)
+    .replace(/-{2,}/g, '-')         // collapse double-hyphens
+    .replace(/^-|-$/g, '');         // trim leading/trailing hyphens
+}
+
 function injectFrontmatter(content, relativePath, today) {
   const type = relativePath.startsWith('summaries/') ? 'summary'
              : relativePath.startsWith('concepts/')  ? 'concept'
              : relativePath.startsWith('entities/')  ? 'entity'
              : null;
 
-  if (!type) return content;                                   // index.md, log.md — skip
-  if (content.trimStart().startsWith('---')) return content;  // YAML already present — skip
+  if (!type) return content;  // index.md, log.md — skip
+
+  // If YAML already present (e.g. user ingesting a pre-formatted .md file),
+  // sanitize the tags line in place and return — don't rebuild the whole block.
+  if (content.trimStart().startsWith('---')) {
+    return content.replace(/^(tags:\s*\[)(.+?)(\])/m, (_, open, inner, close) => {
+      const fixed = inner.split(',').map(slugTag).filter(Boolean).join(', ');
+      return open + fixed + close;
+    });
+  }
 
   // Extract inline Tags: field → YAML tags array
   const tagsMatch = content.match(/^Tags:\s*(.+)$/m);
   const existing = tagsMatch
-    ? tagsMatch[1].split(',').map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean)
+    ? tagsMatch[1].split(',').map(slugTag).filter(Boolean)
     : [];
 
   // Extract inline Source: and Date Ingested: for summary pages

@@ -2239,3 +2239,70 @@ Pages created or updated:
   - entities/google-imagen-3.md
   - entities/cotrugli-business-school.md
 
+## [2026-04-13] ingest | From Google AI Studio to Production: Building Lumina v1 in 48 Hours
+Pages created or updated:
+  - summaries/from-google-ai-studio-to-production-building-lumina-v1-in-48-hours.md
+  - concepts/vibe-coding.md
+  - entities/tali-rezun.md
+  - entities/lumina.md
+  - entities/google-oauth.md
+  - concepts/rag.md
+  - concepts/llms.md
+  - entities/google-flash-2.5-llm.md
+  - entities/react-19.md
+  - entities/typescript.md
+  - entities/vite.md
+  - entities/tailwind-css.md
+  - entities/github.md
+  - entities/augment-code.md
+  - entities/anthropic-haiku-4.5.md
+  - entities/firebase-hosting.md
+  - entities/firestore.md
+  - entities/google-cloud-functions.md
+  - entities/google-cloud-storage.md
+  - entities/google-oauth-authentication.md
+  - entities/firebase-console.md
+  - entities/gemini-2.5-flash.md
+  - entities/paid-firebase-hosting.md
+  - entities/pdf-parse.md
+  - entities/stripe.md
+  - entities/vercel.md
+  - entities/digital-ocean.md
+  - concepts/the-70-percent-problem.md
+  - concepts/context-engineering.md
+  - concepts/development-democratization.md
+  - concepts/agent-handoffs.md
+  - entities/google-ai-studio.md
+  - concepts/autonomous-loops-in-ai.md
+  - concepts/context-engineering-for-ai-agents.md
+  - entities/llms.md
+  - entities/google-oauth.md
+  - entities/concepts/rag.md
+  - entities/llms.md
+  - entities/react-19.md
+  - entities/typescript.md
+  - entities/vite.md
+  - entities/tailwind-css.md
+  - entities/github.md
+  - entities/augment-code.md
+  - entities/anthropic-haiku-4.5.md
+  - entities/firebase-hosting.md
+  - entities/firestore.md
+  - entities/google-cloud-functions.md
+  - entities/google-cloud-storage.md
+  - entities/google-oauth-authentication.md
+  - entities/firebase-console.md
+  - entities/gemini-2.5-flash.md
+  - entities/paid-firebase-hosting.md
+  - entities/pdf-parse.md
+  - entities/stripe.md
+  - entities/vercel.md
+  - entities/digital-ocean.md
+  - concepts/the-70-percent-problem.md
+  - concepts/context-engineering.md
+  - concepts/development-democratization.md
+  - concepts/agent-handoffs.md
+  - entities/google-ai-studio.md
+  - concepts/autonomous-loops-in-ai.md
+  - concepts/context-engineering-for-ai-agents.md
+

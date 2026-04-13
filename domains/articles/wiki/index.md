@@ -1,5 +1,5 @@
 # Wiki Index — AI / Tech
-Last updated: 2026-04-12
+Last updated: 2026-04-13
 
 | Page | Type | Summary |
 |------|------|---------|
@@ -21,6 +21,7 @@ Last updated: 2026-04-12
 | [[summaries/the-claude-desktop-coding-agent-experiment]] | summary | Dr. Tali Rezun details an experiment transforming Claude Desktop into a coding agent using Model Context Protocols (MCPs) and system instructions. The experiment successfully built a functional MVP of an AI orchestration SaaS for Slovenian building legislation, highlighting context management challenges and limitations for complex projects. |
 | [[summaries/chasing-jarvis-the-three-missing-pieces-in-ai-coding-agents]] | summary | An article by Dr. Tali Rezun discussing the current state and future of AI coding agents, identifying three critical missing pieces (real-time voice conversation, memory systems, and enhanced tool orchestration) that prevent them from achieving Jarvis-level collaboration, and offering practical insights and a roadmap for development. |
 | [[summaries/how-i-built-an-ai-marketing-team-that-actually-works-from-memes-to-technical-content-in-minutes]] | summary | Dr. Tali Rezun details how to build a specialized AI marketing team using tools like Claude Desktop, Google Labs Flow (with Nano Banana Pro and VEO), and Google NotebookLM to generate diverse content, from technical articles to viral memes and podcasts. |
+| [[summaries/from-google-ai-studio-to-production-building-lumina-v1-in-48-hours]] | summary | Dr. Tali Rezun details the rapid development of Lumina, a SaaS app for knowledge-based chat widgets, from concept to production in 48 hours using Google AI Studio and AI coding agents. The process highlights a shift from traditional development to rapid, single-person, AI-assisted approaches, while noting the continued need for production-level engineering skills. |
 | [[concepts/rag]] | concept | Retrieval Augmented Generation combines the power of retrieval-based models with generative models to produce more accurate and contextually relevant outputs. |
 | [[concepts/context-engineering]] | concept | The practice of providing relevant and sufficient information to AI models to guide their responses and actions, crucial for complex tasks and long-term project continuity in AI-assisted development. |
 | [[concepts/the-70-percent-problem]] | concept | The challenge in AI-assisted development where current tools can achieve the majority of a task but fall short of completing the final, critical portion required for a production-ready product. |
@@ -41,6 +42,7 @@ Last updated: 2026-04-12
 | [[concepts/ai-generated-video]] | concept | The creation of video content using artificial intelligence tools, ranging from short meme-style clips to more produced explainers and podcasts, often driven by detailed text prompts and reference assets. |
 | [[concepts/ai-generated-podcasts]] | concept | The production of audio content, specifically conversational podcasts, using AI tools that synthesize information from provided sources and generate natural-sounding dialogue between virtual hosts. |
 | [[concepts/ai-marketing-team]] | concept | A specialized team composed of AI agents, configured with specific tools and access to project knowledge, designed to execute marketing tasks such as content creation, campaign planning, and social media post generation. |
+| [[concepts/vibe-coding]] | concept | A rapid software development approach where users describe desired application features conversationally, allowing AI tools to generate interactive MVPs directly within the development environment. |
 | [[entities/tali-rezun]] | entity | Author of 'The Year I Started Coding with AI: My Coding Agent Journey', a technologist and entrepreneur sharing their experiences with AI coding tools and agentic development. Also the author of several other key articles and a teacher at Cotrugli Business School. |
 | [[entities/lovable]] | entity | An early AI coding tool explored by Dr. Tali Rezun, noted for its ability to generate landing pages and basic applications from simple prompts. |
 | [[entities/replit]] | entity | A development environment and platform used by Dr. Tali Rezun in their early exploration of AI coding tools. |
@@ -88,4 +90,24 @@ Last updated: 2026-04-12
 | [[entities/stanford-codex]] | organization | A center for Legal Informatics at Stanford University that conducts research on computational law and the mechanization of legal reasoning. |
 | [[entities/mit-computational-law-programme]] | organization | A program at MIT that explores the treatment of legal documents as executable programs, contributing to the 'Law as Code' concept. |
 | [[entities/box-ai]] | tool | Provided enterprise evaluations of AI models, including Gemini 3.1 Pro, for complex legal tasks, noting significant improvements in legal accuracy and reasoning. |
-| [[entities/vals-ai]] | tool | Maintains the LegalBench leaderboard, which tracks the performance of large language models on legal reasoning tasks, with Gemini 3 Pro and Flash showing
+| [[entities/vals-ai]] | tool | Maintains the LegalBench leaderboard, which tracks the performance of large language models on legal reasoning tasks, with Gemini 3 Pro and Flash showing |
+| [[entities/lumina]] | tool | SaaS application for knowledge-based chat widgets, rapidly developed using [[google-ai-studio]] and AI coding agents. |
+| [[entities/google-oauth]] | tool | Authentication protocol allowing users to sign in via Google accounts. |
+| [[entities/google-flash-2.5-llm]] | tool | An affordable and efficient LLM from Google, used in Lumina. |
+| [[entities/react-19]] | framework | Future version of the React JavaScript library for building user interfaces, used in Lumina's frontend. |
+| [[entities/typescript]] | language | Strongly typed programming language that builds on JavaScript, used in Lumina's frontend. |
+| [[entities/vite]] | tool | Modern frontend build tool for fast development experiences, used in Lumina's build process. |
+| [[entities/tailwind-css]] | framework | Utility-first CSS framework for rapid UI development, used for styling Lumina. |
+| [[entities/firebase-hosting]] | tool | Google's web hosting service used for deploying Lumina's frontend. |
+| [[entities/firestore]] | tool | Google's NoSQL document database used for Lumina's backend data storage. |
+| [[entities/google-cloud-functions]] | tool | Google's serverless compute platform used for Lumina's backend API. |
+| [[entities/google-cloud-storage]] | tool | Google's object storage service, likely used for storing user-uploaded files in Lumina. |
+| [[entities/google-oauth-authentication]] | concept | Implementation of Google OAuth for user authentication in applications. |
+| [[entities/firebase-console]] | tool | Web interface for managing Firebase projects, used for Lumina's backend configuration. |
+| [[entities/gemini-2.5-flash]] | tool | Google's efficient LLM with a large context window, used for Lumina's API. |
+| [[entities/paid-firebase-hosting]] | concept | The production-ready tier of Firebase Hosting, required for Lumina's live deployment. |
+| [[entities/pdf-parse]] | tool | JavaScript library for extracting text from PDF files, used in Lumina. |
+| [[entities/stripe]] | company | Financial technology company providing payment processing, planned for Lumina's monetization. |
+| [[entities/vercel]] | company | Cloud platform for frontend developers, mentioned as a deployment alternative. |
+| [[entities/digitalocean]] | company | Cloud infrastructure provider, used as a comparison for deployment speed. |
+| [[entities/anthropic-haiku-4.5]] | tool | Anthropic's cost-effective and fast LLM, used with Augment Code for Lumina's backend. |
