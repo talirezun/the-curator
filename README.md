@@ -306,6 +306,7 @@ the-curator/
 │       ├── raw/            Your original uploaded files (local only)
 │       ├── wiki/           Auto-generated knowledge pages
 │       └── conversations/  Saved chat threads
+├── scripts/                Maintenance utilities (dedup, repair, bulk-reingest)
 ├── images/                 App icon in multiple sizes
 └── docs/                   Full documentation
 ```

@@ -103,6 +103,11 @@ the-curator/
 │   ├── user-guide.md           End-to-end guide for non-technical users
 │   ├── architecture.md         This file — system internals
 │   └── sync.md                 Step-by-step guide to the GitHub sync feature
+├── scripts/
+│   ├── fix-wiki-duplicates.js  One-time deduplication: merges near-duplicate entity/concept files
+│   ├── fix-wiki-structure.js   One-time migration: moves non-canonical folders → entities/
+│   ├── bulk-reingest.js        Re-ingests all raw files in a domain to rebuild the wiki
+│   └── inject-summary-backlinks.js  Retroactively injects [[summaries/...]] backlinks into all entity pages
 ├── package.json
 ├── .env                        API key (never committed)
 └── .gitignore
@@ -150,6 +155,9 @@ src/brain/ingest.js
       │     User:    date + index + source text (≤80 000 chars) + instructions
       │     Returns: { title, pages: [{path, content}], index }
       ├─ 6. Write each page → domains/<domain>/wiki/<path>
+      │     For every summary page written, injectSummaryBacklinks() also fires:
+      │     reads "Entities Mentioned", injects [[summaries/<slug>]] into the
+      │     Related section of each referenced entity page (bidirectional graph)
       ├─ 7. Write updated index.md
       └─ 8. Append timestamped entry to log.md
 
@@ -261,7 +269,8 @@ Pure filesystem helpers. No LLM calls.
 | `listDomains()` | Names of all non-hidden subdirectories under `domains/` |
 | `readSchema(domain)` | Contents of `domains/<domain>/CLAUDE.md` |
 | `readWikiPages(domain)` | All `.md` files under `wiki/`, returned as `{path, content}[]` |
-| `writePage(domain, relativePath, content)` | Write a wiki page; runs `injectFrontmatter()` post-processor first to ensure YAML metadata is present |
+| `writePage(domain, relativePath, content)` | Write a wiki page; runs `injectFrontmatter()`, merges with existing content, strips blank-line gaps, and calls `injectSummaryBacklinks()` for summary pages |
+| `injectSummaryBacklinks(summarySlug, summaryContent, wikiDir)` | After a summary is written, injects `[[summaries/<slug>]]` into the Related section of every entity listed under "Entities Mentioned"; deduplicates via `dedupKey()` so re-ingest never creates duplicates |
 | `appendLog(domain, entry)` | Append a string to `log.md` |
 | `readIndex(domain)` | Contents of `index.md` |
 | `createDomain(slug, displayName, description, template)` | Scaffold full domain directory + auto-generate CLAUDE.md from template |
