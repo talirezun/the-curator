@@ -220,18 +220,42 @@ function injectFrontmatter(content, relativePath, today) {
   return yamlLines.join('\n') + body;
 }
 
+// Title prefixes the LLM adds that shouldn't create separate entity files
+const TITLE_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor|the)-/;
+
 export async function writePage(domain, relativePath, content) {
   const today = new Date().toISOString().slice(0, 10);
-  // Redirect mis-filed paths to canonical folders
-  const canonPath = normalizePath(relativePath);
+
+  // 1. Redirect mis-filed paths to canonical folders
+  let canonPath = normalizePath(relativePath);
+
+  // 2. Guard: skip paths with no valid .md filename (prevents EISDIR crash
+  //    when the LLM returns just a folder name like "entities/")
+  const basename = path.basename(canonPath);
+  if (!basename || !basename.endsWith('.md')) {
+    console.warn(`[writePage] Skipping invalid path (no filename): "${relativePath}"`);
+    return;
+  }
+
+  // 3. For entity paths, strip title prefixes (dr-, mr-, prof-, etc.) and
+  //    redirect to the canonical file if it already exists — prevents the LLM
+  //    from creating "dr-tali-rezun.md" separately from "tali-rezun.md"
+  if (canonPath.startsWith('entities/')) {
+    const filename = canonPath.slice('entities/'.length);
+    const stripped = filename.replace(TITLE_PREFIX_RE, '');
+    if (stripped !== filename) {
+      const canonFile = path.join(wikiPath(domain), 'entities', stripped);
+      if (existsSync(canonFile)) canonPath = 'entities/' + stripped;
+    }
+  }
+
   const processed = injectFrontmatter(content, canonPath, today);
   const fullPath = path.join(wikiPath(domain), canonPath);
   const dir = path.dirname(fullPath);
   await mkdir(dir, { recursive: true });
 
-  // Merge with existing content instead of overwriting — this makes the
-  // wiki grow: bullet-list sections (Key Facts, Related, etc.) accumulate
-  // knowledge across multiple ingests of different source documents.
+  // 4. Merge with existing content instead of overwriting — bullet-list
+  //    sections (Key Facts, Related, etc.) accumulate across ingests.
   let final = processed;
   const skipMerge = canonPath === 'index.md' || canonPath === 'log.md';
   if (!skipMerge && existsSync(fullPath)) {
