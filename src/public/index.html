@@ -19,7 +19,11 @@
         <span class="logo-text">The Curator</span>
       </div>
       <nav>
-        <button class="tab-btn active" data-tab="ingest">
+        <button class="tab-btn active" data-tab="domains">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Domains
+        </button>
+        <button class="tab-btn" data-tab="ingest">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           Ingest
         </button>
@@ -35,10 +39,6 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Sync
         </button>
-        <button class="tab-btn" data-tab="domains">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-          Domains
-        </button>
       </nav>
       <span id="app-version" class="app-version" title="The Curator version"></span>
       <button id="stop-btn" class="btn stop" title="Stop the server">
@@ -48,7 +48,7 @@
     </header>
 
     <!-- INGEST TAB -->
-    <section id="tab-ingest" class="tab active">
+    <section id="tab-ingest" class="tab hidden">
       <h2>Ingest a Source</h2>
       <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. The Curator will read it and update the wiki automatically.</p>
       <div class="form-group">
@@ -395,7 +395,7 @@
     </section>
 
     <!-- DOMAINS TAB -->
-    <section id="tab-domains" class="tab hidden">
+    <section id="tab-domains" class="tab active">
         <!-- ── Knowledge Base Path ────────────────────────────────────────── -->
         <div class="kb-path-panel" id="kb-path-panel">
           <div class="kb-path-header">
@@ -403,23 +403,44 @@
               <span class="kb-path-icon">📁</span>
               <span>Knowledge Base Location</span>
             </div>
-            <button class="kb-path-edit-btn" id="kb-path-edit-btn" title="Change folder">Edit</button>
           </div>
+
+          <!-- Normal display state -->
           <div class="kb-path-display" id="kb-path-display">
             <code id="kb-path-value" class="kb-path-code">Loading…</code>
-            <button class="kb-path-copy-btn" id="kb-path-copy-btn" title="Copy path (paste in Obsidian)">Copy</button>
+            <div class="kb-path-actions">
+              <button class="btn pill primary" id="kb-path-choose-btn">📂 Choose Folder</button>
+              <button class="btn pill" id="kb-path-copy-btn" title="Copy path (paste in Obsidian)">Copy</button>
+              <button class="btn pill" id="kb-path-edit-btn" title="Type a path manually">Edit</button>
+            </div>
           </div>
+
+          <!-- Manual text entry (hidden by default) -->
           <div class="kb-path-edit-row hidden" id="kb-path-edit-row">
             <input type="text" id="kb-path-input" class="kb-path-input"
                    placeholder="/Users/yourname/Documents/my-brain" spellcheck="false" />
-            <button class="btn-primary" id="kb-path-save-btn">Apply</button>
-            <button class="btn-ghost" id="kb-path-cancel-btn">Cancel</button>
+            <button class="btn pill primary" id="kb-path-save-btn">Apply</button>
+            <button class="btn pill" id="kb-path-cancel-btn">Cancel</button>
           </div>
+
           <div class="kb-path-hint">
             This folder is also your <strong>Obsidian vault</strong> — open it in Obsidian with
-            <em>Open folder as vault</em>. Changes take effect immediately.
+            <em>Open folder as vault</em>. Click <strong>Choose Folder</strong> to browse.
           </div>
           <div class="kb-path-status hidden" id="kb-path-status"></div>
+        </div>
+
+        <!-- ── First-run welcome (shown when no domains exist) ─────────────── -->
+        <div class="first-run-guide hidden" id="first-run-guide">
+          <div class="first-run-icon">🧠</div>
+          <h3 class="first-run-title">Welcome to The Curator</h3>
+          <p class="first-run-desc">
+            Choose a folder for your knowledge base, then create your first domain.
+            This folder will also be your Obsidian vault.
+          </p>
+          <button class="btn pill primary" id="first-run-choose-btn" style="margin-top:4px;">
+            📂 Choose Knowledge Base Folder
+          </button>
         </div>
       <div class="domains-header">
         <h2>Domains</h2>

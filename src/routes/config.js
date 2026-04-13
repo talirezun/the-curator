@@ -27,4 +27,36 @@ router.post('/domains-path', (req, res) => {
   }
 });
 
+/** POST /api/config/pick-folder — opens native macOS folder picker via osascript */
+router.post('/pick-folder', async (_req, res) => {
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const { stdout } = await execAsync(
+      `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
+      { timeout: 60000 }
+    );
+    const picked = stdout.trim();
+    if (picked) {
+      // Validate and save immediately
+      const { existsSync } = await import('fs');
+      if (!existsSync(picked)) {
+        return res.status(400).json({ error: `Folder does not exist: ${picked}` });
+      }
+      setDomainsDir(picked);
+      res.json({ ok: true, path: picked });
+    } else {
+      res.json({ cancelled: true });
+    }
+  } catch (err) {
+    // User pressed Cancel in the picker (exit code 1, error -128)
+    if (err.killed || err.code === 1 || String(err.stderr).includes('-128')) {
+      res.json({ cancelled: true });
+    } else {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
 export default router;

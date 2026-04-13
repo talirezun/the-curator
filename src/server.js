@@ -37,10 +37,16 @@ app.get('/api/health',  (_req, res) => res.json({ ok: true, version }));
 // Version endpoint — used by the UI to display the current app version
 app.get('/api/version', (req, res) => res.json({ version }));
 
-// Shutdown endpoint — kills the server process cleanly
-app.post('/api/shutdown', (req, res) => {
-  res.json({ message: 'Server shutting down...' });
-  setTimeout(() => process.exit(0), 300);
+// Shutdown endpoint — drains open connections then exits cleanly
+app.post('/api/shutdown', (_req, res) => {
+  res.json({ ok: true });
+  setImmediate(() => {
+    // closeAllConnections() available in Node 18.2+ — drops keep-alive sockets
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    server.close(() => process.exit(0));
+    // Safety fallback: if server.close never fires (no active connections), exit anyway
+    setTimeout(() => process.exit(0), 1500);
+  });
 });
 
 // Catch-all: serve index.html for SPA
@@ -48,7 +54,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   try {
     const { provider, model } = getProviderInfo();
     const providerLabel = provider === 'gemini' ? '🟦 Gemini' : '🟣 Anthropic';

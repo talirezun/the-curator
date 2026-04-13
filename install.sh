@@ -123,7 +123,7 @@ on run
         open location appURL
         return
     end try
-    do shell script "cd " & quoted form of projectPath & " && " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
+    do shell script "cd " & quoted form of projectPath & " && nohup " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
     set attempts to 0
     repeat
         delay 1

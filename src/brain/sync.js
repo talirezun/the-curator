@@ -4,11 +4,11 @@ import path from 'path';
 import { mkdir, writeFile, readFile, unlink, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { getDomainsDir } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT       = path.resolve(__dirname, '../..');
 const GIT_DIR    = path.join(ROOT, '.knowledge-git');
-const WORK_TREE  = path.join(ROOT, 'domains');
 const CONFIG_FILE = path.join(ROOT, '.sync-config.json');
 
 const execAsync = promisify(exec);
@@ -22,7 +22,7 @@ function sanitize(str) {
 }
 
 async function git(cmd, opts = {}) {
-  const full = `git --git-dir="${GIT_DIR}" --work-tree="${WORK_TREE}" ${cmd}`;
+  const full = `git --git-dir="${GIT_DIR}" --work-tree="${getDomainsDir()}" ${cmd}`;
   try {
     const { stdout, stderr } = await execAsync(full, {
       timeout: opts.timeout || 30000,
@@ -87,7 +87,7 @@ async function loadConfig() {
 // ── Domains .gitignore ────────────────────────────────────────────────────────
 
 async function ensureDomainsGitignore() {
-  const p = path.join(WORK_TREE, '.gitignore');
+  const p = path.join(getDomainsDir(), '.gitignore');
   if (!existsSync(p)) {
     await writeFile(p, '*/raw/\n', 'utf8');
   }

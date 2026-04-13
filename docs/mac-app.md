@@ -91,7 +91,7 @@ on run
         return
     end try
 
-    do shell script "cd " & quoted form of projectPath & " && " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
+    do shell script "cd " & quoted form of projectPath & " && nohup " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo $! > /tmp/the-curator.pid"
 
     set attempts to 0
     repeat
@@ -134,9 +134,9 @@ That's it. You can now double-click it at any time.
 
 | Action | How |
 |--------|-----|
-| Start the app | Double-click the Dock icon |
+| Start the app | Click the Dock icon |
 | Stop the app | Click **■ Stop** in the top-right of the browser UI |
-| Restart the app | Double-click the Dock icon again after stopping |
+| Restart the app | Click the Dock icon again after stopping |
 | View logs (if something goes wrong) | Open Terminal and run: `cat /tmp/the-curator.log` |
 
 ---

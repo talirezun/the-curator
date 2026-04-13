@@ -441,6 +441,12 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 }
 .btn:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
 
+/* Aliases used in dynamically-generated buttons */
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 2px 8px var(--accent-dim); }
+.btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.btn-ghost { background: transparent; border-color: var(--border); color: var(--text-2); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+
 /* Pill-shaped CTA buttons (Obsidian "Animate" style) */
 .btn.pill { border-radius: 100px; display: inline-flex; align-items: center; }
 
@@ -1234,6 +1240,13 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.kb-path-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .kb-path-code {
@@ -1296,3 +1309,32 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 }
 .kb-path-status.success { background: rgba(16,185,129,0.1); color: #10b981; }
 .kb-path-status.error   { background: rgba(239,68,68,0.1);  color: #ef4444; }
+
+/* ── First-run welcome guide ────────────────────────────────────────────────── */
+.first-run-guide {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08) 0%, rgba(99,102,241,0.04) 100%);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 12px;
+  padding: 28px 24px;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.first-run-icon { font-size: 36px; margin-bottom: 8px; }
+
+.first-run-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text, #e2e8f0);
+  margin: 0 0 8px;
+}
+
+.first-run-desc {
+  font-size: 13.5px;
+  color: var(--text-2, #94a3b8);
+  margin: 0 0 16px;
+  line-height: 1.6;
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+}

@@ -26,7 +26,7 @@ document.getElementById('stop-btn').addEventListener('click', async () => {
       <div style="font-size:48px;">🧠</div>
       <div style="font-size:20px;font-weight:600;">The Curator stopped</div>
       <div id="stopped-sub" style="font-size:14px;color:#64748b;">
-        Double-click the Dock icon to restart.
+        Click the Dock icon once to restart.
       </div>
       <div id="restart-spinner" style="display:none;margin-top:8px;">
         <div style="width:20px;height:20px;border:2px solid #334155;border-top-color:#6366f1;
@@ -996,25 +996,39 @@ loadChatDomains();
 // ── Knowledge Base Path panel ─────────────────────────────────────────────────
 
 async function initKbPathPanel() {
-  const pathValue   = document.getElementById('kb-path-value');
-  const editBtn     = document.getElementById('kb-path-edit-btn');
-  const editRow     = document.getElementById('kb-path-edit-row');
-  const pathInput   = document.getElementById('kb-path-input');
-  const saveBtn     = document.getElementById('kb-path-save-btn');
-  const cancelBtn   = document.getElementById('kb-path-cancel-btn');
-  const copyBtn     = document.getElementById('kb-path-copy-btn');
-  const statusEl    = document.getElementById('kb-path-status');
-  const displayEl   = document.getElementById('kb-path-display');
+  const pathValue    = document.getElementById('kb-path-value');
+  const editBtn      = document.getElementById('kb-path-edit-btn');
+  const chooseBtn    = document.getElementById('kb-path-choose-btn');
+  const firstRunBtn  = document.getElementById('first-run-choose-btn');
+  const editRow      = document.getElementById('kb-path-edit-row');
+  const pathInput    = document.getElementById('kb-path-input');
+  const saveBtn      = document.getElementById('kb-path-save-btn');
+  const cancelBtn    = document.getElementById('kb-path-cancel-btn');
+  const copyBtn      = document.getElementById('kb-path-copy-btn');
+  const statusEl     = document.getElementById('kb-path-status');
+  const displayEl    = document.getElementById('kb-path-display');
+  const firstRunEl   = document.getElementById('first-run-guide');
 
-  // Load current path from server
+  // ── Load current path ──────────────────────────────────────────────────────
+  let currentPath = '';
   try {
     const cfg = await fetch('/api/config').then(r => r.json());
-    pathValue.textContent = cfg.domainsPath;
-    pathInput.value = cfg.domainsPath;
+    currentPath = cfg.domainsPath;
+    pathValue.textContent = currentPath;
+    pathInput.value = currentPath;
   } catch {
     pathValue.textContent = '(could not load)';
   }
 
+  // ── Show first-run guide if no domains exist ───────────────────────────────
+  try {
+    const { domains } = await fetch('/api/domains').then(r => r.json());
+    if (firstRunEl && domains.length === 0) {
+      firstRunEl.classList.remove('hidden');
+    }
+  } catch { /* ignore */ }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function showStatus(msg, type) {
     statusEl.textContent = msg;
     statusEl.className = 'kb-path-status ' + type;
@@ -1022,23 +1036,57 @@ async function initKbPathPanel() {
     if (type === 'success') setTimeout(() => statusEl.classList.add('hidden'), 4000);
   }
 
-  editBtn.addEventListener('click', () => {
+  function applyPath(newPath) {
+    currentPath = newPath;
+    pathValue.textContent = newPath;
+    pathInput.value = newPath;
+    editRow.classList.add('hidden');
+    displayEl.classList.remove('hidden');
+    if (firstRunEl) firstRunEl.classList.add('hidden');
+    showStatus('✓ Knowledge base folder updated', 'success');
+    domainsTabInitialised = false;
+    loadDomainList();
+  }
+
+  // ── Native folder picker (osascript via server) ────────────────────────────
+  async function openFolderPicker() {
+    const btn = event.currentTarget;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Selecting…';
+    try {
+      const res = await fetch('/api/config/pick-folder', { method: 'POST' });
+      const data = await res.json();
+      if (data.cancelled) return;
+      if (!res.ok) throw new Error(data.error || 'Picker failed');
+      applyPath(data.path);
+    } catch (err) {
+      showStatus('✗ ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
+  if (chooseBtn)   chooseBtn.addEventListener('click',   openFolderPicker);
+  if (firstRunBtn) firstRunBtn.addEventListener('click', openFolderPicker);
+
+  // ── Manual edit flow ───────────────────────────────────────────────────────
+  if (editBtn) editBtn.addEventListener('click', () => {
     editRow.classList.remove('hidden');
     displayEl.classList.add('hidden');
-    editBtn.classList.add('hidden');
     pathInput.focus();
     pathInput.select();
   });
 
-  cancelBtn.addEventListener('click', () => {
+  if (cancelBtn) cancelBtn.addEventListener('click', () => {
     editRow.classList.add('hidden');
     displayEl.classList.remove('hidden');
-    editBtn.classList.remove('hidden');
     statusEl.classList.add('hidden');
-    pathInput.value = pathValue.textContent;
+    pathInput.value = currentPath;
   });
 
-  saveBtn.addEventListener('click', async () => {
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
     const newPath = pathInput.value.trim();
     if (!newPath) return;
     saveBtn.disabled = true;
@@ -1050,16 +1098,8 @@ async function initKbPathPanel() {
         body: JSON.stringify({ path: newPath }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update path');
-      pathValue.textContent = data.domainsPath;
-      pathInput.value = data.domainsPath;
-      editRow.classList.add('hidden');
-      displayEl.classList.remove('hidden');
-      editBtn.classList.remove('hidden');
-      showStatus('✓ Path updated — reloading domain list…', 'success');
-      // Reload domain list to reflect new location
-      domainsTabInitialised = false;
-      loadDomainList();
+      if (!res.ok) throw new Error(data.error || 'Failed');
+      applyPath(data.domainsPath || newPath);
     } catch (err) {
       showStatus('✗ ' + err.message, 'error');
     } finally {
@@ -1068,20 +1108,19 @@ async function initKbPathPanel() {
     }
   });
 
-  copyBtn.addEventListener('click', async () => {
+  // ── Copy path ──────────────────────────────────────────────────────────────
+  if (copyBtn) copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(pathValue.textContent);
       const orig = copyBtn.textContent;
       copyBtn.textContent = 'Copied!';
       setTimeout(() => copyBtn.textContent = orig, 1500);
-    } catch {
-      copyBtn.textContent = 'Copy failed';
-    }
+    } catch { copyBtn.textContent = 'Copy failed'; }
   });
 
-  // Allow Enter key in input
-  pathInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveBtn.click();
+  // ── Keyboard shortcuts in the input ───────────────────────────────────────
+  if (pathInput) pathInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  saveBtn.click();
     if (e.key === 'Escape') cancelBtn.click();
   });
 }
@@ -1095,6 +1134,11 @@ document.querySelector('[data-tab="domains"]').addEventListener('click', () => {
     loadDomainList();
   }
 });
+
+// Domains is the first tab — initialize immediately
+initKbPathPanel();
+loadDomainList();
+domainsTabInitialised = true;
 
 async function loadDomainList() {
   const listEl = document.getElementById('domain-list');
