@@ -59,15 +59,15 @@ docs/               — user-facing documentation
 
 | Function | Purpose |
 |---|---|
-| `writePage(domain, relativePath, content)` | Normalise path → inject frontmatter → merge with existing → strip blank gaps → strip folder-prefix links → write → call syncSummaryEntities if summary |
-| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks |
-| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section |
+| `writePage(domain, relativePath, content)` | Normalise path → dedup passes A+B → inject frontmatter → merge with existing → strip blanks → dedup bullets → strip folder-prefix links → normalize variant links (5c) → write → call injectSummaryBacklinks if summary |
+| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks with the complete list |
+| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section; creates the section if it doesn't exist |
+| `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities |
 | `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing sections are injected (Key Facts, Related, Entities Mentioned, etc.) |
-| `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target for Related-style bullets |
+| `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
 | `normalizePath(relativePath)` | Redirects non-canonical folders → entities/ or concepts/ |
 | `injectFrontmatter(content, path, today)` | Extracts inline Tags/Type/Source → builds YAML frontmatter block |
-| `injectSummaryBacklinks` (Pass B) | Hyphen-normalised slug match: `talirezun` → resolves to `tali-rezun.md` |
 
 ---
 
@@ -86,20 +86,26 @@ POST /api/ingest
            Phase 1: outline → [{path, summary}]
            Phase 2: batched content (BATCH_SIZE=4 pages/call)
            Phase 3: index update
+      5.5 Deduplicate result.pages — multi-phase can return the same path in
+           multiple batches; keep last occurrence per path (Map dedup)
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
-           b. Hyphen-slug dedup Pass B — talirezun → tali-rezun.md
-           c. Title-prefix dedup Pass A — dr-tali-rezun → tali-rezun.md
+           b. Pass A: title-prefix strip — dr-tali-rezun.md → tali-rezun.md
+           c. Pass B: hyphen-normalised dedup — talirezun.md → tali-rezun.md
            d. injectFrontmatter()
            e. mergeWikiPage() if file exists
            f. stripBlanksInBulletSections()
-           g. Strip [[entities/...]] and [[concepts/...]] folder-prefix links
-           h. writeFile()
-           i. If summary page: injectSummaryBacklinks() (fires once per writePage call)
+           g. deduplicateBulletSections() — safety net for merge edge cases
+           h. Strip [[entities/...]] and [[concepts/...]] folder-prefix links
+           i. Step 5c: normalize [[variant]] links using Pass A+B logic
+              (e.g. [[dr-tali-rezun]] → [[tali-rezun]] in page content)
+           j. writeFile()
+           k. If summary page: injectSummaryBacklinks() (fires once per write)
       7. syncSummaryEntities() ← THE KEY POST-WRITE STEP
            Reads ingest's writtenPaths → injects ALL entity slugs into
-           summary's "Entities Mentioned" → re-fires injectSummaryBacklinks()
-           with the complete list → ALL entities get bidirectional backlinks
+           summary's "Entities Mentioned" → deduplicates → re-fires
+           injectSummaryBacklinks() with the complete list →
+           ALL entities get bidirectional backlinks
       8. writePage(index.md)
       9. appendLog()
 ```
@@ -113,13 +119,17 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Failure | Frequency | Code fix |
 |---|---|---|
 | "Entities Mentioned" lists 5–7 entities while 20–30 entity pages are written | Every ingest | `syncSummaryEntities()` in post-write step |
-| Entity slug hyphen variation: `talirezun` vs `tali-rezun` | Common | Pass B hyphen-normalised dedup in `writePage()` + `injectSummaryBacklinks()` |
-| Title prefix ghost files: `dr-tali-rezun.md` | Occasional | Pass A title-prefix strip + redirect in `writePage()` |
-| Folder-prefix links: `[[concepts/rag]]` instead of `[[rag]]` | Common | `writePage()` step 5g strips `entities/` and `concepts/` prefixes |
-| Summary truncated — missing "Entities Mentioned" section entirely | Occasional (large docs) | `syncSummaryEntities()` adds the section if missing; console.warn logged |
+| Entity slug hyphen variation: `talirezun` vs `tali-rezun` | Common | Pass B dedup in `writePage()` (filename) + Pass B in `injectSummaryBacklinks()` |
+| Title prefix ghost files: `dr-tali-rezun.md` | Occasional | Pass A strip + redirect in `writePage()` |
+| `[[dr-tali-rezun]]` written as a link in page content | Occasional | Step 5c in `writePage()` normalizes all variant links at write time |
+| Folder-prefix links: `[[concepts/rag]]` instead of `[[rag]]` | Common | `writePage()` step h strips `entities/` and `concepts/` prefixes |
+| Multi-phase returns same page path in multiple batches | Occasional | `result.pages` deduped in `ingest.js` before the write loop |
+| Duplicate bullets in sections (from multi-write edge cases) | Occasional | `deduplicateBulletSections()` safety net on every write |
+| Entity has no Related section — backlinks silently dropped | New entities | `injectBulletsIntoSection()` now creates the section if it doesn't exist |
+| Summary truncated — missing "Entities Mentioned" section entirely | Occasional (large docs) | `syncSummaryEntities()` adds the section if missing |
 | Blank lines between bullets in a section | Common | `stripBlanksInBulletSections()` runs on every write |
 | Semantic near-duplicates in Key Facts ("25 years" vs "30 years") | Common | NOT fixed — requires LLM or manual curation |
-| Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix yet |
+| Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix |
 
 ---
 
@@ -131,19 +141,31 @@ Run these after any ingest where results look wrong:
 # 1. Ghost author links (LLM uses "talirezun" or "dr-tali-rezun")
 grep -rl "\[\[talirezun\]\]\|\[\[dr-tali-rezun\]\]" domains/articles/wiki/
 
-# 2. Ghost non-prefixed summary links (should be [[summaries/foo]] not [[foo]])
-# (requires knowing the summary slug — check manually)
-
-# 3. Folder-prefix link violations
+# 2. Folder-prefix link violations
 grep -rl "\[\[concepts/\|\[\[entities/" domains/articles/wiki/ | grep -v index.md
 
-# 4. Blank-line gaps inside bullet sections
-python3 scripts/check-blanks.py   # (or run the inline python from session history)
+# 3. Duplicate bullets in any section
+python3 -c "
+import os, re
+wiki = 'domains/articles/wiki'
+for root, dirs, fnames in os.walk(wiki):
+    for f in fnames:
+        if not f.endswith('.md'): continue
+        path = os.path.join(root, f)
+        c = open(path).read()
+        if len(re.findall(r'^## Related\s*$', c, re.M)) > 1:
+            print('DUPLICATE RELATED:', path)
+"
 
-# 5. Duplicate [[link]] targets in Related sections
-# (dedup logic in injectBulletsIntoSection handles this at write time)
+# 4. Duplicate Related sections (created by buggy section injection)
+grep -rl "^## Related" domains/articles/wiki/ | xargs python3 -c "
+import sys, re
+for p in sys.argv[1:]:
+    c = open(p).read()
+    if len(re.findall(r'^## Related\s*\$', c, re.M)) > 1: print(p)
+" 2>/dev/null
 
-# 6. Run retroactive backlink repair if needed
+# 5. Run retroactive backlink repair if needed
 node scripts/inject-summary-backlinks.js --domain=articles
 # or all domains:
 node scripts/inject-summary-backlinks.js
@@ -151,7 +173,6 @@ node scripts/inject-summary-backlinks.js
 
 **Fix ghost links globally:**
 ```bash
-# Fix author slug variants across entire wiki
 find domains/articles/wiki -name "*.md" | xargs sed -i '' \
   's/\[\[talirezun\]\]/[[tali-rezun]]/g' \
   -e 's/\[\[dr-tali-rezun\]\]/[[tali-rezun]]/g'
@@ -207,7 +228,10 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `8f77d33` | injectSummaryBacklinks() added — bidirectional backlinks for all entities |
 | `c1b6567` | Hyphen-slug dedup Pass B + folder-prefix auto-cleanup + truncation warning |
 | `b56b2d3` | Hyphen-normalised resolution in injectSummaryBacklinks (talirezun → tali-rezun) |
-| current | syncSummaryEntities() — post-ingest reconciliation closes the entity completeness gap |
+| `f4cb825` | syncSummaryEntities() + CLAUDE.md dev guide |
+| `7589a15` | Step 5c: normalize [[variant]] links in page content at write time |
+| `132b769` | deduplicateBulletSections() safety net + result.pages dedup for multi-phase |
+| `b2fa124` | injectBulletsIntoSection creates missing section; multiline regex fix |
 
 ---
 
@@ -261,3 +285,4 @@ node scripts/bulk-reingest.js --domain=articles --delay=5000  # slower, for rate
 - **Conversations gitignored from app repo but synced via knowledge repo** — personal to each user's machine, not committed to source control.
 - **CLAUDE.md per domain** — each domain is a specialist, not a generalist. The schema shapes how the LLM categorises knowledge for that domain.
 - **syncSummaryEntities is idempotent** — safe to run multiple times; injectBulletsIntoSection deduplicates by link target.
+- **deduplicateBulletSections is always safe to run** — only removes bullets whose dedupKey already appeared earlier in the same section; never drops unique content.

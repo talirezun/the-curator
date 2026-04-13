@@ -154,16 +154,25 @@ src/brain/ingest.js
       │     System:  domain CLAUDE.md schema
       │     User:    date + index + source text (≤80 000 chars) + instructions
       │     Returns: { title, pages: [{path, content}], index }
+      ├─ 5.5 Deduplicate result.pages (multi-phase ingest can return the same
+      │     path in multiple batches; keep last occurrence per path)
       ├─ 6. Write each page → domains/<domain>/wiki/<path>
+      │     Each writePage() call runs a full post-processing pipeline:
+      │       Pass A: title-prefix strip (dr-tali-rezun → tali-rezun.md)
+      │       Pass B: hyphen-normalised dedup (talirezun → tali-rezun.md)
+      │       injectFrontmatter(), mergeWikiPage(), stripBlanksInBulletSections()
+      │       deduplicateBulletSections() — safety net for merge edge cases
+      │       folder-prefix link cleanup ([[entities/foo]] → [[foo]])
+      │       Step 5c: variant link normalization ([[dr-tali-rezun]] → [[tali-rezun]])
       │     For every summary page written, injectSummaryBacklinks() also fires:
-      │     reads "Entities Mentioned", injects [[summaries/<slug>]] into the
-      │     Related section of each referenced entity page (bidirectional graph)
+      │       reads "Entities Mentioned", injects [[summaries/<slug>]] into the
+      │       Related section of each referenced entity (creates section if missing)
       ├─ 7. Post-write reconciliation via syncSummaryEntities()
       │     The LLM reliably under-lists entities in "Entities Mentioned"
       │     (writes 5–7 while creating 20–30 entity pages). This step:
       │       a. Derives the full entity list from actual pagesWritten paths
       │       b. Injects all missing [[entity-slug]] bullets into the summary's
-      │          "Entities Mentioned" section (dedup-safe)
+      │          "Entities Mentioned" section (dedup-safe + deduplicateBulletSections)
       │       c. Re-fires injectSummaryBacklinks() with the complete list so
       │          every entity page receives [[summaries/<slug>]] — not just
       │          the few the LLM remembered to mention
@@ -278,9 +287,11 @@ Pure filesystem helpers. No LLM calls.
 | `listDomains()` | Names of all non-hidden subdirectories under `domains/` |
 | `readSchema(domain)` | Contents of `domains/<domain>/CLAUDE.md` |
 | `readWikiPages(domain)` | All `.md` files under `wiki/`, returned as `{path, content}[]` |
-| `writePage(domain, relativePath, content)` | Write a wiki page; runs `injectFrontmatter()`, merges with existing content, strips blank-line gaps, and calls `injectSummaryBacklinks()` for summary pages |
-| `injectSummaryBacklinks(summarySlug, summaryContent, wikiDir)` | After a summary is written, injects `[[summaries/<slug>]]` into the Related section of every entity listed under "Entities Mentioned"; deduplicates via `dedupKey()` so re-ingest never creates duplicates |
-| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: uses the ground-truth `pagesWritten` list (not the LLM's truncated "Entities Mentioned") to fill in all missing entity slugs in the summary, then re-fires `injectSummaryBacklinks()` so every entity page gets its backlink regardless of LLM compliance |
+| `writePage(domain, relativePath, content)` | Full write pipeline: dedup passes A+B on filename, `injectFrontmatter()`, `mergeWikiPage()`, `stripBlanksInBulletSections()`, `deduplicateBulletSections()`, folder-prefix cleanup, step 5c variant-link normalization, write to disk, then `injectSummaryBacklinks()` for summary pages |
+| `injectSummaryBacklinks(summarySlug, summaryContent, wikiDir)` | After a summary is written, injects `[[summaries/<slug>]]` into the Related section of every entity listed under "Entities Mentioned"; creates the section if it doesn't exist; deduplicates via `dedupKey()` |
+| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: uses the ground-truth `pagesWritten` list (not the LLM's truncated output) to fill in all missing entity slugs in the summary, then re-fires `injectSummaryBacklinks()` so every entity page gets its backlink regardless of LLM compliance |
+| `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all accumulating sections (Key Facts, Related, Entities Mentioned, etc.) using `dedupKey()`; runs after every write and after `syncSummaryEntities()` |
+| `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection; creates the section if it doesn't exist (multiline regex for existence check) |
 | `appendLog(domain, entry)` | Append a string to `log.md` |
 | `readIndex(domain)` | Contents of `index.md` |
 | `createDomain(slug, displayName, description, template)` | Scaffold full domain directory + auto-generate CLAUDE.md from template |
