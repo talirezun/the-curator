@@ -253,6 +253,16 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
   const title = titleMatch ? titleMatch[1].trim() : summarySlug;
 
   const entityBullets = extractBulletsFromSection(summaryContent, 'Entities Mentioned');
+  if (!entityBullets.length) {
+    // Summary is missing its Entities Mentioned section — the LLM produced a
+    // truncated page. Log a warning so the issue is visible in the server console.
+    console.warn(
+      `[injectSummaryBacklinks] WARNING: summaries/${summarySlug}.md has no ` +
+      `"Entities Mentioned" section — no entity backlinks were injected. ` +
+      `Consider re-ingesting the source or adding the section manually.`
+    );
+    return;
+  }
 
   for (const bullet of entityBullets) {
     const linkMatch = bullet.match(/\[\[([^\]]+)\]\]/);
@@ -370,16 +380,37 @@ export async function writePage(domain, relativePath, content) {
     return;
   }
 
-  // 3. For entity paths, strip title prefixes (dr-, mr-, prof-, etc.) and
-  //    redirect to the canonical file if it already exists — prevents the LLM
-  //    from creating "dr-tali-rezun.md" separately from "tali-rezun.md"
+  // 3. For entity paths, apply two deduplication passes so the LLM never
+  //    creates a variant file when a canonical one already exists.
+  //
+  //    Pass A — title prefix stripping: "dr-tali-rezun.md" → "tali-rezun.md"
+  //    Pass B — hyphen-normalised slug match: "talirezun.md" → "tali-rezun.md"
+  //             Strips all hyphens from both the incoming slug and every existing
+  //             entity filename; if they match, redirect to the existing file.
+  //             This handles any author/entity whose name the LLM hyphenates
+  //             differently on different ingests — not just tali-rezun.
   if (canonPath.startsWith('entities/')) {
-    const filename = canonPath.slice('entities/'.length);
+    const entitiesDir = path.join(wikiPath(domain), 'entities');
+    let filename = canonPath.slice('entities/'.length);
+
+    // Pass A: strip title prefix
     const stripped = filename.replace(TITLE_PREFIX_RE, '');
     if (stripped !== filename) {
-      const canonFile = path.join(wikiPath(domain), 'entities', stripped);
-      if (existsSync(canonFile)) canonPath = 'entities/' + stripped;
+      const canonFile = path.join(entitiesDir, stripped);
+      if (existsSync(canonFile)) { filename = stripped; canonPath = 'entities/' + stripped; }
     }
+
+    // Pass B: hyphen-normalised match against all existing entity files
+    const incomingNorm = filename.replace(/-/g, '').toLowerCase();
+    try {
+      const existing = await readdir(entitiesDir);
+      const match = existing.find(f =>
+        f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === incomingNorm
+      );
+      if (match && match !== filename) {
+        canonPath = 'entities/' + match;
+      }
+    } catch { /* entities dir may not exist yet on first ingest */ }
   }
 
   const processed = injectFrontmatter(content, canonPath, today);
@@ -404,6 +435,15 @@ export async function writePage(domain, relativePath, content) {
   //    emits two groups of bullets separated by a blank line. Remove those gaps
   //    so sections stay clean on both first-write and merge paths.
   if (!skipMerge) final = stripBlanksInBulletSections(final);
+
+  // 5b. Strip folder prefixes from [[wiki-links]] — the LLM sometimes writes
+  //     [[concepts/rag]], [[entities/tali-rezun]], or [[summaries/foo]] instead
+  //     of [[rag]], [[tali-rezun]], [[summaries/foo]].
+  //     Exception: [[summaries/...]] links are intentionally kept as-is because
+  //     they live in a separate folder and need the prefix for Obsidian routing.
+  if (!skipMerge) {
+    final = final.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
+  }
 
   await writeFile(fullPath, final, 'utf8');
 
