@@ -9,6 +9,7 @@ import {
   wikiPath,
   writePage,
   appendLog,
+  syncSummaryEntities,
 } from './files.js';
 
 async function extractText(filePath) {
@@ -475,6 +476,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   progress(90, `Writing ${result.pages.length} wiki pages to disk…`);
   for (const page of result.pages) {
     await writePage(domain, page.path, page.content);
+  }
+
+  // Post-write: reconcile the summary's "Entities Mentioned" with every entity
+  // page actually written this ingest. The LLM reliably under-lists entities in
+  // the summary (writes 5–7 while creating 20–30 entity pages), which breaks
+  // bidirectional graph connections. syncSummaryEntities() fills the gap
+  // automatically and re-fires injectSummaryBacklinks() with the full list.
+  progress(93, 'Syncing entity backlinks…');
+  const summaryPath = result.pages.find(p => p.path.startsWith('summaries/'))?.path;
+  const writtenPaths = result.pages.map(p => p.path);
+  if (summaryPath) {
+    await syncSummaryEntities(domain, summaryPath, writtenPaths);
   }
 
   // Write updated index

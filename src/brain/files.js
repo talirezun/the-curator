@@ -247,6 +247,76 @@ function stripBlanksInBulletSections(content) {
  * every entity knows which summaries reference it, not just the other way around.
  * Safe to call on re-ingest: dedupKey() prevents duplicate backlinks.
  */
+/**
+ * After writing all pages for an ingest, reconcile the summary's
+ * "Entities Mentioned" section with every entity page that was actually
+ * written during the ingest.
+ *
+ * WHY THIS EXISTS:
+ * The LLM consistently produces a truncated "Entities Mentioned" list —
+ * it might list 5–7 entities while the ingest actually writes 20–30 entity
+ * pages. This means most entity pages never receive a [[summaries/...]]
+ * backlink unless we repair this. This function closes that gap automatically
+ * after every ingest, for any domain and any text type.
+ *
+ * WHAT IT DOES:
+ * 1. Derives entity slugs from the written entity file paths
+ * 2. Reads the summary file
+ * 3. Injects any missing entity slugs as [[slug]] bullets under
+ *    "Entities Mentioned" (using existing dedup logic — safe to call twice)
+ * 4. Writes the updated summary back to disk
+ * 5. Re-runs injectSummaryBacklinks() so every entity page gets the
+ *    [[summaries/slug]] backlink it was missing
+ *
+ * @param {string} domain          - domain slug (e.g. "articles")
+ * @param {string} summaryPath     - relative path (e.g. "summaries/foo.md")
+ * @param {string[]} writtenPaths  - all paths returned by writePage() for this ingest
+ */
+export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
+  const wikiDir = wikiPath(domain);
+  const summaryFile = path.join(wikiDir, summaryPath);
+
+  let summaryContent;
+  try {
+    summaryContent = await readFile(summaryFile, 'utf8');
+  } catch {
+    console.warn(`[syncSummaryEntities] Could not read summary: ${summaryPath}`);
+    return;
+  }
+
+  // Build [[slug]] bullets from every entity path written this ingest
+  const entityBullets = writtenPaths
+    .filter(p => p.startsWith('entities/'))
+    .map(p => `- [[${path.basename(p, '.md')}]]`);
+
+  if (!entityBullets.length) return;
+
+  // Ensure the summary has an "Entities Mentioned" section to inject into.
+  // If it's missing entirely (fully truncated summary), add it before Notes or at end.
+  if (!/^## Entities Mentioned\s*$/m.test(summaryContent)) {
+    console.warn(`[syncSummaryEntities] Summary has no "Entities Mentioned" section — adding it.`);
+    // Insert before ## Notes if present, otherwise append
+    if (/^## Notes\s*$/m.test(summaryContent)) {
+      summaryContent = summaryContent.replace(/^## Notes\s*$/m, '## Entities Mentioned\n\n## Notes');
+    } else {
+      summaryContent = summaryContent.trimEnd() + '\n\n## Entities Mentioned\n';
+    }
+  }
+
+  // Inject missing entity bullets (dedup logic inside injectBulletsIntoSection)
+  const updated = injectBulletsIntoSection(summaryContent, 'Entities Mentioned', entityBullets);
+  const cleaned = stripBlanksInBulletSections(updated);
+
+  await writeFile(summaryFile, cleaned, 'utf8');
+
+  // Now re-run backlink injection with the complete Entities Mentioned list
+  const summarySlug = path.basename(summaryPath, '.md');
+  await injectSummaryBacklinks(summarySlug, cleaned, wikiDir);
+
+  const injected = entityBullets.length;
+  console.log(`[syncSummaryEntities] Synced ${injected} entity slugs into ${summaryPath} and propagated backlinks.`);
+}
+
 export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDir) {
   // Extract the summary title from the # heading for use in the backlink description
   const titleMatch = summaryContent.match(/^#\s+(.+)$/m);

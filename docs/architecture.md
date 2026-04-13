@@ -158,8 +158,17 @@ src/brain/ingest.js
       │     For every summary page written, injectSummaryBacklinks() also fires:
       │     reads "Entities Mentioned", injects [[summaries/<slug>]] into the
       │     Related section of each referenced entity page (bidirectional graph)
-      ├─ 7. Write updated index.md
-      └─ 8. Append timestamped entry to log.md
+      ├─ 7. Post-write reconciliation via syncSummaryEntities()
+      │     The LLM reliably under-lists entities in "Entities Mentioned"
+      │     (writes 5–7 while creating 20–30 entity pages). This step:
+      │       a. Derives the full entity list from actual pagesWritten paths
+      │       b. Injects all missing [[entity-slug]] bullets into the summary's
+      │          "Entities Mentioned" section (dedup-safe)
+      │       c. Re-fires injectSummaryBacklinks() with the complete list so
+      │          every entity page receives [[summaries/<slug>]] — not just
+      │          the few the LLM remembered to mention
+      ├─ 8. Write updated index.md
+      └─ 9. Append timestamped entry to log.md
 
 HTTP response → { success: true, title, pagesWritten: [...] }
 ```
@@ -271,6 +280,7 @@ Pure filesystem helpers. No LLM calls.
 | `readWikiPages(domain)` | All `.md` files under `wiki/`, returned as `{path, content}[]` |
 | `writePage(domain, relativePath, content)` | Write a wiki page; runs `injectFrontmatter()`, merges with existing content, strips blank-line gaps, and calls `injectSummaryBacklinks()` for summary pages |
 | `injectSummaryBacklinks(summarySlug, summaryContent, wikiDir)` | After a summary is written, injects `[[summaries/<slug>]]` into the Related section of every entity listed under "Entities Mentioned"; deduplicates via `dedupKey()` so re-ingest never creates duplicates |
+| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: uses the ground-truth `pagesWritten` list (not the LLM's truncated "Entities Mentioned") to fill in all missing entity slugs in the summary, then re-fires `injectSummaryBacklinks()` so every entity page gets its backlink regardless of LLM compliance |
 | `appendLog(domain, entry)` | Append a string to `log.md` |
 | `readIndex(domain)` | Contents of `index.md` |
 | `createDomain(slug, displayName, description, template)` | Scaffold full domain directory + auto-generate CLAUDE.md from template |
