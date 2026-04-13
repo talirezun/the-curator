@@ -90,6 +90,7 @@ POST /api/ingest
            multiple batches; keep last occurrence per path (Map dedup)
       6. writePage() for each page:
            a. normalizePath() — canonical folder enforcement
+           a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md
            b. Pass A: title-prefix strip — dr-tali-rezun.md → tali-rezun.md
            c. Pass B: hyphen-normalised dedup — talirezun.md → tali-rezun.md
            d. injectFrontmatter()
@@ -128,6 +129,7 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Entity has no Related section — backlinks silently dropped | New entities | `injectBulletsIntoSection()` now creates the section if it doesn't exist |
 | Summary truncated — missing "Entities Mentioned" section entirely | Occasional (large docs) | `syncSummaryEntities()` adds the section if missing |
 | Blank lines between bullets in a section | Common | `stripBlanksInBulletSections()` runs on every write |
+| Underscore filename from PDF name: `two_worlds_of_code.md` | Occasional | Step 1a in `writePage()` converts `_` → `-` in the filename |
 | Semantic near-duplicates in Key Facts ("25 years" vs "30 years") | Common | NOT fixed — requires LLM or manual curation |
 | Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix |
 
@@ -232,6 +234,7 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `7589a15` | Step 5c: normalize [[variant]] links in page content at write time |
 | `132b769` | deduplicateBulletSections() safety net + result.pages dedup for multi-phase |
 | `b2fa124` | injectBulletsIntoSection creates missing section; multiline regex fix |
+| (next) | Underscore → hyphen slug normalization in writePage() step 1a |
 
 ---
 

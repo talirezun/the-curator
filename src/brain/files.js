@@ -501,6 +501,15 @@ export async function writePage(domain, relativePath, content) {
   // 1. Redirect mis-filed paths to canonical folders
   let canonPath = normalizePath(relativePath);
 
+  // 1a. Normalise underscores → hyphens in the filename portion.
+  //     The LLM sometimes mirrors the original PDF filename (e.g. two_worlds_of_code.pdf
+  //     → two_worlds_of_code.md). Wiki convention is lowercase-hyphenated slugs.
+  {
+    const dir = path.dirname(canonPath);
+    const base = path.basename(canonPath).replace(/_/g, '-');
+    canonPath = dir === '.' ? base : `${dir}/${base}`;
+  }
+
   // 2. Guard: skip paths with no valid .md filename (prevents EISDIR crash
   //    when the LLM returns just a folder name like "entities/")
   const basename = path.basename(canonPath);
