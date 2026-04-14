@@ -7,14 +7,6 @@ fetch('/api/version')
   })
   .catch(() => {}); // non-critical — silently skip if unavailable
 
-// ── Heartbeat — tells the server the browser tab is still open ────────────────
-// Server shuts down automatically if no heartbeat for 90 seconds (tab closed).
-setInterval(() => {
-  fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
-}, 30000);
-// Send initial heartbeat immediately
-fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
-
 // ── Stop button (stops the server) ────────────────────────────────────────────
 document.getElementById('stop-btn').addEventListener('click', async () => {
   try {
