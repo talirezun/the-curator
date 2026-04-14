@@ -22,6 +22,7 @@ Browser (http://localhost:3333)
 │  /api/domains  /api/ingest          │
 │  /api/chat     /api/wiki/:domain    │
 │  /api/sync     /api/config          │
+│  /api/restart                       │
 └───────────────┬─────────────────────┘
                 │
         ┌───────┴──────────┐
@@ -73,7 +74,7 @@ Obsidian (a separate desktop app) reads the same `domains/` folder directly — 
 ```
 the-curator/
 ├── src/
-│   ├── server.js               Express entry point (port 3333)
+│   ├── server.js               Express entry point (port 3333, auto-opens browser)
 │   ├── routes/
 │   │   ├── domains.js          GET/POST/PUT/DELETE /api/domains[/:domain]
 │   │   ├── ingest.js           POST /api/ingest
@@ -110,7 +111,8 @@ the-curator/
 │   ├── fix-wiki-structure.js   One-time migration: moves non-canonical folders → entities/
 │   ├── bulk-reingest.js        Re-ingests all raw files in a domain to rebuild the wiki
 │   ├── inject-summary-backlinks.js  Retroactively injects [[summaries/...]] backlinks into all entity pages
-│   └── repair-wiki.js         Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
+│   ├── repair-wiki.js         Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
+│   └── build-app.sh           Rebuild The Curator.app from the AppleScript template
 ├── package.json
 ├── .env                        API key — developer fallback (never committed)
 ├── .curator-config.json        API keys + settings from UI (never committed)
@@ -362,7 +364,8 @@ POST /api/config/pick-folder   → macOS native folder picker (osascript)
 GET  /api/config/api-keys      → masked keys + active provider info
 POST /api/config/api-keys      → save API keys (partial update)
 GET  /api/config/update-check  → compare local vs GitHub version
-POST /api/config/update        → git pull + npm install + auto-restart
+POST /api/config/update        → git pull + npm install + rebuild .app (build-app.sh)
+POST /api/restart               → spawn new server process, exit current one
 ```
 
 ---

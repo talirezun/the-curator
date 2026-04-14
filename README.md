@@ -70,7 +70,7 @@ This is the shift from a file cabinet to a neural network.
   auto-generate the right schema
 - **Settings tab** — manage API keys, view version info, and check for updates from within the app
 - **First-run onboarding wizard** — guided 3-step setup (API keys, create a domain, sync) on first launch
-- **Auto-update** — check for updates in Settings; the app pulls the latest version and restarts automatically
+- **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
 - Three built-in domains: AI/Tech · Business/Finance · Personal Growth

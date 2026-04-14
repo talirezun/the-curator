@@ -42,6 +42,7 @@ scripts/
   fix-wiki-structure.js         — one-time migration from non-canonical folders
   bulk-reingest.js              — re-ingest all raw files in a domain
   repair-wiki.js                — comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
+  build-app.sh                  — rebuild The Curator.app from the AppleScript template
 domains/
   <domain>/
     CLAUDE.md         — domain schema (system prompt for LLM)
@@ -262,6 +263,7 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `181157f` | Underscore → hyphen slug normalization in writePage() step 1a |
 | `f9665b3` | Cross-folder dedup (3b), expanded step 5c (Pass C prefix-tolerant), backlinks cover concepts/, writePage returns canonPath, ingest uses canonical paths for sync |
 | `1f11c25` | Settings tab, onboarding wizard, auto-update, stop/restart fix, .curator-config.json |
+| `v2.1.0` | Remove Stop button + /api/shutdown; server runs until quit; update rebuilds .app; build-app.sh |
 
 ---
 
@@ -313,6 +315,9 @@ node scripts/bulk-reingest.js --domain=articles --delay=5000  # slower, for rate
 # Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
 node scripts/repair-wiki.js --domain=articles
 node scripts/repair-wiki.js  # all domains
+
+# Rebuild The Curator.app (called automatically by update, or run manually)
+bash scripts/build-app.sh
 ```
 
 ---
@@ -328,5 +333,9 @@ node scripts/repair-wiki.js  # all domains
 - **deduplicateBulletSections is always safe to run** — only removes bullets whose dedupKey already appeared earlier in the same section; never drops unique content.
 - **API keys UI-first** — `.curator-config.json` (set via Settings tab / onboarding wizard) takes priority over `.env`. The `.env` file remains as a developer fallback.
 - **install.sh auto-provisions** — detects and installs Node.js (via Homebrew or nodejs.org .pkg) and git (via Xcode CLI tools); no longer asks for API key during install (onboarding wizard handles it); auto-opens the app on completion.
-- **Auto-update via Settings** — compares local `package.json` version with GitHub's `main` branch; runs `git pull` + `npm install` + `process.exit(0)`; AppleScript's `on reopen` handler restarts the server cleanly.
+- **No Stop button** — removed entirely because AppleScript's `on reopen` handler is broken on modern macOS and caused unrecoverable crashes. Closing the browser tab leaves the server running in the background (uses ~0 CPU). Clicking the Dock icon re-opens the browser if the server is running, or starts the server if it is not. To fully quit: right-click the Dock icon → Quit.
+- **No /api/shutdown endpoint** — the server runs until the process is explicitly killed (Dock → Quit, or terminal Ctrl+C). No heartbeat or auto-shutdown.
+- **Auto-update via Settings** — compares local `package.json` version with GitHub's `main` branch; runs `git pull` + `npm install` + `bash scripts/build-app.sh` (rebuilds the .app); returns success; frontend then calls `/api/restart` which spawns a new process and exits the old one. Browser auto-reloads.
+- **Server auto-opens browser** — `exec('open http://localhost:3333')` runs on startup.
 - **Onboarding wizard** — 3-step modal on first run (API keys → create domain → sync setup); appears when no API keys are configured in either `.curator-config.json` or `.env`.
+- **Version:** 2.1.0

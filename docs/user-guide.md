@@ -165,7 +165,9 @@ node src/server.js
 
 Then open **http://localhost:3333** in your browser.
 
-> **Tip:** The Dock app handles starting and stopping the server for you. If you use the terminal method instead, keep the terminal window open while using the app. Press `Ctrl + C` to stop the server.
+> **Closing the tab does not stop the server.** The server continues running in the background using virtually no CPU. This is normal. Click the Dock icon again to reopen the browser. If you use the terminal method instead, keep the terminal window open while using the app. Press `Ctrl + C` to stop the server.
+
+> **To fully quit the app:** right-click **The Curator** icon in the Dock and choose **Quit**. This is standard macOS behavior — the same way you quit any other app.
 
 ---
 
@@ -687,7 +689,7 @@ The active provider switches automatically based on which keys are configured (G
 
 ### Version and updates
 
-The Settings tab displays the current app version. Click **Check for Updates** to compare your version against the latest release on GitHub. If an update is available, click **Update Now** — the app pulls the latest code, reinstalls dependencies, and restarts automatically.
+The Settings tab displays the current app version. Click **Check for Updates** to compare your version against the latest release on GitHub. If an update is available, click **Update Now** — the app pulls the latest code, reinstalls dependencies, rebuilds the Dock app, and restarts automatically. The browser reloads on its own.
 
 ### App info
 
