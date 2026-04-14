@@ -201,7 +201,18 @@ export async function push() {
   }
 
   await git('push -u origin main', { timeout: 120000 });
-  return { pushed: true, changesCount: changesCount || aheadCount };
+
+  // Return meaningful count: uncommitted files staged + any files in commits ahead of remote
+  let filesChanged = changesCount;
+  if (!filesChanged && aheadCount > 0) {
+    try {
+      const { stdout: diffStat } = await git('diff --stat --name-only origin/main~1..origin/main');
+      filesChanged = diffStat.split('\n').filter(Boolean).length;
+    } catch {
+      filesChanged = aheadCount;  // Fallback to commit count
+    }
+  }
+  return { pushed: true, changesCount: filesChanged || aheadCount };
 }
 
 export async function pull() {

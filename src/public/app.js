@@ -637,10 +637,14 @@ document.getElementById('sync-both-btn').addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
-    const pushMsg = data.pushResult?.pushed
-      ? `Pushed ${data.pushResult.changesCount} change${data.pushResult.changesCount !== 1 ? 's' : ''}.`
-      : 'Nothing new to push.';
-    showStatus(statusEl, 'success', `✓ Sync complete. ${pushMsg}`);
+    const parts = [];
+    if (data.pullResult?.pulled) parts.push('Pulled latest from GitHub.');
+    if (data.pushResult?.pushed) {
+      const n = data.pushResult.changesCount;
+      parts.push(`Pushed ${n} file${n !== 1 ? 's' : ''} to GitHub.`);
+    }
+    if (!parts.length) parts.push('Everything is up to date.');
+    showStatus(statusEl, 'success', `✓ Sync complete. ${parts.join(' ')}`);
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
   } catch (err) {
