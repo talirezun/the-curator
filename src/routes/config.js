@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { existsSync } from 'fs';
-import { getConfig, setDomainsDir } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys } from '../brain/config.js';
+import { getProviderInfo } from '../brain/llm.js';
 
 const router = Router();
 
@@ -56,6 +57,99 @@ router.post('/pick-folder', async (_req, res) => {
     } else {
       res.status(500).json({ error: err.message });
     }
+  }
+});
+
+// ── API Keys ────────────────────────────────────────────────────────────────
+
+/** Mask an API key: show only last 4 chars */
+function maskKey(key) {
+  if (!key || key.length < 8) return key ? '••••' : '';
+  return '••••••••' + key.slice(-4);
+}
+
+/** GET /api/config/api-keys — returns masked keys + active provider info */
+router.get('/api-keys', (_req, res) => {
+  const keys = getApiKeys();
+  let provider = null;
+  try {
+    provider = getProviderInfo();
+  } catch { /* no key configured yet */ }
+
+  res.json({
+    geminiApiKey:    maskKey(keys.geminiApiKey),
+    anthropicApiKey: maskKey(keys.anthropicApiKey),
+    hasGeminiKey:    !!keys.geminiApiKey,
+    hasAnthropicKey: !!keys.anthropicApiKey,
+    activeProvider:  provider?.provider || null,
+    activeModel:     provider?.model || null,
+  });
+});
+
+/** POST /api/config/api-keys — save API keys (partial update) */
+router.post('/api-keys', (req, res) => {
+  const { geminiApiKey, anthropicApiKey } = req.body;
+
+  // Only save non-empty values (empty string = clear the key)
+  const update = {};
+  if (geminiApiKey !== undefined)    update.geminiApiKey    = geminiApiKey.trim();
+  if (anthropicApiKey !== undefined) update.anthropicApiKey = anthropicApiKey.trim();
+
+  try {
+    setApiKeys(update);
+    // Return updated provider info
+    let provider = null;
+    try { provider = getProviderInfo(); } catch {}
+    res.json({
+      ok: true,
+      activeProvider: provider?.provider || null,
+      activeModel:    provider?.model || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Update Check (Phase 5 placeholder) ──────────────────────────────────────
+
+router.get('/update-check', async (_req, res) => {
+  try {
+    const { readFileSync } = await import('fs');
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
+    const current = pkg.version;
+
+    // Fetch remote version from GitHub
+    const response = await fetch(
+      'https://raw.githubusercontent.com/talirezun/the-curator/main/package.json'
+    );
+    if (!response.ok) throw new Error('Could not reach GitHub');
+    const remote = await response.json();
+    const latest = remote.version;
+
+    res.json({ current, latest, updateAvailable: latest !== current });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/update', async (_req, res) => {
+  try {
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    const { fileURLToPath } = await import('url');
+    const path = await import('path');
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+    await execAsync('git pull origin main', { cwd: root, timeout: 30000 });
+    await execAsync('npm install --silent --no-audit --no-fund', { cwd: root, timeout: 60000 });
+
+    res.json({ ok: true, restarting: true });
+
+    // Exit after response is flushed — AppleScript's on reopen will restart
+    setTimeout(() => process.exit(0), 500);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

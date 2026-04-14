@@ -1,9 +1,10 @@
 /**
  * LLM abstraction layer — supports Anthropic Claude and Google Gemini.
  *
- * Provider selection (automatic, based on which key is set in .env):
- *   GEMINI_API_KEY      → Google Gemini  (default model: gemini-2.5-flash-lite)
- *   ANTHROPIC_API_KEY   → Anthropic Claude (default model: claude-sonnet-4-6)
+ * Provider selection (automatic):
+ *   1. .curator-config.json keys (set via Settings UI)
+ *   2. .env file keys (developer fallback)
+ *   Gemini takes priority if both providers have keys.
  *
  * Optional override:
  *   LLM_MODEL=<model-id>   override the default model for whichever provider is active
@@ -11,6 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getEffectiveKey } from './config.js';
 
 const DEFAULTS = {
   gemini: 'gemini-2.5-flash-lite',
@@ -18,20 +20,20 @@ const DEFAULTS = {
 };
 
 export function getProviderInfo() {
-  if (process.env.GEMINI_API_KEY) {
+  if (getEffectiveKey('gemini')) {
     return {
       provider: 'gemini',
       model: process.env.LLM_MODEL || DEFAULTS.gemini,
     };
   }
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (getEffectiveKey('anthropic')) {
     return {
       provider: 'anthropic',
       model: process.env.LLM_MODEL || DEFAULTS.anthropic,
     };
   }
   throw new Error(
-    'No LLM API key found. Set GEMINI_API_KEY or ANTHROPIC_API_KEY in your .env file.'
+    'No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'
   );
 }
 
@@ -128,7 +130,7 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat) {
 
   // ── Google Gemini ────────────────────────────────────────────────────────
   if (provider === 'gemini') {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const genAI = new GoogleGenerativeAI(getEffectiveKey('gemini'));
     const geminiModel = genAI.getGenerativeModel({
       model,
       systemInstruction: systemPrompt,
@@ -147,7 +149,7 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat) {
   }
 
   // ── Anthropic Claude ─────────────────────────────────────────────────────
-  const client = new Anthropic();
+  const client = new Anthropic({ apiKey: getEffectiveKey('anthropic') });
   const message = await client.messages.create({
     model,
     max_tokens: maxTokens,

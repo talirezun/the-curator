@@ -39,11 +39,14 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Sync
         </button>
+        <button class="tab-btn" data-tab="settings">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
+        </button>
       </nav>
       <span id="app-version" class="app-version" title="The Curator version"></span>
-      <button id="stop-btn" class="btn stop" title="Stop the server">
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-        Stop
+      <button id="stop-btn" class="btn stop" title="Stop App">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
       </button>
     </header>
 
@@ -501,6 +504,161 @@
         <div id="nd-status" class="status hidden"></div>
       </div>
     </section>
+
+    <!-- SETTINGS TAB -->
+    <section id="tab-settings" class="tab hidden">
+      <h2>Settings</h2>
+
+      <!-- API Keys -->
+      <div class="settings-section">
+        <h3>API Keys</h3>
+        <p class="hint">Add at least one API key to use The Curator. We recommend <strong>Google Gemini</strong> for its low cost.</p>
+        <div id="settings-provider-badge" class="provider-badge hidden">
+          <span class="provider-dot"></span>
+          <span id="settings-provider-text"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-gemini-key">Google Gemini API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="settings-gemini-key" placeholder="AIza..." autocomplete="off" spellcheck="false" />
+            <button type="button" class="toggle-vis" data-target="settings-gemini-key" title="Show/hide">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <span class="help-text">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></span>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-anthropic-key">Anthropic API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="settings-anthropic-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+            <button type="button" class="toggle-vis" data-target="settings-anthropic-key" title="Show/hide">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <span class="help-text">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a></span>
+        </div>
+
+        <button id="settings-save-keys" class="btn primary pill">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>
+          Save API Keys
+        </button>
+        <div id="settings-keys-status" class="status hidden"></div>
+      </div>
+
+      <!-- Knowledge Base -->
+      <div class="settings-section">
+        <h3>Knowledge Base Location</h3>
+        <div class="settings-path-row">
+          <code id="settings-kb-path" class="settings-path-display">Loading...</code>
+          <button id="settings-change-folder" class="btn btn-sm">Change Folder</button>
+        </div>
+      </div>
+
+      <!-- App -->
+      <div class="settings-section">
+        <h3>App</h3>
+        <div class="settings-app-row">
+          <div class="settings-app-info">
+            <span>The Curator</span>
+            <span id="settings-version" class="app-version"></span>
+          </div>
+          <div class="settings-app-actions">
+            <button id="settings-update-btn" class="btn btn-sm">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Check for Updates
+            </button>
+          </div>
+        </div>
+        <div id="settings-update-status" class="status hidden"></div>
+      </div>
+    </section>
+
+    <!-- ONBOARDING WIZARD -->
+    <div id="onboarding-wizard" class="onboarding-overlay hidden">
+      <div class="onboarding-card">
+        <div class="onboarding-header">
+          <span class="logo-icon" style="font-size:32px">🧠</span>
+          <h2>Welcome to The Curator</h2>
+          <p class="hint">Let's get you set up in a few quick steps.</p>
+        </div>
+
+        <div class="onboarding-progress">
+          <div class="ob-step active" data-step="1"><span>1</span> API Key</div>
+          <div class="ob-step-line"></div>
+          <div class="ob-step" data-step="2"><span>2</span> Domain</div>
+          <div class="ob-step-line"></div>
+          <div class="ob-step" data-step="3"><span>3</span> Sync</div>
+        </div>
+
+        <!-- Step 1: API Key -->
+        <div id="ob-step-1" class="ob-panel">
+          <h3>Add an API Key</h3>
+          <p class="hint">You need at least one key. We recommend Google Gemini for its low cost and high quality.</p>
+          <div class="form-group">
+            <label for="ob-gemini-key">Google Gemini API Key</label>
+            <div class="input-with-toggle">
+              <input type="password" id="ob-gemini-key" placeholder="AIza..." autocomplete="off" spellcheck="false" />
+              <button type="button" class="toggle-vis" data-target="ob-gemini-key" title="Show/hide">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <span class="help-text"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Get a free Gemini API key</a></span>
+          </div>
+          <div class="form-group">
+            <label for="ob-anthropic-key">Anthropic API Key <span class="hint">(optional)</span></label>
+            <div class="input-with-toggle">
+              <input type="password" id="ob-anthropic-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+              <button type="button" class="toggle-vis" data-target="ob-anthropic-key" title="Show/hide">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="ob-step1-status" class="status hidden"></div>
+          <button id="ob-step1-next" class="btn primary pill" disabled>Continue</button>
+        </div>
+
+        <!-- Step 2: Domain -->
+        <div id="ob-step-2" class="ob-panel hidden">
+          <h3>Create Your First Domain</h3>
+          <p class="hint">A domain is a topic area for your knowledge. You can always create more later.</p>
+          <div class="form-group">
+            <label for="ob-domain-name">Domain Name</label>
+            <input type="text" id="ob-domain-name" placeholder="e.g. AI Research, Business Strategy..." />
+          </div>
+          <div class="form-group">
+            <label>Template</label>
+            <div class="ob-templates">
+              <button class="ob-template-btn active" data-template="tech">Tech / AI</button>
+              <button class="ob-template-btn" data-template="business">Business</button>
+              <button class="ob-template-btn" data-template="personal">Personal</button>
+              <button class="ob-template-btn" data-template="generic">Generic</button>
+            </div>
+          </div>
+          <div id="ob-step2-status" class="status hidden"></div>
+          <div class="ob-actions">
+            <button id="ob-step2-skip" class="btn">Skip</button>
+            <button id="ob-step2-next" class="btn primary pill">Create & Continue</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Sync -->
+        <div id="ob-step-3" class="ob-panel hidden">
+          <h3>Sync Your Knowledge</h3>
+          <p class="hint">Back up and sync your wiki across computers using a private GitHub repository. You can set this up anytime from the Sync tab.</p>
+          <div class="ob-actions">
+            <button id="ob-step3-sync" class="btn">Set Up Sync</button>
+            <button id="ob-step3-done" class="btn primary pill">Start Using The Curator</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GitHub Link -->
+    <a href="https://github.com/talirezun/the-curator" target="_blank" rel="noopener" class="github-link" title="View on GitHub">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+    </a>
   </div>
 
   <script src="app.js" type="module"></script>

@@ -50,3 +50,37 @@ export function getConfig() {
     domainsPathSource: source,
   };
 }
+
+// ── API Keys ────────────────────────────────────────────────────────────────
+
+/** Read API keys from .curator-config.json (not .env). */
+export function getApiKeys() {
+  const cfg = readRaw();
+  return {
+    geminiApiKey:    cfg.geminiApiKey    || '',
+    anthropicApiKey: cfg.anthropicApiKey || '',
+  };
+}
+
+/** Save API keys to .curator-config.json. Partial update — only overwrites provided keys. */
+export function setApiKeys({ geminiApiKey, anthropicApiKey }) {
+  const cfg = readRaw();
+  if (geminiApiKey !== undefined)    cfg.geminiApiKey    = geminiApiKey;
+  if (anthropicApiKey !== undefined) cfg.anthropicApiKey = anthropicApiKey;
+  writeRaw(cfg);
+}
+
+/**
+ * Returns the effective API key for a provider.
+ * Priority: .curator-config.json → process.env → null
+ */
+export function getEffectiveKey(provider) {
+  const keys = getApiKeys();
+  if (provider === 'gemini') {
+    return keys.geminiApiKey || process.env.GEMINI_API_KEY || null;
+  }
+  if (provider === 'anthropic') {
+    return keys.anthropicApiKey || process.env.ANTHROPIC_API_KEY || null;
+  }
+  return null;
+}

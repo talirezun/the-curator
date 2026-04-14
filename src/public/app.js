@@ -1453,3 +1453,269 @@ ndCreateBtn.addEventListener('click', async () => {
     ndCreateBtn.disabled = false;
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SETTINGS TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+let settingsInitialised = false;
+
+document.querySelector('[data-tab="settings"]')?.addEventListener('click', () => {
+  if (!settingsInitialised) {
+    settingsInitialised = true;
+    initSettings();
+  }
+});
+
+async function initSettings() {
+  // Load API keys
+  await loadApiKeyStatus();
+  // Load KB path
+  try {
+    const r = await fetch('/api/config');
+    const cfg = await r.json();
+    document.getElementById('settings-kb-path').textContent = cfg.domainsPath || '(default)';
+  } catch {}
+  // Load version
+  try {
+    const r = await fetch('/api/version');
+    const { version } = await r.json();
+    document.getElementById('settings-version').textContent = `v${version}`;
+  } catch {}
+}
+
+async function loadApiKeyStatus() {
+  try {
+    const r = await fetch('/api/config/api-keys');
+    const data = await r.json();
+    const geminiInput = document.getElementById('settings-gemini-key');
+    const anthropicInput = document.getElementById('settings-anthropic-key');
+    if (geminiInput)   geminiInput.placeholder = data.hasGeminiKey ? data.geminiApiKey : 'AIza...';
+    if (anthropicInput) anthropicInput.placeholder = data.hasAnthropicKey ? data.anthropicApiKey : 'sk-ant-...';
+    // Clear actual values — only show placeholders with masked keys
+    if (geminiInput) geminiInput.value = '';
+    if (anthropicInput) anthropicInput.value = '';
+
+    const badge = document.getElementById('settings-provider-badge');
+    const text = document.getElementById('settings-provider-text');
+    if (data.activeProvider) {
+      const label = data.activeProvider === 'gemini' ? 'Gemini' : 'Anthropic';
+      text.textContent = `Active: ${label} — ${data.activeModel}`;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  } catch {}
+}
+
+// Save API keys
+document.getElementById('settings-save-keys')?.addEventListener('click', async () => {
+  const btn = document.getElementById('settings-save-keys');
+  const status = document.getElementById('settings-keys-status');
+  const gemini = document.getElementById('settings-gemini-key').value.trim();
+  const anthropic = document.getElementById('settings-anthropic-key').value.trim();
+
+  if (!gemini && !anthropic) {
+    showStatus(status, 'error', 'Enter at least one API key.');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const body = {};
+    if (gemini)    body.geminiApiKey    = gemini;
+    if (anthropic) body.anthropicApiKey = anthropic;
+
+    const r = await fetch('/api/config/api-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+
+    showStatus(status, 'success', '✓ API keys saved.');
+    await loadApiKeyStatus();
+  } catch (err) {
+    showStatus(status, 'error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Show/hide toggle for password fields (works for both Settings and Onboarding)
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.toggle-vis');
+  if (!btn) return;
+  const targetId = btn.dataset.target;
+  const input = document.getElementById(targetId);
+  if (input) {
+    input.type = input.type === 'password' ? 'text' : 'password';
+  }
+});
+
+// Change folder button
+document.getElementById('settings-change-folder')?.addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/config/pick-folder', { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) {
+      document.getElementById('settings-kb-path').textContent = data.path;
+      await Promise.all([loadDomains(), loadChatDomains()]);
+    }
+  } catch {}
+});
+
+// Check for updates
+document.getElementById('settings-update-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('settings-update-btn');
+  const status = document.getElementById('settings-update-status');
+  btn.disabled = true;
+  showStatus(status, 'info', 'Checking for updates...');
+
+  try {
+    const r = await fetch('/api/config/update-check');
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+
+    if (data.updateAvailable) {
+      status.innerHTML = `
+        <span style="color:var(--warning)">Update available: v${data.current} → v${data.latest}</span>
+        <button id="settings-do-update" class="btn primary pill" style="margin-left:12px;font-size:12px;padding:4px 14px">
+          Update Now
+        </button>`;
+      status.className = 'status';
+      document.getElementById('settings-do-update')?.addEventListener('click', doUpdate);
+    } else {
+      showStatus(status, 'success', `✓ You're up to date (v${data.current})`);
+    }
+  } catch (err) {
+    showStatus(status, 'error', `Update check failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+async function doUpdate() {
+  const status = document.getElementById('settings-update-status');
+  showStatus(status, 'info', 'Updating... this may take a moment.');
+  try {
+    await fetch('/api/config/update', { method: 'POST' });
+  } catch {}
+  // Server will restart — show the stopped screen and poll for restart
+  document.getElementById('stop-btn').click();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ONBOARDING WIZARD
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function checkFirstRun() {
+  try {
+    const r = await fetch('/api/config/api-keys');
+    const keys = await r.json();
+    if (keys.hasGeminiKey || keys.hasAnthropicKey) return; // already configured
+    // Show wizard
+    document.getElementById('onboarding-wizard')?.classList.remove('hidden');
+  } catch {}
+}
+
+// Step 1 — API keys
+document.getElementById('ob-gemini-key')?.addEventListener('input', updateOBStep1);
+document.getElementById('ob-anthropic-key')?.addEventListener('input', updateOBStep1);
+
+function updateOBStep1() {
+  const g = document.getElementById('ob-gemini-key')?.value.trim();
+  const a = document.getElementById('ob-anthropic-key')?.value.trim();
+  const btn = document.getElementById('ob-step1-next');
+  if (btn) btn.disabled = !(g || a);
+}
+
+document.getElementById('ob-step1-next')?.addEventListener('click', async () => {
+  const btn = document.getElementById('ob-step1-next');
+  const status = document.getElementById('ob-step1-status');
+  const gemini = document.getElementById('ob-gemini-key').value.trim();
+  const anthropic = document.getElementById('ob-anthropic-key').value.trim();
+  btn.disabled = true;
+
+  try {
+    const body = {};
+    if (gemini)    body.geminiApiKey    = gemini;
+    if (anthropic) body.anthropicApiKey = anthropic;
+    const r = await fetch('/api/config/api-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+
+    // Advance to step 2
+    document.getElementById('ob-step-1').classList.add('hidden');
+    document.getElementById('ob-step-2').classList.remove('hidden');
+    document.querySelector('.ob-step[data-step="1"]').classList.remove('active');
+    document.querySelector('.ob-step[data-step="1"]').classList.add('done');
+    document.querySelector('.ob-step[data-step="2"]').classList.add('active');
+  } catch (err) {
+    showStatus(status, 'error', err.message);
+    btn.disabled = false;
+  }
+});
+
+// Step 2 — Domain template picker
+document.querySelectorAll('.ob-template-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.ob-template-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+
+document.getElementById('ob-step2-skip')?.addEventListener('click', () => obGoToStep3());
+document.getElementById('ob-step2-next')?.addEventListener('click', async () => {
+  const name = document.getElementById('ob-domain-name').value.trim();
+  const status = document.getElementById('ob-step2-status');
+  if (!name) {
+    showStatus(status, 'error', 'Enter a domain name.');
+    return;
+  }
+  const template = document.querySelector('.ob-template-btn.active')?.dataset.template || 'generic';
+  try {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const r = await fetch('/api/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, displayName: name, description: '', template }),
+    });
+    if (!r.ok) { const d = await r.json(); throw new Error(d.error); }
+    obGoToStep3();
+  } catch (err) {
+    showStatus(status, 'error', err.message);
+  }
+});
+
+function obGoToStep3() {
+  document.getElementById('ob-step-2').classList.add('hidden');
+  document.getElementById('ob-step-3').classList.remove('hidden');
+  document.querySelector('.ob-step[data-step="2"]').classList.remove('active');
+  document.querySelector('.ob-step[data-step="2"]').classList.add('done');
+  document.querySelector('.ob-step[data-step="3"]').classList.add('active');
+}
+
+document.getElementById('ob-step3-sync')?.addEventListener('click', () => {
+  closeOnboarding();
+  document.querySelector('[data-tab="sync"]')?.click();
+});
+
+document.getElementById('ob-step3-done')?.addEventListener('click', () => {
+  closeOnboarding();
+});
+
+function closeOnboarding() {
+  document.getElementById('onboarding-wizard')?.classList.add('hidden');
+  // Refresh data
+  loadDomains?.();
+  loadChatDomains?.();
+  try { loadDomainList?.(); } catch {}
+}
+
+// Run first-run check after initial load
+checkFirstRun();

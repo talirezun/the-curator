@@ -134,26 +134,24 @@ nav {
 }
 .tab-btn.active svg { opacity: 1; }
 
-/* ── Stop button ── */
+/* ── Stop button (power icon) ── */
 .btn.stop {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   background: none;
-  border: 1px solid rgba(243,139,168,0.25);
-  color: var(--error);
-  font-size: 12px;
-  padding: 5px 12px;
-  white-space: nowrap;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 5px;
   margin-left: auto;
   border-radius: var(--radius);
   cursor: pointer;
-  font-family: var(--font);
-  transition: background 0.15s, border-color 0.15s;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .btn.stop:hover {
+  color: var(--error);
+  border-color: rgba(243,139,168,0.4);
   background: var(--error-dim);
-  border-color: var(--error);
 }
 
 /* ── Version badge ── */
@@ -1337,4 +1335,270 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   max-width: 420px;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   SETTINGS TAB
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+.settings-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.settings-section .hint { margin-bottom: 14px; }
+
+/* Input with show/hide toggle */
+.input-with-toggle {
+  display: flex;
+  gap: 0;
+  position: relative;
+}
+.input-with-toggle input {
+  flex: 1;
+  padding-right: 38px;
+}
+.toggle-vis {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+.toggle-vis:hover { color: var(--text); }
+
+/* Provider status badge */
+.provider-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 14px 5px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 14px;
+}
+.provider-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+
+/* Knowledge base path row */
+.settings-path-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-path-display {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--bg-alt);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Small button variant */
+.btn-sm {
+  font-size: 12px;
+  padding: 5px 12px;
+  white-space: nowrap;
+}
+
+/* App section row */
+.settings-app-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-app-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.settings-app-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   GITHUB LINK
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.github-link {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  color: var(--text-muted);
+  opacity: 0.35;
+  transition: opacity 0.2s, color 0.2s;
+  z-index: 50;
+  line-height: 1;
+}
+.github-link:hover {
+  opacity: 0.9;
+  color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   ONBOARDING WIZARD
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17,17,27,0.92);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.onboarding-overlay.hidden { display: none; }
+
+.onboarding-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 32px 36px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: var(--shadow-lg);
+}
+
+.onboarding-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.onboarding-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+.onboarding-header .hint {
+  margin: 0;
+}
+
+/* Progress steps */
+.onboarding-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 28px;
+}
+.ob-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: color 0.2s;
+}
+.ob-step span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.ob-step.active { color: var(--accent); }
+.ob-step.active span {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+.ob-step.done span {
+  border-color: var(--success);
+  background: rgba(166,227,161,0.15);
+  color: var(--success);
+}
+.ob-step.done { color: var(--success); }
+.ob-step-line {
+  width: 32px;
+  height: 1.5px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+/* Step panels */
+.ob-panel { animation: fadeIn 0.2s ease; }
+.ob-panel.hidden { display: none; }
+.ob-panel h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.ob-panel .hint { margin-bottom: 16px; }
+
+.ob-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Template picker */
+.ob-templates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ob-template-btn {
+  background: var(--bg-alt);
+  border: 1.5px solid var(--border);
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.ob-template-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.ob-template-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

@@ -117,13 +117,14 @@ property appURL : "http://localhost:3333"
 property projectPath : "${INSTALL_DIR}"
 property nodePath : "${NODE_PATH}"
 
-on run
+on startServer()
+    -- Remove stale files
     try
-        do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
-        open location appURL
-        return
+        do shell script "rm -f /tmp/the-curator.pid /tmp/the-curator-stopped"
     end try
-    do shell script "cd " & quoted form of projectPath & " && nohup " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
+    -- Source shell profile for correct PATH (handles nvm/fnm), then start server
+    do shell script "source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null; cd " & quoted form of projectPath & " && nohup " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
+    -- Wait for server to be ready
     set attempts to 0
     repeat
         delay 1
@@ -133,12 +134,36 @@ on run
             exit repeat
         end try
         if attempts > 15 then
-            display dialog "The Curator could not start." & return & return & "Check " & projectPath & "/.env has a valid GEMINI_API_KEY." & return & return & "Log: /tmp/the-curator.log" buttons {"OK"} default button 1 with icon stop
+            display dialog "The Curator could not start." & return & return & "Open Settings in the app to add your API key, or check the log." & return & return & "Log: /tmp/the-curator.log" buttons {"OK"} default button 1 with icon stop
             return
         end if
     end repeat
+end startServer
+
+on run
+    -- Check if already running
+    try
+        do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
+        open location appURL
+        return
+    end try
+    -- Not running — start it
+    my startServer()
     open location appURL
 end run
+
+on reopen
+    -- Dock icon clicked while applet is already running (e.g. after Stop)
+    try
+        do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
+        -- Server is running — just show the browser
+        open location appURL
+    on error
+        -- Server is down — restart it
+        my startServer()
+        open location appURL
+    end try
+end reopen
 ASEOF
 
 osacompile -o "${INSTALL_DIR}/The Curator.app" /tmp/TheCurator.applescript 2>/dev/null
