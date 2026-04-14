@@ -135,7 +135,8 @@ fi
 # ── Build The Curator.app ─────────────────────────────────────────────────────
 echo "  🔨  Building The Curator.app..."
 
-# Generate brain icon via Swift
+# Generate brain icon via Swift (optional — app works without custom icon)
+HAS_ICON=false
 cat > /tmp/curator_icon.swift << 'SWIFTEOF'
 import AppKit
 import Foundation
@@ -158,16 +159,19 @@ let bmp = NSBitmapImageRep(data: tiff)!
 let png = bmp.representation(using: .png, properties: [:])!
 try! png.write(to: URL(fileURLWithPath: "/tmp/curator_icon_1024.png"))
 SWIFTEOF
-swift /tmp/curator_icon.swift 2>/dev/null
 
-ICONSET=/tmp/CuratorIcon.iconset
-rm -rf "$ICONSET" && mkdir "$ICONSET"
-for SIZE in 16 32 128 256 512; do
-  sips -z $SIZE $SIZE /tmp/curator_icon_1024.png --out "$ICONSET/icon_${SIZE}x${SIZE}.png" >/dev/null
-  sips -z $((SIZE*2)) $((SIZE*2)) /tmp/curator_icon_1024.png --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" >/dev/null
-done
-sips -z 1024 1024 /tmp/curator_icon_1024.png --out "$ICONSET/icon_512x512@2x.png" >/dev/null
-iconutil -c icns "$ICONSET" -o /tmp/CuratorIcon.icns 2>/dev/null
+if swift /tmp/curator_icon.swift 2>/dev/null; then
+  ICONSET=/tmp/CuratorIcon.iconset
+  rm -rf "$ICONSET" && mkdir "$ICONSET"
+  for SIZE in 16 32 128 256 512; do
+    sips -z $SIZE $SIZE /tmp/curator_icon_1024.png --out "$ICONSET/icon_${SIZE}x${SIZE}.png" >/dev/null 2>&1
+    sips -z $((SIZE*2)) $((SIZE*2)) /tmp/curator_icon_1024.png --out "$ICONSET/icon_${SIZE}x${SIZE}@2x.png" >/dev/null 2>&1
+  done
+  sips -z 1024 1024 /tmp/curator_icon_1024.png --out "$ICONSET/icon_512x512@2x.png" >/dev/null 2>&1
+  if iconutil -c icns "$ICONSET" -o /tmp/CuratorIcon.icns 2>/dev/null; then
+    HAS_ICON=true
+  fi
+fi
 
 NODE_PATH="$(which node)"
 cat > /tmp/TheCurator.applescript << ASEOF
@@ -217,8 +221,17 @@ on reopen
 end reopen
 ASEOF
 
-osacompile -o "${INSTALL_DIR}/The Curator.app" /tmp/TheCurator.applescript 2>/dev/null
-cp /tmp/CuratorIcon.icns "${INSTALL_DIR}/The Curator.app/Contents/Resources/applet.icns"
+if ! osacompile -o "${INSTALL_DIR}/The Curator.app" /tmp/TheCurator.applescript 2>/dev/null; then
+  echo -e "  ${RED}Failed to build The Curator.app${NC}"
+  echo "  You can still run the app manually: cd ~/the-curator && node src/server.js"
+  echo "  Then open http://localhost:3333 in your browser."
+  exit 1
+fi
+
+# Apply custom icon if it was generated successfully
+if [[ "$HAS_ICON" == "true" ]]; then
+  cp /tmp/CuratorIcon.icns "${INSTALL_DIR}/The Curator.app/Contents/Resources/applet.icns"
+fi
 touch "${INSTALL_DIR}/The Curator.app"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
