@@ -1,7 +1,15 @@
 import { Router } from 'express';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getConfig, setDomainsDir, getApiKeys, setApiKeys } from '../brain/config.js';
 import { getProviderInfo } from '../brain/llm.js';
+
+const execAsync = promisify(exec);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
 
 const router = Router();
 
@@ -31,17 +39,12 @@ router.post('/domains-path', (req, res) => {
 /** POST /api/config/pick-folder — opens native macOS folder picker via osascript */
 router.post('/pick-folder', async (_req, res) => {
   try {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
     const { stdout } = await execAsync(
       `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
       { timeout: 60000 }
     );
     const picked = stdout.trim();
     if (picked) {
-      // Validate and save immediately
-      const { existsSync } = await import('fs');
       if (!existsSync(picked)) {
         return res.status(400).json({ error: `Folder does not exist: ${picked}` });
       }
@@ -90,14 +93,12 @@ router.get('/api-keys', (_req, res) => {
 router.post('/api-keys', (req, res) => {
   const { geminiApiKey, anthropicApiKey } = req.body;
 
-  // Only save non-empty values (empty string = clear the key)
   const update = {};
   if (geminiApiKey !== undefined)    update.geminiApiKey    = geminiApiKey.trim();
   if (anthropicApiKey !== undefined) update.anthropicApiKey = anthropicApiKey.trim();
 
   try {
     setApiKeys(update);
-    // Return updated provider info
     let provider = null;
     try { provider = getProviderInfo(); } catch {}
     res.json({
@@ -110,15 +111,14 @@ router.post('/api-keys', (req, res) => {
   }
 });
 
-// ── Update Check (Phase 5 placeholder) ──────────────────────────────────────
+// ── Update ──────────────────────────────────────────────────────────────────
 
+/** GET /api/config/update-check — compare local vs remote version */
 router.get('/update-check', async (_req, res) => {
   try {
-    const { readFileSync } = await import('fs');
-    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url)));
+    const pkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
     const current = pkg.version;
 
-    // Fetch remote version from GitHub
     const response = await fetch(
       'https://raw.githubusercontent.com/talirezun/the-curator/main/package.json'
     );
@@ -132,17 +132,11 @@ router.get('/update-check', async (_req, res) => {
   }
 });
 
+/** POST /api/config/update — pull latest code and restart */
 router.post('/update', async (_req, res) => {
   try {
-    const { exec } = await import('child_process');
-    const { promisify } = await import('util');
-    const execAsync = promisify(exec);
-    const { fileURLToPath } = await import('url');
-    const path = await import('path');
-    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-
-    await execAsync('git pull origin main', { cwd: root, timeout: 30000 });
-    await execAsync('npm install --silent --no-audit --no-fund', { cwd: root, timeout: 60000 });
+    await execAsync('git pull origin main', { cwd: PROJECT_ROOT, timeout: 30000 });
+    await execAsync('npm install --silent --no-audit --no-fund', { cwd: PROJECT_ROOT, timeout: 60000 });
 
     res.json({ ok: true, restarting: true });
 
