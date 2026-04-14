@@ -171,22 +171,36 @@ export async function setup(repoUrl, token, mode) {
 }
 
 export async function push() {
+  // Stage and commit any uncommitted changes
   const { stdout } = await git('status --porcelain');
   const changesCount = stdout.split('\n').filter(Boolean).length;
 
-  if (changesCount === 0) {
+  if (changesCount > 0) {
+    const now  = new Date();
+    const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    await git('add -A');
+    await git(`commit -m "The Curator sync — ${date} ${time} — ${changesCount} change${changesCount !== 1 ? 's' : ''}"`);
+  }
+
+  // Check if there are local commits ahead of the remote (including commits
+  // made by pull()'s auto-save). Without this, sync() would report "nothing
+  // to push" even though pull() just committed all local changes.
+  let aheadCount = 0;
+  try {
+    const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
+    aheadCount = parseInt(ahead.trim(), 10) || 0;
+  } catch {
+    // If origin/main doesn't exist yet (first push), we have commits to push
+    aheadCount = 1;
+  }
+
+  if (aheadCount === 0) {
     return { pushed: false, message: 'Everything is already up to date — nothing new to sync.' };
   }
 
-  const now  = new Date();
-  const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-
-  await git('add -A');
-  await git(`commit -m "The Curator sync — ${date} ${time} — ${changesCount} change${changesCount !== 1 ? 's' : ''}"`);
   await git('push', { timeout: 120000 });
-
-  return { pushed: true, changesCount };
+  return { pushed: true, changesCount: changesCount || aheadCount };
 }
 
 export async function pull() {
