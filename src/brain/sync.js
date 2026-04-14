@@ -26,6 +26,7 @@ async function git(cmd, opts = {}) {
   try {
     const { stdout, stderr } = await execAsync(full, {
       timeout: opts.timeout || 30000,
+      cwd: ROOT,  // Explicit cwd prevents "getcwd: Operation not permitted" on macOS
     });
     return { stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (err) {
@@ -203,6 +204,14 @@ export async function pull() {
 
   const { stdout: pullOut } = await git('pull --rebase origin main', { timeout: 120000 });
   return { pulled: true, details: pullOut };
+}
+
+export async function sync() {
+  // Bidirectional sync: pull remote changes first, then push local changes.
+  // This is the safest order — always get the latest before pushing.
+  const pullResult = await pull();
+  const pushResult = await push();
+  return { pullResult, pushResult };
 }
 
 export async function disconnect() {

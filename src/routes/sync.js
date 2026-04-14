@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  isConfigured, getStatus, setup, push, pull, disconnect, friendlyError,
+  isConfigured, getStatus, setup, push, pull, sync, disconnect, friendlyError,
 } from '../brain/sync.js';
 
 const router = Router();
@@ -41,6 +41,15 @@ router.post('/pull', async (req, res) => {
   try {
     if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
     res.json(await pull());
+  } catch (err) {
+    res.status(500).json({ error: friendlyError(err) || err.message });
+  }
+});
+
+router.post('/sync', async (req, res) => {
+  try {
+    if (!isConfigured()) return res.status(400).json({ error: 'Sync is not configured' });
+    res.json(await sync());
   } catch (err) {
     res.status(500).json({ error: friendlyError(err) || err.message });
   }

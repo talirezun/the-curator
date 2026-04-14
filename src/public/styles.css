@@ -832,6 +832,11 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .sync-action-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .sync-action-desc { font-size: 12px; color: var(--text-muted); line-height: 1.55; flex: 1; }
 .sync-action-btn { margin-top: 8px; width: 100%; border-radius: 100px; padding: 10px 18px; }
+.sync-full-row {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 16px;
+}
+.sync-full-btn { flex-shrink: 0; padding: 10px 24px; }
+.sync-full-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
 .sync-tip {
   font-size: 12px; color: var(--text-muted);
   background: var(--accent-dim); border: 1px solid rgba(124,90,245,0.2);

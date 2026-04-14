@@ -625,6 +625,31 @@ document.getElementById('sync-pull-btn').addEventListener('click', async () => {
   }
 });
 
+// ── Bidirectional Sync ────────────────────────────────────────────────────────
+document.getElementById('sync-both-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('sync-both-btn');
+  const statusEl = document.getElementById('sync-op-status');
+  btn.disabled = true;
+  showStatus(statusEl, 'loading', 'Syncing — pulling remote changes, then pushing local…');
+
+  try {
+    const res = await fetch('/api/sync/sync', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+
+    const pushMsg = data.pushResult?.pushed
+      ? `Pushed ${data.pushResult.changesCount} change${data.pushResult.changesCount !== 1 ? 's' : ''}.`
+      : 'Nothing new to push.';
+    showStatus(statusEl, 'success', `✓ Sync complete. ${pushMsg}`);
+    const s = await fetch('/api/sync/status').then(r => r.json());
+    renderSyncConfigured(s);
+  } catch (err) {
+    showStatus(statusEl, 'error', err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // ── Disconnect ────────────────────────────────────────────────────────────────
 document.getElementById('sync-disconnect-btn').addEventListener('click', async () => {
   if (!confirm('Disconnect sync from this computer? Your GitHub repository will not be affected.')) return;
