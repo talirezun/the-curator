@@ -193,11 +193,25 @@ if ! osacompile -o "${INSTALL_DIR}/The Curator.app" /tmp/TheCurator.applescript 
   exit 1
 fi
 
-# Apply the brain icon to the .app
+# Apply the brain icon and set app metadata
 if [[ -f "$APP_ICON" ]]; then
   cp "$APP_ICON" "${INSTALL_DIR}/The Curator.app/Contents/Resources/applet.icns"
 fi
+
+# Set proper app name in Info.plist (osacompile defaults to "applet")
+PLIST="${INSTALL_DIR}/The Curator.app/Contents/Info.plist"
+if [[ -f "$PLIST" ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName 'The Curator'" "$PLIST" 2>/dev/null || true
+fi
+
+# Force macOS to refresh the icon cache for this app
 touch "${INSTALL_DIR}/The Curator.app"
+touch "${INSTALL_DIR}/The Curator.app/Contents/Info.plist"
+touch "${INSTALL_DIR}/The Curator.app/Contents/Resources/applet.icns"
+
+# Clear the icon cache so macOS picks up the new icon immediately
+/usr/bin/GetFileInfo -a "${INSTALL_DIR}/The Curator.app" >/dev/null 2>&1 || true
+/usr/bin/SetFile -a C "${INSTALL_DIR}/The Curator.app" 2>/dev/null || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
