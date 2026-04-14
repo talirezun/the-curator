@@ -59,9 +59,9 @@ docs/               — user-facing documentation
 
 | Function | Purpose |
 |---|---|
-| `writePage(domain, relativePath, content)` | Normalise path → dedup passes A+B → inject frontmatter → merge with existing → strip blanks → dedup bullets → strip folder-prefix links → normalize variant links (5c) → write → call injectSummaryBacklinks if summary |
-| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks with the complete list |
-| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section; creates the section if it doesn't exist |
+| `writePage(domain, relativePath, content)` | Normalise path → dedup passes A+B → cross-folder dedup (3b) → inject frontmatter → merge with existing → strip blanks → dedup bullets → strip folder-prefix links → normalize variant links (5c: entities + concepts + summaries, prefix-tolerant) → write → call injectSummaryBacklinks if summary |
+| `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: injects ALL written entity AND concept slugs into summary's "Entities Mentioned", then re-fires injectSummaryBacklinks with the complete list |
+| `injectSummaryBacklinks(summarySlug, content, wikiDir)` | For each entity in "Entities Mentioned", injects `[[summaries/slug]]` into that entity's Related section; checks entities/ first, falls back to concepts/; creates the section if it doesn't exist |
 | `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all ACCUMULATE sections using dedupKey; runs after every write and after syncSummaryEntities |
 | `mergeWikiPage(existing, incoming)` | Union merge: incoming is base, bullets from existing sections are injected (Key Facts, Related, Entities Mentioned, etc.) |
 | `injectBulletsIntoSection(content, sectionName, bullets)` | Dedup-aware bullet injection: compares by link target; creates the section if it doesn't exist (uses 'im' multiline regex for existence check) |
@@ -93,20 +93,29 @@ POST /api/ingest
            a2. Underscore → hyphen slug normalisation — two_worlds_of_code.md → two-worlds-of-code.md
            b. Pass A: title-prefix strip — dr-tali-rezun.md → tali-rezun.md
            c. Pass B: hyphen-normalised dedup — talirezun.md → tali-rezun.md
+           c2. Step 3b: cross-folder dedup — concepts/google.md → entities/google.md
+               (prevents duplicate files when LLM misclassifies entity as concept)
            d. injectFrontmatter()
            e. mergeWikiPage() if file exists
            f. stripBlanksInBulletSections()
            g. deduplicateBulletSections() — safety net for merge edge cases
            h. Strip [[entities/...]] and [[concepts/...]] folder-prefix links
-           i. Step 5c: normalize [[variant]] links using Pass A+B logic
-              (e.g. [[dr-tali-rezun]] → [[tali-rezun]] in page content)
+           i. Step 5c: normalize [[variant]] links using Pass A+B+C logic
+              Pass A: [[dr-tali-rezun]] → [[tali-rezun]]
+              Pass B: hyphen-normalised match against entities + concepts
+              Pass C: prefix-tolerant match across all wiki files (entities, concepts, summaries)
+              Catches [[energy-and-water-footprint-of-generative-ai]] →
+              [[summaries/the-energy-and-water-footprint-of-generative-ai]]
            j. writeFile()
-           k. If summary page: injectSummaryBacklinks() (fires once per write)
+           k. If summary page: injectSummaryBacklinks() (entities/ + concepts/ fallback)
+           l. Return canonPath — the actual path written to disk (may differ from input)
       7. syncSummaryEntities() ← THE KEY POST-WRITE STEP
-           Reads ingest's writtenPaths → injects ALL entity slugs into
+           Uses canonicalPaths (returned by writePage), NOT original LLM paths.
+           This ensures redirected slugs (dr-tali-rezun → tali-rezun) appear
+           correctly in the summary. Injects ALL entity AND concept slugs into
            summary's "Entities Mentioned" → deduplicates → re-fires
            injectSummaryBacklinks() with the complete list →
-           ALL entities get bidirectional backlinks
+           ALL entities/concepts get bidirectional backlinks
       8. writePage(index.md)
       9. appendLog()
 ```
@@ -130,6 +139,9 @@ The LLM produces structurally valid but consistently incomplete output. These pa
 | Summary truncated — missing "Entities Mentioned" section entirely | Occasional (large docs) | `syncSummaryEntities()` adds the section if missing |
 | Blank lines between bullets in a section | Common | `stripBlanksInBulletSections()` runs on every write |
 | Underscore filename from PDF name: `two_worlds_of_code.md` | Occasional | Step 1a in `writePage()` converts `_` → `-` in the filename |
+| Cross-folder duplicates: `concepts/google.md` when `entities/google.md` exists | Common | Step 3b cross-folder dedup redirects to existing file |
+| Slug mismatch: `[[international-energy-agency]]` but file is `iea.md` | Occasional | Prompt strengthened + Step 5c Pass C prefix-tolerant matching |
+| Missing article prefix in link: `[[energy-and-water...]]` vs `the-energy-and-water...` | Occasional | Step 5c Pass C strips `the-`/`a-`/`an-` prefixes for matching |
 | Semantic near-duplicates in Key Facts ("25 years" vs "30 years") | Common | NOT fixed — requires LLM or manual curation |
 | Concepts filed as entities (llm.md, cli.md, open-source.md) | Occasional | Caught by manual review; no automated fix |
 
@@ -234,7 +246,8 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `7589a15` | Step 5c: normalize [[variant]] links in page content at write time |
 | `132b769` | deduplicateBulletSections() safety net + result.pages dedup for multi-phase |
 | `b2fa124` | injectBulletsIntoSection creates missing section; multiline regex fix |
-| (next) | Underscore → hyphen slug normalization in writePage() step 1a |
+| `181157f` | Underscore → hyphen slug normalization in writePage() step 1a |
+| (next) | Cross-folder dedup (3b), expanded step 5c (Pass C prefix-tolerant), backlinks cover concepts/, writePage returns canonPath, ingest uses canonical paths for sync |
 
 ---
 

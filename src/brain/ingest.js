@@ -100,10 +100,12 @@ Produce ONLY a JSON outline — do NOT write any page content yet.
 
 CRITICAL — Valid folder prefixes for page paths:
   • summaries/  — one summary page per source document
-  • entities/   — every person, tool, company, framework, dataset, project
+  • entities/   — every person, tool, company, framework, dataset, project, country, organization
   • concepts/   — every idea, technique, principle, methodology
 NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
 Every path MUST start with one of the three prefixes above.
+
+CROSS-FOLDER RULE: If a file already exists in entities/, do NOT create a concepts/ file with the same or similar name, and vice versa. Companies (Google, Microsoft), organizations (IEA), and countries (Chile, Japan) are ALWAYS entities, never concepts.
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
@@ -152,6 +154,7 @@ Guidelines:
 - Entity pages: include a line "Type: <type>" and a line "Tags: tag1, tag2" in the body.
 - Concept and summary pages: include a line "Tags: tag1, tag2" in the body.
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
+- LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
@@ -159,10 +162,12 @@ Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(
 
 CRITICAL — Valid folder prefixes for page paths:
   • summaries/  — one summary page per source document
-  • entities/   — every person, tool, company, framework, dataset, project
+  • entities/   — every person, tool, company, framework, dataset, project, country, organization
   • concepts/   — every idea, technique, principle, methodology
 NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
 Every path MUST start with one of the three prefixes above.
+
+CROSS-FOLDER RULE: If a file already exists in entities/, do NOT create a concepts/ file with the same or similar name, and vice versa. Companies (Google, Microsoft), organizations (IEA), and countries (Chile, Japan) are ALWAYS entities, never concepts.
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
@@ -245,14 +250,17 @@ Page body rules:
 - Entity pages: include a "Type: <entity-type>" line and a "Tags: tag1, tag2" line in the body.
 - Concept and summary pages: include a "Tags: tag1, tag2" line in the body.
 - Links: always write [[page-name]] — NEVER use folder prefix (write [[rag]] not [[concepts/rag]]).
+- LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
 - In the index.md table, use [[page-name]] (no folder prefix, no duplicates).
 
 CRITICAL — Valid folder prefixes for page paths:
   • summaries/  — one summary page per source document
-  • entities/   — every person, tool, company, framework, dataset, project
+  • entities/   — every person, tool, company, framework, dataset, project, country, organization
   • concepts/   — every idea, technique, principle, methodology
 NEVER use any other folder (e.g. "people/", "tools/", "frameworks/" are INVALID).
 Every path MUST start with one of the three prefixes above.
+
+CROSS-FOLDER RULE: If a file already exists in entities/, do NOT create a concepts/ file with the same or similar name, and vice versa. Companies (Google, Microsoft), organizations (IEA), and countries (Chile, Japan) are ALWAYS entities, never concepts.
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
@@ -482,36 +490,36 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     result.pages = [...seen.values()];
   }
 
-  // Write all wiki pages
+  // Write all wiki pages — collect canonical paths (writePage may redirect
+  // dr-tali-rezun.md → tali-rezun.md, concepts/google.md → entities/google.md, etc.)
   progress(90, `Writing ${result.pages.length} wiki pages to disk…`);
+  const canonicalPaths = [];
   for (const page of result.pages) {
-    await writePage(domain, page.path, page.content);
+    const canon = await writePage(domain, page.path, page.content);
+    if (canon) canonicalPaths.push(canon);
   }
 
   // Post-write: reconcile the summary's "Entities Mentioned" with every entity
-  // page actually written this ingest. The LLM reliably under-lists entities in
-  // the summary (writes 5–7 while creating 20–30 entity pages), which breaks
-  // bidirectional graph connections. syncSummaryEntities() fills the gap
-  // automatically and re-fires injectSummaryBacklinks() with the full list.
+  // page actually written this ingest. Uses canonical paths so redirected slugs
+  // (dr-tali-rezun → tali-rezun) appear correctly in the summary and backlinks.
   progress(93, 'Syncing entity backlinks…');
-  const summaryPath = result.pages.find(p => p.path.startsWith('summaries/'))?.path;
-  const writtenPaths = result.pages.map(p => p.path);
+  const summaryPath = canonicalPaths.find(p => p.startsWith('summaries/'));
   if (summaryPath) {
-    await syncSummaryEntities(domain, summaryPath, writtenPaths);
+    await syncSummaryEntities(domain, summaryPath, canonicalPaths);
   }
 
   // Write updated index
   progress(96, 'Updating index…');
   await writePage(domain, 'index.md', result.index);
 
-  // Append to log
-  const pageList = result.pages.map(p => `  - ${p.path}`).join('\n');
+  // Append to log — use canonical paths for accurate reporting
+  const pageList = canonicalPaths.map(p => `  - ${p}`).join('\n');
   const logEntry = `## [${today}] ingest | ${result.title}\nPages created or updated:\n${pageList}\n`;
   await appendLog(domain, logEntry);
 
   progress(100, 'Done!');
   return {
     title: result.title,
-    pagesWritten: result.pages.map(p => p.path),
+    pagesWritten: canonicalPaths,
   };
 }

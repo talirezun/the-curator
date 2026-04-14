@@ -329,9 +329,11 @@ export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
     return;
   }
 
-  // Build [[slug]] bullets from every entity path written this ingest
+  // Build [[slug]] bullets from every entity AND concept path written this ingest.
+  // Include concepts because the LLM sometimes misclassifies entities as concepts —
+  // those pages still need to appear in "Entities Mentioned" and receive backlinks.
   const entityBullets = writtenPaths
-    .filter(p => p.startsWith('entities/'))
+    .filter(p => p.startsWith('entities/') || p.startsWith('concepts/'))
     .map(p => `- [[${path.basename(p, '.md')}]]`);
 
   if (!entityBullets.length) return;
@@ -398,17 +400,33 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
     // Pass B: hyphen-normalised match — "talirezun" → "tali-rezun.md", same
     // logic as writePage() so backlinks always reach the canonical entity file
     // even when the LLM drops or adds hyphens in the entity name.
+    // Falls back to concepts/ if no entity file matches — handles LLM misclassification.
     let entityFile = path.join(wikiDir, 'entities', `${entityName}.md`);
     if (!existsSync(entityFile)) {
+      const norm = entityName.replace(/-/g, '').toLowerCase();
+      let found = false;
+
+      // Try entities/ first (hyphen-normalised)
       try {
-        const norm = entityName.replace(/-/g, '').toLowerCase();
         const existing = await readdir(path.join(wikiDir, 'entities'));
         const match = existing.find(f =>
           f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm + '.md'
         );
-        if (match) entityFile = path.join(wikiDir, 'entities', match);
-        else continue;
-      } catch { continue; }
+        if (match) { entityFile = path.join(wikiDir, 'entities', match); found = true; }
+      } catch { /* dir may not exist */ }
+
+      // Fallback: try concepts/ (the LLM may have misclassified an entity as a concept)
+      if (!found) {
+        try {
+          const conceptFiles = await readdir(path.join(wikiDir, 'concepts'));
+          const match = conceptFiles.find(f =>
+            f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm + '.md'
+          );
+          if (match) { entityFile = path.join(wikiDir, 'concepts', match); found = true; }
+        } catch { /* dir may not exist */ }
+      }
+
+      if (!found) continue;
     }
 
     try {
@@ -551,6 +569,27 @@ export async function writePage(domain, relativePath, content) {
     } catch { /* entities dir may not exist yet on first ingest */ }
   }
 
+  // 3b. Cross-folder dedup — prevent concepts/google.md when entities/google.md
+  //     already exists (or vice versa). The LLM sometimes misclassifies entities
+  //     as concepts; first-write wins so the existing file's folder is canonical.
+  if (canonPath.startsWith('entities/') || canonPath.startsWith('concepts/')) {
+    const folder = canonPath.split('/')[0];
+    const filename = path.basename(canonPath);
+    const siblingFolder = folder === 'entities' ? 'concepts' : 'entities';
+    const siblingDir = path.join(wikiPath(domain), siblingFolder);
+    const norm = filename.replace(/-/g, '').toLowerCase();
+    try {
+      const siblingFiles = await readdir(siblingDir);
+      const match = siblingFiles.find(f =>
+        f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm
+      );
+      if (match) {
+        console.log(`[writePage] Cross-folder dedup: ${canonPath} → ${siblingFolder}/${match}`);
+        canonPath = `${siblingFolder}/${match}`;
+      }
+    } catch { /* sibling dir may not exist yet */ }
+  }
+
   const processed = injectFrontmatter(content, canonPath, today);
   const fullPath = path.join(wikiPath(domain), canonPath);
   const dir = path.dirname(fullPath);
@@ -589,39 +628,74 @@ export async function writePage(domain, relativePath, content) {
     final = final.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
   }
 
-  // 5c. Normalize [[variant-slug]] links to canonical entity slugs — reuses
-  //     Pass A (title-prefix strip) and Pass B (hyphen-normalised match) but
-  //     applied to every [[wikilink]] in the *content*, not just the filename.
-  //     Catches [[dr-tali-rezun]] → [[tali-rezun]] when the LLM writes that
-  //     variant inside another entity's Related section or a summary's Entities
-  //     Mentioned — the same bug that Pass A/B fix for filenames.
+  // 5c. Normalize [[variant-slug]] links to canonical wiki slugs.
+  //     Pass A: title-prefix strip (dr-, mr-, prof-, etc.)
+  //     Pass B: hyphen-normalised match against entities and concepts
+  //     Pass C: prefix-tolerant match across ALL wiki files (entities, concepts, summaries)
+  //             Strips common article prefixes (the-, a-, an-) for comparison,
+  //             catching [[energy-and-water-footprint-of-generative-ai]] →
+  //             [[summaries/the-energy-and-water-footprint-of-generative-ai]].
   if (!skipMerge) {
-    const entitiesDir = path.join(wikiPath(domain), 'entities');
-    let allEntityFiles = [];
-    try { allEntityFiles = await readdir(entitiesDir); } catch { /* first ingest */ }
-    const entitySlugs = new Set(
-      allEntityFiles.filter(f => f.endsWith('.md')).map(f => f.slice(0, -3))
-    );
+    const wiki = wikiPath(domain);
+
+    // Load slugs from all three canonical folders
+    let entityFiles = [], conceptFiles = [], summaryFiles = [];
+    try { entityFiles = (await readdir(path.join(wiki, 'entities'))).filter(f => f.endsWith('.md')); } catch {}
+    try { conceptFiles = (await readdir(path.join(wiki, 'concepts'))).filter(f => f.endsWith('.md')); } catch {}
+    try { summaryFiles = (await readdir(path.join(wiki, 'summaries'))).filter(f => f.endsWith('.md')); } catch {}
+
+    const entitySlugs = new Set(entityFiles.map(f => f.slice(0, -3)));
+    const conceptSlugs = new Set(conceptFiles.map(f => f.slice(0, -3)));
+
+    // Build a prefix-tolerant lookup Map for Pass C: key → { folder, slug }
+    // Keys are hyphen-stripped AND article-prefix-stripped for maximum match coverage
+    const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
+    const allSlugsMap = new Map();
+    for (const f of entityFiles) {
+      const s = f.slice(0, -3);
+      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: null, slug: s }); // bare link
+    }
+    for (const f of conceptFiles) {
+      const s = f.slice(0, -3);
+      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: null, slug: s }); // bare link
+    }
+    for (const f of summaryFiles) {
+      const s = f.slice(0, -3);
+      const key = s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+      if (!allSlugsMap.has(key)) allSlugsMap.set(key, { folder: 'summaries', slug: s }); // prefixed link
+    }
 
     final = final.replace(/\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g, (match, slug, alias) => {
       // Never touch summaries/ prefixed links or any link containing a sub-path
       if (slug.includes('/')) return match;
-      // Already a known canonical slug — nothing to do
-      if (entitySlugs.has(slug)) return match;
+      // Already a known canonical entity or concept slug — nothing to do
+      if (entitySlugs.has(slug) || conceptSlugs.has(slug)) return match;
 
       // Pass A: strip title prefix (dr-, mr-, prof-, etc.)
       const stripped = slug.replace(TITLE_PREFIX_RE, '');
-      if (stripped !== slug && entitySlugs.has(stripped)) {
+      if (stripped !== slug && (entitySlugs.has(stripped) || conceptSlugs.has(stripped))) {
         return `[[${stripped}${alias || ''}]]`;
       }
 
-      // Pass B: hyphen-normalised match
+      // Pass B: hyphen-normalised match against entities and concepts
       const norm = slug.replace(/-/g, '').toLowerCase();
       for (const s of entitySlugs) {
-        if (s.replace(/-/g, '').toLowerCase() === norm) {
-          return `[[${s}${alias || ''}]]`;
-        }
+        if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
       }
+      for (const s of conceptSlugs) {
+        if (s.replace(/-/g, '').toLowerCase() === norm) return `[[${s}${alias || ''}]]`;
+      }
+
+      // Pass C: prefix-tolerant match across all wiki files (incl. summaries)
+      const normKey = slug.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+      const hit = allSlugsMap.get(normKey);
+      if (hit) {
+        const target = hit.folder ? `${hit.folder}/${hit.slug}` : hit.slug;
+        return `[[${target}${alias || ''}]]`;
+      }
+
       return match;
     });
   }
@@ -635,6 +709,11 @@ export async function writePage(domain, relativePath, content) {
     const summarySlug = path.basename(canonPath, '.md');
     await injectSummaryBacklinks(summarySlug, final, wikiPath(domain));
   }
+
+  // Return the canonical path so callers (ingestFile) can use the actual
+  // path written to disk, not the original LLM path which may have been
+  // redirected by Pass A, Pass B, step 3b, or normalizePath().
+  return canonPath;
 }
 
 export async function appendLog(domain, entry) {
