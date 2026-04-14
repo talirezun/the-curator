@@ -176,20 +176,20 @@ end startServer
 on run
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
-        open location appURL
+        do shell script "open " & appURL
         return
     end try
     my startServer()
-    open location appURL
+    do shell script "open " & appURL
 end run
 
 on reopen
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
-        open location appURL
+        do shell script "open " & appURL
     on error
         my startServer()
-        open location appURL
+        do shell script "open " & appURL
     end try
 end reopen
 ASEOF
