@@ -37,12 +37,9 @@ app.get('/api/health',  (_req, res) => res.json({ ok: true, version }));
 // Version endpoint — used by the UI to display the current app version
 app.get('/api/version', (req, res) => res.json({ version }));
 
-// Shutdown endpoint — exits cleanly; AppleScript's on reopen restarts the server
+// Shutdown endpoint — exit code 0 triggers auto-restart via start.sh
 app.post('/api/shutdown', (_req, res) => {
   res.json({ ok: true });
-  // Give the response time to flush, then exit.
-  // The AppleScript wrapper detects the server is down and restarts it
-  // when the user clicks the Dock icon (on reopen handler).
   setTimeout(() => {
     if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     server.close(() => process.exit(0));

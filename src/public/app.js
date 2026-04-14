@@ -7,35 +7,38 @@ fetch('/api/version')
   })
   .catch(() => {}); // non-critical — silently skip if unavailable
 
-// ── Stop server ───────────────────────────────────────────────────────────────
+// ── Stop / Restart server ─────────────────────────────────────────────────────
 document.getElementById('stop-btn').addEventListener('click', async () => {
   const btn = document.getElementById('stop-btn');
   btn.disabled = true;
-  btn.innerHTML = '<span style="opacity:.6">Stopping…</span>';
+
+  // Show restarting overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'restart-overlay';
+  overlay.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;
+         justify-content:center;height:100vh;gap:16px;font-family:system-ui;
+         color:#e2e8f0;background:rgba(15,17,23,0.95);position:fixed;inset:0;z-index:9999">
+      <div style="font-size:48px;">🧠</div>
+      <div style="font-size:20px;font-weight:600;">Restarting The Curator...</div>
+      <div id="restart-sub" style="font-size:14px;color:#64748b;">
+        This takes a few seconds.
+      </div>
+      <div style="margin-top:8px;">
+        <div style="width:20px;height:20px;border:2px solid #334155;border-top-color:#6366f1;
+             border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+      </div>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+  document.body.appendChild(overlay);
+
   try {
     await fetch('/api/shutdown', { method: 'POST' });
   } catch {
     // Expected — the server closes before responding fully
   }
 
-  // Show "stopped" UI and start polling for restart
-  document.body.innerHTML = `
-    <div id="stopped-screen" style="display:flex;flex-direction:column;align-items:center;
-         justify-content:center;height:100vh;gap:16px;font-family:system-ui;
-         color:#e2e8f0;background:#0f1117;">
-      <div style="font-size:48px;">🧠</div>
-      <div style="font-size:20px;font-weight:600;">The Curator stopped</div>
-      <div id="stopped-sub" style="font-size:14px;color:#64748b;">
-        Click the Dock icon once to restart.
-      </div>
-      <div id="restart-spinner" style="display:none;margin-top:8px;">
-        <div style="width:20px;height:20px;border:2px solid #334155;border-top-color:#6366f1;
-             border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-      </div>
-    </div>
-    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
-
-  // Poll /api/health every 2 seconds — when the server comes back, reload automatically
+  // Poll until server comes back (start.sh auto-restarts it)
   let polling = false;
   const poll = setInterval(async () => {
     if (polling) return;
@@ -44,18 +47,25 @@ document.getElementById('stop-btn').addEventListener('click', async () => {
       const r = await fetch('/api/health', { signal: AbortSignal.timeout(1000) });
       if (r.ok) {
         clearInterval(poll);
-        const sub = document.getElementById('stopped-sub');
-        const spinner = document.getElementById('restart-spinner');
-        if (sub) sub.textContent = 'Server is back — reloading…';
-        if (spinner) spinner.style.display = 'block';
-        setTimeout(() => location.reload(), 800);
+        clearTimeout(failsafe);
+        const sub = document.getElementById('restart-sub');
+        if (sub) sub.textContent = 'Server is back — reloading...';
+        setTimeout(() => location.reload(), 600);
       }
     } catch {
-      // Server still down — keep polling
+      // Server still restarting — keep polling
     } finally {
       polling = false;
     }
-  }, 2000);
+  }, 1500);
+
+  // Failsafe: if server doesn't come back in 20 seconds, show manual instructions
+  const failsafe = setTimeout(() => {
+    clearInterval(poll);
+    const sub = document.getElementById('restart-sub');
+    if (sub) sub.innerHTML = 'Server is taking longer than expected.<br><a href="http://localhost:3333" style="color:#7c5af5;text-decoration:underline">Click here to retry</a>';
+    btn.disabled = false;
+  }, 20000);
 });
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────

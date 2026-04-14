@@ -138,25 +138,13 @@ echo "  🔨  Building The Curator.app..."
 # App icon — pre-built .icns is included in the repo (no Swift or Xcode needed)
 APP_ICON="${INSTALL_DIR}/images/applet.icns"
 
-NODE_PATH="$(which node)"
 cat > /tmp/TheCurator.applescript << ASEOF
-property serverPort : "3333"
 property appURL : "http://localhost:3333"
 property projectPath : "${INSTALL_DIR}"
-property nodePath : "${NODE_PATH}"
 
 on startServer()
-    -- Kill any leftover server process to avoid port conflicts
-    try
-        do shell script "kill $(cat /tmp/the-curator.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/the-curator.pid"
-    end try
-    -- Also kill anything on port 3333 as a safety net
-    try
-        do shell script "lsof -ti :3333 | xargs kill -9 2>/dev/null"
-    end try
-    delay 1
-    -- Start the server
-    do shell script "source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null; cd " & quoted form of projectPath & " && nohup " & nodePath & " src/server.js >> /tmp/the-curator.log 2>&1 & echo \$! > /tmp/the-curator.pid"
+    -- start.sh auto-restarts the server on exit code 0, handles port cleanup
+    do shell script "cd " & quoted form of projectPath & " && nohup bash start.sh >> /tmp/the-curator.log 2>&1 &"
     -- Wait for server to be ready
     set attempts to 0
     repeat
@@ -166,7 +154,7 @@ on startServer()
             do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
             exit repeat
         end try
-        if attempts > 15 then
+        if attempts > 20 then
             display dialog "The Curator could not start." & return & return & "Open Settings in the app to add your API key, or check the log." & return & return & "Log: /tmp/the-curator.log" buttons {"OK"} default button 1 with icon stop
             return
         end if
@@ -174,16 +162,19 @@ on startServer()
 end startServer
 
 on run
+    -- Check if already running
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
         do shell script "open " & appURL
         return
     end try
+    -- Not running — start it
     my startServer()
     do shell script "open " & appURL
 end run
 
 on reopen
+    -- Dock icon clicked while applet is already in Dock
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
         do shell script "open " & appURL
@@ -243,8 +234,7 @@ echo ""
 #  due to macOS Gatekeeper prompts or unsigned app restrictions)
 echo -e "  ${BLUE}Starting The Curator...${NC}"
 cd "${INSTALL_DIR}"
-nohup "${NODE_PATH}" src/server.js >> /tmp/the-curator.log 2>&1 &
-echo $! > /tmp/the-curator.pid
+nohup bash start.sh >> /tmp/the-curator.log 2>&1 &
 
 # Wait for server to be ready
 ATTEMPTS=0
