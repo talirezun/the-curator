@@ -21,7 +21,8 @@ This guide covers everything from first-time setup to daily use. No technical ba
 13. [Two ways to explore your knowledge](#13-two-ways-to-explore-your-knowledge)
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers](#15-sync-across-computers)
-16. [Troubleshooting](#16-troubleshooting)
+16. [Settings](#16-settings)
+17. [Troubleshooting](#17-troubleshooting)
 
 ---
 
@@ -71,49 +72,54 @@ Ingest journal entries, book highlights, and podcast notes. Query recurring patt
 
 | Requirement | What it is | Where to get it |
 |-------------|-----------|-----------------|
-| A computer | Mac, Windows, or Linux | — |
-| Node.js (version 18 or newer) | The engine that runs the app | [nodejs.org](https://nodejs.org) — download the LTS version |
+| A Mac | The installer and Dock app are Mac-native | — |
 | A Gemini API key | Gives the app access to Google's AI | Free at [aistudio.google.com](https://aistudio.google.com/app/apikey) |
 | Obsidian (optional) | App to visualise the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
 
-**How to check if Node.js is already installed:**
-Open Terminal (Mac) or Command Prompt (Windows) and type:
-```
-node --version
-```
-If you see a number like `v22.0.0`, you're good. If you see an error, download Node.js from the link above and install it first.
+> **Node.js** is required to run the app, but the installer detects and installs it automatically if it is missing. You do not need to install it yourself.
 
 ---
 
 ## 3. Installation
 
-> **What is a terminal?** On Mac, open **Terminal** (search for it in Spotlight). On Windows, open **Command Prompt** or **PowerShell**. It's just a text-based way to run commands.
+### One-command installer (recommended)
 
-### Step 1 — Download the project
-
-In your terminal, paste this and press Enter:
+Open **Terminal** (search for it in Spotlight) and paste this single command:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/talirezun/the-curator/main/install.sh | bash
+```
+
+The installer handles everything automatically:
+
+1. Detects whether Node.js and git are installed — installs them if missing
+2. Downloads the project into `~/the-curator`
+3. Installs all dependencies
+4. Builds **The Curator.app** for your Dock
+
+When it finishes, the app opens automatically in your browser. The **onboarding wizard** appears on first launch and walks you through entering your API key, creating your first domain, and optionally setting up sync.
+
+> You only need to run this command **once**. After that, double-click **The Curator** in your Dock to launch the app.
+
+### Manual setup (alternative)
+
+If you prefer to set things up yourself:
+
+```bash
+# 1. Clone the project
 git clone https://github.com/talirezun/the-curator.git
-```
-
-This downloads the project into a folder called `the-curator` in whatever directory you're currently in.
-
-### Step 2 — Go into the project folder
-
-```bash
 cd the-curator
-```
 
-### Step 3 — Install dependencies
-
-```bash
+# 2. Install dependencies
 npm install
+
+# 3. Start the server
+node src/server.js
 ```
 
-This downloads all the packages the app needs. You'll see a lot of text scroll by — that's normal. Wait until it finishes (usually under 30 seconds).
+Open **http://localhost:3333** in your browser. The onboarding wizard will guide you through the rest.
 
-> You only need to do steps 1–3 **once**. After that, you just start the server each time you want to use the app.
+> For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
 
 ---
 
@@ -127,66 +133,39 @@ The app uses Google's Gemini AI to read your documents. You need a free API key 
 4. Copy the key — it starts with `AIza` and is about 40 characters long
 5. Keep it somewhere safe — you'll paste it in the next step
 
+> The onboarding wizard also links directly to this page when you first open the app.
+
 > Your API key is like a password. Never share it publicly or post it on the internet.
 
 ---
 
 ## 5. Configure the app
 
-The app reads its settings from a file called `.env` in the project folder.
+When you first open The Curator, the **onboarding wizard** appears and walks you through setup:
 
-### Step 1 — Create the .env file
+1. **API key** — paste your Gemini API key (from step 4) and click Continue
+2. **Create a domain** — pick a name and template for your first knowledge domain
+3. **Sync setup** — optionally connect a GitHub repository (you can skip this and set it up later)
 
-In your terminal (make sure you're still in the `the-curator` folder), run:
+That's it. You can change your API key anytime in the **Settings** tab (the gear icon in the navigation bar).
 
-```bash
-cp .env.example .env
-```
-
-This creates `.env` by copying the template.
-
-### Step 2 — Add your API key
-
-Open the `.env` file in any text editor (Notepad on Windows, TextEdit on Mac, or VS Code).
-
-You'll see this:
-
-```
-GEMINI_API_KEY=your_gemini_key_here
-```
-
-Replace `your_gemini_key_here` with the key you copied from Google. It should look like:
-
-```
-GEMINI_API_KEY=AIzaSyAbCdEfGhIjKlMnOpQrStUvWxYz1234567
-```
-
-Save the file and close it.
-
-> **Important:** The `.env` file is private. It is listed in `.gitignore` so it is never uploaded to GitHub. Your key stays on your computer only.
+> **For developers:** You can also configure API keys by creating a `.env` file manually (`cp .env.example .env`) and setting `GEMINI_API_KEY=your_key_here`. The Settings tab takes priority over `.env` when both are present.
 
 ---
 
 ## 6. Start the server
 
-Every time you want to use The Curator, you need to start the server first.
+Double-click **The Curator** icon in your Dock. The app opens in your browser automatically.
 
-Open your terminal, go to the project folder, and run:
+If you installed manually without the Dock app, open your terminal, go to the project folder, and run:
 
 ```bash
 node src/server.js
 ```
 
-You should see:
+Then open **http://localhost:3333** in your browser.
 
-```
-The Curator running at http://localhost:3333
-LLM provider: 🟦 Gemini  |  model: gemini-2.5-flash-lite
-```
-
-**The server keeps running in this terminal window.** Do not close it while you're using the app. To stop the server, press `Ctrl + C`.
-
-> **Tip:** Every time you restart your computer, you need to start the server again with `node src/server.js`.
+> **Tip:** The Dock app handles starting and stopping the server for you. If you use the terminal method instead, keep the terminal window open while using the app. Press `Ctrl + C` to stop the server.
 
 ---
 
@@ -198,7 +177,7 @@ With the server running, open your web browser (Chrome, Safari, Firefox — any 
 http://localhost:3333
 ```
 
-You'll see the The Curator interface with five tabs at the top: **Ingest**, **Chat**, **Wiki**, **Sync**, and **Domains**.
+You'll see the The Curator interface with six tabs at the top: **Ingest**, **Chat**, **Wiki**, **Sync**, **Domains**, and **Settings**.
 
 > `localhost:3333` means "a web page running on your own computer, on port 3333". It only works when your server is running and is not accessible to anyone else on the internet.
 
@@ -571,13 +550,13 @@ Here is the recommended way to use The Curator day-to-day:
 ### When you find something worth keeping
 
 1. Save the article/chapter/notes as a `.txt` or `.pdf` file
-2. Open `http://localhost:3333` (start the server first if needed: `node src/server.js`)
+2. Open The Curator (double-click the Dock icon, or go to `http://localhost:3333`)
 3. Choose the right domain, upload the file, click **Ingest**
 4. In Obsidian, press `Cmd/Ctrl + R` to see the new pages appear in the graph
 
 ### When you want to recall something
 
-1. Open `http://localhost:3333`
+1. Open The Curator
 2. Go to the **Chat** tab, pick a domain, and ask your question (or continue an old conversation)
 3. Get a cited answer pointing to specific wiki pages
 4. Click through to Obsidian to read the source page in full
@@ -661,8 +640,8 @@ After Sync Down, refresh the Chat or Wiki tab to see the newly arrived pages.
 
 On any additional computer:
 
-1. Install the app (`git clone` + `npm install` — same as the first setup)
-2. Start the server and go to `http://localhost:3333`
+1. Install the app (run the one-command installer, or `git clone` + `npm install`)
+2. Open the app and complete the onboarding wizard
 3. Click the **Sync** tab
 4. Click **Set Up Sync**
 5. Enter the **same repository URL** and the **same token** as before
@@ -690,7 +669,33 @@ Your GitHub repository is not changed. You can reconnect at any time using the w
 
 ---
 
-## 16. Troubleshooting
+## 16. Settings
+
+The **Settings** tab (gear icon) gives you control over app configuration without editing files.
+
+### API keys
+
+The Settings tab shows your currently configured API keys (masked for security) and which provider is active. To change a key:
+
+1. Click the **Settings** tab
+2. Paste a new key into the Gemini or Anthropic field
+3. Click **Save**
+
+The active provider switches automatically based on which keys are configured (Gemini takes priority when both are present).
+
+> Keys entered in Settings are stored in `.curator-config.json` at the project root. This file is gitignored and never committed. If you also have keys in `.env`, the Settings tab values take priority.
+
+### Version and updates
+
+The Settings tab displays the current app version. Click **Check for Updates** to compare your version against the latest release on GitHub. If an update is available, click **Update Now** — the app pulls the latest code, reinstalls dependencies, and restarts automatically.
+
+### App info
+
+A link to the project's GitHub repository is available in the bottom-right corner of every page.
+
+---
+
+## 17. Troubleshooting
 
 **"command not found: node" when I type `node src/server.js`**
 
@@ -698,10 +703,7 @@ Node.js is not installed, or the terminal can't find it. Download it from [nodej
 
 **"No LLM API key found" error when starting the server**
 
-Your `.env` file is missing or the key is not set correctly. Check:
-- The file is named `.env` (not `.env.example` or `.env.txt`)
-- It is inside the `the-curator` folder
-- The line reads `GEMINI_API_KEY=` followed immediately by your key (no spaces around `=`)
+No API key is configured. Open the app in your browser — the onboarding wizard will prompt you to enter your key. Alternatively, go to the **Settings** tab and paste your key there. If you prefer to use a file, check that `.env` exists in the `the-curator` folder with `GEMINI_API_KEY=your_key_here`.
 
 **The server starts but `http://localhost:3333` shows "This site can't be reached"**
 
@@ -731,4 +733,4 @@ Then restart the server and go to `http://localhost:4000` instead.
 
 **I closed the terminal — the app stopped working**
 
-That's expected. The server runs in your terminal. Always keep the terminal window open while using the app. To restart: open a new terminal, navigate to the project folder (`cd the-curator`), and run `node src/server.js`.
+If you are running the server manually from Terminal, the server stops when the terminal closes. To restart: open a new terminal, navigate to the project folder (`cd the-curator`), and run `node src/server.js`. If you use the Dock app instead, this is handled automatically — just double-click The Curator icon to relaunch.

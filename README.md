@@ -68,6 +68,10 @@ This is the shift from a file cabinet to a neural network.
 - **GitHub sync** — one-time 3-minute setup, then Sync Up / Sync Down across any number of computers
 - **Domain management** — create, rename, and delete domains from the UI; four AI-tuned templates
   auto-generate the right schema
+- **Settings tab** — manage API keys, view version info, and check for updates from within the app
+- **First-run onboarding wizard** — guided 3-step setup (API keys, create a domain, sync) on first launch
+- **Auto-update** — check for updates in Settings; the app pulls the latest version and restarts automatically
+- **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
 - Three built-in domains: AI/Tech · Business/Finance · Personal Growth
 - Add unlimited custom domains — no terminal or file editing required
@@ -148,9 +152,7 @@ Paste this into Terminal and press Enter:
 curl -fsSL https://raw.githubusercontent.com/talirezun/the-curator/main/install.sh | bash
 ```
 
-The script checks for Node.js, clones the repo, installs dependencies, asks for your Gemini API key, and builds **The Curator.app** — all in one step. When it finishes, open Finder, go to `~/the-curator`, and drag **The Curator.app** to your Dock.
-
-> **Prerequisite:** [Node.js 18+](https://nodejs.org) must be installed (free, one download).
+The script auto-detects and installs Node.js if needed, clones the repo, installs dependencies, and builds **The Curator.app** — all in one step. When it finishes, the app opens automatically. An onboarding wizard walks you through API key setup on first launch.
 
 ---
 
@@ -169,21 +171,13 @@ cd the-curator
 # 2. Install dependencies
 npm install
 
-# 3. Create your config file and add your API key
-cp .env.example .env
-```
-
-Open `.env` and set your key:
-```
-GEMINI_API_KEY=AIza...your key here...
-```
-
-```bash
-# 4. Start the server
+# 3. Start the server
 node src/server.js
 ```
 
 Open **http://localhost:3333** in your browser.
+
+> **API keys:** The onboarding wizard appears on first launch and asks for your key. You can also add or change keys anytime in the **Settings** tab. Alternatively, developers can create a `.env` file manually (`cp .env.example .env`) and set `GEMINI_API_KEY` there.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](docs/mac-app.md)**.
 
@@ -330,7 +324,7 @@ the-curator/
 
 ## Security
 
-- Your API key lives in `.env` — gitignored, never committed
+- API keys can be stored via the **Settings** tab (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed
 - Sync token lives in `.sync-config.json` — gitignored, never committed
 - The app runs entirely on your local machine — the only outbound calls are to Gemini/Claude and (when syncing) to your own private GitHub repo
 - Do not expose the server on a public network (it has no authentication)

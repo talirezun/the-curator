@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Curator is a local Node.js web application. It has no external database — all knowledge is stored as plain markdown files on disk. An LLM (Google Gemini or Anthropic Claude, selected by which API key is in `.env`) is the only external dependency at runtime.
+The Curator is a local Node.js web application. It has no external database — all knowledge is stored as plain markdown files on disk. An LLM (Google Gemini or Anthropic Claude, selected by which API key is configured) is the only external dependency at runtime.
 
 ### Core design philosophy: Curation, not retrieval
 
@@ -21,7 +21,7 @@ Browser (http://localhost:3333)
 │                                     │
 │  /api/domains  /api/ingest          │
 │  /api/chat     /api/wiki/:domain    │
-│  /api/sync                          │
+│  /api/sync     /api/config          │
 └───────────────┬─────────────────────┘
                 │
         ┌───────┴──────────┐
@@ -41,11 +41,11 @@ Browser (http://localhost:3333)
 │  (Gemini or Claude, auto-detected)  │
 └─────────────────────────────────────┘
                  │
-                 │  API call
+                 │  API call (key from config.js)
                  ▼
 ┌─────────────────────────────────────┐
 │  Google Gemini  OR  Anthropic Claude│
-│  (whichever key is set in .env)     │
+│  (key priority: config file → .env) │
 └─────────────────────────────────────┘
                  │
                  ▼
@@ -78,15 +78,17 @@ the-curator/
 │   │   ├── domains.js          GET/POST/PUT/DELETE /api/domains[/:domain]
 │   │   ├── ingest.js           POST /api/ingest
 │   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]
-│   │   └── wiki.js             GET  /api/wiki/:domain
+│   │   ├── wiki.js             GET  /api/wiki/:domain
+│   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
-│   │   └── chat.js             Chat pipeline (multi-turn, persistent)
+│   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
+│   │   └── config.js           Persistent config (API keys, domains path)
 │   └── public/
 │       ├── index.html          Single-page UI shell
-│       ├── app.js              Vanilla JS frontend
+│       ├── app.js              Vanilla JS frontend (includes Settings tab + onboarding wizard)
 │       └── styles.css          Dark-theme styles
 ├── domains/
 │   └── <domain>/
@@ -107,9 +109,11 @@ the-curator/
 │   ├── fix-wiki-duplicates.js  One-time deduplication: merges near-duplicate entity/concept files
 │   ├── fix-wiki-structure.js   One-time migration: moves non-canonical folders → entities/
 │   ├── bulk-reingest.js        Re-ingests all raw files in a domain to rebuild the wiki
-│   └── inject-summary-backlinks.js  Retroactively injects [[summaries/...]] backlinks into all entity pages
+│   ├── inject-summary-backlinks.js  Retroactively injects [[summaries/...]] backlinks into all entity pages
+│   └── repair-wiki.js         Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
 ├── package.json
-├── .env                        API key (never committed)
+├── .env                        API key — developer fallback (never committed)
+├── .curator-config.json        API keys + settings from UI (never committed)
 └── .gitignore
 ```
 
@@ -117,12 +121,12 @@ the-curator/
 
 ## LLM provider selection (`src/brain/llm.js`)
 
-The app auto-detects which LLM provider to use based on which key is present in `.env`. `GEMINI_API_KEY` takes priority if both are set.
+The app auto-detects which LLM provider to use based on which key is available. Keys are resolved by `config.js` with this priority: `.curator-config.json` (set via Settings UI) takes precedence over `.env` (developer fallback). `GEMINI_API_KEY` takes priority over `ANTHROPIC_API_KEY` if both are set.
 
 ```
 GEMINI_API_KEY set      →  Google Gemini  (default model: gemini-2.5-flash-lite)
 ANTHROPIC_API_KEY set   →  Anthropic Claude (default model: claude-sonnet-4-6)
-Neither set             →  Error on startup
+Neither set             →  Error on startup (onboarding wizard prompts for key)
 ```
 
 The optional `LLM_MODEL` env var overrides the default model for whichever provider is active.
@@ -277,11 +281,24 @@ prompt the user to Sync Up.
 
 ## Module reference
 
+### `src/brain/config.js`
+
+Persistent app configuration stored in `.curator-config.json` at the project root.
+
+| Export | Description |
+|--------|-------------|
+| `getDomainsDir()` | Resolved absolute path to the domains folder (config file → env var → default) |
+| `setDomainsDir(newPath)` | Persists a new domains path to `.curator-config.json` |
+| `getConfig()` | Returns `{ domainsPath, domainsPathSource }` for the UI |
+| `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
+| `setApiKeys({ geminiApiKey, anthropicApiKey })` | Saves API keys to the config file (partial update) |
+| `getEffectiveKey(provider)` | Returns the active key for a provider: config file takes priority over `.env` |
+
 ### `src/brain/llm.js`
 
 | Export | Description |
 |--------|-------------|
-| `getProviderInfo()` | Returns `{ provider, model }` based on env vars |
+| `getProviderInfo()` | Returns `{ provider, model }` based on effective keys (via `config.js`) |
 | `generateText(system, user, maxTokens, responseFormat)` | Single LLM call; handles Gemini and Claude API differences |
 
 ### `src/brain/files.js`
@@ -334,6 +351,20 @@ readConversation(domain, id) → Promise<Conversation | null>
 deleteConversation(domain, id) → Promise<void>
 ```
 
+### `src/routes/config.js`
+
+Settings and configuration endpoints.
+
+```
+GET  /api/config               → current app configuration
+POST /api/config/domains-path  → set domains folder path
+POST /api/config/pick-folder   → macOS native folder picker (osascript)
+GET  /api/config/api-keys      → masked keys + active provider info
+POST /api/config/api-keys      → save API keys (partial update)
+GET  /api/config/update-check  → compare local vs GitHub version
+POST /api/config/update        → git pull + npm install + auto-restart
+```
+
 ---
 
 ## Dependencies
@@ -364,7 +395,7 @@ At the scale of a focused domain wiki (tens to low hundreds of pages), the LLM c
 Domain context shapes how the LLM categorises knowledge. An AI/Tech wiki uses different entity types and concept hierarchies than a Personal Growth wiki. Per-domain schemas give each wiki a specialist, not a generalist.
 
 **Why vanilla JS instead of React/Vue?**
-The UI has three tabs and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
+The UI has six tabs and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
 
 **Why JSON mode for ingest but not chat?**
 Ingest requires structured output (pages + index as a JSON object) that must be machine-parsed. Chat returns free-form markdown prose; JSON mode would constrain the writing style unnecessarily.

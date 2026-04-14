@@ -24,21 +24,24 @@ src/
   brain/
     ingest.js     — main ingest pipeline (single-pass + multi-phase for large docs)
     files.js      — all filesystem logic: writePage, mergeWikiPage, syncSummaryEntities, injectSummaryBacklinks
-    llm.js        — LLM abstraction (Gemini or Claude, auto-detected from .env)
+    llm.js        — LLM abstraction (Gemini or Claude, auto-detected via config.js)
     chat.js       — multi-turn chat against the wiki
     sync.js       — GitHub sync (git --git-dir / --work-tree)
+    config.js     — persistent config (.curator-config.json): getApiKeys, setApiKeys, getEffectiveKey, getDomainsDir
   routes/
     ingest.js     — POST /api/ingest (SSE streaming)
     domains.js    — domain CRUD
     chat.js       — chat endpoints
     wiki.js       — GET /api/wiki/:domain
     sync.js       — sync endpoints
-  public/         — vanilla JS frontend (no build step)
+    config.js     — Settings/config endpoints (API keys, updates, domains path)
+  public/         — vanilla JS frontend (no build step, includes Settings tab + onboarding wizard)
 scripts/
   inject-summary-backlinks.js   — retroactive backlink repair for existing summaries
   fix-wiki-duplicates.js        — one-time entity/concept deduplication
   fix-wiki-structure.js         — one-time migration from non-canonical folders
   bulk-reingest.js              — re-ingest all raw files in a domain
+  repair-wiki.js                — comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
 domains/
   <domain>/
     CLAUDE.md         — domain schema (system prompt for LLM)
@@ -68,6 +71,16 @@ docs/               — user-facing documentation
 | `stripBlanksInBulletSections(content)` | Removes blank lines inside bullet sections (LLM artifact) |
 | `normalizePath(relativePath)` | Redirects non-canonical folders → entities/ or concepts/ |
 | `injectFrontmatter(content, path, today)` | Extracts inline Tags/Type/Source → builds YAML frontmatter block |
+
+## Key Functions (config.js)
+
+| Function | Purpose |
+|---|---|
+| `getApiKeys()` | Read API keys from `.curator-config.json` (not `.env`) |
+| `setApiKeys({ geminiApiKey, anthropicApiKey })` | Save API keys to `.curator-config.json` (partial update) |
+| `getEffectiveKey(provider)` | Returns the active key for a provider: `.curator-config.json` → `.env` → null |
+| `getDomainsDir()` | Resolved absolute path to the domains folder (config → env → default) |
+| `getConfig()` | Returns `{ domainsPath, domainsPathSource }` for the UI |
 
 ---
 
@@ -247,14 +260,20 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `132b769` | deduplicateBulletSections() safety net + result.pages dedup for multi-phase |
 | `b2fa124` | injectBulletsIntoSection creates missing section; multiline regex fix |
 | `181157f` | Underscore → hyphen slug normalization in writePage() step 1a |
-| (next) | Cross-folder dedup (3b), expanded step 5c (Pass C prefix-tolerant), backlinks cover concepts/, writePage returns canonPath, ingest uses canonical paths for sync |
+| `f9665b3` | Cross-folder dedup (3b), expanded step 5c (Pass C prefix-tolerant), backlinks cover concepts/, writePage returns canonPath, ingest uses canonical paths for sync |
+| `1f11c25` | Settings tab, onboarding wizard, auto-update, stop/restart fix, .curator-config.json |
 
 ---
 
 ## Environment & Config
 
 ```
-.env                    — API keys (never committed)
+.curator-config.json    — UI-managed config (API keys, domains path) — never committed
+  geminiApiKey          — Google Gemini key (set via Settings tab / onboarding wizard)
+  anthropicApiKey       — Anthropic Claude key (set via Settings tab)
+  domainsPath           — custom path for domains/ folder (set via UI)
+
+.env                    — developer fallback for API keys (never committed)
   GEMINI_API_KEY        — Google Gemini (default, recommended)
   ANTHROPIC_API_KEY     — Anthropic Claude (alternative)
   LLM_MODEL            — optional model override
@@ -263,6 +282,7 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 .sync-config.json       — GitHub sync credentials (never committed)
 ```
 
+**Key priority:** `.curator-config.json` (Settings UI) takes precedence over `.env` for API keys.
 **LLM selection:** `GEMINI_API_KEY` takes priority. If both keys are set, Gemini is used.
 **Default models:** Gemini 2.5 Flash Lite / Claude Sonnet 4.6
 
@@ -289,6 +309,10 @@ node scripts/fix-wiki-structure.js
 # Re-ingest all raw files in a domain
 node scripts/bulk-reingest.js --domain=articles
 node scripts/bulk-reingest.js --domain=articles --delay=5000  # slower, for rate limits
+
+# Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
+node scripts/repair-wiki.js --domain=articles
+node scripts/repair-wiki.js  # all domains
 ```
 
 ---
@@ -296,9 +320,13 @@ node scripts/bulk-reingest.js --domain=articles --delay=5000  # slower, for rate
 ## Active Development Decisions
 
 - **No vector DB / embeddings** — the wiki is small enough to fit in a single LLM context window for chat. Markdown files are human-readable and Obsidian-native.
-- **No React/Vue** — three-tab UI with vanilla JS. No build step.
+- **No React/Vue** — six-tab UI with vanilla JS. No build step.
 - **JSON mode for ingest, text mode for chat** — ingest requires structured output; chat needs free prose.
 - **Conversations gitignored from app repo but synced via knowledge repo** — personal to each user's machine, not committed to source control.
 - **CLAUDE.md per domain** — each domain is a specialist, not a generalist. The schema shapes how the LLM categorises knowledge for that domain.
 - **syncSummaryEntities is idempotent** — safe to run multiple times; injectBulletsIntoSection deduplicates by link target.
 - **deduplicateBulletSections is always safe to run** — only removes bullets whose dedupKey already appeared earlier in the same section; never drops unique content.
+- **API keys UI-first** — `.curator-config.json` (set via Settings tab / onboarding wizard) takes priority over `.env`. The `.env` file remains as a developer fallback.
+- **install.sh auto-provisions** — detects and installs Node.js (via Homebrew or nodejs.org .pkg) and git (via Xcode CLI tools); no longer asks for API key during install (onboarding wizard handles it); auto-opens the app on completion.
+- **Auto-update via Settings** — compares local `package.json` version with GitHub's `main` branch; runs `git pull` + `npm install` + `process.exit(0)`; AppleScript's `on reopen` handler restarts the server cleanly.
+- **Onboarding wizard** — 3-step modal on first run (API keys → create domain → sync setup); appears when no API keys are configured in either `.curator-config.json` or `.env`.

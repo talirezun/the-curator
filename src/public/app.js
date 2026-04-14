@@ -1470,12 +1470,6 @@ document.querySelector('[data-tab="settings"]')?.addEventListener('click', () =>
 async function initSettings() {
   // Load API keys
   await loadApiKeyStatus();
-  // Load KB path
-  try {
-    const r = await fetch('/api/config');
-    const cfg = await r.json();
-    document.getElementById('settings-kb-path').textContent = cfg.domainsPath || '(default)';
-  } catch {}
   // Load version
   try {
     const r = await fetch('/api/version');
@@ -1552,18 +1546,6 @@ document.addEventListener('click', (e) => {
   if (input) {
     input.type = input.type === 'password' ? 'text' : 'password';
   }
-});
-
-// Change folder button
-document.getElementById('settings-change-folder')?.addEventListener('click', async () => {
-  try {
-    const r = await fetch('/api/config/pick-folder', { method: 'POST' });
-    const data = await r.json();
-    if (data.ok) {
-      document.getElementById('settings-kb-path').textContent = data.path;
-      await Promise.all([loadDomains(), loadChatDomains()]);
-    }
-  } catch {}
 });
 
 // Check for updates
