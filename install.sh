@@ -143,8 +143,13 @@ property appURL : "http://localhost:3333"
 property projectPath : "${INSTALL_DIR}"
 
 on startServer()
-    -- start.sh auto-restarts the server on exit code 0, handles port cleanup
-    do shell script "cd " & quoted form of projectPath & " && nohup bash start.sh >> /tmp/the-curator.log 2>&1 &"
+    -- Kill anything on port 3333 first
+    try
+        do shell script "lsof -ti :3333 | xargs kill -9 2>/dev/null"
+    end try
+    delay 0.5
+    -- Start the server (single run, no loop — server manages its own lifecycle)
+    do shell script "source ~/.zprofile 2>/dev/null; source ~/.zshrc 2>/dev/null; cd " & quoted form of projectPath & " && nohup node src/server.js >> /tmp/the-curator.log 2>&1 &"
     -- Wait for server to be ready
     set attempts to 0
     repeat
@@ -155,14 +160,14 @@ on startServer()
             exit repeat
         end try
         if attempts > 20 then
-            display dialog "The Curator could not start." & return & return & "Open Settings in the app to add your API key, or check the log." & return & return & "Log: /tmp/the-curator.log" buttons {"OK"} default button 1 with icon stop
+            display dialog "The Curator could not start." & return & return & "Check the log: /tmp/the-curator.log" buttons {"OK"} default button 1 with icon stop
             return
         end if
     end repeat
 end startServer
 
 on run
-    -- Check if already running
+    -- If server is already running, just open the browser
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
         do shell script "open " & appURL
@@ -174,7 +179,7 @@ on run
 end run
 
 on reopen
-    -- Dock icon clicked while applet is already in Dock
+    -- Dock icon clicked while applet is in Dock
     try
         do shell script "curl -s --max-time 1 " & appURL & " > /dev/null 2>&1"
         do shell script "open " & appURL

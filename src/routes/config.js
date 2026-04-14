@@ -164,16 +164,13 @@ router.get('/update-check', async (_req, res) => {
   }
 });
 
-/** POST /api/config/update — pull latest code and restart */
+/** POST /api/config/update — pull latest code, install deps, signal restart */
 router.post('/update', async (_req, res) => {
   try {
     await execAsync('git pull origin main', { cwd: PROJECT_ROOT, timeout: 30000 });
     await execAsync('npm install --silent --no-audit --no-fund', { cwd: PROJECT_ROOT, timeout: 60000 });
-
     res.json({ ok: true, restarting: true });
-
-    // Exit after response is flushed — AppleScript's on reopen will restart
-    setTimeout(() => process.exit(0), 500);
+    // Don't exit here — let the frontend call /api/restart after it gets the response
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

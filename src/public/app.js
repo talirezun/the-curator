@@ -7,65 +7,31 @@ fetch('/api/version')
   })
   .catch(() => {}); // non-critical — silently skip if unavailable
 
-// ── Stop / Restart server ─────────────────────────────────────────────────────
+// ── Heartbeat — tells the server the browser tab is still open ────────────────
+// Server shuts down automatically if no heartbeat for 90 seconds (tab closed).
+setInterval(() => {
+  fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
+}, 30000);
+// Send initial heartbeat immediately
+fetch('/api/heartbeat', { method: 'POST' }).catch(() => {});
+
+// ── Stop button (closes the app) ─────────────────────────────────────────────
 document.getElementById('stop-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('stop-btn');
-  btn.disabled = true;
-
-  // Show restarting overlay
-  const overlay = document.createElement('div');
-  overlay.id = 'restart-overlay';
-  overlay.innerHTML = `
-    <div style="display:flex;flex-direction:column;align-items:center;
-         justify-content:center;height:100vh;gap:16px;font-family:system-ui;
-         color:#e2e8f0;background:rgba(15,17,23,0.95);position:fixed;inset:0;z-index:9999">
-      <div style="font-size:48px;">🧠</div>
-      <div style="font-size:20px;font-weight:600;">Restarting The Curator...</div>
-      <div id="restart-sub" style="font-size:14px;color:#64748b;">
-        This takes a few seconds.
-      </div>
-      <div style="margin-top:8px;">
-        <div style="width:20px;height:20px;border:2px solid #334155;border-top-color:#6366f1;
-             border-radius:50%;animation:spin 0.8s linear infinite;"></div>
-      </div>
-    </div>
-    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
-  document.body.appendChild(overlay);
-
+  if (!confirm('Stop The Curator? The server will shut down.')) return;
   try {
     await fetch('/api/shutdown', { method: 'POST' });
-  } catch {
-    // Expected — the server closes before responding fully
-  }
-
-  // Poll until server comes back (start.sh auto-restarts it)
-  let polling = false;
-  const poll = setInterval(async () => {
-    if (polling) return;
-    polling = true;
-    try {
-      const r = await fetch('/api/health', { signal: AbortSignal.timeout(1000) });
-      if (r.ok) {
-        clearInterval(poll);
-        clearTimeout(failsafe);
-        const sub = document.getElementById('restart-sub');
-        if (sub) sub.textContent = 'Server is back — reloading...';
-        setTimeout(() => location.reload(), 600);
-      }
-    } catch {
-      // Server still restarting — keep polling
-    } finally {
-      polling = false;
-    }
-  }, 1500);
-
-  // Failsafe: if server doesn't come back in 20 seconds, show manual instructions
-  const failsafe = setTimeout(() => {
-    clearInterval(poll);
-    const sub = document.getElementById('restart-sub');
-    if (sub) sub.innerHTML = 'Server is taking longer than expected.<br><a href="http://localhost:3333" style="color:#7c5af5;text-decoration:underline">Click here to retry</a>';
-    btn.disabled = false;
-  }, 20000);
+  } catch {}
+  // Close this tab
+  window.close();
+  // If window.close() doesn't work (not opened by script), show message
+  document.body.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;
+         justify-content:center;height:100vh;gap:16px;font-family:system-ui;
+         color:#e2e8f0;background:#0f1117;">
+      <div style="font-size:48px;">🧠</div>
+      <div style="font-size:20px;font-weight:600;">The Curator stopped</div>
+      <div style="font-size:14px;color:#64748b;">You can close this tab. Click the app icon to start again.</div>
+    </div>`;
 });
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -1634,41 +1600,42 @@ async function doUpdate() {
     const r = await fetch('/api/config/update', { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error);
-  } catch {
-    // Expected — server exits before fully responding
+  } catch (err) {
+    status.innerHTML = `<span style="color:var(--error)">Update failed: ${err.message || 'Unknown error'}</span>`;
+    status.className = 'status';
+    return;
   }
 
-  // Poll for the server to come back after restart
+  // Update succeeded — now restart the server
   status.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <div style="width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--success);
            border-radius:50%;animation:spin 0.8s linear infinite;flex-shrink:0"></div>
-      <span>Update complete. Waiting for server to restart...</span>
+      <span>Update complete. Restarting server...</span>
     </div>`;
 
-  // Wait for the server to come back, then reload
+  // Trigger restart — this spawns a new server process, then kills this one
+  try { await fetch('/api/restart', { method: 'POST' }); } catch {}
+
+  // Poll for the new server to come up
   const poll = setInterval(async () => {
     try {
       const r = await fetch('/api/health', { signal: AbortSignal.timeout(1000) });
       if (r.ok) {
         clearInterval(poll);
-        status.innerHTML = '<span style="color:var(--success)">✓ Updated! Reloading...</span>';
+        clearTimeout(failsafe);
+        status.innerHTML = '<span style="color:var(--success)">✓ Updated successfully! Reloading...</span>';
         status.className = 'status';
-        setTimeout(() => location.reload(), 500);
+        setTimeout(() => location.reload(), 600);
       }
-    } catch {
-      // Server still restarting — keep polling
-    }
-  }, 2000);
+    } catch {}
+  }, 1500);
 
-  // After 30 seconds, show manual instructions
-  setTimeout(() => {
+  const failsafe = setTimeout(() => {
     clearInterval(poll);
-    status.innerHTML = `
-      <span style="color:var(--warning)">Update installed. Click the Dock icon to restart the app,
-      then <a href="http://localhost:3333" style="color:var(--accent)">reload this page</a>.</span>`;
+    status.innerHTML = '<span style="color:var(--success)">✓ Updated! <a href="http://localhost:3333" style="color:var(--accent)">Click here to reload</a>.</span>';
     status.className = 'status';
-  }, 30000);
+  }, 20000);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
