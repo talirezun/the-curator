@@ -228,7 +228,11 @@ export async function pull() {
     }
   }
 
-  const { stdout: pullOut } = await git('pull --rebase origin main', { timeout: 120000 });
+  // Use merge (not rebase) with "theirs" strategy for conflicts.
+  // Wiki files are merged at the application level (mergeWikiPage) on next ingest,
+  // so accepting the remote version for git conflicts is safe and avoids the
+  // "could not apply" rebase errors when both computers edit the same entity pages.
+  const { stdout: pullOut } = await git('pull --no-rebase -X theirs origin main', { timeout: 120000 });
   return { pulled: true, details: pullOut };
 }
 
