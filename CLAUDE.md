@@ -265,6 +265,7 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 | `1f11c25` | Settings tab, onboarding wizard, auto-update, stop/restart fix, .curator-config.json |
 | `v2.1.0` | Remove Stop button + /api/shutdown; server runs until quit; update rebuilds .app; build-app.sh |
 | `f80b2db` | Absolute node path in AppleScript — fixes "node: No such file or directory"; process.execPath in restart; CURATOR_NO_OPEN prevents double browser tabs |
+| `c5eddef` | Auto-refresh UI state after ingest, sync, and tab switches — domain stats, wiki tab, and dropdowns update without manual browser reload |
 
 ---
 
@@ -340,5 +341,6 @@ bash scripts/build-app.sh
 - **Server auto-opens browser** — `exec('open http://localhost:3333')` runs on startup, unless `CURATOR_NO_OPEN=1` is set (used by the restart endpoint to prevent double browser tabs — the frontend reloads itself via polling).
 - **Absolute node path in AppleScript** — `build-app.sh` and `install.sh` resolve the full path to `node` (via `which node`) at build time and embed it as `property nodeBin` in the AppleScript. This avoids the "node: No such file or directory" failure caused by AppleScript's `do shell script` running in a bare `/bin/sh` environment without the user's PATH. A `export PATH=...` with common node locations (`/usr/local/bin`, `/opt/homebrew/bin`) is also added as a fallback. If the user upgrades or moves Node.js, `bash scripts/build-app.sh` re-resolves the path.
 - **Restart uses `process.execPath`** — the `/api/restart` endpoint uses the absolute path to the currently running Node binary (`process.execPath`) instead of bare `node`, ensuring the restarted server finds the same Node regardless of shell environment.
+- **UI auto-refreshes after mutations** — after ingest, domain stats (page count, conversation count) update automatically; after sync down/both, domain dropdowns and stats also refresh; switching to the Domains or Wiki tab reloads their data. No manual browser reload needed.
 - **Onboarding wizard** — 3-step modal on first run (API keys → create domain → sync setup); appears when no API keys are configured in either `.curator-config.json` or `.env`.
 - **Version:** 2.1.0

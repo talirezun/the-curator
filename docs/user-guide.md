@@ -636,7 +636,7 @@ Computer B (starting here)  ←  click Sync Down ←  GitHub
 | **↑ Sync Up** | Saves all your local changes as a snapshot and sends them to GitHub |
 | **↓ Sync Down** | Downloads the latest snapshot from GitHub to this computer |
 
-After Sync Down, refresh the Chat or Wiki tab to see the newly arrived pages.
+After Sync Down, domain stats and the Wiki tab update automatically. Switch to the Chat tab to see newly arrived conversations.
 
 ### Setting up a second (or third) computer
 
