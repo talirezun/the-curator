@@ -725,6 +725,21 @@ The PDF is scanned (an image of a page, not real text). Copy the text manually a
 
 Press `Cmd/Ctrl + R` in Obsidian to force a refresh, or close and reopen the vault. Obsidian does not always detect new files automatically.
 
+**"The Curator could not start" dialog appears when clicking the Dock icon**
+
+Check the log for the exact error:
+```bash
+cat /tmp/the-curator.log
+```
+
+The most common cause is `nohup: node: No such file or directory` — this means Node.js was upgraded or its path changed since the app was built. Rebuild the app to pick up the current path:
+```bash
+cd ~/the-curator
+bash scripts/build-app.sh
+```
+
+Then double-click the Dock icon again. If the log shows a different error (e.g. a missing API key), the onboarding wizard will help when you open `http://localhost:3333` manually in your browser.
+
 **"Port 3333 is already in use" error**
 
 Another process is using port 3333. Either close that process or change the port in your `.env` file:
