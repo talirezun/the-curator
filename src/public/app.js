@@ -19,6 +19,13 @@ tabBtns.forEach(btn => {
       t.classList.toggle('active', t.id === `tab-${target}`);
       t.classList.toggle('hidden', t.id !== `tab-${target}`);
     });
+
+    // Auto-refresh data when switching to certain tabs
+    if (target === 'domains') loadDomainList().catch(() => {});
+    if (target === 'wiki') {
+      const wikiDomain = document.getElementById('wiki-domain');
+      if (wikiDomain && wikiDomain.value) loadWiki();
+    }
   });
 });
 
@@ -181,6 +188,9 @@ async function submitIngest(overwrite) {
     fileNameEl.textContent = '';
     fileInput.value = '';
     ingestBtn.disabled = true;
+
+    // Refresh domain stats so page counts update without a browser reload
+    loadDomainList().catch(() => {});
 
   } catch (err) {
     hideProgress();
@@ -541,9 +551,10 @@ document.getElementById('sync-push-btn').addEventListener('click', async () => {
     } else {
       showStatus(statusEl, 'success', `✓ ${data.message}`);
     }
-    // Refresh status
+    // Refresh status + domain stats
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
+    loadDomainList().catch(() => {});
   } catch (err) {
     showStatus(statusEl, 'error', err.message);
   } finally {
@@ -567,6 +578,8 @@ document.getElementById('sync-pull-btn').addEventListener('click', async () => {
       '✓ Pulled successfully. Reload the Wiki or Chat tab to see updated content.');
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
+    // Refresh domain stats + dropdowns (sync may have added/removed pages or domains)
+    Promise.all([loadDomains(), loadChatDomains(), loadDomainList()]).catch(() => {});
   } catch (err) {
     showStatus(statusEl, 'error', err.message);
   } finally {
@@ -596,6 +609,8 @@ document.getElementById('sync-both-btn').addEventListener('click', async () => {
     showStatus(statusEl, 'success', `✓ Sync complete. ${parts.join(' ')}`);
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
+    // Refresh domain stats + dropdowns (sync may have added/removed pages or domains)
+    Promise.all([loadDomains(), loadChatDomains(), loadDomainList()]).catch(() => {});
   } catch (err) {
     showStatus(statusEl, 'error', err.message);
   } finally {
@@ -1109,8 +1124,8 @@ document.querySelector('[data-tab="domains"]').addEventListener('click', () => {
   if (!domainsTabInitialised) {
     domainsTabInitialised = true;
     initKbPathPanel();
-    loadDomainList();
   }
+  // loadDomainList() is now called by the tab-switch handler
 });
 
 // Domains is the first tab — initialize immediately
