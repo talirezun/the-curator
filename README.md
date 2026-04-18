@@ -26,11 +26,13 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
 ## Product Demo
 
 <p align="center">
-  <a href="images/the-curator-product-video.mp4">
-    <strong>▶ Click to watch the product demo</strong>
-  </a>
-  <br>
+  <img src="images/the-curator-product-video-v2.gif" alt="The Curator product demo" width="800" />
+</p>
+
+<p align="center">
   <em>See The Curator in action: drop a PDF, watch it atomize into an interlinked wiki, explore the knowledge graph, and chat with your knowledge.</em>
+  <br>
+  <a href="images/the-curator-product-video.mp4"><strong>▶ Watch in HD (MP4)</strong></a>
 </p>
 
 ---
