@@ -383,12 +383,14 @@ curl http://localhost:3333/api/health/ai-tech
 
 | Type | Auto-fixable | Description |
 |------|:-:|-------------|
-| `brokenLinks` | — | `[[wikilink]]` that points to a non-existent page. Includes a `suggestedTarget` when a prefix-tolerant match exists. |
+| `brokenLinks` | ✓¹ | `[[wikilink]]` that points to a non-existent page. Includes a `suggestedTarget` when a prefix-tolerant match exists. |
 | `orphans` | — | Entity or concept pages with zero incoming links. |
 | `folderPrefixLinks` | ✓ | Links like `[[concepts/rag]]` that should be `[[rag]]`. |
 | `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |
 | `hyphenVariants` | ✓ | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). |
 | `missingBacklinks` | ✓ | Summary mentions an entity under "Entities Mentioned" but the entity's Related section doesn't link back. |
+
+¹ `brokenLinks` are auto-fixable **only when `suggestedTarget` is non-null** — the fix rewrites the link in the source file to point at the suggestion. Broken links without a suggestion are review-only; `fix-all` silently skips them and `total` reflects the count of fixable (suggested) issues, not the total broken-link count.
 
 **Error responses**
 
@@ -424,7 +426,7 @@ Apply a single fix for a specific issue.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | Missing `type`; type is review-only (`brokenLinks` / `orphans`) |
+| `400` | Missing `type`; type is review-only (`orphans`), or `brokenLinks` issue has no `suggestedTarget` |
 | `404` | Unknown domain |
 
 ---

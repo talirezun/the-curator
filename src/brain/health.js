@@ -316,15 +316,30 @@ export async function scanWiki(domain) {
 // ── Fix handlers ────────────────────────────────────────────────────────────
 
 /**
- * Auto-fixable issue types. Orphans and brokenLinks require human judgement
- * and are returned as review-only.
+ * Auto-fixable issue types. Orphans are always review-only. brokenLinks are
+ * auto-fixable per-issue only when a `suggestedTarget` is present; issues
+ * without a suggestion fall through as review-only in the UI.
  */
 export const AUTO_FIXABLE = new Set([
+  'brokenLinks',
   'folderPrefixLinks',
   'crossFolderDupes',
   'hyphenVariants',
   'missingBacklinks',
 ]);
+
+async function fixBrokenLink(wikiDir, issue) {
+  if (!issue.suggestedTarget) return false;
+  const full = path.join(wikiDir, issue.sourceFile);
+  if (!existsSync(full)) return false;
+  const before = await readFile(full, 'utf8');
+  const esc = issue.linkText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`\\[\\[${esc}(\\|[^\\]]+)?\\]\\]`, 'g');
+  const after = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
+  if (after === before) return false;
+  await writeFile(full, after, 'utf8');
+  return true;
+}
 
 async function fixFolderPrefixLink(wikiDir, issue) {
   const full = path.join(wikiDir, issue.sourceFile);
@@ -404,6 +419,7 @@ export async function fixIssue(domain, type, issue = null) {
   // Fix one specific issue
   if (issue) {
     let ok = false;
+    if (type === 'brokenLinks')       ok = await fixBrokenLink(wikiDir, issue);
     if (type === 'folderPrefixLinks') ok = await fixFolderPrefixLink(wikiDir, issue);
     if (type === 'crossFolderDupes')  ok = await fixCrossFolderDupe(wikiDir, issue);
     if (type === 'hyphenVariants')    ok = await fixHyphenVariant(wikiDir, issue);
@@ -411,13 +427,16 @@ export async function fixIssue(domain, type, issue = null) {
     return { fixed: ok ? 1 : 0, total: 1 };
   }
 
-  // Fix all of type: re-scan and apply each
+  // Fix all of type: re-scan and apply each. For brokenLinks, only issues
+  // with a suggestedTarget count toward the total — the rest are review-only.
   const report = await scanWiki(domain);
-  const issues = report[type] || [];
+  let issues = report[type] || [];
+  if (type === 'brokenLinks') issues = issues.filter(i => i.suggestedTarget);
   let fixed = 0;
   for (const it of issues) {
     let ok = false;
     try {
+      if (type === 'brokenLinks')       ok = await fixBrokenLink(wikiDir, it);
       if (type === 'folderPrefixLinks') ok = await fixFolderPrefixLink(wikiDir, it);
       if (type === 'crossFolderDupes')  ok = await fixCrossFolderDupe(wikiDir, it);
       if (type === 'hyphenVariants')    ok = await fixHyphenVariant(wikiDir, it);

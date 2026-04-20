@@ -91,7 +91,7 @@ This is the shift from a file cabinet to a neural network.
 - **Domain management** — create, rename, and delete domains from the UI; four AI-tuned templates
   auto-generate the right schema
 - **Settings tab** — manage API keys, view version info, and check for updates from within the app
-- **Wiki Health tab** — one-click scan for broken links, orphans, duplicate entities, folder-prefix violations, and missing backlinks — with **Fix** buttons that repair each category in place
+- **Wiki Health tab** — one-click scan for broken links, orphans, duplicate entities, folder-prefix violations, and missing backlinks. Auto-fix categories rewrite in place; broken links with a suggested target get an **Apply** button (and a bulk **Apply all suggestions** action); genuine ambiguities and orphans stay review-only.
 - **First-run onboarding wizard** — guided 3-step setup (API keys, create a domain, sync) on first launch
 - **Live UI updates** — domain stats, wiki pages, and page counts refresh automatically after ingest and sync — no manual browser reload needed
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically

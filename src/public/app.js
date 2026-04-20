@@ -1749,7 +1749,7 @@ const healthStatusEl   = document.getElementById('health-status');
 const healthEmptyEl    = document.getElementById('health-empty');
 
 const HEALTH_META = {
-  brokenLinks:       { label: 'Broken links',          desc: 'Wikilinks that point to a page that doesn\'t exist.',                 autoFix: false },
+  brokenLinks:       { label: 'Broken links',          desc: 'Wikilinks that point to a page that doesn\'t exist. Rows with a suggestion can be fixed in one click.', autoFix: true, perIssue: true },
   orphans:           { label: 'Orphan pages',          desc: 'Entity or concept pages with no incoming links.',                     autoFix: false },
   folderPrefixLinks: { label: 'Folder-prefix links',   desc: 'Links that include a folder prefix (e.g. [[concepts/rag]]).',         autoFix: true  },
   crossFolderDupes:  { label: 'Cross-folder duplicates', desc: 'The same page exists in both entities/ and concepts/.',             autoFix: true  },
@@ -1840,16 +1840,26 @@ function renderSection(report, type) {
   const n = issues.length;
   if (n === 0) return '';
 
+  const canFixIssue = (issue) => {
+    if (type === 'brokenLinks') return !!issue.suggestedTarget;
+    return meta.autoFix;
+  };
+  const fixableCount = meta.autoFix ? issues.filter(canFixIssue).length : 0;
+  const btnLabel = type === 'brokenLinks' ? 'Apply' : 'Fix';
+
   const rows = issues.map(issue => {
     const description = describeIssue(type, issue);
-    const fixBtn = meta.autoFix
-      ? `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>Fix</button>`
+    const fixBtn = canFixIssue(issue)
+      ? `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>${btnLabel}</button>`
       : `<span class="health-review-tag">Review</span>`;
     return `<li class="health-issue-row"><span class="health-issue-desc">${description}</span>${fixBtn}</li>`;
   }).join('');
 
-  const fixAllBtn = meta.autoFix
-    ? `<button class="btn btn-sm health-fix-all-btn" data-fix-all="${type}">Fix all (${n})</button>`
+  const fixAllLabel = type === 'brokenLinks'
+    ? `Apply all suggestions (${fixableCount})`
+    : `Fix all (${n})`;
+  const fixAllBtn = fixableCount > 0
+    ? `<button class="btn btn-sm health-fix-all-btn" data-fix-all="${type}">${fixAllLabel}</button>`
     : '';
 
   return `

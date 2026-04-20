@@ -706,21 +706,21 @@ The **Health** tab scans a domain's wiki for structural issues and lets you fix 
 
 | Issue | What it means | Action |
 |-------|---------------|--------|
-| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo or a deleted page. | **Review** — if there's a suggested match (e.g. *"did you mean [[foo]]?"*), edit the file in Obsidian to correct it. |
-| **Orphan pages** | An entity or concept page has zero incoming links. Probably forgotten or wrongly categorized. | **Review** — decide whether to keep, merge, or delete from Obsidian. |
+| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo, hyphen drift, or a link to a page the LLM hasn't written yet. | **Apply** (if the scanner found a close match) rewrites the link to the suggested target. Rows without a suggestion stay **Review** — either ingest more content on that topic, remove the brackets, or pick a different target manually. |
+| **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Review** — keep, merge, or delete from Obsidian. Many orphans resolve themselves over time as the wiki grows. |
 | **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
 | **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
 | **Hyphen variants** | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). | **Fix** — merges into the canonical hyphenated slug. |
 | **Missing backlinks** | A summary lists an entity under *Entities Mentioned* but the entity's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
 
-**Auto-fixable issues** have a **Fix** button (and a **Fix all (N)** button at the top of the section). **Review-only issues** (broken links, orphans) require human judgement — The Curator surfaces them for you but won't change them automatically, since the right action depends on intent.
+**Auto-fixable issues** have a **Fix** button (and a **Fix all (N)** button at the top of the section). **Broken links** use the same flow per-row but with an **Apply** button — only rows where the scanner found a plausible target are applicable; the bulk action is **Apply all suggestions (N)**. **Orphans** are review-only because no mechanical rule determines whether an unconnected page should stay, merge, or go.
 
 ### How to use it
 
 1. Click the **Health** tab (heartbeat icon in the top bar)
 2. Pick a domain
 3. Click **Scan** — results appear within a second or two
-4. For each issue, click **Fix** to apply the repair, or **Fix all (N)** to batch the whole category
+4. For each issue, click **Fix** (or **Apply** for broken links with a suggested target) to apply the repair, or **Fix all (N)** / **Apply all suggestions (N)** to batch the category
 5. After fixing, the wiki auto-re-scans so you can see counts drop to zero
 
 ### When to run it
