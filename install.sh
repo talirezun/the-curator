@@ -74,7 +74,10 @@ if [[ "$NEED_NODE" == "true" ]]; then
   if [[ -t 0 ]]; then
     echo -e "  ${YELLOW}Node.js 18+ is required but not installed.${NC}"
     read -rp "  Install Node.js automatically? (Y/n): " INSTALL_CHOICE
-    if [[ "${INSTALL_CHOICE,,}" == "n" ]]; then
+    # macOS ships bash 3.2, which doesn't support ${VAR,,} lowercasing —
+    # use tr for portability across old and new bash.
+    CHOICE_LOWER=$(echo "${INSTALL_CHOICE:-y}" | tr '[:upper:]' '[:lower:]')
+    if [[ "$CHOICE_LOWER" == "n" || "$CHOICE_LOWER" == "no" ]]; then
       echo ""
       echo -e "  ${RED}Please install Node.js manually:${NC} https://nodejs.org"
       exit 1
@@ -240,11 +243,14 @@ echo "  3. Drag 'The Curator' to your Dock"
 echo ""
 
 # Auto-open: start the server and open the browser directly
-# (more reliable than launching the .app, which may fail on first run
-#  due to macOS Gatekeeper prompts or unsigned app restrictions)
+# (more reliable than launching the .app on first run, which may hit
+#  macOS Gatekeeper prompts or unsigned-app restrictions)
 echo -e "  ${BLUE}Starting The Curator...${NC}"
 cd "${INSTALL_DIR}"
-nohup bash start.sh >> /tmp/the-curator.log 2>&1 &
+# Use the absolute node binary we resolved earlier; AppleScript's bare PATH
+# would otherwise not find it. Kill any stale server first to prevent EADDRINUSE.
+lsof -ti :3333 | xargs kill -9 2>/dev/null || true
+nohup "${NODE_PATH}" src/server.js >> /tmp/the-curator.log 2>&1 &
 
 # Wait for server to be ready
 ATTEMPTS=0

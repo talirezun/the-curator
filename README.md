@@ -10,7 +10,7 @@
   <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Platform-macOS-blue" alt="Platform: macOS"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
-  <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/github/v/release/talirezun/the-curator?label=Version" alt="Latest Release"></a>
+  <a href="https://github.com/talirezun/the-curator/blob/main/package.json"><img src="https://img.shields.io/github/package-json/v/talirezun/the-curator?label=Version&color=blue" alt="Current Version"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
