@@ -185,49 +185,68 @@ export async function setup(repoUrl, token, mode) {
 export async function push() {
   // Stage and commit any uncommitted changes
   const { stdout } = await git('status --porcelain');
-  const changesCount = stdout.split('\n').filter(Boolean).length;
+  const uncommittedCount = stdout.split('\n').filter(Boolean).length;
 
-  if (changesCount > 0) {
+  if (uncommittedCount > 0) {
     const now  = new Date();
     const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     await git('add -A');
-    await git(`commit -m "The Curator sync — ${date} ${time} — ${changesCount} change${changesCount !== 1 ? 's' : ''}"`);
+    await git(`commit -m "The Curator sync — ${date} ${time} — ${uncommittedCount} change${uncommittedCount !== 1 ? 's' : ''}"`);
   }
 
-  // Check if there are local commits ahead of the remote (including commits
-  // made by pull()'s auto-save). Without this, sync() would report "nothing
-  // to push" even though pull() just committed all local changes.
+  // Determine what will be pushed BEFORE pushing. We want the union of files
+  // changed across ALL unpushed commits — including commits made earlier in
+  // this sync by pull()'s auto-save. The previous implementation only counted
+  // the most recent commit's diff, so a big ingest that got split into
+  // multiple commits by pull() → push() would show a wildly-wrong count like
+  // "6 files" for a 200-file change.
   let aheadCount = 0;
+  let filesToPush = 0;
+  let filePreview = [];
   try {
     const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
     aheadCount = parseInt(ahead.trim(), 10) || 0;
+    if (aheadCount > 0) {
+      const { stdout: names } = await git('diff --name-only origin/main..HEAD');
+      const list = names.split('\n').filter(Boolean);
+      filesToPush = list.length;
+      filePreview = list.slice(0, 20);
+    }
   } catch {
-    // If origin/main doesn't exist yet (first push), we have commits to push
-    aheadCount = 1;
+    // First push ever: origin/main doesn't exist yet. Count tracked files.
+    try {
+      const { stdout: names } = await git('ls-files');
+      const list = names.split('\n').filter(Boolean);
+      filesToPush = list.length;
+      filePreview = list.slice(0, 20);
+      aheadCount = 1;
+    } catch { filesToPush = uncommittedCount; aheadCount = 1; }
   }
 
   if (aheadCount === 0) {
-    return { pushed: false, message: 'Everything is already up to date — nothing new to sync.' };
+    return {
+      pushed: false,
+      filesChanged: 0,
+      commitsAhead: 0,
+      message: 'Everything is already up to date — nothing new to sync.',
+    };
   }
 
   await git('push -u origin main', { timeout: 120000 });
 
-  // Return meaningful count: uncommitted files staged + any files in commits ahead of remote
-  let filesChanged = changesCount;
-  if (!filesChanged && aheadCount > 0) {
-    try {
-      const { stdout: diffStat } = await git('diff --stat --name-only origin/main~1..origin/main');
-      filesChanged = diffStat.split('\n').filter(Boolean).length;
-    } catch {
-      filesChanged = aheadCount;  // Fallback to commit count
-    }
-  }
-  return { pushed: true, changesCount: filesChanged || aheadCount };
+  return {
+    pushed: true,
+    filesChanged: filesToPush,
+    commitsAhead: aheadCount,
+    files: filePreview,
+    // Back-compat: `changesCount` was the field the UI used before v2.3.7
+    changesCount: filesToPush,
+  };
 }
 
 export async function pull() {
-  // Auto-commit local changes so rebase succeeds
+  // Auto-commit local changes so the pull merge succeeds
   const { stdout } = await git('status --porcelain');
   if (stdout.trim()) {
     const date = new Date().toLocaleString();
@@ -239,6 +258,23 @@ export async function pull() {
     }
   }
 
+  // Fetch remote state without merging yet, so we can count what's incoming.
+  await git('fetch origin main', { timeout: 120000 });
+
+  let filesPulled = 0;
+  let commitsPulled = 0;
+  let filePreview = [];
+  try {
+    const { stdout: cnt } = await git('rev-list --count HEAD..origin/main');
+    commitsPulled = parseInt(cnt.trim(), 10) || 0;
+    if (commitsPulled > 0) {
+      const { stdout: names } = await git('diff --name-only HEAD..origin/main');
+      const list = names.split('\n').filter(Boolean);
+      filesPulled = list.length;
+      filePreview = list.slice(0, 20);
+    }
+  } catch { /* no remote yet — first sync, pull will do the right thing */ }
+
   // Use merge (not rebase) with "theirs" strategy for conflicts.
   // Wiki files are merged at the application level (mergeWikiPage) on next ingest,
   // so accepting the remote version for git conflicts is safe and avoids the
@@ -247,12 +283,17 @@ export async function pull() {
 
   // Prune ghost domain directories. When another machine deletes a domain, the
   // pull removes every tracked file, but empty dirs are left behind because git
-  // doesn't track them. A directory is a "real" domain only if it has a
-  // CLAUDE.md schema after the pull — if that's gone, everything under it is
-  // untracked leftovers and we can safely remove the whole folder.
+  // doesn't track them.
   const pruned = await pruneGhostDomainDirs();
 
-  return { pulled: true, details: pullOut, pruned };
+  return {
+    pulled: true,
+    filesChanged: filesPulled,
+    commitsPulled,
+    files: filePreview,
+    pruned,
+    details: pullOut,
+  };
 }
 
 /**

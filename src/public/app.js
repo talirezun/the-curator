@@ -552,8 +552,10 @@ document.getElementById('sync-push-btn').addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.error);
 
     if (data.pushed) {
+      const n = data.filesChanged ?? data.changesCount ?? 0;
+      const commits = data.commitsAhead ? ` across ${data.commitsAhead} commit${data.commitsAhead !== 1 ? 's' : ''}` : '';
       showStatus(statusEl, 'success',
-        `✓ Synced ${data.changesCount} change${data.changesCount !== 1 ? 's' : ''} to GitHub.`);
+        `✓ Pushed ${n} file${n !== 1 ? 's' : ''} to GitHub${commits}.`);
     } else {
       showStatus(statusEl, 'success', `✓ ${data.message}`);
     }
@@ -580,8 +582,14 @@ document.getElementById('sync-pull-btn').addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
 
-    showStatus(statusEl, 'success',
-      '✓ Pulled successfully. Reload the Wiki or Chat tab to see updated content.');
+    const n = data.filesChanged ?? 0;
+    const pruned = data.pruned?.length
+      ? `, removed ${data.pruned.length} deleted domain${data.pruned.length !== 1 ? 's' : ''} (${data.pruned.join(', ')})`
+      : '';
+    const msg = n > 0
+      ? `✓ Pulled ${n} file${n !== 1 ? 's' : ''} from GitHub${pruned}.`
+      : `✓ Already up to date${pruned}.`;
+    showStatus(statusEl, 'success', msg);
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
     // Refresh domain stats + dropdowns (sync may have added/removed pages or domains)
@@ -606,13 +614,22 @@ document.getElementById('sync-both-btn').addEventListener('click', async () => {
     if (!res.ok) throw new Error(data.error);
 
     const parts = [];
-    if (data.pullResult?.pulled) parts.push('Pulled latest from GitHub.');
-    if (data.pushResult?.pushed) {
-      const n = data.pushResult.changesCount;
-      parts.push(`Pushed ${n} file${n !== 1 ? 's' : ''} to GitHub.`);
+    const pulled = data.pullResult?.filesChanged ?? 0;
+    const pushed = data.pushResult?.filesChanged ?? 0;
+    if (pulled > 0) {
+      parts.push(`Pulled ${pulled} file${pulled !== 1 ? 's' : ''} from GitHub`);
     }
-    if (!parts.length) parts.push('Everything is up to date.');
-    showStatus(statusEl, 'success', `✓ Sync complete. ${parts.join(' ')}`);
+    if (data.pushResult?.pushed && pushed > 0) {
+      parts.push(`pushed ${pushed} file${pushed !== 1 ? 's' : ''} to GitHub`);
+    }
+    if (data.pullResult?.pruned?.length) {
+      const p = data.pullResult.pruned;
+      parts.push(`removed ${p.length} deleted domain${p.length !== 1 ? 's' : ''} (${p.join(', ')})`);
+    }
+    const summary = parts.length
+      ? `✓ Sync complete — ${parts.join(', ')}.`
+      : '✓ Sync complete — everything was already up to date.';
+    showStatus(statusEl, 'success', summary);
     const s = await fetch('/api/sync/status').then(r => r.json());
     renderSyncConfigured(s);
     // Refresh domain stats + dropdowns (sync may have added/removed pages or domains)
