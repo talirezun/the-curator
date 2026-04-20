@@ -323,6 +323,134 @@ Pages are returned in filesystem traversal order (depth-first). The `path` field
 
 ---
 
+## GET /api/health
+
+Server ping. Used by the UI to detect whether the server is running.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "version": "2.2.0" }
+```
+
+---
+
+## GET /api/health/:domain
+
+Scan a domain's wiki for structural issues. Pure — no writes.
+
+**Path parameter**
+
+| Parameter | Description |
+|-----------|-------------|
+| `domain` | Domain slug |
+
+**Example (curl)**
+
+```bash
+curl http://localhost:3333/api/health/ai-tech
+```
+
+**Success response** `200 OK`
+
+```json
+{
+  "domain": "ai-tech",
+  "scannedAt": "2026-04-20T11:03:13.937Z",
+  "counts": { "entities": 42, "concepts": 28, "summaries": 15 },
+  "brokenLinks": [
+    { "sourceFile": "summaries/foo.md", "linkText": "missing-page", "suggestedTarget": null }
+  ],
+  "orphans": [
+    { "path": "concepts/orphan.md", "type": "concept", "slug": "orphan" }
+  ],
+  "folderPrefixLinks": [
+    { "sourceFile": "summaries/foo.md", "linkText": "concepts/rag" }
+  ],
+  "crossFolderDupes": [
+    { "keep": "entities/google.md", "remove": "concepts/google.md" }
+  ],
+  "hyphenVariants": [
+    { "files": ["tali-rezun", "talirezun"], "suggestedSlug": "tali-rezun" }
+  ],
+  "missingBacklinks": [
+    { "summary": "summaries/foo.md", "entity": "entities/bar.md", "summarySlug": "foo" }
+  ]
+}
+```
+
+**Issue types**
+
+| Type | Auto-fixable | Description |
+|------|:-:|-------------|
+| `brokenLinks` | — | `[[wikilink]]` that points to a non-existent page. Includes a `suggestedTarget` when a prefix-tolerant match exists. |
+| `orphans` | — | Entity or concept pages with zero incoming links. |
+| `folderPrefixLinks` | ✓ | Links like `[[concepts/rag]]` that should be `[[rag]]`. |
+| `crossFolderDupes` | ✓ | Same page exists in both `entities/` and `concepts/`. |
+| `hyphenVariants` | ✓ | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). |
+| `missingBacklinks` | ✓ | Summary mentions an entity under "Entities Mentioned" but the entity's Related section doesn't link back. |
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain |
+| `500` | Filesystem read error |
+
+---
+
+## POST /api/health/:domain/fix
+
+Apply a single fix for a specific issue.
+
+**Request body** `Content-Type: application/json`
+
+```json
+{
+  "type": "crossFolderDupes",
+  "issue": { "keep": "entities/google.md", "remove": "concepts/google.md" }
+}
+```
+
+`type` must be one of the auto-fixable types. `issue` must be an exact issue object returned by `GET /api/health/:domain`.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "fixed": 1, "total": 1 }
+```
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `type`; type is review-only (`brokenLinks` / `orphans`) |
+| `404` | Unknown domain |
+
+---
+
+## POST /api/health/:domain/fix-all
+
+Apply every fix of a given type in one call. Re-scans the wiki, then applies each fix in turn.
+
+**Request body** `Content-Type: application/json`
+
+```json
+{ "type": "missingBacklinks" }
+```
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "fixed": 7, "total": 7 }
+```
+
+`fixed` may be less than `total` if any individual fix fails (each failure is logged to the server console but does not abort the batch).
+
+**Error responses** — same as `/fix`.
+
+---
+
 ## Static files
 
 The server also serves the web UI from `src/public/` at the root path.

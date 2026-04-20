@@ -26,11 +26,12 @@ tabBtns.forEach(btn => {
       const wikiDomain = document.getElementById('wiki-domain');
       if (wikiDomain && wikiDomain.value) loadWiki();
     }
+    if (target === 'health') resetHealthPanel();
   });
 });
 
 // ── Domain loading ─────────────────────────────────────────────────────────────
-const domainSelects = ['ingest-domain', 'wiki-domain'];
+const domainSelects = ['ingest-domain', 'wiki-domain', 'health-domain'];
 
 async function loadDomains() {
   const res = await fetch('/api/domains');
@@ -1739,3 +1740,194 @@ function closeOnboarding() {
 
 // Run first-run check after initial load
 checkFirstRun();
+
+// ── HEALTH TAB ───────────────────────────────────────────────────────────────
+
+const healthSummaryEl  = document.getElementById('health-summary');
+const healthSectionsEl = document.getElementById('health-sections');
+const healthStatusEl   = document.getElementById('health-status');
+const healthEmptyEl    = document.getElementById('health-empty');
+
+const HEALTH_META = {
+  brokenLinks:       { label: 'Broken links',          desc: 'Wikilinks that point to a page that doesn\'t exist.',                 autoFix: false },
+  orphans:           { label: 'Orphan pages',          desc: 'Entity or concept pages with no incoming links.',                     autoFix: false },
+  folderPrefixLinks: { label: 'Folder-prefix links',   desc: 'Links that include a folder prefix (e.g. [[concepts/rag]]).',         autoFix: true  },
+  crossFolderDupes:  { label: 'Cross-folder duplicates', desc: 'The same page exists in both entities/ and concepts/.',             autoFix: true  },
+  hyphenVariants:    { label: 'Hyphen variants',       desc: 'Entity files with the same name but different hyphenation.',          autoFix: true  },
+  missingBacklinks:  { label: 'Missing backlinks',     desc: 'Summary mentions an entity but the entity doesn\'t link back.',       autoFix: true  },
+};
+
+const HEALTH_ORDER = [
+  'brokenLinks', 'crossFolderDupes', 'hyphenVariants',
+  'folderPrefixLinks', 'missingBacklinks', 'orphans',
+];
+
+function resetHealthPanel() {
+  healthSummaryEl.classList.add('hidden');
+  healthSectionsEl.classList.add('hidden');
+  healthSectionsEl.innerHTML = '';
+  healthEmptyEl.classList.remove('hidden');
+  hideEl(healthStatusEl);
+}
+
+document.getElementById('health-scan-btn')?.addEventListener('click', () => runHealthScan());
+
+async function runHealthScan() {
+  const domain = document.getElementById('health-domain').value;
+  if (!domain) {
+    showStatus(healthStatusEl, 'error', 'Select a domain first.');
+    return;
+  }
+  healthEmptyEl.classList.add('hidden');
+  showStatus(healthStatusEl, 'info', 'Scanning wiki…');
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}`);
+    if (!r.ok) throw new Error((await r.json()).error || 'Scan failed');
+    const report = await r.json();
+    hideEl(healthStatusEl);
+    renderHealthReport(report);
+  } catch (err) {
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+function renderHealthReport(report) {
+  const total =
+    report.brokenLinks.length +
+    report.orphans.length +
+    report.folderPrefixLinks.length +
+    report.crossFolderDupes.length +
+    report.hyphenVariants.length +
+    report.missingBacklinks.length;
+
+  const counts = report.counts || { entities: 0, concepts: 0, summaries: 0 };
+  healthSummaryEl.classList.remove('hidden');
+  healthSummaryEl.innerHTML = `
+    <div class="health-summary-head">
+      <div class="health-summary-title">${total === 0 ? '✅ Wiki is clean' : `Found ${total} issue${total === 1 ? '' : 's'}`}</div>
+      <div class="health-summary-sub">Scanned ${counts.entities} entities, ${counts.concepts} concepts, ${counts.summaries} summaries.</div>
+    </div>
+    <div class="health-summary-chips">
+      ${HEALTH_ORDER.map(type => {
+        const n = report[type].length;
+        const meta = HEALTH_META[type];
+        if (!meta) return '';
+        const cls = n === 0 ? 'ok' : (meta.autoFix ? 'warn' : 'info');
+        return `<span class="health-chip health-chip-${cls}">${meta.label}: ${n}</span>`;
+      }).join('')}
+    </div>
+  `;
+
+  healthSectionsEl.classList.remove('hidden');
+  healthSectionsEl.innerHTML = HEALTH_ORDER.map(type => renderSection(report, type)).join('');
+
+  // Wire up fix buttons
+  healthSectionsEl.querySelectorAll('[data-fix-all]').forEach(btn => {
+    btn.addEventListener('click', () => fixAll(report.domain, btn.dataset.fixAll, btn));
+  });
+  healthSectionsEl.querySelectorAll('[data-fix-one]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.fixOne;
+      const issue = JSON.parse(btn.dataset.issue);
+      fixOne(report.domain, type, issue, btn);
+    });
+  });
+}
+
+function renderSection(report, type) {
+  const meta = HEALTH_META[type];
+  const issues = report[type] || [];
+  const n = issues.length;
+  if (n === 0) return '';
+
+  const rows = issues.map(issue => {
+    const description = describeIssue(type, issue);
+    const fixBtn = meta.autoFix
+      ? `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>Fix</button>`
+      : `<span class="health-review-tag">Review</span>`;
+    return `<li class="health-issue-row"><span class="health-issue-desc">${description}</span>${fixBtn}</li>`;
+  }).join('');
+
+  const fixAllBtn = meta.autoFix
+    ? `<button class="btn btn-sm health-fix-all-btn" data-fix-all="${type}">Fix all (${n})</button>`
+    : '';
+
+  return `
+    <details class="health-section" open>
+      <summary class="health-section-head">
+        <span class="health-section-title">${meta.label} <span class="health-count">${n}</span></span>
+        ${fixAllBtn}
+      </summary>
+      <p class="health-section-desc">${meta.desc}</p>
+      <ul class="health-issue-list">${rows}</ul>
+    </details>
+  `;
+}
+
+function describeIssue(type, issue) {
+  const esc = escapeHtml;
+  switch (type) {
+    case 'brokenLinks':
+      return `In <code>${esc(issue.sourceFile)}</code>: <code>[[${esc(issue.linkText)}]]</code>`
+        + (issue.suggestedTarget ? ` — did you mean <code>[[${esc(issue.suggestedTarget)}]]</code>?` : '');
+    case 'orphans':
+      return `<code>${esc(issue.path)}</code> has no incoming links`;
+    case 'folderPrefixLinks':
+      return `In <code>${esc(issue.sourceFile)}</code>: <code>[[${esc(issue.linkText)}]]</code>`;
+    case 'crossFolderDupes':
+      return `Merge <code>${esc(issue.remove)}</code> into <code>${esc(issue.keep)}</code>`;
+    case 'hyphenVariants':
+      return `${issue.files.map(f => `<code>${esc(f)}</code>`).join(', ')} → merge into <code>${esc(issue.suggestedSlug)}</code>`;
+    case 'missingBacklinks':
+      return `<code>${esc(issue.entity)}</code> is missing backlink to <code>${esc(issue.summary)}</code>`;
+    default:
+      return JSON.stringify(issue);
+  }
+}
+
+async function fixOne(domain, type, issue, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Fixing…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/fix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, issue }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'Fix failed');
+    await runHealthScan();
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Fix';
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+async function fixAll(domain, type, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Fixing…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/fix-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'Fix-all failed');
+    const result = await r.json();
+    showStatus(healthStatusEl, 'success', `Fixed ${result.fixed} of ${result.total}.`);
+    await runHealthScan();
+  } catch (err) {
+    btn.disabled = false;
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+}

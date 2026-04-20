@@ -22,7 +22,8 @@ This guide covers everything from first-time setup to daily use. No technical ba
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers](#15-sync-across-computers)
 16. [Settings](#16-settings)
-17. [Troubleshooting](#17-troubleshooting)
+17. [Wiki Health](#17-wiki-health)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -697,7 +698,43 @@ A link to the project's GitHub repository is available in the bottom-right corne
 
 ---
 
-## 17. Troubleshooting
+## 17. Wiki Health
+
+The **Health** tab scans a domain's wiki for structural issues and lets you fix them with one click. Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
+
+### What it checks
+
+| Issue | What it means | Action |
+|-------|---------------|--------|
+| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo or a deleted page. | **Review** — if there's a suggested match (e.g. *"did you mean [[foo]]?"*), edit the file in Obsidian to correct it. |
+| **Orphan pages** | An entity or concept page has zero incoming links. Probably forgotten or wrongly categorized. | **Review** — decide whether to keep, merge, or delete from Obsidian. |
+| **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
+| **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
+| **Hyphen variants** | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). | **Fix** — merges into the canonical hyphenated slug. |
+| **Missing backlinks** | A summary lists an entity under *Entities Mentioned* but the entity's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
+
+**Auto-fixable issues** have a **Fix** button (and a **Fix all (N)** button at the top of the section). **Review-only issues** (broken links, orphans) require human judgement — The Curator surfaces them for you but won't change them automatically, since the right action depends on intent.
+
+### How to use it
+
+1. Click the **Health** tab (heartbeat icon in the top bar)
+2. Pick a domain
+3. Click **Scan** — results appear within a second or two
+4. For each issue, click **Fix** to apply the repair, or **Fix all (N)** to batch the whole category
+5. After fixing, the wiki auto-re-scans so you can see counts drop to zero
+
+### When to run it
+
+- After a large batch of ingests (e.g. 10+ sources in a day)
+- When a new user forks an existing knowledge base via sync and wants a clean baseline
+- Periodically — once a month is plenty for active domains
+- Whenever Obsidian's graph looks noisier than it should
+
+The Health tab doesn't touch source files or conversations — it only cleans the wiki itself. Running it is always safe and idempotent.
+
+---
+
+## 18. Troubleshooting
 
 **"command not found: node" when I type `node src/server.js`**
 

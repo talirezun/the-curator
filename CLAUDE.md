@@ -27,15 +27,17 @@ src/
     llm.js        — LLM abstraction (Gemini or Claude, auto-detected via config.js)
     chat.js       — multi-turn chat against the wiki
     sync.js       — GitHub sync (git --git-dir / --work-tree)
+    health.js     — wiki health scanner + auto-fix (broken links, orphans, folder-prefix, cross-folder dedup, hyphen variants, missing backlinks)
     config.js     — persistent config (.curator-config.json): getApiKeys, setApiKeys, getEffectiveKey, getDomainsDir
   routes/
     ingest.js     — POST /api/ingest (SSE streaming)
     domains.js    — domain CRUD
     chat.js       — chat endpoints
     wiki.js       — GET /api/wiki/:domain
+    health.js     — GET /api/health/:domain, POST /api/health/:domain/fix[-all]
     sync.js       — sync endpoints
     config.js     — Settings/config endpoints (API keys, updates, domains path)
-  public/         — vanilla JS frontend (no build step, includes Settings tab + onboarding wizard)
+  public/         — vanilla JS frontend (no build step, includes Settings tab, Health tab, onboarding wizard)
 scripts/
   inject-summary-backlinks.js   — retroactive backlink repair for existing summaries
   fix-wiki-duplicates.js        — one-time entity/concept deduplication

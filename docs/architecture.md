@@ -80,12 +80,14 @@ the-curator/
 │   │   ├── ingest.js           POST /api/ingest
 │   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]
 │   │   ├── wiki.js             GET  /api/wiki/:domain
+│   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all]
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
+│   │   ├── health.js           Wiki health scanner + auto-fix logic
 │   │   └── config.js           Persistent config (API keys, domains path)
 │   └── public/
 │       ├── index.html          Single-page UI shell
@@ -277,6 +279,55 @@ HTTP response → { slug, displayName } or { deleted, syncWarning }
 Obsidian sees all changes instantly — it watches the same domains/ folder.
 If sync is configured, syncWarning: true is returned so the UI can
 prompt the user to Sync Up.
+```
+
+---
+
+## Data flow: Wiki Health
+
+```
+User clicks Scan on the Health tab
+      │
+      ▼
+GET /api/health/:domain
+      │
+      ▼
+src/routes/health.js  —  validates domain
+      │
+      ▼
+src/brain/health.js  →  scanWiki(domain)  (pure, no writes)
+      ├─ Walk wiki/*.md files
+      ├─ For every [[wikilink]]: resolve target; record incoming links;
+      │   flag folder-prefix violations; flag broken targets with suggestions
+      ├─ Orphan pass: entity/concept files with zero incoming links
+      ├─ Cross-folder dedup pass: entities/X + concepts/X with same
+      │   hyphen-normalised slug
+      ├─ Hyphen variant pass: group entity files by normKey (strip hyphens,
+      │   article prefix); prefer the form with the most hyphens as canonical
+      └─ Missing backlink pass: for each summary's "Entities Mentioned"
+          bullet, check the target page's "Related" section for a
+          [[summaries/<slug>]] bullet
+
+HTTP response → { counts, brokenLinks, orphans, folderPrefixLinks,
+                  crossFolderDupes, hyphenVariants, missingBacklinks }
+
+User clicks Fix / Fix all:
+
+POST /api/health/:domain/fix[-all]    body: { type, issue? }
+      │
+      ▼
+src/brain/health.js  →  fixIssue(domain, type, issue?)
+      └─ Dispatch by type:
+         folderPrefixLinks → strip [[entities/|concepts/]] prefixes in-place
+         crossFolderDupes  → merge bullet sections, delete concept copy,
+                             normalise frontmatter type to entity
+         hyphenVariants    → union bullets into canonical slug, delete variants
+         missingBacklinks  → replay injectSummaryBacklinks() from files.js
+
+UI re-scans automatically after every fix so counts drop in real time.
+
+Orphans and broken links are surfaced as Review-only — they require
+human judgement and the app refuses to auto-fix them.
 ```
 
 ---

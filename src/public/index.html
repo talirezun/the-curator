@@ -35,6 +35,10 @@
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
           Wiki
         </button>
+        <button class="tab-btn" data-tab="health">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          Health
+        </button>
         <button class="tab-btn" data-tab="sync">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
           Sync
@@ -382,6 +386,33 @@
         </div>
       </div><!-- /#sync-configured -->
 
+    </section>
+
+    <!-- HEALTH TAB -->
+    <section id="tab-health" class="tab hidden">
+      <div class="health-header">
+        <h2>Wiki Health</h2>
+        <p class="hint">Scan your wiki for structural issues — broken links, orphans, duplicates, missing backlinks. Fix them with one click.</p>
+      </div>
+
+      <div class="form-group inline">
+        <label for="health-domain">Domain</label>
+        <select id="health-domain"></select>
+        <button id="health-scan-btn" class="btn primary pill">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Scan
+        </button>
+      </div>
+
+      <div id="health-status" class="status hidden"></div>
+
+      <div id="health-empty" class="hint hidden" style="margin-top:16px">
+        Click <strong>Scan</strong> to check this domain's wiki for issues.
+      </div>
+
+      <div id="health-summary" class="health-summary hidden"></div>
+
+      <div id="health-sections" class="health-sections hidden"></div>
     </section>
 
     <!-- WIKI TAB -->
