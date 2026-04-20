@@ -412,36 +412,40 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
       if (existsSync(canonFile)) entityName = stripped;
     }
 
-    // Pass B: hyphen-normalised match — "talirezun" → "tali-rezun.md", same
-    // logic as writePage() so backlinks always reach the canonical entity file
-    // even when the LLM drops or adds hyphens in the entity name.
-    // Falls back to concepts/ if no entity file matches — handles LLM misclassification.
-    let entityFile = path.join(wikiDir, 'entities', `${entityName}.md`);
-    if (!existsSync(entityFile)) {
+    // Pass B: resolve to the target file. Order:
+    //   1. Exact match in entities/
+    //   2. Exact match in concepts/    (matches the scan's resolution order)
+    //   3. Hyphen-normalised match in entities/
+    //   4. Hyphen-normalised match in concepts/
+    //
+    // The exact-match passes MUST come before hyphen-normalised fallbacks.
+    // Without this, when both `concepts/email.md` and `concepts/e-mail.md` exist,
+    // an `[[email]]` bullet would fuzzy-match `e-mail.md` (first alphabetical
+    // hyphen-variant) and the backlink would silently land in the wrong file.
+    let entityFile = null;
+    const exactEntity  = path.join(wikiDir, 'entities', `${entityName}.md`);
+    const exactConcept = path.join(wikiDir, 'concepts', `${entityName}.md`);
+    if      (existsSync(exactEntity))  entityFile = exactEntity;
+    else if (existsSync(exactConcept)) entityFile = exactConcept;
+    else {
       const norm = entityName.replace(/-/g, '').toLowerCase();
-      let found = false;
-
-      // Try entities/ first (hyphen-normalised)
       try {
         const existing = await readdir(path.join(wikiDir, 'entities'));
         const match = existing.find(f =>
           f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm + '.md'
         );
-        if (match) { entityFile = path.join(wikiDir, 'entities', match); found = true; }
+        if (match) entityFile = path.join(wikiDir, 'entities', match);
       } catch { /* dir may not exist */ }
-
-      // Fallback: try concepts/ (the LLM may have misclassified an entity as a concept)
-      if (!found) {
+      if (!entityFile) {
         try {
           const conceptFiles = await readdir(path.join(wikiDir, 'concepts'));
           const match = conceptFiles.find(f =>
             f.endsWith('.md') && f.replace(/-/g, '').toLowerCase() === norm + '.md'
           );
-          if (match) { entityFile = path.join(wikiDir, 'concepts', match); found = true; }
+          if (match) entityFile = path.join(wikiDir, 'concepts', match);
         } catch { /* dir may not exist */ }
       }
-
-      if (!found) continue;
+      if (!entityFile) continue;
     }
 
     try {
@@ -454,6 +458,29 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
       console.warn(`[injectSummaryBacklinks] Failed to update ${entityName}: ${err.message}`);
     }
   }
+}
+
+/**
+ * Inject a single backlink into a specific entity/concept page's Related section.
+ *
+ * Unlike `injectSummaryBacklinks`, this function does NOT re-resolve slug names;
+ * it trusts the caller's resolved `entityFilePath`. This matters for the Wiki
+ * Health "Fix" action, where the scan has already resolved which file is missing
+ * a backlink — re-resolving from the summary could hit hyphen-variant files
+ * (e.g. writing to `concepts/e-mail.md` when the scan pointed at `concepts/email.md`).
+ *
+ * Returns true if the file was modified, false if the backlink already existed.
+ */
+export async function injectSingleBacklink(entityFilePath, summarySlug, summaryTitle) {
+  if (!existsSync(entityFilePath)) return false;
+  const backlink = `- [[summaries/${summarySlug}]] — ${summaryTitle}`;
+  let content = await readFile(entityFilePath, 'utf8');
+  const before = content;
+  content = injectBulletsIntoSection(content, 'Related', [backlink]);
+  content = stripBlanksInBulletSections(content);
+  if (content === before) return false;
+  await writeFile(entityFilePath, content, 'utf8');
+  return true;
 }
 
 function mergeWikiPage(existingContent, incomingContent) {

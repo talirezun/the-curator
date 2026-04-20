@@ -17,7 +17,7 @@
 import { readFile, writeFile, readdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { wikiPath, injectSummaryBacklinks } from './files.js';
+import { wikiPath, injectSingleBacklink } from './files.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 
@@ -396,10 +396,20 @@ async function fixHyphenVariant(wikiDir, issue) {
 }
 
 async function fixMissingBacklink(wikiDir, issue) {
+  // Use the entity path the scan already resolved, instead of re-running the
+  // bulk injectSummaryBacklinks machinery. The bulk function re-resolves every
+  // bullet in the summary's "Entities Mentioned" section and can land the
+  // backlink in a hyphen-variant file (e.g. e-mail.md when the scan pointed
+  // at email.md), leaving the flagged file unchanged and the issue unfixed.
+  const entityPath = path.join(wikiDir, issue.entity);
   const summaryPath = path.join(wikiDir, issue.summary);
-  if (!existsSync(summaryPath)) return false;
+  if (!existsSync(entityPath) || !existsSync(summaryPath)) return false;
+
   const summaryContent = await readFile(summaryPath, 'utf8');
-  await injectSummaryBacklinks(issue.summarySlug, summaryContent, wikiDir);
+  const titleMatch = summaryContent.match(/^#\s+(.+)$/m);
+  const title = titleMatch ? titleMatch[1].trim() : issue.summarySlug;
+
+  await injectSingleBacklink(entityPath, issue.summarySlug, title);
   return true;
 }
 
