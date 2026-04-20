@@ -164,14 +164,40 @@ router.get('/update-check', async (_req, res) => {
   }
 });
 
-/** POST /api/config/update — pull latest code, install deps, rebuild .app */
+/** POST /api/config/update — fetch latest code, hard-sync to origin/main, install deps, rebuild .app
+ *
+ * We use `fetch + reset --hard` instead of `pull` because `npm install` commonly
+ * regenerates `package-lock.json` with machine-specific diffs, which make plain
+ * `git pull` abort with "local changes would be overwritten". The app directory
+ * is meant to track `main` verbatim — user data (domains/, .curator-config.json,
+ * .sync-config.json) is all gitignored, so hard-reset is safe.
+ */
 router.post('/update', async (_req, res) => {
   try {
-    await execAsync('git pull origin main', { cwd: PROJECT_ROOT, timeout: 30000 });
-    await execAsync('npm install --silent --no-audit --no-fund', { cwd: PROJECT_ROOT, timeout: 60000 });
-    // Rebuild the .app so the AppleScript stays current with the code
+    // 1. Fetch before resetting so we never hard-reset to a stale ref if the remote is unreachable.
+    await execAsync('git fetch origin main', { cwd: PROJECT_ROOT, timeout: 30000 });
+
+    // 2. Record before/after SHAs so the response explains what changed.
+    const { stdout: beforeSha } = await execAsync('git rev-parse HEAD', { cwd: PROJECT_ROOT, timeout: 5000 });
+
+    // 3. Hard-sync to origin/main. Discards any local modifications to tracked files
+    //    (including the common `package-lock.json` regeneration) without touching gitignored data.
+    await execAsync('git reset --hard origin/main', { cwd: PROJECT_ROOT, timeout: 10000 });
+
+    const { stdout: afterSha } = await execAsync('git rev-parse HEAD', { cwd: PROJECT_ROOT, timeout: 5000 });
+
+    // 4. Install deps. Non-fatal if npm emits warnings.
+    await execAsync('npm install --silent --no-audit --no-fund', { cwd: PROJECT_ROOT, timeout: 120000 });
+
+    // 5. Rebuild the .app so the AppleScript stays current with the code
     await execAsync('bash scripts/build-app.sh', { cwd: PROJECT_ROOT, timeout: 30000 }).catch(() => {});
-    res.json({ ok: true, restarting: true });
+
+    res.json({
+      ok: true,
+      restarting: true,
+      from: beforeSha.trim().slice(0, 7),
+      to:   afterSha.trim().slice(0, 7),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
