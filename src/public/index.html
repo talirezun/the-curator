@@ -413,7 +413,66 @@
       <div id="health-summary" class="health-summary hidden"></div>
 
       <div id="health-sections" class="health-sections hidden"></div>
+
+      <!-- Phase 3 (v2.4.5): Semantic duplicates — separate, opt-in, paid action -->
+      <div id="semantic-dupes-section" class="semantic-dupes-section hidden">
+        <div class="semantic-dupes-head">
+          <h3>Semantic duplicates <span class="hint">(AI-powered)</span></h3>
+          <p class="hint" style="margin:2px 0 10px">
+            Find pages that describe the same concept under different slugs —
+            like <code>[[rag]]</code> and <code>[[retrieval-augmented-generation]]</code>.
+            This check uses an LLM and has a small cost, so it runs only when you click below.
+          </p>
+          <button id="semantic-dupes-scan-btn" class="btn primary pill">
+            <span>✨</span> Scan for semantic duplicates
+          </button>
+          <span id="semantic-dupes-status" class="hint" style="margin-left:12px"></span>
+        </div>
+        <div id="semantic-dupes-progress" class="semantic-dupes-progress hidden">
+          <div class="semantic-dupes-progress-bar"><div class="semantic-dupes-progress-fill"></div></div>
+          <div class="semantic-dupes-progress-text"></div>
+        </div>
+        <div id="semantic-dupes-results" class="semantic-dupes-results"></div>
+      </div>
     </section>
+
+    <!-- Semantic-duplicate confirm modal (cost preview before any LLM call) -->
+    <div id="semantic-dupes-confirm" class="onboarding-overlay hidden">
+      <div class="onboarding-card" style="max-width:520px">
+        <div class="onboarding-header">
+          <span class="logo-icon" style="font-size:28px">✨</span>
+          <h2>Scan for semantic duplicates?</h2>
+        </div>
+        <div class="ob-panel" style="text-align:left">
+          <div id="semantic-dupes-estimate" class="semantic-dupes-estimate"></div>
+          <p class="hint" style="line-height:1.5; margin-top:10px">
+            This sends each candidate pair (slug + title + first paragraph of each page)
+            to your configured LLM provider. See <code>docs/ai-health.md</code> for full details.
+          </p>
+          <div class="ob-actions" style="margin-top:14px">
+            <button id="semantic-dupes-cancel" class="btn">Cancel</button>
+            <button id="semantic-dupes-confirm-btn" class="btn primary pill">Run scan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Merge preview modal (destructive-operation safety gate) -->
+    <div id="semantic-merge-preview" class="onboarding-overlay hidden">
+      <div class="onboarding-card" style="max-width:720px">
+        <div class="onboarding-header">
+          <span class="logo-icon" style="font-size:28px">⚠️</span>
+          <h2>Preview merge</h2>
+        </div>
+        <div class="ob-panel" style="text-align:left">
+          <div id="semantic-merge-preview-body"></div>
+          <div class="ob-actions" style="margin-top:14px">
+            <button id="semantic-merge-cancel" class="btn">Close</button>
+            <button id="semantic-merge-confirm" class="btn primary pill" style="background:#d44">Merge and delete duplicate</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- WIKI TAB -->
     <section id="tab-wiki" class="tab hidden">
@@ -808,6 +867,35 @@
           </div>
         </div><!-- /#mcp-configured -->
 
+      </div>
+
+      <!-- AI Health settings (Phase 3+) -->
+      <div class="settings-section">
+        <h3>AI Wiki Health</h3>
+        <p class="hint">
+          Limits for the <strong>Scan for semantic duplicates</strong> feature in the Health tab.
+          Raise them if your domain is large and the scan refuses to start.
+        </p>
+        <div class="form-group">
+          <label for="ai-cost-ceiling">Cost ceiling per scan (tokens)</label>
+          <input type="number" id="ai-cost-ceiling" min="1000" step="1000" placeholder="50000" />
+          <span class="help-text">
+            Default 50,000 tokens ≈ $0.01 on Gemini Flash Lite. Scan refuses to start
+            if its estimate exceeds this value.
+          </span>
+        </div>
+        <div class="form-group">
+          <label for="ai-max-pairs">Maximum candidate pairs per scan</label>
+          <input type="number" id="ai-max-pairs" min="10" step="10" placeholder="500" />
+          <span class="help-text">
+            After pre-filtering, only the top N candidate pairs (ranked by similarity)
+            are sent to the LLM. Default 500.
+          </span>
+        </div>
+        <div class="form-group">
+          <button id="ai-health-save" class="btn primary pill">Save AI Health limits</button>
+          <span id="ai-health-save-status" class="hint" style="margin-left:12px"></span>
+        </div>
       </div>
 
       <!-- App -->

@@ -123,6 +123,48 @@ export function getActiveProvider() {
   return null;
 }
 
+// ── AI Health settings (v2.4.5+) ─────────────────────────────────────────────
+
+const DEFAULT_AI_HEALTH = {
+  costCeilingTokens:    50_000, // hard-stops semantic-dupe scan before LLM calls
+  semanticDupeMaxPairs: 500,    // candidate-pair cap out of the pre-filter
+};
+
+/**
+ * Returns the persisted AI Health settings, falling back to defaults for
+ * missing fields so new installs pick up sensible values without needing
+ * a config migration.
+ */
+export function getAiHealthSettings() {
+  const cfg = readRaw();
+  const stored = cfg.aiHealth || {};
+  return {
+    costCeilingTokens:    Number.isInteger(stored.costCeilingTokens) && stored.costCeilingTokens > 0
+                          ? stored.costCeilingTokens : DEFAULT_AI_HEALTH.costCeilingTokens,
+    semanticDupeMaxPairs: Number.isInteger(stored.semanticDupeMaxPairs) && stored.semanticDupeMaxPairs > 0
+                          ? stored.semanticDupeMaxPairs : DEFAULT_AI_HEALTH.semanticDupeMaxPairs,
+  };
+}
+
+/**
+ * Partial update — pass only the fields you want to change. Non-numeric or
+ * non-positive values are ignored (UI enforces sane ranges; this is the
+ * last line of defence).
+ */
+export function setAiHealthSettings({ costCeilingTokens, semanticDupeMaxPairs } = {}) {
+  const cfg = readRaw();
+  const next = { ...(cfg.aiHealth || {}) };
+  if (Number.isFinite(costCeilingTokens) && costCeilingTokens > 0) {
+    next.costCeilingTokens = Math.round(costCeilingTokens);
+  }
+  if (Number.isFinite(semanticDupeMaxPairs) && semanticDupeMaxPairs > 0) {
+    next.semanticDupeMaxPairs = Math.round(semanticDupeMaxPairs);
+  }
+  cfg.aiHealth = next;
+  writeRaw(cfg);
+  return getAiHealthSettings();
+}
+
 /**
  * Returns the effective API key for a provider.
  * Priority: .curator-config.json → process.env → null

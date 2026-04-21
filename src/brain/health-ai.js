@@ -22,7 +22,8 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
-import { generateText } from './llm.js';
+import { generateText, getProviderInfo } from './llm.js';
+import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP } from './health.js';
 
 // Excerpt window around the broken link — ~4 KB total (≈800 words). Large
 // enough to give the model paragraph-level context, small enough that a
@@ -333,4 +334,239 @@ export async function suggestOrphanHomes(domain, issue) {
   }
 
   return { candidates };
+}
+
+// ── Phase 3 (v2.4.5) — Semantic near-duplicate detection ────────────────────
+
+const SEMANTIC_BATCH_SIZE = 20;
+const FIRST_PARA_MAX = 500;     // per-page content sample sent to the LLM
+const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
+// Rough pricing heuristics (USD per 1M tokens). These are intentionally
+// conservative — we show them as estimates only, not billing. Keeping them
+// in-file avoids a separate pricing table that drifts silently.
+const MODEL_PRICING = {
+  // Gemini Flash Lite — input $0.075, output $0.30 per 1M as of 2026-04
+  'gemini-2.5-flash-lite': { input: 0.075, output: 0.30 },
+  'gemini-2.5-flash':      { input: 0.30,  output: 2.50 },
+  // Anthropic Haiku 4.5 — input $1.00, output $5.00 per 1M as of 2026-04
+  'claude-haiku-4-5':      { input: 1.00,  output: 5.00 },
+};
+
+function estimateUsdCost(provider, model, inputTokens, outputTokens) {
+  const p = MODEL_PRICING[model];
+  if (!p) return null;
+  return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+}
+
+/**
+ * Extract the first ~500 chars of prose from a wiki page, skipping YAML
+ * frontmatter and the title line. Small samples are enough for the LLM to
+ * judge whether two pages describe the same concept.
+ */
+function firstParagraph(content) {
+  let body = content;
+  // Strip frontmatter
+  if (body.startsWith('---')) {
+    const closeIdx = body.indexOf('\n---', 3);
+    if (closeIdx !== -1) body = body.slice(closeIdx + 4).trimStart();
+  }
+  // Strip the title line
+  body = body.replace(/^#\s+.*\n/, '').trimStart();
+  return body.slice(0, FIRST_PARA_MAX).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Estimate the cost of a semantic-duplicate scan WITHOUT making any LLM
+ * calls. Used by the UI to show a confirm dialog before the user pays for
+ * the real scan.
+ *
+ * @param {string} domain
+ * @param {number} maxPairs — cap on candidate pairs (default 500)
+ * @returns {Promise<{pageCount, candidatePairs, totalCandidates, truncated, estimatedTokens, estimatedUsd, provider, model}>}
+ */
+export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
+  const { pairs, pageCount, truncated, totalCandidates } =
+    await findSemanticCandidatePairs(domain, maxPairs);
+  const estimatedTokens = pairs.length * EST_TOKENS_PER_PAIR;
+  const { provider, model } = getProviderInfo();
+  // Rough 60/40 input/output split
+  const estimatedUsd = estimateUsdCost(provider, model, estimatedTokens * 0.6, estimatedTokens * 0.4);
+  return {
+    pageCount,
+    candidatePairs: pairs.length,
+    totalCandidates,
+    truncated,
+    estimatedTokens,
+    estimatedUsd,
+    provider,
+    model,
+  };
+}
+
+/**
+ * Run the real semantic-duplicate scan. Yields progress events through
+ * `onEvent({type, ...})` so the HTTP layer can forward them over SSE.
+ *
+ * Event shapes:
+ *   { type: 'start', candidatePairs, batches }
+ *   { type: 'progress', processed, total, found }
+ *   { type: 'pair', pair }                       — one accepted duplicate pair
+ *   { type: 'done', pairs, cost }                — final summary
+ *
+ * The LLM is asked, per batch, to judge each pair as duplicate / not-duplicate
+ * and pick the canonical slug. Low-confidence and non-duplicate verdicts are
+ * filtered out; only medium+high duplicates survive to the UI.
+ *
+ * NO FILESYSTEM WRITES. Application is through POST /api/health/:domain/fix
+ * with type: 'semanticDupe'.
+ */
+export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => {}) {
+  const { maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, costCeilingTokens = 50_000 } = opts;
+
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+
+  const { pairs: candidatePairs } = await findSemanticCandidatePairs(domain, maxPairs);
+
+  // Hard ceiling: abort before any LLM call if we'd exceed the user's budget
+  const estimatedTokens = candidatePairs.length * EST_TOKENS_PER_PAIR;
+  if (estimatedTokens > costCeilingTokens) {
+    const err = new Error(
+      `Estimated ${estimatedTokens.toLocaleString()} tokens exceeds your ` +
+      `AI Health cost ceiling of ${costCeilingTokens.toLocaleString()}. ` +
+      `Raise the ceiling in Settings, lower the candidate cap, or split the domain.`
+    );
+    err.code = 'OVER_COST_CEILING';
+    throw err;
+  }
+
+  const batches = [];
+  for (let i = 0; i < candidatePairs.length; i += SEMANTIC_BATCH_SIZE) {
+    batches.push(candidatePairs.slice(i, i + SEMANTIC_BATCH_SIZE));
+  }
+
+  onEvent({ type: 'start', candidatePairs: candidatePairs.length, batches: batches.length });
+
+  // Pre-load first-paragraph samples for every slug we'll mention in prompts,
+  // to avoid re-reading the same file multiple times.
+  const sampleCache = new Map();
+  async function getSample(folder, slug) {
+    const key = `${folder}/${slug}`;
+    if (sampleCache.has(key)) return sampleCache.get(key);
+    const full = path.join(wikiDir, folder, slug + '.md');
+    if (!existsSync(full)) { sampleCache.set(key, ''); return ''; }
+    const content = await readFile(full, 'utf8');
+    const sample = firstParagraph(content);
+    sampleCache.set(key, sample);
+    return sample;
+  }
+
+  const acceptedPairs = [];
+  let processed = 0;
+  let totalInputChars = 0;
+  let totalOutputChars = 0;
+
+  const systemPrompt =
+    `You are auditing a personal knowledge wiki for semantic duplicate pages — ` +
+    `pages that describe the same concept under different slugs (e.g. "rag" vs ` +
+    `"retrieval-augmented-generation", or "email" vs "e-mail"). You read a batch of ` +
+    `candidate pairs, each with both pages' slug + title + first paragraph, and ` +
+    `decide whether they are true duplicates.\n\n` +
+    `RULES:\n` +
+    `1. A pair is a duplicate ONLY if both pages describe the SAME underlying ` +
+    `concept/entity. Related-but-distinct pages (e.g. "gpt-4" vs "gpt-4-turbo") ` +
+    `are NOT duplicates.\n` +
+    `2. For duplicates, pick the canonical slug — prefer the more descriptive, ` +
+    `readable form (e.g. "retrieval-augmented-generation" over "rag"; ` +
+    `"neural-networks" over "neural-network"; full name over acronym).\n` +
+    `3. Set confidence honestly: "high" = unambiguous same concept; ` +
+    `"medium" = likely but some doubt; "low" = speculative.\n` +
+    `4. If unsure, mark as non-duplicate. Precision over recall — a missed dupe ` +
+    `is cheap; a wrong merge is expensive.\n` +
+    `5. Respond with ONLY valid JSON. No markdown fences, no prose outside JSON.`;
+
+  for (let bi = 0; bi < batches.length; bi++) {
+    const batch = batches[bi];
+    const batchInfo = [];
+    for (let i = 0; i < batch.length; i++) {
+      const p = batch[i];
+      const [sampleA, sampleB] = await Promise.all([
+        getSample(p.folderA, p.slugA),
+        getSample(p.folderB, p.slugB),
+      ]);
+      batchInfo.push({
+        index: i,
+        slugA: p.slugA, folderA: p.folderA, sampleA,
+        slugB: p.slugB, folderB: p.folderB, sampleB,
+      });
+    }
+
+    const userPrompt =
+      `Judge each of these ${batch.length} candidate pairs. Return JSON:\n` +
+      `{"results": [{"index": N, "isDuplicate": bool, "canonicalSlug": "slug-or-null", ` +
+      `"confidence": "high"|"medium"|"low", "rationale": "one short sentence"}, ...]}\n\n` +
+      `PAIRS:\n` +
+      batchInfo.map(b =>
+        `--- PAIR ${b.index} ---\n` +
+        `A: [${b.folderA}/${b.slugA}]\n${b.sampleA || '(empty)'}\n\n` +
+        `B: [${b.folderB}/${b.slugB}]\n${b.sampleB || '(empty)'}\n`
+      ).join('\n');
+
+    totalInputChars += systemPrompt.length + userPrompt.length;
+
+    let raw, parsed;
+    try {
+      raw = await generateText(systemPrompt, userPrompt, 2048, 'json');
+      totalOutputChars += (raw || '').length;
+      parsed = parseJSON(raw);
+    } catch (err) {
+      onEvent({ type: 'batch-error', batch: bi, error: err.message });
+      processed += batch.length;
+      onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
+      continue;
+    }
+
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    for (const r of results) {
+      if (!r || typeof r !== 'object') continue;
+      if (!r.isDuplicate) continue;
+      const conf = String(r.confidence || 'low').toLowerCase();
+      if (conf === 'low') continue;   // require at least medium confidence
+      const idx = Number(r.index);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= batch.length) continue;
+      const pair = batch[idx];
+      const canonical = String(r.canonicalSlug || '').trim().replace(/^(entities|concepts)\//, '');
+      if (canonical !== pair.slugA && canonical !== pair.slugB) continue; // must match one side
+      const keepSlug = canonical;
+      const keepFolder = keepSlug === pair.slugA ? pair.folderA : pair.folderB;
+      const removeSlug = keepSlug === pair.slugA ? pair.slugB : pair.slugA;
+      const removeFolder = keepSlug === pair.slugA ? pair.folderB : pair.folderA;
+      const accepted = {
+        keepSlug, keepFolder,
+        removeSlug, removeFolder,
+        confidence: conf,
+        rationale: String(r.rationale || '').trim() || 'No rationale provided.',
+      };
+      acceptedPairs.push(accepted);
+      onEvent({ type: 'pair', pair: accepted });
+    }
+
+    processed += batch.length;
+    onEvent({ type: 'progress', processed, total: candidatePairs.length, found: acceptedPairs.length });
+  }
+
+  // Rough token ≈ 4 chars. Good enough for a user-facing "you spent $X" readout.
+  const approxInputTokens = Math.round(totalInputChars / 4);
+  const approxOutputTokens = Math.round(totalOutputChars / 4);
+  const { provider, model } = getProviderInfo();
+  const actualUsd = estimateUsdCost(provider, model, approxInputTokens, approxOutputTokens);
+
+  const cost = {
+    provider, model,
+    inputTokens: approxInputTokens,
+    outputTokens: approxOutputTokens,
+    estimatedUsd: actualUsd,
+  };
+  onEvent({ type: 'done', pairs: acceptedPairs, cost });
+  return { pairs: acceptedPairs, cost };
 }

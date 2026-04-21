@@ -88,7 +88,7 @@ the-curator/
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
-│   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+) and orphans (v2.4.4+) — READ-ONLY
+│   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
 │   │   └── config.js           Persistent config (API keys, domains path)
 │   └── public/
 │       ├── index.html          Single-page UI shell
@@ -327,6 +327,11 @@ src/brain/health.js  →  fixIssue(domain, type, issue?)
          missingBacklinks  → injectSingleBacklink() into scan-resolved entity
          orphanLink        → injectRelatedLink(): AI orphan-rescue bullet (v2.4.4+)
                              — pseudo-type, never emitted by scanWiki
+         semanticDupe      → fixSemanticDuplicate() (v2.4.5+): DESTRUCTIVE
+                             merges two pages, rewrites all [[removeSlug]]
+                             links across the domain, deletes the duplicate
+                             — pseudo-type, never emitted by scanWiki;
+                             gated by mandatory Preview-diff in the UI
 
 UI re-scans automatically after every fix so counts drop in real time.
 

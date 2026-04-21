@@ -732,6 +732,20 @@ The **Health** tab scans a domain's wiki for structural issues and lets you fix 
 
 The Health tab doesn't touch source files or conversations — it only cleans the wiki itself. Running it is always safe and idempotent.
 
+### Semantic duplicates (v2.4.5+)
+
+Below the main Health report, when you have an API key configured, a separate **Semantic duplicates** section offers **✨ Scan for semantic duplicates**. This finds pages that the algorithm can't catch — like `[[rag]]` and `[[retrieval-augmented-generation]]`, or `[[email]]` and `[[e-mail]]`, or `[[neural-network]]` and `[[neural-networks]]`.
+
+Unlike the other Health fixes, this one:
+
+- **Costs a small amount** — typically $0.005–$0.03 per scan on Gemini Flash Lite. A confirm dialog shows the estimate before you run it.
+- **Is opt-in and user-gated.** Nothing happens until you click Scan, then Confirm.
+- **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug. For this reason, the Merge button stays disabled until you open the **Preview diff** for that pair — the preview shows exactly which files will change.
+
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in Settings → AI Wiki Health. Defaults (50k tokens, 500 pairs) are suitable for domains up to ~5k pages; raise them for larger wikis.
+
+For the full guide, see [ai-health.md](ai-health.md).
+
 ---
 
 ## 18. Troubleshooting

@@ -1,6 +1,6 @@
 # AI Wiki Health
 
-*Available from v2.4.3. Orphan rescue added in v2.4.4.*
+*Available from v2.4.3. Orphan rescue added in v2.4.4. Semantic duplicates added in v2.4.5.*
 
 Wiki Health has always scanned your wiki for structural issues — broken links, orphans, duplicates, missing backlinks — and offered one-click fixes where the algorithm can solve them deterministically. Some issue types, however, need semantic judgement: *"which existing page did I mean when I wrote `[[ecdhe]]`?"*
 
@@ -14,7 +14,7 @@ Wiki Health has always scanned your wiki for structural issues — broken links,
 |---|---|---|---|
 | 1 | Broken links (no algorithmic suggestion) | Reads page context + your slug inventory → proposes the most likely intended target, or says "no good target exists". | **v2.4.3** ✅ |
 | 2 | Orphan pages | Proposes up to 5 existing pages that should link to the orphan, each with an AI-written bullet description. | **v2.4.4** ✅ |
-| 3 | Semantic near-duplicates | Detects pages like `email.md` + `e-mail.md` that are the same concept under different slugs. | v2.4.5 (planned) |
+| 3 | Semantic near-duplicates | Detects pages like `email.md` + `e-mail.md`, `rag.md` + `retrieval-augmented-generation.md`, `neural-network.md` + `neural-networks.md` that are the same concept under different slugs. | **v2.4.5** ✅ |
 
 Issues that the algorithm solves perfectly (missing backlinks, folder-prefix links, hyphen variants, cross-folder duplicates) are **not** AI-assisted — determinism wins there.
 
@@ -61,12 +61,59 @@ Entities and concepts, by contrast, accumulate relationships over time — a new
 
 ---
 
+## How it works (Phase 3 — semantic near-duplicates)
+
+Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
+
+Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** — it runs only when you click **Scan for semantic duplicates** in the Health tab. It's gated by a cost preview and a cost ceiling.
+
+### The pipeline
+
+1. **Local pre-filter** (no LLM, runs in seconds even at 20k pages). An inverted token index finds slug pairs that share ≥1 non-stopword token or have high character-level similarity (Jaro-Winkler ≥ 0.85). Ranked by a combined score; capped at your configured maximum (default 500 pairs).
+2. **Cost estimate** is shown in a confirm dialog: number of candidate pairs, estimated tokens, estimated USD cost on your current model, and whether it exceeds your cost ceiling.
+3. **You click Run scan**. The server streams progress over SSE (batches of 20 pairs per LLM call), and accepted pairs appear in the UI as they arrive. The LLM is asked to judge each pair as duplicate / not-duplicate and pick the more canonical slug.
+4. **Only `medium` and `high` confidence duplicates surface** in the UI. Low-confidence and non-dupe verdicts are dropped silently.
+5. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
+6. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
+
+### Scale caps (baked into the code)
+
+| Cap | Default | Configurable in |
+|---|---|---|
+| Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
+| Max candidate pairs sent to the LLM | 500 | Settings → AI Wiki Health → Maximum candidate pairs per scan |
+| Cost ceiling per scan (tokens) | 50,000 | Settings → AI Wiki Health → Cost ceiling per scan |
+| Batch merge | **Never offered** | — |
+
+Batch merges are deliberately omitted at every scale. A single wrong batch merge across thousands of pages could wreck a wiki; the per-pair preview gate makes that impossible.
+
+### Cost
+
+Using the defaults on Gemini Flash Lite:
+
+- A scan of 500 candidate pairs ≈ 200k tokens ≈ **$0.03**.
+- A scan of 50 candidate pairs ≈ 20k tokens ≈ **$0.003**.
+
+On Claude Haiku 4.5 the cost is roughly 10× higher but still under $0.50 for a default scan.
+
+The estimate shown in the confirm dialog uses published per-1M-token pricing from 2026-04; treat the USD figure as an order-of-magnitude guide, not a billing authority.
+
+### What Phase 3 will NOT do
+
+- Merge pairs that are related-but-distinct (e.g. `gpt-4` vs `gpt-4-turbo`). The LLM is instructed to err toward non-dupe when ambiguous.
+- Touch `summaries/` as a merge target. A summary can never be the kept or removed page in a merge; link rewrites still go through summary pages (because summaries may link to the old slug and need to point to the new one), but the summary itself is never deleted or structurally modified.
+- Batch-merge. One pair at a time, always, even if 100 high-confidence pairs are found.
+- Run without your explicit click. This is the only AI Health feature with a cost preview + cost ceiling, because it's the only one that scans the whole domain.
+
+---
+
 ## Privacy — what leaves your machine
 
 When you click **✨ Ask AI**, The Curator sends to your configured LLM provider (Google Gemini or Anthropic, whichever you set in Settings):
 
 - For **broken links**: a ~4 KB excerpt from the wiki page containing the broken link, plus a list of your wiki's page names (entities, concepts, and summaries — slugs only, not contents).
 - For **orphan rescue**: up to ~4 KB of the orphan page's content, plus a list of entity and concept slugs (summaries are omitted). A 2000-page domain adds ~15 KB of slugs.
+- For **semantic duplicates**: for each candidate pair, the slug + first paragraph (~500 chars) of each of the two pages. At 500 pairs that's roughly 500 KB of text across all batches, spread over ~25 separate LLM calls.
 
 It does **not** send:
 
@@ -142,7 +189,12 @@ This defence sits ABOVE the existing v2.4.0 model fallback chain, so a confused 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/health/ai-available` | Frontend probe. Returns `{available, provider, model}` or `{available: false, reason}`. |
-| `POST` | `/api/health/:domain/ai-suggest` | Body: `{type, issue}`. Accepts `type: 'brokenLinks'` (v2.4.3+) or `type: 'orphans'` (v2.4.4+). Response shape differs: broken links return a flat `{target, rationale, confidence}`; orphans return `{candidates: [...]}`. |
-| `POST` | `/api/health/:domain/fix` | Existing endpoint — used unchanged to apply an accepted AI suggestion. For broken links, pass `type: 'brokenLinks'` with `issue.suggestedTarget` set to the AI's target. For orphan rescue, pass `type: 'orphanLink'` with `issue = {orphanSlug, targetSlug, description}`. |
+| `GET` | `/api/health/ai-settings` | Returns the user's `{costCeilingTokens, semanticDupeMaxPairs}`. |
+| `POST` | `/api/health/ai-settings` | Partial update of the same fields. Values are clamped to sane ranges. |
+| `POST` | `/api/health/:domain/ai-suggest` | Body: `{type, issue}`. Accepts `type: 'brokenLinks'` (v2.4.3+) or `type: 'orphans'` (v2.4.4+). |
+| `GET` | `/api/health/:domain/semantic-dupes/estimate` | Phase 3 — runs pre-filter only, returns `{pageCount, candidatePairs, estimatedTokens, estimatedUsd, costCeilingTokens, ...}`. No LLM calls. |
+| `POST` | `/api/health/:domain/semantic-dupes/scan` | Phase 3 — SSE stream. Events: `start`, `progress`, `pair`, `batch-error`, `done`, `error`. |
+| `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. READ-ONLY. |
+| `POST` | `/api/health/:domain/fix` | Existing endpoint. Applies any AI-suggested fix. New types: `orphanLink` (v2.4.4), `semanticDupe` (v2.4.5). |
 
-No existing endpoint was modified. The `orphanLink` fix type is a pseudo-type — the scanner never emits it; it exists only as a routing key so AI orphan-apply calls go through the same `fixIssue()` chokepoint as every other write.
+No existing endpoint was modified. The `orphanLink` and `semanticDupe` fix types are pseudo-types — the scanner never emits them; they exist only as routing keys so AI-applied operations go through the same `fixIssue()` chokepoint as every other write.

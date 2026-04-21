@@ -12,8 +12,15 @@ import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { listDomains } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE } from '../brain/health.js';
-import { suggestBrokenLinkTarget, suggestOrphanHomes } from '../brain/health-ai.js';
+import {
+  suggestBrokenLinkTarget,
+  suggestOrphanHomes,
+  estimateSemanticDuplicateScan,
+  scanSemanticDuplicates,
+} from '../brain/health-ai.js';
+import { previewSemanticDuplicateMerge } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
+import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
 
 const router = Router();
 
@@ -34,6 +41,22 @@ router.get('/ai-available', (_req, res) => {
     res.json({ available: true, provider: info.provider, model: info.model });
   } catch (err) {
     res.json({ available: false, reason: err.message });
+  }
+});
+
+// AI Health settings (cost ceiling, candidate-pair cap). Defined BEFORE
+// `/:domain` so `ai-settings` isn't matched as a domain name.
+router.get('/ai-settings', (_req, res) => {
+  try { res.json(getAiHealthSettings()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.post('/ai-settings', (req, res) => {
+  try {
+    const { costCeilingTokens, semanticDupeMaxPairs } = req.body || {};
+    const updated = setAiHealthSettings({ costCeilingTokens, semanticDupeMaxPairs });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -99,6 +122,87 @@ router.post('/:domain/ai-suggest', async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health ai-suggest]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// ── Phase 3 (v2.4.5) — semantic near-duplicate detection ──────────────────
+// The scan is a separate, explicit user action (not part of the regular
+// /api/health/:domain scan), runs through its own endpoints below, and is
+// gated by cost preview + cost ceiling.
+
+// Estimate the cost of a semantic-duplicate scan BEFORE any LLM call. The UI
+// uses this to render the confirm dialog.
+router.get('/:domain/semantic-dupes/estimate', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); }
+    catch (err) { return res.status(400).json({ error: err.message }); }
+    const settings = getAiHealthSettings();
+    const estimate = await estimateSemanticDuplicateScan(domain, settings.semanticDupeMaxPairs);
+    res.json({ ok: true, ...estimate, costCeilingTokens: settings.costCeilingTokens });
+  } catch (err) {
+    if (err.code === 'DOMAIN_TOO_LARGE') return res.status(400).json({ error: err.message, code: err.code });
+    console.error('[semantic-dupes estimate]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Run the real semantic-duplicate scan over SSE. Events stream as
+//   event: start | progress | pair | batch-error | done | error
+// matching the shape documented in docs/api-reference.md.
+router.post('/:domain/semantic-dupes/scan', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); }
+    catch (err) { return res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event) => {
+    res.write(`event: ${event.type}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  try {
+    const settings = getAiHealthSettings();
+    await scanSemanticDuplicates(
+      req.params.domain,
+      {
+        maxPairs: settings.semanticDupeMaxPairs,
+        costCeilingTokens: settings.costCeilingTokens,
+      },
+      send,
+    );
+  } catch (err) {
+    send({ type: 'error', error: err.message, code: err.code });
+  } finally {
+    res.end();
+  }
+});
+
+// Preview a semantic-duplicate merge — shows exactly which files will be
+// modified, the merged content that will land on the kept page, and the
+// count of link rewrites. READ-ONLY.
+router.post('/:domain/semantic-dupes/preview', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const issue = req.body && req.body.issue;
+    if (!issue) return res.status(400).json({ error: 'Missing issue' });
+    const preview = await previewSemanticDuplicateMerge(domain, issue);
+    res.json({ ok: true, ...preview });
+  } catch (err) {
+    console.error('[semantic-dupes preview]', err);
     res.status(err.status || 500).json({ error: err.message });
   }
 });

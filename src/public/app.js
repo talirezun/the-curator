@@ -1498,7 +1498,51 @@ async function initSettings() {
   } catch {}
   // Load My Curator MCP status + snippet
   await refreshMcpSection();
+  // Load AI Health limits
+  await loadAiHealthSettings();
 }
+
+async function loadAiHealthSettings() {
+  const ceilingEl = document.getElementById('ai-cost-ceiling');
+  const pairsEl   = document.getElementById('ai-max-pairs');
+  if (!ceilingEl || !pairsEl) return;
+  try {
+    const r = await fetch('/api/health/ai-settings');
+    if (!r.ok) return;
+    const data = await r.json();
+    ceilingEl.value = data.costCeilingTokens ?? 50000;
+    pairsEl.value   = data.semanticDupeMaxPairs ?? 500;
+  } catch {}
+}
+
+document.getElementById('ai-health-save')?.addEventListener('click', async () => {
+  const ceilingEl = document.getElementById('ai-cost-ceiling');
+  const pairsEl   = document.getElementById('ai-max-pairs');
+  const statusEl  = document.getElementById('ai-health-save-status');
+  const ceiling = parseInt(ceilingEl.value, 10);
+  const pairs   = parseInt(pairsEl.value, 10);
+  if (!Number.isFinite(ceiling) || ceiling < 1000) {
+    statusEl.textContent = 'Cost ceiling must be at least 1,000 tokens';
+    return;
+  }
+  if (!Number.isFinite(pairs) || pairs < 10) {
+    statusEl.textContent = 'Max pairs must be at least 10';
+    return;
+  }
+  statusEl.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/health/ai-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ costCeilingTokens: ceiling, semanticDupeMaxPairs: pairs }),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'Save failed');
+    statusEl.textContent = '✓ Saved';
+    setTimeout(() => { statusEl.textContent = ''; }, 2000);
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+  }
+});
 
 // ══════════════════════════════════════════════════════════════════════════════
 // MY CURATOR (MCP) — Settings section (landing → wizard → connected)
@@ -2190,9 +2234,41 @@ function resetHealthPanel() {
   healthSectionsEl.innerHTML = '';
   healthEmptyEl.classList.remove('hidden');
   hideEl(healthStatusEl);
+  // Also wipe any leftover Phase 3 state so switching domains or re-entering
+  // the tab never shows stale semantic-dupe results from a previous scan.
+  resetSemanticDupesPanel();
+}
+
+// Wipes the Phase 3 semantic-duplicates sub-panel. Safe to call even before
+// its DOM elements exist (initial page load) — all lookups null-guard.
+function resetSemanticDupesPanel() {
+  const section  = document.getElementById('semantic-dupes-section');
+  const progress = document.getElementById('semantic-dupes-progress');
+  const results  = document.getElementById('semantic-dupes-results');
+  const status   = document.getElementById('semantic-dupes-status');
+  if (section)  section.classList.add('hidden');
+  if (progress) {
+    progress.classList.add('hidden');
+    const fill = progress.querySelector('.semantic-dupes-progress-fill');
+    const text = progress.querySelector('.semantic-dupes-progress-text');
+    if (fill) fill.style.width = '0%';
+    if (text) text.textContent = '';
+  }
+  if (results) results.innerHTML = '';
+  if (status)  status.textContent = '';
+  // Drop previewed-pairs safety gate too — a fresh scan starts from zero.
+  if (typeof _semPreviewedPairs !== 'undefined') _semPreviewedPairs = new Set();
 }
 
 document.getElementById('health-scan-btn')?.addEventListener('click', () => runHealthScan());
+
+// When the user switches domains in the Health tab, clear the Phase 3 panel
+// immediately so stale results never linger across domains. The main summary
+// + sections also get wiped so the UI shows the "click Scan" empty state.
+document.getElementById('health-domain')?.addEventListener('change', () => {
+  resetHealthPanel();
+  _healthDomain = null;
+});
 
 async function runHealthScan() {
   const domain = document.getElementById('health-domain').value;
@@ -2200,6 +2276,9 @@ async function runHealthScan() {
     showStatus(healthStatusEl, 'error', 'Select a domain first.');
     return;
   }
+  // Always wipe Phase 3 state at the start of any scan — prevents stale
+  // semantic-dupe results from a previous domain bleeding into the new one.
+  resetSemanticDupesPanel();
   healthEmptyEl.classList.add('hidden');
   showStatus(healthStatusEl, 'info', 'Scanning wiki…');
   try {
@@ -2218,7 +2297,12 @@ async function runHealthScan() {
   }
 }
 
+// Expose the domain currently rendered in the Health tab so the
+// semantic-duplicates flow (which lives outside renderHealthReport) can use it.
+let _healthDomain = null;
+
 function renderHealthReport(report) {
+  _healthDomain = report.domain;
   const total =
     report.brokenLinks.length +
     report.orphans.length +
@@ -2247,6 +2331,14 @@ function renderHealthReport(report) {
 
   healthSectionsEl.classList.remove('hidden');
   healthSectionsEl.innerHTML = HEALTH_ORDER.map(type => renderSection(report, type)).join('');
+
+  // Phase 3 (v2.4.5+): show the semantic-duplicates section only when AI is
+  // available — it's a paid, opt-in action. Hidden otherwise.
+  const semSection = document.getElementById('semantic-dupes-section');
+  if (semSection) {
+    if (_aiAvailable) semSection.classList.remove('hidden');
+    else              semSection.classList.add('hidden');
+  }
 
   // Wire up fix buttons
   healthSectionsEl.querySelectorAll('[data-fix-all]').forEach(btn => {
@@ -2617,4 +2709,281 @@ function renderOrphanAiResult(domain, issue, result, row, actions) {
       }
     });
   });
+}
+
+// ── Phase 3 (v2.4.5) — Semantic duplicate scanning ─────────────────────────
+
+const semBtn          = document.getElementById('semantic-dupes-scan-btn');
+const semStatus       = document.getElementById('semantic-dupes-status');
+const semProgress     = document.getElementById('semantic-dupes-progress');
+const semResults      = document.getElementById('semantic-dupes-results');
+const semConfirmModal = document.getElementById('semantic-dupes-confirm');
+const semEstimateEl   = document.getElementById('semantic-dupes-estimate');
+const semCancelBtn    = document.getElementById('semantic-dupes-cancel');
+const semConfirmBtn   = document.getElementById('semantic-dupes-confirm-btn');
+const semPreviewModal = document.getElementById('semantic-merge-preview');
+const semPreviewBody  = document.getElementById('semantic-merge-preview-body');
+const semMergeCancel  = document.getElementById('semantic-merge-cancel');
+const semMergeConfirm = document.getElementById('semantic-merge-confirm');
+
+let _semPreviewedPairs = new Set();   // pairs the user has previewed (safety gate)
+let _semCurrentPreview = null;        // the pair currently in the preview modal
+
+semBtn?.addEventListener('click', async () => {
+  if (!_healthDomain) {
+    showStatus(healthStatusEl, 'error', 'Run Scan first so a domain is selected.');
+    return;
+  }
+  semStatus.textContent = 'Estimating…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/semantic-dupes/estimate`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Estimate failed');
+    openSemanticConfirmModal(data);
+    semStatus.textContent = '';
+  } catch (err) {
+    semStatus.textContent = '';
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+});
+
+function openSemanticConfirmModal(est) {
+  const costStr = est.estimatedUsd !== null && est.estimatedUsd !== undefined
+    ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}`
+    : 'cost unknown';
+  const overCap = est.estimatedTokens > est.costCeilingTokens;
+  const truncatedNote = est.truncated
+    ? `<div class="hint" style="margin-top:6px">Pre-filter found ${est.totalCandidates.toLocaleString()} potential pairs; capped to ${est.candidatePairs.toLocaleString()} highest-similarity (raise the cap in Settings if you want more).</div>`
+    : '';
+  semEstimateEl.innerHTML = `
+    <div class="semantic-dupes-estimate-row"><strong>Pages:</strong> ${est.pageCount.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Candidate pairs:</strong> ${est.candidatePairs.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Estimated tokens:</strong> ${est.estimatedTokens.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Estimated cost:</strong> ${escapeHtml(costStr)}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Your cost ceiling:</strong> ${est.costCeilingTokens.toLocaleString()} tokens</div>
+    ${overCap ? `<div class="status error" style="margin-top:8px">Estimate exceeds your cost ceiling. Raise the ceiling in Settings, or lower the candidate cap.</div>` : ''}
+    ${truncatedNote}
+  `;
+  semConfirmBtn.disabled = overCap;
+  semConfirmModal.classList.remove('hidden');
+}
+
+function closeSemanticConfirmModal() {
+  semConfirmModal.classList.add('hidden');
+}
+
+semCancelBtn?.addEventListener('click', closeSemanticConfirmModal);
+semConfirmBtn?.addEventListener('click', () => {
+  closeSemanticConfirmModal();
+  runSemanticScan();
+});
+
+async function runSemanticScan() {
+  semResults.innerHTML = '';
+  _semPreviewedPairs = new Set();
+  semProgress.classList.remove('hidden');
+  const fill = semProgress.querySelector('.semantic-dupes-progress-fill');
+  const text = semProgress.querySelector('.semantic-dupes-progress-text');
+  fill.style.width = '0%';
+  text.textContent = 'Starting…';
+
+  semBtn.disabled = true;
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/semantic-dupes/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || `Scan failed (HTTP ${r.status})`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 2);
+        const dataLine = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dataLine) continue;
+        let event;
+        try { event = JSON.parse(dataLine.slice(6)); }
+        catch { continue; }
+        handleSemanticEvent(event, { fill, text });
+      }
+    }
+  } catch (err) {
+    text.textContent = 'Error';
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    semBtn.disabled = false;
+  }
+}
+
+function handleSemanticEvent(event, ui) {
+  if (event.type === 'start') {
+    ui.text.textContent = `Checking ${event.candidatePairs} pairs across ${event.batches} batches…`;
+    ui.fill.style.width = '2%';
+  } else if (event.type === 'progress') {
+    const pct = event.total > 0 ? (event.processed / event.total) * 100 : 0;
+    ui.fill.style.width = `${Math.max(2, Math.round(pct))}%`;
+    ui.text.textContent = `${event.processed} / ${event.total} pairs checked · ${event.found} duplicates found`;
+  } else if (event.type === 'pair') {
+    renderSemanticPairCard(event.pair);
+  } else if (event.type === 'batch-error') {
+    console.warn('[semantic] batch error:', event.error);
+  } else if (event.type === 'error') {
+    ui.text.textContent = 'Error';
+    showStatus(healthStatusEl, 'error', event.error);
+  } else if (event.type === 'done') {
+    ui.fill.style.width = '100%';
+    const usd = event.cost && typeof event.cost.estimatedUsd === 'number'
+      ? `$${event.cost.estimatedUsd.toFixed(4)}` : 'cost unknown';
+    ui.text.textContent = `Done. ${event.pairs.length} duplicate${event.pairs.length === 1 ? '' : 's'} found · ${event.cost.inputTokens.toLocaleString()} in + ${event.cost.outputTokens.toLocaleString()} out tokens · ${usd}`;
+    if (event.pairs.length === 0) {
+      semResults.innerHTML = '<div class="hint" style="padding:12px">No semantic duplicates found in this domain.</div>';
+    }
+  }
+}
+
+function renderSemanticPairCard(pair) {
+  const card = document.createElement('div');
+  card.className = 'semantic-pair-card';
+  card.dataset.keep = `${pair.keepFolder}/${pair.keepSlug}`;
+  card.dataset.remove = `${pair.removeFolder}/${pair.removeSlug}`;
+  const conf = pair.confidence || 'medium';
+  const pairKey = `${pair.keepFolder}/${pair.keepSlug}||${pair.removeFolder}/${pair.removeSlug}`;
+  card.dataset.key = pairKey;
+  card.innerHTML = `
+    <div class="semantic-pair-head">
+      <code>[[${escapeHtml(pair.removeSlug)}]]</code>
+      <span class="semantic-pair-arrow">→</span>
+      <code>[[${escapeHtml(pair.keepSlug)}]]</code>
+      <span class="health-ai-confidence health-ai-confidence-${conf}">${escapeHtml(conf)} confidence</span>
+    </div>
+    <div class="semantic-pair-sub">
+      Keep: <code>${escapeHtml(pair.keepFolder)}/${escapeHtml(pair.keepSlug)}</code>
+      &nbsp;·&nbsp; Remove: <code>${escapeHtml(pair.removeFolder)}/${escapeHtml(pair.removeSlug)}</code>
+    </div>
+    <div class="semantic-pair-rationale">${escapeHtml(pair.rationale || '')}</div>
+    <div class="semantic-pair-actions">
+      <button class="btn btn-sm semantic-preview-btn">Preview diff</button>
+      <button class="btn btn-sm semantic-flip-btn" title="Swap which side is kept">↔ Flip</button>
+      <button class="btn btn-sm semantic-merge-btn" disabled>Merge</button>
+      <button class="btn btn-sm semantic-skip-btn">Skip</button>
+    </div>
+  `;
+  semResults.appendChild(card);
+
+  card.querySelector('.semantic-preview-btn').addEventListener('click', () => openMergePreview(card, pair));
+  card.querySelector('.semantic-flip-btn').addEventListener('click', () => {
+    const flipped = {
+      keepSlug: pair.removeSlug, keepFolder: pair.removeFolder,
+      removeSlug: pair.keepSlug, removeFolder: pair.keepFolder,
+      confidence: pair.confidence, rationale: pair.rationale,
+    };
+    card.replaceWith(card); // no-op to appease linters
+    // Rebuild card
+    card.remove();
+    renderSemanticPairCard(flipped);
+  });
+  const mergeBtn = card.querySelector('.semantic-merge-btn');
+  mergeBtn.addEventListener('click', () => {
+    if (!_semPreviewedPairs.has(pairKey)) {
+      showStatus(healthStatusEl, 'error', 'Click Preview diff before merging.');
+      return;
+    }
+    openMergeConfirm(card, pair);
+  });
+  card.querySelector('.semantic-skip-btn').addEventListener('click', () => card.remove());
+}
+
+async function openMergePreview(card, pair) {
+  semPreviewBody.innerHTML = '<div class="hint">Loading preview…</div>';
+  semPreviewModal.classList.remove('hidden');
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/semantic-dupes/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issue: pair }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Preview failed');
+
+    const files = data.affectedFiles || [];
+    const fileRows = files.slice(0, 20).map(f => `<li><code>${escapeHtml(f.path)}</code> — ${f.linkCount} link${f.linkCount === 1 ? '' : 's'}</li>`).join('');
+    const moreNote = files.length < data.affectedCount
+      ? `<li class="hint">…and ${data.affectedCount - files.length} more files</li>`
+      : '';
+
+    semPreviewBody.innerHTML = `
+      <div class="semantic-preview-grid">
+        <div>
+          <strong>Keep:</strong> <code>${escapeHtml(data.keepPath)}</code>
+        </div>
+        <div>
+          <strong>Delete:</strong> <code>${escapeHtml(data.removePath)}</code>
+        </div>
+        <div>
+          <strong>Link rewrites:</strong> ${data.totalLinksRewritten} across ${data.affectedCount} file${data.affectedCount === 1 ? '' : 's'}
+        </div>
+      </div>
+      ${files.length ? `<h4 style="margin-top:14px">Files that will be updated</h4><ul class="semantic-preview-files">${fileRows}${moreNote}</ul>` : ''}
+      <h4 style="margin-top:14px">Merged content preview (first 4 KB)</h4>
+      <pre class="semantic-preview-merged">${escapeHtml(data.mergedPreview || '')}${data.mergedLength > 4000 ? '\n…(truncated)' : ''}</pre>
+    `;
+
+    _semPreviewedPairs.add(card.dataset.key);
+    _semCurrentPreview = { card, pair };
+    const mergeBtn = card.querySelector('.semantic-merge-btn');
+    mergeBtn.disabled = false;
+  } catch (err) {
+    semPreviewBody.innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeMergePreview() {
+  semPreviewModal.classList.add('hidden');
+  semMergeConfirm.style.display = '';
+  _semCurrentPreview = null;
+}
+
+semMergeCancel?.addEventListener('click', closeMergePreview);
+// The confirm button inside the preview modal triggers the merge immediately
+semMergeConfirm?.addEventListener('click', async () => {
+  if (!_semCurrentPreview) return;
+  const { card, pair } = _semCurrentPreview;
+  semMergeConfirm.disabled = true;
+  semMergeConfirm.textContent = 'Merging…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/fix`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'semanticDupe', issue: pair }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Merge failed');
+    if (!data.fixed) throw new Error('Server rejected merge (validation failed)');
+    card.classList.add('semantic-pair-merged');
+    card.innerHTML = `<div class="hint">✓ Merged. <code>[[${escapeHtml(pair.removeSlug)}]]</code> → <code>[[${escapeHtml(pair.keepSlug)}]]</code></div>`;
+    closeMergePreview();
+    showStatus(healthStatusEl, 'success', `Merged ${pair.removeSlug} → ${pair.keepSlug}`);
+  } catch (err) {
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    semMergeConfirm.disabled = false;
+    semMergeConfirm.textContent = 'Merge and delete duplicate';
+  }
+});
+
+function openMergeConfirm(card, pair) {
+  // If user clicked the enabled Merge button (already previewed), jump straight
+  // into the preview modal in a "confirm" state. We reuse the same modal so
+  // the user always sees what will change.
+  openMergePreview(card, pair);
 }

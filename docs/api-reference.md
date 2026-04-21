@@ -605,6 +605,156 @@ Writes `- [[orphanSlug]] — description` into the target's `## Related` section
 
 ---
 
+## GET /api/health/ai-settings
+
+Returns the user's AI Health limits. Persisted in `.curator-config.json` under the `aiHealth` key.
+
+**Response** `200 OK`
+
+```json
+{ "costCeilingTokens": 50000, "semanticDupeMaxPairs": 500 }
+```
+
+## POST /api/health/ai-settings
+
+Partial update of the same fields. Non-numeric or non-positive values are ignored server-side.
+
+**Request body**
+
+```json
+{ "costCeilingTokens": 200000, "semanticDupeMaxPairs": 1000 }
+```
+
+**Response** — echoes the effective settings after the update (same shape as GET).
+
+---
+
+## GET /api/health/:domain/semantic-dupes/estimate
+
+Phase 3 (v2.4.5+). Runs the local candidate-pair pre-filter only. Makes **no LLM calls**. The UI uses this to render the confirm dialog before the real scan.
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "pageCount": 2434,
+  "candidatePairs": 500,
+  "totalCandidates": 18152,
+  "truncated": true,
+  "estimatedTokens": 200000,
+  "estimatedUsd": 0.033,
+  "provider": "gemini",
+  "model": "gemini-2.5-flash-lite",
+  "costCeilingTokens": 50000
+}
+```
+
+Set `candidatePairs` is the top N after ranking; `totalCandidates` is the unbounded count (what `candidatePairs` was capped from). `truncated: true` means the pre-filter found more pairs than your cap allowed.
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | No API key configured; or `code: 'DOMAIN_TOO_LARGE'` if the domain exceeds 20,000 pages. |
+| `404` | Unknown domain. |
+
+---
+
+## POST /api/health/:domain/semantic-dupes/scan
+
+Phase 3. Streams the real scan over **Server-Sent Events (SSE)**.
+
+Each event is emitted as `event: <type>\ndata: <json>\n\n`.
+
+| Event | Shape | Meaning |
+|-------|-------|---------|
+| `start` | `{candidatePairs, batches}` | Scan is starting. |
+| `progress` | `{processed, total, found}` | After each batch. |
+| `pair` | `{pair: {keepSlug, keepFolder, removeSlug, removeFolder, confidence, rationale}}` | One accepted duplicate. |
+| `batch-error` | `{batch, error}` | One batch failed (scan continues). |
+| `done` | `{pairs, cost: {provider, model, inputTokens, outputTokens, estimatedUsd}}` | Final summary. |
+| `error` | `{error, code?}` | Unrecoverable error — e.g. `code: 'OVER_COST_CEILING'`. |
+
+The request body is empty (the scan uses the user's persisted settings).
+
+---
+
+## POST /api/health/:domain/semantic-dupes/preview
+
+Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would do. Called before the **Merge** button is enabled.
+
+**Request body**
+
+```json
+{
+  "issue": {
+    "keepSlug": "email",
+    "keepFolder": "concepts",
+    "removeSlug": "e-mail",
+    "removeFolder": "concepts"
+  }
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "keepPath": "concepts/email.md",
+  "removePath": "concepts/e-mail.md",
+  "mergedPreview": "...",
+  "mergedLength": 1836,
+  "affectedFiles": [
+    { "path": "concepts/cryptographic-algorithms.md", "linkCount": 1 },
+    { "path": "summaries/beyond-encryption-block-labs-occ-tech.md", "linkCount": 1 }
+  ],
+  "affectedCount": 3,
+  "totalLinksRewritten": 3
+}
+```
+
+`affectedFiles` is capped at 50 entries; `affectedCount` is the full count.
+
+---
+
+## POST /api/health/:domain/fix — `semanticDupe` variant
+
+The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5. DESTRUCTIVE: merges two pages, rewrites every link to the removed slug across the domain, then deletes the removed file.
+
+**Request body**
+
+```json
+{
+  "type": "semanticDupe",
+  "issue": {
+    "keepSlug": "email",
+    "keepFolder": "concepts",
+    "removeSlug": "e-mail",
+    "removeFolder": "concepts"
+  }
+}
+```
+
+**Response** `200 OK`
+
+```json
+{ "ok": true, "fixed": 1, "total": 1 }
+```
+
+`fixed: 0` indicates a defence rejected the request (slug regex, same-slug-same-folder, summary folder, missing file). No error status is returned — it is a silent no-op.
+
+**Defences applied (all return `fixed: 0` on failure):**
+- `keepSlug` and `removeSlug` must match `/^[a-z0-9][a-z0-9.-]*$/i`.
+- `keepFolder` and `removeFolder` must be `entities` or `concepts` (never `summaries`).
+- Both files must exist on disk.
+- The pair must not be `{same slug, same folder}`.
+
+**`fix-all` is a no-op for `semanticDupe`** — per-pair only, deliberately.
+
+---
+
 ## Static files
 
 The server also serves the web UI from `src/public/` at the root path.

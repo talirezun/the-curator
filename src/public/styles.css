@@ -216,7 +216,7 @@ label {
 /* native select hidden — .cs-wrap renders it visually */
 select.cs-native { display: none !important; }
 
-select, textarea, input[type="text"], input[type="url"], input[type="password"] {
+select, textarea, input[type="text"], input[type="url"], input[type="password"], input[type="number"], input[type="email"] {
   width: 100%;
   background: var(--bg-alt);
   border: 1px solid var(--border);
@@ -530,6 +530,17 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   color: var(--text-muted);
   margin-bottom: 20px;
   line-height: 1.65;
+}
+
+/* Generic help-text below an input inside a form-group renders as a block.
+   Existing uses inside flex containers (e.g. .key-field-footer) are
+   unaffected because those explicitly position their children. */
+.form-group > .help-text {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* ── CHAT ── */
@@ -2292,4 +2303,122 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   gap: 6px;
   margin-top: 6px;
   align-items: center;
+}
+
+/* AI Health Phase 3 — semantic duplicates */
+.semantic-dupes-section {
+  margin-top: 22px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.semantic-dupes-section h3 {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  color: var(--text);
+}
+.semantic-dupes-progress {
+  margin-top: 14px;
+}
+.semantic-dupes-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.semantic-dupes-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent, #8b5cf6), var(--accent-2, #c4b5fd));
+  transition: width 0.25s ease-out;
+}
+.semantic-dupes-progress-text {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.semantic-dupes-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.semantic-pair-card {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent, #8b5cf6);
+  border-radius: 8px;
+}
+.semantic-pair-card.semantic-pair-merged {
+  border-left-color: #3fb950;
+  opacity: 0.7;
+}
+.semantic-pair-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.semantic-pair-arrow {
+  color: var(--text-muted);
+}
+.semantic-pair-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.semantic-pair-rationale {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.semantic-pair-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.semantic-dupes-estimate {
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.semantic-dupes-estimate-row {
+  padding: 2px 0;
+  color: var(--text-2);
+}
+.semantic-preview-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.semantic-preview-files {
+  max-height: 200px;
+  overflow: auto;
+  padding-left: 18px;
+  font-size: 12px;
+  margin: 4px 0;
+}
+.semantic-preview-merged {
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
