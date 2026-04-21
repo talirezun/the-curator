@@ -4,7 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey } from '../brain/config.js';
 import { getProviderInfo, getFallbackStatus } from '../brain/llm.js';
 
 const execAsync = promisify(exec);
@@ -114,7 +114,10 @@ router.get('/api-keys', (_req, res) => {
   });
 });
 
-/** POST /api/config/api-keys — save API keys (partial update) */
+/** POST /api/config/api-keys — save API keys (partial update).
+ *  Saving a non-empty key for a provider also marks it as the active provider
+ *  ("last-saved-wins" — see setApiKeys in brain/config.js).
+ */
 router.post('/api-keys', (req, res) => {
   const { geminiApiKey, anthropicApiKey } = req.body;
 
@@ -130,6 +133,30 @@ router.post('/api-keys', (req, res) => {
       ok: true,
       activeProvider: provider?.provider || null,
       activeModel:    provider?.model || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/config/api-keys/disconnect — clear one provider's stored key.
+ *  Body: { provider: 'gemini' | 'anthropic' }
+ *  If the disconnected key was active, active switches to the other provider
+ *  (if it still has a key), or to null.
+ */
+router.post('/api-keys/disconnect', (req, res) => {
+  const { provider } = req.body || {};
+  if (provider !== 'gemini' && provider !== 'anthropic') {
+    return res.status(400).json({ error: 'provider must be "gemini" or "anthropic"' });
+  }
+  try {
+    clearApiKey(provider);
+    let info = null;
+    try { info = getProviderInfo(); } catch {}
+    res.json({
+      ok: true,
+      activeProvider: info?.provider || null,
+      activeModel:    info?.model || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1353,6 +1353,47 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 }
 .settings-section .hint { margin-bottom: 14px; }
 
+/* Key-field footer — hosts the help text + per-field Disconnect button */
+.key-field-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+.key-field-footer .help-text { margin-top: 0; }
+.key-disconnect-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 3px 10px;
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
+  transition: all 0.15s;
+}
+.key-disconnect-btn:hover {
+  color: var(--error);
+  border-color: rgba(243,139,168,0.5);
+  background: var(--error-dim);
+}
+
+/* Save-row — Save button + hint line together, so the row never looks lonely */
+.key-save-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.key-save-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  flex: 1;
+  min-width: 200px;
+}
+.key-save-hint strong { color: var(--text-2); }
+
 /* Input with show/hide toggle */
 .input-with-toggle {
   display: flex;

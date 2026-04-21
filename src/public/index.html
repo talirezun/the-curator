@@ -562,7 +562,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
           </div>
-          <span class="help-text">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></span>
+          <div class="key-field-footer">
+            <span class="help-text">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a></span>
+            <button type="button" class="btn btn-sm key-disconnect-btn hidden" data-provider="gemini" title="Remove saved Gemini key">Disconnect</button>
+          </div>
         </div>
 
         <div class="form-group">
@@ -573,13 +576,19 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
             </button>
           </div>
-          <span class="help-text">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a></span>
+          <div class="key-field-footer">
+            <span class="help-text">Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a></span>
+            <button type="button" class="btn btn-sm key-disconnect-btn hidden" data-provider="anthropic" title="Remove saved Anthropic key">Disconnect</button>
+          </div>
         </div>
 
-        <button id="settings-save-keys" class="btn primary pill">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>
-          Save API Keys
-        </button>
+        <div class="key-save-row">
+          <button id="settings-save-keys" class="btn primary pill">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg>
+            Save API Keys
+          </button>
+          <span class="key-save-hint">Saving a key makes that provider active. <strong>Disconnect</strong> removes a key without adding a new one.</span>
+        </div>
         <div id="settings-keys-status" class="status hidden"></div>
       </div>
 

@@ -62,12 +62,65 @@ export function getApiKeys() {
   };
 }
 
-/** Save API keys to .curator-config.json. Partial update — only overwrites provided keys. */
+/**
+ * Save API keys to .curator-config.json. Partial update — only overwrites provided keys.
+ *
+ * Saving a non-empty key for a provider ALSO sets it as the active provider.
+ * This implements "last-saved-wins": users don't juggle priorities, they just
+ * paste the key they want to use. If both fields are submitted in one save,
+ * whichever non-empty key is encountered last takes the active slot (the
+ * current frontend sends {geminiApiKey, anthropicApiKey} in that order, so
+ * Anthropic wins a dual-save — deterministic, rare edge case).
+ */
 export function setApiKeys({ geminiApiKey, anthropicApiKey }) {
   const cfg = readRaw();
-  if (geminiApiKey !== undefined)    cfg.geminiApiKey    = geminiApiKey;
-  if (anthropicApiKey !== undefined) cfg.anthropicApiKey = anthropicApiKey;
+  if (geminiApiKey !== undefined) {
+    cfg.geminiApiKey = geminiApiKey;
+    if (geminiApiKey) cfg.activeProvider = 'gemini';
+  }
+  if (anthropicApiKey !== undefined) {
+    cfg.anthropicApiKey = anthropicApiKey;
+    if (anthropicApiKey) cfg.activeProvider = 'anthropic';
+  }
   writeRaw(cfg);
+}
+
+/**
+ * Clear a specific provider's stored key. Used by the Settings "Disconnect"
+ * button so users can wipe a key without having to add a new one.
+ * If the cleared key was the active provider, active switches to the other
+ * provider (if it has a key), or to null.
+ */
+export function clearApiKey(provider) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return;
+  const cfg = readRaw();
+  if (provider === 'gemini')    cfg.geminiApiKey = '';
+  if (provider === 'anthropic') cfg.anthropicApiKey = '';
+  if (cfg.activeProvider === provider) {
+    if (provider === 'gemini'    && cfg.anthropicApiKey) cfg.activeProvider = 'anthropic';
+    else if (provider === 'anthropic' && cfg.geminiApiKey)    cfg.activeProvider = 'gemini';
+    else delete cfg.activeProvider;
+  }
+  writeRaw(cfg);
+}
+
+/**
+ * Returns the provider the user most recently activated via the Settings UI.
+ * For legacy configs (pre-v2.4.2) that don't have an activeProvider field,
+ * falls back to the previous "Gemini-first if both are set" behaviour so
+ * existing installations keep working without any action.
+ */
+export function getActiveProvider() {
+  const cfg = readRaw();
+  if (cfg.activeProvider === 'gemini' || cfg.activeProvider === 'anthropic') {
+    return cfg.activeProvider;
+  }
+  // Legacy priority: whichever key exists, Gemini first
+  if (cfg.geminiApiKey)    return 'gemini';
+  if (cfg.anthropicApiKey) return 'anthropic';
+  if (process.env.GEMINI_API_KEY)    return 'gemini';
+  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  return null;
 }
 
 /**

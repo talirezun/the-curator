@@ -12,7 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getEffectiveKey } from './config.js';
+import { getEffectiveKey, getActiveProvider } from './config.js';
 
 const DEFAULTS = {
   gemini:    'gemini-2.5-flash-lite',
@@ -65,17 +65,22 @@ export function getFallbackStatus() {
 }
 
 export function getProviderInfo() {
+  // Honour the user's last-saved active provider (v2.4.2+). Falls back to
+  // Gemini-first-if-both behaviour for legacy configs via getActiveProvider().
+  const active = getActiveProvider();
+  if (active === 'gemini' && getEffectiveKey('gemini')) {
+    return { provider: 'gemini', model: process.env.LLM_MODEL || DEFAULTS.gemini };
+  }
+  if (active === 'anthropic' && getEffectiveKey('anthropic')) {
+    return { provider: 'anthropic', model: process.env.LLM_MODEL || DEFAULTS.anthropic };
+  }
+  // Defensive fallback: active provider is stored but its key is missing.
+  // Prefer whichever provider still has a usable key.
   if (getEffectiveKey('gemini')) {
-    return {
-      provider: 'gemini',
-      model: process.env.LLM_MODEL || DEFAULTS.gemini,
-    };
+    return { provider: 'gemini', model: process.env.LLM_MODEL || DEFAULTS.gemini };
   }
   if (getEffectiveKey('anthropic')) {
-    return {
-      provider: 'anthropic',
-      model: process.env.LLM_MODEL || DEFAULTS.anthropic,
-    };
+    return { provider: 'anthropic', model: process.env.LLM_MODEL || DEFAULTS.anthropic };
   }
   throw new Error(
     'No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'

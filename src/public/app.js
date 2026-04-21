@@ -1775,6 +1775,13 @@ async function loadApiKeyStatus() {
     if (geminiInput) geminiInput.value = '';
     if (anthropicInput) anthropicInput.value = '';
 
+    // Show/hide the per-field Disconnect button based on whether a key is saved
+    document.querySelectorAll('.key-disconnect-btn').forEach(btn => {
+      const provider = btn.dataset.provider;
+      const has = provider === 'gemini' ? data.hasGeminiKey : data.hasAnthropicKey;
+      btn.classList.toggle('hidden', !has);
+    });
+
     const badge = document.getElementById('settings-provider-badge');
     const text = document.getElementById('settings-provider-text');
     if (data.activeProvider) {
@@ -1845,6 +1852,40 @@ document.getElementById('settings-save-keys')?.addEventListener('click', async (
     showStatus(status, 'error', err.message);
   } finally {
     btn.disabled = false;
+  }
+});
+
+// Per-field Disconnect — clears the stored key for one provider without
+// requiring the user to re-enter a different key first. If the cleared
+// provider was active, active switches to the other provider (if it has
+// a key), or to none.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.key-disconnect-btn');
+  if (!btn) return;
+  const provider = btn.dataset.provider;
+  const label = provider === 'gemini' ? 'Google Gemini' : 'Anthropic';
+  if (!confirm(`Remove the saved ${label} API key? You can re-add it later.`)) return;
+
+  btn.disabled = true;
+  const origText = btn.textContent;
+  btn.textContent = 'Removing…';
+  try {
+    const r = await fetch('/api/config/api-keys/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Disconnect failed');
+    const status = document.getElementById('settings-keys-status');
+    showStatus(status, 'success', `✓ ${label} key removed.`);
+    await loadApiKeyStatus();
+  } catch (err) {
+    const status = document.getElementById('settings-keys-status');
+    showStatus(status, 'error', err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origText;
   }
 });
 
