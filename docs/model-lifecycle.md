@@ -1,10 +1,10 @@
 # Model Lifecycle & Fallback Safety Net
 
 > **Applies from:** v2.4.0+
-> **Scope:** ingest pipeline, chat, query, Wiki Health AI (from v2.4.x onward), MCP-adjacent tools
+> **Scope:** ingest pipeline, chat, query, AI Wiki Health (broken-link suggestions v2.4.3+, orphan rescue v2.4.4+), MCP-adjacent tools
 > **Audience:** every Curator user; also relevant to developers shipping new releases
 
-The Curator uses an LLM for every text-writing task — ingest (atomising a source into entities / concepts / summary), chat, and upcoming AI-assisted Wiki Health actions. Every one of those calls flows through a single chokepoint in [`src/brain/llm.js`](../src/brain/llm.js).
+The Curator uses an LLM for every text-writing task — ingest (atomising a source into entities / concepts / summary), chat, and AI-assisted Wiki Health actions (broken-link suggestions, orphan rescue). Every one of those calls flows through a single chokepoint in [`src/brain/llm.js`](../src/brain/llm.js).
 
 This document explains **what happens when a provider retires a model** — and what you, as a user, should do.
 

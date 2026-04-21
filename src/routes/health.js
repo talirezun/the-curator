@@ -12,7 +12,7 @@ import { Router } from 'express';
 import { readFileSync } from 'fs';
 import { listDomains } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE } from '../brain/health.js';
-import { suggestBrokenLinkTarget } from '../brain/health-ai.js';
+import { suggestBrokenLinkTarget, suggestOrphanHomes } from '../brain/health-ai.js';
 import { getProviderInfo } from '../brain/llm.js';
 
 const router = Router();
@@ -75,14 +75,17 @@ router.post('/:domain/fix', async (req, res) => {
 
 // AI-assisted suggestion for a single issue. READ-ONLY: proposes a target but
 // does NOT apply it — the UI passes the result back through /fix when the user
-// clicks Apply. Phase 1 supports only broken-link suggestions.
+// clicks Apply. Phase 1 (v2.4.3) supports broken links; Phase 2 (v2.4.4) adds
+// orphan-rescue. Response shape differs per type:
+//   brokenLinks → { ok, target, rationale, confidence }
+//   orphans     → { ok, candidates: [{target, description, confidence, rationale}, ...] }
 router.post('/:domain/ai-suggest', async (req, res) => {
   try {
     const { domain } = req.params;
     const { type, issue } = req.body || {};
     if (!type)  return res.status(400).json({ error: 'Missing type' });
     if (!issue) return res.status(400).json({ error: 'Missing issue' });
-    if (type !== 'brokenLinks') {
+    if (type !== 'brokenLinks' && type !== 'orphans') {
       return res.status(400).json({ error: `AI suggest not yet available for type "${type}"` });
     }
     await assertDomain(domain);
@@ -90,7 +93,9 @@ router.post('/:domain/ai-suggest', async (req, res) => {
     try { getProviderInfo(); }
     catch (err) { return res.status(400).json({ error: err.message }); }
 
-    const result = await suggestBrokenLinkTarget(domain, issue);
+    let result;
+    if (type === 'brokenLinks') result = await suggestBrokenLinkTarget(domain, issue);
+    else                        result = await suggestOrphanHomes(domain, issue);
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health ai-suggest]', err);

@@ -88,6 +88,7 @@ the-curator/
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
+│   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+) and orphans (v2.4.4+) — READ-ONLY
 │   │   └── config.js           Persistent config (API keys, domains path)
 │   └── public/
 │       ├── index.html          Single-page UI shell
@@ -318,13 +319,30 @@ POST /api/health/:domain/fix[-all]    body: { type, issue? }
       ▼
 src/brain/health.js  →  fixIssue(domain, type, issue?)
       └─ Dispatch by type:
+         brokenLinks       → regex rewrite [[old]] → [[issue.suggestedTarget]]
          folderPrefixLinks → strip [[entities/|concepts/]] prefixes in-place
          crossFolderDupes  → merge bullet sections, delete concept copy,
                              normalise frontmatter type to entity
          hyphenVariants    → union bullets into canonical slug, delete variants
-         missingBacklinks  → replay injectSummaryBacklinks() from files.js
+         missingBacklinks  → injectSingleBacklink() into scan-resolved entity
+         orphanLink        → injectRelatedLink(): AI orphan-rescue bullet (v2.4.4+)
+                             — pseudo-type, never emitted by scanWiki
 
 UI re-scans automatically after every fix so counts drop in real time.
+
+AI-assisted suggestions (v2.4.3+) flow through a separate READ-ONLY module:
+
+POST /api/health/:domain/ai-suggest    body: { type, issue }
+      │
+      ▼
+src/brain/health-ai.js  →  suggestBrokenLinkTarget / suggestOrphanHomes
+      │
+      └─ generateText() in llm.js  (provider-agnostic, fallback-chain aware)
+      └─ Validate all returned slugs against on-disk filenames before response
+         (hallucinated slugs are coerced to null / dropped)
+
+This module NEVER writes. Applying an AI suggestion goes back through
+the /fix endpoint above — same chokepoint as every other Health write.
 
 Orphans and broken links are surfaced as Review-only — they require
 human judgement and the app refuses to auto-fix them.

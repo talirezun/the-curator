@@ -2253,3 +2253,43 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .health-ai-confidence-high   { border-color: #3fb950; color: #7ee787; background: rgba(63,185,80,0.12); }
 .health-ai-confidence-medium { border-color: #b58900; color: #e0b341; background: rgba(181,137,0,0.12); }
 .health-ai-confidence-low    { border-color: var(--text-muted); color: var(--text-muted); background: transparent; }
+
+/* AI Health Phase 2 — orphan rescue: multi-candidate layout */
+.health-ai-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.health-ai-candidate {
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+.health-ai-candidate-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.health-ai-candidate-desc {
+  font-size: 12px;
+  color: var(--text-2);
+  margin: 4px 0;
+  line-height: 1.4;
+}
+.health-ai-candidate-desc em {
+  color: var(--text);
+  font-style: normal;
+  background: var(--bg-deep);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.health-ai-candidate-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}

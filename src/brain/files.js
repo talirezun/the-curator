@@ -483,6 +483,38 @@ export async function injectSingleBacklink(entityFilePath, summarySlug, summaryT
   return true;
 }
 
+/**
+ * Inject a generic wikilink bullet into a target file's "Related" section.
+ *
+ * Used by v2.4.4+ AI orphan rescue: adds `- [[linkSlug]] — description` to
+ * the target's Related section, dedup-safe against existing bullets via the
+ * existing `injectBulletsIntoSection` machinery.
+ *
+ * Unlike `injectSingleBacklink`, this helper does NOT enforce the
+ * "summaries/" folder prefix — callers pass whatever slug syntax they need
+ * (bare `rag`, folder-qualified `summaries/foo`, etc.). The link-target
+ * dedup key comparison already handles both cases.
+ *
+ * @param {string} targetFilePath — absolute path to the target .md file
+ * @param {string} linkSlug       — the slug inside `[[ ]]` (bare or folder-qualified)
+ * @param {string} description    — prose after the em-dash
+ * @returns {Promise<boolean>}    — true if the file changed
+ */
+export async function injectRelatedLink(targetFilePath, linkSlug, description) {
+  if (!existsSync(targetFilePath)) return false;
+  const cleanDesc = String(description || '').replace(/\s+/g, ' ').trim();
+  const bullet = cleanDesc
+    ? `- [[${linkSlug}]] — ${cleanDesc}`
+    : `- [[${linkSlug}]]`;
+  let content = await readFile(targetFilePath, 'utf8');
+  const before = content;
+  content = injectBulletsIntoSection(content, 'Related', [bullet]);
+  content = stripBlanksInBulletSections(content);
+  if (content === before) return false;
+  await writeFile(targetFilePath, content, 'utf8');
+  return true;
+}
+
 function mergeWikiPage(existingContent, incomingContent) {
   const ACCUMULATE = [
     'Related',

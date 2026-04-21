@@ -17,7 +17,7 @@
 import { readFile, writeFile, readdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
-import { wikiPath, injectSingleBacklink } from './files.js';
+import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 
@@ -326,6 +326,10 @@ export const AUTO_FIXABLE = new Set([
   'crossFolderDupes',
   'hyphenVariants',
   'missingBacklinks',
+  // orphanLink is a pseudo-type (v2.4.4+) — never emitted by scanWiki; only
+  // used to route a POST /fix that carries an AI orphan suggestion through
+  // fixOrphanLink. Keeps the "only fixIssue() writes" invariant intact.
+  'orphanLink',
 ]);
 
 async function fixBrokenLink(wikiDir, issue) {
@@ -395,6 +399,51 @@ async function fixHyphenVariant(wikiDir, issue) {
   return true;
 }
 
+/**
+ * Apply an AI-proposed orphan-rescue suggestion (v2.4.4+).
+ *
+ * The issue carries the orphan's bare slug, the target page to link FROM,
+ * and a short AI-written description for the bullet's prose. Writes
+ *   `- [[orphanSlug]] — description`
+ * into the target's Related section via `injectRelatedLink`.
+ *
+ * Defense in depth:
+ *   1. `targetPath` must resolve inside wikiDir (no path traversal).
+ *   2. The orphan slug must actually exist on disk in entities/ or concepts/.
+ *   3. Target must be an entities/ or concepts/ file — never a summary
+ *      (summaries are not valid orphan-rescue targets; see docs/ai-health.md).
+ */
+async function fixOrphanLink(wikiDir, issue) {
+  if (!issue || !issue.orphanSlug || !issue.targetSlug) return false;
+
+  const { orphanSlug, targetSlug } = issue;
+  const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
+  if (!SLUG_RE.test(orphanSlug) || !SLUG_RE.test(targetSlug)) return false;
+
+  const entitiesDir = path.join(wikiDir, 'entities');
+  const conceptsDir = path.join(wikiDir, 'concepts');
+
+  // Defence 1: orphan must exist on disk (entity or concept)
+  const orphanExists =
+    existsSync(path.join(entitiesDir, orphanSlug + '.md')) ||
+    existsSync(path.join(conceptsDir, orphanSlug + '.md'));
+  if (!orphanExists) return false;
+
+  // Defence 2: target must exist and be an entity or concept (never a summary)
+  let targetPath = null;
+  if (existsSync(path.join(entitiesDir, targetSlug + '.md'))) {
+    targetPath = path.join(entitiesDir, targetSlug + '.md');
+  } else if (existsSync(path.join(conceptsDir, targetSlug + '.md'))) {
+    targetPath = path.join(conceptsDir, targetSlug + '.md');
+  }
+  if (!targetPath) return false;
+
+  // Defence 3: don't link a page to itself
+  if (orphanSlug === targetSlug) return false;
+
+  return await injectRelatedLink(targetPath, orphanSlug, issue.description || '');
+}
+
 async function fixMissingBacklink(wikiDir, issue) {
   // Use the entity path the scan already resolved, instead of re-running the
   // bulk injectSummaryBacklinks machinery. The bulk function re-resolves every
@@ -436,11 +485,15 @@ export async function fixIssue(domain, type, issue = null) {
     if (type === 'crossFolderDupes')  ok = await fixCrossFolderDupe(wikiDir, issue);
     if (type === 'hyphenVariants')    ok = await fixHyphenVariant(wikiDir, issue);
     if (type === 'missingBacklinks')  ok = await fixMissingBacklink(wikiDir, issue);
+    if (type === 'orphanLink')        ok = await fixOrphanLink(wikiDir, issue);
     return { fixed: ok ? 1 : 0, total: 1 };
   }
 
   // Fix all of type: re-scan and apply each. For brokenLinks, only issues
   // with a suggestedTarget count toward the total — the rest are review-only.
+  // `orphanLink` has no scan-emitted issues; fix-all is a no-op.
+  if (type === 'orphanLink') return { fixed: 0, total: 0 };
+
   const report = await scanWiki(domain);
   let issues = report[type] || [];
   if (type === 'brokenLinks') issues = issues.filter(i => i.suggestedTarget);

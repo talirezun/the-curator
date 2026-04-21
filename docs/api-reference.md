@@ -477,7 +477,13 @@ This endpoint never returns a non-200 status — availability is a soft signal, 
 
 Ask the LLM to propose a target for an issue that the algorithmic scanner could not resolve. **Read-only — does not modify the wiki.** To apply the suggestion, call `POST /api/health/:domain/fix` with the returned target patched into `issue.suggestedTarget`.
 
-**Phase 1 (v2.4.3)** supports only `type: 'brokenLinks'`. Other types will be added in v2.4.4 (orphans) and v2.4.5 (semantic duplicates).
+**Supported types:**
+
+- `type: 'brokenLinks'` (v2.4.3+) — propose a target for a broken wikilink.
+- `type: 'orphans'` (v2.4.4+) — propose up to 5 pages that should link to an orphan.
+- Phase 3 (semantic near-duplicates) planned for v2.4.5.
+
+### Broken-link suggestion
 
 **Request body** `Content-Type: application/json`
 
@@ -491,11 +497,6 @@ Ask the LLM to propose a target for an issue that the algorithmic scanner could 
   }
 }
 ```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | Yes | `"brokenLinks"` (Phase 1). |
-| `issue` | object | Yes | The issue object as returned by `GET /api/health/:domain`. |
 
 **Success response** `200 OK`
 
@@ -514,6 +515,47 @@ Ask the LLM to propose a target for an issue that the algorithmic scanner could 
 | `rationale` | string | One-sentence explanation of why this target was chosen (or why none fits). |
 | `confidence` | string | `"high"`, `"medium"`, or `"low"`. The frontend hides **Apply** when `target` is `null` or `confidence` is `"low"`. |
 
+### Orphan rescue suggestion
+
+**Request body** `Content-Type: application/json`
+
+```json
+{
+  "type": "orphans",
+  "issue": {
+    "path": "entities/acl-findings.md",
+    "type": "entity",
+    "slug": "acl-findings"
+  }
+}
+```
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "candidates": [
+    {
+      "target": "artificial-intelligence-research",
+      "description": "ACL Findings is a venue publishing AI research.",
+      "confidence": "high",
+      "rationale": "ACL Findings is a benchmark specifically for AI research."
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `candidates` | array | Up to 5 validated candidates. May be empty if nothing plausible was found. |
+| `candidates[].target` | string | A slug that exists on disk in `entities/` or `concepts/`. Never a summary. |
+| `candidates[].description` | string | AI-written bullet text (trimmed to 140 chars). |
+| `candidates[].confidence` | string | `"high"`, `"medium"`, or `"low"`. Frontend shows the Apply button only when confidence ≥ medium. |
+| `candidates[].rationale` | string | One-sentence explanation of why this target was chosen. |
+
+To apply a candidate, call `POST /api/health/:domain/fix` with `type: 'orphanLink'` (see below).
+
 **Error responses**
 
 | Status | Condition |
@@ -522,7 +564,44 @@ Ask the LLM to propose a target for an issue that the algorithmic scanner could 
 | `404` | Unknown domain. |
 | `500` | LLM call failed after the fallback chain was exhausted, or the response could not be parsed as JSON. |
 
-Privacy note: this endpoint sends a ~4 KB excerpt of the source page plus the list of page slugs in the domain to the configured LLM provider. See [ai-health.md](ai-health.md) for the full disclosure.
+Privacy note: this endpoint sends up to ~4 KB of the source/orphan page content plus the relevant slug inventory to the configured LLM provider. See [ai-health.md](ai-health.md) for the full disclosure.
+
+---
+
+## POST /api/health/:domain/fix — `orphanLink` variant
+
+The existing `/fix` endpoint gains a new pseudo-type `orphanLink` in v2.4.4 to apply an AI orphan-rescue suggestion. This type is **never emitted by the scanner**; it exists only as a routing key so AI-driven orphan applies go through the same `fixIssue()` chokepoint as every other write.
+
+**Request body**
+
+```json
+{
+  "type": "orphanLink",
+  "issue": {
+    "orphanSlug": "acl-findings",
+    "targetSlug": "artificial-intelligence-research",
+    "description": "ACL Findings is a venue publishing AI research."
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `orphanSlug` | string | Bare slug (no folder prefix) of the orphan entity or concept. |
+| `targetSlug` | string | Bare slug of the entity or concept to link from. Summaries are rejected. |
+| `description` | string | Prose after the em-dash in the bullet. May be empty; in that case a bare `- [[orphanSlug]]` is written. |
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "fixed": 1, "total": 1 }
+```
+
+`fixed: 0` indicates a defence rejected the request (unknown slug, bad format, self-link, or summary target). No error status is returned in this case — it is a silent no-op to keep client code simple.
+
+Writes `- [[orphanSlug]] — description` into the target's `## Related` section. Dedup-safe: a bullet with the same link target is not duplicated.
+
+**`fix-all` is a no-op for `orphanLink`** — since the scanner never emits it, there is nothing to batch.
 
 ---
 

@@ -2299,6 +2299,11 @@ function renderSection(report, type) {
       trailing =
         `<button class="btn btn-sm health-ai-btn" data-ai-suggest="brokenLinks" data-issue='${escapeAttr(JSON.stringify(issue))}' data-row-idx="${idx}">✨ Ask AI</button>` +
         `<span class="health-review-tag">Review</span>`;
+    } else if (type === 'orphans' && _aiAvailable) {
+      // Orphan page + AI available → offer AI orphan-rescue suggestions
+      trailing =
+        `<button class="btn btn-sm health-ai-btn" data-ai-suggest="orphans" data-issue='${escapeAttr(JSON.stringify(issue))}' data-row-idx="${idx}">✨ Ask AI</button>` +
+        `<span class="health-review-tag">Review</span>`;
     } else {
       trailing = `<span class="health-review-tag">Review</span>`;
     }
@@ -2453,7 +2458,14 @@ async function runAiSuggest(domain, type, issue, btn) {
     return;
   }
 
-  // Render the inline result block beneath the issue description
+  if (type === 'orphans') {
+    renderOrphanAiResult(domain, issue, result, row, actions);
+  } else {
+    renderBrokenLinkAiResult(domain, issue, result, row, actions);
+  }
+}
+
+function renderBrokenLinkAiResult(domain, issue, result, row, actions) {
   const desc = row.querySelector('.health-issue-desc');
   const canApply = !!result.target && result.confidence !== 'low';
   const conf = result.confidence || 'low';
@@ -2478,7 +2490,6 @@ async function runAiSuggest(domain, type, issue, btn) {
       `<div class="health-ai-hint">Consider creating a new page or removing the link.</div>`;
   }
 
-  // Insert a child block under the description; replace actions with Apply/Skip
   let aiBlock = row.querySelector('.health-ai-result');
   if (!aiBlock) {
     aiBlock = document.createElement('div');
@@ -2504,4 +2515,106 @@ async function runAiSuggest(domain, type, issue, btn) {
   } else {
     actions.innerHTML = `<span class="health-review-tag">Review</span>`;
   }
+}
+
+function renderOrphanAiResult(domain, issue, result, row, actions) {
+  const desc = row.querySelector('.health-issue-desc');
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+
+  let aiBlock = row.querySelector('.health-ai-result');
+  if (!aiBlock) {
+    aiBlock = document.createElement('div');
+    aiBlock.className = 'health-ai-result';
+    desc.insertAdjacentElement('afterend', aiBlock);
+  }
+
+  if (candidates.length === 0) {
+    aiBlock.innerHTML =
+      `<div class="health-ai-result-head">` +
+        `<span class="health-ai-result-label">🤖 No good candidates.</span>` +
+      `</div>` +
+      `<div class="health-ai-hint">AI found no existing pages that should reference this orphan. Consider whether the orphan itself should stay, merge into another page, or be removed.</div>`;
+    actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+    return;
+  }
+
+  const header =
+    `<div class="health-ai-result-head">` +
+      `<span class="health-ai-result-label">🤖 Suggested pages to link from:</span>` +
+    `</div>`;
+
+  const candidateRows = candidates.map((c, i) => {
+    const conf = c.confidence || 'low';
+    const target = escapeHtml(c.target);
+    const rationale = escapeHtml(c.rationale || '');
+    const descText = escapeHtml(c.description || '');
+    const canApply = conf !== 'low';
+    return (
+      `<div class="health-ai-candidate" data-candidate-idx="${i}">` +
+        `<div class="health-ai-candidate-head">` +
+          `<code>[[${target}]]</code> ` +
+          `<span class="health-ai-confidence health-ai-confidence-${conf}">${escapeHtml(conf)} confidence</span>` +
+        `</div>` +
+        (descText ? `<div class="health-ai-candidate-desc">Bullet: <em>${descText}</em></div>` : '') +
+        `<div class="health-ai-rationale">${rationale}</div>` +
+        `<div class="health-ai-candidate-actions">` +
+          (canApply
+            ? `<button class="btn btn-sm health-fix-btn health-ai-apply-orphan">Apply</button>`
+            : `<span class="health-review-tag">Low confidence — review manually</span>`) +
+          `<button class="btn btn-sm health-ai-skip-orphan">Skip</button>` +
+        `</div>` +
+      `</div>`
+    );
+  }).join('');
+
+  aiBlock.innerHTML = header + `<div class="health-ai-candidates">${candidateRows}</div>`;
+  actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+
+  // Wire per-candidate buttons. Each Apply targets a different page; Skip
+  // removes just that candidate row. When all candidates are gone, we collapse
+  // the entire block.
+  aiBlock.querySelectorAll('.health-ai-candidate').forEach(card => {
+    const idx = Number(card.dataset.candidateIdx);
+    const cand = candidates[idx];
+    const applyBtn = card.querySelector('.health-ai-apply-orphan');
+    const skipBtn  = card.querySelector('.health-ai-skip-orphan');
+
+    if (applyBtn) {
+      applyBtn.addEventListener('click', async () => {
+        applyBtn.disabled = true;
+        applyBtn.textContent = 'Applying…';
+        try {
+          const r = await fetch(`/api/health/${encodeURIComponent(domain)}/fix`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'orphanLink',
+              issue: {
+                orphanSlug: issue.slug,
+                targetSlug: cand.target,
+                description: cand.description || '',
+              },
+            }),
+          });
+          if (!r.ok) throw new Error((await r.json()).error || 'Apply failed');
+          const data = await r.json();
+          if (!data.fixed) throw new Error('Server reported no changes applied');
+          // On success, trigger a full re-scan — orphan may disappear.
+          await runHealthScan();
+        } catch (err) {
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Apply';
+          showStatus(healthStatusEl, 'error', err.message);
+        }
+      });
+    }
+
+    skipBtn.addEventListener('click', () => {
+      card.remove();
+      if (aiBlock.querySelectorAll('.health-ai-candidate').length === 0) {
+        aiBlock.remove();
+        actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+      }
+    });
+  });
 }
