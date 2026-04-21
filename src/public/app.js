@@ -2167,6 +2167,23 @@ const HEALTH_ORDER = [
   'folderPrefixLinks', 'missingBacklinks', 'orphans',
 ];
 
+// Session cache for AI availability — populated once per page load by
+// /api/health/ai-available. Re-probed when the user re-enters the Health tab
+// after changing API keys in Settings.
+let _aiAvailable = null;
+async function checkAiAvailable() {
+  try {
+    const r = await fetch('/api/health/ai-available');
+    if (!r.ok) return false;
+    const data = await r.json();
+    _aiAvailable = !!data.available;
+    return _aiAvailable;
+  } catch {
+    _aiAvailable = false;
+    return false;
+  }
+}
+
 function resetHealthPanel() {
   healthSummaryEl.classList.add('hidden');
   healthSectionsEl.classList.add('hidden');
@@ -2186,9 +2203,14 @@ async function runHealthScan() {
   healthEmptyEl.classList.add('hidden');
   showStatus(healthStatusEl, 'info', 'Scanning wiki…');
   try {
-    const r = await fetch(`/api/health/${encodeURIComponent(domain)}`);
-    if (!r.ok) throw new Error((await r.json()).error || 'Scan failed');
-    const report = await r.json();
+    // Re-probe AI availability in parallel with the scan; API key may have
+    // been added/removed since last visit.
+    const [scanResp] = await Promise.all([
+      fetch(`/api/health/${encodeURIComponent(domain)}`),
+      checkAiAvailable(),
+    ]);
+    if (!scanResp.ok) throw new Error((await scanResp.json()).error || 'Scan failed');
+    const report = await scanResp.json();
     hideEl(healthStatusEl);
     renderHealthReport(report);
   } catch (err) {
@@ -2237,6 +2259,15 @@ function renderHealthReport(report) {
       fixOne(report.domain, type, issue, btn);
     });
   });
+  healthSectionsEl.querySelectorAll('[data-ai-suggest]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await ensureAiDisclosure();
+      if (!ok) return;
+      const type = btn.dataset.aiSuggest;
+      const issue = JSON.parse(btn.dataset.issue);
+      runAiSuggest(report.domain, type, issue, btn);
+    });
+  });
 }
 
 function renderSection(report, type) {
@@ -2258,12 +2289,20 @@ function renderSection(report, type) {
     issues = [...issues].sort((a, b) => (b.suggestedTarget ? 1 : 0) - (a.suggestedTarget ? 1 : 0));
   }
 
-  const rows = issues.map(issue => {
+  const rows = issues.map((issue, idx) => {
     const description = describeIssue(type, issue);
-    const fixBtn = canFixIssue(issue)
-      ? `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>${btnLabel}</button>`
-      : `<span class="health-review-tag">Review</span>`;
-    return `<li class="health-issue-row"><span class="health-issue-desc">${description}</span>${fixBtn}</li>`;
+    let trailing;
+    if (canFixIssue(issue)) {
+      trailing = `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>${btnLabel}</button>`;
+    } else if (type === 'brokenLinks' && _aiAvailable) {
+      // Review-only broken link + AI available → offer AI suggestion
+      trailing =
+        `<button class="btn btn-sm health-ai-btn" data-ai-suggest="brokenLinks" data-issue='${escapeAttr(JSON.stringify(issue))}' data-row-idx="${idx}">✨ Ask AI</button>` +
+        `<span class="health-review-tag">Review</span>`;
+    } else {
+      trailing = `<span class="health-review-tag">Review</span>`;
+    }
+    return `<li class="health-issue-row" data-type="${type}" data-row-idx="${idx}"><span class="health-issue-desc">${description}</span><span class="health-issue-actions">${trailing}</span></li>`;
   }).join('');
 
   const fixAllLabel = type === 'brokenLinks'
@@ -2351,4 +2390,118 @@ function escapeHtml(s) {
 
 function escapeAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+}
+
+// ── AI Health (Phase 1 — v2.4.3) ────────────────────────────────────────────
+
+const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';
+
+/**
+ * Ensure the user has acknowledged the AI privacy disclosure once. Returns a
+ * Promise<boolean> — true if the user accepts (or has previously), false if
+ * they cancel.
+ */
+function ensureAiDisclosure() {
+  if (localStorage.getItem(AI_DISCLOSURE_KEY) === 'yes') return Promise.resolve(true);
+  return new Promise(resolve => {
+    const overlay = document.getElementById('ai-health-disclosure');
+    const continueBtn = document.getElementById('ai-disclosure-continue');
+    const cancelBtn   = document.getElementById('ai-disclosure-cancel');
+    if (!overlay || !continueBtn || !cancelBtn) return resolve(true); // fail-open in case markup missing
+
+    overlay.classList.remove('hidden');
+    const onContinue = () => {
+      localStorage.setItem(AI_DISCLOSURE_KEY, 'yes');
+      cleanup();
+      resolve(true);
+    };
+    const onCancel = () => { cleanup(); resolve(false); };
+    function cleanup() {
+      overlay.classList.add('hidden');
+      continueBtn.removeEventListener('click', onContinue);
+      cancelBtn.removeEventListener('click', onCancel);
+    }
+    continueBtn.addEventListener('click', onContinue);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+async function runAiSuggest(domain, type, issue, btn) {
+  const row = btn.closest('.health-issue-row');
+  const actions = row?.querySelector('.health-issue-actions');
+  if (!actions) return;
+
+  // Replace the actions area with a loading indicator while we wait
+  actions.innerHTML = `<span class="health-ai-loading">Asking AI…</span>`;
+
+  let result;
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/ai-suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, issue }),
+    });
+    result = await r.json();
+    if (!r.ok || result.error) throw new Error(result.error || 'AI suggest failed');
+  } catch (err) {
+    actions.innerHTML =
+      `<button class="btn btn-sm health-ai-btn health-ai-retry">✨ Retry</button>` +
+      `<span class="health-review-tag">Review</span>`;
+    const retryBtn = actions.querySelector('.health-ai-retry');
+    retryBtn.addEventListener('click', () => runAiSuggest(domain, type, issue, retryBtn));
+    showStatus(healthStatusEl, 'error', 'AI suggest failed: ' + err.message);
+    return;
+  }
+
+  // Render the inline result block beneath the issue description
+  const desc = row.querySelector('.health-issue-desc');
+  const canApply = !!result.target && result.confidence !== 'low';
+  const conf = result.confidence || 'low';
+  const rationale = escapeHtml(result.rationale || '');
+
+  let body;
+  if (result.target) {
+    body =
+      `<div class="health-ai-result-head">` +
+        `<span class="health-ai-result-label">🤖 Suggested:</span> ` +
+        `<code>[[${escapeHtml(result.target)}]]</code> ` +
+        `<span class="health-ai-confidence health-ai-confidence-${conf}">${escapeHtml(conf)} confidence</span>` +
+      `</div>` +
+      `<div class="health-ai-rationale">${rationale}</div>`;
+  } else {
+    body =
+      `<div class="health-ai-result-head">` +
+        `<span class="health-ai-result-label">🤖 No good target:</span> ` +
+        `<span class="health-ai-confidence health-ai-confidence-${conf}">${escapeHtml(conf)} confidence</span>` +
+      `</div>` +
+      `<div class="health-ai-rationale">${rationale}</div>` +
+      `<div class="health-ai-hint">Consider creating a new page or removing the link.</div>`;
+  }
+
+  // Insert a child block under the description; replace actions with Apply/Skip
+  let aiBlock = row.querySelector('.health-ai-result');
+  if (!aiBlock) {
+    aiBlock = document.createElement('div');
+    aiBlock.className = 'health-ai-result';
+    desc.insertAdjacentElement('afterend', aiBlock);
+  }
+  aiBlock.innerHTML = body;
+
+  if (canApply) {
+    actions.innerHTML =
+      `<button class="btn btn-sm health-fix-btn health-ai-apply">Apply</button>` +
+      `<button class="btn btn-sm health-ai-skip">Skip</button>`;
+    const applyBtn = actions.querySelector('.health-ai-apply');
+    const skipBtn  = actions.querySelector('.health-ai-skip');
+    applyBtn.addEventListener('click', () => {
+      const patched = { ...issue, suggestedTarget: result.target };
+      fixOne(domain, 'brokenLinks', patched, applyBtn);
+    });
+    skipBtn.addEventListener('click', () => {
+      aiBlock.remove();
+      actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+    });
+  } else {
+    actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+  }
 }

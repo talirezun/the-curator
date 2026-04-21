@@ -453,6 +453,79 @@ Apply every fix of a given type in one call. Re-scans the wiki, then applies eac
 
 ---
 
+## GET /api/health/ai-available
+
+Probe for whether the **✨ Ask AI** feature (v2.4.3+) is available — i.e. whether a usable LLM API key is configured. The frontend calls this on each Health scan to decide whether to render the Ask AI button.
+
+**Success response** `200 OK` — key configured
+
+```json
+{ "available": true, "provider": "gemini", "model": "gemini-2.5-flash-lite" }
+```
+
+**Success response** `200 OK` — no key configured
+
+```json
+{ "available": false, "reason": "No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env." }
+```
+
+This endpoint never returns a non-200 status — availability is a soft signal, not an error.
+
+---
+
+## POST /api/health/:domain/ai-suggest
+
+Ask the LLM to propose a target for an issue that the algorithmic scanner could not resolve. **Read-only — does not modify the wiki.** To apply the suggestion, call `POST /api/health/:domain/fix` with the returned target patched into `issue.suggestedTarget`.
+
+**Phase 1 (v2.4.3)** supports only `type: 'brokenLinks'`. Other types will be added in v2.4.4 (orphans) and v2.4.5 (semantic duplicates).
+
+**Request body** `Content-Type: application/json`
+
+```json
+{
+  "type": "brokenLinks",
+  "issue": {
+    "sourceFile": "concepts/aerospace-and-ai.md",
+    "linkText": "transportation",
+    "suggestedTarget": null
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | Yes | `"brokenLinks"` (Phase 1). |
+| `issue` | object | Yes | The issue object as returned by `GET /api/health/:domain`. |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "target": "ai-in-transportation-systems",
+  "rationale": "The source page discusses AI in aerospace, which is a sub-field of transportation.",
+  "confidence": "medium"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `target` | string \| null | A slug that exists on disk, or `null` if no suitable target was found. Hallucinated slugs are rejected server-side (coerced to `null`). For summary targets the value is prefixed, e.g. `"summaries/the-paper-title"`. |
+| `rationale` | string | One-sentence explanation of why this target was chosen (or why none fits). |
+| `confidence` | string | `"high"`, `"medium"`, or `"low"`. The frontend hides **Apply** when `target` is `null` or `confidence` is `"low"`. |
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `type`/`issue`, unsupported `type`, or no API key configured. |
+| `404` | Unknown domain. |
+| `500` | LLM call failed after the fallback chain was exhausted, or the response could not be parsed as JSON. |
+
+Privacy note: this endpoint sends a ~4 KB excerpt of the source page plus the list of page slugs in the domain to the configured LLM provider. See [ai-health.md](ai-health.md) for the full disclosure.
+
+---
+
 ## Static files
 
 The server also serves the web UI from `src/public/` at the root path.

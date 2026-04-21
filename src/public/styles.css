@@ -2191,3 +2191,65 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .health-fix-all-btn {
   flex-shrink: 0;
 }
+
+/* AI Health (Phase 1 — v2.4.3) */
+.health-issue-row {
+  flex-wrap: wrap; /* allow the inline AI result block to drop to a new line */
+}
+.health-issue-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.health-ai-btn {
+  border-color: var(--accent, #8b5cf6);
+  color: var(--accent-2, #c4b5fd);
+  background: var(--accent-dim, rgba(139,92,246,0.08));
+}
+.health-ai-btn:hover {
+  background: var(--accent-dim, rgba(139,92,246,0.16));
+}
+.health-ai-loading {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.health-ai-result {
+  flex-basis: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent, #8b5cf6);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.health-ai-result-head {
+  margin-bottom: 4px;
+  color: var(--text);
+}
+.health-ai-result-label {
+  font-weight: 600;
+}
+.health-ai-rationale {
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.health-ai-hint {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.health-ai-confidence {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  text-transform: lowercase;
+}
+.health-ai-confidence-high   { border-color: #3fb950; color: #7ee787; background: rgba(63,185,80,0.12); }
+.health-ai-confidence-medium { border-color: #b58900; color: #e0b341; background: rgba(181,137,0,0.12); }
+.health-ai-confidence-low    { border-color: var(--text-muted); color: var(--text-muted); background: transparent; }
