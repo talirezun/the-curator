@@ -15,8 +15,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getEffectiveKey } from './config.js';
 
 const DEFAULTS = {
-  gemini: 'gemini-2.5-flash-lite',
-  anthropic: 'claude-sonnet-4-6',
+  gemini:    'gemini-2.5-flash-lite',
+  anthropic: 'claude-haiku-4-5',         // Haiku is the low-cost tier, matching the
+                                         // cost profile of gemini-2.5-flash-lite.
+                                         // See docs/model-lifecycle.md for rationale.
 };
 
 /**
@@ -40,9 +42,11 @@ const FALLBACK_CHAINS = {
     'gemini-1.5-flash-latest',      // Google's rolling alias as last resort
   ],
   anthropic: [
-    'claude-sonnet-4-5',            // previous Sonnet generation
+    'claude-3-5-haiku-latest',      // previous Haiku gen — same cost tier, SDK-typed
+    'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
+    'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
     'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
-    'claude-3-5-sonnet-latest',     // broadly-available stable fallback
+    'claude-3-5-sonnet-latest',     // deep fallback — broadly-available Sonnet
   ],
 };
 

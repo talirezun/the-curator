@@ -20,10 +20,12 @@ Providers rename and retire models. When Google retires `gemini-2.5-flash-lite` 
 
 ```js
 const DEFAULTS = {
-  gemini:    'gemini-2.5-flash-lite',
-  anthropic: 'claude-sonnet-4-6',
+  gemini:    'gemini-2.5-flash-lite',   // Google's low-cost tier
+  anthropic: 'claude-haiku-4-5',        // Anthropic's low-cost tier
 };
 ```
+
+Both defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output can override via `LLM_MODEL=<model-id>` in `.env`.
 
 When a provider retires or supersedes one of these, we bump the constant in a new release and push. Users get the new default via **Settings → Check for Updates**.
 
@@ -37,9 +39,11 @@ const FALLBACK_CHAINS = {
     'gemini-1.5-flash-latest',      // Google's rolling alias as last resort
   ],
   anthropic: [
-    'claude-sonnet-4-5',            // previous Sonnet generation
+    'claude-3-5-haiku-latest',      // previous Haiku gen — same cost tier, SDK-typed
+    'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
+    'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
     'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
-    'claude-3-5-sonnet-latest',     // broadly-available stable fallback
+    'claude-3-5-sonnet-latest',     // deep fallback — broadly-available Sonnet
   ],
 };
 ```
@@ -114,13 +118,20 @@ LLM_MODEL=gemini-2.5-pro npm start
 
 ## Anthropic-specific notes
 
-As of v2.4.0, the Anthropic code path has not been exercised by any production ingest run (the project's primary user has historically used Gemini). The code is identical in shape — same `generateText()` abstraction, same fallback chain — but two known differences apply:
+The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, chosen to mirror the cost profile of Gemini's `gemini-2.5-flash-lite`. Two known differences relative to the Gemini path:
 
 1. **No native JSON response mode.** Gemini supports `responseMimeType: 'application/json'`, which forces structurally-valid JSON output. Anthropic does not expose an equivalent, so JSON-producing code paths (primarily `src/brain/ingest.js`) rely on the system prompt instruction *"Return ONLY valid JSON"* combined with the `jsonrepair`-based fallback parser. Empirically this works, but expect slightly more retries on large ingests than Gemini produces.
 
-2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` in its TypeScript types; newer model IDs like `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain has both named-version and rolling-alias entries.
+2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` / `claude-3-5-haiku-latest` in its TypeScript types; newer model IDs like `claude-haiku-4-5` and `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain walks same-tier Haiku variants first, then escalates to Sonnet (higher cost but always available).
 
-If you test with Anthropic and hit an issue, please open a GitHub issue including the log line starting `[llm]`.
+If your usage patterns make Haiku's quality insufficient (rare for wiki ingest but possible for dense academic PDFs), you can opt into Sonnet via:
+
+```bash
+# in .env
+LLM_MODEL=claude-sonnet-4-5
+```
+
+Or any other model ID Anthropic accepts. The fallback chain still applies on top of your override.
 
 ---
 
