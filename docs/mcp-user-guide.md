@@ -8,6 +8,24 @@ This is a *personal* MCP: it reads only your local wiki folder, nothing more, an
 
 ---
 
+## Why this matters (the elevator pitch)
+
+For most second-brain users, the loop is: ingest → admire the Obsidian graph → use the local Chat tab for everyday lookups. That's already useful. But the graph is something you *look at*. The synapses — the actual connections between thousands of knowledge nodes accumulated over years — are mostly invisible to you while you're inside the graph.
+
+My Curator changes that. From the moment you connect Claude Desktop (with **Opus** or **Sonnet**) to your wiki via MCP, your second brain is **a prompt away** for a frontier model. Not as raw text. As a **graph** — with topology, tags, and bidirectional backlinks all exposed as first-class structured data.
+
+This is what unlocks deep research:
+
+- *"What ideas in my AI domain have I never explicitly connected to my business strategy domain?"* → the model traverses both graphs and surfaces the intersections.
+- *"For my white paper on organisational resilience, pull every entity tagged `crisis-response` across all domains and build a citation skeleton."* → graph search + tag query + multi-page synthesis in one turn.
+- *"Across my last six months of journal entries, identify recurring patterns I haven't named yet — citing the entries each pattern shows up in."* → the model finds patterns *you* missed, with sources.
+
+Most "AI for personal knowledge" tools are RAG wrappers — they re-derive answers from raw files at query time and forget afterwards. Nothing compounds. Nothing traverses. My Curator inverts that: ingest builds a **persistent, graph-shaped** structure during writing, and MCP exposes that graph at read time so a frontier model can reason against it like an analyst querying a database.
+
+That's the difference between *"I have a folder of notes"* and *"I have a queryable, compounding extension of my own thinking that any frontier model can reason against on demand."* Everything stays on your machine.
+
+---
+
 ## What it does
 
 My Curator exposes **ten tools** to Claude Desktop:

@@ -230,7 +230,30 @@ Open **http://localhost:3333** in your browser.
 
 ## Cost — what The Curator actually costs to run
 
-Most of what The Curator does (storing files, the wiki itself, Obsidian, sync) is **free**. The only paid component is the AI provider you choose for ingest + chat:
+The Curator itself is **free, open-source software**. The only paid component is the AI provider you connect for the features that actually call an LLM. Knowing which features cost tokens and which don't makes the bill predictable.
+
+### What uses your API tokens
+
+| Feature | Uses tokens? | Why |
+|---|---|---|
+| **Ingest** (drop in a PDF / article / note) | ✅ Yes | The LLM reads the source and writes the wiki pages. This is by far the largest consumer of tokens. |
+| **Chat** (built-in tab) | ✅ Yes | Each message + reply is one LLM call. Cheap — typically a few cents per long conversation. |
+| **Wiki Health — ✨ Ask AI on broken links** (Phase 1) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
+| **Wiki Health — ✨ Ask AI on orphan pages** (Phase 2) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
+| **Wiki Health — Semantic duplicate scan** (Phase 3) | ✅ Yes — opt-in, cost-gated | A confirm dialog shows the estimate before you run it (typical: $0.003–$0.03 on Gemini Flash Lite). |
+
+### What does NOT use any AI / tokens
+
+| Feature | Why it's free |
+|---|---|
+| **Wiki tab** (browse pages) | Pure file rendering. No LLM call. |
+| **Domain management** (create / rename / delete) | Filesystem operations only. |
+| **Settings**, **API keys**, **updates** | Local. No LLM call. |
+| **GitHub Sync** (Sync Up / Sync Down) | A `git push` / `git pull` over HTTPS to your own private repo. |
+| **Wiki Health — structural scan & deterministic fixes** (broken-link auto-fix, folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) | Algorithmic — runs entirely on your machine. |
+| **My Curator MCP server** (locally, on this machine) | The bridge itself is free. The frontier model you connect *to* it (Claude Desktop, etc.) bills you on its own plan, not through your Curator API key. |
+
+### Provider pricing
 
 | Provider | Free tier? | Cost (paid) | Real-world cost |
 |---|---|---|---|
@@ -240,6 +263,52 @@ Most of what The Curator does (storing files, the wiki itself, Obsidian, sync) i
 **About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
 
 **Context window:** Gemini 2.5 Flash Lite has a **1,048,576-token window (≈1M tokens)**, which means The Curator can in principle ingest articles of 200–300 pages in a single pass. The current ingest pipeline caps inputs at 80k characters per call (≈20k tokens) and uses a multi-phase pipeline for larger documents — books and very long PDFs work but haven't been stress-tested at the full 1M-token ceiling.
+
+---
+
+## Why My Curator MCP changes everything
+
+Building a second brain is rewarding. **Querying it with a frontier model** is the moment it becomes irreplaceable.
+
+For most second-brain users, the loop is: ingest sources → admire the Obsidian graph. The graph is beautiful, the visual structure is enjoyable, and the local Chat tab handles everyday lookups. But the graph is something you *look at*. The synapses — the actual connections between thousands of knowledge nodes accumulated over years — are mostly invisible to you while you're inside the graph.
+
+**My Curator MCP** is the bridge that opens that synapse layer to a frontier model. From v2.3 onwards, The Curator ships a local read-only MCP server that exposes your wiki to any [Model Context Protocol](https://modelcontextprotocol.io/)-compatible client — most importantly **Claude Desktop with Opus or Sonnet**, but also VS Code with an MCP-aware coding agent, [LM Studio](https://lmstudio.ai/) with a local model, or any other MCP client.
+
+This is not "another way to read your files." It's a *graph-native* access path. Ten dedicated tools (seven retrieval, three explicitly graph-shaped) let the model:
+
+- Pull a topology overview of any domain — central hubs, cluster shape, orphan sample, top tags — in one call
+- Traverse multi-hop neighbourhoods around any concept or entity
+- Get bidirectional backlinks — "every source that mentions Karpathy"
+- Search across every domain you've ever built, simultaneously
+- Pivot from a tag to its pages, from a page to its links, from a link to its incoming references
+
+### What this enables in practice
+
+Imagine you've built your second brain over years. Thousands of nodes. Dozens of domains. Articles, research papers, books, customer interviews, journal entries — all ingested, all interconnected. You sit in Claude Desktop with Opus and ask:
+
+> *"What are the most important ideas in my AI domain that I have never explicitly connected to my business strategy domain?"*
+
+Opus traverses the graph. Pulls hubs from both domains. Finds the intersections. Surfaces connections you made unconsciously, over years, without ever noticing them.
+
+Or:
+
+> *"For the white paper I'm drafting on organisational resilience, pull every entity and concept tagged `crisis-response` across all domains, group them by source, and build a citation skeleton."*
+
+Or:
+
+> *"Across my last six months of journal entries, identify recurring patterns I haven't named yet, and propose names for them — citing the specific entries each pattern shows up in."*
+
+That is not a chat interface. That is a frontier model doing **deep research over your own intellectual history** — with full citations, no hallucinations beyond your wiki, and no data ever leaving your machine.
+
+### Why this is first-of-its-kind
+
+Most "AI for personal knowledge" tools are RAG wrappers: they re-derive answers from raw files at query time and forget everything afterwards. Nothing compounds. Nothing traverses.
+
+My Curator inverts that: ingest builds a **persistent, graph-shaped knowledge structure** during writing, and MCP exposes that graph as first-class structured data at read time. The model doesn't pretend to be your second brain — it *uses* your second brain, the way an analyst uses a database. Topology, tags, links, backlinks — all queryable, all cited, all yours.
+
+This is what makes the difference between "I have a folder of notes" and "I have a queryable, compounding extension of my own thinking that any frontier model can reason against on demand."
+
+> 📖 **Setup is under 2 minutes** from the **Settings** tab inside the app — see **[docs/mcp-user-guide.md](docs/mcp-user-guide.md)** for the wizard, prompt patterns, and the privacy/security model.
 
 ---
 

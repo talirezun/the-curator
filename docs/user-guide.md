@@ -79,7 +79,7 @@ Ingest journal entries, book highlights, and podcast notes. Query recurring patt
 | Requirement | What it is | Where to get it |
 |-------------|-----------|-----------------|
 | A computer running macOS, Windows, or Linux | See the platform notes below | — |
-| An AI provider API key | Powers ingest + chat | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
+| An AI provider API key | Powers ingest, chat, and AI-assisted Wiki Health | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
 | Obsidian (optional) | Visualises the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
 | Node.js 18+ | Runtime that powers the local server | Auto-installed on Mac by the one-line installer; on Windows/Linux install manually from [nodejs.org](https://nodejs.org) |
 
@@ -926,7 +926,20 @@ You are on Gemini's free tier and have hit a daily/per-minute quota — see [§1
 
 > **Read this section before you commit to using The Curator at scale.** It is the single most common source of frustration for new users.
 
-The Curator is **free software**. The only thing that costs money is the AI provider you call for ingest + chat. There are two providers you can plug in.
+The Curator is **free software**. The only thing that costs money is the AI provider you call for the features that actually invoke an LLM. There are two providers you can plug in (Gemini or Claude), and a clear split between which features use tokens and which don't.
+
+### Which features use tokens
+
+| ✅ Uses tokens (paid) | ❌ Free / local-only |
+|---|---|
+| **Ingest** — by far the biggest consumer | **Wiki tab** (browse) |
+| **Chat tab** — every message + reply | **Domain management** (create / rename / delete) |
+| **Wiki Health — ✨ Ask AI on broken links** (Phase 1) | **GitHub Sync** (Sync Up / Sync Down) |
+| **Wiki Health — ✨ Ask AI on orphan pages** (Phase 2) | **Wiki Health structural scan** + deterministic fixes (folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) |
+| **Wiki Health — Semantic duplicate scan** (Phase 3, opt-in & cost-gated) | **Settings**, **API key management**, **updates** |
+| | **My Curator MCP server** (local bridge — free; the *frontier model* you connect to it bills you separately on its own plan) |
+
+So when you see a bill, the dominant line item is **ingest**. Chat and Health Ask-AI are negligible by comparison; everything else is genuinely free.
 
 ### Provider comparison
 
