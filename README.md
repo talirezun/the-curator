@@ -7,7 +7,8 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
-  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Platform-macOS-blue" alt="Platform: macOS"></a>
+  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Installer-macOS-blue" alt="Installer: macOS"></a>
+  <a href="https://github.com/talirezun/the-curator#option-b--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
   <a href="https://github.com/talirezun/the-curator/blob/main/package.json"><img src="https://img.shields.io/github/package-json/v/talirezun/the-curator?label=Version&color=blue" alt="Current Version"></a>
@@ -52,7 +53,9 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
 ```
 
 Everything is stored as plain markdown files on your computer. No subscriptions, no database,
-no cloud accounts — except a free Gemini API key.
+no cloud accounts — except a Google Gemini or Anthropic Claude API key (Gemini has a free tier
+with strict daily quotas; pay-as-you-go costs roughly **€5/month** for moderate use — see
+[Cost & API keys](docs/user-guide.md#19-api-keys-cost--free-tier) for the full breakdown).
 
 ---
 
@@ -179,15 +182,21 @@ curl -fsSL https://raw.githubusercontent.com/talirezun/the-curator/main/install.
 
 The script auto-detects and installs Node.js if needed, clones the repo, installs dependencies, and builds **The Curator.app** — all in one step. When it finishes, the app opens automatically. An onboarding wizard walks you through API key setup on first launch.
 
+> **Pin it to your Dock.** The installer puts **The Curator.app** in `~/the-curator/` but doesn't add it to your Dock automatically — open a Finder window, navigate to `~/the-curator`, and **drag the app icon down into your Dock**. Now you can launch The Curator with one click any time.
+
+> **Lifecycle on macOS.** The app is a local web server that opens in your browser. **Closing the browser tab does not stop the server** — it keeps running in the background using virtually no CPU, so clicking the Dock icon again instantly reopens it. **To fully quit:** right-click The Curator in the Dock → **Quit**.
+
 > **Optional:** The repo includes a `research/` folder with articles and papers about second brain architecture. This is **not required to run the app**. If you want to save disk space after installation, you can safely delete `~/the-curator/research/` — the app will work perfectly without it. The research folder is available for interested users who want to explore the concepts behind The Curator.
 
 ---
 
-### Option B — Manual setup
+### Option B — Manual setup (Windows / Linux / Mac)
+
+The Node.js server runs anywhere Node 18+ runs. Only the one-line installer and the auto-built **`.app`** Dock launcher are macOS-specific — the app itself is fully cross-platform.
 
 **Prerequisites**
-- [Node.js 18+](https://nodejs.org) (free)
-- A [Google Gemini API key](https://aistudio.google.com/app/apikey) (free)
+- [Node.js 18+](https://nodejs.org)
+- An API key — [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available, paid tier ~€5/month for moderate use) or [Anthropic Claude](https://console.anthropic.com/) (paid only)
 - [Obsidian](https://obsidian.md) for the knowledge graph (free, optional)
 
 ```bash
@@ -199,17 +208,38 @@ cd the-curator
 npm install
 
 # 3. Start the server
-node src/server.js
+node src/server.js          # macOS / Linux
+# Windows PowerShell:
+# $env:CURATOR_NO_OPEN=1; node src\server.js
 ```
 
 Open **http://localhost:3333** in your browser.
+
+> **Windows / Linux notes:** the auto-update + Dock-app + folder-picker UI buttons are macOS-only; everything else (ingest, chat, wiki, MCP, sync, Health) works identically. Set `DOMAINS_PATH=...` to point at your knowledge folder, and `CURATOR_NO_OPEN=1` to skip the macOS-only `open` browser-launch on startup.
+
+> **Install with a coding agent:** Claude Code, Cursor, Augment, Cline, and other CLI-aware AI coding agents can install The Curator for you — paste the prompt from [User Guide §20](docs/user-guide.md#20-install-with-a-coding-agent).
 
 > **API keys:** The onboarding wizard appears on first launch and asks for your key. You can also add or change keys anytime in the **Settings** tab. Alternatively, developers can create a `.env` file manually (`cp .env.example .env`) and set `GEMINI_API_KEY` there.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](docs/mac-app.md)**.
 
 > First time? Read the full **[User Guide](docs/user-guide.md)** — it covers every step in plain
-> language, including how to get your API key, how to use the chat, and how to set up Obsidian.
+> language, including how to get your API key, real-world cost estimates, how to use the chat, and how to set up Obsidian.
+
+---
+
+## Cost — what The Curator actually costs to run
+
+Most of what The Curator does (storing files, the wiki itself, Obsidian, sync) is **free**. The only paid component is the AI provider you choose for ingest + chat:
+
+| Provider | Free tier? | Cost (paid) | Real-world cost |
+|---|---|---|---|
+| **Google Gemini 2.5 Flash Lite** *(default, recommended)* | Yes — 15 RPM, 1,000 requests/day, 250k tokens/min ([details](https://ai.google.dev/gemini-api/docs/rate-limits)) | $0.10/M input · $0.40/M output | **~€5/month** at heavy use (50 articles × ~10 pages, plus daily chat) |
+| **Anthropic Claude Haiku 4.5** | No | $1/M input · $5/M output | ~10× the Gemini bill for the same workload |
+
+**About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
+
+**Context window:** Gemini 2.5 Flash Lite has a **1,048,576-token window (≈1M tokens)**, which means The Curator can in principle ingest articles of 200–300 pages in a single pass. The current ingest pipeline caps inputs at 80k characters per call (≈20k tokens) and uses a multi-phase pipeline for larger documents — books and very long PDFs work but haven't been stress-tested at the full 1M-token ceiling.
 
 ---
 
@@ -336,14 +366,25 @@ the-curator/
 
 ## Documentation
 
+**For users**
+
 | | |
 |-|-|
-| [User Guide](docs/user-guide.md) | Full setup + usage guide for all levels |
-| [Use Cases](docs/use-cases.md) | Detailed workflows for every user profile |
+| [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
+| [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
+| [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect the wiki to Claude Desktop (or any MCP client) for frontier-model research over your graph |
+| [AI Wiki Health Guide](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and the privacy tradeoffs |
 | [Sync Guide](docs/sync.md) | GitHub sync — setup, daily workflow, troubleshooting |
+| [Use Cases](docs/use-cases.md) | Detailed workflows for every user profile |
 | [Mac App Setup](docs/mac-app.md) | Double-click Dock launcher for Mac |
+
+**For developers**
+
+| | |
+|-|-|
 | [Adding Domains](docs/adding-domains.md) | Create domains via UI or manually |
 | [Domain Schemas](docs/domain-schemas.md) | Customise how the AI structures knowledge |
+| [Model Lifecycle](docs/model-lifecycle.md) | Provider/model fallback policy, retiring deprecated models |
 | [API Reference](docs/api-reference.md) | REST API documentation |
 | [Architecture](docs/architecture.md) | System design for developers |
 

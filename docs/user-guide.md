@@ -9,21 +9,24 @@ This guide covers everything from first-time setup to daily use. No technical ba
 1. [What is this app?](#1-what-is-this-app)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
-4. [Get your free API key](#4-get-your-free-api-key)
+4. [Get your API key (Gemini or Claude)](#4-get-your-api-key-gemini-or-claude)
 5. [Configure the app](#5-configure-the-app)
-6. [Start the server](#6-start-the-server)
+6. [Start the server (and how lifecycle works)](#6-start-the-server-and-how-lifecycle-works)
 7. [Open the app in your browser](#7-open-the-app-in-your-browser)
 8. [Ingest a source](#8-ingest-a-source)
 9. [Chat with your brain](#9-chat-with-your-brain)
 10. [Manage your domains](#10-manage-your-domains)
 11. [Browse the wiki tab](#11-browse-the-wiki-tab)
 12. [See your knowledge graph in Obsidian](#12-see-your-knowledge-graph-in-obsidian)
-13. [Two ways to explore your knowledge](#13-two-ways-to-explore-your-knowledge)
+13. [Three ways to talk to your knowledge (Chat · Obsidian · MCP)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers](#15-sync-across-computers)
 16. [Settings](#16-settings)
 17. [Wiki Health](#17-wiki-health)
 18. [Troubleshooting](#18-troubleshooting)
+19. [API keys, cost & free tier (read this before serious use)](#19-api-keys-cost--free-tier)
+20. [Install with a coding agent (Claude Code, Cursor, Augment, Cline)](#20-install-with-a-coding-agent)
+21. [Further reading](#21-further-reading)
 
 ---
 
@@ -37,6 +40,8 @@ The Curator is a local, AI-powered knowledge curation system. You feed it docume
 - Produces a **visual knowledge graph** you can explore in Obsidian, with auto-colored nodes by type
 
 The big idea: instead of one giant notebook where everything gets lost, you have **separate, focused wikis per topic** (e.g. AI/Tech, Business, Personal Growth). Each one compounds with every source you add. You are the curator; the AI is the diligent librarian.
+
+> 📖 **For the long-form story** of why a second brain matters and how the parts of The Curator fit together philosophically, read **[Knowledge Immortality — Building a Second Brain with The Curator](../research/articles/knowledge-immortality-second-brain.md)**. It's a 15-minute essay covering the Karpathy spark, what markdown gives you, every section of the app in plain language, and the case for *compounding* knowledge. Recommended before you start ingesting.
 
 ---
 
@@ -73,11 +78,22 @@ Ingest journal entries, book highlights, and podcast notes. Query recurring patt
 
 | Requirement | What it is | Where to get it |
 |-------------|-----------|-----------------|
-| A Mac | The installer and Dock app are Mac-native | — |
-| A Gemini API key | Gives the app access to Google's AI | Free at [aistudio.google.com](https://aistudio.google.com/app/apikey) |
-| Obsidian (optional) | App to visualise the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
+| A computer running macOS, Windows, or Linux | See the platform notes below | — |
+| An AI provider API key | Powers ingest + chat | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
+| Obsidian (optional) | Visualises the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
+| Node.js 18+ | Runtime that powers the local server | Auto-installed on Mac by the one-line installer; on Windows/Linux install manually from [nodejs.org](https://nodejs.org) |
 
-> **Node.js** is required to run the app, but the installer detects and installs it automatically if it is missing. You do not need to install it yourself.
+### Platform support
+
+| Platform | One-line installer | Manual `npm install` | Dock launcher app | Auto-update / folder-picker |
+|---|---|---|---|---|
+| **macOS** | ✅ Recommended | ✅ Works | ✅ `.app` is built automatically | ✅ |
+| **Linux** | ❌ — script checks for Darwin | ✅ Works (`node src/server.js`) | ❌ — no `.app` bundle | ⚠️ Some UI buttons (auto-update, folder picker) are macOS-only; everything else (ingest, chat, wiki, MCP, sync, Health) works identically |
+| **Windows** | ❌ | ✅ Works (PowerShell or WSL2; set `CURATOR_NO_OPEN=1`) | ❌ | ⚠️ Same caveat as Linux |
+
+> The installer is currently macOS-only because it auto-builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users can clone the repo and run `node src/server.js` directly. Auto-update from the Settings tab is also macOS-specific (it rebuilds the `.app`); on Windows/Linux, run `git pull && npm install` to update.
+
+> **Don't have a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
 
 ---
 
@@ -100,11 +116,13 @@ The installer handles everything automatically:
 
 When it finishes, the app opens automatically in your browser. The **onboarding wizard** appears on first launch and walks you through entering your API key, creating your first domain, and optionally setting up sync.
 
-> You only need to run this command **once**. After that, double-click **The Curator** in your Dock to launch the app.
+> ⚠️ **Pin The Curator to your Dock manually.** The installer puts **The Curator.app** inside `~/the-curator/` but does **not** add it to your Dock automatically. Open Finder → `~/the-curator/` → drag **The Curator** icon down into your Dock. From now on, one click launches everything.
 
-### Manual setup (alternative)
+> You only need to run the install command **once**. After that, click The Curator in your Dock to launch the app.
 
-If you prefer to set things up yourself:
+### Manual setup (alternative — works on Mac, Linux, Windows)
+
+If you prefer to set things up yourself, or you're on Linux/Windows:
 
 ```bash
 # 1. Clone the project
@@ -115,28 +133,60 @@ cd the-curator
 npm install
 
 # 3. Start the server
-node src/server.js
+node src/server.js                         # macOS / Linux
+# Windows PowerShell:
+# $env:CURATOR_NO_OPEN=1; node src\server.js
 ```
 
 Open **http://localhost:3333** in your browser. The onboarding wizard will guide you through the rest.
+
+**Linux / Windows specifics**
+
+- Set `CURATOR_NO_OPEN=1` to skip the macOS-only `open` browser-launch on startup (the server still binds to `localhost:3333`; just open it manually).
+- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS.
+- Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. The Settings → Check for Updates button is macOS-only because it also rebuilds the `.app` bundle.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
 
 ---
 
-## 4. Get your free API key
+## 4. Get your API key (Gemini or Claude)
 
-The app uses Google's Gemini AI to read your documents. You need a free API key to access it.
+The app uses an AI provider to read your documents and power chat. You need an API key from one of two providers — **Google Gemini** (recommended, has a free tier and the lowest pay-as-you-go cost) or **Anthropic Claude** (paid only, costs roughly 10× more).
+
+> ⚠️ **About "free" — read this before you commit to free-tier-only usage.**
+>
+> The Gemini free tier exists, and it's enough to *try* the app and ingest a few articles. It is **not enough for serious use.** As of the [December 2025 quota tightening](https://ai.google.dev/gemini-api/docs/rate-limits), Gemini 2.5 Flash Lite (the model The Curator uses by default) is capped at:
+>
+> - **15 requests per minute** (RPM)
+> - **1,000 requests per day** (RPD)
+> - **250,000 tokens per minute** (TPM)
+>
+> A typical batch ingest of 5–10 PDFs can hit those limits and stall mid-run with `429 RESOURCE_EXHAUSTED` errors. **For real use, enable billing in Google AI Studio.** The pay-as-you-go price is so low that most users pay €1–€10/month — see [§19](#19-api-keys-cost--free-tier) for actual numbers.
+
+### How to create a Gemini key
 
 1. Go to **[aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)**
 2. Sign in with your Google account
 3. Click **Create API key**
 4. Copy the key — it starts with `AIza` and is about 40 characters long
-5. Keep it somewhere safe — you'll paste it in the next step
+5. **(Strongly recommended)** Click **Set up Billing** in the same console and link a payment method — the upgrade unlocks the higher paid-tier rate limits and is what enables most users to actually run the app at scale. You will not be billed until you exceed the free tier.
+6. Keep the key somewhere safe — you'll paste it in the next step
 
 > The onboarding wizard also links directly to this page when you first open the app.
-
+>
 > Your API key is like a password. Never share it publicly or post it on the internet.
+
+### Or use Anthropic Claude instead
+
+If you'd rather pay Anthropic than Google (e.g. for privacy preference, or because you already have a Claude account):
+
+1. Go to **[console.anthropic.com](https://console.anthropic.com/)**
+2. Generate an API key under **Settings → API Keys**
+3. Anthropic has **no free tier** — you must add billing before any call works
+4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). For higher quality, set `LLM_MODEL=claude-sonnet-4-5` in `.env`.
+
+If you configure both keys, **Gemini wins by default** (it's much cheaper). You can switch the active provider at any time in the Settings tab.
 
 ---
 
@@ -154,21 +204,41 @@ That's it. You can change your API key anytime in the **Settings** tab (the gear
 
 ---
 
-## 6. Start the server
+## 6. Start the server (and how lifecycle works)
 
-Double-click **The Curator** icon in your Dock. The app opens in your browser automatically.
+### macOS — using the Dock app
 
-If you installed manually without the Dock app, open your terminal, go to the project folder, and run:
+Click **The Curator** icon in your Dock. The app starts the local server and opens in your browser automatically.
+
+> If The Curator is not yet in your Dock, open Finder → `~/the-curator/` → drag the app icon down into your Dock first (one-time step).
+
+### Manual / Linux / Windows
+
+Open a terminal in the project folder and run:
 
 ```bash
-node src/server.js
+node src/server.js                            # macOS / Linux
+# Windows PowerShell:
+# $env:CURATOR_NO_OPEN=1; node src\server.js
 ```
 
 Then open **http://localhost:3333** in your browser.
 
-> **Closing the tab does not stop the server.** The server continues running in the background using virtually no CPU. This is normal. Click the Dock icon again to reopen the browser. If you use the terminal method instead, keep the terminal window open while using the app. Press `Ctrl + C` to stop the server.
+### How the lifecycle actually works
 
-> **To fully quit the app:** right-click **The Curator** icon in the Dock and choose **Quit**. This is standard macOS behavior — the same way you quit any other app.
+The Curator is a **local web app** — a small Express server runs on your machine and renders the UI inside whichever browser you have open. Three things to know:
+
+| You do… | What happens |
+|---|---|
+| Close the browser tab | The server **keeps running** in the background, idling at near-zero CPU. Nothing is lost. |
+| Click the Dock icon again (Mac) | The browser tab reopens and reconnects to the already-running server. Fast — there is no restart. |
+| Right-click Dock icon → **Quit** (Mac) | The server actually stops. Use this when you want the process gone. |
+| Press `Ctrl + C` in the terminal (manual mode) | The server stops. |
+| Reboot your computer | The server is gone; relaunch it (Dock click or `node src/server.js`). |
+
+> **There is no "Stop server" button in the UI.** It was deliberately removed in v2.1 because AppleScript's reopen handler is broken on modern macOS. Use the Dock right-click menu instead.
+
+> If you ingest a 200-page PDF, **don't quit until you see the success banner** — the ingest stream lives inside the server process.
 
 ---
 
@@ -222,11 +292,33 @@ The AI reads your document and creates:
 
 On the second, third, and subsequent ingests, the AI reads what's already in the wiki and *updates* existing pages rather than duplicating them. The more you add, the smarter it gets.
 
+### How big a document can The Curator handle?
+
+Gemini 2.5 Flash Lite has a **1,048,576-token context window** (~1 million tokens, roughly 700,000 English words). In principle, a single ingest could swallow an entire 300-page book.
+
+In practice, The Curator's ingest pipeline currently caps the **input** at 80,000 characters (~20,000 tokens) per single LLM call to keep latency and cost predictable. For longer documents the pipeline automatically switches to **multi-phase mode**:
+
+1. **Phase 1** — outline pass: the AI reads the whole document and decides what pages to write
+2. **Phase 2** — batched content: pages are written in batches of 4 per LLM call
+3. **Phase 3** — index update
+
+**Practical guidance:**
+
+| Document size | Behaviour |
+|---|---|
+| **≤ 25 pages / ~10–15 k words** | Single-pass ingest (15–60 seconds) — the most common case |
+| **25–100 pages / book chapters / long research papers** | Multi-phase pipeline kicks in automatically (~1–5 minutes) — works reliably |
+| **200–300 pages / full books** | Multi-phase pipeline still works — possible but **not yet stress-tested at scale**. The 1M-token context is large enough; expect ingest to take 10–20 minutes. If a very long PDF stalls or runs out of token budget, split it into chapters. |
+| **Scanned PDFs (image-only)** | Won't work — there's no OCR step. Convert to text first. |
+
+> The 80k-char-per-call cap is conservative; future versions may raise it now that Gemini 2.5 Flash Lite's full 1M window is generally available. For now, splitting very long sources by chapter is the safe bet.
+
 ### Tips for better results
 
 - **Use descriptive filenames.** `atomic-habits-summary.txt` is better than `notes.txt` — the filename appears in the log.
 - **One document at a time.** Don't combine ten articles into one file; each document should get its own ingest so it gets its own summary page.
 - **Clean up copy-pasted text.** If you paste an article from a website, remove the navigation menus, cookie banners, and footer text first. Cleaner input = better wiki pages.
+- **Mind the rate limits on the free tier.** If you're ingesting a batch of 5+ documents and you're on Gemini's free tier, expect to hit `429 RESOURCE_EXHAUSTED` partway through — see [§19](#19-api-keys-cost--free-tier).
 
 ---
 
@@ -495,11 +587,11 @@ A healthy knowledge network passes this test: open any **concept** page, set the
 
 ---
 
-## 13. Two ways to explore your knowledge
+## 13. Three ways to talk to your knowledge (Chat · Obsidian · MCP)
 
-Once you have ingested several documents, you have two complementary tools for making sense of what you know.
+Once you have ingested several documents, you have **three complementary** access paths into the same `domains/` folder. They don't compete — each is best at a different kind of question.
 
-### Option A — AI chat (built-in)
+### Option A — Built-in AI chat
 
 Use the **Chat** tab when you want to:
 
@@ -508,7 +600,7 @@ Use the **Chat** tab when you want to:
 - Connect dots across multiple sources ("how does X relate to Y?")
 - Pick up a thread you started in a previous session
 
-The AI reads your entire wiki on every message and reasons across all of it. Past conversations are saved, so you can return to a thread days later and continue where you left off.
+The AI reads your wiki on every message, reasons across all of it, and saves the conversation. Powered by your configured low-cost provider (Gemini Flash Lite or Claude Haiku) — perfect for fast everyday Q&A.
 
 ### Option B — Obsidian graph
 
@@ -519,30 +611,47 @@ Use **Obsidian** when you want to:
 - Browse and edit individual wiki pages by hand
 - Explore "what is connected to this page?" using the local graph
 
-### They are complementary, not competing
+### Option C — My Curator MCP (frontier-model research)
+
+Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or any MCP-compatible AI client — to do **deep research** over your wiki, treating it as a structured graph rather than a folder of files.
+
+This is the most powerful access path. You install a tiny local MCP bridge (one-time, under 2 minutes from the **Settings** tab), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
+
+- Run topology overviews — *"Show me the most central hubs in my AI domain"*
+- Trace bidirectional links — *"Every source that mentions OpenAI"*
+- Find tag-driven clusters — *"All pages tagged `ai-safety`, then synthesise"*
+- Search across every domain at once
+- Reason about your knowledge as a graph (10 dedicated tools, including 3 graph-native ones)
+
+Everything stays local — the MCP server is read-only and only sees your wiki folder.
+
+> 📖 **Full setup guide:** [docs/mcp-user-guide.md](mcp-user-guide.md) — wizard-style 2-minute install, prompt patterns, troubleshooting.
+
+### How the three combine
 
 ```
                  The Curator app
-                 (Chat tab)
+              (Chat tab — Gemini/Haiku)
                        │
-          Multi-turn AI reasoning
-          across all wiki pages
-                       │
-              domains/ folder  ◄───────┐
-                       │               │
-          Markdown files on disk       │
-                                       │
-                 Obsidian              │
-              (desktop app)   ─────────┘
-              Visual graph,
-              manual editing
+                       │       Claude Desktop / VS Code / LM Studio
+                       │       (Frontier model — Opus, Sonnet, local)
+                       │              │
+                       │              │ via My Curator MCP (read-only)
+                       ▼              ▼
+              domains/ folder ◄──────────────┐
+                       │                     │
+          Markdown files on disk             │
+                                             │
+                 Obsidian   ─────────────────┘
+              (desktop app — visual graph)
 ```
 
-Both tools read the same `domains/` folder. There is nothing to sync. Ingest in the app, explore in both. The intended daily flow is:
+All three read the same `domains/` folder. Nothing to sync between them. The intended daily flow:
 
 1. Feed the app new documents (**Ingest** tab)
-2. Chat with the AI to pull out insights (**Chat** tab)
-3. Open Obsidian to see how the new pages fit into the graph visually
+2. Quick lookups → built-in **Chat**
+3. Visual exploration → **Obsidian**
+4. Deep research / synthesis across years of notes → frontier model via **My Curator MCP**
 
 ---
 
@@ -576,6 +685,8 @@ Here is the recommended way to use The Curator day-to-day:
 ## 15. Sync across computers
 
 The **Sync** tab keeps your wiki and chat history in sync across all your computers using a free, private GitHub repository — no subscription, no third-party service. Your notes never touch any server you don't control.
+
+> 📖 **For the full sync deep-dive** (every wizard step with screenshots, conflict recovery, organisational/team-shared brain pattern, token expiry strategy), see **[docs/sync.md](sync.md)**. The summary below is enough for most users.
 
 ### What gets synced
 
@@ -702,6 +813,8 @@ A link to the project's GitHub repository is available in the bottom-right corne
 
 The **Health** tab scans a domain's wiki for structural issues and lets you fix them with one click. Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
 
+> 📖 **For the AI-assisted features** (Phase 1 broken-link rescue, Phase 2 orphan rescue, Phase 3 semantic-duplicate detection — what each phase does, what data leaves your machine, exact cost math), see **[docs/ai-health.md](ai-health.md)**. The summary below covers the regular structural scan.
+
 ### What it checks
 
 | Issue | What it means | Action |
@@ -802,3 +915,149 @@ Then restart the server and go to `http://localhost:4000` instead.
 **I closed the terminal — the app stopped working**
 
 If you are running the server manually from Terminal, the server stops when the terminal closes. To restart: open a new terminal, navigate to the project folder (`cd the-curator`), and run `node src/server.js`. If you use the Dock app instead, this is handled automatically — just double-click The Curator icon to relaunch.
+
+**`429 RESOURCE_EXHAUSTED` or `Rate limit exceeded` errors during ingest**
+
+You are on Gemini's free tier and have hit a daily/per-minute quota — see [§19](#19-api-keys-cost--free-tier). The fix is either to wait (limits reset), batch your ingests across days, or enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) so you move to the paid tier (still extremely cheap — typically €1–€10/month).
+
+---
+
+## 19. API keys, cost & free tier
+
+> **Read this section before you commit to using The Curator at scale.** It is the single most common source of frustration for new users.
+
+The Curator is **free software**. The only thing that costs money is the AI provider you call for ingest + chat. There are two providers you can plug in.
+
+### Provider comparison
+
+| | **Google Gemini 2.5 Flash Lite** | **Anthropic Claude Haiku 4.5** |
+|---|---|---|
+| Default in The Curator | ✅ Yes | Optional fallback |
+| Free tier | 15 RPM · 1,000 RPD · 250k TPM | ❌ No free tier |
+| Paid input price | **$0.10 / 1M tokens** | $1.00 / 1M tokens |
+| Paid output price | **$0.40 / 1M tokens** | $5.00 / 1M tokens |
+| Context window | **1,048,576 tokens (~1M)** | 200,000 tokens |
+| Cost vs Gemini | 1× | ~10× more expensive |
+| Where to get a key | [aistudio.google.com](https://aistudio.google.com/app/apikey) | [console.anthropic.com](https://console.anthropic.com/) |
+
+> Gemini has a free tier *and* the cheapest paid tier *and* the largest context window. That is why it is the default. Claude Haiku 4.5 is the right choice if you specifically want Anthropic — for example because you already have a corporate Anthropic account, or you prefer Anthropic's privacy stance — but expect a roughly 10× higher bill for the same workload.
+
+### What the Gemini free tier actually gives you
+
+After the [December 2025 quota changes](https://ai.google.dev/gemini-api/docs/rate-limits), free-tier Gemini 2.5 Flash Lite is limited to:
+
+- **15 requests per minute (RPM)**
+- **1,000 requests per day (RPD)** — resets at midnight Pacific Time
+- **250,000 tokens per minute (TPM)**
+
+In Curator terms:
+
+- A single small-article ingest = ~1–4 LLM calls. So you can ingest **10 small articles per minute** before hitting RPM, or **maybe 200–400 articles per day** before hitting RPD.
+- A single book ingest can be 50–100 calls (multi-phase). The free tier will likely **fail mid-book** with `429 RESOURCE_EXHAUSTED`. In our testing, a 100-page PDF reliably exhausted the free-tier daily quota in one go.
+- Chat tab usage adds ~1 call per message.
+
+**TL;DR for free tier:** fine for trying the app and ingesting a few articles; not viable for serious or batch use. **Enable billing.**
+
+### What pay-as-you-go actually costs (real numbers)
+
+**Author's own usage** (Tali, project creator) for one month of heavy use on Gemini Flash Lite:
+
+- **~50 articles** ingested (each ≥10 pages)
+- Daily chat usage on top
+- **Total bill: ~€5**
+
+That averages out to **~€0.10 per article** — including the wiki growing larger over time (which makes each ingest call read more existing context). Most casual users will pay closer to €1–€3/month.
+
+**Estimated cost on Anthropic Haiku 4.5** for the same workload:
+
+- ~10× input cost · ~12.5× output cost
+- Realistic monthly bill: **€40–€60**
+
+### Per-ingest math (back-of-envelope)
+
+For a typical 10-page article:
+
+| | Gemini 2.5 Flash Lite | Claude Haiku 4.5 |
+|---|---|---|
+| Input tokens (article + index + entity list) | ~10k | ~10k |
+| Output tokens (5–15 wiki pages, frontmatter, links) | ~5k | ~5k |
+| Cost per ingest | **~$0.003** (≈€0.003) | **~$0.035** (≈€0.03) |
+| Cost per 100 ingests | ~$0.30 | ~$3.50 |
+
+These numbers ignore prompt caching (Anthropic only) and the small per-call overhead from the LLM-not-found fallback chain (v2.4.0+).
+
+### Practical guidance
+
+1. **Start on Gemini free tier** to make sure the app is right for you (1–5 ingests, browse the wiki, try the Chat tab).
+2. **As soon as you want to ingest a batch or a book, enable billing in Google AI Studio.** No credit card = no scaling. The bill will almost always be under €10/month for personal use.
+3. **Use Claude Haiku 4.5 only if you specifically need Anthropic.** It is 10× the price for ~equivalent quality on this workload.
+4. **Set an AI Studio budget alert** on your Google Cloud project (e.g. €20/month) so you can't be surprised.
+5. **Don't worry about chat cost** — it's a fraction of ingest cost. Multi-turn conversations on a 2,000-page wiki cost cents.
+
+### What about MCP / Health / semantic dupe scans?
+
+- **My Curator MCP** runs entirely on your machine and **costs you nothing** in API fees — it's just a local read-only bridge. The frontier model you connect *to* it (Claude Desktop, etc.) bills you separately on its own plan.
+- **Wiki Health structural scan** is local and **free**.
+- **Wiki Health Phase 1 / 2 (✨ Ask AI)** uses your configured provider; ~$0.0001–0.0005 per click. Trivial.
+- **Wiki Health Phase 3 (semantic dupe scan)** is **opt-in and cost-gated**. A 500-pair scan on Gemini Flash Lite costs ~$0.03; a confirm dialog shows the estimate before you run it. See [docs/ai-health.md](ai-health.md).
+
+---
+
+## 20. Install with a coding agent
+
+Don't want to run a single terminal command? If you already have a CLI-aware AI coding agent — **Claude Code**, **Cursor**, **Augment**, **Cline**, **Aider**, **GitHub Copilot CLI**, or any other agent that can run shell commands — paste the prompt below into the agent and let it do the install for you.
+
+This is the **easiest way to install on Linux and Windows**, where the one-line `curl | bash` installer doesn't apply.
+
+### Copy-paste prompt
+
+```
+Please install "The Curator" on this machine for me.
+
+Project: https://github.com/talirezun/the-curator
+User Guide: https://github.com/talirezun/the-curator/blob/main/docs/user-guide.md
+
+Steps:
+1. Verify Node.js 18+ is installed; if not, install it (Homebrew on macOS, nodejs.org installer on Windows, system package manager on Linux).
+2. git clone https://github.com/talirezun/the-curator.git into the user's home directory.
+3. cd the-curator && npm install
+4. On macOS: bash scripts/build-app.sh to build "The Curator.app", then move/copy it to /Applications and remind me to drag it from Finder into my Dock.
+5. On Linux/Windows: skip the .app build; explain how to start the server (`node src/server.js`, with CURATOR_NO_OPEN=1 on Windows) and remind me to open http://localhost:3333.
+6. Open the URL once the server is running so I can complete the onboarding wizard (API key + first domain).
+7. Tell me what to do if I want to enable GitHub sync (point me to docs/sync.md).
+
+Do not edit any files outside ~/the-curator. Do not commit anything to my git config. Do not ask me for my API key — the in-app onboarding wizard will handle it. After the install finishes, summarise what you did in 5 bullet points.
+```
+
+### What you should know
+
+- Most agents will ask before running `npm install` and before launching the server. Approve those — they're the install.
+- If the agent doesn't have permission to install Node.js system-wide, it will tell you. On Linux, `sudo apt install nodejs npm` (or your distro's equivalent) is enough.
+- After the install, the **onboarding wizard** in the browser handles the rest: API key, first domain, optional sync setup. The agent should not need to touch any of that.
+- The agent doesn't replace this guide — when you want to understand what the app actually does, [§4 (API keys)](#4-get-your-api-key-gemini-or-claude), [§13 (three ways to talk to your knowledge)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp), and [§19 (cost)](#19-api-keys-cost--free-tier) are the most important sections.
+
+### Updating with a coding agent
+
+The Mac Settings → Update button is `git pull && npm install && bash scripts/build-app.sh`. Any coding agent can do the equivalent on any platform:
+
+```
+Please update The Curator at ~/the-curator: cd into it, run `git pull && npm install`,
+and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
+```
+
+---
+
+## 21. Further reading
+
+| | |
+|-|-|
+| 📖 [Knowledge Immortality (essay)](../research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, and a section-by-section walkthrough of every part of the app |
+| 🔌 [My Curator MCP Guide](mcp-user-guide.md) | Connect the wiki to Claude Desktop / VS Code / LM Studio for frontier-model research |
+| 🧹 [AI Wiki Health Guide](ai-health.md) | Phase 1 / 2 / 3 details: broken-link rescue, orphan rescue, semantic duplicate detection — what data leaves your machine and what each call costs |
+| 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
+| 📁 [Adding Domains](adding-domains.md) | Create domains via the UI or by hand |
+| 🎨 [Domain Schemas](domain-schemas.md) | Customise how the AI structures knowledge per domain |
+| 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained |
+| 🍎 [Mac App Setup](mac-app.md) | Detailed Mac Dock launcher instructions |
+| 🛠 [API Reference](api-reference.md) | REST API endpoints (for developers) |
+| 🏗 [Architecture](architecture.md) | System design (for developers) |
