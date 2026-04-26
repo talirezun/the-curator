@@ -18,6 +18,7 @@ import { readFile, writeFile, readdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
+import { loadDismissed, filterDismissed } from './health-dismissed.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 
@@ -296,6 +297,27 @@ export async function scanWiki(domain) {
     }
   }
 
+  // Apply persistent dismissals (v2.5.1+). Issues the user has previously
+  // skipped don't re-surface in the scan. The total dismissed count surfaces
+  // in `counts.dismissed` so the UI can show "12 dismissed".
+  const { keys: dismissedKeys } = await loadDismissed(domain);
+
+  const filterTypes = [
+    ['brokenLinks',       brokenLinks],
+    ['orphans',           orphans],
+    ['folderPrefixLinks', folderPrefixLinks],
+    ['crossFolderDupes',  crossFolderDupes],
+    ['hyphenVariants',    hyphenVariants],
+    ['missingBacklinks',  missingBacklinks],
+  ];
+  let totalDismissed = 0;
+  const filtered = {};
+  for (const [type, issues] of filterTypes) {
+    const r = filterDismissed(issues, type, dismissedKeys);
+    filtered[type] = r.kept;
+    totalDismissed += r.dismissed;
+  }
+
   return {
     domain,
     scannedAt: new Date().toISOString(),
@@ -303,13 +325,14 @@ export async function scanWiki(domain) {
       entities: entityFiles.length,
       concepts: conceptFiles.length,
       summaries: summaryFiles.length,
+      dismissed: totalDismissed,
     },
-    brokenLinks,
-    orphans,
-    folderPrefixLinks,
-    crossFolderDupes,
-    hyphenVariants,
-    missingBacklinks,
+    brokenLinks:       filtered.brokenLinks,
+    orphans:           filtered.orphans,
+    folderPrefixLinks: filtered.folderPrefixLinks,
+    crossFolderDupes:  filtered.crossFolderDupes,
+    hyphenVariants:    filtered.hyphenVariants,
+    missingBacklinks:  filtered.missingBacklinks,
   };
 }
 
@@ -701,10 +724,12 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   }
 
   const ranked = [...pairMap.values()].sort((a, b) => b.score - a.score);
-  const truncated = ranked.length > maxPairs;
-  const slice = ranked.slice(0, maxPairs);
 
-  const pairs = slice.map(p => ({
+  // Lift the ranked pairs into the public shape, then filter out any pairs the
+  // user has previously dismissed (v2.5.1+). We filter BEFORE truncating so a
+  // domain with many dismissals doesn't silently lose live pairs by pushing
+  // them past `maxPairs`.
+  const allPairs = ranked.map(p => ({
     slugA:   allSlugs[p.i].slug,
     folderA: allSlugs[p.i].folder,
     slugB:   allSlugs[p.j].slug,
@@ -712,7 +737,19 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
     score:   Number(p.score.toFixed(3)),
   }));
 
-  return { pageCount, pairs, truncated, totalCandidates: ranked.length };
+  const { keys: dismissedKeys } = await loadDismissed(domain);
+  const filtered = filterDismissed(allPairs, 'semanticDupe', dismissedKeys);
+  const livePairs = filtered.kept;
+  const truncated = livePairs.length > maxPairs;
+  const pairs = livePairs.slice(0, maxPairs);
+
+  return {
+    pageCount,
+    pairs,
+    truncated,
+    totalCandidates: livePairs.length,
+    dismissed: filtered.dismissed,
+  };
 }
 
 /**

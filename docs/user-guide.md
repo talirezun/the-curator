@@ -899,6 +899,28 @@ You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** 
 
 For the full guide, see [ai-health.md](ai-health.md).
 
+### Persistent dismissals (v2.5.1+)
+
+Not every flagged issue is a real problem. Two pages you intentionally keep separate, an orphan you're planning to develop later, a draft with a deliberately broken link — before v2.5.1, clicking Skip just hid the issue until the next scan, and then you saw it again.
+
+Now dismissals stick.
+
+A **Dismiss** button appears on every review-only Health row (orphans, broken links without an auto-fix suggestion) and on every semantic-duplicate pair card. Click it once and the issue stops appearing on future scans.
+
+A small *"N dismissed"* chip in the scan summary tells you how many issues are being filtered. Below the regular sections, a collapsible **Dismissed (N)** list shows everything you've dismissed, with an **Un-dismiss** button on each row to bring an item back.
+
+**Three actions you'll see, in order of permanence:**
+
+| Button | Where | What it does |
+|---|---|---|
+| **Apply** / **Fix** | Auto-fixable rows | Performs the repair now. The issue is resolved. |
+| **Dismiss** | Review-only rows + semantic-dupe cards | Marks the issue as not-a-problem. Won't surface on future scans. Reversible from the Dismissed section. |
+| **Skip** | Inside ✨ Ask AI panels | Closes just that AI suggestion. The underlying issue stays flagged on future scans. Use **Dismiss** if you want it gone for good. |
+
+**Dismissals sync between your computers.** They live inside the wiki folder (`<wiki>/.health-dismissed.jsonl`), so your existing GitHub sync carries them along. Skip a 70-pair semantic scan on your laptop, sync, and the same false positives stay skipped on your desktop.
+
+**Stale dismissals self-clean.** If you later rename a page or delete one of the files involved in a dismissed pair, the corresponding record is silently removed on the next scan — no clutter accumulates.
+
 ---
 
 ## 18. Troubleshooting

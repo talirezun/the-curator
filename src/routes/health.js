@@ -21,6 +21,7 @@ import {
 import { previewSemanticDuplicateMerge } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
+import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
 
 const router = Router();
 
@@ -218,6 +219,76 @@ router.post('/:domain/fix-all', async (req, res) => {
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health fix-all]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// ── Dismissal store (v2.5.1) ──────────────────────────────────────────────────
+// Persists "skip" decisions so the same false positives don't re-surface on
+// every Health scan. Stored as JSONL inside the wiki/ folder so dismissals
+// sync across machines via the existing GitHub sync (the wiki/ folder is
+// already git-tracked).
+
+const DISMISSIBLE_TYPES = new Set([
+  'brokenLinks',
+  'orphans',
+  'folderPrefixLinks',
+  'crossFolderDupes',
+  'hyphenVariants',
+  'missingBacklinks',
+  'semanticDupe',
+]);
+
+router.get('/:domain/dismissed', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    const records = await listDismissed(domain);
+    res.json({ ok: true, records });
+  } catch (err) {
+    console.error('[health dismissed list]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/:domain/dismiss', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    const { type, issue } = req.body || {};
+    if (!type) return res.status(400).json({ error: 'Missing type' });
+    if (!DISMISSIBLE_TYPES.has(type)) {
+      return res.status(400).json({ error: `Type "${type}" cannot be dismissed.` });
+    }
+    if (!issue || typeof issue !== 'object') {
+      return res.status(400).json({ error: 'Missing issue' });
+    }
+    await assertDomain(domain);
+    const result = await addDismissal(domain, type, issue);
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+    res.json(result);
+  } catch (err) {
+    console.error('[health dismiss]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/:domain/undismiss', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    const { type, issue } = req.body || {};
+    if (!type) return res.status(400).json({ error: 'Missing type' });
+    if (!DISMISSIBLE_TYPES.has(type)) {
+      return res.status(400).json({ error: `Type "${type}" cannot be un-dismissed.` });
+    }
+    if (!issue || typeof issue !== 'object') {
+      return res.status(400).json({ error: 'Missing issue' });
+    }
+    await assertDomain(domain);
+    const result = await removeDismissal(domain, type, issue);
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+    res.json(result);
+  } catch (err) {
+    console.error('[health undismiss]', err);
     res.status(err.status || 500).json({ error: err.message });
   }
 });

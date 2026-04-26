@@ -80,15 +80,18 @@ the-curator/
 │   │   ├── ingest.js           POST /api/ingest
 │   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]
 │   │   ├── wiki.js             GET  /api/wiki/:domain
-│   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all]
+│   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
+│   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
+│   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
 │   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
+│   │   ├── health-dismissed.js Persistent skip-store for Health issues (v2.5.1+) — wiki/.health-dismissed.jsonl
 │   │   └── config.js           Persistent config (API keys, domains path)
 │   └── public/
 │       ├── index.html          Single-page UI shell
@@ -103,7 +106,8 @@ the-curator/
 │       │   ├── log.md          Chronological ingest log
 │       │   ├── entities/       People, tools, companies, datasets
 │       │   ├── concepts/       Ideas, techniques, frameworks
-│       │   └── summaries/      One page per ingested source
+│       │   ├── summaries/      One page per ingested source
+│       │   └── .health-dismissed.jsonl  Persistent Health-issue dismissals (v2.5.1+); git-tracked, syncs across machines
 │       └── conversations/      Saved chat threads (JSON, gitignored)
 ├── docs/                       This documentation
 │   ├── user-guide.md           End-to-end guide for non-technical users
@@ -351,6 +355,35 @@ the /fix endpoint above — same chokepoint as every other Health write.
 
 Orphans and broken links are surfaced as Review-only — they require
 human judgement and the app refuses to auto-fix them.
+
+Persistent dismissals (v2.5.1+):
+
+POST /api/health/:domain/dismiss      body: { type, issue }
+POST /api/health/:domain/undismiss    body: { type, issue }
+GET  /api/health/:domain/dismissed    → { records: [...] }
+      │
+      ▼
+src/brain/health-dismissed.js
+      ├─ keyForIssue(type, issue)
+      │   Canonical, deterministic key per issue type. Order-insensitive
+      │   identities (semantic-dupe pairs, hyphen-variant groups) are
+      │   alphabetised so {a,b} and {b,a} produce one key.
+      ├─ loadDismissed(domain)
+      │   Reads <wiki>/.health-dismissed.jsonl, parses every line,
+      │   silently prunes records whose referenced files/slugs no longer
+      │   exist, returns { records, keys: Set<string> }.
+      ├─ addDismissal / removeDismissal — append-or-rewrite the JSONL.
+      └─ filterDismissed(issues, type, keys)
+          O(N) Set-based filter; surfaces dismissed-count for the UI.
+
+scanWiki and findSemanticCandidatePairs filter their results through
+filterDismissed before returning. counts.dismissed is exposed in the
+scan response so the UI can show "N dismissed" alongside live issues.
+
+The JSONL file lives INSIDE wiki/ so it's already git-tracked by the
+existing sync — dismissals propagate across machines automatically.
+Line-oriented format makes concurrent dismissals on different machines
+merge cleanly through git's standard 3-way merge.
 ```
 
 ---

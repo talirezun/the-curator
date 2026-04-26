@@ -2203,6 +2203,58 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   flex-shrink: 0;
 }
 
+/* Dismiss / Un-dismiss buttons + Dismissed section (v2.5.1) */
+.health-dismiss-btn,
+.health-undismiss-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  transition: all 0.15s ease;
+}
+.health-dismiss-btn:hover:not(:disabled),
+.health-undismiss-btn:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--text-faint);
+}
+.health-dismiss-btn:disabled,
+.health-undismiss-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.health-summary-dismissed {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  vertical-align: middle;
+  font-weight: 500;
+}
+.health-dismissed-section { margin-top: 16px; }
+.health-dismissed-block {
+  /* Visually de-emphasised compared to actionable sections */
+  opacity: 0.85;
+}
+.health-dismissed-block .health-section-title {
+  color: var(--text-muted);
+}
+.health-dismissed-row .health-issue-desc {
+  color: var(--text-muted);
+}
+.health-dismissed-when {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
 /* AI Health (Phase 1 — v2.4.3) */
 .health-issue-row {
   flex-wrap: wrap; /* allow the inline AI result block to drop to a new line */

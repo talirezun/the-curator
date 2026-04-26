@@ -2573,11 +2573,15 @@ function renderHealthReport(report) {
     report.hyphenVariants.length +
     report.missingBacklinks.length;
 
-  const counts = report.counts || { entities: 0, concepts: 0, summaries: 0 };
+  const counts = report.counts || { entities: 0, concepts: 0, summaries: 0, dismissed: 0 };
+  const dismissedCount = counts.dismissed || 0;
+  const dismissedNote = dismissedCount > 0
+    ? ` <span class="health-summary-dismissed" title="Issues you've previously dismissed — see the Dismissed section below to un-dismiss">${dismissedCount} dismissed</span>`
+    : '';
   healthSummaryEl.classList.remove('hidden');
   healthSummaryEl.innerHTML = `
     <div class="health-summary-head">
-      <div class="health-summary-title">${total === 0 ? '✅ Wiki is clean' : `Found ${total} issue${total === 1 ? '' : 's'}`}</div>
+      <div class="health-summary-title">${total === 0 ? '✅ Wiki is clean' : `Found ${total} issue${total === 1 ? '' : 's'}`}${dismissedNote}</div>
       <div class="health-summary-sub">Scanned ${counts.entities} entities, ${counts.concepts} concepts, ${counts.summaries} summaries.</div>
     </div>
     <div class="health-summary-chips">
@@ -2622,6 +2626,209 @@ function renderHealthReport(report) {
       runAiSuggest(report.domain, type, issue, btn);
     });
   });
+
+  // Wire Dismiss buttons (v2.5.1+) — persists the skip via the dismiss endpoint
+  // and removes the row. Failure shows an inline status; row is left in place.
+  healthSectionsEl.querySelectorAll('[data-dismiss-one]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const type = btn.dataset.dismissOne;
+      const issue = JSON.parse(btn.dataset.issue);
+      await dismissIssue(report.domain, type, issue, btn);
+    });
+  });
+
+  // Render the Dismissed (N) section below the regular issue sections — kept
+  // collapsed by default so it doesn't compete with the actionable lists.
+  loadAndRenderDismissedSection(report.domain);
+}
+
+async function dismissIssue(domain, type, issue, btn) {
+  if (!btn) return;
+  const row = btn.closest('.health-issue-row');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Dismissing…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, issue }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Dismiss failed');
+    if (row) row.remove();
+    // Refresh the Dismissed section so the user sees the newly-dismissed item.
+    loadAndRenderDismissedSection(domain);
+    bumpDismissedCounter(+1);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = original;
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+function bumpDismissedCounter(delta) {
+  const el = healthSummaryEl?.querySelector('.health-summary-dismissed');
+  if (!el) {
+    // No counter currently shown (count was 0). If the new value is positive,
+    // a fresh scan would render the counter; for now, leave the summary as-is.
+    // The user can run a new scan or trust the Dismissed section's count.
+    return;
+  }
+  const m = el.textContent.match(/(\d+)/);
+  const cur = m ? parseInt(m[1], 10) : 0;
+  const next = Math.max(0, cur + delta);
+  el.textContent = `${next} dismissed`;
+}
+
+async function loadAndRenderDismissedSection(domain) {
+  const container = document.getElementById('health-dismissed-section');
+  if (!container) return;
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/dismissed`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Failed to load dismissed list');
+    renderDismissedSection(container, domain, data.records || []);
+  } catch (err) {
+    console.warn('[health dismissed]', err.message);
+    container.innerHTML = '';
+    container.classList.add('hidden');
+  }
+}
+
+function renderDismissedSection(container, domain, records) {
+  if (!records.length) {
+    container.innerHTML = '';
+    container.classList.add('hidden');
+    return;
+  }
+  container.classList.remove('hidden');
+
+  const rows = records.map(r => {
+    const desc = describeDismissedRecord(r);
+    const dismissedAt = r.dismissedAt
+      ? new Date(r.dismissedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : '';
+    return (
+      `<li class="health-issue-row health-dismissed-row" data-key="${escapeAttr(r.key || '')}">` +
+        `<span class="health-issue-desc">${desc}</span>` +
+        `<span class="health-issue-actions">` +
+          (dismissedAt ? `<span class="health-dismissed-when">${dismissedAt}</span>` : '') +
+          `<button class="btn btn-sm health-undismiss-btn" data-undismiss-type="${escapeAttr(r.type)}" data-undismiss-record='${escapeAttr(JSON.stringify(r))}'>Un-dismiss</button>` +
+        `</span>` +
+      `</li>`
+    );
+  }).join('');
+
+  container.innerHTML = `
+    <details class="health-section health-dismissed-block">
+      <summary class="health-section-head">
+        <span class="health-section-title">Dismissed <span class="health-count">${records.length}</span></span>
+      </summary>
+      <p class="health-section-desc">Issues you previously skipped. They won't appear in scan results until you un-dismiss them.</p>
+      <ul class="health-issue-list">${rows}</ul>
+    </details>
+  `;
+
+  container.querySelectorAll('[data-undismiss-type]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.undismissType;
+      const record = JSON.parse(btn.dataset.undismissRecord);
+      undismissIssue(domain, type, record, btn);
+    });
+  });
+}
+
+/**
+ * Convert a stored dismissal record back into a user-facing description.
+ * Mirrors the shapes describeIssue() handles, but reads from record fields
+ * directly (which carry the original issue's identity tuple).
+ */
+function describeDismissedRecord(r) {
+  const esc = escapeHtml;
+  switch (r.type) {
+    case 'semanticDupe': {
+      const [a, b] = r.slugs || [];
+      const folder = r.folder && r.folder !== 'mixed' ? r.folder + '/' : '';
+      return `<code>${esc(folder)}${esc(a || '?')}</code> ↔ <code>${esc(folder)}${esc(b || '?')}</code>`;
+    }
+    case 'orphans':
+      return `Orphan: <code>${esc(r.path || r.slug || '?')}</code>`;
+    case 'brokenLinks':
+      return `Broken link in <code>${esc(r.sourceFile)}</code>: <code>[[${esc(r.linkText)}]]</code>`;
+    case 'folderPrefixLinks':
+      return `Folder-prefix link in <code>${esc(r.sourceFile)}</code>: <code>[[${esc(r.linkText)}]]</code>`;
+    case 'crossFolderDupes':
+      return `Cross-folder dupe: <code>${esc(r.keep)}</code> + <code>${esc(r.remove)}</code>`;
+    case 'hyphenVariants':
+      return `Hyphen variants: ${(r.files || []).map(f => `<code>${esc(f)}</code>`).join(', ')}`;
+    case 'missingBacklinks':
+      return `Missing backlink: <code>${esc(r.summary)}</code> ↛ <code>${esc(r.entity)}</code>`;
+    default:
+      return `<code>${esc(r.type)}</code>`;
+  }
+}
+
+async function undismissIssue(domain, type, record, btn) {
+  if (!btn) return;
+  const row = btn.closest('.health-dismissed-row');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Restoring…';
+  try {
+    // The record IS the issue — the brain layer's recordToIssue() lift makes
+    // the original record sufficient as `issue` for keyForIssue() to recreate
+    // the canonical key. For semanticDupe specifically we need to expose the
+    // pair-shape fields the route validator expects.
+    let issue = record;
+    if (type === 'semanticDupe') {
+      const [slugA, slugB] = record.slugs || [];
+      issue = {
+        slugA, slugB,
+        folderA: record.folderA || record.folder || 'entities',
+        folderB: record.folderB || record.folder || 'entities',
+      };
+    }
+    const r = await fetch(`/api/health/${encodeURIComponent(domain)}/undismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, issue }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Un-dismiss failed');
+    if (row) row.remove();
+    bumpDismissedCounter(-1);
+    // Refresh the dismissed list so the count and remaining records sync.
+    loadAndRenderDismissedSection(domain);
+    // Note: we deliberately do NOT auto-rerun the structural scan. The next
+    // time the user clicks Scan, the un-dismissed issue will reappear.
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = original;
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+// Module-level helper so renderSection AND the AI-result renderers below can
+// produce the SAME dismiss button. Without this, renderBrokenLinkAiResult /
+// renderOrphanAiResult replace the row's actions HTML and accidentally wipe
+// the Dismiss button — the v2.5.1 UX bug surfaced shortly after release.
+function dismissButtonHtml(type, issue) {
+  return `<button class="btn btn-sm health-dismiss-btn" title="Mark as not-an-issue — won't show on future scans" data-dismiss-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>Dismiss</button>`;
+}
+
+// Wire a single dismiss button to the dismiss endpoint. Called by AI-result
+// renderers after they inject a Dismiss button into a row, so the click
+// handler attaches even though the button didn't exist when renderHealthReport
+// ran its initial wiring loop.
+function wireDismissButton(btn, domain) {
+  if (!btn || btn.dataset.dismissWired) return;
+  btn.dataset.dismissWired = '1';
+  btn.addEventListener('click', async () => {
+    const type = btn.dataset.dismissOne;
+    const issue = JSON.parse(btn.dataset.issue);
+    await dismissIssue(domain, type, issue, btn);
+  });
 }
 
 function renderSection(report, type) {
@@ -2643,21 +2850,32 @@ function renderSection(report, type) {
     issues = [...issues].sort((a, b) => (b.suggestedTarget ? 1 : 0) - (a.suggestedTarget ? 1 : 0));
   }
 
+  const dismissBtn = (issue) => dismissButtonHtml(type, issue);
+
   const rows = issues.map((issue, idx) => {
     const description = describeIssue(type, issue);
     let trailing;
     if (canFixIssue(issue)) {
+      // Auto-fixable rows: just the Apply / Fix button. No dismiss — the user
+      // is meant to click Apply, not skip permanently. (If they really want to
+      // suppress an auto-fixable item, they can dismiss it from the Dismissed
+      // section after running fix-all.)
       trailing = `<button class="btn btn-sm health-fix-btn" data-fix-one="${type}" data-issue='${escapeAttr(JSON.stringify(issue))}'>${btnLabel}</button>`;
     } else if (type === 'brokenLinks' && _aiAvailable) {
-      // Review-only broken link + AI available → offer AI suggestion
+      // Review-only broken link + AI available → offer AI suggestion + Dismiss
       trailing =
         `<button class="btn btn-sm health-ai-btn" data-ai-suggest="brokenLinks" data-issue='${escapeAttr(JSON.stringify(issue))}' data-row-idx="${idx}">✨ Ask AI</button>` +
+        dismissBtn(issue) +
         `<span class="health-review-tag">Review</span>`;
     } else if (type === 'orphans' && _aiAvailable) {
-      // Orphan page + AI available → offer AI orphan-rescue suggestions
+      // Orphan page + AI available → offer AI orphan-rescue + Dismiss
       trailing =
         `<button class="btn btn-sm health-ai-btn" data-ai-suggest="orphans" data-issue='${escapeAttr(JSON.stringify(issue))}' data-row-idx="${idx}">✨ Ask AI</button>` +
+        dismissBtn(issue) +
         `<span class="health-review-tag">Review</span>`;
+    } else if (type === 'brokenLinks' || type === 'orphans') {
+      // Review-only without AI → still allow Dismiss
+      trailing = dismissBtn(issue) + `<span class="health-review-tag">Review</span>`;
     } else {
       trailing = `<span class="health-review-tag">Review</span>`;
     }
@@ -2853,21 +3071,33 @@ function renderBrokenLinkAiResult(domain, issue, result, row, actions) {
   aiBlock.innerHTML = body;
 
   if (canApply) {
+    // Apply (accept AI fix) | Dismiss (won't flag again) | Skip (close AI block,
+    // keep flagging on future scans). Three distinct actions; keeping all three
+    // makes the user's options explicit. "Skip" tooltip clarifies it's just a
+    // local close — different from Dismiss.
     actions.innerHTML =
       `<button class="btn btn-sm health-fix-btn health-ai-apply">Apply</button>` +
-      `<button class="btn btn-sm health-ai-skip">Skip</button>`;
+      dismissButtonHtml('brokenLinks', issue) +
+      `<button class="btn btn-sm health-ai-skip" title="Close this AI suggestion. The link will still be flagged on the next scan — use Dismiss to never show it again.">Skip</button>`;
     const applyBtn = actions.querySelector('.health-ai-apply');
     const skipBtn  = actions.querySelector('.health-ai-skip');
+    const dismissBtn = actions.querySelector('.health-dismiss-btn');
     applyBtn.addEventListener('click', () => {
       const patched = { ...issue, suggestedTarget: result.target };
       fixOne(domain, 'brokenLinks', patched, applyBtn);
     });
     skipBtn.addEventListener('click', () => {
       aiBlock.remove();
-      actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+      actions.innerHTML = dismissButtonHtml('brokenLinks', issue) + `<span class="health-review-tag">Review</span>`;
+      const reAdded = actions.querySelector('.health-dismiss-btn');
+      if (reAdded) wireDismissButton(reAdded, domain);
     });
+    wireDismissButton(dismissBtn, domain);
   } else {
-    actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+    // No good target → only meaningful actions are Dismiss (won't flag again)
+    // or leave for review later.
+    actions.innerHTML = dismissButtonHtml('brokenLinks', issue) + `<span class="health-review-tag">Review</span>`;
+    wireDismissButton(actions.querySelector('.health-dismiss-btn'), domain);
   }
 }
 
@@ -2888,7 +3118,10 @@ function renderOrphanAiResult(domain, issue, result, row, actions) {
         `<span class="health-ai-result-label">🤖 No good candidates.</span>` +
       `</div>` +
       `<div class="health-ai-hint">AI found no existing pages that should reference this orphan. Consider whether the orphan itself should stay, merge into another page, or be removed.</div>`;
-    actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+    // No fixable candidates → still preserve the row-level Dismiss so the user
+    // can mark the orphan as intentional and stop seeing it on future scans.
+    actions.innerHTML = dismissButtonHtml('orphans', issue) + `<span class="health-review-tag">Review</span>`;
+    wireDismissButton(actions.querySelector('.health-dismiss-btn'), domain);
     return;
   }
 
@@ -2915,14 +3148,18 @@ function renderOrphanAiResult(domain, issue, result, row, actions) {
           (canApply
             ? `<button class="btn btn-sm health-fix-btn health-ai-apply-orphan">Apply</button>`
             : `<span class="health-review-tag">Low confidence — review manually</span>`) +
-          `<button class="btn btn-sm health-ai-skip-orphan">Skip</button>` +
+          `<button class="btn btn-sm health-ai-skip-orphan" title="Skip this suggestion only — the orphan stays flagged. To stop seeing the orphan altogether, use the Dismiss button at the row level.">Skip</button>` +
         `</div>` +
       `</div>`
     );
   }).join('');
 
   aiBlock.innerHTML = header + `<div class="health-ai-candidates">${candidateRows}</div>`;
-  actions.innerHTML = `<span class="health-review-tag">Review</span>`;
+  // Preserve the row-level Dismiss button so the user can choose to suppress
+  // the whole orphan after seeing the AI's candidate list — e.g. when none of
+  // the suggestions are right and they don't want this orphan re-surfaced.
+  actions.innerHTML = dismissButtonHtml('orphans', issue) + `<span class="health-review-tag">Review</span>`;
+  wireDismissButton(actions.querySelector('.health-dismiss-btn'), domain);
 
   // Wire per-candidate buttons. Each Apply targets a different page; Skip
   // removes just that candidate row. When all candidates are gone, we collapse
@@ -3162,7 +3399,35 @@ function renderSemanticPairCard(pair) {
     }
     openMergeConfirm(card, pair);
   });
-  card.querySelector('.semantic-skip-btn').addEventListener('click', () => card.remove());
+  card.querySelector('.semantic-skip-btn').addEventListener('click', async () => {
+    // Persist the skip (v2.5.1+) so the same pair doesn't re-surface on the
+    // next semantic-dupe scan. The pair shape mirrors what the brain layer
+    // expects in `findSemanticCandidatePairs` output.
+    const skipBtn = card.querySelector('.semantic-skip-btn');
+    skipBtn.disabled = true;
+    skipBtn.textContent = 'Skipping…';
+    try {
+      const issue = {
+        slugA: pair.keepSlug, folderA: pair.keepFolder,
+        slugB: pair.removeSlug, folderB: pair.removeFolder,
+      };
+      const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/dismiss`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'semanticDupe', issue }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Skip failed');
+      card.remove();
+      // Refresh the Dismissed section if the structural Health view is showing.
+      if (_healthDomain) loadAndRenderDismissedSection(_healthDomain);
+      bumpDismissedCounter(+1);
+    } catch (err) {
+      skipBtn.disabled = false;
+      skipBtn.textContent = 'Skip';
+      showStatus(healthStatusEl, 'error', err.message);
+    }
+  });
 }
 
 async function openMergePreview(card, pair) {

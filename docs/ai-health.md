@@ -107,6 +107,44 @@ The estimate shown in the confirm dialog uses published per-1M-token pricing fro
 
 ---
 
+## Persistent dismissals (v2.5.1+)
+
+Some flagged issues are not real problems — two pages the LLM thinks are duplicates that you intentionally keep separate, an orphan page you're planning to develop later, a broken link in a draft you haven't finished. Before v2.5.1, clicking **Skip** removed the issue from view but the next scan would re-surface it, forcing you to re-decide on every run.
+
+In v2.5.1, dismissals persist.
+
+### What you can dismiss
+
+A **Dismiss** button appears on every review-only Health row:
+
+- **Orphans** — pages with no incoming links (with or without ✨ Ask AI suggestions).
+- **Broken links** that have no auto-fix suggestion — anything where AI couldn't propose a target, or you didn't accept the proposal.
+- **Semantic-duplicate pair cards** — the existing **Skip** button now persists (this is the change that motivated the feature).
+
+Auto-fixable issues (broken links *with* a suggested target, folder-prefix violations, cross-folder duplicates, hyphen variants, missing backlinks) deliberately do **not** have a Dismiss button — the right action there is **Apply**, not skip. If you change your mind later, you can dismiss anything from the Dismissed section.
+
+### How it persists
+
+Dismissals are stored in `domains/<your-domain>/wiki/.health-dismissed.jsonl` — one JSON line per dismissal. The file lives inside the wiki folder, which is already git-tracked, so dismissals **sync between your computers automatically** via the existing GitHub sync. Skip a pair on your laptop, run sync, the same pair stays skipped on your desktop.
+
+The format is line-oriented and append-only, so concurrent dismissals on different machines merge cleanly through git's standard 3-way merge.
+
+### The Dismissed section
+
+Below the regular Health issue list (and above the Semantic Duplicates panel), a collapsible **Dismissed (N)** section lists every previously-dismissed item. Each row has an **Un-dismiss** button — restore an item to the active scan with one click. Empty when N=0; hidden entirely if you've never dismissed anything.
+
+A small "N dismissed" chip in the scan summary header tells you how many issues are being filtered.
+
+### Stale records
+
+When you rename a slug or merge two pages, dismissals that referenced the old names become stale. The Curator silently prunes them on every Health scan — if a dismissal record points at a file or slug that no longer exists, it's dropped without bothering you. The `.health-dismissed.jsonl` file stays clean over time.
+
+### Why this matters
+
+A 2000-page domain typically produces 70–500 semantic-duplicate candidate pairs. Reviewing them once is reasonable; reviewing the same false positives every month is not. Persistent dismissals turn the Health tab into a true to-do list — once you've dispositioned an issue, it stops competing for your attention.
+
+---
+
 ## Privacy — what leaves your machine
 
 When you click **✨ Ask AI**, The Curator sends to your configured LLM provider (Google Gemini or Anthropic, whichever you set in Settings):
