@@ -207,6 +207,56 @@ The same write pipeline used by The Curator app's in-app Compile button runs her
 - **Idempotency**: same conversation + same title + same date → same slug → second call is refused with a clear message ("Already compiled to X").
 - **Default domain**: in The Curator's Settings, you can set a default domain for MCP writes. When you say "my wiki" without specifying which one, Claude uses that. Without a default, Claude must call `list_domains` first and confirm with you.
 - **Audit log**: every MCP write is recorded to `domains/<d>/.mcp-write-log.jsonl` (local-only, never synced to GitHub) — your private record of what happened, when, and by which tool.
+- **Link grounding (v2.5.5+)**: see below.
+
+### Link grounding — preventing broken `[[wikilinks]]` (v2.5.5+)
+
+When Claude composes wiki content, it has a habit of inventing wikilinks that look plausible but don't exist (`[[machine-learning-fundamentals]]`, `[[ai-research-2024]]`). On a fresh / empty domain this is the dominant source of broken links — early users reported dozens per compile.
+
+**`compile_to_wiki` now runs a pre-write resolution pass on every link.** Each `[[wikilink]]` is resolved against:
+
+- Slugs that already exist in the target domain
+- Slugs being created in this same call's `additional_pages`
+- Pass A / B / C variant normalisation (e.g. `[[Claude]]` → `[[claude]]`, `[[dr-tali-rezun]]` → `[[tali-rezun]]`)
+
+The response includes a structured `links` field:
+
+```json
+"links": {
+  "total": 12,
+  "resolved": 8,            // exact slug match
+  "normalized": 2,          // variant slug auto-fixed
+  "broken": [               // no match anywhere
+    { "in": "summaries/foo.md", "link": "machine-learning-fundamentals" }
+  ],
+  "broken_count": 1,
+  "policy": "keep"
+}
+```
+
+Claude reads this and can decide whether to retry with corrections.
+
+### `broken_link_policy` — three modes for fresh domains
+
+The optional `broken_link_policy` parameter on `compile_to_wiki` controls what happens when a link doesn't resolve:
+
+| Policy | What it does | When to use |
+|---|---|---|
+| `'keep'` (default) | Writes broken links as-is, reports them in `links.broken`. | Most cases. Lets Claude decide on retry. Matches in-app ingest behaviour. |
+| `'strip'` | Removes the `[[brackets]]` so the prose reads naturally and no broken link lands on disk. Lossy but clean. | When you want Claude's content saved cleanly even if some references can't be linked. |
+| `'refuse'` | Aborts the whole compile if **any** link is broken. Response includes `valid_slugs_sample` of real slugs from the domain so Claude can retry quickly. | **Recommended for fresh / empty domains.** Forces Claude to ground its links before any write happens. |
+
+### Sample dialogue for fresh domains
+
+> **You:** *"Add a summary of our discussion about AI agents to my new `projects` domain. The wiki is empty so be strict — refuse if any link is broken."*
+>
+> **Claude:** [calls `compile_to_wiki` with `broken_link_policy: 'refuse'`] *"The compile was refused — 4 broken links: `agent-orchestration`, `tool-calling`, `model-router`, `prompt-chaining`. Want me to add those as new pages in the same call, or rewrite the summary without those links?"*
+>
+> **You:** *"Add them as new pages."*
+>
+> **Claude:** [calls `compile_to_wiki` again with `additional_pages: [...]` covering the four concepts] *"Compiled. 5 new pages in 'projects', all 12 links resolved cleanly."*
+
+This loop typically converges in 1–2 retries and produces a wiki with **zero broken links** — instead of dozens that need cleanup later.
 
 ---
 
