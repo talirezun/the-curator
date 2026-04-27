@@ -46,6 +46,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *On why recorded, structured knowledge is the only thing that survives — and how a local app built on markdown files, Obsidian, and a spark from Andrej Karpathy makes knowledge immortality achievable for anyone.*
 
+- **[From Graph to Intelligence: The My Curator MCP and the Art of Querying Your Second Brain](./articles/from-graph-to-intelligence-my-curator-mcp.md)**  
+  By Dr. Tali Režun  
+  *How My Curator MCP turns your second brain into a frontier AI research partner — a private, local bridge between the knowledge you have built and the reasoning models that can finally read it as a graph, not a folder.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -73,6 +77,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {April},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/knowledge-immortality-second-brain.md}
+}
+
+@article{rezun2026graph-to-intelligence,
+  author = {Režun, Tali},
+  title = {From Graph to Intelligence: The My Curator MCP and the Art of Querying Your Second Brain},
+  year = {2026},
+  month = {April},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/from-graph-to-intelligence-my-curator-mcp.md}
 }
 ```
 
