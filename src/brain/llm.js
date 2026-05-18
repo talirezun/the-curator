@@ -137,23 +137,40 @@ function sleep(ms) {
 export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null) {
   const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
 
+  // Resolve provider name once for consistent error messaging. If this fails
+  // (e.g. no key configured), let the underlying call throw the original
+  // "No LLM API key found" message — don't shadow it here.
+  let providerName = 'AI provider';
+  try {
+    const info = getProviderInfo();
+    providerName = info.provider === 'gemini' ? 'Gemini' : info.provider === 'anthropic' ? 'Claude' : 'AI provider';
+  } catch { /* surface real error from callLLM below */ }
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat);
     } catch (err) {
       const retryable = is429(err) || is503(err);
       if (!retryable || attempt === MAX_RETRIES) {
-        // Out of retries or non-retryable error — surface a clean message
+        // Out of retries or non-retryable error — surface a clean message that
+        // makes clear whether the issue is in The Curator or upstream at the
+        // AI provider, and what the user should do next (v3.0.1-beta.4).
         if (is429(err)) {
           const delaySec = Math.ceil(parseRetryDelay(err) / 1000);
           throw new Error(
-            `Rate limit reached: the Gemini free tier allows 20 requests per day. ` +
-            `Please wait ${delaySec} seconds and try again, or upgrade your Gemini API plan at https://ai.dev/rate-limit`
+            `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
+            `not an issue with The Curator. Free tiers cap at ~15 requests/min and ~20–50 requests/day; ` +
+            `paid plans have much higher limits but can still be reached during bulk operations. ` +
+            `Please wait ${delaySec} seconds and try again. If you are on the free tier, consider upgrading at https://ai.google.dev/pricing.`
           );
         }
         if (is503(err)) {
           throw new Error(
-            `The AI service is temporarily overloaded. Please wait a moment and try again.`
+            `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
+            `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
+            `problem with The Curator or your API key. The Curator already retried 4 times with backoff over ` +
+            `~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, check ` +
+            `https://status.cloud.google.com or temporarily switch to a different provider in Settings.`
           );
         }
         throw err;
