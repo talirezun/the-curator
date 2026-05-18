@@ -257,6 +257,21 @@ function showIngestResult(data) {
     `;
     showEl(ingestResult);
   }
+  // v3.0.1-beta.1: surface non-fatal warnings (truncation, stub pages,
+  // outline-validator patches) above the change records so the user sees
+  // them without having to inspect the log.
+  renderIngestWarnings(data);
+}
+
+function renderIngestWarnings(data) {
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+  if (!warnings.length) return;
+  const banner = document.createElement('div');
+  banner.className = 'ingest-warnings';
+  banner.style.cssText = 'background:#fff7e6;border:1px solid #ffb961;border-radius:6px;padding:10px 12px;margin:10px 0;font-size:13px;line-height:1.5;';
+  const items = warnings.map(w => `<li>${escHtml(w)}</li>`).join('');
+  banner.innerHTML = `<strong>⚠ Ingest finished with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}:</strong><ul style="margin:6px 0 0 18px;padding:0;">${items}</ul>`;
+  ingestResult.insertBefore(banner, ingestResult.firstChild);
 }
 
 // ── Shared change-records renderer (v2.5.0) ───────────────────────────────────

@@ -69,7 +69,9 @@ router.post('/', upload.single('file'), async (req, res) => {
       type: 'done',
       title: result.title,
       pagesWritten: result.pagesWritten,
-      changes: result.changes, // structured per-file change records (v2.5.0+)
+      changes: result.changes,    // structured per-file change records (v2.5.0+)
+      warnings: result.warnings || [],  // non-fatal issues (v3.0.1-beta.1)
+      truncated: !!result.truncated,    // source-text was longer than 80k chars
       wasOverwrite: overwrite === 'true',
     });
   } catch (err) {

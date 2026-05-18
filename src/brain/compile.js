@@ -176,7 +176,7 @@ no index.md content — the app maintains the index itself):
  *                                  canonical path (writePage may redirect via
  *                                  cross-folder dedup, hyphen normalisation, etc.)
  */
-function mergeIntoIndex(existingIndex, pages, writeRecords) {
+export function mergeIntoIndex(existingIndex, pages, writeRecords) {
   // Build a quick lookup of pages already mentioned in the index
   const mentioned = new Set();
   const wikiLinkRe = /\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]/g;

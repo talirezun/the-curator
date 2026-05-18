@@ -297,11 +297,11 @@ On the second, third, and subsequent ingests, the AI reads what's already in the
 
 Gemini 2.5 Flash Lite has a **1,048,576-token context window** (~1 million tokens, roughly 700,000 English words). In principle, a single ingest could swallow an entire 300-page book.
 
-In practice, The Curator's ingest pipeline currently caps the **input** at 80,000 characters (~20,000 tokens) per single LLM call to keep latency and cost predictable. For longer documents the pipeline automatically switches to **multi-phase mode**:
+In practice, The Curator's ingest pipeline currently caps the **input** at 80,000 characters (~20,000 tokens) per ingest to keep latency and cost predictable. **If your source is longer than that, you'll see an amber warning on the result panel telling you exactly how much was processed and how much was dropped** — content past the cap is not seen by the AI. For long sources, split by chapter or use the multi-phase pipeline (kicks in automatically for inputs > 15k chars):
 
-1. **Phase 1** — outline pass: the AI reads the whole document and decides what pages to write
+1. **Phase 1** — outline pass: the AI reads the whole document and produces a list of pages to write (with a required-coverage checklist: one summary, originator entity, every named person/tool/company, every key concept, consolidation rule for closely related sub-ideas)
 2. **Phase 2** — batched content: pages are written in batches of 4 per LLM call
-3. **Phase 3** — index update
+3. **Index merge** — the app appends new rows to `index.md` programmatically (no LLM call), so the index stays consistent even on large domains
 
 **Practical guidance:**
 
@@ -316,10 +316,41 @@ In practice, The Curator's ingest pipeline currently caps the **input** at 80,00
 
 ### Tips for better results
 
-- **Use descriptive filenames.** `atomic-habits-summary.txt` is better than `notes.txt` — the filename appears in the log.
+- **Use descriptive filenames.** `atomic-habits-summary.txt` is better than `notes.txt` — the filename becomes the summary page's slug (v3.0.1-beta.1+), so the file `report-2024.pdf` always lands on `summaries/report-2024.md`.
 - **One document at a time.** Don't combine ten articles into one file; each document should get its own ingest so it gets its own summary page.
 - **Clean up copy-pasted text.** If you paste an article from a website, remove the navigation menus, cookie banners, and footer text first. Cleaner input = better wiki pages.
 - **Mind the rate limits on the free tier.** If you're ingesting a batch of 5+ documents and you're on Gemini's free tier, expect to hit `429 RESOURCE_EXHAUSTED` partway through — see [§19](#19-api-keys-cost--free-tier).
+- **Watch the warnings panel after each ingest.** If you see "⚠ Source truncated to 80,000 chars" or "⚠ Stub page created", the ingest finished but with reduced quality — the warning tells you exactly what to do. Re-ingesting the same source is safe (see below).
+
+### Re-ingesting a source (and why it's safe)
+
+If you find an ingested page looks incomplete, or you've updated The Curator and want fresh ingests to apply newer prompt rules to old sources, re-ingest. **The pipeline is fully idempotent on re-ingest (v3.0.1-beta.1+):**
+
+| What could duplicate | What prevents it |
+|---|---|
+| Summary page | The slug is computed from the source filename, so `report.pdf` always becomes `summaries/report.md`. The second ingest merges into the existing summary — bullets accumulate, no second file. |
+| Entity pages (Alice, Google, etc.) | The AI is shown a list of existing entity filenames before it picks slugs, plus `writePage` runs three dedup passes (title-prefix strip, hyphen-normalised match, cross-folder dedup). Same entity = same file = bullets merge. |
+| Concept pages | Same mechanism as entities. |
+| Index rows | The index is updated programmatically — rows for slugs already mentioned are skipped. |
+| Bullets within sections | After every write, `deduplicateBulletSections` removes any duplicates produced by the merge. |
+
+**How to re-ingest a single source:**
+
+1. Open the **Domains** tab and click your domain
+2. Scroll to **Raw files** — every source you've ingested is listed there
+3. Click the file you want to re-ingest — you'll get a confirmation dialog ("This file has already been ingested")
+4. Click **Re-ingest** (or **Overwrite**) to proceed
+
+The result panel will show which pages were "updated" vs "unchanged" — you can confirm at a glance that nothing was duplicated.
+
+**To re-ingest every source in a domain** (after a Curator update with significant ingest improvements, for example):
+
+```bash
+node scripts/bulk-reingest.js <domain>
+# e.g.: node scripts/bulk-reingest.js articles
+```
+
+There's a 3-second pause between files by default to avoid rate-limit hits on the free tier. Add `--delay=5000` for slower pacing.
 
 ---
 

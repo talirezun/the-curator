@@ -208,14 +208,53 @@ src/routes/ingest.js  —  validates domain + file type
       │
       ▼
 src/brain/ingest.js
+      ├─ 0. Compute deterministic summary slug from the source filename     (v3.0.1+)
+      │     computeSummarySlugFromSource('report.pdf') → 'report'
+      │     summaryPath = 'summaries/report.md'
+      │     This slug is FORCED into the LLM prompt, so re-ingesting the
+      │     same source always lands on the same summary page → merges via
+      │     mergeWikiPage instead of creating a duplicate file.
       ├─ 1. Copy file → domains/<domain>/raw/<filename>
       ├─ 2. Extract text (.txt/.md → readFile, .pdf → pdf-parse)
+      │     If fullText.length > 80,000: truncate + push warning into the
+      │     result.warnings array + emit a progress message + log it (v3.0.1+).
       ├─ 3. Load domains/<domain>/CLAUDE.md  (system prompt)
       ├─ 4. Load domains/<domain>/wiki/index.md  (current wiki state)
-      ├─ 5. Call LLM via llm.js  (JSON mode, 32 768 max output tokens)
+      ├─ 5. Call LLM via llm.js  (JSON mode, 65,536 max output tokens)
       │     System:  domain CLAUDE.md schema
-      │     User:    date + index + source text (≤80 000 chars) + instructions
-      │     Returns: { title, pages: [{path, content}], index }
+      │     User:    date + index + source text (≤80,000 chars) + REQUIRED
+      │              COVERAGE checklist (v3.0.1+): forced summary path,
+      │              originator entity rule, every-name-mentioned rule,
+      │              every-key-concept rule, parent-over-children consolidation.
+      │     Returns: { title, pages: [{path, content, summary?}] }
+      │              (no `index` field — app maintains the index itself, v3.0.1+)
+      │
+      │     Two paths converge here:
+      │     ── Single-pass (input ≤ 15,000 chars) ──
+      │        One LLM call returns both pages and content.
+      │     ── Multi-phase (input > 15,000 chars OR single-pass parse fails) ──
+      │        Phase 1 outline → validated → Phase 2 batched content (BATCH=4).
+      │        No Phase 3 — index merge moved out of the LLM (v3.0.1+).
+      │        On batch parse failure: page-by-page retry; absolute last
+      │        resort writes a clearly-marked Stub page that surfaces in
+      │        Health and in the warnings panel.
+      │
+      ├─ 5a. validateOutline() — programmatic safety net                       (v3.0.1+)
+      │      Runs on BOTH single-pass and multi-phase results.
+      │      Invariants enforced:
+      │        - exactly one summary page at summaryPath; inject if missing,
+      │          redirect if path drifted, drop extras if > 1.
+      │        - originator entity present: if extractAuthorHints() detected
+      │          an author byline / YAML `author:` / "Author: X" and the
+      │          outline omitted that entity, inject it at the FRONT of the
+      │          pages list. If the outline contains a variant slug
+      │          ("dr-tali-rezun.md" vs canonical "tali-rezun.md"), redirect
+      │          it in place — uses the same Pass A + Pass B normalisation
+      │          that writePage applies at write time, so the slug Phase 2
+      │          generates content for matches the slug used in [[wikilinks]].
+      │      Each patch emits a user-visible warning in result.warnings.
+      │      Concept coverage is requested by the prompt; not
+      │      machine-validated (would require a second LLM call).
       ├─ 5.5 Deduplicate result.pages (multi-phase ingest can return the same
       │     path in multiple batches; keep last occurrence per path)
       ├─ 6. Write each page → domains/<domain>/wiki/<path>
@@ -235,6 +274,8 @@ src/brain/ingest.js
       │       reads "Entities Mentioned", injects [[summaries/<slug>]] into the
       │       Related section of each referenced entity or concept (creates section
       │       if missing; checks entities/ first, falls back to concepts/)
+      │     writeRecords[i] is kept aligned 1:1 with result.pages[i] for the
+      │     index-merge step below (v3.0.1+).
       ├─ 7. Post-write reconciliation via syncSummaryEntities()
       │     The LLM reliably under-lists entities in "Entities Mentioned"
       │     (writes 5–7 while creating 20–30 entity pages). This step:
@@ -244,11 +285,32 @@ src/brain/ingest.js
       │       c. Re-fires injectSummaryBacklinks() with the complete list so
       │          every entity/concept page receives [[summaries/<slug>]] — not just
       │          the few the LLM remembered to mention
-      ├─ 8. Write updated index.md
-      └─ 9. Append timestamped entry to log.md
+      ├─ 8. Programmatic index merge via mergeIntoIndex() (shared with compile, v3.0.1+)
+      │     Reads existing wikilinks in index.md → skips any slug already there.
+      │     Appends rows for newly CREATED pages (not updated/unchanged), pairing
+      │     LLM-supplied summaries with canonical post-write paths so cross-folder
+      │     dedup redirects keep the correct type column. No LLM call. Sanitises
+      │     pipe + newline characters from summary text before insertion.
+      └─ 9. Append timestamped entry to log.md (warnings section included if any)
 
-HTTP response → { success: true, title, pagesWritten: [...] }
+HTTP response → { type: 'done', title, pagesWritten, changes,
+                  warnings: [...], truncated: bool, wasOverwrite: bool }
+                  (SSE event; warnings + truncated added in v3.0.1+)
 ```
+
+### Idempotency guarantees on re-ingest (v3.0.1+)
+
+Re-ingesting the same source file produces no duplicates anywhere in the
+wiki. The chain that makes this work, in order of where it kicks in:
+
+| Layer | Mechanism | Outcome |
+|---|---|---|
+| **Summary file** | Deterministic slug from source filename (`computeSummarySlugFromSource`) | Same input file → same `summaries/<slug>.md` → `mergeWikiPage` union-merges bullets. No second summary file possible. |
+| **Entity / concept files** | Existing-files list passed to LLM + `writePage` dedup passes (title-prefix, hyphen-norm, cross-folder) | Same entity = same slug = bullets merge. |
+| **Bullet sections** (Key Facts, Related, Entities Mentioned) | `mergeWikiPage` union + `deduplicateBulletSections` safety net | Bullets with the same link target collapsed to one. |
+| **Summary "Entities Mentioned"** | `syncSummaryEntities` always rebuilds from the ground-truth `pagesWritten` list | List always matches the actual pages written this run. |
+| **Backlinks** | `injectSummaryBacklinks` is dedup-safe (`dedupKey()`) | Same `[[summaries/<slug>]]` bullet is never added twice. |
+| **`index.md` rows** | `mergeIntoIndex` scans existing wikilinks → skips any slug already mentioned | Re-ingest never adds a duplicate row. Only newly CREATED pages get rows. |
 
 ## Data flow: Chat
 
@@ -575,11 +637,31 @@ Pure filesystem helpers. No LLM calls.
 ### `src/brain/ingest.js`
 
 ```js
-ingestFile(domain, filePath, originalName, isOverwrite?)
-  → Promise<{ title: string, pagesWritten: string[] }>
+ingestFile(domain, filePath, originalName, isOverwrite?, onProgress?)
+  → Promise<{
+      title: string,
+      pagesWritten: string[],
+      changes: ChangeRecord[],   // v2.5.0+: per-file {canonPath, status, bytesBefore, bytesAfter, sectionsChanged, bulletsAdded}
+      warnings: string[],        // v3.0.1+: truncation, validator patches, stub pages
+      truncated: boolean,        // v3.0.1+: was the source > 80k chars?
+    }>
+
+computeSummarySlugFromSource(originalName)  → string                    // v3.0.1+
+extractAuthorHints(text)  → string[]   // YAML/byline/"Author:" scan    // v3.0.1+
+slugifyName(name)  → string            // honorific-stripped slug       // v3.0.1+
+validateOutline(outline, summaryPath, originalName, originatorHints?)
+  → { outline, warnings: string[] }                                     // v3.0.1+
+parseJSON(raw)  → object   // shared with compile.js
 ```
 
-Single-pass for small/medium documents; automatically falls back to a three-phase pipeline (outline → batched content → index) for large documents that would exceed the model's output token ceiling.
+Single-pass for small/medium documents (input ≤ 15,000 chars). Falls back to
+a two-phase pipeline (outline → batched content) for larger inputs or after
+a single-pass parse failure. The index is merged programmatically by
+`mergeIntoIndex` (imported from `compile.js`) — no LLM call (v3.0.1+).
+A REQUIRED COVERAGE checklist is injected into both prompts (single-pass and
+multi-phase outline) so the LLM always produces a summary at the canonical
+slug, an originator entity for the source's author/speaker, and applies the
+parent-over-children consolidation rule.
 
 ### `src/brain/chat.js`
 
