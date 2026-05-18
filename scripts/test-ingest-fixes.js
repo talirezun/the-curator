@@ -512,6 +512,60 @@ console.log('\n9. validateOutline — originator-hint injection\n');
     'case I3: dr- variant redirected to canonical tali-rezun.md');
 }
 
+// ── 10. Health scanner hyphen-variant detection (v3.0.1-beta.3) ──────────────
+// Regression: the inline normalisation at the detection site failed to call
+// normKey() — so dr.-tali-rezun.md never grouped with tali-rezun.md. Test
+// the actual scanWiki output against a tempdir containing the exact filename
+// pair the user reported.
+console.log('\n10. Health scanner hyphen-variant detection (real pair)\n');
+{
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('fs');
+  const { tmpdir } = await import('os');
+  const pathMod = await import('path');
+
+  const testRoot = mkdtempSync(pathMod.join(tmpdir(), 'curator-health-test-'));
+  const domainsPath = pathMod.join(testRoot, 'domains');
+  const domainDir = pathMod.join(domainsPath, 'hvt');
+  const wikiDir = pathMod.join(domainDir, 'wiki');
+  mkdirSync(pathMod.join(wikiDir, 'entities'), { recursive: true });
+  mkdirSync(pathMod.join(wikiDir, 'concepts'), { recursive: true });
+  mkdirSync(pathMod.join(wikiDir, 'summaries'), { recursive: true });
+  writeFileSync(pathMod.join(domainDir, 'CLAUDE.md'), '# Test\n');
+  writeFileSync(pathMod.join(wikiDir, 'index.md'), '# Index\n');
+  writeFileSync(pathMod.join(wikiDir, 'log.md'), '# Log\n');
+
+  // Create the exact filename pair the user reported
+  const stub = '---\ntype: entity\ntags: [type/entity]\n---\n\nStub content.\n';
+  writeFileSync(pathMod.join(wikiDir, 'entities', 'dr.-tali-rezun.md'), stub);
+  writeFileSync(pathMod.join(wikiDir, 'entities', 'tali-rezun.md'), stub);
+
+  // Point ingest/health at this tempdir
+  const oldDomainsPath = process.env.DOMAINS_PATH;
+  process.env.DOMAINS_PATH = domainsPath;
+
+  // Bust ESM module cache — health.js reads getDomainsDir() at call time, OK
+  const { scanWiki } = await import('../src/brain/health.js');
+  const report = await scanWiki('hvt');
+
+  assertTrue(report.hyphenVariants.length >= 1,
+    'scanWiki detects dr.-X.md and X.md as hyphen variants');
+  if (report.hyphenVariants.length >= 1) {
+    const v = report.hyphenVariants.find(g => g.files.some(f => /dr\.-tali-rezun/.test(f)));
+    assertTrue(!!v, 'group includes the dr.- variant file');
+    if (v) {
+      assertEq(v.suggestedSlug, 'tali-rezun',
+        'canonical suggestion is "tali-rezun" (honorific-free), not "dr.-tali-rezun"');
+      assertTrue(v.files.includes('dr.-tali-rezun') && v.files.includes('tali-rezun'),
+        'group contains both files');
+    }
+  }
+
+  // Cleanup
+  rmSync(testRoot, { recursive: true, force: true });
+  if (oldDomainsPath) process.env.DOMAINS_PATH = oldDomainsPath;
+  else delete process.env.DOMAINS_PATH;
+}
+
 // Case J: empty hints array → no injection, no errors
 {
   const outline = {

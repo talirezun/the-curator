@@ -261,24 +261,32 @@ export async function scanWiki(domain) {
     }
   }
 
-  // Hyphen variants within entities/ (talirezun + tali-rezun)
+  // Hyphen variants within entities/ — groups slugs that normalise to the same
+  // key. Uses the shared normKey() (v3.0.1-beta.2: strips honorific prefix too)
+  // so "dr.-tali-rezun", "dr-tali-rezun", "talirezun", and "tali-rezun" all
+  // collapse to "talirezun" and surface as one variant group.
   const hyphenVariants = [];
   const seenGroups = new Set();
   for (let i = 0; i < entityFiles.length; i++) {
     const stemA = entityFiles[i].slice(0, -3);
     if (seenGroups.has(stemA)) continue;
     const group = [stemA];
-    const normA = stemA.replace(/-/g, '').toLowerCase();
+    const normA = normKey(stemA);
     for (let j = i + 1; j < entityFiles.length; j++) {
       const stemB = entityFiles[j].slice(0, -3);
       if (seenGroups.has(stemB)) continue;
-      const normB = stemB.replace(/-/g, '').toLowerCase();
+      const normB = normKey(stemB);
       if (normA === normB) { group.push(stemB); seenGroups.add(stemB); }
     }
     if (group.length > 1) {
-      // Prefer the form with the most hyphens — wiki convention favors
-      // readable hyphenated slugs (e.g. "tali-rezun" over "talirezun").
+      // Canonical selection (v3.0.1-beta.3): prefer slugs without an
+      // honorific prefix (dr.-tali-rezun → tali-rezun); among the rest,
+      // prefer the form with the most hyphens (wiki convention favors
+      // readable "tali-rezun" over "talirezun"); then shortest.
       const canonical = group.slice().sort((a, b) => {
+        const hasHon = (s) => HONORIFIC_PREFIX_RE.test(s) ? 1 : 0;
+        const diffHon = hasHon(a) - hasHon(b);
+        if (diffHon !== 0) return diffHon;       // no-honorific first
         const hy = (s) => (s.match(/-/g) || []).length;
         const diff = hy(b) - hy(a);
         return diff !== 0 ? diff : a.length - b.length;
@@ -445,19 +453,29 @@ async function fixCrossFolderDupe(wikiDir, issue) {
 }
 
 async function fixHyphenVariant(wikiDir, issue) {
-  // Tighter slug regex prevents path components from sneaking in via issue.files
-  // or issue.suggestedSlug — defense in depth alongside resolveInsideWiki.
-  const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
+  // Slug regex allows alphanumerics, hyphens, AND single embedded periods —
+  // the LLM occasionally produces slugs like "dr.-tali-rezun" by preserving
+  // the dot from "Dr." (v3.0.1-beta.3). The explicit `..` + `/` checks below
+  // close the path-traversal hole that a permissive character class would
+  // otherwise open. `resolveInsideWiki` is the final chokepoint.
+  const SLUG_RE = /^[a-z0-9][a-z0-9.\-]*$/i;
+  const isSafeSlug = (s) =>
+    typeof s === 'string' &&
+    !s.includes('..') &&
+    !s.includes('/') &&
+    !s.includes('\\') &&
+    SLUG_RE.test(s);
+
   const entitiesDir = path.join(wikiDir, 'entities');
   const canonical = issue.suggestedSlug;
-  if (typeof canonical !== 'string' || !SLUG_RE.test(canonical)) return false;
+  if (!isSafeSlug(canonical)) return false;
   const canonPath = resolveInsideWiki(wikiDir, `entities/${canonical}.md`);
   if (!canonPath || !existsSync(canonPath)) return false;
 
   let canonContent = await readFile(canonPath, 'utf8');
   for (const slug of (issue.files || [])) {
     if (slug === canonical) continue;
-    if (typeof slug !== 'string' || !SLUG_RE.test(slug)) continue;
+    if (!isSafeSlug(slug)) continue;
     const dupPath = resolveInsideWiki(wikiDir, `entities/${slug}.md`);
     if (!dupPath || !existsSync(dupPath)) continue;
     const dupContent = await readFile(dupPath, 'utf8');
