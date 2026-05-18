@@ -626,7 +626,47 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     (msg) => progress(12, msg, 'wait')
   )).trim();
 
-  let outline = parseJSON(outlineRaw);
+  // v3.0.1-beta.7: retry once with a stricter JSON-only prompt if the first
+  // outline response is malformed. LLM outputs are non-deterministic — a
+  // second pass with explicit "no markdown, no commentary, valid JSON only"
+  // guidance almost always works when the first one produces bad JSON
+  // (unescaped quote in a summary, stray backtick, etc).
+  let outline;
+  try {
+    outline = parseJSON(outlineRaw);
+  } catch (firstErr) {
+    console.warn(`[ingest] Phase 1 outline parse failed (${outlineRaw.length} chars). Retrying with stricter JSON prompt...`);
+    warnings.push('Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.');
+    progress(13, 'Phase 1: retrying with stricter JSON…', 'wait');
+
+    const strictPrompt = buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath)
+      + '\n\nIMPORTANT — STRICT JSON REQUIREMENTS:\n'
+      + '1. Return ONLY the JSON object. No markdown fences, no "```json" wrapper, no commentary before or after.\n'
+      + '2. Inside "summary" string values: do NOT use double quotes. Use single quotes if you need quotation marks. Avoid backslashes and special characters.\n'
+      + '3. Keep each "summary" under 120 characters to reduce the chance of malformed strings.\n'
+      + '4. The response must parse with native JSON.parse on the first try.';
+
+    try {
+      const outlineRaw2 = (await generateText(
+        schema, strictPrompt, 16384, 'json',
+        (msg) => progress(13, msg, 'wait')
+      )).trim();
+      outline = parseJSON(outlineRaw2);
+      console.error('[ingest] Phase 1 stricter retry succeeded.');
+    } catch (secondErr) {
+      // Both attempts failed — throw a clean, actionable error the UI can show.
+      console.error('[ingest] Phase 1 retry also failed:', secondErr.message.slice(0, 200));
+      throw new Error(
+        `⚠ The AI returned malformed JSON for this source twice in a row — a rare ` +
+        `transient issue with the AI provider (not a problem with The Curator or your file). ` +
+        `What to do: (1) try Ingest again — LLM output is non-deterministic, the next attempt ` +
+        `usually succeeds; (2) if the issue persists, split the source PDF into smaller parts ` +
+        `(e.g. by chapter) and ingest each separately, or convert the PDF to a .md file first ` +
+        `with cleaner text; (3) temporarily switch to a different AI provider in Settings ` +
+        `(Anthropic Claude often handles edge cases differently from Gemini).`
+      );
+    }
+  }
 
   // v3.0.1-beta.1: validate outline against required-coverage contract.
   // Injects the summary page if the LLM omitted it; redirects non-canonical
