@@ -221,6 +221,11 @@ export async function push() {
   // the most recent commit's diff, so a big ingest that got split into
   // multiple commits by pull() → push() would show a wildly-wrong count like
   // "6 files" for a 200-file change.
+  // Count files we're actually sending TO remote. Naive `diff origin/main..HEAD`
+  // is symmetric: when local merged a remote commit (`-X theirs`), files that
+  // origin had — but local didn't touch — still show up as "differing", which
+  // inflates the count. Use `merge-base` so the count reflects only what local
+  // is genuinely adding on top of the common ancestor (v3.0.1-beta.6).
   let aheadCount = 0;
   let filesToPush = 0;
   let filePreview = [];
@@ -228,7 +233,10 @@ export async function push() {
     const { stdout: ahead } = await git('rev-list --count origin/main..HEAD');
     aheadCount = parseInt(ahead.trim(), 10) || 0;
     if (aheadCount > 0) {
-      const { stdout: names } = await git('diff --name-only origin/main..HEAD');
+      const { stdout: baseOut } = await git('merge-base HEAD origin/main');
+      const base = baseOut.trim();
+      const diffRange = base ? `${base}..HEAD` : 'origin/main..HEAD';
+      const { stdout: names } = await git(`diff --name-only ${diffRange}`);
       const list = names.split('\n').filter(Boolean);
       filesToPush = list.length;
       filePreview = list.slice(0, 20);
@@ -281,6 +289,12 @@ export async function pull() {
   // Fetch remote state without merging yet, so we can count what's incoming.
   await git('fetch origin main', { timeout: 120000 });
 
+  // Count files actually coming FROM remote. Naive `diff HEAD..origin/main`
+  // is symmetric — it counts files differing in EITHER direction, including
+  // files we modified locally in the auto-save commit above. That produces
+  // confusing reports like "pulled 206 / pushed 206" for the same 206 files.
+  // Using `merge-base` lets us count only files origin advanced beyond the
+  // common ancestor (v3.0.1-beta.6).
   let filesPulled = 0;
   let commitsPulled = 0;
   let filePreview = [];
@@ -288,10 +302,14 @@ export async function pull() {
     const { stdout: cnt } = await git('rev-list --count HEAD..origin/main');
     commitsPulled = parseInt(cnt.trim(), 10) || 0;
     if (commitsPulled > 0) {
-      const { stdout: names } = await git('diff --name-only HEAD..origin/main');
-      const list = names.split('\n').filter(Boolean);
-      filesPulled = list.length;
-      filePreview = list.slice(0, 20);
+      const { stdout: baseOut } = await git('merge-base HEAD origin/main');
+      const base = baseOut.trim();
+      if (base) {
+        const { stdout: names } = await git(`diff --name-only ${base}..origin/main`);
+        const list = names.split('\n').filter(Boolean);
+        filesPulled = list.length;
+        filePreview = list.slice(0, 20);
+      }
     }
   } catch { /* no remote yet — first sync, pull will do the right thing */ }
 
