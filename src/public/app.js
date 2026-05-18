@@ -198,6 +198,10 @@ async function submitIngest(overwrite) {
     // Refresh domain stats so page counts update without a browser reload
     loadDomainList().catch(() => {});
 
+    // Bump the navbar pending-sync badge — ingest just wrote many new/
+    // modified wiki files that need to be pushed (v3.0.1-beta.5).
+    refreshSyncPendingBadge();
+
   } catch (err) {
     hideProgress();
     showStatus(ingestStatus, 'error', err.message);
@@ -752,6 +756,54 @@ const syncTokenInput   = document.getElementById('sync-token');
 let wizardRepoUrl = '';
 let wizardToken   = '';
 let wizardLastMode = 'push';
+
+// ── Navbar sync-pending badge (v3.0.1-beta.5) ────────────────────────────────
+// Visible from every tab so the user sees uncommitted local changes (e.g.
+// a domain deletion) without needing to open the Sync tab. Hidden when sync
+// is not configured, or when there are no pending changes.
+
+function applySyncPendingBadge(status) {
+  const badge = document.getElementById('sync-pending-badge');
+  if (!badge) return;
+  const count = (status && status.configured) ? (status.changesCount | 0) : 0;
+  if (count > 0) {
+    badge.textContent = String(count);
+    badge.title = `${count} local change${count === 1 ? '' : 's'} not yet pushed to GitHub. Click Sync to push them.`;
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+async function refreshSyncPendingBadge() {
+  try {
+    const res = await fetch('/api/sync/status');
+    if (!res.ok) {
+      applySyncPendingBadge(null);
+      return;
+    }
+    const status = await res.json();
+    applySyncPendingBadge(status);
+  } catch {
+    // Silent — bad network shouldn't surface as a UI error here. Try again
+    // on the next tab click or the next periodic poll.
+    applySyncPendingBadge(null);
+  }
+}
+
+// Refresh on every tab click — covers the common case where a user does
+// something destructive (delete a domain, ingest a file) and then clicks a
+// different tab. The badge updates instantly when they navigate away.
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => { refreshSyncPendingBadge(); });
+});
+
+// Periodic poll so the badge stays fresh even if the user lingers on one
+// tab. Cheap: one local HTTP call to a route that does `git status --porcelain`.
+setInterval(refreshSyncPendingBadge, 60_000);
+
+// Initial fetch on app load — runs in the background; doesn't block any UI.
+refreshSyncPendingBadge();
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function initSyncTab() {
@@ -1779,6 +1831,11 @@ function renderSyncConfigured(status) {
   } else {
     changesEl.textContent = '';
   }
+
+  // Keep the navbar badge in sync — every sync operation (push, pull, sync)
+  // already calls renderSyncConfigured after success, so this single line
+  // covers all those code paths without each one needing its own update.
+  applySyncPendingBadge(status);
 }
 
 // ── Push only ─────────────────────────────────────────────────────────────────
@@ -2608,6 +2665,9 @@ function showDeletePanel(cardEl, stats) {
       setTimeout(() => cardEl.remove(), 300);
 
       await Promise.all([loadDomains(), loadChatDomains()]);
+      // Bump the navbar pending-sync badge — the deletion is now an
+      // uncommitted change that needs to be pushed (v3.0.1-beta.5).
+      refreshSyncPendingBadge();
     } catch (err) {
       showStatus(statusEl, 'error', err.message);
       confirmBtn.disabled = false;

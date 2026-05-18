@@ -134,6 +134,36 @@ nav {
 }
 .tab-btn.active svg { opacity: 1; }
 
+/* ── Pending-sync badge (v3.0.1-beta.5) ── */
+/* Lives inside the Sync tab button; visible from every tab so the user
+   sees uncommitted/unpushed changes (e.g. a domain deletion) without
+   needing to open the Sync tab. Pulses gently to draw attention. */
+.sync-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  margin-left: 2px;
+  border-radius: 9px;
+  background: var(--warning, #f9b91c);
+  color: #1a1429;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow: 0 0 0 0 rgba(249, 185, 28, 0.55);
+  animation: sync-pending-pulse 2.4s ease-in-out infinite;
+}
+.sync-pending-badge.hidden {
+  display: none;
+}
+@keyframes sync-pending-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 185, 28, 0.55); }
+  50%      { box-shadow: 0 0 0 4px rgba(249, 185, 28, 0); }
+}
+
 
 /* ── Version badge ── */
 .app-version {
