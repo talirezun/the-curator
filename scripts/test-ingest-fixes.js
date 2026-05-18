@@ -477,6 +477,41 @@ console.log('\n9. validateOutline — originator-hint injection\n');
   assertEq(candidates.length, 1, 'case I: hyphen-norm match prevents duplicate slug variant');
 }
 
+// Case I2: honorific WITH period — "dr.-tali-rezun" must redirect to canonical
+// (v3.0.1-beta.2 regression test — the LLM occasionally preserves "Dr." literally)
+{
+  const outline = {
+    title: 'Test',
+    pages: [
+      { path: SP, summary: 'Summary' },
+      { path: 'entities/dr.-tali-rezun.md', summary: 'Author' },  // LLM kept the dot
+    ],
+  };
+  const { outline: out, warnings } = validateOutline(outline, SP, 'src.md', ['Dr. Tali Rezun']);
+  const taliPages = out.pages.filter(p => /tali|rezun/i.test(p.path));
+  assertEq(taliPages.length, 1, 'case I2: dr.- variant deduped → exactly 1 author page');
+  assertEq(taliPages[0].path, 'entities/tali-rezun.md',
+    'case I2: dr.- variant redirected to canonical tali-rezun.md');
+  assertTrue(warnings.some(w => /redirected to canonical/.test(w)),
+    'case I2: redirect warning emitted');
+}
+
+// Case I3: honorific WITHOUT period — "dr-tali-rezun" must also redirect
+{
+  const outline = {
+    title: 'Test',
+    pages: [
+      { path: SP, summary: 'Summary' },
+      { path: 'entities/dr-tali-rezun.md', summary: 'Author' },
+    ],
+  };
+  const { outline: out } = validateOutline(outline, SP, 'src.md', ['Dr. Tali Rezun']);
+  const taliPages = out.pages.filter(p => /tali|rezun/i.test(p.path));
+  assertEq(taliPages.length, 1, 'case I3: dr- variant deduped → exactly 1 author page');
+  assertEq(taliPages[0].path, 'entities/tali-rezun.md',
+    'case I3: dr- variant redirected to canonical tali-rezun.md');
+}
+
 // Case J: empty hints array → no injection, no errors
 {
   const outline = {

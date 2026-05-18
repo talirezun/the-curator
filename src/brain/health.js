@@ -21,6 +21,12 @@ import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
+// Honorific prefixes — same set writePage's Pass A and the ingest validator
+// recognise. Optional period covers the "dr.-tali-rezun" variant produced
+// when the LLM preserves the dot from "Dr." (v3.0.1-beta.2). Stripping this
+// in normKey lets the hyphen-variant Health pass detect `dr.-tali-rezun.md`
+// and `tali-rezun.md` as the same logical entity and offer a merge.
+const HONORIFIC_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor)\.?-/;
 
 /**
  * Resolve a relative wiki path against `wikiDir` and refuse anything that
@@ -119,7 +125,11 @@ async function listMd(dir) {
 }
 
 function normKey(slug) {
-  return slug.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();
+  return slug
+    .replace(HONORIFIC_PREFIX_RE, '')   // dr.-tali-rezun → tali-rezun
+    .replace(ARTICLE_PREFIX_RE, '')      // the-curtain → curtain
+    .replace(/-/g, '')                   // collapse remaining hyphens
+    .toLowerCase();
 }
 
 async function walkMdFiles(rootDir) {

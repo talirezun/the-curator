@@ -420,8 +420,12 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
   // (honorific included, or hyphen drop), REDIRECT it to the canonical slug
   // rather than creating a duplicate.
   if (Array.isArray(originatorHints) && originatorHints.length > 0) {
-    // Mirror writePage's Pass A regex — strip leading "dr-", "mr-", "prof-" etc.
-    const HONORIFIC_RE = /^(dr|mr|ms|mrs|prof|professor|the)-/;
+    // Mirror writePage's Pass A regex — strip leading "dr-", "mr-", "prof-"
+    // etc., AND the same patterns with an optional period ("dr.-tali-rezun"
+    // produced when the LLM preserves the dot from "Dr."). Keep this in sync
+    // with TITLE_PREFIX_RE in files.js — they MUST stay aligned or the
+    // validator and writePage disagree on what counts as the same entity.
+    const HONORIFIC_RE = /^(dr|mr|ms|mrs|prof|professor|the)\.?-/;
     // Normalisation that mirrors what writePage's Pass A + Pass B do at write
     // time: strip honorific prefix, then strip all hyphens, lowercase. Two
     // slugs that produce the same normKey are write-time equivalent.

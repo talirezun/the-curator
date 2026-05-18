@@ -694,7 +694,13 @@ function injectFrontmatter(content, relativePath, today) {
 }
 
 // Title prefixes the LLM adds that shouldn't create separate entity files
-const TITLE_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor|the)-/;
+// Honorific / title prefixes the LLM sometimes attaches to entity slugs.
+// Allows an OPTIONAL period after the honorific because the LLM occasionally
+// preserves the dot from "Dr." when slugifying — producing "dr.-tali-rezun"
+// instead of "dr-tali-rezun". Without the optional `\.?`, Pass A failed to
+// strip the prefix and the canonical-slug dedup didn't fire, leaving two
+// entity files on disk for the same person (v3.0.1-beta.2 fix).
+const TITLE_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor|the)\.?-/;
 
 export async function writePage(domain, relativePath, content) {
   const today = new Date().toISOString().slice(0, 10);
