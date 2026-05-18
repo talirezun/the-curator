@@ -16,7 +16,7 @@ Wiki Health has always scanned your wiki for structural issues — broken links,
 | 2 | Orphan pages | Proposes up to 5 existing pages that should link to the orphan, each with an AI-written bullet description. | **v2.4.4** ✅ |
 | 3 | Semantic near-duplicates | Detects pages like `email.md` + `e-mail.md`, `rag.md` + `retrieval-augmented-generation.md`, `neural-network.md` + `neural-networks.md` that are the same concept under different slugs. | **v2.4.5** ✅ |
 
-Issues that the algorithm solves perfectly (missing backlinks, folder-prefix links, hyphen variants, cross-folder duplicates) are **not** AI-assisted — determinism wins there.
+Issues that the algorithm solves perfectly (missing backlinks, folder-prefix links, hyphen variants, cross-folder duplicates) are **not** AI-assisted — determinism wins there. For the structural-scan checks and step-by-step fix walk-throughs (especially **Hyphen variants** with honorific-aware grouping in v3.0.1-beta.3+), see [docs/user-guide.md §17 Wiki Health](user-guide.md#17-wiki-health).
 
 ---
 

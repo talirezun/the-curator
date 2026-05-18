@@ -918,7 +918,7 @@ The **Health** tab scans a domain's wiki for structural issues and lets you fix 
 | **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Review** — keep, merge, or delete from Obsidian. Many orphans resolve themselves over time as the wiki grows. From v2.4.4, each orphan row also gets a ✨ **Ask AI** button that proposes up to 5 existing pages which should link to this one, each with an AI-written bullet description — see [ai-health.md](ai-health.md). |
 | **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
 | **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
-| **Hyphen variants** | Entity files differing only in hyphenation (e.g. `tali-rezun` + `talirezun`). | **Fix** — merges into the canonical hyphenated slug. |
+| **Hyphen variants** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix. The scanner groups files whose normalised form (strip honorifics like `dr-` / `dr.-` / `prof-`, then strip all hyphens, then lowercase) is identical. Example groups: `tali-rezun` + `talirezun` + `dr.-tali-rezun`; `prof-smith` + `smith`. | **Fix** — merges all variants into the canonical slug (no honorific, most hyphens, shortest). See the detailed walk-through below. |
 | **Missing backlinks** | A summary lists an entity under *Entities Mentioned* but the entity's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
 
 **Auto-fixable issues** have a **Fix** button (and a **Fix all (N)** button at the top of the section). **Broken links** use the same flow per-row but with an **Apply** button — only rows where the scanner found a plausible target are applicable; the bulk action is **Apply all suggestions (N)**. **Orphans** are review-only because no mechanical rule determines whether an unconnected page should stay, merge, or go.
@@ -939,6 +939,40 @@ The **Health** tab scans a domain's wiki for structural issues and lets you fix 
 - Whenever Obsidian's graph looks noisier than it should
 
 The Health tab doesn't touch source files or conversations — it only cleans the wiki itself. Running it is always safe and idempotent.
+
+### Hyphen variants — when and how (v3.0.1-beta.3+)
+
+The most common cause of hyphen-variant duplicates is an LLM picking a slightly different slug across multiple ingests of related sources. The Curator does its best to prevent this at write time (deterministic summary slug, existing-files list passed to the LLM, three dedup passes in `writePage`), but a few specific patterns can still slip through:
+
+| Pattern | Example | Why it happens |
+|---|---|---|
+| **Honorific kept literally with period** | `dr.-tali-rezun.md` next to `tali-rezun.md` | The LLM occasionally preserves the dot from "Dr." when slugifying |
+| **Honorific kept without period** | `dr-tali-rezun.md` next to `tali-rezun.md` | The LLM treats the title as part of the name |
+| **Pure hyphenation drift** | `tali-rezun.md` next to `talirezun.md` | Different runs converge on different slug shapes for the same name |
+| **Article-prefix drift** | `the-curtain.md` next to `curtain.md` | Article prefixes like "the/a/an" inconsistently included |
+
+All four cases collapse to the same canonical slug after the scanner's normalisation, so the **Hyphen variants** section will surface them as one group regardless of the variation.
+
+**Step-by-step fix walk-through:**
+
+1. **Click Scan.** The summary banner shows `Hyphen variants: N` if any are detected.
+2. **Scroll to the Hyphen variants section.** Each row shows the canonical file (kept) plus the variants that will be merged into it. Canonical selection priorities: (a) no honorific prefix; (b) most hyphens; (c) shortest length.
+3. **Click Fix on the row.** The Curator:
+   - Reads each variant file's bullet sections (Key Facts, Related, Entities Mentioned, etc.)
+   - Unions them into the canonical file, deduplicating by link target
+   - Deletes the variant files from disk
+4. **Re-scan.** The Hyphen variants count drops to zero. Any `[[broken-slug]]` wikilinks that still point at the deleted files will appear in the **Broken links** section.
+5. **Optional cleanup of broken links.** Click **Apply all suggestions** on Broken links — the scanner will offer to rewrite stranded links to the canonical slug. Pages you re-ingest later will also get this rewrite automatically via `writePage`'s step 5c variant-link normalisation (prefix-tolerant matching across all wiki folders).
+
+**Real-world example.** After re-ingesting an article authored by Dr. Tali Rezun on v3.0.1-beta.1, two author files ended up on disk: `entities/dr.-tali-rezun.md` (2.5 KB, sparse) and `entities/tali-rezun.md` (19.8 KB, populated). Both describe the same person. On v3.0.1-beta.3+:
+
+- Scan flags them as a hyphen-variant group with `tali-rezun.md` as canonical
+- One click on Fix unions the bullet sections, deletes `dr.-tali-rezun.md`
+- Re-scan: any pages that had `[[dr.-tali-rezun]]` links now show in Broken links; one Apply all suggestions and they're rewritten
+
+**What the Fix does not do (intentional):** Hyphen-variant Fix doesn't rewrite `[[old-slug]]` wikilinks across the domain — that's the role of the Broken links pass. This separation keeps each operation cheap and predictable. The two-step flow (Hyphen variants → Broken links) takes < 30 seconds in practice.
+
+**Safety:** The merge is always non-destructive at the bullet level — `mergeBulletSections` unions content rather than overwriting. If the canonical file already had richer content than the variant (as in the example above), nothing is lost; the variant's unique bullets are added on top.
 
 ### Semantic duplicates (v2.4.5+)
 
