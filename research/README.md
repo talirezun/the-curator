@@ -54,6 +54,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *How the race to solve AI agent memory led me back to markdown files, knowledge graphs, and the quiet power of a second brain.*
 
+- **[The Shared Brain: When Second Brains Start Thinking Together](./articles/the-shared-brain-thinking-together.md)**  
+  By Dr. Tali Režun & Dražen Kapusta  
+  *On The Curator v3.0.0-beta and the Shared Brain feature — how cohorts, research teams, and organisations can build attributed, AI-queryable collective intelligence on plain markdown and Git, without giving up individual privacy or ownership.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -97,6 +101,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {May},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-agent-memory-problem.md}
+}
+
+@article{rezun-kapusta2026shared-brain,
+  author = {Režun, Tali and Kapusta, Dražen},
+  title = {The Shared Brain: When Second Brains Start Thinking Together},
+  year = {2026},
+  month = {May},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-shared-brain-thinking-together.md}
 }
 ```
 

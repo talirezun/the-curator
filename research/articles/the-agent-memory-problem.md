@@ -306,4 +306,5 @@ Serial Entrepreneur · AI Researcher · Builder of Second Brains
 *Published: May 14, 2026*  
 *Part of: [The Curator Research Series](https://github.com/talirezun/the-curator/tree/main/research)*  
 *Previous in series: [The Second Brain That Grows Smarter and Lives on Your Computer](./the-second-brain-that-grows-smarter.md) · [Building Knowledge Immortality Through the Second Brain Architecture and The Curator App](./knowledge-immortality-second-brain.md) · [From Graph to Intelligence: The My Curator MCP and the Art of Querying Your Second Brain](./from-graph-to-intelligence-my-curator-mcp.md)*  
+*Next in series: [The Shared Brain: When Second Brains Start Thinking Together](./the-shared-brain-thinking-together.md)*  
 *Open source | Local-first | Privacy-first*
