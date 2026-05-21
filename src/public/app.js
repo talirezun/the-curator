@@ -3412,13 +3412,46 @@ document.getElementById('settings-update-btn')?.addEventListener('click', async 
     } catch { /* non-critical */ }
 
     if (versionInfo?.restartRequired) {
+      // v3.0.1-beta.8+: offer a one-click Restart instead of asking the user
+      // to manually quit the Dock app. The /api/restart endpoint is what we
+      // already call after a successful update (and is the bulletproof v2.7.1
+      // implementation) — there's no reason to make the user do this by hand
+      // when the running process is responsive enough to have served the
+      // version check. The manual Dock → Quit path remains documented in the
+      // fallback hint below in case the auto-restart somehow doesn't take.
       status.innerHTML = `
         <span style="color:var(--warning)">
           <strong>Files are updated (v${versionInfo.onDiskVersion})</strong>
           but the running app is still v${versionInfo.version}.
-          Please quit and relaunch The Curator — right-click the Dock icon → Quit, then re-open the .app.
-        </span>`;
+        </span>
+        <button id="settings-restart-stale" class="btn primary pill" style="margin-left:12px;font-size:12px;padding:4px 14px">
+          Restart now
+        </button>
+        <div style="color:var(--text-muted);font-size:11px;margin-top:6px">
+          If the restart doesn't take, fall back to right-click the Dock icon → Quit, then re-open the .app.
+        </div>`;
       status.className = 'status';
+      document.getElementById('settings-restart-stale')?.addEventListener('click', async (ev) => {
+        const restartBtn = ev.currentTarget;
+        restartBtn.disabled = true;
+        restartBtn.textContent = 'Restarting…';
+        try { await fetch('/api/restart', { method: 'POST' }); } catch {}
+        // Poll until the new server answers — same pattern as doUpdate().
+        const poll = setInterval(async () => {
+          try {
+            const r = await fetch('/api/health', { signal: AbortSignal.timeout(1000) });
+            if (r.ok) {
+              clearInterval(poll);
+              clearTimeout(failsafe);
+              setTimeout(() => location.reload(), 500);
+            }
+          } catch {}
+        }, 1200);
+        const failsafe = setTimeout(() => {
+          clearInterval(poll);
+          status.innerHTML = `<span style="color:var(--warning)">Auto-restart didn't respond within 30s. Right-click the Dock icon → Quit, then re-open the .app.</span>`;
+        }, 30_000);
+      });
       return;
     }
 
