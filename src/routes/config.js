@@ -40,6 +40,99 @@ const SUBPROCESS_PATH = [
 ].filter(Boolean).join(':');
 const SUBPROCESS_ENV = { ...process.env, PATH: SUBPROCESS_PATH };
 
+/**
+ * Classify an `npm install` failure into one of a handful of well-known
+ * remediation buckets. Returns `{ kind, actionable }` where `actionable`
+ * is a user-facing plain-English message with a concrete next step, or
+ * `null` when the error doesn't match any known pattern (caller should
+ * surface the raw npm output in that case).
+ *
+ * Exported for unit testing (v3.0.1-beta.10). The classifier itself is
+ * a pure function over a string + two SHA strings — no FS, no network,
+ * deterministic — so it can be exercised from a stand-alone test
+ * script with synthetic npm error strings.
+ *
+ * Kept narrow on purpose: we only enrich messages we recognise. Unknown
+ * errors fall through with `actionable: null` so the user sees the real
+ * npm output rather than a wrong-but-confident remediation.
+ */
+export function classifyNpmError(rawMessage, beforeSha = '', afterSha = '') {
+  const msg = (rawMessage || '').toLowerCase();
+  if (!msg) return { kind: 'unknown', actionable: null };
+
+  // PATH issue is handled separately by the caller (returns a different
+  // shape — partial success rather than failure). Surface it for
+  // completeness so test coverage stays explicit.
+  if (msg.includes('npm: command not found') || msg.includes('npm: not found')) {
+    return { kind: 'path', actionable: null };
+  }
+
+  const shaSpan = beforeSha && afterSha ? `${beforeSha} → ${afterSha} ` : '';
+
+  // Corrupted npm cache — partial file in ~/.npm/_cacache blocks the
+  // rename(2) of the freshly-downloaded tarball. Diagnosed via Cowork
+  // troubleshooting on a user's machine that had been force-quit during
+  // a previous install. The canonical recovery is `npm cache clean --force`.
+  if (msg.includes('eacces') ||
+      msg.includes('errno -13') ||
+      msg.includes('permission denied') ||
+      (msg.includes('rename') && msg.includes('file exists'))) {
+    return {
+      kind: 'cache-corrupted',
+      actionable:
+        `Your npm cache appears to be corrupted (EACCES / permission denied during a rename). ` +
+        `This is usually the result of a previous install being interrupted. To recover: ` +
+        `open Terminal and run ` +
+        '`npm cache clean --force`' +
+        ` then click Check for Updates again. ` +
+        `Files were ${shaSpan ? 'updated to ' + shaSpan : 'updated '}but dependencies didn't install — ` +
+        `your existing app keeps working, only the dependency install was blocked.`,
+    };
+  }
+
+  // Disk-out-of-space.
+  if (msg.includes('enospc') || msg.includes('no space left')) {
+    return {
+      kind: 'disk-full',
+      actionable:
+        `Disk is full (ENOSPC) — npm couldn't write to disk. Free some space ` +
+        `(at least 500 MB to be safe) and click Check for Updates again. ` +
+        `Files were ${shaSpan ? 'updated to ' + shaSpan : 'updated '}but dependencies didn't install.`,
+    };
+  }
+
+  // Network-related — registry timeouts, dropped connections, DNS.
+  if (msg.includes('etimedout') ||
+      msg.includes('econnreset') ||
+      msg.includes('socket hang up') ||
+      msg.includes('enotfound') ||
+      msg.includes('network')) {
+    return {
+      kind: 'network',
+      actionable:
+        `Network error while downloading dependencies (timeout / connection reset / DNS). ` +
+        `Check your connection and click Check for Updates again. ` +
+        `Files were ${shaSpan ? 'updated to ' + shaSpan : 'updated '}but dependencies didn't install.`,
+    };
+  }
+
+  // Lockfile in a bad state — happens when a previous npm install was
+  // interrupted between the package.json write and the package-lock.json
+  // regeneration. Auto-recovers on retry once user clears node_modules.
+  if (msg.includes('eintegrity') || msg.includes('lockfile')) {
+    return {
+      kind: 'lockfile',
+      actionable:
+        `npm lockfile is in a bad state. To recover: open Terminal, run ` +
+        '`rm -rf node_modules package-lock.json && npm install`' +
+        ` and then relaunch The Curator. ` +
+        `Files were ${shaSpan ? 'updated to ' + shaSpan : 'updated '}but dependencies didn't reinstall.`,
+    };
+  }
+
+  return { kind: 'unknown', actionable: null };
+}
+
 const router = Router();
 
 /** GET /api/config — returns current app configuration */
@@ -315,9 +408,6 @@ router.post('/update', async (_req, res) => {
       // process (which is what spawned this subprocess) doesn't. Restarting picks
       // up the fixed version. Since v2.3.4→v2.3.5 added no dependencies, the
       // existing node_modules is still correct and a restart is sufficient.
-      //
-      // For any OTHER npm error, we re-throw and surface it — auto-restarting
-      // into a broken-dependency state would be worse than reporting the failure.
       const msg = (npmErr.message || '').toLowerCase();
       const pathIssue = msg.includes('npm: command not found') || msg.includes('npm: not found');
       if (pathIssue) {
@@ -332,6 +422,29 @@ router.post('/update', async (_req, res) => {
                    `older versions that's fixed in the update you just pulled. Restarting will ` +
                    `load the fixed updater. No dependency install is needed for this version bump.`,
         });
+      }
+
+      // v3.0.1-beta.10: classify other common npm install failures so the
+      // user sees an actionable next step rather than the cryptic
+      // "Command failed: npm install --silent --no-audit --no-fund".
+      //
+      // Reported case that motivated this: a user's `~/.npm/_cacache` had a
+      // partial file from a prior force-quit, so every npm install failed
+      // with `EACCES: permission denied, rename ...`. The previous error
+      // message gave them no hint that `npm cache clean --force` would fix
+      // it. The classifier maps each well-known npm-failure pattern to a
+      // plain-English remediation that the frontend renders verbatim in
+      // the Settings → Updates banner.
+      //
+      // For genuinely unknown errors we still re-throw the raw npmErr so
+      // the user sees the actual text and can google it — never hide an
+      // error we don't recognise.
+      const classification = classifyNpmError(npmErr.message, beforeSha, afterSha);
+      if (classification.actionable) {
+        const enriched = new Error(classification.actionable);
+        enriched.original = npmErr.message;
+        enriched.classification = classification.kind;
+        throw enriched;
       }
       throw npmErr;
     }

@@ -1399,11 +1399,29 @@ export async function getDomainStats(slug) {
       .then(files => files.filter(f => f.endsWith('.json')).length)
       .catch(() => 0),
 
-    // Last ingest date from log.md
+    // Last ingest date from log.md — pick the MOST RECENT entry.
+    //
+    // Pre-v3.0.1-beta.10 this used `content.match(/.../m)` without the `g`
+    // flag, which returns only the FIRST match in the file. But appendLog
+    // APPENDS new entries to the end of log.md, so "first match" was actually
+    // the OLDEST entry — every "Last ingest" date displayed in the Domains
+    // tab showed the date of the FIRST-EVER ingest of that domain rather
+    // than the most recent one. Confirmed empirically on a real domain log
+    // with 25 entries spanning April–May 2026: the UI rendered the April
+    // date even after a fresh May ingest.
+    //
+    // Fix: collect all `## [YYYY-MM-DD]` headings via matchAll, then return
+    // the lexicographic max. ISO-8601 dates sort correctly as strings, so
+    // this is both robust to manually-edited logs (a user reordering
+    // entries doesn't lie about "most recent") and free of false positives
+    // (only headings of the documented log-entry format match).
     readFile(path.join(base, 'wiki', 'log.md'), 'utf8')
       .then(content => {
-        const match = content.match(/^## \[(\d{4}-\d{2}-\d{2})\]/m);
-        return match ? match[1] : null;
+        const matches = [...content.matchAll(/^## \[(\d{4}-\d{2}-\d{2})\]/gm)];
+        if (matches.length === 0) return null;
+        let max = matches[0][1];
+        for (const m of matches) if (m[1] > max) max = m[1];
+        return max;
       })
       .catch(() => null),
   ]);
