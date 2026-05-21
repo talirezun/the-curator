@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { listDomains, createDomain, deleteDomain, renameDomain, getDomainStats, generateUniqueSlug } from '../brain/files.js';
 import { isConfigured } from '../brain/sync.js';
+import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 
 const router = Router();
 
@@ -74,6 +75,13 @@ router.put('/:domain', async (req, res) => {
 
 // DELETE /api/domains/:domain — delete a domain
 router.delete('/:domain', async (req, res) => {
+  // v3.0.1-beta.8: refuse to delete a domain that has an active write
+  // operation. The `rm -rf` of the domain folder would race the ingest's
+  // writePage calls and produce undefined behaviour.
+  if (isDomainActive(req.params.domain)) {
+    const { status, body } = conflictResponse(`delete domain "${req.params.domain}"`);
+    return res.status(status).json(body);
+  }
   try {
     await deleteDomain(req.params.domain);
     res.json({ deleted: true, syncWarning: isConfigured() });

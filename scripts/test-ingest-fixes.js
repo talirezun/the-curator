@@ -155,7 +155,9 @@ const SP = 'summaries/the-source.md';
   assertTrue(warnings.some(w => w.includes('non-canonical')), 'case B: redirect warning');
 }
 
-// Case C: outline already correct → no warnings, no changes
+// Case C: outline correct + minimal — v3.0.1-beta.8 may emit structural
+// warnings for missing concepts/* and < 3 pages, neither of which affects
+// the canonical-summary invariant being tested here.
 {
   const outline = {
     title: 'Test',
@@ -165,7 +167,8 @@ const SP = 'summaries/the-source.md';
     ],
   };
   const { outline: out, warnings } = validateOutline(outline, SP, 'the-source.pdf');
-  assertEq(warnings.length, 0, 'case C: no warnings');
+  const summaryWarnings = warnings.filter(w => w.includes('summary'));
+  assertEq(summaryWarnings.length, 0, 'case C: no summary-related warnings');
   assertEq(out.pages.length, 2, 'case C: page count unchanged');
 }
 
@@ -187,11 +190,15 @@ const SP = 'summaries/the-source.md';
   assertTrue(warnings.some(w => w.includes('summary pages')), 'case D: drop warning emitted');
 }
 
-// Case E: bad input shape doesn't crash
+// Case E: bad input shape doesn't crash. v3.0.1-beta.8 adds structural
+// warnings (no entities, no concepts, < 3 pages) on top of the existing
+// missing-summary warning — we only assert that the missing-summary one
+// is present.
 {
   const { outline, warnings } = validateOutline({}, SP, 'x.pdf');
   assertTrue(Array.isArray(outline.pages), 'case E: empty input → array pages');
-  assertEq(warnings.length, 1, 'case E: one warning (missing summary)');
+  const summaryW = warnings.filter(w => w.includes('missing summary'));
+  assertEq(summaryW.length, 1, 'case E: one warning (missing summary)');
 }
 
 // ── 3. Prompt builders: required coverage rules ──────────────────────────────
@@ -566,7 +573,9 @@ console.log('\n10. Health scanner hyphen-variant detection (real pair)\n');
   else delete process.env.DOMAINS_PATH;
 }
 
-// Case J: empty hints array → no injection, no errors
+// Case J: empty hints array → no originator-related injections.
+// v3.0.1-beta.8 may emit structural warnings (no entities, no concepts,
+// < 3 pages) but none should be originator-related.
 {
   const outline = {
     title: 'Test',
@@ -574,7 +583,11 @@ console.log('\n10. Health scanner hyphen-variant detection (real pair)\n');
   };
   const { outline: out, warnings } = validateOutline(outline, SP, 'src.md', []);
   assertEq(out.pages.length, 1, 'case J: empty hints → no changes');
-  assertEq(warnings.length, 0, 'case J: empty hints → no warnings');
+  // The structural-checks layer adds advisory warnings for empty outlines
+  // (no entities, no concepts) that mention the word "originator" in
+  // their prose — filter to the originator-INJECTION warning specifically.
+  const originatorW = warnings.filter(w => w.includes('omitted originator'));
+  assertEq(originatorW.length, 0, 'case J: empty hints → no originator injection');
 }
 
 // ── Summary ──────────────────────────────────────────────────────────────────

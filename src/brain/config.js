@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileAtomicSync } from './atomic-write.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -20,8 +21,11 @@ function readRaw() {
   catch { return {}; }
 }
 
+// v3.0.1-beta.8: atomic write so a kill-mid-write of .curator-config.json
+// cannot wipe the user's API keys / domainsPath. Sync variant required —
+// callers in this module don't await.
 function writeRaw(data) {
-  writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
 /** Returns the resolved, absolute path to the domains folder. */

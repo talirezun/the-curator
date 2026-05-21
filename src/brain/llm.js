@@ -236,6 +236,24 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig,
     });
+    // v3.0.1-beta.8: detect output-budget truncation. Gemini returns
+    // `finishReason: "MAX_TOKENS"` on the first candidate when its response
+    // exceeded `maxOutputTokens`. Pre-fix this surfaced as the
+    // "AI returned malformed JSON twice in a row" message at parseJSON time —
+    // misleadingly framed as "transient" when in fact the next attempt would
+    // hit the same wall. Now we throw a clear, actionable error BEFORE the
+    // truncated text reaches the JSON parser.
+    const finishReason = result?.response?.candidates?.[0]?.finishReason;
+    if (finishReason === 'MAX_TOKENS') {
+      throw new Error(
+        `⚠ Gemini hit the output token limit (${maxTokens} tokens) on this call. ` +
+        `The response was cut off mid-way and cannot be parsed. This is NOT a ` +
+        `transient JSON error — retrying will hit the same limit. What to do: ` +
+        `split the source into smaller parts (e.g. by chapter) and ingest each ` +
+        `separately. If you regularly ingest very long documents, the ` +
+        `Phase 2 batch size in src/brain/ingest.js may need tuning.`
+      );
+    }
     return result.response.text();
   }
 
@@ -250,7 +268,40 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
   });
-  return message.content[0].text;
+  // v3.0.1-beta.8: detect Anthropic output-budget truncation. When the model
+  // hits `max_tokens` mid-response, Anthropic returns
+  // `stop_reason: "max_tokens"` and the `text` field contains the partial
+  // JSON. Pre-fix this manifested as a deterministic JSON parse failure that
+  // the v3.0.1-beta.7 retry-with-stricter-JSON path could never resolve
+  // (because the underlying issue was budget, not prompt obedience).
+  //
+  // Especially impactful for Anthropic users because they have no JSON-mode
+  // safety net — Gemini's MAX_TOKENS check (above) catches the analogous
+  // condition there.
+  if (message.stop_reason === 'max_tokens') {
+    throw new Error(
+      `⚠ Claude hit the output token limit (${maxTokens} tokens) on this call. ` +
+      `The response was cut off mid-way and cannot be parsed. This is NOT a ` +
+      `transient JSON error — retrying will hit the same limit. What to do: ` +
+      `split the source into smaller parts (e.g. by chapter) and ingest each ` +
+      `separately; or switch to a model with a larger output budget (Settings → ` +
+      `LLM_MODEL = claude-sonnet-4-5). Note: Claude Haiku 4.5 has a smaller ` +
+      `output cap than Sonnet — heavy documents are more likely to hit this ` +
+      `limit on Haiku.`
+    );
+  }
+  // Defensive: text field can be missing if the assistant produced only
+  // tool-use blocks (shouldn't happen for these prompts, but better to
+  // surface a clear error than to throw an obscure "undefined.text").
+  const firstBlock = message?.content?.[0];
+  if (!firstBlock || typeof firstBlock.text !== 'string') {
+    throw new Error(
+      `⚠ Claude returned no text content (stop_reason: ${message.stop_reason || 'unknown'}). ` +
+      `This is rare and usually transient — try again. If it persists, switch ` +
+      `provider in Settings.`
+    );
+  }
+  return firstBlock.text;
 }
 
 /**

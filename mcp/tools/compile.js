@@ -24,6 +24,7 @@ import {
   readSchema,
   readIndex,
   wikiPath,
+  domainPath,
   writePage,
   appendLog,
   syncSummaryEntities,
@@ -31,6 +32,7 @@ import {
 import { generateText } from '../../src/brain/llm.js';
 import { getDefaultDomain } from '../../src/brain/config.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
+import { acquireFileLock, isFileLocked } from '../../src/brain/write-registry.js';
 
 // Hard caps — defense against runaway LLM output. Generous enough to never
 // bite a real compile; small enough that a confused or malicious model can't
@@ -555,6 +557,27 @@ export async function compileToWikiHandler(args, storage) {
   const resolvedSummary = resolvedPages.find(p => p.path === summaryPath)?.content ?? summary_content;
   const resolvedExtra = resolvedPages.filter(p => p.path !== summaryPath);
 
+  // v3.0.1-beta.8: respect the file-based write lock used by the web-server
+  // for ingest + compile + health-fix-all. The MCP server runs in a child
+  // process spawned by Claude Desktop — separate from the Curator web app
+  // process — so the in-memory write registry isn't visible. The file lock
+  // under <domain>/.write-lock IS shared. Without this check, Claude Desktop
+  // calling compile_to_wiki while the Curator UI is running an ingest on the
+  // same domain would race writePage with itself, producing undefined merge
+  // outcomes. With the check + 30-minute stale-lock TTL we hold a safe
+  // boundary across processes.
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'mcp:compile_to_wiki' });
+  if (!releaseFileLock) {
+    return {
+      ok: false,
+      error: `Another process is writing to "${domain}" right now (likely the Curator app running an ingest or compile). Wait a moment and retry. If you believe this is stale, delete <domains>/${domain}/.write-lock manually.`,
+      conflict: 'file_lock',
+    };
+  }
+
+  let mcpResult;
+  try {
+
   const writeRecords = [];
 
   // 4a. Summary page
@@ -642,7 +665,7 @@ export async function compileToWikiHandler(args, storage) {
         ? ` ${allBroken.length} broken link${allBroken.length === 1 ? '' : 's'} stripped (rendered as plain text). See \`links.broken\` for what was dropped.`
         : ` ⚠️ ${allBroken.length} broken link${allBroken.length === 1 ? '' : 's'} written as-is. See \`links.broken\` — consider adding those pages to additional_pages on a follow-up call, or use broken_link_policy='strip' / 'refuse'.`;
 
-  return {
+  mcpResult = {
     ok: true,
     domain,
     title,
@@ -656,6 +679,14 @@ export async function compileToWikiHandler(args, storage) {
         ? 'Review `links.broken`. To add the missing pages, call compile_to_wiki again with `additional_pages` covering those slugs.'
         : 'Use get_node or get_summary to read any of the pages back, or scan_wiki_health to check for any issues introduced.',
   };
+
+  } finally {
+    // v3.0.1-beta.8: always release the cross-process file lock so a
+    // crashed / errored compile doesn't leave a stale lock that blocks the
+    // next call until the 30-minute TTL.
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+  }
+  return mcpResult;
 }
 
 function extractFirstSentence(content) {

@@ -4,7 +4,13 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { ingestFile } from '../brain/ingest.js';
-import { listDomains, rawPath } from '../brain/files.js';
+import { listDomains, rawPath, domainPath } from '../brain/files.js';
+import {
+  registerWrite,
+  acquireFileLock,
+  isUpdateInProgress,
+  conflictResponse,
+} from '../brain/write-registry.js';
 
 const router = Router();
 
@@ -45,6 +51,14 @@ router.post('/', upload.single('file'), async (req, res) => {
     });
   }
 
+  // v3.0.1-beta.8: refuse to start a new ingest while the app updater is
+  // running. The update flow does `git reset --hard` + `npm install` + a
+  // process restart — none of which co-operates well with an in-flight ingest.
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('start a new ingest');
+    return res.status(status).json(body);
+  }
+
   // ── Switch to Server-Sent Events streaming ─────────────────────────────────
   // All validation passed — from here on we stream progress events to the client.
   res.setHeader('Content-Type', 'text/event-stream');
@@ -55,6 +69,29 @@ router.post('/', upload.single('file'), async (req, res) => {
   const emit = (data) => {
     if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
+
+  // v3.0.1-beta.8: register this ingest so concurrent /api/update,
+  // /api/restart, /api/sync/*, and DELETE /api/domains/:slug can refuse
+  // with 409 instead of racing the in-flight wiki writes. Wraps the call
+  // in try/finally so the registry is released on EVERY exit path
+  // (success, error, client disconnect — although the await completes
+  // regardless of client state in the current architecture).
+  //
+  // Also takes a file-based write lock under <domain>/.write-lock so the
+  // MCP child process (separate from this web-server process, spawned by
+  // Claude Desktop) sees the in-flight state. The MCP's write tools
+  // (compile_to_wiki, fix_wiki_issue) check isFileLocked() before writing.
+  const releaseRegistry = registerWrite(domain, 'ingest');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'ingest' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    emit({
+      type: 'error',
+      message: `Another process is already writing to "${domain}" (file lock held). ` +
+               `If this seems stuck, manually delete <domains>/${domain}/.write-lock and retry.`,
+    });
+    return res.end();
+  }
 
   try {
     const result = await ingestFile(
@@ -78,6 +115,8 @@ router.post('/', upload.single('file'), async (req, res) => {
     console.error('Ingest error:', err);
     emit({ type: 'error', message: err.message });
   } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
     res.end();
   }
 });

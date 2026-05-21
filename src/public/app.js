@@ -127,6 +127,14 @@ async function submitIngest(overwrite) {
   hideDuplicateBanner();
   showProgress(2, 'Starting…');
 
+  // v3.0.1-beta.8: register ingest start with the UI busy-state tracker so
+  // Update / Sync / Delete buttons get disabled while this is running.
+  // Matched by ingestEnd() in finally below.
+  if (typeof window.__curatorIngestStart === 'function') {
+    window.__curatorIngestStart(domain);
+  }
+  let ingestRegistered = true;
+
   const formData = new FormData();
   formData.append('domain', domain);
   formData.append('file', selectedFile);
@@ -206,6 +214,13 @@ async function submitIngest(overwrite) {
     hideProgress();
     showStatus(ingestStatus, 'error', err.message);
     ingestBtn.disabled = false;
+  } finally {
+    // v3.0.1-beta.8: always release the UI busy state so the Update/Sync/
+    // Delete buttons re-enable. Mirrors the backend write-registry release
+    // pattern in src/routes/ingest.js.
+    if (ingestRegistered && typeof window.__curatorIngestEnd === 'function') {
+      window.__curatorIngestEnd(domain);
+    }
   }
 }
 
@@ -804,6 +819,84 @@ setInterval(refreshSyncPendingBadge, 60_000);
 
 // Initial fetch on app load — runs in the background; doesn't block any UI.
 refreshSyncPendingBadge();
+
+// ── Ingest-busy state (v3.0.1-beta.8) ─────────────────────────────────────
+//
+// When an ingest (or compile) is mid-flight, the backend refuses
+// /api/update, /api/restart, /api/sync/*, and DELETE /api/domains/:slug
+// with 409 (see src/brain/write-registry.js). We mirror that in the UI by
+// disabling the matching buttons so the user doesn't see the 409 in the
+// first place. The 409 path is still the canonical safety net — this is
+// just the friendly layer on top.
+//
+// State is tracked per-domain (a Map<domain, count>). Multiple concurrent
+// ingests are uncommon but possible (different domains) — the buttons stay
+// disabled until ALL ingest streams have completed.
+const _activeIngests = new Map();
+function _ingestActive() {
+  for (const n of _activeIngests.values()) if (n > 0) return true;
+  return false;
+}
+function _applyIngestBusyState() {
+  const busy = _ingestActive();
+  // List of selectors → human-friendly title for the tooltip.
+  const targets = [
+    { sel: '#settings-update-btn',    label: 'Check for Updates' },
+    { sel: '#sync-both-btn',          label: 'Sync now' },
+    { sel: '#sync-push-btn',          label: 'Push only' },
+    { sel: '#sync-pull-btn',          label: 'Pull only' },
+    { sel: '#sync-disconnect-btn',    label: 'Disconnect sync' },
+  ];
+  for (const t of targets) {
+    const el = document.querySelector(t.sel);
+    if (!el) continue;
+    if (busy) {
+      if (!el.dataset.savedTitle) el.dataset.savedTitle = el.title || '';
+      if (!el.dataset.preIngestDisabled) {
+        el.dataset.preIngestDisabled = el.disabled ? '1' : '0';
+      }
+      el.disabled = true;
+      el.title = 'An ingest is in progress — please wait for it to finish.';
+    } else {
+      if (el.dataset.preIngestDisabled === '0') el.disabled = false;
+      // Always restore the original title attribute (might have been empty).
+      if (el.dataset.savedTitle !== undefined) {
+        if (el.dataset.savedTitle) el.title = el.dataset.savedTitle;
+        else el.removeAttribute('title');
+      }
+      delete el.dataset.savedTitle;
+      delete el.dataset.preIngestDisabled;
+    }
+  }
+  // Domain delete buttons (created dynamically per-card)
+  document.querySelectorAll('.domain-delete-btn').forEach(el => {
+    if (busy) {
+      if (!el.dataset.preIngestDisabled) {
+        el.dataset.preIngestDisabled = el.disabled ? '1' : '0';
+      }
+      el.disabled = true;
+      el.title = 'An ingest is in progress — please wait for it to finish.';
+    } else {
+      if (el.dataset.preIngestDisabled === '0') el.disabled = false;
+      el.title = 'Delete';
+      delete el.dataset.preIngestDisabled;
+    }
+  });
+}
+function ingestStart(domain) {
+  _activeIngests.set(domain, (_activeIngests.get(domain) || 0) + 1);
+  _applyIngestBusyState();
+}
+function ingestEnd(domain) {
+  const n = (_activeIngests.get(domain) || 0) - 1;
+  if (n <= 0) _activeIngests.delete(domain);
+  else _activeIngests.set(domain, n);
+  _applyIngestBusyState();
+}
+// Expose so other in-app surfaces (compile button, future Dictate/Curate
+// modes) can register their own writes through the same gate.
+window.__curatorIngestStart = ingestStart;
+window.__curatorIngestEnd   = ingestEnd;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function initSyncTab() {

@@ -21,6 +21,7 @@ import { existsSync } from 'fs';
 import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import path from 'path';
 import { wikiPath } from './files.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 const DISMISSED_FILENAME = '.health-dismissed.jsonl';
 
@@ -109,7 +110,9 @@ async function writeRecords(domain, records) {
   const file = dismissedFilePath(domain);
   await mkdir(path.dirname(file), { recursive: true });
   const lines = records.map(r => JSON.stringify(r)).join('\n');
-  await writeFile(file, lines + (lines ? '\n' : ''), 'utf8');
+  // v3.0.1-beta.8: atomic so a process-kill mid-rewrite can't truncate
+  // the dismissals JSONL.
+  await writeFileAtomic(file, lines + (lines ? '\n' : ''), 'utf8');
 }
 
 /**

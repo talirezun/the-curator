@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { generateText } from './llm.js';
@@ -12,6 +12,7 @@ import {
   syncSummaryEntities,
 } from './files.js';
 import { mergeIntoIndex } from './compile.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 /**
  * v3.0.1-beta.1 — deterministic summary slug computed from the source filename.
@@ -381,6 +382,19 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
   const warnings = [];
   const pages = Array.isArray(outline?.pages) ? [...outline.pages] : [];
 
+  // v3.0.1-beta.8: drop entries that aren't well-formed page records BEFORE
+  // any structural check fires. Defends against the LLM occasionally returning
+  // a malformed entry (null, missing path, non-string path) inside an otherwise
+  // valid outline — without this guard the structural checks below could
+  // throw on a `.startsWith` against undefined.
+  for (let i = pages.length - 1; i >= 0; i--) {
+    const p = pages[i];
+    if (!p || typeof p.path !== 'string' || !p.path) {
+      warnings.push('Outline contained a malformed page entry without a path — dropped.');
+      pages.splice(i, 1);
+    }
+  }
+
   const summaryEntries = pages.filter(p =>
     p && typeof p.path === 'string' && p.path.startsWith('summaries/')
   );
@@ -474,6 +488,122 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
       };
       pages.splice(insertAt, 0, newEntry);
       entityByNormKey.set(canonKey, newEntry);
+    }
+  }
+
+  // v3.0.1-beta.8: TRUNK-PAGE DETECTOR — the granularity-inversion fix.
+  //
+  // The LLM (especially Anthropic Haiku, which lacks JSON-mode rails) tends
+  // to create many specific sub-concept pages (`taste-as-moat.md`,
+  // `taste-as-judgment.md`, `taste-development-formula.md`) while skipping
+  // the obvious parent — just `taste.md`. The downstream consequence: pages
+  // link to `[[taste]]` and the link is broken because no trunk page exists.
+  //
+  // Detection: scan the outline for clusters of ≥3 concept pages sharing a
+  // common first segment (`<prefix>-...`). If the trunk page for that prefix
+  // is missing AND wasn't already injected, add it. Phase 2 (or single-pass)
+  // will generate content for it using the same source text.
+  //
+  // Why concept-only: the consolidation rule applies to concept-clusters
+  // (umbrella idea + sub-ideas). Entity clusters (e.g. `openai-gpt-4`,
+  // `openai-gpt-5`) are sometimes legitimate sub-pages but more often
+  // mis-classifications writePage's cross-folder dedup will catch later.
+  // Restricting to concepts/ keeps the detector conservative.
+  {
+    const CLUSTER_THRESHOLD = 3;
+    const conceptByPrefix = new Map();
+    for (const p of pages) {
+      if (typeof p.path !== 'string' || !p.path.startsWith('concepts/')) continue;
+      const slug = p.path.replace(/^concepts\//, '').replace(/\.md$/, '');
+      const m = slug.match(/^([a-z0-9]+(?:[a-z0-9])*)-/);  // first segment before a hyphen
+      if (!m) continue;
+      const prefix = m[1];
+      if (prefix.length < 2) continue;  // skip single-char prefixes ("a-foo", "i-foo")
+      if (!conceptByPrefix.has(prefix)) conceptByPrefix.set(prefix, []);
+      conceptByPrefix.get(prefix).push(p);
+    }
+
+    // Build the set of concept slugs already in the outline (for fast lookup)
+    const conceptSlugsInOutline = new Set();
+    for (const p of pages) {
+      if (typeof p.path === 'string' && p.path.startsWith('concepts/')) {
+        conceptSlugsInOutline.add(p.path.replace(/^concepts\//, '').replace(/\.md$/, ''));
+      }
+    }
+
+    for (const [prefix, cluster] of conceptByPrefix) {
+      if (cluster.length < CLUSTER_THRESHOLD) continue;
+      // Trunk page is just `concepts/<prefix>.md` — does it already exist
+      // in the outline? If yes, the LLM did the right thing; skip.
+      if (conceptSlugsInOutline.has(prefix)) continue;
+
+      const trunkPath = `concepts/${prefix}.md`;
+      const subPaths = cluster.map(p => p.path).slice(0, 5);
+      const subList = subPaths.length === cluster.length
+        ? subPaths.join(', ')
+        : subPaths.join(', ') + `, … (+${cluster.length - subPaths.length} more)`;
+
+      warnings.push(
+        `Outline had ${cluster.length} "${prefix}-*" pages without a parent "${trunkPath}" — ` +
+        `injected the trunk page (granularity-inversion fix). Sub-pages: ${subList}.`
+      );
+
+      // Insert the trunk page AFTER the summary so Phase 2 writes it before
+      // any of its children — that way the children can link back to it.
+      const trunkEntry = {
+        path: trunkPath,
+        summary: `Umbrella concept that the ${prefix}-* pages elaborate on.`,
+      };
+      const summaryIdx = pages.findIndex(p =>
+        p && typeof p.path === 'string' && p.path.startsWith('summaries/')
+      );
+      const insertAt = summaryIdx >= 0 ? summaryIdx + 1 : 0;
+      pages.splice(insertAt, 0, trunkEntry);
+      conceptSlugsInOutline.add(prefix);
+    }
+  }
+
+  // v3.0.1-beta.8: STRUCTURAL CHECKS — cheap, deterministic, mostly advisory.
+  //
+  // These don't reject the outline (the user is mid-ingest; we never throw
+  // here), but they do surface warnings the user can see in the result panel.
+  // The goal is to catch outlines that are obviously off-spec before they hit
+  // disk so the user knows whether to re-ingest.
+  {
+    // Duplicate paths in the outline — multi-phase batches each generate
+    // independent content, so two identical paths in the outline would write
+    // the same file twice (the second overwriting/merging into the first).
+    // writePage's merge handles this safely but it's wasted work.
+    const seenPaths = new Map();
+    for (const p of pages) {
+      if (typeof p?.path !== 'string') continue;
+      seenPaths.set(p.path, (seenPaths.get(p.path) || 0) + 1);
+    }
+    const dups = [...seenPaths.entries()].filter(([, n]) => n > 1);
+    if (dups.length > 0) {
+      warnings.push(
+        `Outline had duplicate paths: ${dups.map(([p, n]) => `${p} (×${n})`).join(', ')} — ` +
+        `each will be written once via mergeWikiPage.`
+      );
+    }
+
+    // Coverage: entity + concept folder presence. If the outline has only a
+    // summary and no entities, that's a strong signal something went wrong
+    // (no author entity, no extracted concepts).
+    const hasEntity = pages.some(p => typeof p?.path === 'string' && p.path.startsWith('entities/'));
+    const hasConcept = pages.some(p => typeof p?.path === 'string' && p.path.startsWith('concepts/'));
+    if (!hasEntity) {
+      warnings.push('Outline contained no entities/ pages. Check the source — every document should have at least one originator entity (author/speaker/company).');
+    }
+    if (!hasConcept) {
+      warnings.push('Outline contained no concepts/ pages. Check the source — most substantive sources develop at least one concept worth its own page.');
+    }
+
+    // Minimum page count — a real ingest should produce at least the summary
+    // plus a handful of entities/concepts. Outlines under 3 pages are a
+    // strong signal that the LLM gave up early or hit a budget.
+    if (pages.length < 3) {
+      warnings.push(`Outline planned only ${pages.length} pages — very short. The source may have been short, or the AI may have given up early. Inspect the result.`);
     }
   }
 
@@ -790,13 +920,51 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   await mkdir(rawDir, { recursive: true });
   const destPath = path.join(rawDir, originalName);
   const buffer = await readFile(filePath);
-  await writeFile(destPath, buffer);
+  // v3.0.1-beta.8: atomic raw save so a kill mid-write doesn't leave a
+  // half-saved PDF in raw/ that the duplicate-check (routes/ingest.js)
+  // then blocks future retries on.
+  await writeFileAtomic(destPath, buffer);
 
-  // Extract text — cap at 80 000 chars to stay within input limits.
-  // v3.0.1-beta.1: when truncation kicks in, surface a warning in the result
-  // and in the progress stream so the user knows information was dropped.
+  // v3.0.1-beta.8: extract text inside a try/catch so a corrupt / encrypted /
+  // image-only PDF doesn't (a) crash the pipeline with an unhandled
+  // pdf-parse error and (b) leave the raw file lingering — which would then
+  // 409-block the user when they try to re-upload the file after fixing it.
+  //
+  // ALSO guards against silent garbage ingest: if pdf-parse returns 0 or
+  // near-0 characters (image-only PDF, encrypted PDF that "extracts" empty
+  // text), the LLM would otherwise see an empty document and hallucinate
+  // wiki pages from the filename alone. Refuse early with an actionable
+  // message instead.
   progress(8, 'Extracting text from document…');
-  const fullText = await extractText(destPath);
+  const MIN_TEXT_LEN = 200;          // empirical: useful sources are far longer
+  let fullText;
+  try {
+    fullText = await extractText(destPath);
+  } catch (err) {
+    // Best-effort cleanup of the raw file so the user can retry without
+    // hitting the duplicate-check 409.
+    try { await unlink(destPath); } catch { /* ignore */ }
+    throw new Error(
+      `Could not extract text from "${originalName}". ` +
+      `This is usually caused by an encrypted PDF, a scanned / image-only PDF ` +
+      `that needs OCR first, or a malformed file. Try: opening the PDF and ` +
+      `re-saving without encryption; running OCR (e.g. macOS Preview → Tools → ` +
+      `Adjust Text → OCR, or ocrmypdf); or converting to .md / .txt first. ` +
+      `(Underlying error: ${err.message.slice(0, 200)})`
+    );
+  }
+  if (!fullText || fullText.trim().length < MIN_TEXT_LEN) {
+    try { await unlink(destPath); } catch { /* ignore */ }
+    const got = fullText ? fullText.trim().length : 0;
+    throw new Error(
+      `"${originalName}" yielded only ${got} characters of text — too little to ` +
+      `produce meaningful wiki pages. This usually means the PDF is image-only ` +
+      `(scanned, no embedded text layer) and needs OCR before ingest. ` +
+      `Try: macOS Preview → Tools → Adjust Text → OCR, or run ocrmypdf, or paste ` +
+      `the article text into a .md file and ingest that instead. The raw file ` +
+      `has been removed so you can re-upload after fixing it.`
+    );
+  }
   const TEXT_CAP = 80_000;
   const truncated = fullText.length > TEXT_CAP;
   const text = fullText.slice(0, TEXT_CAP);

@@ -613,7 +613,7 @@ Pure filesystem helpers. No LLM calls.
 | `listDomains()` | Names of all non-hidden subdirectories under `domains/` |
 | `readSchema(domain)` | Contents of `domains/<domain>/CLAUDE.md` |
 | `readWikiPages(domain)` | All `.md` files under `wiki/`, returned as `{path, content}[]` |
-| `writePage(domain, relativePath, content)` | Full write pipeline: underscore→hyphen slug fix, dedup passes A+B on filename, cross-folder dedup (step 3b), `injectFrontmatter()`, `mergeWikiPage()`, `stripBlanksInBulletSections()`, `deduplicateBulletSections()`, folder-prefix cleanup, step 5c variant-link normalization (Pass A+B+C across all wiki folders, prefix-tolerant), write to disk, `injectSummaryBacklinks()` for summary pages; **returns the canonical path** so callers use redirected slugs |
+| `writePage(domain, relativePath, content)` | Full write pipeline: underscore→hyphen slug fix, dedup passes A+B on filename, cross-folder dedup (step 3b), `injectFrontmatter()`, `mergeWikiPage()`, `stripBlanksInBulletSections()`, `deduplicateBulletSections()`, folder-prefix cleanup, step 5c variant-link normalization (Pass A+B+C across all wiki folders, prefix-tolerant), **atomic write to disk** via `writeFileAtomic()` (v3.0.1-beta.8+), `injectSummaryBacklinks()` for summary pages; **returns the canonical path** so callers use redirected slugs |
 | `injectSummaryBacklinks(summarySlug, summaryContent, wikiDir)` | After a summary is written, injects `[[summaries/<slug>]]` into the Related section of every entity listed under "Entities Mentioned"; checks entities/ first, falls back to concepts/; creates the section if it doesn't exist; deduplicates via `dedupKey()` |
 | `syncSummaryEntities(domain, summaryPath, writtenPaths)` | Post-ingest reconciliation: uses the ground-truth `pagesWritten` list (not the LLM's truncated output) to fill in all missing entity AND concept slugs in the summary, then re-fires `injectSummaryBacklinks()` so every entity/concept page gets its backlink regardless of LLM compliance |
 | `deduplicateBulletSections(content)` | Safety net: removes duplicate bullets from all accumulating sections (Key Facts, Related, Entities Mentioned, etc.) using `dedupKey()`; runs after every write and after `syncSummaryEntities()` |
@@ -633,6 +633,32 @@ Pure filesystem helpers. No LLM calls.
 | `readConversation(domain, id)` | Full conversation object, or `null` if not found |
 | `writeConversation(domain, conversation)` | Persist conversation JSON to disk |
 | `deleteConversation(domain, id)` | Delete a conversation file |
+
+### `src/brain/atomic-write.js` (v3.0.1-beta.8+)
+
+Single chokepoint for all wiki + config writes. Replaces `fs.writeFile` and `fs.writeFileSync` with a temp-file + rename pattern so a process kill mid-write leaves either the OLD file or the NEW file intact — never a zero-byte truncated file. POSIX `rename(2)` is atomic per-file within a single filesystem.
+
+| Export | Description |
+|--------|-------------|
+| `writeFileAtomic(targetPath, content, encoding?)` | Async atomic write: writes content to `<dir>/.tmp-<base>-<pid>-<counter>`, then `rename`s into place. Refuses to write through a symlink (`lstat` pre-check). Cleans up the orphan tempfile if rename fails. |
+| `writeFileAtomicSync(targetPath, content, encoding?)` | Sync variant for `.curator-config.json` writes that happen before the async runtime is fully online. |
+
+Used by `files.js` (every wiki + log + index + conversation write), `health.js` (destructive Health fixes), `config.js` (sync writes to `.curator-config.json`), `health-dismissed.js` (JSONL rewrite), `sharedbrain-local-adapter.js` (`_writeFile` chokepoint), and `ingest.js` (raw source save). **NOT used by append-only JSONL audit logs** (MCP write log, sharedbrain audit JSONL) — `appendFile` is already crash-safe at line granularity on local filesystems.
+
+### `src/brain/write-registry.js` (v3.0.1-beta.8+)
+
+In-memory + file-based coordination layer that prevents destructive operations (app update, restart, git sync, domain delete) from racing in-flight writes (ingest, compile-to-wiki, health-fix-all). Same in-process module shared between the web server and (via the file-lock half) the MCP child process spawned by Claude Desktop.
+
+| Export | Description |
+|--------|-------------|
+| `registerWrite(domain, op)` | Long-running write registers on entry; returns a `release()` token the caller MUST invoke in `finally`. Uses `Map<domain, refcount>` so two ingests on the same domain coexist correctly. |
+| `hasActiveWrites()`, `isDomainActive(domain)` | Fast checks used by conflicting endpoints to decide whether to refuse with 409. |
+| `conflictResponse(attemptedOp)` | Builds the standard `{ status: 409, body: {...} }` payload — names the active domain + ops, mentions whether an update is in progress. |
+| `beginUpdate()` / `endUpdate()` / `isUpdateInProgress()` | Domain-global flag for the `/api/update` flow (git reset + npm install + restart). Ingest + compile routes check this in addition to the per-domain registry to close the millisecond race window. |
+| `acquireFileLock(domainDir, opts)` | Cross-process advisory lock at `<domain>/.write-lock` (JSON: pid, op, startedAt). Returns a `release()` function on success, `null` if another process holds a fresh lock. 30-minute stale-lock TTL + `process.kill(pid, 0)` liveness probe; stale or unparseable locks are silently cleared on the next acquire. |
+| `isFileLocked(domainDir)` | Non-acquiring check — used by MCP write tools to refuse fast without trying to take the lock themselves. |
+
+The file lock is what lets the MCP server (separate child process spawned by Claude Desktop) coordinate with the Curator web server. The in-memory registry is faster and authoritative for the web server's own routes; the file lock is the cross-process boundary.
 
 ### `src/brain/ingest.js`
 

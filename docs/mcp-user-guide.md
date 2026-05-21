@@ -67,6 +67,12 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. The MCP skill at `claude-skills/my-curator/SKILL.md` documents this in §3.1.
 
+### Write tools while the Curator app is running an ingest (`v3.0.1-beta.8+`)
+
+When the Curator desktop app has an ingest, compile, or bulk-Health-fix mid-flight on a domain, `compile_to_wiki` and `fix_wiki_issue` refuse with a clear message and `conflict: 'file_lock'`. Coordination is via a tiny lock file at `<domain>/.write-lock` (JSON containing the PID + start time + operation name), which the Curator app and the MCP server both check. If the lock seems stuck for more than 30 minutes (the auto-clear TTL on stale locks), check whether the Curator app is actually running an ingest — and if not, you can manually delete `<domains>/<domain>/.write-lock` to recover. The lock auto-clears on the next acquire attempt if the holder's PID is dead.
+
+Read tools are unaffected — Claude can keep searching and exploring even while an ingest is running.
+
 ## How it scales
 
 MCP tool responses feed into the model's context window as tokens — so the practical limit isn't just the 1 MB MCP cap, it's also the model's context. My Curator caps every tool response at **~400 KB (≈100 000 tokens)** so multi-turn conversations can sustain several tool calls without exhausting Opus's 200 000-token window.

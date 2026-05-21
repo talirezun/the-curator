@@ -32,6 +32,8 @@ import {
   scanSemanticDuplicates,
 } from '../../src/brain/health-ai.js';
 import { getAiHealthSettings, getDefaultDomain } from '../../src/brain/config.js';
+import { domainPath } from '../../src/brain/files.js';
+import { acquireFileLock } from '../../src/brain/write-registry.js';
 import { resolveDomainArg, refuseIfReadonly } from '../util.js';
 
 // ── scan_wiki_health ─────────────────────────────────────────────────────────
@@ -207,7 +209,26 @@ export async function fixWikiIssueHandler(args, storage) {
     SEMANTIC_DUPE_PREVIEWED.delete(`${domain.value}|${key}`);
   }
 
-  const result = await fixIssue(domain.value, type, issue);
+  // v3.0.1-beta.8: respect the cross-process file lock. fixIssue() is
+  // destructive on AUTO_FIXABLE types (mergeBulletSections + rm() on
+  // crossFolderDupes / hyphenVariants / semanticDupe). Racing it against an
+  // in-flight Curator-app ingest writing to the same files is a recipe for
+  // confusing data loss.
+  const releaseFileLock = await acquireFileLock(domainPath(domain.value), { op: 'mcp:fix_wiki_issue' });
+  if (!releaseFileLock) {
+    return {
+      ok: false,
+      error: `Another process is writing to "${domain.value}" right now (likely the Curator app). Wait a moment and retry. If you believe this is stale, delete <domains>/${domain.value}/.write-lock manually.`,
+      conflict: 'file_lock',
+    };
+  }
+
+  let result;
+  try {
+    result = await fixIssue(domain.value, type, issue);
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+  }
 
   // Audit log (machine-private, gitignored)
   try {

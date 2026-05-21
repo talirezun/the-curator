@@ -7,6 +7,12 @@ import { fileURLToPath } from 'url';
 import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus } from '../brain/llm.js';
+import {
+  hasActiveWrites,
+  conflictResponse,
+  beginUpdate,
+  endUpdate,
+} from '../brain/write-registry.js';
 
 const execAsync = promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -264,11 +270,27 @@ router.get('/update-check', async (_req, res) => {
  * .sync-config.json) is all gitignored, so hard-reset is safe.
  */
 router.post('/update', async (_req, res) => {
+  // v3.0.1-beta.8: refuse to update while any wiki write is in flight.
+  // The update flow does `git reset --hard origin/main` (safe — only touches
+  // tracked app files, domains/ is gitignored) followed by `/api/restart`
+  // (NOT safe — kills the Node process, can truncate in-flight wiki writes).
+  // The atomic-write fix in this same release makes the truncation
+  // recoverable, but the kindest UX is still to refuse the update rather
+  // than abort a running ingest.
+  if (hasActiveWrites()) {
+    const { status, body } = conflictResponse('update the app');
+    return res.status(status).json(body);
+  }
+
   // Shared exec options — the env override is what makes `npm` resolvable under
   // the .app wrapper's minimal PATH.
   const execOpts = (extra = {}) => ({ cwd: PROJECT_ROOT, env: SUBPROCESS_ENV, ...extra });
   let beforeSha = null, afterSha = null;
 
+  // Flag this domain-global operation so an ingest that arrives during the
+  // git-reset / npm-install window is refused with a clear 409 (see the
+  // matching check in src/routes/ingest.js). Cleared in `finally`.
+  beginUpdate();
   try {
     // 1. Fetch before resetting so we never hard-reset to a stale ref if the remote is unreachable.
     await execAsync('git fetch origin main', execOpts({ timeout: 30000 }));
@@ -329,6 +351,12 @@ router.post('/update', async (_req, res) => {
       from: beforeSha,
       to:   afterSha,
     });
+  } finally {
+    // v3.0.1-beta.8: ALWAYS clear the update flag — success path leads to a
+    // restart anyway, but failure path must release so future ingests aren't
+    // blocked. Runs even after the early `return` for the partial-success
+    // npm-PATH case.
+    endUpdate();
   }
 });
 

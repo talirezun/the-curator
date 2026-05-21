@@ -22,6 +22,13 @@ import { previewSemanticDuplicateMerge } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
+import { domainPath } from '../brain/files.js';
+import {
+  registerWrite,
+  acquireFileLock,
+  isUpdateInProgress,
+  conflictResponse,
+} from '../brain/write-registry.js';
 
 const router = Router();
 
@@ -209,8 +216,25 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
 });
 
 router.post('/:domain/fix-all', async (req, res) => {
+  // v3.0.1-beta.8: register fix-all as a write op so concurrent
+  // sync/update/delete can refuse with 409. Single-fix endpoint
+  // (POST /:domain/fix) is sub-second and intentionally NOT registered —
+  // adding noise to fast paths doesn't help anyone.
+  const { domain } = req.params;
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`bulk-fix domain "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'health-fix-all');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'health-fix-all' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({
+      error: `Another process is already writing to "${domain}" (file lock held).`,
+      conflict: 'file_lock',
+    });
+  }
   try {
-    const { domain } = req.params;
     const { type } = req.body || {};
     if (!type)                 return res.status(400).json({ error: 'Missing type' });
     if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
@@ -220,6 +244,9 @@ router.post('/:domain/fix-all', async (req, res) => {
   } catch (err) {
     console.error('[health fix-all]', err);
     res.status(err.status || 500).json({ error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
   }
 });
 

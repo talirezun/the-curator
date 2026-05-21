@@ -16,6 +16,7 @@ import mcpRouter    from './routes/mcp.js';
 import compileRouter from './routes/compile.js';
 import sharedbrainRouter from './routes/sharedbrain.js';
 import { getProviderInfo } from './brain/llm.js';
+import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -72,6 +73,16 @@ app.get('/api/version', (req, res) => {
 // at startup (see startListenWithRetry below) so the child waits if
 // the parent hasn't released the port yet.
 app.post('/api/restart', (_req, res) => {
+  // v3.0.1-beta.8: refuse to restart while any wiki write is in flight.
+  // The spawn-and-exit dance kills the current process; an in-flight ingest
+  // would lose its remaining writes. The atomic-write fix in this release
+  // makes the partial state recoverable (no zero-byte files), but the
+  // best UX is still to wait. Update flow (POST /api/update) has the same
+  // guard so its restart trigger doesn't bypass this.
+  if (hasActiveWrites()) {
+    const { status, body } = conflictResponse('restart the app');
+    return res.status(status).json(body);
+  }
   res.json({ ok: true, restarting: true });
 
   // Brief delay so the HTTP response can flush before we tear down.

@@ -19,6 +19,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 // Honorific prefixes — same set writePage's Pass A and the ingest validator
@@ -413,7 +414,7 @@ async function fixBrokenLink(wikiDir, issue) {
   const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
   const after = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
   if (after === before) return false;
-  await writeFile(full, after, 'utf8');
+  await writeFileAtomic(full, after, 'utf8');
   return true;
 }
 
@@ -424,7 +425,7 @@ async function fixFolderPrefixLink(wikiDir, issue) {
   const before = content;
   content = content.replace(/\[\[(entities|concepts)\/([^\]|#\n]+?)(\|[^\]]+)?\]\]/g,
     (_m, _folder, slug, alias) => `[[${slug}${alias || ''}]]`);
-  if (content !== before) await writeFile(full, content, 'utf8');
+  if (content !== before) await writeFileAtomic(full, content, 'utf8');
   return content !== before;
 }
 
@@ -447,7 +448,7 @@ async function fixCrossFolderDupe(wikiDir, issue) {
     merged = merged.replace(/type\/concept/g, 'type/entity');
   }
 
-  await writeFile(keepPath, merged, 'utf8');
+  await writeFileAtomic(keepPath, merged, 'utf8');
   await rm(removePath);
   return true;
 }
@@ -482,7 +483,7 @@ async function fixHyphenVariant(wikiDir, issue) {
     canonContent = mergeBulletSections(canonContent, dupContent);
     await rm(dupPath);
   }
-  await writeFile(canonPath, canonContent, 'utf8');
+  await writeFileAtomic(canonPath, canonContent, 'utf8');
   return true;
 }
 
@@ -955,18 +956,18 @@ async function fixSemanticDuplicate(wikiDir, issue) {
     }
     const rewritten = content.replace(linkRe, (_m, alias) => `[[${keepSlug}${alias || ''}]]`);
     if (rewritten !== content) {
-      await writeFile(full, rewritten, 'utf8');
+      await writeFileAtomic(full, rewritten, 'utf8');
       if (path.resolve(full) === path.resolve(keepPath)) merged = rewritten;
     } else if (path.resolve(full) === path.resolve(keepPath)) {
       // Keep file had no inbound-to-self links but we still need to persist merge
-      await writeFile(full, merged, 'utf8');
+      await writeFileAtomic(full, merged, 'utf8');
     }
   }
 
   // Step 4: ensure the merged content was written even if the keep file
   // didn't appear in the loop's mutation set (no links to remove to itself).
   const keepFinal = await readFile(keepPath, 'utf8');
-  if (keepFinal !== merged) await writeFile(keepPath, merged, 'utf8');
+  if (keepFinal !== merged) await writeFileAtomic(keepPath, merged, 'utf8');
 
   // Step 5: delete the removed file
   await rm(removePath);

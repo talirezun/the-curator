@@ -20,6 +20,7 @@
 import { readFile, writeFile, mkdir, readdir, stat, unlink, appendFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
+import { writeFileAtomic } from './atomic-write.js';
 import { SharedBrainStorageAdapter } from './sharedbrain-storage.js';
 
 /**
@@ -112,7 +113,11 @@ export class LocalFolderStorageAdapter extends SharedBrainStorageAdapter {
 
   async _writeFile(absPath, content) {
     await mkdir(path.dirname(absPath), { recursive: true });
-    await writeFile(absPath, content, 'utf8');
+    // v3.0.1-beta.8: atomic so a kill mid-write of a contribution / digest /
+    // collective wiki page can't leave a truncated file in the local mirror.
+    // NB — does NOT cover the appendFile call at line ~304 (audit JSONL),
+    // which is intentionally append-only and crash-safe at line granularity.
+    await writeFileAtomic(absPath, content, 'utf8');
   }
 
   async _listDirRecursive(absDir, prefix = '') {

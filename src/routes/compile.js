@@ -16,7 +16,13 @@
 
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
-import { listDomains } from '../brain/files.js';
+import { listDomains, domainPath } from '../brain/files.js';
+import {
+  registerWrite,
+  acquireFileLock,
+  isUpdateInProgress,
+  conflictResponse,
+} from '../brain/write-registry.js';
 
 const router = Router();
 
@@ -39,6 +45,13 @@ router.post('/conversation', async (req, res) => {
     return res.status(400).json({ error: `Unknown domain: ${domain}` });
   }
 
+  // v3.0.1-beta.8: refuse if the app updater is mid-flight (matches the
+  // ingest-route guard).
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('compile a conversation');
+    return res.status(status).json(body);
+  }
+
   // ── Switch to Server-Sent Events streaming ───────────────────────────────
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -48,6 +61,21 @@ router.post('/conversation', async (req, res) => {
   const emit = (data) => {
     if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
+
+  // v3.0.1-beta.8: same write-registry + file-lock dance as ingest. Compile
+  // writes via the same writePage chokepoint, so it gets the same coverage
+  // against concurrent sync/update/delete.
+  const releaseRegistry = registerWrite(domain, 'compile');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'compile' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    emit({
+      type: 'error',
+      message: `Another process is already writing to "${domain}" (file lock held). ` +
+               `If this seems stuck, manually delete <domains>/${domain}/.write-lock and retry.`,
+    });
+    return res.end();
+  }
 
   try {
     const result = await compileConversation(domain, conversationId, ({ pct, message }) => {
@@ -75,6 +103,8 @@ router.post('/conversation', async (req, res) => {
     console.error('Compile error:', err);
     emit({ type: 'error', message: err.message });
   } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
     res.end();
   }
 });

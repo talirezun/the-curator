@@ -3,6 +3,13 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDomainsDir } from './config.js';
+import { writeFileAtomic } from './atomic-write.js';
+
+// v3.0.1-beta.8: every wiki write goes through writeFileAtomic so a
+// process-kill mid-write (e.g. /api/restart killing the old process while
+// an ingest is mid-flight) leaves either the old file or the new file
+// intact — never a truncated zero-byte file. See src/brain/atomic-write.js
+// for the rationale and the same-directory-tempfile invariant.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -474,7 +481,7 @@ export async function syncSummaryEntities(domain, summaryPath, writtenPaths) {
   const stripped = stripBlanksInBulletSections(updated);
   const cleaned = deduplicateBulletSections(stripped);
 
-  await writeFile(summaryFile, cleaned, 'utf8');
+  await writeFileAtomic(summaryFile, cleaned, 'utf8');
 
   // Now re-run backlink injection with the complete Entities Mentioned list
   const summarySlug = path.basename(summaryPath, '.md');
@@ -562,7 +569,7 @@ export async function injectSummaryBacklinks(summarySlug, summaryContent, wikiDi
       const backlink = `- [[summaries/${summarySlug}]] — ${title}`;
       entityContent = injectBulletsIntoSection(entityContent, 'Related', [backlink]);
       entityContent = stripBlanksInBulletSections(entityContent);
-      await writeFile(entityFile, entityContent, 'utf8');
+      await writeFileAtomic(entityFile, entityContent, 'utf8');
     } catch (err) {
       console.warn(`[injectSummaryBacklinks] Failed to update ${entityName}: ${err.message}`);
     }
@@ -588,7 +595,7 @@ export async function injectSingleBacklink(entityFilePath, summarySlug, summaryT
   content = injectBulletsIntoSection(content, 'Related', [backlink]);
   content = stripBlanksInBulletSections(content);
   if (content === before) return false;
-  await writeFile(entityFilePath, content, 'utf8');
+  await writeFileAtomic(entityFilePath, content, 'utf8');
   return true;
 }
 
@@ -620,7 +627,7 @@ export async function injectRelatedLink(targetFilePath, linkSlug, description) {
   content = injectBulletsIntoSection(content, 'Related', [bullet]);
   content = stripBlanksInBulletSections(content);
   if (content === before) return false;
-  await writeFile(targetFilePath, content, 'utf8');
+  await writeFileAtomic(targetFilePath, content, 'utf8');
   return true;
 }
 
@@ -897,7 +904,7 @@ export async function writePage(domain, relativePath, content) {
     });
   }
 
-  await writeFile(fullPath, final, 'utf8');
+  await writeFileAtomic(fullPath, final, 'utf8');
 
   // 6. For summary pages, inject [[summaries/slug]] backlinks into every
   //    entity listed under "Entities Mentioned" — builds the full bidirectional
@@ -934,7 +941,7 @@ export async function writePage(domain, relativePath, content) {
 export async function appendLog(domain, entry) {
   const logFile = path.join(wikiPath(domain), 'log.md');
   const existing = await readFile(logFile, 'utf8');
-  await writeFile(logFile, existing + entry + '\n', 'utf8');
+  await writeFileAtomic(logFile, existing + entry + '\n', 'utf8');
 }
 
 export async function readIndex(domain) {
@@ -945,7 +952,7 @@ export async function readIndex(domain) {
 
 export async function writeIndex(domain, content) {
   const indexFile = path.join(wikiPath(domain), 'index.md');
-  await writeFile(indexFile, content, 'utf8');
+  await writeFileAtomic(indexFile, content, 'utf8');
 }
 
 // ── Conversations ─────────────────────────────────────────────────────────────
@@ -983,7 +990,7 @@ export async function readConversation(domain, id) {
 export async function writeConversation(domain, conversation) {
   const dir = conversationsPath(domain);
   await mkdir(dir, { recursive: true });
-  await writeFile(
+  await writeFileAtomic(
     path.join(dir, `${conversation.id}.json`),
     JSON.stringify(conversation, null, 2),
     'utf8'
@@ -1232,17 +1239,17 @@ export async function createDomain(slug, displayName, description, template) {
 
     const today = new Date().toISOString().slice(0, 10);
 
-    await writeFile(
+    await writeFileAtomic(
       path.join(base, 'wiki', 'index.md'),
       `# Wiki Index — ${displayName}\nLast updated: ${today}\n\n| Page | Type | Summary |\n|------|------|---------|`,
       'utf8'
     );
-    await writeFile(
+    await writeFileAtomic(
       path.join(base, 'wiki', 'log.md'),
       `# Ingest Log — ${displayName}\n`,
       'utf8'
     );
-    await writeFile(
+    await writeFileAtomic(
       path.join(base, 'CLAUDE.md'),
       generateClaudemd(slug, displayName, description, template),
       'utf8'
@@ -1287,7 +1294,7 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
         try {
           const conv = JSON.parse(await readFile(fullPath, 'utf8'));
           conv.domain = newSlug;
-          await writeFile(fullPath, JSON.stringify(conv, null, 2), 'utf8');
+          await writeFileAtomic(fullPath, JSON.stringify(conv, null, 2), 'utf8');
         } catch {}
       })
     );
@@ -1298,7 +1305,7 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
   try {
     const content = await readFile(claudePath, 'utf8');
     const updated = content.replace(/^# Domain: .+$/m, `# Domain: ${newDisplayName}`);
-    await writeFile(claudePath, updated, 'utf8');
+    await writeFileAtomic(claudePath, updated, 'utf8');
   } catch {}
 
   // Update wiki/index.md header
@@ -1306,7 +1313,7 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
   try {
     const content = await readFile(indexPath, 'utf8');
     const updated = content.replace(/^# Wiki Index — .+$/m, `# Wiki Index — ${newDisplayName}`);
-    await writeFile(indexPath, updated, 'utf8');
+    await writeFileAtomic(indexPath, updated, 'utf8');
   } catch {}
 
   // Update wiki/log.md header
@@ -1314,7 +1321,7 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
   try {
     const content = await readFile(logPath, 'utf8');
     const updated = content.replace(/^# Ingest Log — .+$/m, `# Ingest Log — ${newDisplayName}`);
-    await writeFile(logPath, updated, 'utf8');
+    await writeFileAtomic(logPath, updated, 'utf8');
   } catch {}
 }
 
