@@ -197,6 +197,8 @@ For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's nat
 
 ## Data flow: Ingest
 
+> **For the comprehensive technical deep dive** on the ingestion pipeline — every safeguard, every failure mode the code defends against, the full quality contract, Mermaid flowcharts, and the deep-test harness — see [docs/ingestion-pipeline.md](ingestion-pipeline.md). The summary below is the entry-point overview.
+
 ```
 User uploads file
       │

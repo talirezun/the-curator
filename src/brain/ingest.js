@@ -1160,6 +1160,29 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (indexRecord) changes.push(indexRecord);
   }
 
+  // v3.0.1-beta.9: post-write broken-link audit. Surfaces the count of
+  // wikilinks that don't resolve to a file on disk, as a warning that flows
+  // into the ingest result panel + log entry. This is the actionable signal
+  // the user gets WITHOUT needing to run a separate Health scan after every
+  // ingest. Surfaced by the deep-test harness which showed ~14-20% broken
+  // wikilinks on real Gemini Flash output (mostly LLM mentioning entities
+  // in Phase 2 batches that weren't on the page plan in Phase 1).
+  //
+  // Doesn't FAIL the ingest — it's informational. The broken links remain
+  // in the pages; the user can run Health scan → Ask AI to triage them.
+  try {
+    const brokenAudit = await auditBrokenWikilinks(domain, canonicalPaths);
+    if (brokenAudit.brokenCount > 0) {
+      const pct = ((brokenAudit.brokenCount / brokenAudit.totalCount) * 100).toFixed(1);
+      const samples = brokenAudit.samples.slice(0, 3).map(s => `${s.target}`).join(', ');
+      const msg = `${brokenAudit.brokenCount} of ${brokenAudit.totalCount} wikilinks (${pct}%) don't resolve to an existing page. Examples: ${samples}${brokenAudit.samples.length > 3 ? '…' : ''}. Run Wiki Health → Ask AI to fix or strip them, or re-ingest with broader entity coverage.`;
+      warnings.push(msg);
+    }
+  } catch (auditErr) {
+    // Non-fatal — broken-link audit is informational only.
+    console.warn(`[ingest] Broken-link audit failed (non-fatal): ${auditErr.message}`);
+  }
+
   // Append to log — use canonical paths for accurate reporting
   const pageList = canonicalPaths.map(p => `  - ${p}`).join('\n');
   const warningSection = warnings.length
@@ -1176,6 +1199,73 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     warnings,   // user-visible non-fatal issues (v3.0.1-beta.1)
     truncated,  // boolean — was the source longer than TEXT_CAP?
   };
+}
+
+/**
+ * Audit broken wikilinks across the wiki after an ingest. Returns the count
+ * + first few samples so the caller can surface them as a warning. Reads
+ * every page in the wiki once; cheap on small/medium domains.
+ *
+ * v3.0.1-beta.9 — surfaces a quality signal the user previously had to run
+ * Wiki Health to discover. Implementation lives in the ingest module because
+ * the timing matters: we want the audit to reflect THIS ingest's writes
+ * (which is why we run it AFTER all writePage calls + after the index merge,
+ * but BEFORE the log entry — so the count goes into the log entry too).
+ *
+ * Doesn't dedupe — if `[[bitcoin-mining]]` appears in 5 pages, it counts as 5.
+ * That's deliberate: high count = high impact = more reason to investigate.
+ */
+async function auditBrokenWikilinks(domain, recentlyWrittenPaths) {
+  const wikiDir = wikiPath(domain);
+  // Build the slug inventory once
+  const entitiesDir = path.join(wikiDir, 'entities');
+  const conceptsDir = path.join(wikiDir, 'concepts');
+  const summariesDir = path.join(wikiDir, 'summaries');
+  const [entityFiles, conceptFiles, summaryFiles] = await Promise.all([
+    readdir(entitiesDir).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
+    readdir(conceptsDir).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
+    readdir(summariesDir).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
+  ]);
+  const entitySlugs = new Set(entityFiles.map(f => f.slice(0, -3)));
+  const conceptSlugs = new Set(conceptFiles.map(f => f.slice(0, -3)));
+  const summarySlugs = new Set(summaryFiles.map(f => f.slice(0, -3)));
+
+  // Scan ONLY the pages we just wrote (recentlyWrittenPaths) — keeps the
+  // audit narrow to the current ingest's output, not the whole domain.
+  let totalCount = 0;
+  let brokenCount = 0;
+  const samples = [];
+  for (const relPath of recentlyWrittenPaths) {
+    const full = path.join(wikiDir, relPath);
+    let content;
+    try { content = await readFile(full, 'utf8'); }
+    catch { continue; }
+    // Strip code blocks so [[X]] inside ``` isn't counted
+    const stripped = content
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`[^`]*`/g, '');
+    const linkRe = /\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g;
+    let m;
+    while ((m = linkRe.exec(stripped)) !== null) {
+      totalCount++;
+      const target = m[1].trim();
+      let resolved;
+      if (target.includes('/')) {
+        const [folder, slug] = target.split('/', 2);
+        if (folder === 'summaries') resolved = summarySlugs.has(slug);
+        else if (folder === 'entities') resolved = entitySlugs.has(slug);
+        else if (folder === 'concepts') resolved = conceptSlugs.has(slug);
+        else resolved = false;
+      } else {
+        resolved = entitySlugs.has(target) || conceptSlugs.has(target);
+      }
+      if (!resolved) {
+        brokenCount++;
+        if (samples.length < 10) samples.push({ source: relPath, target });
+      }
+    }
+  }
+  return { totalCount, brokenCount, samples };
 }
 
 // Internal helpers exposed for battle-testing (v3.0.1-beta.1).

@@ -600,6 +600,7 @@ the-curator/
 
 | | |
 |-|-|
+| [Ingestion Pipeline](docs/ingestion-pipeline.md) | **The deep dive on the most important code path in The Curator** — every safeguard, every failure mode, the quality contract, Mermaid diagrams |
 | [Domains](docs/domains.md) | Full reference — managing domains, the CLAUDE.md schema, siloing model, custom templates |
 | [Model Lifecycle](docs/model-lifecycle.md) | Provider/model fallback policy, retiring deprecated models |
 | [API Reference](docs/api-reference.md) | REST API documentation |

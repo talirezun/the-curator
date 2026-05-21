@@ -657,13 +657,39 @@ function injectFrontmatter(content, relativePath, today) {
 
   if (!type) return content;  // index.md, log.md — skip
 
-  // If YAML already present (e.g. user ingesting a pre-formatted .md file),
-  // sanitize the tags line in place and return — don't rebuild the whole block.
+  // If YAML already present (e.g. user ingesting a pre-formatted .md file, or
+  // the LLM mirroring the source's frontmatter), sanitize the tags line in
+  // place AND ensure the required type/<type> tag is present. Pre-v3.0.1-
+  // beta.9 this fast path only sanitised existing tags — if the existing
+  // frontmatter had no `tags:` line or its tags didn't include `type/<type>`,
+  // the resulting wiki page lacked the type tag entirely, breaking the
+  // Obsidian graph-color contract (entities blue, concepts green, summaries
+  // purple). Surfaced by the deep-test harness on a real ingest where the
+  // source MD had its own frontmatter but no type/summary in tags.
+  const typeTag = `type/${type}`;
   if (content.trimStart().startsWith('---')) {
-    return content.replace(/^(tags:\s*\[)(.+?)(\])/m, (_, open, inner, close) => {
-      const fixed = inner.split(',').map(slugTag).filter(Boolean).join(', ');
-      return open + fixed + close;
-    });
+    // Match the existing frontmatter block — we'll either patch the tags
+    // line in place or inject a new one before the closing `---`.
+    const fmMatch = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+    if (!fmMatch) {
+      // Defensive: looks like FM but doesn't parse — fall through to rebuild
+    } else {
+      const [, opening, body, closing] = fmMatch;
+      const tagsLineRe = /^(tags:\s*\[)(.*?)(\])/m;
+      const tagsMatch = body.match(tagsLineRe);
+      let patchedBody;
+      if (tagsMatch) {
+        // Tags line exists — sanitize + ensure typeTag present
+        const inner = tagsMatch[2];
+        const fixed = [...new Set(inner.split(',').map(slugTag).filter(Boolean))];
+        if (!fixed.includes(typeTag)) fixed.push(typeTag);
+        patchedBody = body.replace(tagsLineRe, (_, open, _inner, close) => open + fixed.join(', ') + close);
+      } else {
+        // No tags line — inject one with at least the type tag
+        patchedBody = body + (body.endsWith('\n') ? '' : '\n') + `tags: [${typeTag}]`;
+      }
+      return opening + patchedBody + closing + content.slice(fmMatch[0].length);
+    }
   }
 
   // Extract inline Tags: field → YAML tags array
@@ -830,6 +856,20 @@ export async function writePage(domain, relativePath, content) {
   //     they live in a separate folder and need the prefix for Obsidian routing.
   if (!skipMerge) {
     final = final.replace(/\[\[(entities|concepts)\/([^\]]+)\]\]/g, '[[$2]]');
+  }
+
+  // 5b2. Strip trailing `.md` from wikilinks — the LLM sometimes writes
+  //      `[[summaries/foo.md]]` or `[[llama-3.1.md]]` instead of
+  //      `[[summaries/foo]]` / `[[llama-3.1]]`. Wikilink syntax never includes
+  //      the file extension; Obsidian (and our own page-exists check) treats
+  //      the literal `.md` as part of the target slug, making the link broken.
+  //      v3.0.1-beta.8+ deep-test surfaced this as ~15-20% of broken-link
+  //      reports on real LLM output. The prompt asks the model to omit the
+  //      extension, but compliance is imperfect — strip programmatically.
+  //
+  //      Preserves `|alias` text: `[[foo.md|FooLabel]]` → `[[foo|FooLabel]]`.
+  if (!skipMerge) {
+    final = final.replace(/\[\[([^\]|#\n]+?)\.md(\|[^\]]+)?\]\]/g, '[[$1$2]]');
   }
 
   // 5c. Normalize [[variant-slug]] links to canonical wiki slugs.

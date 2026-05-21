@@ -59,6 +59,7 @@ For students, researchers, entrepreneurs, and lifelong learners: this is the dif
 
 | Document | What's inside |
 |----------|---------------|
+| [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |
 | [architecture.md](architecture.md) | System design, data flow, module reference |
 | [api-reference.md](api-reference.md) | Full REST API documentation |
 | [model-lifecycle.md](model-lifecycle.md) | Provider/model fallback policy and what happens when a model is retired |

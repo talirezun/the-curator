@@ -261,6 +261,8 @@ You'll see the The Curator interface with six tabs at the top: **Ingest**, **Cha
 
 "Ingesting" means feeding a document to your The Curator. This is how you build up your knowledge.
 
+> **For developers:** [docs/ingestion-pipeline.md](ingestion-pipeline.md) is the technical deep dive — every stage, every safeguard, the full failure-mode catalogue, the quality contract.
+
 ### Supported file types
 
 | File type | Extension | Example use |
@@ -1232,3 +1234,4 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 🍎 [Mac App Setup](mac-app.md) | Detailed Mac Dock launcher instructions |
 | 🛠 [API Reference](api-reference.md) | REST API endpoints (for developers) |
 | 🏗 [Architecture](architecture.md) | System design (for developers) |
+| ⚙ [Ingestion Pipeline](ingestion-pipeline.md) | The deep dive on the most critical code path — every safeguard, every failure mode, the quality contract, Mermaid diagrams (for developers) |
