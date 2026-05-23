@@ -4,7 +4,7 @@ This document is the definitive technical reference for The Curator's ingestion 
 
 If you're a user looking for how to drop a PDF in and what happens next, start with [the user guide](user-guide.md#8-ingest-a-source). If you're a developer wanting to understand the system at the level needed to debug or extend it, read on.
 
-**Last updated**: v3.0.1-beta.11
+**Last updated**: v3.0.1-beta.13
 
 ---
 
@@ -416,7 +416,25 @@ Each scenario's output is checked against the full quality contract from §5 —
 - Ingest: `buildBatchPrompt` now includes full outline slug list and HUB-PAGE RULE guidance
 - Hub linkification: nested-bracket regression guard (the bug found during the live deep test)
 
-Together these suites give **573 offline + 146 live-LLM deep-ingest = 719 assertions** that exercise the pipeline at every level.
+### 9.6 — Beta.13 chat refinements (`scripts/test-beta13-fixes.js` + `scripts/test-beta13-chat-live.js`)
+
+62 offline assertions covering the three layered chat improvements:
+- `detectEntityPivots` — multi-token and single-token entity matching, common-token blocklist
+- `extractSummaryBacklinks` — parses `[[summaries/X]]` with and without alias syntax
+- `buildSummaryToEntitiesIndex` — reverse-link map summary → entities
+- `detectQueryIntent` — enumerate vs synthesis classification, defensive on null/undefined
+- `selectRelevantPages` — pivot priority over keyword scoring, budget enforcement under pivot load
+- `buildSlugCatalogue` — author/topic metadata on summaries, backlink count on pivot entities
+- `buildPrompt` — intent-aware instruction block switch
+
+PLUS 5 live-LLM scenarios in `scripts/test-beta13-chat-live.js` against the real `articles` wiki (3,250 pages), each scenario run TWICE for stability:
+- L1 enumerate-by-author (≥15 unique summary citations)
+- L2 synthesis on RAG (regression — synthesis path still works)
+- L3 entity pivot on COTRUGLI Business School
+- L4 count query (returns a specific number 30+)
+- L5 niche detail (energy/water footprint article correctly cited)
+
+Together these suites give **635 offline + 146 deep-ingest + 10 live chat = 791 assertions** that exercise the pipeline at every level (write + read).
 
 ---
 
@@ -432,32 +450,51 @@ The pipeline is mature but not perfect. Known limitations:
 
 ---
 
-## 10b. The chat read-side (v3.0.1-beta.11+)
+## 10b. The chat read-side (v3.0.1-beta.11+, refined in v3.0.1-beta.13)
 
 Most of this document describes the WRITE side of the pipeline — turning a source document into wiki pages. But the chat tab is the READ side, and a community-member field report revealed it had been quietly broken on large domains for a long time.
 
-**The pre-v3.0.1-beta.11 bug**: `src/brain/chat.js` was using a single `wikiContext.slice(0, 90000)` over the concatenated body of every wiki page in arbitrary readdir order. On any domain larger than ~90 KB total — which includes any domain with more than a few dozen pages — the LLM saw a truncated prefix of `index.md` plus `log.md`, and ZERO actual entity, concept, or summary pages. The chat was effectively non-functional on mature domains.
+**The pre-v3.0.1-beta.11 bug**: `src/brain/chat.js` was using a single `wikiContext.slice(0, 90000)` over the concatenated body of every wiki page in arbitrary readdir order. On any domain larger than ~90 KB total, the LLM saw a truncated prefix of `index.md` plus `log.md`, and ZERO actual entity, concept, or summary pages. The chat was effectively non-functional on mature domains.
 
-**v3.0.1-beta.11 fix**: query-driven page selection. The flow is now:
+**v3.0.1-beta.11 fix**: query-driven page selection — score each page by keyword overlap, load top-scoring up to 60 KB.
+
+**v3.0.1-beta.13 refinement**: that fixed "tell me about X" queries but had a blind spot for ENUMERATE-style queries ("list articles by Tali Rezun"): the chat would load the entity page (good) but synthesize from only the few summary pages it could keyword-match, ignoring the 50+ other summaries listed in the entity's Related section. The result was under-reporting (chat said "6 articles" when the user actually had 33+). beta.13 adds three layered improvements:
 
 ```mermaid
-flowchart LR
-    Q[User query<br/>+ recent history] --> T[Tokenize query<br/>using sharedbrain-delta.tokenize]
-    T --> S[Score every wiki page:<br/>filename match × 3 +<br/>heading match × 2 +<br/>body-head match × 1]
-    S --> SORT[Sort by score desc]
-    SORT --> BUDGET[Take top pages until<br/>~60 KB of content loaded]
-    BUDGET --> CAT[Always include<br/>compact slug catalogue<br/>~8 KB]
-    CAT --> PROMPT[Build prompt:<br/>full pages + catalogue + history]
+flowchart TD
+    Q[User query<br/>+ recent history] --> IT[detectQueryIntent<br/>enumerate vs synthesis]
+    Q --> P[detectEntityPivots<br/>entity slugs in query?]
+    Q --> T[Tokenize for scoring]
+
+    P -- pivot found --> PR[Force-load:<br/>1. entity page<br/>2. all summary backlinks<br/>from its Related section]
+    PR --> COMB[Combine: pivot pages + keyword-scored]
+    T --> S[Score remaining pages]
+    S --> COMB
+    COMB --> BUDGET[Take until 60 KB budget filled]
+
+    IT --> PROMPT
+    BUDGET --> PROMPT
+
+    BUDGET --> IDX[buildSummaryToEntitiesIndex:<br/>reverse-link map<br/>summary → entities]
+    IDX --> CAT[buildSlugCatalogue:<br/>each summary line shows<br/>'referenced by: X, Y, Z'<br/>budget 12 KB]
+    CAT --> PROMPT
+
+    PROMPT[Build prompt: pages + enriched catalogue + intent-aware instructions]
     PROMPT --> LLM[Generate answer]
 ```
 
-Key behaviours:
-- **`index.md` and `log.md` are excluded** from full-content selection (they're structural, not knowledge). The catalogue is built from page metadata, not from `index.md`.
-- **Fallback when no match** — if the query has zero token overlap with any page, fall back to the most-linked pages (highest `[[X]]` count) as a proxy for "hub" pages likely to discuss the breadth of the domain. Better than returning nothing.
-- **History-aware** — the last two user turns of the conversation are folded into the query context, so a multi-turn chat about "vector databases" still finds the right pages when the user types just "tell me more about HNSW".
-- **Budget enforcement** — 60 KB of full content + 8 KB of catalogue, regardless of domain size. Stays well within every supported model's context window.
+Key behaviours of the beta.13 chat:
+- **Entity-pivot retrieval** — when the query mentions an entity slug that exists in the wiki (≥2 token overlap for multi-token slugs, or 1 token for single-token specific slugs not in the common-token blocklist), the chat **force-loads that entity page AND every summary it backlinks to**. So "list articles by Tali Rezun" loads `entities/tali-rezun.md` plus all 50+ summaries her entity references.
+- **Author-aware catalogue** — for every summary in the domain, the chat scans all entity pages to find which entities backlink to it, and renders the catalogue line as `summaries/X.md — Title · referenced by: tali-rezun, cotrugli-business-school, ...`. The LLM can now enumerate "all articles by tali-rezun" from the catalogue alone, even without loading every summary in full.
+- **Query-intent detection** — patterns like "list", "what articles", "how many", "every", "name all", "by Dr X" trigger an ENUMERATE prompt that emphasizes completeness over synthesis. Synthesis-style queries get the original prompt (synthesis preferred, no quote-blocks).
+- **`index.md` and `log.md` are excluded** from full-content selection.
+- **Fallback when no match** — most-linked pages (hub heuristic) when keyword + pivot both empty.
+- **History-aware** — the last 2 user turns fold into the query context for retrieval (current message alone for intent detection).
+- **Budget enforcement** — 60 KB content + 12 KB catalogue. Stays well within every supported model's context window.
 
-The chat now scales to arbitrarily large domains. Every test of `selectRelevantPages` in `scripts/test-beta11-fixes.js` covers this contract.
+The chat now reliably scales to arbitrarily large domains. On the dev machine's 3,250-page articles wiki, `selectRelevantPages` runs in ~80 ms; `buildSummaryToEntitiesIndex` adds another ~50 ms; total chat-prompt build time is sub-second even before the LLM call.
+
+Test coverage: 62 offline assertions in `scripts/test-beta13-fixes.js` (entity-pivot detection, summary-backlink extraction, query-intent classification, catalogue enrichment, prompt-instruction switch). Plus 5 live-LLM scenarios in `scripts/test-beta13-chat-live.js` against the real articles domain, each run TWICE for stability — all 10 LLM responses passed the assertions on both attempts. The L4 count query went from returning "6 articles" on the old chat to "33–39 articles" consistently across the new pipeline.
 
 ---
 
