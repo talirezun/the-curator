@@ -4,7 +4,7 @@ This document is the definitive technical reference for The Curator's ingestion 
 
 If you're a user looking for how to drop a PDF in and what happens next, start with [the user guide](user-guide.md#8-ingest-a-source). If you're a developer wanting to understand the system at the level needed to debug or extend it, read on.
 
-**Last updated**: v3.0.1-beta.9
+**Last updated**: v3.0.1-beta.11
 
 ---
 
@@ -36,10 +36,12 @@ flowchart TD
     I -- Yes --> K[MULTI-PHASE<br/>Phase 1 outline → Phase 2 batches]
     J --> L[validateOutline:<br/>summary path + originator + trunk detector + structural checks]
     K --> L
-    L --> M[For each page:<br/>writePage with 3-pass dedup +<br/>frontmatter inject + link normalization]
+    L --> L2[redirectSemanticDuplicates:<br/>Jaccard-based pre-write dedup<br/>v3.0.1-beta.11+]
+    L2 --> M[For each page:<br/>writePage with 3-pass dedup +<br/>frontmatter inject + link normalization]
     M --> N[syncSummaryEntities:<br/>reconcile Entities Mentioned<br/>+ inject bidirectional backlinks]
     N --> O[mergeIntoIndex:<br/>programmatic, no LLM call]
-    O --> P[auditBrokenWikilinks:<br/>count + sample]
+    O --> P1[linkifyHubPages:<br/>wrap plain-text mentions in &lpar;&lpar;wikilinks&rpar;&rpar;<br/>v3.0.1-beta.11+]
+    P1 --> P[auditBrokenWikilinks:<br/>count + sample]
     P --> Q[appendLog with warnings]
     Q --> Y[Done: change records + warnings + truncated flag]
 ```
@@ -251,6 +253,9 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | Image-only / encrypted PDF | Occasional | < 200-char text guard refuses early + rolls back raw file |
 | Source > 80,000 chars | Common on books | Truncate + warn user |
 | LLM mentions entities in pages not on the plan | Common | `auditBrokenWikilinks` warns user (v3.0.1-beta.9+) |
+| Hub page enumerates items as plain text instead of wikilinks | Common, esp. on Haiku | `linkifyHubPages` wraps mentions in `[[brackets]]` post-batch (v3.0.1-beta.11+) |
+| Phase 2 batch unaware of other batches' slugs | Common, esp. on Haiku | Full outline slug list now threaded into every batch prompt (v3.0.1-beta.11+) |
+| Slug drift across re-ingest of related sources (`expert-roundup-format` vs `experts-roundup-format`) | Common | `redirectSemanticDuplicates` runs Jaccard at write time (v3.0.1-beta.11+) |
 | Summary "Entities Mentioned" lists 5 entities when 30 written | Every ingest | `syncSummaryEntities` reconciles |
 | Entity has no Related section | New entities | `injectBulletsIntoSection` creates the section |
 | Type tag missing on pre-formatted source's frontmatter | Occasional | `injectFrontmatter` ensures type tag (v3.0.1-beta.9+) |
@@ -403,7 +408,15 @@ The most comprehensive — runs the FULL production pipeline (live Gemini) acros
 
 Each scenario's output is checked against the full quality contract from §5 — zero-byte detection, frontmatter validation, wikilink resolution, backlink bidirectionality, index integrity, log entry, and Health-scan cleanliness. Run with: `node scripts/test-ingest-deep.js` (or `--quick` to skip REAL-1).
 
-Together these suites give **679 offline + 35 live-LLM + 106 deep-ingest = 820 assertions** that exercise the pipeline at every level.
+### 9.5 — Beta.11 fixes (`scripts/test-beta11-fixes.js`)
+
+42 offline assertions specifically targeting the v3.0.1-beta.11 changes:
+- Chat: `selectRelevantPages` prefers query-matching pages, excludes index/log, respects budget, falls back to top-linked
+- Ingest: `redirectSemanticDuplicates` auto-redirects at ≥0.85 Jaccard, warns in 0.5–0.85, handles within-outline dupes, skips entities
+- Ingest: `buildBatchPrompt` now includes full outline slug list and HUB-PAGE RULE guidance
+- Hub linkification: nested-bracket regression guard (the bug found during the live deep test)
+
+Together these suites give **573 offline + 146 live-LLM deep-ingest = 719 assertions** that exercise the pipeline at every level.
 
 ---
 
@@ -412,10 +425,39 @@ Together these suites give **679 offline + 35 live-LLM + 106 deep-ingest = 820 a
 The pipeline is mature but not perfect. Known limitations:
 
 - **80k character cap** — sources longer than 80k chars are truncated. A future version may chunk-and-recombine; the engineering work is non-trivial because cross-chunk entity/concept identity has to be preserved.
-- **No mid-batch awareness** — Phase 2 batches generate independently. Batch 3 doesn't know what batch 1 produced, so cross-batch references can point at entities not on the page plan. The post-write broken-link audit (v3.0.1-beta.9+) measures this; a fix would require threading the running written-slug set into the Phase 2 prompt.
-- **No native JSON mode for Anthropic** — Claude users rely on `parseJSON` + `jsonrepair`. Anthropic's `tool_use` mechanism could be wired in for stricter compliance; left as future work.
+- **No native JSON mode for Anthropic** — Claude users rely on `parseJSON` + `jsonrepair`. Anthropic's `tool_use` mechanism could be wired in for stricter compliance; left as future work. v3.0.1-beta.11 added several Anthropic-amplifying-bug fixes (hub linkification, full outline threading, Jaccard dedup) that significantly close the Haiku/Flash gap.
 - **Single-domain ingest** — every ingest writes to exactly one domain. Cross-domain ingest would require parser/scanner work in `health.js`, `compile.js`, and the MCP tools (see [docs/domains.md § 4](domains.md#4-how-domains-relate-to-each-other)).
 - **No streaming progress for the LLM call itself** — the user sees "AI is analyzing the document…" for tens of seconds at a time. Streaming the partial LLM output for user reassurance is a polish item left for a future release.
+- **Heuristic, not LLM-driven, dedup** — `redirectSemanticDuplicates` uses Jaccard + lightweight stemming. Genuinely synonymous concepts with different vocabularies (e.g. "self-attention" vs "scaled-dot-product-attention") still slip through. The Wiki Health semantic-duplicate scan remains the LLM-judged backstop for that case.
+
+---
+
+## 10b. The chat read-side (v3.0.1-beta.11+)
+
+Most of this document describes the WRITE side of the pipeline — turning a source document into wiki pages. But the chat tab is the READ side, and a community-member field report revealed it had been quietly broken on large domains for a long time.
+
+**The pre-v3.0.1-beta.11 bug**: `src/brain/chat.js` was using a single `wikiContext.slice(0, 90000)` over the concatenated body of every wiki page in arbitrary readdir order. On any domain larger than ~90 KB total — which includes any domain with more than a few dozen pages — the LLM saw a truncated prefix of `index.md` plus `log.md`, and ZERO actual entity, concept, or summary pages. The chat was effectively non-functional on mature domains.
+
+**v3.0.1-beta.11 fix**: query-driven page selection. The flow is now:
+
+```mermaid
+flowchart LR
+    Q[User query<br/>+ recent history] --> T[Tokenize query<br/>using sharedbrain-delta.tokenize]
+    T --> S[Score every wiki page:<br/>filename match × 3 +<br/>heading match × 2 +<br/>body-head match × 1]
+    S --> SORT[Sort by score desc]
+    SORT --> BUDGET[Take top pages until<br/>~60 KB of content loaded]
+    BUDGET --> CAT[Always include<br/>compact slug catalogue<br/>~8 KB]
+    CAT --> PROMPT[Build prompt:<br/>full pages + catalogue + history]
+    PROMPT --> LLM[Generate answer]
+```
+
+Key behaviours:
+- **`index.md` and `log.md` are excluded** from full-content selection (they're structural, not knowledge). The catalogue is built from page metadata, not from `index.md`.
+- **Fallback when no match** — if the query has zero token overlap with any page, fall back to the most-linked pages (highest `[[X]]` count) as a proxy for "hub" pages likely to discuss the breadth of the domain. Better than returning nothing.
+- **History-aware** — the last two user turns of the conversation are folded into the query context, so a multi-turn chat about "vector databases" still finds the right pages when the user types just "tell me more about HNSW".
+- **Budget enforcement** — 60 KB of full content + 8 KB of catalogue, regardless of domain size. Stays well within every supported model's context window.
+
+The chat now scales to arbitrarily large domains. Every test of `selectRelevantPages` in `scripts/test-beta11-fixes.js` covers this contract.
 
 ---
 

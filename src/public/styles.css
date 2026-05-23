@@ -3289,11 +3289,25 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   padding: 3px 0;
   color: var(--text-2);
   border-bottom: 1px solid rgba(36,36,64,0.5);
+  /* v3.0.1-beta.11: min-width:0 lets the flex child shrink below its
+     intrinsic content width, otherwise an overlong unbroken filename
+     pushes the whole row past the panel edge. */
+  min-width: 0;
 }
 .change-list li:last-child { border-bottom: none; }
 .change-path {
   flex: 1;
-  word-break: break-all;
+  /* v3.0.1-beta.11: use overflow-wrap: anywhere instead of
+     word-break: break-all. The old rule wrapped at every character
+     when the flex column got narrower than one glyph (very long
+     unbroken filename + narrow container), producing the vertical
+     character-column rendering reported by a user. overflow-wrap:
+     anywhere still allows long unbroken strings to wrap, but only
+     when there's truly no other option. min-width: 4ch also prevents
+     the flex column from collapsing below 4 chars wide. */
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-width: 4ch;
   color: var(--accent-2);
 }
 .change-detail {

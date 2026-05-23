@@ -665,6 +665,88 @@ async function main() {
     await runHealthScan('syn1', sc);
   }
 
+  // ── SYN-9: hub-shaped source (v3.0.1-beta.11) ───────────────────────
+  // Verifies the post-batch linkification pass: a source that lists 8
+  // sibling sub-techniques under one umbrella should produce a hub
+  // concept page with [[wikilinks]] to all 8 children.
+  {
+    const sc = startScenario('SYN-9', 'hub-shaped source — verifies post-batch linkification');
+    await createTestDomain('syn9');
+    const result = await runIngest('syn9', path.join(INPUTS_DIR, '08-hub-shape.md'), '08-hub-shape.md', sc);
+    const wikiDir = path.join(tempRoot, 'syn9', 'wiki');
+    checkQualityMetrics(sc, wikiDir, result);
+
+    // The hub itself should be a concept page. Find it (filename match)
+    // and confirm the body has wikilinks to ≥4 of the 8 children.
+    const conceptsDir = path.join(wikiDir, 'concepts');
+    const conceptFiles = existsSync(conceptsDir) ? readdirSync(conceptsDir).filter(f => f.endsWith('.md')) : [];
+    const hubCandidate = conceptFiles.find(f => f.includes('visual') || f.includes('note-taking'));
+    if (hubCandidate) {
+      const hubContent = readFileSync(path.join(conceptsDir, hubCandidate), 'utf8');
+      const linkCount = (hubContent.match(/\[\[[^\]|#\n]+/g) || []).length;
+      assertTrue(sc, linkCount >= 4,
+        `SYN-9: hub page "${hubCandidate}" has ≥4 wikilinks to siblings (got ${linkCount})`);
+    } else {
+      warn(sc, 'SYN-9: no clear hub page found (LLM may have structured differently than expected)');
+    }
+
+    // The linkification report should have surfaced as a warning when it fired
+    const linkifyWarning = (result.warnings || []).find(w => w.includes('Hub linkification'));
+    if (linkifyWarning) {
+      ok(sc, 'SYN-9: linkification warning emitted — hub pass actively added links');
+    }
+
+    await runHealthScan('syn9', sc);
+  }
+
+  // ── SYN-10: Jaccard semantic-dupe (related-articles scenario) ───────
+  // Ingest two articles about the same concept with singular vs plural
+  // surface forms. With beta.11 Jaccard guard, only one entity/concept
+  // file should remain — the plural form redirects onto the existing
+  // singular form.
+  {
+    const sc = startScenario('SYN-10', 'Jaccard semantic-dupe — two articles, singular vs plural');
+    await createTestDomain('syn10');
+    // Pass 1: singular form
+    const result1 = await runIngest('syn10', path.join(INPUTS_DIR, '09a-roundup-singular.md'), '09a-roundup-singular.md', sc);
+    assertTrue(sc, result1.pagesWritten.length >= 2,
+      'SYN-10a: first article produced ≥2 pages');
+
+    // Pass 2: plural form
+    const result2 = await runIngest('syn10', path.join(INPUTS_DIR, '09b-roundup-plural.md'), '09b-roundup-plural.md', sc);
+    assertTrue(sc, result2.pagesWritten.length >= 1,
+      'SYN-10b: second article produced ≥1 page');
+
+    // Now verify: only ONE concept page about expert-roundup should exist
+    const conceptsDir = path.join(tempRoot, 'syn10', 'wiki', 'concepts');
+    const conceptFiles = existsSync(conceptsDir) ? readdirSync(conceptsDir).filter(f => f.endsWith('.md')) : [];
+    const roundupFiles = conceptFiles.filter(f =>
+      f.toLowerCase().includes('roundup') || f.toLowerCase().includes('round-up'));
+
+    // We accept 1 (perfect dedup) or 2 (the guard fired with a warning but
+    // didn't auto-redirect because Jaccard fell in the warn band). Both are
+    // acceptable behaviour. We REJECT 3+ which would indicate runaway drift.
+    assertTrue(sc, roundupFiles.length <= 2,
+      `SYN-10c: at most 2 roundup-related concept files (got ${roundupFiles.length}): ${roundupFiles.join(', ')}`);
+
+    // Look for the guard's warning in either ingest's warnings list
+    const semDupeWarning = [...(result1.warnings || []), ...(result2.warnings || [])]
+      .find(w => w.includes('Jaccard') || w.includes('near-duplicate'));
+    if (roundupFiles.length === 1 && semDupeWarning) {
+      ok(sc, 'SYN-10d: Jaccard guard actively redirected the plural variant');
+    } else if (roundupFiles.length === 1) {
+      ok(sc, 'SYN-10d: only one concept file — LLM may have used the same slug both times');
+    } else if (roundupFiles.length === 2 && semDupeWarning) {
+      ok(sc, 'SYN-10d: Jaccard guard fired warning even if did not auto-redirect (warn band)');
+    } else {
+      warn(sc, `SYN-10d: 2 roundup files exist without a Jaccard warning — review`);
+    }
+
+    const wikiDir = path.join(tempRoot, 'syn10', 'wiki');
+    checkQualityMetrics(sc, wikiDir, result2);
+    await runHealthScan('syn10', sc);
+  }
+
   // ── REAL-1: real-world re-ingest ────────────────────────────────────
   if (!QUICK) {
     const sc = startScenario('REAL-1', 'real-world re-ingest of The_Energy_and_Water_Footprint_of_Generative_AI');

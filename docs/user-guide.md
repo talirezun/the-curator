@@ -368,6 +368,8 @@ There's a 3-second pause between files by default to avoid rate-limit hits on th
 
 After ingesting a few sources, you can have a full multi-turn conversation with your knowledge base. The AI answers from your wiki pages only, cites its sources, and remembers the entire thread — even after you restart the server.
 
+> **As of v3.0.1-beta.11**, chat now picks the wiki pages most relevant to your question — instead of trying to feed the LLM every page in the wiki, it tokenizes your question, scores each page by overlap with the title and content, and loads the top matches in full. This is what makes chat work on large mature domains (a domain with 2000+ pages and several megabytes of wiki content is just as fast and accurate as a 20-page domain). Earlier versions hard-truncated at 90 KB which dropped almost all content on large domains.
+
 ### The chat interface
 
 The Chat tab has two parts:

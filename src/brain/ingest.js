@@ -193,10 +193,30 @@ function makeProgress(onProgress) {
 
 // ── Phase 2: page content (batched) ──────────────────────────────────────────
 
-function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }) {
+function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
   const pageList = pageBatch
     .map(p => `  { "path": "${p.path}", "summary": "${p.summary}" }`)
     .join(',\n');
+
+  // v3.0.1-beta.11: build the "pages being created in THIS ingest" block
+  // so a batch writing a hub page can wikilink to items being created in
+  // other batches. Pre-beta.11 the LLM only saw the current batch's slugs
+  // plus the pre-ingest existing-files snapshot — it had no way to know
+  // what slugs sibling batches would produce, so hub pages defaulted to
+  // plain-text item names instead of [[wikilinks]] (Root Cause 1 + 4
+  // from the community bug report).
+  //
+  // Format split by folder so the LLM uses the right link syntax:
+  //   entities/concepts → [[slug]]
+  //   summaries → [[summaries/slug]]
+  const inThisIngest = { entities: [], concepts: [], summaries: [] };
+  for (const p of allOutlinePages) {
+    if (!p || typeof p.path !== 'string') continue;
+    const slug = p.path.replace(/\.md$/, '');
+    if (slug.startsWith('entities/'))  inThisIngest.entities.push(slug.slice('entities/'.length));
+    else if (slug.startsWith('concepts/'))  inThisIngest.concepts.push(slug.slice('concepts/'.length));
+    else if (slug.startsWith('summaries/')) inThisIngest.summaries.push(slug);
+  }
 
   return `Today's date: ${today}
 
@@ -216,10 +236,16 @@ Guidelines:
 - Concept and summary pages: include a line "Tags: tag1, tag2" in the body.
 - Links: always use [[page-name]] — NEVER include folder prefix (write [[rag]] not [[concepts/rag]]).
 - LINK ACCURACY: Use the EXACT slug from existing filenames when linking. If the entity file is iea.md, write [[iea]], NOT [[international-energy-agency]]. If the summary is the-energy-and-water-footprint-of-generative-ai.md, link as [[summaries/the-energy-and-water-footprint-of-generative-ai]], not a shortened form.
+- HUB-PAGE RULE: if your page enumerates many sibling concepts (e.g. a "library", "taxonomy", or "comparison" page), you MUST wikilink to each item using the exact slugs listed below. Plain-text item names without brackets leave the hub disconnected from the items in the graph.
 
 EXISTING WIKI FILES — when writing content for these pages, use [[page-name]] links that match existing filenames exactly.
 Existing entities: ${existingFiles.entities.map(f => f.replace('.md', '')).join(', ')}
 Existing concepts: ${existingFiles.concepts.map(f => f.replace('.md', '')).join(', ')}
+
+PAGES BEING CREATED IN THIS SAME INGEST — even if a slug below is not in the batch you're writing right now, OTHER batches will write it, so you MUST link to it by the exact slug listed (no guesses).
+Entities being created:  ${inThisIngest.entities.join(', ') || '(none)'}
+Concepts being created:  ${inThisIngest.concepts.join(', ') || '(none)'}
+Summaries being created: ${inThisIngest.summaries.join(', ') || '(none)'}
 
 CRITICAL — Valid folder prefixes for page paths:
   • summaries/  — one summary page per source document
@@ -610,6 +636,176 @@ export function validateOutline(outline, summaryPath, originalName, originatorHi
   return { outline: { ...outline, pages }, warnings };
 }
 
+// ── Semantic-near-duplicate guard (v3.0.1-beta.11) ───────────────────────────
+//
+// Catches the slug-drift pattern that the structural Pass A/B/C in writePage
+// cannot:
+//   expert-roundup-format  vs  experts-roundup-format    (singular/plural)
+//   tools-directory        vs  tools-directory-format    (suffix variant)
+//   pattern-library        vs  pattern-library-format    (suffix variant)
+//
+// Surfaced by a community-member field report on the Curation domain after
+// multiple related articles were ingested — each used slightly different
+// surface phrasing for the same concept, so each ingest minted a new slug.
+// The hyphen-normalised Pass B can't see these as equivalent because the
+// underlying letters genuinely differ. The v2.4.5 Health-side semantic-dupe
+// scan exists but is post-hoc cleanup — by the time it runs the wiki is
+// already populated with the drift.
+//
+// Approach: tokenize each candidate slug + each existing slug into a token
+// set, lightly normalize singular→singular (trim trailing 's' if the
+// remainder is ≥3 chars), then compute Jaccard similarity:
+//   ≥ 0.85 → auto-redirect (the new slug becomes the existing one)
+//   0.5 – 0.85 → warn so the user knows there's a candidate cluster
+//   < 0.5 → independent concepts, no action
+//
+// Auto-redirect is intentionally aggressive at 0.85 — a Jaccard of 0.85 on
+// short slugs (3-5 tokens) means at most one token differs, and that
+// difference is almost always a synonym, plural, or suffix variant. The
+// 0.5–0.85 band is the false-positive risk zone, so we warn but don't act.
+//
+// Currently scoped to CONCEPT pages only. Entities are usually proper nouns
+// (people, companies, countries) where slight slug differences may genuinely
+// be different entities (e.g. "open-ai" vs "open-source-ai"). Concepts are
+// the surface where slug drift compounds quickly across ingests.
+
+const SEMANTIC_DUPE_AUTO_REDIRECT = 0.85;
+const SEMANTIC_DUPE_WARN_THRESHOLD = 0.5;
+
+function singularStem(token) {
+  // Lightweight singular/plural stem: drop trailing 's' if the remainder is
+  // at least 3 chars long. Catches "collections" → "collection",
+  // "roundups" → "roundup" without harming words that legitimately end in s
+  // ("is", "as", "css"). Doesn't try to be a real stemmer.
+  if (typeof token !== 'string' || token.length < 4) return token;
+  if (!token.endsWith('s')) return token;
+  return token.slice(0, -1);
+}
+
+function slugToStemmedTokens(slug) {
+  // Split on hyphens (slug convention) then stem each token. Drop empties
+  // and common slug-noise tokens.
+  if (typeof slug !== 'string') return new Set();
+  return new Set(
+    slug.split('-')
+      .map(t => t.trim().toLowerCase())
+      .filter(t => t.length > 1)
+      .map(singularStem)
+  );
+}
+
+function jaccardOnSets(a, b) {
+  if (a.size === 0 && b.size === 0) return 1.0;
+  if (a.size === 0 || b.size === 0) return 0.0;
+  let intersect = 0;
+  for (const t of a) if (b.has(t)) intersect++;
+  return intersect / (a.size + b.size - intersect);
+}
+
+/**
+ * Detect and redirect semantic near-duplicate CONCEPT slugs in the outline.
+ *
+ * Mutates `outline.pages` in place when a redirect fires. Returns
+ * `{ warnings, redirects }` so the caller can surface them like the rest of
+ * validateOutline's signal.
+ *
+ * Exported for unit testing.
+ */
+export function redirectSemanticDuplicates(outline, existingFiles) {
+  const warnings = [];
+  const redirects = [];
+  if (!outline || !Array.isArray(outline.pages)) return { warnings, redirects };
+
+  // Build the inventory of existing concept slugs (on-disk before this
+  // ingest). Use the same stemming so comparisons are symmetric.
+  const existingSlugs = (existingFiles?.concepts || [])
+    .map(f => f.replace(/\.md$/, ''))
+    .filter(Boolean);
+  const existingTokenSets = existingSlugs.map(s => ({ slug: s, tokens: slugToStemmedTokens(s) }));
+
+  // Track redirects so we can also rewrite within-outline duplicates.
+  const newPaths = [];
+  const seenSlugsInOutline = [];
+
+  for (const p of outline.pages) {
+    if (!p || typeof p.path !== 'string') continue;
+    if (!p.path.startsWith('concepts/')) {
+      newPaths.push(p);
+      continue;
+    }
+    const slug = p.path.replace(/^concepts\//, '').replace(/\.md$/, '');
+    const tokens = slugToStemmedTokens(slug);
+
+    // Compare against EXISTING on-disk slugs first.
+    let bestExisting = null;
+    let bestExistingScore = 0;
+    for (const { slug: exSlug, tokens: exTokens } of existingTokenSets) {
+      if (exSlug === slug) {
+        bestExisting = exSlug;
+        bestExistingScore = 1.0;
+        break;
+      }
+      const score = jaccardOnSets(tokens, exTokens);
+      if (score > bestExistingScore) {
+        bestExisting = exSlug;
+        bestExistingScore = score;
+      }
+    }
+
+    if (bestExistingScore >= SEMANTIC_DUPE_AUTO_REDIRECT && bestExisting && bestExisting !== slug) {
+      // Auto-redirect onto the existing slug.
+      const newPath = `concepts/${bestExisting}.md`;
+      warnings.push(
+        `Outline proposed "concepts/${slug}.md" — semantic near-duplicate ` +
+        `(Jaccard ${bestExistingScore.toFixed(2)}) of existing "concepts/${bestExisting}.md". ` +
+        `Redirected; bullets will merge into the existing page.`
+      );
+      redirects.push({ from: slug, to: bestExisting, score: bestExistingScore, scope: 'existing' });
+      p.path = newPath;
+      newPaths.push(p);
+      seenSlugsInOutline.push({ slug: bestExisting, tokens: slugToStemmedTokens(bestExisting), entry: p });
+      continue;
+    }
+    if (bestExistingScore >= SEMANTIC_DUPE_WARN_THRESHOLD && bestExisting && bestExisting !== slug) {
+      warnings.push(
+        `Outline proposed "concepts/${slug}.md" — possible semantic near-duplicate ` +
+        `(Jaccard ${bestExistingScore.toFixed(2)}) of existing "concepts/${bestExisting}.md". ` +
+        `Keeping both; review via Wiki Health → Scan for semantic duplicates if they're truly the same concept.`
+      );
+    }
+
+    // Compare against OTHER slugs already kept in THIS outline pass — catches
+    // the case where one ingest plans both `expert-roundup-format` and
+    // `experts-roundup-format` for the same source.
+    let bestWithin = null;
+    let bestWithinScore = 0;
+    for (const seen of seenSlugsInOutline) {
+      if (seen.slug === slug) continue;
+      const score = jaccardOnSets(tokens, seen.tokens);
+      if (score > bestWithinScore) {
+        bestWithin = seen;
+        bestWithinScore = score;
+      }
+    }
+    if (bestWithinScore >= SEMANTIC_DUPE_AUTO_REDIRECT && bestWithin) {
+      warnings.push(
+        `Outline planned two near-duplicate concept slugs: "${slug}" and ` +
+        `"${bestWithin.slug}" (Jaccard ${bestWithinScore.toFixed(2)}). ` +
+        `Dropping "${slug}" — its content will merge into "${bestWithin.slug}".`
+      );
+      redirects.push({ from: slug, to: bestWithin.slug, score: bestWithinScore, scope: 'within' });
+      // Don't push this entry; we treat it as a duplicate of the earlier one.
+      continue;
+    }
+
+    newPaths.push(p);
+    seenSlugsInOutline.push({ slug, tokens, entry: p });
+  }
+
+  outline.pages = newPaths;
+  return { warnings, redirects };
+}
+
 // ── Single-pass prompt (small documents) ─────────────────────────────────────
 
 function buildPrompt(today, index, existingFiles, originalName, text, strict, isOverwrite = false, summaryPath = null) {
@@ -809,6 +1005,17 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     warnings.push(w);
   }
 
+  // v3.0.1-beta.11: pre-write semantic-dupe guard. Catches slugs like
+  // "experts-roundup-format" landing in the same outline (or being created
+  // against an existing "expert-roundup-format" on disk) and redirects them
+  // onto the existing slug so bullets merge instead of accumulating
+  // near-duplicate sibling pages.
+  const semDupe = redirectSemanticDuplicates(outline, existingFiles);
+  for (const w of semDupe.warnings) {
+    console.warn(`[ingest] Semantic-dupe guard: ${w}`);
+    warnings.push(w);
+  }
+
   const allPages = outline.pages; // [{path, summary}]
   const totalBatches = Math.ceil(allPages.length / BATCH_SIZE);
   console.error(`[ingest] Phase 1 complete — ${allPages.length} pages planned.`);
@@ -825,7 +1032,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
 
     const batchRaw = (await generateText(
       schema,
-      buildBatchPrompt(today, originalName, text, batch, existingFiles),
+      buildBatchPrompt(today, originalName, text, batch, existingFiles, allPages),
       16384,
       'json',
       (msg) => progress(batchPct, msg, 'wait')
@@ -843,7 +1050,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         try {
           const singleRaw = (await generateText(
             schema,
-            buildBatchPrompt(today, originalName, text, [singlePage], existingFiles),
+            buildBatchPrompt(today, originalName, text, [singlePage], existingFiles, allPages),
             4096,
             'json',
             (msg) => progress(batchPct, msg, 'wait')
@@ -1079,6 +1286,15 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       console.warn(`[ingest] Outline validator: ${w}`);
       warnings.push(w);
     }
+
+    // v3.0.1-beta.11: same semantic-dupe guard as multi-phase. Catches a
+    // single-pass result where the LLM proposes a slug that's a plural/
+    // suffix variant of an existing concept on disk.
+    const semDupe = redirectSemanticDuplicates(result, existingFiles);
+    for (const w of semDupe.warnings) {
+      console.warn(`[ingest] Semantic-dupe guard: ${w}`);
+      warnings.push(w);
+    }
   }
 
   // Deduplicate result.pages — multi-phase ingest can return the same path in
@@ -1160,6 +1376,32 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (indexRecord) changes.push(indexRecord);
   }
 
+  // v3.0.1-beta.11: post-batch hub-page linkification.
+  //
+  // After all pages are on disk, scan each concept page just written for
+  // "hub" shape — many sibling list items + few existing wikilinks. For each
+  // such hub, find plain-text occurrences of OTHER pages' titles/slugs from
+  // this same ingest and wrap them in [[brackets]]. Fixes the systematic
+  // Haiku failure mode where hub pages list 25 sibling items as plain text
+  // because the LLM didn't know their slugs at write time. With this pass
+  // running after every batch completes, the slugs are now all on disk and
+  // can be linked deterministically.
+  //
+  // Non-fatal: if anything goes wrong, the warning is logged and the ingest
+  // continues — the audit pass below will still report any phantom links.
+  try {
+    const linkifyReport = await linkifyHubPages(domain, canonicalPaths);
+    if (linkifyReport.linksAdded > 0) {
+      warnings.push(
+        `Hub linkification: added ${linkifyReport.linksAdded} wikilinks across ` +
+        `${linkifyReport.hubsModified} hub-shaped concept page(s) to connect them to ` +
+        `siblings created in this same ingest.`
+      );
+    }
+  } catch (linkifyErr) {
+    console.warn(`[ingest] Hub linkification failed (non-fatal): ${linkifyErr.message}`);
+  }
+
   // v3.0.1-beta.9: post-write broken-link audit. Surfaces the count of
   // wikilinks that don't resolve to a file on disk, as a warning that flows
   // into the ingest result panel + log entry. This is the actionable signal
@@ -1215,6 +1457,134 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
  * Doesn't dedupe — if `[[bitcoin-mining]]` appears in 5 pages, it counts as 5.
  * That's deliberate: high count = high impact = more reason to investigate.
  */
+/**
+ * Post-batch hub-page linkification (v3.0.1-beta.11).
+ *
+ * Some concept pages are inherently HUBS — their job is to enumerate other
+ * concepts in the domain (a "curation format library" listing 25 formats,
+ * a "memory taxonomy" listing 5 memory types, etc.). The LLM writes these
+ * with the item names as plain text (often bold or numbered) instead of
+ * `[[wikilinks]]` because, at the moment of writing the hub, it doesn't
+ * know the exact slugs that sibling batches will produce. The result is
+ * a hub that looks rich in prose but has zero outgoing graph edges to the
+ * items it's supposed to organize.
+ *
+ * This pass runs AFTER every batch has written, when every sibling slug
+ * is now on disk. For each "hub-shaped" concept page just written, we
+ * scan its body for plain-text mentions of other pages' titles/slugs from
+ * this same ingest and wrap them in `[[brackets]]`.
+ *
+ * Conservative matching (avoid false positives):
+ *   - Only operates on CONCEPT pages with ≥5 list items AND ≤2 existing
+ *     wikilinks ("hub" pattern — enumerates many things, links to few)
+ *   - Matches the page's first heading (Title Case) — these are the
+ *     anchors the LLM uses to refer to sibling pages
+ *   - Skips code blocks, inline code, and content already inside `[[]]`
+ *   - Skips self-references (a hub page doesn't link to itself)
+ *   - Uses `[[slug|Display Title]]` so the user-visible text stays the
+ *     same as the LLM wrote — purely additive change
+ */
+async function linkifyHubPages(domain, canonicalPaths) {
+  const wikiDir = wikiPath(domain);
+
+  // Step 1: build the slug → display title map by reading each page's first
+  // heading. The display title is the natural-language form the LLM most
+  // likely used when mentioning the page in another page's body.
+  const slugToTitle = new Map();
+  for (const relPath of canonicalPaths) {
+    if (!relPath.startsWith('concepts/') && !relPath.startsWith('entities/')) continue;
+    const slug = relPath.split('/').pop().replace(/\.md$/, '');
+    try {
+      const content = await readFile(path.join(wikiDir, relPath), 'utf8');
+      const titleMatch = content.match(/^#{1,3}\s+(.+)$/m);
+      const title = titleMatch ? titleMatch[1].trim() : slug.replace(/-/g, ' ');
+      slugToTitle.set(slug, title);
+    } catch {
+      slugToTitle.set(slug, slug.replace(/-/g, ' '));
+    }
+  }
+
+  let hubsModified = 0;
+  let linksAdded = 0;
+
+  for (const relPath of canonicalPaths) {
+    if (!relPath.startsWith('concepts/')) continue;  // hub pattern lives on concepts/
+
+    const fullPath = path.join(wikiDir, relPath);
+    let content;
+    try { content = await readFile(fullPath, 'utf8'); } catch { continue; }
+
+    // Step 2: detect "hub-shaped" pages.
+    const listItemCount = (content.match(/^\s*(?:\d+\.|[-*])\s+/gm) || []).length;
+    const existingLinkCount = (content.match(/\[\[/g) || []).length;
+    if (listItemCount < 5) continue;          // not enough enumeration
+    if (existingLinkCount > 2) continue;      // already well-linked
+
+    const selfSlug = relPath.split('/').pop().replace(/\.md$/, '');
+
+    // Critical: we MUST re-split the content between every candidate so a
+    // freshly-wrapped `[[slug|Title]]` becomes a protected segment in the
+    // NEXT iteration. Otherwise a second candidate's case-insensitive
+    // regex matches the lowercase slug INSIDE the wrap we just produced,
+    // producing nested malformed brackets (`[[[[microsoft]]` etc.).
+    // Discovered during the v3.0.1-beta.11 deep test on the live REAL-1
+    // ingest where 30 broken `[[[[X]]` patterns appeared on a single page.
+    let modified = content;
+    let pageLinks = 0;
+
+    for (const [slug, title] of slugToTitle.entries()) {
+      if (slug === selfSlug) continue;
+      if (!title || title.length < 4) continue;  // skip 1-3 char titles (too noisy)
+
+      // Build the set of display candidates we'll search for. Both the
+      // human-readable title and the slug-with-spaces form catch different
+      // LLM phrasings.
+      const candidates = new Set();
+      candidates.add(title);
+      candidates.add(slug.replace(/-/g, ' '));
+
+      for (const candidate of candidates) {
+        if (!candidate || candidate.length < 4) continue;
+        const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Whole-word, case-insensitive. Require a word boundary on each side
+        // so "Tools" doesn't match inside "ToolsDirectory" and "RAG" doesn't
+        // match inside "DRAGON".
+        const re = new RegExp(`\\b${escaped}\\b`, 'gi');
+
+        // Re-split on every candidate iteration. Performance is fine
+        // because hubs are small (few KB) and the candidate count is
+        // bounded by the number of slugs in this ingest.
+        const segments = modified.split(/(```[\s\S]*?```|`[^`]*`|\[\[[^\]]*\]\])/g);
+        let candidateLinks = 0;
+        for (let i = 0; i < segments.length; i++) {
+          if (i % 2 === 1) continue;
+          const before = segments[i];
+          if (!re.test(before)) continue;
+          re.lastIndex = 0;
+          segments[i] = before.replace(re, (match) => {
+            candidateLinks++;
+            return `[[${slug}|${match}]]`;
+          });
+        }
+        if (candidateLinks > 0) {
+          modified = segments.join('');
+          pageLinks += candidateLinks;
+        }
+      }
+    }
+
+    if (pageLinks > 0) {
+      // Write back via writePage so all the safeguards (atomic write,
+      // bullet dedup, variant-link normalisation Pass A/B/C) still apply.
+      await writePage(domain, relPath, modified);
+      hubsModified++;
+      linksAdded += pageLinks;
+    }
+  }
+
+  return { hubsModified, linksAdded };
+}
+
 async function auditBrokenWikilinks(domain, recentlyWrittenPaths) {
   const wikiDir = wikiPath(domain);
   // Build the slug inventory once
