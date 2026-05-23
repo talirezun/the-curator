@@ -324,13 +324,98 @@ In practice, The Curator's ingest pipeline currently caps the **input** at 80,00
 - **Mind the rate limits on the free tier.** If you're ingesting a batch of 5+ documents and you're on Gemini's free tier, expect to hit `429 RESOURCE_EXHAUSTED` partway through — see [§19](#19-api-keys-cost--free-tier).
 - **Watch the warnings panel after each ingest.** If you see "⚠ Source truncated to 80,000 chars" or "⚠ Stub page created", the ingest finished but with reduced quality — the warning tells you exactly what to do. Re-ingesting the same source is safe (see below).
 
-### Things you might see, and what they mean (v3.0.1-beta.8+)
+### Understanding the ingest report (what those "warnings" really mean)
 
-- **"An ingest is in progress for `articles` — please wait"** (409 error on clicking Sync / Update / Delete a domain). Starting v3.0.1-beta.8, The Curator refuses to update the app, sync to GitHub, or delete a domain while an ingest is mid-flight. The Update, Sync, and Delete buttons also grey out automatically while an ingest runs — you usually won't see this message because the buttons aren't clickable in the first place. **Just wait for the progress bar to reach 100% and the buttons re-enable.** Same applies during the in-app Compile conversation and Wiki Health bulk-fix operations.
-- **"Outline had N `prefix-*` pages without a parent — injected the trunk page"** (warning banner after ingest). The AI created several related concept pages (e.g. `taste-as-moat`, `taste-as-judgment`, `taste-formula`) without the obvious parent page (`taste`). v3.0.1-beta.8+ detects this automatically and creates the parent page so cross-page `[[taste]]` links resolve. **Nothing to do** — the parent page has been added with a clean umbrella summary; you can edit it later in Obsidian if you want richer content.
-- **"Could not extract text from `<file>`"** (red banner on ingest start). The PDF is encrypted, scanned (image-only with no embedded text layer), or malformed. The raw file is auto-deleted so you can retry once you've fixed the source. **What to try**: open the PDF in macOS Preview → Tools → Adjust Text → OCR; or run `ocrmypdf` from the command line; or copy the article text into a `.md` file and ingest that instead.
-- **"Claude / Gemini hit the output token limit"** (red banner on a Haiku or Flash-Lite ingest). The AI's response was cut off because the source was too dense for one batch. This is NOT transient — retrying will hit the same wall. **What to do**: split the source into smaller parts (chapters, sections) and ingest each separately; or switch to a model with a larger output budget via Settings → `LLM_MODEL=claude-sonnet-4-5` in `.env`.
-- **"Another process is already writing to `<domain>` (file lock held)"** (rare, from the MCP). The Curator app has an ingest mid-flight on this domain AND Claude Desktop is trying to write to the same domain via `compile_to_wiki` or `fix_wiki_issue`. **What to do**: wait a moment — the lock auto-clears when the Curator-side ingest finishes. If the lock seems stuck for more than 30 minutes (the auto-clear TTL), check whether the Curator app is actually running; you can manually delete `<domains>/<domain>/.write-lock` if needed.
+When an ingest finishes, you may see a coloured banner at the top of the result panel that says something like *"Ingest finished — 12 notes"*. Despite the older "warning" label, **most of these entries are SUCCESSES, not problems** — they're the Curator's safeguards reporting what they caught and fixed for you. As of v3.0.1-beta.12, each entry is now categorised so you can tell at a glance what needs your attention.
+
+There are four categories:
+
+| Category | Icon | Colour | What it means |
+|---|---|---|---|
+| **Auto-fixed** | ✓ | green | The Curator detected something the LLM did wrong and **already fixed it**. Nothing for you to do — your wiki is cleaner than it would have been. |
+| **For review** | ⚠ | amber | The Curator detected something it **can't auto-resolve**. Read the entry; you may want to act via Wiki Health or by re-ingesting. |
+| **Attention** | ⚠ | red | Something material happened — usually source truncation. Read the entry; you may need to split the source or take other action. |
+| **Info** | ℹ | blue | Contextual note. Usually safe to ignore. |
+
+The banner's outer border colour matches the most-severe entry, so at a glance:
+
+- **Green border** → everything's fine, the safeguards just did some work
+- **Amber border** → one or more items need your review
+- **Red border** → source truncation or similar — read the report
+
+#### Full reference of ingest-report entries
+
+| Entry text | Category | What it means | What the Curator did | What you should do |
+|---|---|---|---|---|
+| *"Outline had N `prefix-*` pages without a parent `concepts/<prefix>.md` — injected the trunk page (granularity-inversion fix)"* | ✓ Auto-fixed | The LLM created several specific sub-concept pages (e.g. `taste-as-moat`, `taste-as-judgment`) but skipped the obvious parent `taste`. | Auto-injected the parent concept page with a clean umbrella summary. | Nothing. You can edit the parent page later in Obsidian if you want richer content. |
+| *"Outline omitted originator '<author>' — injected `entities/<slug>.md`"* | ✓ Auto-fixed | The source had a clear byline ("By Dr. X") but the LLM didn't create an entity page for the author. | Detected the byline + injected the missing author entity. | Nothing. |
+| *"Outline used originator slug `entities/dr-tali-rezun.md` — redirected to canonical `entities/tali-rezun.md`"* | ✓ Auto-fixed | The LLM used a honorific-prefixed slug. | Redirected to the canonical slug so honorific variants don't pile up. | Nothing. |
+| *"Outline proposed `concepts/X.md` — semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Redirected; bullets will merge."* | ✓ Auto-fixed | A new concept slug was ≥85% similar to an existing one (e.g. `experts-roundup-format` vs `expert-roundup-format`). | Auto-merged the new content into the existing page. | Nothing. |
+| *"Hub linkification: added N wikilinks across M hub-shaped concept page(s)"* | ✓ Auto-fixed | The LLM wrote a "hub" concept page (one that enumerates many sibling concepts) using plain-text item names instead of `[[wikilinks]]`. | Detected hub-shape pages, found plain-text mentions of siblings, wrapped them in `[[brackets]]`. | Nothing — your hub now connects to all its items in Obsidian's graph. |
+| *"Outline proposed `concepts/X.md` — possible semantic near-duplicate (Jaccard 0.XX) of existing `concepts/Y.md`. Keeping both."* | ⚠ For review | A new concept slug is 50–85% similar to an existing one (probable but not certain duplicate). | Kept BOTH pages because the similarity was below the auto-merge threshold. | Open Wiki Health → **Scan for semantic duplicates**. The AI-judged scan will tell you whether they're truly the same concept; if yes, merge via the Preview-then-Merge flow. |
+| *"N of M wikilinks (X%) don't resolve to an existing page. Examples: ..."* | ⚠ For review | The LLM mentioned some entities in body text that weren't on the page plan, leaving phantom links. | Wrote the pages as-is with the broken links visible. | Open Wiki Health → click the broken-link rows → use **Ask AI** to either find the right target or strip them. Or re-ingest with broader coverage if it's a content gap. |
+| *"Stub page created: `<path>` — AI failed to write content for this page"* | ⚠ For review | The LLM failed to generate content for a planned page even after the page-by-page fallback. | Wrote a clearly-marked stub with the LLM's planned summary preserved. | Re-ingest the source. The stub page has a `stub` tag so you can find it via Wiki Health. |
+| *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
+| *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
+| *"Claude / Gemini hit the output token limit (N tokens)"* | ⚠ Attention | The LLM's response was cut off mid-write because the source was too dense for one batch. | Reported the failure honestly — this is NOT transient, retrying hits the same wall. | Split the source into smaller parts; or switch to a higher-budget model via Settings → API Keys (Sonnet has a larger output budget than Haiku). |
+| *"An ingest is in progress for `<domain>` — please wait"* | ℹ Info | You clicked Sync, Update, or Delete-domain while an ingest was running. | Refused the conflicting operation with a 409. The Update / Sync / Delete buttons auto-grey while an ingest runs, so you usually won't see this. | Wait for the progress bar to finish, then retry. |
+| *"Another process is already writing to `<domain>` (file lock held)"* | ℹ Info | The MCP via Claude Desktop tried to write while an in-app ingest is running. | Refused the MCP write — the in-app ingest takes priority. | Wait for the in-app ingest to finish. The lock auto-clears after 30 minutes if a process crashed; you can manually delete `<domain>/.write-lock` if needed. |
+
+### What is Jaccard similarity? (for the semantic-dupe entries)
+
+Several entries above mention a "Jaccard 0.XX" score. Jaccard similarity is a simple math measure of how similar two sets are. The Curator uses it to detect concept slugs that are different strings but probably mean the same thing.
+
+The formula (in plain English):
+
+```
+similarity = (words both slugs share) / (total unique words across both)
+```
+
+Worked examples from a real ingest report:
+
+| Pair | Tokens A | Tokens B | Shared | Unique total | Jaccard |
+|---|---|---|---|---|---|
+| `the-human-touch` vs `human-touch` | `{the, human, touch}` | `{human, touch}` | 2 | 3 | **0.67** |
+| `wisdom-cultivation-accelerates` vs `wisdom-cultivation` | `{wisdom, cultivation, accelerates}` | `{wisdom, cultivation}` | 2 | 3 | **0.67** |
+| `expert-roundup-format` vs `experts-roundup-format` | `{expert, roundup, format}` | `{experts, roundup, format}` | 2 (after stem) | 3 | **0.50** raw → **1.0** with stem |
+| `community-relationships-deepen` vs `deepening-community-relationships` | `{community, relationships, deepen}` | `{deepening, community, relationships}` | 2 (3 after stem) | 4 | **0.50** |
+
+The scale and what the Curator does at each:
+
+| Jaccard score | What it means | Curator's action |
+|---|---|---|
+| **0.00 – 0.49** | Independent concepts (share few words) | Keeps both, no message. |
+| **0.50 – 0.84** | Possible duplicate, but uncertain | Keeps both + emits a "For review" entry so you can decide via Wiki Health. |
+| **0.85 – 1.0** | Almost certainly the same concept | Auto-redirects the new slug onto the existing one. Bullets from the new page merge into the existing one. |
+
+#### Lightweight singular/plural normalisation
+
+Before computing Jaccard, the Curator trims trailing `s` if the resulting token would still be ≥3 chars long. This catches:
+
+- `collections` → `collection`
+- `roundups` → `roundup`
+- `relationships` → `relationship`
+
+Without this step, `expert-roundup-format` and `experts-roundup-format` would compute Jaccard 0.50 (3 unique tokens, 2 shared). WITH it, they compute 1.0 (same token set after stem) — and get auto-merged. The stem step is conservative on short words: `is`, `as`, `os` are NOT stemmed (would damage real meaning).
+
+#### Why entities are never auto-merged by Jaccard
+
+The Jaccard guard ONLY operates on **concept** pages, never entities. Entities are usually proper nouns (people, companies, countries) where slug variants may genuinely be different things:
+
+- `open-ai` vs `open-source-ai` — Jaccard might be high but these are different
+- `microsoft` vs `microsoft-research` — different entities sharing a name
+- `tali-rezun` vs `tali-reziuncipher` — could be honest typo or actual different people
+
+For entity dedup, the Curator relies on the structural passes (honorific-prefix strip, hyphen-normalisation, cross-folder dedup) which work on slug shape, not semantics. The Health-side semantic-duplicate scan remains the LLM-judged tool for entity-side merges if you ever need them.
+
+### Related: things you might also see during ingest
+
+These are status messages during the ingest itself (not part of the report banner):
+
+- **"Service busy — retrying in 9s… (attempt 2/3)"** — Gemini API returned HTTP 503 (overloaded). The Curator retries automatically with exponential backoff (3s → 9s → 27s). Ingest almost always succeeds after the wait. See [§19](#19-api-keys-cost--free-tier).
+- **"AI is analyzing the document…"** — The LLM call is in flight. This can take 10–60 seconds depending on document size. Don't refresh.
+- **"Phase 2: writing content, batch N of M…"** — Multi-phase ingest is processing a batch. Wait for it to finish.
+- **"Could not extract text from PDF"** — See the table above.
 
 ### Re-ingesting a source (and why it's safe)
 

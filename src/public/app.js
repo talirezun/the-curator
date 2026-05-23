@@ -282,14 +282,85 @@ function showIngestResult(data) {
   renderIngestWarnings(data);
 }
 
+// v3.0.1-beta.12+: classify each entry in the ingest report by the kind
+// of event it represents. Most "warnings" are actually safeguard SUCCESSES
+// (Curator caught something and fixed it automatically). Showing them all
+// as amber warnings made the result panel look alarming. This classifier
+// inspects the message text and groups entries into three buckets:
+//
+//   ✓ auto-fixed   — Curator detected and fixed automatically, no action needed
+//   ⚠ for review   — Curator detected something it can't auto-resolve;
+//                    user should look at Wiki Health or decide manually
+//   ℹ informational — context the user might want to know (e.g. truncation)
+//
+// The classifier is text-pattern based. It pairs with the warning strings
+// emitted from src/brain/ingest.js — if we add new warning kinds, update
+// this classifier too. Documented in docs/user-guide.md §8.
+function classifyIngestEntry(w) {
+  const lc = String(w || '').toLowerCase();
+  // Order matters: most specific patterns first.
+  if (lc.includes('injected the trunk page') ||
+      lc.includes('hub linkification') ||
+      lc.includes('injected entities/') ||
+      lc.includes('injected the canonical summary') ||
+      lc.includes('redirected to canonical') ||
+      lc.includes('redirected; bullets will merge') ||
+      lc.includes('dropping') && lc.includes('content will merge')) {
+    return { kind: 'fixed', icon: '✓', color: '#3fb950', label: 'Auto-fixed' };
+  }
+  if (lc.includes('keeping both') ||
+      lc.includes("don't resolve") ||
+      lc.includes('do not resolve') ||
+      lc.includes('stub page')) {
+    return { kind: 'review', icon: '⚠', color: '#d29922', label: 'For review' };
+  }
+  if (lc.includes('truncated to')) {
+    return { kind: 'attention', icon: '⚠', color: '#f85149', label: 'Attention' };
+  }
+  return { kind: 'info', icon: 'ℹ', color: '#58a6ff', label: 'Info' };
+}
+
 function renderIngestWarnings(data) {
   const warnings = Array.isArray(data.warnings) ? data.warnings : [];
   if (!warnings.length) return;
+
+  // Bucket entries by kind for the header summary.
+  const buckets = { fixed: 0, review: 0, attention: 0, info: 0 };
+  const classified = warnings.map(w => {
+    const c = classifyIngestEntry(w);
+    buckets[c.kind]++;
+    return { msg: w, ...c };
+  });
+
+  // Build a short summary line: "3 auto-fixed, 1 for review, 1 info"
+  const summaryParts = [];
+  if (buckets.fixed)     summaryParts.push(`<span style="color:#3fb950">${buckets.fixed} auto-fixed</span>`);
+  if (buckets.review)    summaryParts.push(`<span style="color:#d29922">${buckets.review} for review</span>`);
+  if (buckets.attention) summaryParts.push(`<span style="color:#f85149">${buckets.attention} attention</span>`);
+  if (buckets.info)      summaryParts.push(`<span style="color:#58a6ff">${buckets.info} info</span>`);
+  const summaryLine = summaryParts.join(' · ');
+
+  const items = classified.map(c =>
+    `<li style="margin-bottom:4px"><span style="color:${c.color};font-weight:600">${c.icon} ${c.label}:</span> ${escHtml(c.msg)}</li>`
+  ).join('');
+
   const banner = document.createElement('div');
   banner.className = 'ingest-warnings';
-  banner.style.cssText = 'background:#fff7e6;border:1px solid #ffb961;border-radius:6px;padding:10px 12px;margin:10px 0;font-size:13px;line-height:1.5;';
-  const items = warnings.map(w => `<li>${escHtml(w)}</li>`).join('');
-  banner.innerHTML = `<strong>⚠ Ingest finished with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}:</strong><ul style="margin:6px 0 0 18px;padding:0;">${items}</ul>`;
+  // Banner color reflects the most-severe entry: red if any attention,
+  // amber if any review, green if all auto-fixed, blue otherwise.
+  const borderColor = buckets.attention ? '#f85149'
+                    : buckets.review    ? '#ffb961'
+                    : buckets.fixed     ? '#3fb950'
+                    : '#58a6ff';
+  const bg = buckets.attention ? '#3a1c1c'
+           : buckets.review    ? '#3a2c1c'
+           : buckets.fixed     ? '#1c3a2c'
+           : '#1c2c3a';
+  banner.style.cssText = `background:${bg};border:1px solid ${borderColor};border-radius:6px;padding:10px 12px;margin:10px 0;font-size:13px;line-height:1.5;`;
+  banner.innerHTML =
+    `<strong>Ingest finished — ${warnings.length} note${warnings.length === 1 ? '' : 's'}</strong>` +
+    (summaryLine ? `<div style="font-size:12px;margin-top:2px">${summaryLine}</div>` : '') +
+    `<ul style="margin:8px 0 0 0;padding:0;list-style:none">${items}</ul>`;
   ingestResult.insertBefore(banner, ingestResult.firstChild);
 }
 
