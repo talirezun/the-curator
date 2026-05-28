@@ -21,6 +21,14 @@ const DEFAULTS = {
                                          // See docs/model-lifecycle.md for rationale.
 };
 
+// Claude Haiku 4.5 caps output at 64,000 tokens; requesting more is rejected by
+// the API with "max_tokens: N > 64000". Our ingest/compile call sites request
+// 65536 (correct for Gemini 2.5 Flash, which allows it) — so the Anthropic
+// branch clamps down to this ceiling. Anthropic is the ONLY provider clamped;
+// Gemini keeps the full 65536. Haiku is the only Anthropic model the Curator
+// enables (DEFAULTS.anthropic), so a single constant suffices.
+export const ANTHROPIC_MAX_OUTPUT_TOKENS = 64000;
+
 /**
  * Model-lifecycle safety net.
  *
@@ -262,12 +270,26 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // for JSON rely on the "Return ONLY valid JSON" directive in the system prompt
   // plus the jsonrepair fallback in parseJSON (see src/brain/ingest.js).
   const client = new Anthropic({ apiKey: getEffectiveKey('anthropic') });
-  const message = await client.messages.create({
+
+  // Clamp to Haiku's hard output cap. Call sites pass 65536 (right for Gemini),
+  // which the Anthropic API rejects outright as "max_tokens: 65536 > 64000".
+  const effectiveMaxTokens = Math.min(maxTokens, ANTHROPIC_MAX_OUTPUT_TOKENS);
+
+  // Use the streaming transport, NOT messages.create(). The SDK (>=0.39) throws
+  // "Streaming is strongly recommended for operations that may take longer than
+  // 10 minutes" for ANY non-streaming call whose max_tokens implies a computed
+  // timeout over 10 min — which fires for any budget above ~21,333 tokens,
+  // regardless of model or actual response time. messages.stream() uses a fixed
+  // 600s timeout and skips that guard. .finalMessage() assembles and returns the
+  // identical Message object, so the stop_reason / content checks below are
+  // unchanged. (Compile + single-pass ingest both request 65536 → both hit this
+  // on Anthropic before this fix.)
+  const message = await client.messages.stream({
     model,
-    max_tokens: maxTokens,
+    max_tokens: effectiveMaxTokens,
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
-  });
+  }).finalMessage();
   // v3.0.1-beta.8: detect Anthropic output-budget truncation. When the model
   // hits `max_tokens` mid-response, Anthropic returns
   // `stop_reason: "max_tokens"` and the `text` field contains the partial
@@ -280,7 +302,7 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // condition there.
   if (message.stop_reason === 'max_tokens') {
     throw new Error(
-      `⚠ Claude hit the output token limit (${maxTokens} tokens) on this call. ` +
+      `⚠ Claude hit the output token limit (${effectiveMaxTokens} tokens) on this call. ` +
       `The response was cut off mid-way and cannot be parsed. This is NOT a ` +
       `transient JSON error — retrying will hit the same limit. What to do: ` +
       `split the source into smaller parts (e.g. by chapter) and ingest each ` +

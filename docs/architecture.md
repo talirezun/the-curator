@@ -222,7 +222,8 @@ src/brain/ingest.js
       │     result.warnings array + emit a progress message + log it (v3.0.1+).
       ├─ 3. Load domains/<domain>/CLAUDE.md  (system prompt)
       ├─ 4. Load domains/<domain>/wiki/index.md  (current wiki state)
-      ├─ 5. Call LLM via llm.js  (JSON mode, 65,536 max output tokens)
+      ├─ 5. Call LLM via llm.js  (JSON mode, 65,536 max output tokens;
+      │     Anthropic clamps to 64,000 + streams — see model-lifecycle.md)
       │     System:  domain CLAUDE.md schema
       │     User:    date + index + source text (≤80,000 chars) + REQUIRED
       │              COVERAGE checklist (v3.0.1+): forced summary path,

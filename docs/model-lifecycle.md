@@ -124,6 +124,12 @@ The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, c
 
 2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` / `claude-3-5-haiku-latest` in its TypeScript types; newer model IDs like `claude-haiku-4-5` and `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain walks same-tier Haiku variants first, then escalates to Sonnet (higher cost but always available).
 
+3. **Output-token cap + streaming transport (v3.0.1-beta.14).** Ingest single-pass and conversation compile request a `65536`-token output budget — correct for Gemini 2.5 Flash, but two limits make it invalid on Anthropic, so the Anthropic branch of `callProvider` (in `src/brain/llm.js`) handles both:
+   - **Hard output cap.** Claude Haiku 4.5 caps output at **64,000** tokens; the API rejects `max_tokens: 65536` outright as `max_tokens: 65536 > 64000`. The Anthropic branch clamps the budget to `ANTHROPIC_MAX_OUTPUT_TOKENS` (64000) via `Math.min`. Gemini keeps the full 65,536 — it is not clamped.
+   - **Mandatory streaming above ~21k tokens.** SDK v0.39 throws *"Streaming is strongly recommended for operations that may take longer than 10 minutes"* for **any** non-streaming `messages.create()` call whose `max_tokens` implies a computed timeout over 10 minutes — which fires for any budget above ~21,333 tokens, regardless of model or actual latency. So the clamp alone is insufficient; the Anthropic branch uses `client.messages.stream(...).finalMessage()` (fixed 600s timeout, no guard). `.finalMessage()` returns the identical `Message` object, so `stop_reason` / content handling is unchanged.
+
+   Net effect: Anthropic users on Haiku can run Compile-to-Wiki and single-pass ingest without hitting either error. Chat (4096) and multi-phase ingest (16384) were always under both thresholds and are unaffected.
+
 If your usage patterns make Haiku's quality insufficient (rare for wiki ingest but possible for dense academic PDFs), you can opt into Sonnet via:
 
 ```bash
