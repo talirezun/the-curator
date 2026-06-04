@@ -473,7 +473,9 @@ let activeConvId   = null;   // currently open conversation ID
 let chatDomain     = null;   // currently selected domain
 let chatBusy       = false;  // prevents double-sends
 let compileBusy    = false;  // prevents double-compiles
-const COMPILE_MIN_USER_MESSAGES = 2;
+// Show "Compile to Wiki" after the first answer — one good exchange is enough
+// to be worth saving (v3.0.1-beta.15; backend MIN_USER_MESSAGES matches).
+const COMPILE_MIN_USER_MESSAGES = 1;
 
 // ── Domain selector ───────────────────────────────────────────────────────────
 async function loadChatDomains() {
@@ -572,8 +574,9 @@ function showChatEmpty() {
 
 function updateCompileButtonVisibility(messages) {
   // The header is always visible when a conversation is open (carries the
-  // title). The Compile button itself only enables once we have at least
-  // 2 user messages — too short and there's nothing meaningful to compile.
+  // title). The Compile button enables once we have at least
+  // COMPILE_MIN_USER_MESSAGES user messages (1 since v3.0.1-beta.15 — a single
+  // good question→answer exchange is worth compiling).
   const userTurns = messages.filter(m => m.role === 'user').length;
   if (compileBtn) {
     if (userTurns >= COMPILE_MIN_USER_MESSAGES) {
@@ -4515,6 +4518,7 @@ const semMergeConfirm = document.getElementById('semantic-merge-confirm');
 
 let _semPreviewedPairs = new Set();   // pairs the user has previewed (safety gate)
 let _semCurrentPreview = null;        // the pair currently in the preview modal
+let _semBatchRunning = false;         // guards against double-firing the batch merge
 
 semBtn?.addEventListener('click', async () => {
   if (!_healthDomain) {
@@ -4568,6 +4572,7 @@ semConfirmBtn?.addEventListener('click', () => {
 async function runSemanticScan() {
   semResults.innerHTML = '';
   _semPreviewedPairs = new Set();
+  _semBatchRunning = false;
   semProgress.classList.remove('hidden');
   const fill = semProgress.querySelector('.semantic-dupes-progress-fill');
   const text = semProgress.querySelector('.semantic-dupes-progress-text');
@@ -4634,7 +4639,157 @@ function handleSemanticEvent(event, ui) {
     ui.text.textContent = `Done. ${event.pairs.length} duplicate${event.pairs.length === 1 ? '' : 's'} found · ${event.cost.inputTokens.toLocaleString()} in + ${event.cost.outputTokens.toLocaleString()} out tokens · ${usd}`;
     if (event.pairs.length === 0) {
       semResults.innerHTML = '<div class="hint" style="padding:12px">No semantic duplicates found in this domain.</div>';
+    } else {
+      renderBatchMergeBar();
     }
+  }
+}
+
+// ── Batch merge of high-confidence duplicates (v3.0.1-beta.15) ────────────────
+// The previous flow forced the user to Preview + Merge every pair one at a time
+// — brutal at 245 pairs. This adds a single "Merge all high-confidence" action
+// with an explicit confirm step. Only HIGH-confidence pairs (clear near-
+// identical duplicates) are eligible; medium/low stay manual. The whole wiki is
+// git-tracked, so a mistaken batch is revertable from the Sync tab.
+
+// Derive the batch list from the LIVE cards in the DOM, not a frozen scan-time
+// array (audit fix). This makes the batch respect every per-card action the
+// user took after the scan: a Flip rebuilds the card with swapped
+// keep/remove dataset (so we merge the direction the user chose), a Skip removes
+// the card entirely (so we don't re-merge a dismissed pair), and an individual
+// Merge adds `.semantic-pair-merged` (excluded so we don't re-attempt it).
+function highConfidencePairs() {
+  const cards = semResults.querySelectorAll('.semantic-pair-card:not(.semantic-pair-merged)');
+  const pairs = [];
+  for (const card of cards) {
+    if (card.dataset.confidence !== 'high') continue;
+    const keep = (card.dataset.keep || '').split('/');
+    const remove = (card.dataset.remove || '').split('/');
+    if (keep.length < 2 || remove.length < 2) continue;
+    pairs.push({
+      keepFolder: keep[0], keepSlug: keep.slice(1).join('/'),
+      removeFolder: remove[0], removeSlug: remove.slice(1).join('/'),
+      confidence: 'high',
+    });
+  }
+  return pairs;
+}
+
+function renderBatchMergeBar() {
+  const existing = document.getElementById('semantic-batch-bar');
+  if (existing) existing.remove();
+  const highConf = highConfidencePairs();
+  if (highConf.length === 0) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'semantic-batch-bar';
+  bar.className = 'semantic-batch-bar';
+  bar.innerHTML = `
+    <button class="btn btn-primary semantic-merge-all-btn">✨ Merge all ${highConf.length} high-confidence duplicate${highConf.length === 1 ? '' : 's'}</button>
+    <span class="hint">Merges every green “high confidence” pair at once. The duplicate page is deleted and its links repointed. If you use GitHub Sync, this is revertable from the Sync tab.</span>
+  `;
+  // Insert as the first element so it sits above the pair cards.
+  semResults.insertBefore(bar, semResults.firstChild);
+  bar.querySelector('.semantic-merge-all-btn').addEventListener('click', () => confirmBatchMerge(bar));
+}
+
+function confirmBatchMerge(bar) {
+  const highConf = highConfidencePairs();
+  if (highConf.length === 0) return;
+  bar.innerHTML = `
+    <div class="semantic-batch-confirm">
+      <strong>Merge ${highConf.length} high-confidence duplicate${highConf.length === 1 ? '' : 's'}?</strong>
+      This deletes ${highConf.length} duplicate page${highConf.length === 1 ? '' : 's'} and rewrites their links across the wiki.
+      If you use GitHub Sync, you can undo it from the <strong>Sync</strong> tab if anything looks wrong.
+      <div class="semantic-batch-confirm-actions">
+        <button class="btn btn-primary semantic-batch-go">Yes, merge all ${highConf.length}</button>
+        <button class="btn semantic-batch-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  bar.querySelector('.semantic-batch-cancel').addEventListener('click', () => renderBatchMergeBar());
+  bar.querySelector('.semantic-batch-go').addEventListener('click', () => runSemanticBatchMerge(bar, highConf));
+}
+
+function findCardForPair(pair) {
+  const key = `${pair.keepFolder}/${pair.keepSlug}||${pair.removeFolder}/${pair.removeSlug}`;
+  const cards = semResults.querySelectorAll('.semantic-pair-card');
+  for (const c of cards) if (c.dataset.key === key) return c;
+  return null;
+}
+
+async function runSemanticBatchMerge(bar, pairs) {
+  if (_semBatchRunning) return;
+  _semBatchRunning = true;
+  bar.innerHTML = `<div class="semantic-batch-progress"><span class="spinner"></span> <span class="semantic-batch-progress-text">Merging 0 / ${pairs.length}…</span></div>`;
+  const progText = bar.querySelector('.semantic-batch-progress-text');
+
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/semantic-dupes/merge-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairs }),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || `Batch merge failed (HTTP ${r.status})`);
+    }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let summary = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl);
+        buffer = buffer.slice(nl + 2);
+        const dataLine = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dataLine) continue;
+        let event;
+        try { event = JSON.parse(dataLine.slice(6)); }
+        catch { continue; }
+
+        if (event.type === 'progress') {
+          if (progText) progText.textContent = `Merging ${event.done} / ${event.total}…`;
+          // Update the matching card live.
+          if (event.pair) {
+            const card = findCardForPair(event.pair);
+            if (card) {
+              if (event.status === 'merged') {
+                card.classList.add('semantic-pair-merged');
+                card.innerHTML = `<div class="hint">✓ Merged. <code>[[${escapeHtml(event.pair.removeSlug)}]]</code> → <code>[[${escapeHtml(event.pair.keepSlug)}]]</code></div>`;
+              } else if (event.status === 'skipped') {
+                card.classList.add('semantic-pair-merged');
+                card.innerHTML = `<div class="hint">⊘ Skipped (already merged by an earlier pair). <code>[[${escapeHtml(event.pair.removeSlug)}]]</code></div>`;
+              }
+            }
+          }
+        } else if (event.type === 'done') {
+          summary = event;
+        } else if (event.type === 'error') {
+          throw new Error(event.error || 'Batch merge error');
+        }
+      }
+    }
+
+    if (summary) {
+      const parts = [`${summary.merged} merged`];
+      if (summary.skipped) parts.push(`${summary.skipped} skipped`);
+      if (summary.errors) parts.push(`${summary.errors} errored`);
+      bar.innerHTML = `<div class="hint">✓ Done — ${parts.join(' · ')}. Go to <strong>Sync</strong> to push the cleanup (or to revert it).</div>`;
+      showStatus(healthStatusEl, 'success', `Merged ${summary.merged} duplicate${summary.merged === 1 ? '' : 's'}.`);
+      refreshSyncPendingBadge?.();
+    } else {
+      bar.innerHTML = `<div class="hint">Done.</div>`;
+    }
+  } catch (err) {
+    bar.innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    _semBatchRunning = false;
   }
 }
 
@@ -4644,6 +4799,7 @@ function renderSemanticPairCard(pair) {
   card.dataset.keep = `${pair.keepFolder}/${pair.keepSlug}`;
   card.dataset.remove = `${pair.removeFolder}/${pair.removeSlug}`;
   const conf = pair.confidence || 'medium';
+  card.dataset.confidence = conf;   // read by the batch-merge selector
   const pairKey = `${pair.keepFolder}/${pair.keepSlug}||${pair.removeFolder}/${pair.removeSlug}`;
   card.dataset.key = pairKey;
   card.innerHTML = `

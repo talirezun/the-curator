@@ -76,6 +76,14 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 5. **Merge requires preview.** Each pair card has a disabled **Merge** button. You must first click **Preview diff** to see the kept path, the delete path, the count and list of files whose links will be rewritten, and a 4 KB sample of the merged content. After preview, Merge enables. You can also click **Flip** to swap which side is kept (if the AI picked the wrong canonical) or **Skip** to dismiss the pair.
 6. **When you click Merge** (from within the preview modal), the server: merges bullet sections (larger body wins as the base), rewrites every `[[removeSlug]]` and `[[folder/removeSlug]]` link across every .md file in the domain (including summaries), writes the merged content to the kept file, and **deletes the duplicate file**.
 
+### Merge all high-confidence duplicates (v3.0.1-beta.15)
+
+When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is impractical. After the scan finishes, a **✨ Merge all N high-confidence duplicates** bar appears above the results. It acts ONLY on the green **high confidence** pairs — clear near-identical duplicates like `opacity-objection-ai` ↔ `opacity-objection`. Medium- and low-confidence pairs still require the manual Preview → Merge gate, because they're the ones most likely to be genuinely distinct.
+
+Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar (each card flips to ✓ Merged or ⊘ Skipped as it goes). Merges run sequentially server-side, so a pair whose file was already consumed by an earlier merge is safely skipped rather than erroring.
+
+**Undo:** the entire wiki is git-tracked, so a batch merge you regret can be reverted from the **Sync** tab (it shows the pending changes; you can discard them before pushing).
+
 ### Scale caps (baked into the code)
 
 | Cap | Default | Configurable in |
@@ -83,9 +91,10 @@ Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan 
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
 | Max candidate pairs sent to the LLM | 500 | Settings → AI Wiki Health → Maximum candidate pairs per scan |
 | Cost ceiling per scan (tokens) | 50,000 | Settings → AI Wiki Health → Cost ceiling per scan |
-| Batch merge | **Never offered** | — |
+| Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
+| Max pairs per batch merge | 2,000 | hard-coded |
 
-Batch merges are deliberately omitted at every scale. A single wrong batch merge across thousands of pages could wreck a wiki; the per-pair preview gate makes that impossible.
+The batch merge is restricted to high-confidence pairs and guarded by an explicit confirm step; medium/low pairs keep the per-pair preview gate. Because the wiki is git-tracked, any batch merge is revertable from the Sync tab — that's the safety net that makes a bulk operation acceptable here.
 
 ### Cost
 
@@ -233,6 +242,7 @@ This defence sits ABOVE the existing v2.4.0 model fallback chain, so a confused 
 | `GET` | `/api/health/:domain/semantic-dupes/estimate` | Phase 3 — runs pre-filter only, returns `{pageCount, candidatePairs, estimatedTokens, estimatedUsd, costCeilingTokens, ...}`. No LLM calls. |
 | `POST` | `/api/health/:domain/semantic-dupes/scan` | Phase 3 — SSE stream. Events: `start`, `progress`, `pair`, `batch-error`, `done`, `error`. |
 | `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. READ-ONLY. |
+| `POST` | `/api/health/:domain/semantic-dupes/merge-batch` | beta.15 — SSE stream. Body `{pairs:[...]}` (≤2000). Events: `start`, `progress` (`{done,total,pair,status}`), `done` (`{merged,skipped,errors,total,results}`), `error`. Registered as a write-op + file lock; concurrent sync/update/delete get 409. |
 | `POST` | `/api/health/:domain/fix` | Existing endpoint. Applies any AI-suggested fix. New types: `orphanLink` (v2.4.4), `semanticDupe` (v2.4.5). |
 
 No existing endpoint was modified. The `orphanLink` and `semanticDupe` fix types are pseudo-types — the scanner never emits them; they exist only as routing keys so AI-applied operations go through the same `fixIssue()` chokepoint as every other write.

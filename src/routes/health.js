@@ -18,7 +18,7 @@ import {
   estimateSemanticDuplicateScan,
   scanSemanticDuplicates,
 } from '../brain/health-ai.js';
-import { previewSemanticDuplicateMerge } from '../brain/health.js';
+import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
@@ -212,6 +212,77 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
   } catch (err) {
     console.error('[semantic-dupes preview]', err);
     res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Batch-merge a caller-supplied list of semantic-duplicate pairs over SSE
+// (v3.0.1-beta.15). Powers the "Merge all high-confidence" button. The
+// frontend sends the exact pairs to merge (already filtered to high
+// confidence); the server validates each pair inside fixSemanticDuplicate.
+// Registered as a write op + file lock like fix-all so a concurrent
+// sync/update/delete refuses with 409. Streams one `progress` event per pair
+// plus a final `done`.
+const MAX_BATCH_MERGE_PAIRS = 2000;
+router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
+  const { domain } = req.params;
+  try {
+    await assertDomain(domain);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+
+  const rawPairs = (req.body && Array.isArray(req.body.pairs)) ? req.body.pairs : null;
+  if (!rawPairs || rawPairs.length === 0) {
+    return res.status(400).json({ error: 'Missing pairs[] to merge' });
+  }
+  if (rawPairs.length > MAX_BATCH_MERGE_PAIRS) {
+    return res.status(400).json({ error: `Too many pairs (${rawPairs.length}); cap is ${MAX_BATCH_MERGE_PAIRS}.` });
+  }
+  // Defense in depth: drop anything that isn't a plain object before it reaches
+  // fixSemanticDuplicate (which validates slugs/folders anyway, but this keeps
+  // the contract clean and avoids logging noise on malformed items).
+  const pairs = rawPairs.filter(p => p && typeof p === 'object' && !Array.isArray(p));
+  if (pairs.length === 0) {
+    return res.status(400).json({ error: 'No valid pair objects in pairs[]' });
+  }
+
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`batch-merge duplicates in "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'semantic-dupes-merge-batch');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'semantic-dupes-merge-batch' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({
+      error: `Another process is already writing to "${domain}" (file lock held).`,
+      conflict: 'file_lock',
+    });
+  }
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => {
+    res.write(`event: ${event.type}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  try {
+    send({ type: 'start', total: pairs.length });
+    const result = await fixSemanticDuplicatesBatch(domain, pairs, (p) => {
+      send({ type: 'progress', ...p });
+    });
+    send({ type: 'done', ...result });
+  } catch (err) {
+    console.error('[semantic-dupes merge-batch]', err);
+    send({ type: 'error', error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
+    res.end();
   }
 });
 

@@ -631,7 +631,49 @@ export async function injectRelatedLink(targetFilePath, linkSlug, description) {
   return true;
 }
 
-function mergeWikiPage(existingContent, incomingContent) {
+/**
+ * Parse a markdown body into a Map of `## Heading` → full block text
+ * (the heading line plus every line until the next `#`/`##` heading or EOF).
+ * Frontmatter and the top-level `# Title` are ignored — we only key on
+ * level-2 section headings, which is the convention for the wiki body.
+ * Used by mergeWikiPage to detect prose sections the incoming page dropped.
+ */
+function extractSectionMap(content) {
+  const lines = content.split('\n');
+  const map = new Map();
+  let currentName = null;
+  let buffer = [];
+  // Keys are lowercased so a heading that differs only in case between the
+  // existing and incoming page (the LLM is not case-stable across ingests —
+  // "## Definition" vs "## definition") is treated as the SAME section. Without
+  // this, the prose-preservation pass would append the existing section as a
+  // duplicate, and an ACCUMULATE section could be both bullet-injected AND
+  // appended (double content). The bullet helpers already match case-insensitively
+  // via the 'i' regex flag — this keeps the section logic consistent (audit fix).
+  const flush = () => {
+    if (currentName !== null) map.set(currentName.toLowerCase(), buffer.join('\n').replace(/\s+$/, ''));
+  };
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+?)\s*$/);
+    const h1 = /^#\s+/.test(line);
+    if (h2) {
+      flush();
+      currentName = h2[1].trim();
+      buffer = [line];
+    } else if (h1) {
+      // A level-1 heading ends the current level-2 section without starting one.
+      flush();
+      currentName = null;
+      buffer = [];
+    } else if (currentName !== null) {
+      buffer.push(line);
+    }
+  }
+  flush();
+  return map;
+}
+
+export function mergeWikiPage(existingContent, incomingContent) {
   const ACCUMULATE = [
     'Related',
     'Key Facts', 'Key Ideas', 'Key Points',
@@ -645,6 +687,33 @@ function mergeWikiPage(existingContent, incomingContent) {
     const existing = extractBulletsFromSection(existingContent, section);
     if (existing.length) merged = injectBulletsIntoSection(merged, section, existing);
   }
+
+  // Prose-section preservation (v3.0.1-beta.15).
+  //
+  // The incoming page is the base, so any PROSE section (Definition, Summary,
+  // Why It Matters, Overview, etc.) the incoming page omits would be lost —
+  // exactly what happened when a minimal Compile/Curate edit shipped a thin
+  // version of an existing rich page. We only preserve sections the incoming
+  // page DROPPED ENTIRELY; if the incoming page includes the heading (even a
+  // rewrite), the incoming version still wins — that keeps ingest's
+  // "full-document-context rewrite" behaviour intact. Bullet-accumulating
+  // sections are handled above (and re-created by injectBulletsIntoSection when
+  // missing), so they are skipped here.
+  // Lowercased accumulate names so the case-insensitive section keys match.
+  const accumulateSet = new Set(ACCUMULATE.map(s => s.toLowerCase()));
+  const existingSections = extractSectionMap(existingContent);
+  const incomingSections = extractSectionMap(merged);
+  const preserved = [];
+  for (const [name, block] of existingSections) {
+    if (accumulateSet.has(name)) continue;       // bullets handled separately
+    if (incomingSections.has(name)) continue;    // incoming has it — incoming wins
+    if (!block || !block.trim()) continue;       // nothing worth preserving
+    preserved.push(block);
+  }
+  if (preserved.length) {
+    merged = merged.replace(/\s+$/, '') + '\n\n' + preserved.join('\n\n') + '\n';
+  }
+
   return merged;
 }
 

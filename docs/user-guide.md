@@ -537,7 +537,7 @@ A chat is a great place to think out loud, but the conversation itself is not pa
 
 **How it works**
 
-1. Have a conversation in the Chat tab. The **Compile to Wiki** button appears in the top-right of the thread once you've sent at least 2 messages.
+1. Have a conversation in the Chat tab. The **Compile to Wiki** button appears in the top-right of the thread as soon as you've had one exchange (one of your messages plus the AI's answer) — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages).
 2. Click **Compile to Wiki**. A progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
 3. After 15–45 seconds you see a summary panel: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them.
 

@@ -3059,6 +3059,36 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   gap: 10px;
   margin-top: 14px;
 }
+/* Batch "Merge all high-confidence" bar (v3.0.1-beta.15) */
+.semantic-batch-bar {
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid #3fb950;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.semantic-batch-bar .hint {
+  flex: 1;
+  min-width: 200px;
+}
+.semantic-batch-confirm {
+  width: 100%;
+  line-height: 1.5;
+}
+.semantic-batch-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.semantic-batch-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .semantic-pair-card {
   padding: 12px 14px;
   background: var(--surface-2);

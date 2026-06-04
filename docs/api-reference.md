@@ -719,6 +719,35 @@ Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would 
 
 ---
 
+## POST /api/health/:domain/semantic-dupes/merge-batch
+
+v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semantic-duplicate pairs in one pass — powers the **Merge all high-confidence** button. Each pair runs through the same `fixSemanticDuplicate` path as the single `/fix` endpoint (slug-regex + folder allowlist + existence checks), sequentially (never parallel). Registered as a write-op with a per-domain file lock; a concurrent sync/update/delete is refused with `409`.
+
+**Request body**
+
+```json
+{
+  "pairs": [
+    { "keepSlug": "opacity-objection", "keepFolder": "concepts", "removeSlug": "opacity-objection-ai", "removeFolder": "concepts" }
+  ]
+}
+```
+
+`pairs` is required and capped at 2000 entries. The frontend sends only the high-confidence pairs from the current scan.
+
+**SSE events**
+
+| Event | Payload |
+|---|---|
+| `start` | `{ total }` |
+| `progress` | `{ done, total, pair, status }` — `status` ∈ `merged` \| `skipped` \| `error`. A pair whose file was already consumed by an earlier merge in the same batch is `skipped`. |
+| `done` | `{ merged, skipped, errors, total, results }` — `results` is `[{keepSlug, removeSlug, status}]`. |
+| `error` | `{ error }` |
+
+Because the whole wiki is git-tracked, a regretted batch is revertable from the Sync tab.
+
+---
+
 ## POST /api/health/:domain/fix — `semanticDupe` variant
 
 The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5. DESTRUCTIVE: merges two pages, rewrites every link to the removed slug across the domain, then deletes the removed file.

@@ -918,6 +918,31 @@ no index.md content — the app maintains the index itself):
 // failures from accumulated unescaped quotes in dense documents.
 const BATCH_SIZE = 4;
 
+// Output-token budgets for the multi-phase calls (v3.0.1-beta.15).
+// All three stay well under Claude Haiku's 64000 cap AND under the ~21333
+// streaming-guard threshold concerns for the smaller ones. The page-by-page
+// fallback budget was raised from 4096 → 8192 so a dense single page is far
+// less likely to truncate into a stub. The outline budget was raised from
+// 16384 → 24576 so a document that plans many pages doesn't blow the cap while
+// merely listing paths + one-line summaries.
+const MULTI_PHASE_OUTLINE_TOKENS     = 24576;
+const MULTI_PHASE_BATCH_TOKENS       = 16384;
+const MULTI_PHASE_SINGLE_PAGE_TOKENS = 8192;
+
+/**
+ * True when an LLM error is an output-token-limit (the model truncated its
+ * response). These are RECOVERABLE by re-running the work at a smaller scope
+ * (page-by-page / a more concise outline). Every OTHER generateText error —
+ * rate limit (429), service overload (503), auth, network — is fatal here:
+ * llm.js has already exhausted its own retry/backoff before throwing, so
+ * re-issuing the same call page-by-page would just fail again and silently
+ * degrade real content into stub pages. Those must propagate so the user sees
+ * the genuine error instead of a wiki full of stubs. (v3.0.1-beta.15 audit fix.)
+ */
+function isOutputTokenLimit(err) {
+  return /output token limit/i.test((err && err.message) || '');
+}
+
 /**
  * Build a clearly-marked stub page body used as a last-resort fallback when
  * the LLM cannot produce content for a planned page. The stub is rendered as
@@ -944,47 +969,76 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   // MCP child process (which reserves stdout for JSON-RPC) — see v2.5.2.
   console.error('[ingest] Large document — using multi-phase ingest. Phase 1: outline...');
   progress(12, 'Phase 1: planning wiki structure…');
-  const outlineRaw = (await generateText(
-    schema,
-    buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath),
-    16384,
-    'json',
-    (msg) => progress(12, msg, 'wait')
-  )).trim();
 
-  // v3.0.1-beta.7: retry once with a stricter JSON-only prompt if the first
-  // outline response is malformed. LLM outputs are non-deterministic — a
-  // second pass with explicit "no markdown, no commentary, valid JSON only"
-  // guidance almost always works when the first one produces bad JSON
-  // (unescaped quote in a summary, stray backtick, etc).
-  let outline;
+  // v3.0.1-beta.7 + beta.15: retry once with a stricter, more concise prompt if
+  // the first outline attempt FAILS for ANY reason. beta.7 only caught malformed
+  // JSON (a parse error); but a max_tokens error throws from generateText BEFORE
+  // parseJSON runs, so it used to escape uncaught and kill the ingest. Now the
+  // generateText call is inside the try, so both failure modes recover the same
+  // way. The retry adds a "plan FEWER, broader pages" instruction so a document
+  // that planned too many pages produces a smaller outline that fits the budget.
+  // The outline call and its parse are handled separately so a FATAL
+  // generateText error (rate limit / overload / auth / network) propagates with
+  // its real message instead of being re-cast as the misleading "malformed JSON
+  // twice" error after a futile retry (v3.0.1-beta.15 audit fix). Only an
+  // output-token-limit or a JSON parse failure triggers the stricter retry.
+  let outline = null;
+  let outlineRaw = null;
+  let firstFailedOnTokenLimit = false;
   try {
-    outline = parseJSON(outlineRaw);
-  } catch (firstErr) {
-    console.warn(`[ingest] Phase 1 outline parse failed (${outlineRaw.length} chars). Retrying with stricter JSON prompt...`);
-    warnings.push('Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.');
-    progress(13, 'Phase 1: retrying with stricter JSON…', 'wait');
+    outlineRaw = (await generateText(
+      schema,
+      buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath),
+      MULTI_PHASE_OUTLINE_TOKENS,
+      'json',
+      (msg) => progress(12, msg, 'wait')
+    )).trim();
+  } catch (genErr) {
+    if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
+    firstFailedOnTokenLimit = true;
+  }
+  if (outlineRaw !== null) {
+    try { outline = parseJSON(outlineRaw); }
+    catch { /* malformed JSON → stricter retry below */ }
+  }
+
+  if (!outline) {
+    console.warn(`[ingest] Phase 1 outline failed (${firstFailedOnTokenLimit ? 'output token limit' : 'parse'}). Retrying with stricter prompt...`);
+    warnings.push(firstFailedOnTokenLimit
+      ? 'Phase 1 outline was too large for the AI output limit; auto-retried asking for a more concise plan.'
+      : 'Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.');
+    progress(13, 'Phase 1: retrying…', 'wait');
 
     const strictPrompt = buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath)
       + '\n\nIMPORTANT — STRICT JSON REQUIREMENTS:\n'
       + '1. Return ONLY the JSON object. No markdown fences, no "```json" wrapper, no commentary before or after.\n'
       + '2. Inside "summary" string values: do NOT use double quotes. Use single quotes if you need quotation marks. Avoid backslashes and special characters.\n'
       + '3. Keep each "summary" under 120 characters to reduce the chance of malformed strings.\n'
-      + '4. The response must parse with native JSON.parse on the first try.';
+      + '4. Plan FEWER, broader pages — prefer one parent concept over many tiny sibling pages — so the outline stays concise.\n'
+      + '5. The response must parse with native JSON.parse on the first try.';
 
+    let outlineRaw2 = null;
     try {
-      const outlineRaw2 = (await generateText(
-        schema, strictPrompt, 16384, 'json',
+      outlineRaw2 = (await generateText(
+        schema, strictPrompt, MULTI_PHASE_OUTLINE_TOKENS, 'json',
         (msg) => progress(13, msg, 'wait')
       )).trim();
-      outline = parseJSON(outlineRaw2);
-      console.error('[ingest] Phase 1 stricter retry succeeded.');
-    } catch (secondErr) {
-      // Both attempts failed — throw a clean, actionable error the UI can show.
-      console.error('[ingest] Phase 1 retry also failed:', secondErr.message.slice(0, 200));
+    } catch (genErr2) {
+      if (!isOutputTokenLimit(genErr2)) throw genErr2;   // fatal — surface it
+      // token-limit on the retry too → fall through to the actionable error
+    }
+    if (outlineRaw2 !== null) {
+      try { outline = parseJSON(outlineRaw2); console.error('[ingest] Phase 1 stricter retry succeeded.'); }
+      catch { /* still malformed → actionable error below */ }
+    }
+
+    if (!outline) {
+      // Both attempts failed (parse and/or token-limit) — throw a clean,
+      // actionable error the UI can show.
       throw new Error(
-        `⚠ The AI returned malformed JSON for this source twice in a row — a rare ` +
-        `transient issue with the AI provider (not a problem with The Curator or your file). ` +
+        `⚠ The AI could not produce a usable plan for this source after two attempts — ` +
+        `usually a transient AI-provider issue, or a source so dense the outline overflowed ` +
+        `the model's output limit (not a problem with The Curator or your file). ` +
         `What to do: (1) try Ingest again — LLM output is non-deterministic, the next attempt ` +
         `usually succeeds; (2) if the issue persists, split the source PDF into smaller parts ` +
         `(e.g. by chapter) and ingest each separately, or convert the PDF to a .md file first ` +
@@ -1030,35 +1084,64 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     console.error(`[ingest] Phase 2 — batch ${batchNum}/${totalBatches} (${batch.length} pages)...`);
     progress(batchPct, `Phase 2: writing content, batch ${batchNum} of ${totalBatches}…`);
 
-    const batchRaw = (await generateText(
-      schema,
-      buildBatchPrompt(today, originalName, text, batch, existingFiles, allPages),
-      16384,
-      'json',
-      (msg) => progress(batchPct, msg, 'wait')
-    )).trim();
-
-    let batchResult;
+    // The batch LLM call and its JSON parse are handled separately so the two
+    // recoverable failures (output-token-limit, malformed JSON) fall back to
+    // page-by-page, while a FATAL generateText error (rate limit / overload /
+    // auth / network) propagates instead of silently degrading to stub pages
+    // (v3.0.1-beta.15 + audit fix). Before beta.15 the generateText call sat
+    // outside the try, so a max_tokens error killed the whole ingest; now it
+    // recovers, but only for token-limit/parse — not for genuine outages.
+    let batchResult = null;
+    let batchRaw = null;
     try {
-      batchResult = parseJSON(batchRaw);
-    } catch (batchErr) {
-      // Batch parse failed — fall back to writing one page at a time.
-      // A 1-page response is only ~300–800 chars: essentially impossible to fail.
-      console.warn(`[ingest] Batch ${batchNum} parse failed (${batchRaw.length} chars) — retrying page-by-page...`);
+      batchRaw = (await generateText(
+        schema,
+        buildBatchPrompt(today, originalName, text, batch, existingFiles, allPages),
+        MULTI_PHASE_BATCH_TOKENS,
+        'json',
+        (msg) => progress(batchPct, msg, 'wait')
+      )).trim();
+    } catch (genErr) {
+      if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
+      console.warn(`[ingest] Batch ${batchNum} hit the output token limit — retrying page-by-page...`);
+      warnings.push(`Batch ${batchNum} of ${totalBatches} was too large for the AI's output limit — wrote those pages individually instead.`);
+    }
+    if (batchRaw !== null) {
+      try {
+        batchResult = parseJSON(batchRaw);
+      } catch (parseErr) {
+        console.warn(`[ingest] Batch ${batchNum} parse failed (${batchRaw.length} chars) — retrying page-by-page...`);
+      }
+    }
+
+    if (!batchResult) {
+      // Fall back to one page at a time. A single-page response is small enough
+      // to (a) stay under any model's output cap and (b) be essentially
+      // impossible to fail parsing.
       batchResult = { pages: [] };
       for (const singlePage of batch) {
+        let singleRaw = null;
         try {
-          const singleRaw = (await generateText(
+          singleRaw = (await generateText(
             schema,
             buildBatchPrompt(today, originalName, text, [singlePage], existingFiles, allPages),
-            4096,
+            MULTI_PHASE_SINGLE_PAGE_TOKENS,
             'json',
             (msg) => progress(batchPct, msg, 'wait')
           )).trim();
-          const singleResult = parseJSON(singleRaw);
-          batchResult.pages.push(...singleResult.pages);
+        } catch (singleGenErr) {
+          if (!isOutputTokenLimit(singleGenErr)) throw singleGenErr;  // fatal — surface it
+          // token-limit on a single page → fall through to a stub below
+        }
+        let singlePages = null;
+        if (singleRaw !== null) {
+          try { singlePages = parseJSON(singleRaw).pages; }
+          catch { /* parse failure → stub below */ }
+        }
+        if (singlePages) {
+          batchResult.pages.push(...singlePages);
           console.error(`[ingest]   ✓ ${singlePage.path}`);
-        } catch (singleErr) {
+        } else {
           // Absolute last resort — create a clearly-marked stub page so the
           // ingest completes; the user can see and re-ingest to fix.
           console.warn(`[ingest]   ✗ ${singlePage.path} — stub created.`);
@@ -1263,8 +1346,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       }
     }
   } catch (err) {
-    // Re-throw non-parse errors (rate limits, network, etc.)
-    throw err;
+    // v3.0.1-beta.15: an output-token-limit error on the single-pass call is
+    // recoverable — multi-phase splits the work into small batches that each
+    // stay well under the cap. Fall through to it instead of failing the whole
+    // ingest. All other errors (rate limits, network, auth) are genuinely fatal
+    // and re-thrown unchanged.
+    if (/output token limit/i.test(err.message || '')) {
+      console.warn('[ingest] Single-pass hit the output token limit — switching to multi-phase.');
+      warnings.push('The document was too large for a single AI pass — switched to the chunked (multi-phase) importer automatically.');
+      singlePassFailed = true;
+    } else {
+      throw err;
+    }
   }
 
   // ── Multi-phase fallback ───────────────────────────────────────────────────
@@ -1645,5 +1738,6 @@ export const __testing = {
   buildPrompt,
   buildBatchPrompt,
   stubPageContent,
+  isOutputTokenLimit,
   TEXT_CAP: 80_000,
 };

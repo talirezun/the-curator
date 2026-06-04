@@ -249,7 +249,8 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | Single-pass response truncated | Rare | Switch to multi-phase |
 | Phase 2 batch malformed JSON | Rare | Fall back to one page at a time |
 | Page-content totally fails | Rare | Write a clearly-marked stub page |
-| `max_tokens` truncation | Rare on Flash, more common on Haiku | `llm.js` throws an actionable "split source or switch model" error (v3.0.1-beta.8+) |
+| `max_tokens` on a Phase 1/2 multi-phase call (Haiku, dense batch) | Occasional on Haiku | **Recovers** (v3.0.1-beta.15): outline retries with a more-concise plan; a batch falls back page-by-page (smaller output per call). Before beta.15 this threw out of `ingestMultiPhase` and **killed the whole ingest** — losing the entire document. A genuine rate-limit / 503 / auth / network error is NOT treated as recoverable — it re-throws so the user sees the real error instead of a wiki of stubs (`isOutputTokenLimit` gate). |
+| `max_tokens` on single-pass (small dense source on Haiku) | Occasional on Haiku | Falls through to multi-phase instead of failing (v3.0.1-beta.15) |
 | Image-only / encrypted PDF | Occasional | < 200-char text guard refuses early + rolls back raw file |
 | Source > 80,000 chars | Common on books | Truncate + warn user |
 | LLM mentions entities in pages not on the plan | Common | `auditBrokenWikilinks` warns user (v3.0.1-beta.9+) |

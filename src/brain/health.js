@@ -973,3 +973,50 @@ async function fixSemanticDuplicate(wikiDir, issue) {
   await rm(removePath);
   return true;
 }
+
+/**
+ * Batch-merge a list of semantic-duplicate pairs (v3.0.1-beta.15).
+ *
+ * Runs `fixSemanticDuplicate` sequentially for each pair. Sequential — NOT
+ * parallel — because each merge rewrites `[[links]]` and deletes a file across
+ * the entire domain; concurrent merges would race on shared files. A pair
+ * whose keep/remove file was already consumed by an earlier merge in the same
+ * batch is reported as `skipped` (its file no longer exists) rather than an
+ * error, so chained duplicates degrade gracefully.
+ *
+ * Callers (the "Merge all high-confidence" button) pass an explicit, already-
+ * filtered list of pairs. Each pair is still independently validated inside
+ * `fixSemanticDuplicate` (slug regex, folder allowlist, existence) so a crafted
+ * request cannot escape the wiki folder.
+ *
+ * @param {string}   domain
+ * @param {object[]} pairs       [{keepSlug, keepFolder, removeSlug, removeFolder}]
+ * @param {function} onProgress  ({done, total, pair, status}) => void
+ * @returns {Promise<{merged:number, skipped:number, errors:number, total:number, results:object[]}>}
+ */
+export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () => {}) {
+  const wikiDir = wikiPath(domain);
+  const list = Array.isArray(pairs) ? pairs : [];
+  const total = list.length;
+  const results = [];
+  let merged = 0, skipped = 0, errors = 0;
+
+  for (let i = 0; i < total; i++) {
+    const pair = list[i] || {};
+    let status = 'skipped';
+    try {
+      const ok = await fixSemanticDuplicate(wikiDir, pair);
+      status = ok ? 'merged' : 'skipped';
+    } catch (err) {
+      status = 'error';
+      console.error(`[health] Batch merge failed for "${pair.removeSlug}" → "${pair.keepSlug}": ${err.message}`);
+    }
+    if (status === 'merged') merged++;
+    else if (status === 'error') errors++;
+    else skipped++;
+    results.push({ keepSlug: pair.keepSlug, removeSlug: pair.removeSlug, status });
+    try { onProgress({ done: i + 1, total, pair, status }); } catch { /* progress is best-effort */ }
+  }
+
+  return { merged, skipped, errors, total, results };
+}

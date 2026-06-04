@@ -28,7 +28,9 @@ import {
   syncSummaryEntities,
 } from './files.js';
 
-const MIN_USER_MESSAGES = 2;
+// A single rich question→answer exchange is worth compiling (v3.0.1-beta.15).
+// Lowered from 2 so the "Compile to Wiki" button appears after the first answer.
+const MIN_USER_MESSAGES = 1;
 
 /**
  * Lowercase, alphanumeric, hyphenated slug. Max length capped to keep
