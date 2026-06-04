@@ -29,7 +29,11 @@ const { version } = JSON.parse(
 const app = express();
 const PORT = process.env.PORT || 3333;
 
-app.use(express.json());
+// Raised from the 100kb default so a large Health batch plan (the broken-link /
+// orphan apply endpoints POST the full plan as JSON — 1000+ entries on a mature
+// domain) doesn't get rejected with HTTP 413. This is a localhost app, so a
+// generous limit carries no DoS risk.
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/domains', domainsRouter);

@@ -3969,9 +3969,10 @@ function renderHealthReport(report) {
     if (progressEl) progressEl.classList.add('hidden');
   }
 
-  // Wire up fix buttons
+  // Wire up fix buttons. The "Fix all" button lives inside the <summary>, so
+  // stop the click from also toggling the (now collapsed-by-default) section.
   healthSectionsEl.querySelectorAll('[data-fix-all]').forEach(btn => {
-    btn.addEventListener('click', () => fixAll(report.domain, btn.dataset.fixAll, btn));
+    btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fixAll(report.domain, btn.dataset.fixAll, btn); });
   });
   healthSectionsEl.querySelectorAll('[data-fix-one]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4252,8 +4253,12 @@ function renderSection(report, type) {
     ? `<button class="btn btn-sm health-fix-all-btn" data-fix-all="${type}">${fixAllLabel}</button>`
     : '';
 
+  // Collapsed by default (v3.0.1-beta.18): with 1000+ rows an open section
+  // pushes the Quick-maintenance bar and the AI progress/preview panels far
+  // below the fold, so the user can't see whether a fix is running. Click the
+  // section header to expand it.
   return `
-    <details class="health-section" open>
+    <details class="health-section">
       <summary class="health-section-head">
         <span class="health-section-title">${meta.label} <span class="health-count">${n}</span></span>
         ${fixAllBtn}
@@ -4643,7 +4648,9 @@ semConfirmBtn?.addEventListener('click', () => {
 });
 
 async function runSemanticScan() {
-  document.getElementById('semantic-dupes-section')?.classList.remove('hidden');
+  const _semSec = document.getElementById('semantic-dupes-section');
+  _semSec?.classList.remove('hidden');
+  _semSec?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   semResults.innerHTML = '';
   _semPreviewedPairs = new Set();
   _semBatchRunning = false;
@@ -5089,7 +5096,9 @@ async function runBrokenLinkPlan() {
   if (_blBusy) return;
   _blBusy = true;
   _blPlan = null;
-  document.getElementById('broken-links-ai-section')?.classList.remove('hidden');
+  const _blSec = document.getElementById('broken-links-ai-section');
+  _blSec?.classList.remove('hidden');
+  _blSec?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   blResults.innerHTML = '';
   blProgress.classList.remove('hidden');
   const fill = blProgress.querySelector('.semantic-dupes-progress-fill');
@@ -5186,8 +5195,12 @@ async function applyBrokenLinkPlan() {
   blResults.innerHTML = `<div class="semantic-batch-bar"><div class="semantic-batch-progress"><span class="spinner"></span> <span class="bl-apply-text">Applying…</span></div></div>`;
   const applyText = blResults.querySelector('.bl-apply-text');
   try {
+    // Send only the fields the apply endpoint needs (linkText/action/target) —
+    // not occurrences/sourceFiles/confidence/source — so even a 1000+ entry plan
+    // stays a small request body (avoids HTTP 413 on large domains).
+    const slimPlan = _blPlan.map(p => ({ linkText: p.linkText, action: p.action, target: p.target }));
     const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/broken-links/apply`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: _blPlan }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: slimPlan }),
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Apply failed (HTTP ${r.status})`); }
     const reader = r.body.getReader();
@@ -5298,7 +5311,9 @@ async function runOrphanPlan() {
   if (_orphBusy) return;
   _orphBusy = true;
   _orphPlan = null;
-  document.getElementById('orphans-ai-section')?.classList.remove('hidden');
+  const _orphSec = document.getElementById('orphans-ai-section');
+  _orphSec?.classList.remove('hidden');
+  _orphSec?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   orphResults.innerHTML = '';
   orphProgress.classList.remove('hidden');
   const fill = orphProgress.querySelector('.semantic-dupes-progress-fill');
@@ -5367,8 +5382,10 @@ async function applyOrphanPlan() {
   orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="semantic-batch-progress"><span class="spinner"></span> <span class="orph-apply-text">Applying…</span></div></div>`;
   const applyText = orphResults.querySelector('.orph-apply-text');
   try {
+    // Slim payload — apply only needs orphanSlug/target/description.
+    const slimPlan = _orphPlan.map(p => ({ orphanSlug: p.orphanSlug, target: p.target, description: p.description }));
     const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/orphans/apply`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: _orphPlan }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: slimPlan }),
     });
     if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Apply failed (HTTP ${r.status})`); }
     const reader = r.body.getReader();
