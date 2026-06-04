@@ -719,6 +719,95 @@ Phase 3. READ-ONLY. Returns a structured preview of what a specific merge would 
 
 ---
 
+## GET /api/health/:domain/broken-links/estimate
+
+v3.0.1-beta.16. No LLM calls. Returns the breakdown used by the bulk-fix confirm dialog.
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "totalOccurrences": 1033,
+  "uniqueTargets": 620,
+  "resolveFree": 115,
+  "needAi": 505,
+  "inventorySize": 3308,
+  "estimatedTokens": 149388,
+  "estimatedUsd": 0.0162,
+  "provider": "gemini",
+  "model": "gemini-2.5-flash-lite"
+}
+```
+
+---
+
+## POST /api/health/:domain/broken-links/plan
+
+v3.0.1-beta.16. READ-ONLY (makes LLM calls, writes nothing). SSE stream. Runs the deterministic pre-pass then the batched AI pass, gated by the lexical-variant check, and returns the full plan.
+
+**SSE events**
+
+| Event | Payload |
+|---|---|
+| `start` | `{ uniqueTargets, needAi, batches }` |
+| `progress` | `{ processed, total }` |
+| `batch-error` | `{ batch, error }` (one batch failed; planning continues) |
+| `done` | `{ plan, summary, cost }` |
+| `error` | `{ error, code }` |
+
+Each `plan` entry: `{ linkText, action: 'retarget'|'strip', target: slug|null, occurrences, sourceFiles, confidence, source: 'deterministic'|'ai' }`. `summary` carries `{ retarget, strip, retargetOccurrences, stripOccurrences, deterministic, ai }`.
+
+---
+
+## POST /api/health/:domain/broken-links/apply
+
+v3.0.1-beta.16. DESTRUCTIVE. SSE stream. Applies a plan (from `/plan`) to disk. Write-op + per-domain file lock; a concurrent sync/update/delete is refused with `409`. Every retarget target is re-validated against the on-disk inventory; `index.md`/`log.md` are skipped (matching the scanner). Capped at 20000 plan entries.
+
+**Request body**
+
+```json
+{ "plan": [ { "linkText": "rezun-tali", "action": "retarget", "target": "tali-rezun" }, { "linkText": "transportation", "action": "strip" } ] }
+```
+
+**SSE events**: `start { actions }`, `progress { done, total }`, `done { retargeted, stripped, filesChanged, occurrencesReplaced, totalActions }`, `error { error }`.
+
+Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so revertable from the Sync tab.
+
+---
+
+## GET /api/health/:domain/orphans/estimate
+
+v3.0.1-beta.17. No LLM. Returns `{ ok, orphanCount, inventorySize, estimatedTokens, estimatedUsd, provider, model }` for the orphan-rescue confirm dialog.
+
+---
+
+## POST /api/health/:domain/orphans/plan
+
+v3.0.1-beta.17. READ-ONLY (LLM calls, no writes). SSE stream. For each orphan the AI picks the best existing "home" page to link from.
+
+**SSE events**: `start { orphans, batches }`, `progress { processed, total }`, `batch-error { batch, error }`, `done { plan, summary, cost }`, `error`. Each plan entry: `{ orphanSlug, orphanPath, orphanType, target, description, confidence }`. `summary` = `{ rescuable, noHome, orphans }`. Orphans with no confident home are omitted from the plan.
+
+---
+
+## POST /api/health/:domain/orphans/apply
+
+v3.0.1-beta.17. DESTRUCTIVE (additive). SSE stream. Injects `- [[orphanSlug]] — description` into each plan entry's target *Related* section. Write-op + file lock (409 on conflict). **Every entry is re-validated**: `orphanSlug` and `target` must both exist on disk and pass the slug regex; the description is stripped of `[[ ]]`; self-links and duplicates are skipped.
+
+**Request body**: `{ "plan": [ { "orphanSlug": "backpropagation", "target": "gradient-descent", "description": "..." } ] }`
+
+**SSE events**: `start { actions }`, `progress { done, total }`, `done { rescued, skipped, total }`, `error`.
+
+---
+
+## POST /api/health/:domain/fix-all-safe
+
+v3.0.1-beta.17. DESTRUCTIVE. Runs every deterministic auto-fix type (`crossFolderDupes`, `hyphenVariants`, `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` with a suggested target) in a single locked pass. No LLM, no body. Domain is validated before the lock is acquired.
+
+**Response** `200 OK`: `{ ok: true, fixed, total, byType: { <type>: { fixed, total } } }`. `409` if a write/update is already in progress.
+
+---
+
 ## POST /api/health/:domain/semantic-dupes/merge-batch
 
 v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semantic-duplicate pairs in one pass — powers the **Merge all high-confidence** button. Each pair runs through the same `fixSemanticDuplicate` path as the single `/fix` endpoint (slug-regex + folder allowlist + existence checks), sequentially (never parallel). Registered as a write-op with a per-domain file lock; a concurrent sync/update/delete is refused with `409`.

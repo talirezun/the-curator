@@ -17,8 +17,12 @@ import {
   suggestOrphanHomes,
   estimateSemanticDuplicateScan,
   scanSemanticDuplicates,
+  estimateBrokenLinkFix,
+  planBrokenLinkFixes,
+  estimateOrphanRescue,
+  planOrphanRescue,
 } from '../brain/health-ai.js';
-import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch } from '../brain/health.js';
+import { previewSemanticDuplicateMerge, fixSemanticDuplicatesBatch, applyBrokenLinkFixes, applyOrphanRescue, fixAllSafe } from '../brain/health.js';
 import { getProviderInfo } from '../brain/llm.js';
 import { getAiHealthSettings, setAiHealthSettings } from '../brain/config.js';
 import { addDismissal, removeDismissal, listDismissed } from '../brain/health-dismissed.js';
@@ -215,6 +219,199 @@ router.post('/:domain/semantic-dupes/preview', async (req, res) => {
   }
 });
 
+// ── Bulk AI broken-link fix (v3.0.1-beta.16) ─────────────────────────────────
+
+// Estimate (no LLM): how many broken links, how many resolve for free vs need AI.
+router.get('/:domain/broken-links/estimate', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); }
+    catch (err) { return res.status(400).json({ error: err.message }); }
+    const est = await estimateBrokenLinkFix(domain);
+    res.json({ ok: true, ...est });
+  } catch (err) {
+    console.error('[broken-links estimate]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+// Plan (READ-ONLY, but makes LLM calls): deterministic pre-pass + AI batches.
+// SSE: start | progress | batch-error | done | error. Returns the full plan.
+router.post('/:domain/broken-links/plan', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); }
+    catch (err) { return res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+
+  try {
+    await planBrokenLinkFixes(req.params.domain, {}, send);
+  } catch (err) {
+    send({ type: 'error', error: err.message, code: err.code });
+  } finally {
+    res.end();
+  }
+});
+
+// Apply (DESTRUCTIVE): writes the plan to disk. Write-lock + registry like
+// fix-all/merge-batch; SSE progress.
+const MAX_BROKEN_LINK_PLAN = 20000;
+router.post('/:domain/broken-links/apply', async (req, res) => {
+  const { domain } = req.params;
+  try { await assertDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+
+  const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
+  if (!plan || plan.length === 0) return res.status(400).json({ error: 'Missing plan[] to apply' });
+  if (plan.length > MAX_BROKEN_LINK_PLAN) return res.status(400).json({ error: `Plan too large (${plan.length}); cap is ${MAX_BROKEN_LINK_PLAN}.` });
+
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`fix broken links in "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'broken-links-apply');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'broken-links-apply' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({ error: `Another process is already writing to "${domain}" (file lock held).`, conflict: 'file_lock' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+
+  try {
+    send({ type: 'start', actions: plan.length });
+    const result = await applyBrokenLinkFixes(domain, plan, (p) => send({ type: 'progress', ...p }));
+    send({ type: 'done', ...result });
+  } catch (err) {
+    console.error('[broken-links apply]', err);
+    send({ type: 'error', error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
+    res.end();
+  }
+});
+
+// ── Bulk AI orphan rescue (v3.0.1-beta.17) ───────────────────────────────────
+
+router.get('/:domain/orphans/estimate', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); } catch (err) { return res.status(400).json({ error: err.message }); }
+    const est = await estimateOrphanRescue(domain);
+    res.json({ ok: true, ...est });
+  } catch (err) {
+    console.error('[orphans estimate]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+router.post('/:domain/orphans/plan', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    await assertDomain(domain);
+    try { getProviderInfo(); } catch (err) { return res.status(400).json({ error: err.message }); }
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  try {
+    await planOrphanRescue(req.params.domain, {}, send);
+  } catch (err) {
+    send({ type: 'error', error: err.message, code: err.code });
+  } finally {
+    res.end();
+  }
+});
+
+const MAX_ORPHAN_PLAN = 20000;
+router.post('/:domain/orphans/apply', async (req, res) => {
+  const { domain } = req.params;
+  try { await assertDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+
+  const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
+  if (!plan || plan.length === 0) return res.status(400).json({ error: 'Missing plan[] to apply' });
+  if (plan.length > MAX_ORPHAN_PLAN) return res.status(400).json({ error: `Plan too large (${plan.length}); cap is ${MAX_ORPHAN_PLAN}.` });
+
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`rescue orphans in "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'orphan-rescue-apply');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'orphan-rescue-apply' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({ error: `Another process is already writing to "${domain}" (file lock held).`, conflict: 'file_lock' });
+  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => { res.write(`event: ${event.type}\n`); res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  try {
+    send({ type: 'start', actions: plan.length });
+    const result = await applyOrphanRescue(domain, plan, (p) => send({ type: 'progress', ...p }));
+    send({ type: 'done', ...result });
+  } catch (err) {
+    console.error('[orphans apply]', err);
+    send({ type: 'error', error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
+    res.end();
+  }
+});
+
+// One-click "Fix all safe issues" — runs every deterministic auto-fix type in a
+// single locked pass (v3.0.1-beta.17). Write-op + file lock like fix-all.
+router.post('/:domain/fix-all-safe', async (req, res) => {
+  const { domain } = req.params;
+  // Validate the domain BEFORE acquiring the lock / mkdir — otherwise a bogus
+  // domain manufactures a ghost directory + .write-lock on disk (audit H1).
+  try { await assertDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`bulk-fix domain "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'health-fix-all-safe');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'health-fix-all-safe' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({ error: `Another process is already writing to "${domain}" (file lock held).`, conflict: 'file_lock' });
+  }
+  try {
+    const result = await fixAllSafe(domain);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[health fix-all-safe]', err);
+    res.status(err.status || 500).json({ error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
+  }
+});
+
 // Batch-merge a caller-supplied list of semantic-duplicate pairs over SSE
 // (v3.0.1-beta.15). Powers the "Merge all high-confidence" button. The
 // frontend sends the exact pairs to merge (already filtered to high
@@ -292,6 +489,13 @@ router.post('/:domain/fix-all', async (req, res) => {
   // (POST /:domain/fix) is sub-second and intentionally NOT registered —
   // adding noise to fast paths doesn't help anyone.
   const { domain } = req.params;
+  // Validate domain + body BEFORE acquiring the lock / mkdir (audit H1) so a
+  // bogus domain or malformed body never manufactures a ghost directory.
+  try { await assertDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+  const { type } = req.body || {};
+  if (!type)                  return res.status(400).json({ error: 'Missing type' });
+  if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
   if (isUpdateInProgress()) {
     const { status, body } = conflictResponse(`bulk-fix domain "${domain}"`);
     return res.status(status).json(body);
@@ -306,10 +510,6 @@ router.post('/:domain/fix-all', async (req, res) => {
     });
   }
   try {
-    const { type } = req.body || {};
-    if (!type)                 return res.status(400).json({ error: 'Missing type' });
-    if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
-    await assertDomain(domain);
     const result = await fixIssue(domain, type, null);
     res.json({ ok: true, ...result });
   } catch (err) {

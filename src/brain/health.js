@@ -1020,3 +1020,175 @@ export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () 
 
   return { merged, skipped, errors, total, results };
 }
+
+/**
+ * Apply a bulk broken-link fix plan (v3.0.1-beta.16). DESTRUCTIVE.
+ *
+ * `plan` is the array produced by `planBrokenLinkFixes` (health-ai.js):
+ *   [{ linkText, action: 'retarget'|'strip', target?: slug }]
+ *
+ * For each entry, every `[[linkText]]` / `[[linkText|alias]]` occurrence across
+ * the domain is either:
+ *   • retarget → `[[target]]` / `[[target|alias]]`   (target re-validated on disk)
+ *   • strip    → the link's display text without brackets (alias label if present,
+ *                otherwise the link text) — the user's chosen behaviour for links
+ *                that point at no real page.
+ *
+ * Walks every page ONCE and parses its wikilinks with the SAME regex the scanner
+ * uses, so the keys line up exactly. `index.md` / `log.md` are skipped to match
+ * the scanner (and to avoid mangling the generated index table). The plan arrives
+ * from the client, so every retarget target is re-checked against the on-disk
+ * slug inventory — an unknown target is dropped (no-op) rather than written.
+ *
+ * @returns {Promise<{retargeted, stripped, filesChanged, occurrencesReplaced, totalActions}>}
+ */
+export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+
+  const listSlugs = async (d) => {
+    try { return (await readdir(path.join(wikiDir, d))).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)); }
+    catch { return []; }
+  };
+  const [ents, cons, sums] = await Promise.all([listSlugs('entities'), listSlugs('concepts'), listSlugs('summaries')]);
+  const valid = new Set([...ents, ...cons, ...sums.map(s => `summaries/${s}`)]);
+
+  // linkText → { action, target } — last entry wins on duplicate linkText.
+  const actions = new Map();
+  for (const p of (Array.isArray(plan) ? plan : [])) {
+    if (!p || typeof p !== 'object' || !p.linkText) continue;
+    if (p.action === 'retarget') {
+      const target = String(p.target || '').replace(/^(entities|concepts)\//, '');
+      if (!target || !valid.has(target)) continue;   // drop unknown / hallucinated targets
+      actions.set(p.linkText, { action: 'retarget', target });
+    } else if (p.action === 'strip') {
+      actions.set(p.linkText, { action: 'strip' });
+    }
+  }
+
+  const totalActions = actions.size;
+  if (totalActions === 0) {
+    return { retargeted: 0, stripped: 0, filesChanged: 0, occurrencesReplaced: 0, totalActions: 0 };
+  }
+
+  const linkRe = /\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g;
+  const allFiles = await walkMdFiles(wikiDir);
+  let retargeted = 0, stripped = 0, filesChanged = 0, occurrencesReplaced = 0, processed = 0;
+
+  for (const full of allFiles) {
+    const rel = path.relative(wikiDir, full);
+    if (rel === 'index.md' || rel === 'log.md') { processed++; continue; }
+    const before = await readFile(full, 'utf8');
+    let changedHere = 0;
+    const after = before.replace(linkRe, (m0, inner, alias) => {
+      const act = actions.get(inner.trim());
+      if (!act) return m0;
+      changedHere++;
+      if (act.action === 'retarget') { retargeted++; return `[[${act.target}${alias || ''}]]`; }
+      stripped++;
+      // Keep readable text: the alias label if the link had one, else the link text.
+      return alias ? alias.slice(1).trim() : inner.trim();
+    });
+    if (changedHere > 0 && after !== before) {
+      await writeFileAtomic(full, after, 'utf8');
+      filesChanged++;
+      occurrencesReplaced += changedHere;
+    }
+    processed++;
+    if (processed % 100 === 0) { try { onProgress({ done: processed, total: allFiles.length }); } catch { /* best-effort */ } }
+  }
+  try { onProgress({ done: allFiles.length, total: allFiles.length }); } catch { /* best-effort */ }
+
+  return { retargeted, stripped, filesChanged, occurrencesReplaced, totalActions };
+}
+
+/**
+ * Apply a bulk orphan-rescue plan (v3.0.1-beta.17). DESTRUCTIVE (additive).
+ *
+ * `plan` is from `planOrphanRescue` (health-ai.js):
+ *   [{ orphanSlug, target, description }]
+ *
+ * For each entry, injects `- [[orphanSlug]] — description` into the target
+ * page's `## Related` section (via injectRelatedLink, which is dedup-safe and
+ * creates the section if missing). The target is re-validated against the
+ * on-disk entity/concept inventory; self-links and unknown targets are skipped.
+ *
+ * @returns {Promise<{rescued, skipped, total}>}
+ */
+export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
+
+  const listSlugs = async (d) => {
+    try { return (await readdir(path.join(wikiDir, d))).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)); }
+    catch { return []; }
+  };
+  const [ents, cons] = await Promise.all([listSlugs('entities'), listSlugs('concepts')]);
+  const validEnt = new Set(ents), validCon = new Set(cons);
+
+  // The plan arrives from the client, so EVERY field is validated before it
+  // touches a page (audit H1/M2): orphanSlug must be a real on-disk slug (it
+  // goes inside `[[ ]]`, so a crafted value could otherwise inject a wikilink or
+  // markdown), the target must exist, and the description is stripped of
+  // bracket sequences that could fabricate extra links.
+  const SLUG_RE = /^[a-z0-9][a-z0-9.\-]*$/i;
+  const safeSlug = (s) => typeof s === 'string' && SLUG_RE.test(s) && !s.includes('..') && !s.includes('/') && !s.includes('\\');
+  const orphanExists = (slug) => validEnt.has(slug) || validCon.has(slug);
+
+  const list = Array.isArray(plan) ? plan : [];
+  const total = list.length;
+  const seen = new Set();            // dedup (target, orphan) pairs — one write per pair (M1)
+  let rescued = 0, skipped = 0, processed = 0;
+
+  for (const p of list) {
+    processed++;
+    const target = String((p && p.target) || '').replace(/^(entities|concepts)\//, '');
+    const orphanSlug = p && p.orphanSlug;
+    const dedupKey = `${target}::${orphanSlug}`;
+    let ok = false;
+    if (
+      target && orphanSlug && target !== orphanSlug &&
+      safeSlug(target) && safeSlug(orphanSlug) &&
+      (validEnt.has(target) || validCon.has(target)) &&   // target exists
+      orphanExists(orphanSlug) &&                          // orphan exists (no phantom rescue)
+      !seen.has(dedupKey)
+    ) {
+      seen.add(dedupKey);
+      const folder = validEnt.has(target) ? 'entities' : 'concepts';
+      const targetPath = path.join(wikiDir, folder, target + '.md');
+      // Sanitise the description: collapse whitespace and remove `[[`/`]]` so it
+      // can never fabricate a wikilink inside the injected bullet.
+      const desc = String((p && p.description) || '').replace(/\[\[|\]\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 140);
+      try { ok = await injectRelatedLink(targetPath, orphanSlug, desc); }
+      catch { ok = false; }
+    }
+    if (ok) rescued++; else skipped++;
+    if (processed % 25 === 0) { try { onProgress({ done: processed, total }); } catch { /* */ } }
+  }
+  try { onProgress({ done: total, total }); } catch { /* */ }
+
+  return { rescued, skipped, total };
+}
+
+/**
+ * Run every deterministic (auto-fixable) structural fix type in one locked pass
+ * (v3.0.1-beta.17). Powers the "Fix N safe issues" one-click button so users
+ * don't have to click fix-all per type. Returns per-type and total counts.
+ * Reuses fixIssue(domain, type, null) — the same chokepoint as fix-all.
+ */
+export async function fixAllSafe(domain) {
+  const TYPES = ['crossFolderDupes', 'hyphenVariants', 'folderPrefixLinks', 'missingBacklinks', 'brokenLinks'];
+  const byType = {};
+  let fixed = 0, total = 0;
+  for (const type of TYPES) {
+    try {
+      const r = await fixIssue(domain, type, null);  // brokenLinks fix-all only touches suggestedTarget rows
+      byType[type] = r;
+      fixed += r.fixed || 0;
+      total += r.total || 0;
+    } catch (err) {
+      byType[type] = { fixed: 0, total: 0, error: err.message };
+    }
+  }
+  return { fixed, total, byType };
+}

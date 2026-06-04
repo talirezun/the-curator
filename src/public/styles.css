@@ -2765,6 +2765,28 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   gap: 8px;
   margin-top: 6px;
 }
+/* AI Maintenance action bar (v3.0.1-beta.17) */
+.health-maintenance-bar {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+.health-maintenance-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+.health-maintenance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.health-maint-btn { white-space: nowrap; }
+/* The AI batch tools are launched from the action bar; their card heads hide. */
+.ai-tool-headless .semantic-dupes-head { display: none; }
 .health-chip {
   display: inline-flex;
   align-items: center;
@@ -3088,6 +3110,18 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* Broken-link AI fix preview (v3.0.1-beta.16) */
+.broken-links-preview-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 12px 0;
+}
+.broken-links-preview-cols h4 { margin: 0 0 6px; font-size: 13px; }
+.broken-links-preview-cols ul { max-height: 220px; overflow-y: auto; }
+@media (max-width: 720px) {
+  .broken-links-preview-cols { grid-template-columns: 1fr; }
 }
 .semantic-pair-card {
   padding: 12px 14px;

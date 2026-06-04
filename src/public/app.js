@@ -3790,6 +3790,18 @@ function resetHealthPanel() {
   // Also wipe any leftover Phase 3 state so switching domains or re-entering
   // the tab never shows stale semantic-dupe results from a previous scan.
   resetSemanticDupesPanel();
+  // Clear any pending AI batch plans so a plan from the previous domain can
+  // never be applied to a newly-selected one (audit H1). Guarded because these
+  // are declared later in the module; by call time they're initialised.
+  try { _blPlan = null; _orphPlan = null; _blBusy = false; _orphBusy = false; } catch { /* pre-init */ }
+  // Re-hide + wipe the AI tool cards.
+  for (const id of ['semantic-dupes-section', 'broken-links-ai-section', 'orphans-ai-section']) {
+    const sec = document.getElementById(id);
+    if (!sec) continue;
+    sec.classList.add('hidden');
+    const resultsEl = sec.querySelector('.semantic-dupes-results');
+    if (resultsEl) resultsEl.innerHTML = '';
+  }
 }
 
 // Wipes the Phase 3 semantic-duplicates sub-panel. Safe to call even before
@@ -3856,6 +3868,16 @@ let _healthDomain = null;
 
 function renderHealthReport(report) {
   _healthDomain = report.domain;
+  // Defensive: default every issue array so a partial/older response can't throw
+  // in render and break the whole Health UI (audit M3).
+  for (const k of ['brokenLinks', 'orphans', 'folderPrefixLinks', 'crossFolderDupes', 'hyphenVariants', 'missingBacklinks']) {
+    if (!Array.isArray(report[k])) report[k] = [];
+  }
+  // Re-entering the scan invalidates any pending AI batch plan from a previous
+  // scan/domain — clear it so a stale plan can never be applied to a new domain
+  // (audit H1).
+  _blPlan = null; _orphPlan = null; _blBusy = false; _orphBusy = false;
+
   const total =
     report.brokenLinks.length +
     report.orphans.length +
@@ -3869,6 +3891,35 @@ function renderHealthReport(report) {
   const dismissedNote = dismissedCount > 0
     ? ` <span class="health-summary-dismissed" title="Issues you've previously dismissed — see the Dismissed section below to un-dismiss">${dismissedCount} dismissed</span>`
     : '';
+  // Counts that drive the AI Maintenance action bar (v3.0.1-beta.17).
+  const safeCount =
+    report.crossFolderDupes.length +
+    report.hyphenVariants.length +
+    report.folderPrefixLinks.length +
+    report.missingBacklinks.length +
+    report.brokenLinks.filter(i => i.suggestedTarget).length;
+  const brokenCount = report.brokenLinks.length;
+  const orphanCount = report.orphans.length;
+
+  // Build the action bar — batch tools first, so maintaining a large wiki is a
+  // few clicks, not hundreds. Each button only appears when it has work to do.
+  const maintBtns = [];
+  if (safeCount > 0) maintBtns.push(`<button class="btn primary health-maint-btn" data-maint="safe">🛠 Fix ${safeCount} safe issue${safeCount === 1 ? '' : 's'}</button>`);
+  if (_aiAvailable && brokenCount > 0) maintBtns.push(`<button class="btn health-maint-btn" data-maint="broken">✨ Fix ${brokenCount} broken link${brokenCount === 1 ? '' : 's'}</button>`);
+  if (_aiAvailable && orphanCount > 0) maintBtns.push(`<button class="btn health-maint-btn" data-maint="orphans">✨ Rescue ${orphanCount} orphan${orphanCount === 1 ? '' : 's'}</button>`);
+  if (_aiAvailable) maintBtns.push(`<button class="btn health-maint-btn" data-maint="dupes">✨ Find duplicate pages</button>`);
+
+  // Show the bar whenever there are issues — even if no button qualifies (e.g.
+  // orphans/broken links present but no API key), so the "add an API key" hint
+  // still surfaces (audit M2).
+  const maintBar = (total > 0)
+    ? `<div class="health-maintenance-bar">
+         <div class="health-maintenance-label">⚡ Quick maintenance${_aiAvailable ? '' : ' <span class="hint">— add an API key in Settings to unlock AI tools</span>'}</div>
+         ${maintBtns.length ? `<div class="health-maintenance-actions">${maintBtns.join('')}</div>` : ''}
+         ${maintBtns.length ? `<div class="hint" style="margin-top:6px">AI tools show a preview before writing. Everything is git-tracked — revert from the Sync tab if needed.</div>` : ''}
+       </div>`
+    : '';
+
   healthSummaryEl.classList.remove('hidden');
   healthSummaryEl.innerHTML = `
     <div class="health-summary-head">
@@ -3884,17 +3935,38 @@ function renderHealthReport(report) {
         return `<span class="health-chip health-chip-${cls}">${meta.label}: ${n}</span>`;
       }).join('')}
     </div>
+    ${maintBar}
   `;
+
+  // Wire the action bar to the batch flows.
+  healthSummaryEl.querySelectorAll('[data-maint]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const which = btn.dataset.maint;
+      if (which === 'safe')    runFixAllSafe(btn);
+      else if (which === 'broken')  startBrokenLinkFix();
+      else if (which === 'orphans') startOrphanRescue();
+      else if (which === 'dupes')   startSemanticScan();
+    });
+  });
 
   healthSectionsEl.classList.remove('hidden');
   healthSectionsEl.innerHTML = HEALTH_ORDER.map(type => renderSection(report, type)).join('');
 
   // Phase 3 (v2.4.5+): show the semantic-duplicates section only when AI is
   // available — it's a paid, opt-in action. Hidden otherwise.
-  const semSection = document.getElementById('semantic-dupes-section');
-  if (semSection) {
-    if (_aiAvailable) semSection.classList.remove('hidden');
-    else              semSection.classList.add('hidden');
+  // v3.0.1-beta.17: the AI batch tools are launched from the Maintenance action
+  // bar above. Their cards stay HIDDEN until a flow is launched (un-hidden by the
+  // run* functions) so a fresh scan never leaves empty bordered boxes under the
+  // issue list (audit M1). Here we only RESET them — wipe stale results/progress
+  // and re-hide — so switching domains or re-scanning starts clean.
+  for (const id of ['semantic-dupes-section', 'broken-links-ai-section', 'orphans-ai-section']) {
+    const sec = document.getElementById(id);
+    if (!sec) continue;
+    sec.classList.add('ai-tool-headless', 'hidden');
+    const resultsEl = sec.querySelector('.semantic-dupes-results');
+    const progressEl = sec.querySelector('.semantic-dupes-progress');
+    if (resultsEl) resultsEl.innerHTML = '';
+    if (progressEl) progressEl.classList.add('hidden');
   }
 
   // Wire up fix buttons
@@ -4520,23 +4592,24 @@ let _semPreviewedPairs = new Set();   // pairs the user has previewed (safety ga
 let _semCurrentPreview = null;        // the pair currently in the preview modal
 let _semBatchRunning = false;         // guards against double-firing the batch merge
 
-semBtn?.addEventListener('click', async () => {
+async function startSemanticScan() {
   if (!_healthDomain) {
     showStatus(healthStatusEl, 'error', 'Run Scan first so a domain is selected.');
     return;
   }
-  semStatus.textContent = 'Estimating…';
+  if (semStatus) semStatus.textContent = 'Estimating…';
   try {
     const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/semantic-dupes/estimate`);
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Estimate failed');
     openSemanticConfirmModal(data);
-    semStatus.textContent = '';
+    if (semStatus) semStatus.textContent = '';
   } catch (err) {
-    semStatus.textContent = '';
+    if (semStatus) semStatus.textContent = '';
     showStatus(healthStatusEl, 'error', err.message);
   }
-});
+}
+semBtn?.addEventListener('click', startSemanticScan);
 
 function openSemanticConfirmModal(est) {
   const costStr = est.estimatedUsd !== null && est.estimatedUsd !== undefined
@@ -4570,6 +4643,7 @@ semConfirmBtn?.addEventListener('click', () => {
 });
 
 async function runSemanticScan() {
+  document.getElementById('semantic-dupes-section')?.classList.remove('hidden');
   semResults.innerHTML = '';
   _semPreviewedPairs = new Set();
   _semBatchRunning = false;
@@ -4957,4 +5031,378 @@ function openMergeConfirm(card, pair) {
   // into the preview modal in a "confirm" state. We reuse the same modal so
   // the user always sees what will change.
   openMergePreview(card, pair);
+}
+
+// ── Bulk AI broken-link fix (v3.0.1-beta.16) ──────────────────────────────────
+// Flow: button → confirm (cost estimate) → plan (SSE, read-only) → preview
+// summary → Apply (SSE, writes). Revertable from the Sync tab.
+
+const blBtn         = document.getElementById('broken-links-ai-btn');
+const blStatus      = document.getElementById('broken-links-ai-status');
+const blProgress    = document.getElementById('broken-links-ai-progress');
+const blResults     = document.getElementById('broken-links-ai-results');
+const blConfirmModal = document.getElementById('broken-links-ai-confirm');
+const blEstimateEl  = document.getElementById('broken-links-ai-estimate');
+const blCancelBtn   = document.getElementById('broken-links-ai-cancel');
+const blConfirmBtn  = document.getElementById('broken-links-ai-confirm-btn');
+
+let _blPlan = null;        // the plan returned from /broken-links/plan
+let _blBusy = false;
+
+async function startBrokenLinkFix() {
+  if (!_healthDomain) { showStatus(healthStatusEl, 'error', 'Run Scan first so a domain is selected.'); return; }
+  if (blStatus) blStatus.textContent = 'Estimating…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/broken-links/estimate`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Estimate failed');
+    openBrokenLinkConfirm(data);
+    if (blStatus) blStatus.textContent = '';
+  } catch (err) {
+    if (blStatus) blStatus.textContent = '';
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+blBtn?.addEventListener('click', startBrokenLinkFix);
+
+function openBrokenLinkConfirm(est) {
+  const costStr = est.estimatedUsd != null
+    ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}`
+    : 'cost unknown';
+  blEstimateEl.innerHTML = `
+    <div class="semantic-dupes-estimate-row"><strong>Broken links:</strong> ${est.totalOccurrences.toLocaleString()} (${est.uniqueTargets.toLocaleString()} unique targets)</div>
+    <div class="semantic-dupes-estimate-row"><strong>Fix for free (formatting):</strong> ${est.resolveFree.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Need AI judgment:</strong> ${est.needAi.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Estimated cost:</strong> ${escapeHtml(costStr)}</div>
+  `;
+  blConfirmBtn.disabled = est.totalOccurrences === 0;
+  blConfirmModal.classList.remove('hidden');
+}
+
+blCancelBtn?.addEventListener('click', () => blConfirmModal.classList.add('hidden'));
+blConfirmBtn?.addEventListener('click', () => {
+  blConfirmModal.classList.add('hidden');
+  runBrokenLinkPlan();
+});
+
+async function runBrokenLinkPlan() {
+  if (_blBusy) return;
+  _blBusy = true;
+  _blPlan = null;
+  document.getElementById('broken-links-ai-section')?.classList.remove('hidden');
+  blResults.innerHTML = '';
+  blProgress.classList.remove('hidden');
+  const fill = blProgress.querySelector('.semantic-dupes-progress-fill');
+  const text = blProgress.querySelector('.semantic-dupes-progress-text');
+  fill.style.width = '2%';
+  text.textContent = 'Planning…';
+  blBtn.disabled = true;
+
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/broken-links/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Plan failed (HTTP ${r.status})`); }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl); buffer = buffer.slice(nl + 2);
+        const dl = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dl) continue;
+        let ev; try { ev = JSON.parse(dl.slice(6)); } catch { continue; }
+        if (ev.type === 'start') {
+          text.textContent = ev.needAi > 0 ? `Asking AI about ${ev.needAi} links in ${ev.batches} batches…` : 'Resolving…';
+        } else if (ev.type === 'progress') {
+          const pct = ev.total > 0 ? (ev.processed / ev.total) * 100 : 100;
+          fill.style.width = `${Math.max(2, Math.round(pct))}%`;
+          text.textContent = `${ev.processed} / ${ev.total} links analysed…`;
+        } else if (ev.type === 'batch-error') {
+          console.warn('[broken-links plan] batch error:', ev.error);
+        } else if (ev.type === 'error') {
+          throw new Error(ev.error || 'Plan error');
+        } else if (ev.type === 'done') {
+          fill.style.width = '100%';
+          _blPlan = ev.plan;
+          renderBrokenLinkPreview(ev.summary, ev.cost);
+        }
+      }
+    }
+  } catch (err) {
+    text.textContent = 'Error';
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    blBtn.disabled = false;
+    _blBusy = false;
+  }
+}
+
+function renderBrokenLinkPreview(summary, cost) {
+  blProgress.classList.add('hidden');
+  const usd = cost && cost.estimatedUsd != null ? `$${cost.estimatedUsd.toFixed(4)}` : '';
+  const retargetSamples = (_blPlan || []).filter(p => p.action === 'retarget').slice(0, 12);
+  const stripSamples = (_blPlan || []).filter(p => p.action === 'strip').slice(0, 12);
+  const sampleRow = (p) => p.action === 'retarget'
+    ? `<li><code>[[${escapeHtml(p.linkText)}]]</code> → <code>[[${escapeHtml(p.target)}]]</code> <span class="hint">${p.occurrences}×</span></li>`
+    : `<li><code>[[${escapeHtml(p.linkText)}]]</code> → <span class="hint">remove brackets · ${p.occurrences}×</span></li>`;
+
+  blResults.innerHTML = `
+    <div class="semantic-batch-bar" style="flex-direction:column; align-items:stretch">
+      <div>
+        <strong>Plan ready.</strong> ${summary.retargetOccurrences.toLocaleString()} link${summary.retargetOccurrences === 1 ? '' : 's'} will be
+        repointed to a real page (${summary.retarget} unique), and ${summary.stripOccurrences.toLocaleString()} will have their brackets removed
+        (${summary.strip} unique). ${usd ? `Planning cost: ${usd}.` : ''}
+        <span class="hint">${summary.deterministic} fixed by formatting rules, ${summary.ai} judged by AI.</span>
+      </div>
+      <div class="broken-links-preview-cols">
+        <div>
+          <h4>Repointed to a real page (${summary.retarget})</h4>
+          <ul class="semantic-preview-files">${retargetSamples.map(sampleRow).join('') || '<li class="hint">none</li>'}${summary.retarget > retargetSamples.length ? `<li class="hint">…and ${summary.retarget - retargetSamples.length} more</li>` : ''}</ul>
+        </div>
+        <div>
+          <h4>Brackets removed — no real page (${summary.strip})</h4>
+          <ul class="semantic-preview-files">${stripSamples.map(sampleRow).join('') || '<li class="hint">none</li>'}${summary.strip > stripSamples.length ? `<li class="hint">…and ${summary.strip - stripSamples.length} more</li>` : ''}</ul>
+        </div>
+      </div>
+      <div class="semantic-batch-confirm-actions">
+        <button class="btn primary broken-links-apply-btn">Apply — fix ${(summary.retargetOccurrences + summary.stripOccurrences).toLocaleString()} broken links</button>
+        <button class="btn broken-links-cancel-btn">Cancel</button>
+      </div>
+      <span class="hint">All changes are git-tracked — if anything looks wrong, revert from the Sync tab before pushing.</span>
+    </div>
+  `;
+  blResults.querySelector('.broken-links-apply-btn').addEventListener('click', () => applyBrokenLinkPlan());
+  blResults.querySelector('.broken-links-cancel-btn').addEventListener('click', () => { blResults.innerHTML = ''; _blPlan = null; });
+}
+
+async function applyBrokenLinkPlan() {
+  if (_blBusy || !_blPlan || !_blPlan.length) return;
+  _blBusy = true;
+  blResults.innerHTML = `<div class="semantic-batch-bar"><div class="semantic-batch-progress"><span class="spinner"></span> <span class="bl-apply-text">Applying…</span></div></div>`;
+  const applyText = blResults.querySelector('.bl-apply-text');
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/broken-links/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: _blPlan }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Apply failed (HTTP ${r.status})`); }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let summary = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl); buffer = buffer.slice(nl + 2);
+        const dl = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dl) continue;
+        let ev; try { ev = JSON.parse(dl.slice(6)); } catch { continue; }
+        if (ev.type === 'progress' && applyText) applyText.textContent = `Applying… ${ev.done}/${ev.total} pages`;
+        else if (ev.type === 'done') summary = ev;
+        else if (ev.type === 'error') throw new Error(ev.error || 'Apply error');
+      }
+    }
+    if (summary) {
+      blResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">✓ Done — ${summary.retargeted.toLocaleString()} repointed, ${summary.stripped.toLocaleString()} brackets removed across ${summary.filesChanged.toLocaleString()} pages. Re-scan to confirm, then push from the <strong>Sync</strong> tab.</div></div>`;
+      showStatus(healthStatusEl, 'success', `Fixed ${summary.retargeted + summary.stripped} broken links.`);
+      refreshSyncPendingBadge?.();
+      // Auto re-scan so the broken-link count updates (reads the domain dropdown).
+      setTimeout(() => runHealthScan(), 400);
+    } else {
+      blResults.innerHTML = `<div class="hint">Done.</div>`;
+    }
+  } catch (err) {
+    blResults.innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    _blBusy = false;
+    _blPlan = null;
+  }
+}
+
+// ── Fix all safe (deterministic) issues — one click (v3.0.1-beta.17) ──────────
+let _fixSafeBusy = false;
+async function runFixAllSafe(btn) {
+  if (_fixSafeBusy || !_healthDomain) return;
+  _fixSafeBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
+  showStatus(healthStatusEl, 'info', 'Fixing safe issues…');
+  let fixedOk = false;
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/fix-all-safe`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Fix failed');
+    showStatus(healthStatusEl, 'success', `Fixed ${data.fixed} of ${data.total} safe issue${data.total === 1 ? '' : 's'}.`);
+    refreshSyncPendingBadge?.();
+    fixedOk = true;
+  } catch (err) {
+    showStatus(healthStatusEl, 'error', err.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry'; }
+  } finally {
+    _fixSafeBusy = false;
+  }
+  // Re-scan OUTSIDE the fix try/catch so a scan hiccup can't be reported as a
+  // "fix failed" error (audit H2). The scan re-renders the action bar fresh.
+  if (fixedOk) { try { await runHealthScan(); } catch { /* scan errors surface via runHealthScan itself */ } }
+}
+
+// ── Bulk AI orphan rescue (v3.0.1-beta.17) ────────────────────────────────────
+// Flow mirrors the broken-link fixer: confirm (estimate) → plan (SSE) → preview
+// → apply (SSE). Apply injects a Related link from each orphan's best "home".
+
+const orphProgress    = document.getElementById('orphans-ai-progress');
+const orphResults     = document.getElementById('orphans-ai-results');
+const orphConfirmModal = document.getElementById('orphans-ai-confirm');
+const orphEstimateEl  = document.getElementById('orphans-ai-estimate');
+const orphCancelBtn   = document.getElementById('orphans-ai-cancel');
+const orphConfirmBtn  = document.getElementById('orphans-ai-confirm-btn');
+
+let _orphPlan = null;
+let _orphBusy = false;
+
+async function startOrphanRescue() {
+  if (!_healthDomain) { showStatus(healthStatusEl, 'error', 'Run Scan first so a domain is selected.'); return; }
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/orphans/estimate`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Estimate failed');
+    openOrphanConfirm(data);
+  } catch (err) {
+    showStatus(healthStatusEl, 'error', err.message);
+  }
+}
+
+function openOrphanConfirm(est) {
+  const costStr = est.estimatedUsd != null ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}` : 'cost unknown';
+  orphEstimateEl.innerHTML = `
+    <div class="semantic-dupes-estimate-row"><strong>Orphan pages:</strong> ${est.orphanCount.toLocaleString()}</div>
+    <div class="semantic-dupes-estimate-row"><strong>Estimated cost:</strong> ${escapeHtml(costStr)}</div>
+  `;
+  orphConfirmBtn.disabled = est.orphanCount === 0;
+  orphConfirmModal.classList.remove('hidden');
+}
+
+orphCancelBtn?.addEventListener('click', () => orphConfirmModal.classList.add('hidden'));
+orphConfirmBtn?.addEventListener('click', () => { orphConfirmModal.classList.add('hidden'); runOrphanPlan(); });
+
+async function runOrphanPlan() {
+  if (_orphBusy) return;
+  _orphBusy = true;
+  _orphPlan = null;
+  document.getElementById('orphans-ai-section')?.classList.remove('hidden');
+  orphResults.innerHTML = '';
+  orphProgress.classList.remove('hidden');
+  const fill = orphProgress.querySelector('.semantic-dupes-progress-fill');
+  const text = orphProgress.querySelector('.semantic-dupes-progress-text');
+  fill.style.width = '2%';
+  text.textContent = 'Planning…';
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/orphans/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Plan failed (HTTP ${r.status})`); }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl); buffer = buffer.slice(nl + 2);
+        const dl = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dl) continue;
+        let ev; try { ev = JSON.parse(dl.slice(6)); } catch { continue; }
+        if (ev.type === 'start') text.textContent = `Finding homes for ${ev.orphans} orphans in ${ev.batches} batches…`;
+        else if (ev.type === 'progress') { const pct = ev.total > 0 ? (ev.processed / ev.total) * 100 : 100; fill.style.width = `${Math.max(2, Math.round(pct))}%`; text.textContent = `${ev.processed} / ${ev.total} orphans analysed…`; }
+        else if (ev.type === 'error') throw new Error(ev.error || 'Plan error');
+        else if (ev.type === 'done') { fill.style.width = '100%'; _orphPlan = ev.plan; renderOrphanPreview(ev.summary, ev.cost); }
+      }
+    }
+  } catch (err) {
+    text.textContent = 'Error';
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    _orphBusy = false;
+  }
+}
+
+function renderOrphanPreview(summary, cost) {
+  orphProgress.classList.add('hidden');
+  const usd = cost && cost.estimatedUsd != null ? `$${cost.estimatedUsd.toFixed(4)}` : '';
+  const samples = (_orphPlan || []).slice(0, 18);
+  const row = (p) => `<li><code>[[${escapeHtml(p.orphanSlug)}]]</code> → linked from <code>[[${escapeHtml(p.target)}]]</code> <span class="hint">${escapeHtml(p.description || '')}</span></li>`;
+  if (!summary.rescuable) {
+    orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">The AI found no confident home for any of the ${summary.orphans} orphans. They're left as-is for manual review (try the per-orphan <strong>✨ Ask AI</strong> in the Orphans section below).</div></div>`;
+    return;
+  }
+  orphResults.innerHTML = `
+    <div class="semantic-batch-bar" style="flex-direction:column; align-items:stretch">
+      <div><strong>Plan ready.</strong> ${summary.rescuable} of ${summary.orphans} orphan${summary.orphans === 1 ? '' : 's'} will get an incoming link from a related page${summary.noHome ? `; ${summary.noHome} had no confident home and are left for manual review` : ''}. ${usd ? `Planning cost: ${usd}.` : ''}</div>
+      <ul class="semantic-preview-files" style="max-height:260px">${samples.map(row).join('')}${summary.rescuable > samples.length ? `<li class="hint">…and ${summary.rescuable - samples.length} more</li>` : ''}</ul>
+      <div class="semantic-batch-confirm-actions">
+        <button class="btn primary orph-apply-btn">Apply — rescue ${summary.rescuable} orphan${summary.rescuable === 1 ? '' : 's'}</button>
+        <button class="btn orph-cancel-btn">Cancel</button>
+      </div>
+      <span class="hint">Git-tracked — revert from the Sync tab if anything looks wrong.</span>
+    </div>
+  `;
+  orphResults.querySelector('.orph-apply-btn').addEventListener('click', () => applyOrphanPlan());
+  orphResults.querySelector('.orph-cancel-btn').addEventListener('click', () => { orphResults.innerHTML = ''; _orphPlan = null; });
+}
+
+async function applyOrphanPlan() {
+  if (_orphBusy || !_orphPlan || !_orphPlan.length) return;
+  _orphBusy = true;
+  orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="semantic-batch-progress"><span class="spinner"></span> <span class="orph-apply-text">Applying…</span></div></div>`;
+  const applyText = orphResults.querySelector('.orph-apply-text');
+  try {
+    const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/orphans/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: _orphPlan }),
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Apply failed (HTTP ${r.status})`); }
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let summary = null;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, nl); buffer = buffer.slice(nl + 2);
+        const dl = chunk.split('\n').find(l => l.startsWith('data: '));
+        if (!dl) continue;
+        let ev; try { ev = JSON.parse(dl.slice(6)); } catch { continue; }
+        if (ev.type === 'progress' && applyText) applyText.textContent = `Applying… ${ev.done}/${ev.total}`;
+        else if (ev.type === 'done') summary = ev;
+        else if (ev.type === 'error') throw new Error(ev.error || 'Apply error');
+      }
+    }
+    if (summary) {
+      orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">✓ Done — rescued ${summary.rescued.toLocaleString()} orphan${summary.rescued === 1 ? '' : 's'}${summary.skipped ? `, ${summary.skipped} skipped` : ''}. Re-scan to confirm, then push from the <strong>Sync</strong> tab.</div></div>`;
+      showStatus(healthStatusEl, 'success', `Rescued ${summary.rescued} orphan${summary.rescued === 1 ? '' : 's'}.`);
+      refreshSyncPendingBadge?.();
+      setTimeout(() => runHealthScan(), 400);
+    } else {
+      orphResults.innerHTML = `<div class="hint">Done.</div>`;
+    }
+  } catch (err) {
+    orphResults.innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
+    showStatus(healthStatusEl, 'error', err.message);
+  } finally {
+    _orphBusy = false;
+    _orphPlan = null;
+  }
 }

@@ -1,6 +1,6 @@
 {
   "name": "the-curator",
-  "version": "3.0.1-beta.15",
+  "version": "3.0.1-beta.17",
   "description": "A local, AI-powered knowledge curation system. Drop in a document — the AI atomizes it into an interlinked wiki of entities, concepts, and summaries. Chat with your knowledge. Explore it visually in Obsidian.",
   "homepage": "https://github.com/talirezun/the-curator",
   "type": "module",

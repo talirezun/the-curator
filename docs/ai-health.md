@@ -61,6 +61,47 @@ Entities and concepts, by contrast, accumulate relationships over time — a new
 
 ---
 
+## Bulk broken-link fix (v3.0.1-beta.16)
+
+The per-link **✨ Ask AI** button (Phase 1) is perfect for a handful of broken links, but a mature domain can accumulate **hundreds or thousands** — clicking each one is impractical. The **✨ Fix broken links with AI** card (it appears in the Health tab when AI is configured and the domain actually has broken links) resolves them in bulk.
+
+It's a two-tier resolver with a preview-then-confirm flow, so you always see the plan before anything is written:
+
+1. **Estimate (free).** Click the button and a dialog shows the totals: how many broken links, how many resolve **for free** by formatting rules, how many need the AI, and the estimated AI cost.
+2. **Free pass.** Pure formatting fixes run with no LLM cost — slugifying spaces (`[[artificial intelligence]]` → `[[artificial-intelligence]]`), stripping `.md` (`[[tali-rezun.md]]` → `[[tali-rezun]]`), removing folder prefixes, hyphen-normalising — matched against your real page names.
+3. **AI pass.** The remaining unique targets go to the LLM in batches with your full page-name inventory. For each, it picks the existing page the writer meant, or says "no real match."
+4. **The lexical-variant gate (the safety net).** An AI suggestion is only accepted as a **retarget** when the broken link and the target genuinely share words — a spelling/ordering variant, an acronym, or one containing the other (`rezun-tali` → `tali-rezun`, `mcp` → `model-context-protocol-mcp`, `iot` → `iot-and-ai`). When the AI reaches for a merely *related* page (`context-window` → `agent-memory`, `big-data` → `ai-and-weather-forecasting`, `healthcare` → `ai-in-medicine`), that's a different concept — it would be a **wrong** graph connection — so it falls through to **strip** instead. This keeps the AI from inventing false links.
+5. **Preview.** When planning finishes you see two columns — **repointed to a real page** and **brackets removed (no real page)** — with sample lists and counts. Nothing has been written yet.
+6. **Apply.** Click **Apply** and the plan is written: retargeted links point to the real page (alias display text preserved); stripped links lose only their brackets, keeping the readable words (a `[[big-data|Big Data]]` becomes plain `Big Data`). Health then auto-re-scans so you can confirm the count dropped.
+
+**Removing the brackets vs. leaving a broken link.** A link to a page that doesn't exist isn't helping you — it's a dead end in the graph. Removing the brackets keeps the words readable in your notes while clearing the broken-link clutter. (If you'd rather a missing concept *became* a page, write it up and re-link — the bulk fixer never invents pages.)
+
+**Safety.** Like every Health fix, this is git-tracked. If a batch result looks wrong, revert it from the **Sync** tab before pushing. The apply is registered as a write operation, so a concurrent sync/update/delete is refused with a clear message until it finishes. The planning step is strictly read-only — it makes the AI calls but writes nothing; only **Apply** touches your files.
+
+**Cost.** The dominant cost is re-sending your page-name inventory in each batch, so large batches (100 targets/call) keep it low. On a real 3,300-page domain with 1,000+ broken links the full plan cost about **$0.014** on Gemini Flash Lite. You see the estimate before confirming.
+
+---
+
+## Bulk orphan rescue (v3.0.1-beta.17)
+
+The per-orphan **✨ Ask AI** button is fine for a few orphans, but a mature domain can have hundreds (one real articles domain had **604**). The **✨ Rescue N orphans** button in the Quick maintenance bar handles them in one reviewed batch.
+
+For each orphan, the AI picks the ONE existing page that should most naturally link *to* it, and writes a short relationship description. Applying injects `- [[orphan]] — description` into that page's *Related* section — giving the orphan an incoming link so it drops off the orphan list. The flow is the familiar one: estimate → confirm → plan (with progress) → **preview** → Apply → auto re-scan.
+
+**Conservative by design.** The AI is told to return *no home* unless there's a genuine conceptual relationship — a loose topical association isn't enough. On the 604-orphan run, 391 got a confident home (e.g. `breaches` ← `data-leaks`, `hewlett-packard` ← `dell-technologies`, `coindesk` ← `blockchain-technology`) and **213 were deliberately left for manual review** rather than forced into a weak link. A removed orphan with a wrong link is worse than an orphan you decide on yourself.
+
+**Summaries are never homes.** Per the wiki convention, summaries reference entities at ingest time, not retroactively — so only entity and concept pages are candidate homes (the same rule as the per-orphan Phase 2 rescue).
+
+**Safety.** Read-only planning; the apply is write-locked and git-tracked (revert from Sync). Every plan entry is re-validated on apply: the orphan slug and the target must both exist on disk, the description is stripped of any `[[ ]]` so it can't fabricate links, and a malformed/crafted entry is skipped rather than written.
+
+---
+
+## One-click "Fix N safe issues" (v3.0.1-beta.17)
+
+The **🛠 Fix N safe issues** button runs every *deterministic* fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched to a target. These are mechanical and unambiguous, so there's no AI, no cost, and no preview step (the rule fully determines the fix). It's the fastest way to clear the "safe" pile before you spend a moment of thought on the judgement calls (orphans, semantic duplicates, unmatched broken links). It's one write-locked operation, then the wiki re-scans.
+
+---
+
 ## How it works (Phase 3 — semantic near-duplicates)
 
 Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
@@ -243,6 +284,13 @@ This defence sits ABOVE the existing v2.4.0 model fallback chain, so a confused 
 | `POST` | `/api/health/:domain/semantic-dupes/scan` | Phase 3 — SSE stream. Events: `start`, `progress`, `pair`, `batch-error`, `done`, `error`. |
 | `POST` | `/api/health/:domain/semantic-dupes/preview` | Phase 3 — returns `{keepPath, removePath, mergedPreview, mergedLength, affectedFiles, affectedCount, totalLinksRewritten}`. READ-ONLY. |
 | `POST` | `/api/health/:domain/semantic-dupes/merge-batch` | beta.15 — SSE stream. Body `{pairs:[...]}` (≤2000). Events: `start`, `progress` (`{done,total,pair,status}`), `done` (`{merged,skipped,errors,total,results}`), `error`. Registered as a write-op + file lock; concurrent sync/update/delete get 409. |
+| `GET` | `/api/health/:domain/broken-links/estimate` | beta.16 — counts (unique / free / AI) + cost. No LLM. |
+| `POST` | `/api/health/:domain/broken-links/plan` | beta.16 — SSE, READ-ONLY (makes LLM calls). Returns the retarget/strip plan. |
+| `POST` | `/api/health/:domain/broken-links/apply` | beta.16 — SSE, DESTRUCTIVE. Body `{plan:[...]}` (≤20000). Write-op + file lock. |
+| `GET` | `/api/health/:domain/orphans/estimate` | beta.17 — orphan count + cost. No LLM. |
+| `POST` | `/api/health/:domain/orphans/plan` | beta.17 — SSE, READ-ONLY. Returns `[{orphanSlug, target, description, confidence}]`. |
+| `POST` | `/api/health/:domain/orphans/apply` | beta.17 — SSE, DESTRUCTIVE. Body `{plan:[...]}`. Injects Related links; re-validates every slug on apply. |
+| `POST` | `/api/health/:domain/fix-all-safe` | beta.17 — runs all deterministic fix types in one locked pass. Returns `{fixed, total, byType}`. No LLM. |
 | `POST` | `/api/health/:domain/fix` | Existing endpoint. Applies any AI-suggested fix. New types: `orphanLink` (v2.4.4), `semanticDupe` (v2.4.5). |
 
 No existing endpoint was modified. The `orphanLink` and `semanticDupe` fix types are pseudo-types — the scanner never emits them; they exist only as routing keys so AI-applied operations go through the same `fixIssue()` chokepoint as every other write.

@@ -516,6 +516,44 @@
         </div>
         <div id="semantic-dupes-results" class="semantic-dupes-results"></div>
       </div>
+
+      <!-- v3.0.1-beta.16: Bulk AI broken-link fix -->
+      <div id="broken-links-ai-section" class="semantic-dupes-section hidden">
+        <div class="semantic-dupes-head">
+          <h3>Fix broken links with AI <span class="hint">(AI-powered)</span></h3>
+          <p class="hint" style="margin:2px 0 10px">
+            Resolve broken <code>[[wikilinks]]</code> in bulk. Free formatting fixes run first
+            (slugifying, stripping <code>.md</code>); the rest are matched to existing pages by the
+            AI when they're a clear variant, and links pointing at no real page have their brackets
+            removed. You review the full plan before anything is written.
+          </p>
+          <button id="broken-links-ai-btn" class="btn primary pill">
+            <span>✨</span> Fix broken links with AI
+          </button>
+          <span id="broken-links-ai-status" class="hint" style="margin-left:12px"></span>
+        </div>
+        <div id="broken-links-ai-progress" class="semantic-dupes-progress hidden">
+          <div class="semantic-dupes-progress-bar"><div class="semantic-dupes-progress-fill"></div></div>
+          <div class="semantic-dupes-progress-text"></div>
+        </div>
+        <div id="broken-links-ai-results" class="semantic-dupes-results"></div>
+      </div>
+
+      <!-- v3.0.1-beta.17: Bulk AI orphan rescue -->
+      <div id="orphans-ai-section" class="semantic-dupes-section hidden">
+        <div class="semantic-dupes-head">
+          <h3>Rescue orphans with AI <span class="hint">(AI-powered)</span></h3>
+          <p class="hint" style="margin:2px 0 10px">
+            An orphan is a page nothing links to. The AI finds the best existing page to link
+            <em>from</em> for each orphan, in bulk, and you review the plan before it's applied.
+          </p>
+        </div>
+        <div id="orphans-ai-progress" class="semantic-dupes-progress hidden">
+          <div class="semantic-dupes-progress-bar"><div class="semantic-dupes-progress-fill"></div></div>
+          <div class="semantic-dupes-progress-text"></div>
+        </div>
+        <div id="orphans-ai-results" class="semantic-dupes-results"></div>
+      </div>
     </section>
 
     <!-- Semantic-duplicate confirm modal (cost preview before any LLM call) -->
@@ -534,6 +572,53 @@
           <div class="ob-actions" style="margin-top:14px">
             <button id="semantic-dupes-cancel" class="btn">Cancel</button>
             <button id="semantic-dupes-confirm-btn" class="btn primary pill">Run scan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Broken-link AI fix confirm modal (cost preview before planning) -->
+    <div id="broken-links-ai-confirm" class="onboarding-overlay hidden">
+      <div class="onboarding-card" style="max-width:540px">
+        <div class="onboarding-header">
+          <span class="logo-icon" style="font-size:28px">✨</span>
+          <h2>Fix broken links with AI?</h2>
+        </div>
+        <div class="ob-panel" style="text-align:left">
+          <div id="broken-links-ai-estimate" class="semantic-dupes-estimate"></div>
+          <p class="hint" style="line-height:1.5; margin-top:10px">
+            Free formatting fixes are applied first. The AI then maps each remaining broken
+            link to an existing page when it's a clear variant, or removes the brackets if no
+            real page exists. <strong>Nothing is written yet</strong> — you'll see the full plan
+            and confirm again before it's applied. Revertable from the Sync tab.
+          </p>
+          <div class="ob-actions" style="margin-top:14px">
+            <button id="broken-links-ai-cancel" class="btn">Cancel</button>
+            <button id="broken-links-ai-confirm-btn" class="btn primary pill">Plan the fix</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Orphan-rescue confirm modal (cost preview before planning) -->
+    <div id="orphans-ai-confirm" class="onboarding-overlay hidden">
+      <div class="onboarding-card" style="max-width:540px">
+        <div class="onboarding-header">
+          <span class="logo-icon" style="font-size:28px">✨</span>
+          <h2>Rescue orphans with AI?</h2>
+        </div>
+        <div class="ob-panel" style="text-align:left">
+          <div id="orphans-ai-estimate" class="semantic-dupes-estimate"></div>
+          <p class="hint" style="line-height:1.5; margin-top:10px">
+            For each orphan page the AI picks the existing page that should most naturally link
+            to it, and writes a short relationship note into that page's <strong>Related</strong>
+            section. <strong>Nothing is written yet</strong> — you'll see the full plan and confirm
+            again before it's applied. Orphans with no confident match are left for manual review.
+            Revertable from the Sync tab.
+          </p>
+          <div class="ob-actions" style="margin-top:14px">
+            <button id="orphans-ai-cancel" class="btn">Cancel</button>
+            <button id="orphans-ai-confirm-btn" class="btn primary pill">Plan the rescue</button>
           </div>
         </div>
       </div>

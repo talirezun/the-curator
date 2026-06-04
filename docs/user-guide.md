@@ -1017,28 +1017,45 @@ A link to the project's GitHub repository is available in the bottom-right corne
 
 The **Health** tab scans a domain's wiki for structural issues and lets you fix them with one click. Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
 
-> 📖 **For the AI-assisted features** (Phase 1 broken-link rescue, Phase 2 orphan rescue, Phase 3 semantic-duplicate detection — what each phase does, what data leaves your machine, exact cost math), see **[docs/ai-health.md](ai-health.md)**. The summary below covers the regular structural scan.
+> 📖 **For the AI-assisted features** (bulk broken-link fix, bulk orphan rescue, semantic-duplicate detection — what each does, what data leaves your machine, exact cost math), see **[docs/ai-health.md](ai-health.md)**. The **Quick maintenance** action bar (below) is the fast way to use them; the per-issue sections give you granular control.
 
 ### What it checks
 
 | Issue | What it means | Action |
 |-------|---------------|--------|
-| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo, hyphen drift, or a link to a page the LLM hasn't written yet. | **Apply** (if the scanner found a close match) rewrites the link to the suggested target. Rows without a suggestion now also show a ✨ **Ask AI** button (v2.4.3+) that calls your configured LLM to propose a target with rationale and confidence — see [ai-health.md](ai-health.md). Otherwise the row stays **Review** — either ingest more content on that topic, remove the brackets, or pick a different target manually. |
-| **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Review** — keep, merge, or delete from Obsidian. Many orphans resolve themselves over time as the wiki grows. From v2.4.4, each orphan row also gets a ✨ **Ask AI** button that proposes up to 5 existing pages which should link to this one, each with an AI-written bullet description — see [ai-health.md](ai-health.md). |
+| **Broken links** | A `[[wikilink]]` points to a page that doesn't exist. Often a typo, hyphen drift, or a link to a page the LLM hasn't written yet. | **Best: ✨ Fix N broken links** in the Quick maintenance bar fixes them all in one reviewed batch (v3.0.1-beta.16). Per-row, **Apply** rewrites a link to a scanner-matched target, or ✨ **Ask AI** proposes one. |
+| **Orphan pages** | An entity or concept page has zero incoming links. Not necessarily an error — a page becomes connected as future ingests reference it. | **Best: ✨ Rescue N orphans** in the Quick maintenance bar finds a home for each orphan in one reviewed batch (v3.0.1-beta.17). Per-row, ✨ **Ask AI** proposes up to 5 pages that should link to it. Or keep/merge/delete from Obsidian — many orphans resolve themselves as the wiki grows. |
 | **Folder-prefix links** | Links like `[[concepts/rag]]` instead of `[[rag]]`. Obsidian treats these as separate pages, breaking the graph. | **Fix** — strips the prefix automatically. |
 | **Cross-folder duplicates** | The same page exists in both `entities/` and `concepts/` (e.g. `entities/google.md` + `concepts/google.md`). | **Fix** — merges the concept into the entity version, keeping all bullets. |
 | **Hyphen variants** | Entity files that refer to the **same person/thing** but differ in hyphenation **or** an honorific prefix. The scanner groups files whose normalised form (strip honorifics like `dr-` / `dr.-` / `prof-`, then strip all hyphens, then lowercase) is identical. Example groups: `tali-rezun` + `talirezun` + `dr.-tali-rezun`; `prof-smith` + `smith`. | **Fix** — merges all variants into the canonical slug (no honorific, most hyphens, shortest). See the detailed walk-through below. |
 | **Missing backlinks** | A summary lists an entity under *Entities Mentioned* but the entity's *Related* section doesn't link back. | **Fix** — injects the missing `[[summaries/...]]` backlink. |
 
-**Auto-fixable issues** have a **Fix** button (and a **Fix all (N)** button at the top of the section). **Broken links** use the same flow per-row but with an **Apply** button — only rows where the scanner found a plausible target are applicable; the bulk action is **Apply all suggestions (N)**. **Orphans** are review-only because no mechanical rule determines whether an unconnected page should stay, merge, or go.
+**Auto-fixable issues** have a **Fix** button. **Broken links** use the same flow per-row but with an **Apply** button — only rows where the scanner found a plausible target are applicable. **Orphans** were review-only — but from v3.0.1-beta.17 you no longer have to work through them one at a time; see **Quick maintenance** below.
 
-### How to use it
+### Quick maintenance — the action bar (v3.0.1-beta.17)
+
+This is the recommended way to maintain a wiki, and it's what makes the Health tab usable on a large or shared brain with **hundreds or thousands** of issues. After you Scan, a **⚡ Quick maintenance** bar appears at the top of the report with one button per batch tool — each showing a live count, each only appearing when it has work to do:
+
+| Button | What it does | AI? | Cost |
+|---|---|---|---|
+| **🛠 Fix N safe issues** | Applies every deterministic fix at once — folder-prefix links, cross-folder duplicates, hyphen variants, missing backlinks, and broken links the scanner already matched. One click, no AI, no preview needed (these are unambiguous). | No | Free |
+| **✨ Fix N broken links** | Resolves broken `[[wikilinks]]` in bulk. Free formatting fixes first (slugifying, stripping `.md`), then the AI matches the rest to real pages when they're a clear variant, and removes the brackets on links that point at no real page. **You review the full plan before it's applied.** | Yes | ~$0.01–0.15 for a whole large domain |
+| **✨ Rescue N orphans** | For each orphan (a page nothing links to), the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Orphans with no confident match are left for manual review. **You review the plan before it's applied.** | Yes | ~$0.01–0.10 for a whole large domain |
+| **✨ Find duplicate pages** | The semantic-duplicate scan (see below). | Yes | small, shown before you run |
+
+**The pattern is always the same:** click → see a cost estimate → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki auto-re-scans so you watch the counts drop. Every change is git-tracked, so if a result ever looks wrong you revert it from the **Sync** tab before pushing.
+
+This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
+
+> Don't have an API key configured? The action bar still shows **🛠 Fix N safe issues** (deterministic, no AI) and a note that adding a key in Settings unlocks the AI tools. The per-row buttons in the detailed sections below also still work.
+
+### How to use it (step by step)
 
 1. Click the **Health** tab (heartbeat icon in the top bar)
-2. Pick a domain
-3. Click **Scan** — results appear within a second or two
-4. For each issue, click **Fix** (or **Apply** for broken links with a suggested target) to apply the repair, or **Fix all (N)** / **Apply all suggestions (N)** to batch the category
-5. After fixing, the wiki auto-re-scans so you can see counts drop to zero
+2. Pick a domain and click **Scan**
+3. **For bulk maintenance** (recommended): use the **⚡ Quick maintenance** buttons at the top — start with **🛠 Fix N safe issues**, then the AI tools (each previews before applying)
+4. **For granular control**: scroll to the detailed per-type sections below and use the per-row **Fix** / **Apply** / **✨ Ask AI** / **Dismiss** buttons
+5. After any fix the wiki auto-re-scans so you see counts drop; when you're happy, push from the **Sync** tab
 
 ### When to run it
 
