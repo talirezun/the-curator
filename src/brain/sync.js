@@ -41,7 +41,13 @@ async function git(cmd, opts = {}) {
     });
     return { stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (err) {
-    throw new Error(sanitize(err.message));
+    // exec's err.message includes stderr but NOT stdout. Git writes benign
+    // status like "nothing to commit, working tree clean" to stdout, and the
+    // callers below detect that via err.message.includes('nothing to commit').
+    // Append stdout so those checks (setup commit, pull auto-save, friendlyError)
+    // see it — otherwise a no-op commit crashes setup on an already-clean repo.
+    const detail = err.stdout ? `${err.message}\n${err.stdout}` : err.message;
+    throw new Error(sanitize(detail));
   }
 }
 

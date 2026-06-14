@@ -821,7 +821,9 @@ Here is the recommended way to use The Curator day-to-day:
 
 The **Sync** tab keeps your wiki and chat history in sync across all your computers using a free, private GitHub repository — no subscription, no third-party service. Your notes never touch any server you don't control.
 
-> 📖 **For the full sync deep-dive** (every wizard step with screenshots, conflict recovery, organisational/team-shared brain pattern, token expiry strategy), see **[docs/sync.md](sync.md)**. The summary below is enough for most users.
+> 📖 **For the full sync deep-dive** (every wizard step, token permissions, conflict recovery, troubleshooting, token expiry strategy), see **[docs/sync.md](sync.md)**. The summary below is enough for most users.
+>
+> 🤖 **Prefer to let an AI agent do it?** If you use Claude Code, Cursor, opencode, Aider, or another coding agent, paste one prompt and it sets up sync end-to-end — see **[docs/sync-via-coding-agent.md](sync-via-coding-agent.md)**.
 
 ### What gets synced
 
@@ -840,19 +842,27 @@ You only do this once. After that, syncing is two button clicks.
 1. Go to **[github.com/new](https://github.com/new)** (create a free account if you don't have one)
 2. Name the repository anything — e.g. `my-brain`
 3. Make sure **Private** is selected
-4. Click **Create repository** — leave everything else as default
-5. Copy the URL from your browser (e.g. `https://github.com/your-username/my-brain`)
+4. **Leave the repo empty** — do **NOT** tick "Add a README", ".gitignore", or "license". The Curator fills the repo on the first sync; a pre-filled repo makes the first push fail.
+5. Click **Create repository**
+6. Copy the URL from your browser (e.g. `https://github.com/your-username/my-brain`)
 
 #### Step 2 — Create a Personal Access Token
 
-This is how The Curator gets permission to read and write your private repository.
+This is how The Curator gets permission to read and write your private repository. GitHub offers two token types — **either works**; fine-grained is more secure (scoped to one repo), classic is lower-maintenance (can never expire). Full comparison in [docs/sync.md](sync.md#step-4--create-and-enter-a-personal-access-token-wizard-step-2).
 
-1. Go to **[github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=repo&description=the-curator)** (you may need to sign in)
-2. Give the token any name — e.g. `the-curator`
-3. Under **Select scopes**, check the **repo** box ☑
-4. Set **Expiration** to "No expiration" (recommended — so you don't need to regenerate it)
-5. Scroll down and click **Generate token**
-6. **Copy the token immediately** — GitHub only shows it once. It starts with `ghp_`
+**Fine-grained token (recommended):**
+
+1. Go to **[github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)** (you may need to sign in)
+2. Name it anything — e.g. `the-curator-sync` — and pick an **Expiration** (up to 1 year)
+3. **Repository access** → **Only select repositories** → pick the repo you created in Step 1
+4. **Permissions** → **Repository permissions** → set **Contents** to **Read and write** (this is the critical one; Metadata: Read-only is added automatically)
+5. Scroll down → **Generate token** → **copy it immediately**. It starts with `github_pat_`
+
+**Or a classic token (can be set to never expire):**
+
+1. Go to **[github.com/settings/tokens/new](https://github.com/settings/tokens/new?scopes=repo&description=the-curator)**
+2. Name it, set **Expiration** to "No expiration", tick the top-level **`repo`** scope
+3. **Generate token** → **copy it immediately**. It starts with `ghp_`
 
 #### Step 3 — Connect in the app
 

@@ -2242,7 +2242,16 @@ async function submitSyncSetup(mode) {
     }, 4000);
 
   } catch (err) {
-    document.getElementById('sync-error-msg').textContent = err.message;
+    // A network-level failure (server crashed or stopped mid-setup) surfaces as
+    // "Failed to fetch" / "Load failed" / "NetworkError" — unhelpful on its own.
+    // Translate it into an actionable message.
+    const raw = String(err && err.message || '');
+    const isNetworkDown = /failed to fetch|load failed|networkerror|connection/i.test(raw);
+    document.getElementById('sync-error-msg').textContent = isNetworkDown
+      ? 'The Curator server stopped responding during setup. This usually means the server process closed or restarted. '
+        + 'Make sure The Curator is still running, reload this page, and try again. '
+        + 'On Windows, also check that no GitHub sign-in popup is waiting for you — see docs/sync.md → Troubleshooting.'
+      : raw || 'Setup failed';
     showWizardStep(syncError);
   }
 }

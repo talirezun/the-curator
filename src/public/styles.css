@@ -792,6 +792,13 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   background: var(--success-dim); border: 1px solid rgba(166,227,161,0.2);
   border-radius: var(--radius); padding: 8px 12px;
 }
+.sync-classic-note { margin-top: 12px; font-size: 12px; }
+.sync-classic-note summary {
+  cursor: pointer; color: var(--text-muted); font-size: 12px;
+  user-select: none; padding: 2px 0;
+}
+.sync-classic-note summary:hover { color: var(--text-2); }
+.sync-classic-note .hint { font-size: 12px; line-height: 1.6; }
 .sync-mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 20px 0 24px; }
 .sync-mode-card {
   background: var(--surface); border: 2px solid var(--border);

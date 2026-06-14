@@ -456,9 +456,14 @@ The **Domains tab** is a full GUI for creating, renaming, and deleting domains �
 The **Sync tab** connects The Curator to a private GitHub repository so your wiki and chat history are available on every machine.
 
 **One-time setup (~3 minutes):**
-1. Create a free private repository on GitHub
-2. Generate a Personal Access Token with `repo` scope
+1. Create a free, **empty** private repository on GitHub (no README/.gitignore/license)
+2. Create a Personal Access Token — **fine-grained** (recommended; *Contents: Read and write* on that one repo) or **classic** (`repo` scope; can be set to never expire)
 3. Open the Sync tab → follow the 3-step wizard
+
+**Three ways to set it up:**
+- **In-app wizard** (most users) — Sync tab → 3 steps. Full guide: [docs/sync.md](docs/sync.md).
+- **With a coding agent** (Claude Code, Cursor, opencode, Aider…) — paste one prompt and it does the whole thing: [docs/sync-via-coding-agent.md](docs/sync-via-coding-agent.md).
+- **Manual** — create the repo + token yourself and enter them in the wizard.
 
 **Daily use:**
 - Click **Sync now** at the start and end of every work session — it pulls remote changes first, then pushes yours. One button, both directions.
@@ -467,7 +472,7 @@ The **Sync tab** connects The Curator to a private GitHub repository so your wik
 What syncs: wiki pages, chat history, domain schemas.
 What stays local: source files, API keys, app code.
 
-See [docs/sync.md](docs/sync.md) for the full guide.
+See [docs/sync.md](docs/sync.md) for the full guide, including token permissions and troubleshooting.
 
 ---
 
@@ -587,7 +592,8 @@ the-curator/
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect the wiki to Claude Desktop (or any MCP client) for frontier-model research over your graph |
 | [AI Wiki Health Guide](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and the privacy tradeoffs |
-| [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers |
+| [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers (wizard, token permissions, troubleshooting) |
+| [Sync with a coding agent](docs/sync-via-coding-agent.md) | Automated sync setup via Claude Code / Cursor / opencode / Aider — one copy-paste prompt |
 | [Shared Brain — User Guide](docs/shared-brain-user-guide.md) | **v3.0.0-beta+** — step-by-step for contributors AND admins; daily workflow; troubleshooting |
 | [Shared Brain — Architecture](docs/shared-brain.md) | What Shared Brain is, how it works internally, engineering decisions, v3.x+ roadmap |
 | [Shared Brain — Admin Operations](docs/shared-brain-admin.md) | Advanced admin reference: synthesis cadence, revocation, contributor management |

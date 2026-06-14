@@ -220,10 +220,14 @@
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">4</span>
-                <span>Click "Create repository" — leave everything else as-is</span>
+                <span><strong>Leave the repo empty</strong> — do <strong>NOT</strong> tick "Add a README", ".gitignore", or "license". The Curator fills it on the first sync; a pre-filled repo causes the first push to fail.</span>
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">5</span>
+                <span>Click "Create repository"</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">6</span>
                 <span>Copy the URL from your browser's address bar and paste it below</span>
               </div>
             </div>
@@ -241,36 +245,48 @@
           <!-- Step 2: Token -->
           <div id="sync-step-2" class="sync-step hidden">
             <h3 class="sync-step-title">Create a Personal Access Token</h3>
-            <p class="hint">This gives The Curator permission to read and write your private repository on GitHub.</p>
+            <p class="hint">This gives The Curator permission to read and write your private repository on GitHub. We recommend a <strong>fine-grained token</strong> — it's scoped to just this one repo. (Prefer a classic token that never expires? See the note below.)</p>
             <div class="sync-instructions">
               <div class="sync-instr-row">
                 <span class="sync-instr-num">1</span>
-                <span>Open the GitHub token page</span>
-                <a href="https://github.com/settings/tokens/new?scopes=repo&description=the-curator"
+                <span>Open GitHub's fine-grained token page</span>
+                <a href="https://github.com/settings/personal-access-tokens/new"
                    target="_blank" rel="noopener" class="btn sync-open-btn">Open Token Page ↗</a>
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">2</span>
-                <span>Give it any name — e.g. <code>the-curator</code></span>
+                <span>Name it — e.g. <code>the-curator-sync</code> — and pick an <strong>Expiration</strong> (up to 1 year)</span>
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">3</span>
-                <span>Under "Select scopes", make sure <strong>repo</strong> is checked ☑</span>
+                <span>Under <strong>Repository access</strong>, choose <strong>Only select repositories</strong> → pick the repo you just created</span>
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">4</span>
-                <span>Scroll down and click "Generate token"</span>
+                <span>Under <strong>Permissions → Repository permissions</strong>, set <strong>Contents</strong> to <strong>Read and write</strong> ← this is the one that matters (Metadata: Read-only is added automatically)</span>
               </div>
               <div class="sync-instr-row">
                 <span class="sync-instr-num">5</span>
-                <span>Copy the token shown — it starts with <code>ghp_</code></span>
+                <span>Scroll down → click "Generate token"</span>
+              </div>
+              <div class="sync-instr-row">
+                <span class="sync-instr-num">6</span>
+                <span>Copy the token shown — it starts with <code>github_pat_</code></span>
               </div>
             </div>
+            <details class="sync-classic-note">
+              <summary>Prefer a token that never expires? Use a classic token instead</summary>
+              <p class="hint" style="margin-top:8px">
+                Open <a href="https://github.com/settings/tokens/new?scopes=repo&description=the-curator" target="_blank" rel="noopener">the classic token page</a>,
+                set <strong>Expiration</strong> to <strong>No expiration</strong>, tick the top-level <strong>repo</strong> scope,
+                then Generate. A classic token starts with <code>ghp_</code>. Either token type works here.
+              </p>
+            </details>
             <div class="form-group" style="margin-top:24px">
               <label for="sync-token">Personal Access Token</label>
               <div class="sync-token-row">
                 <input type="password" id="sync-token" class="sync-input"
-                       placeholder="ghp_…" autocomplete="off" spellcheck="false" />
+                       placeholder="github_pat_… or ghp_…" autocomplete="off" spellcheck="false" />
                 <button id="sync-token-toggle" class="btn" type="button">Show</button>
               </div>
             </div>
@@ -286,17 +302,17 @@
           <!-- Step 3: Mode -->
           <div id="sync-step-3" class="sync-step hidden">
             <h3 class="sync-step-title">Which computer is this?</h3>
-            <p class="hint">Choose whether to upload your current knowledge or download from GitHub.</p>
+            <p class="hint">If your GitHub repo is empty (you just created it), choose <strong>First computer</strong>. If you already synced from another machine into this same repo, choose <strong>Other computers</strong>.</p>
             <div class="sync-mode-cards">
               <button class="sync-mode-card" id="mode-push" data-mode="push">
                 <div class="sync-mode-icon">📤</div>
-                <div class="sync-mode-title">First computer</div>
-                <div class="sync-mode-desc">I have knowledge here already — push it to GitHub so I can access it on other computers.</div>
+                <div class="sync-mode-title">First computer (Push)</div>
+                <div class="sync-mode-desc">My repo is empty. Upload the knowledge that's on this computer to GitHub so my other computers can pull it.</div>
               </button>
               <button class="sync-mode-card" id="mode-pull" data-mode="pull">
                 <div class="sync-mode-icon">📥</div>
-                <div class="sync-mode-title">Other computers</div>
-                <div class="sync-mode-desc">I've already synced on another computer — pull my knowledge from GitHub to this machine.</div>
+                <div class="sync-mode-title">Other computers (Pull)</div>
+                <div class="sync-mode-desc">I already pushed from another computer. Download that knowledge from GitHub onto this machine.</div>
               </button>
             </div>
             <div class="sync-step-actions">

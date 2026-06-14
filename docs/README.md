@@ -28,7 +28,7 @@ For students, researchers, entrepreneurs, and lifelong learners: this is the dif
 
 **New to the project?** Read the [User Guide](user-guide.md) — it covers everything from installation to chat, sync, and Obsidian, written in plain language for non-technical users.
 
-**Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository.
+**Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository. Prefer to let an AI agent do it? See [Set up sync with a coding agent](sync-via-coding-agent.md).
 
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 
@@ -46,7 +46,8 @@ For students, researchers, entrepreneurs, and lifelong learners: this is the dif
 | [use-cases.md](use-cases.md) | Detailed workflows for every user profile |
 | [mcp-user-guide.md](mcp-user-guide.md) | My Curator MCP — connect your wiki to Claude Desktop / VS Code / LM Studio for frontier-model research and write-back |
 | [ai-health.md](ai-health.md) | AI-assisted Wiki Health — broken-link rescue, orphan rescue, semantic-duplicate detection, persistent dismissals |
-| [sync.md](sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers |
+| [sync.md](sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers (wizard, token permissions, troubleshooting) |
+| [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
 | [shared-brain-user-guide.md](shared-brain-user-guide.md) | **Shared Brain — User Guide (v3.0.0-beta+)** — step-by-step setup for contributors AND admins, daily workflow, troubleshooting |
 | [shared-brain.md](shared-brain.md) | Shared Brain — concept, architecture, engineering decisions, v3.x+ roadmap |
 | [shared-brain-admin.md](shared-brain-admin.md) | Shared Brain — advanced admin operations (synthesis cadence, revocation, contributor management) |

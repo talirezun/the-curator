@@ -48,6 +48,8 @@ That's it. No developer tools, no command line, no extra software.
 
 The Sync tab has a built-in wizard that walks you through everything. Here's what to expect at each step.
 
+> 🤖 **Using a coding agent?** If you have Claude Code, Cursor, opencode, Aider, or a similar agent wired to your machine and GitHub, you can skip the manual steps entirely — paste one prompt and it does all of this for you. See **[sync-via-coding-agent.md](sync-via-coding-agent.md)**.
+
 ### Step 1 — Open the Sync tab
 
 Start your server (`node src/server.js`) and open `http://localhost:3333`. Click the **Sync** tab. You'll see a welcome screen explaining what sync does. Click **Get started**.
@@ -71,19 +73,44 @@ Paste the URL you just copied into the field and click **Next**.
 
 ### Step 4 — Create and enter a Personal Access Token (Wizard Step 2)
 
-GitHub needs to verify that you have permission to write to your repository. It does this using a **Personal Access Token (PAT)** — think of it as a password specifically for this app.
+GitHub needs to verify that you have permission to read and write your repository. It does this using a **Personal Access Token (PAT)** — think of it as a password specifically for this app.
 
-To create one:
+GitHub offers two kinds of token. **Either one works** — pick based on the tradeoff below.
 
-1. Go to [github.com/settings/tokens](https://github.com/settings/tokens)
-2. Click **Generate new token** → **Generate new token (classic)**
-3. Give it a name like "The Curator sync"
-4. Set **Expiration** to **No expiration** (recommended — so you don't have to repeat this every few months)
-5. Under **Select scopes**, tick the **`repo`** checkbox (this gives access to private repositories)
-6. Scroll down and click **Generate token**
-7. **Copy the token immediately** — GitHub only shows it once. It starts with `ghp_`.
+| | **Fine-grained token** *(recommended)* | **Classic token** |
+|---|---|---|
+| Security | Scoped to **one repository** with the **minimum** permissions | Broad — `repo` scope grants access to **all** your repositories |
+| Expiration | Must have an expiry date (max 1 year), so you'll re-create it periodically | Can be set to **No expiration** — true set-and-forget |
+| GitHub's stance | The modern, recommended option | Legacy, still fully supported |
 
-Paste the token into the wizard and click **Next**.
+If you're unsure, use a **fine-grained token** — it's safer because it can only touch the one repository you point it at. If you'd rather never think about this again, a **classic token with "No expiration"** is the lowest-maintenance option.
+
+#### Option A — Fine-grained token (recommended)
+
+1. Go to [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new)
+2. **Token name**: anything, e.g. `the-curator-sync`
+3. **Expiration**: choose the longest option you're comfortable with (up to **1 year** / a custom date). Set a calendar reminder to renew it before it expires, or you can switch to a classic token if you want one that never expires.
+4. **Repository access**: select **Only select repositories** → click the dropdown → pick the repository you created in Step 2.
+5. **Permissions** → **Repository permissions**: find **Contents** and set it to **Read and write** ← *this is the one that matters; without write access, sync will fail with a 403.*
+   - **Metadata: Read-only** is added automatically by GitHub when you pick any repository permission — leave it.
+   - You do **not** need any other permission. Leave everything else at "No access".
+6. Scroll down and click **Generate token**.
+7. **Copy the token immediately** — GitHub only shows it once. It starts with `github_pat_`.
+
+#### Option B — Classic token
+
+1. Go to [github.com/settings/tokens/new?scopes=repo&description=the-curator](https://github.com/settings/tokens/new?scopes=repo&description=the-curator)
+2. **Note** (name): anything, e.g. `the-curator-sync`
+3. **Expiration**: set to **No expiration** (so you don't have to repeat this every few months)
+4. Under **Select scopes**, tick **only** the top-level **`repo`** checkbox (this grants read/write to your private repositories)
+5. Scroll down and click **Generate token**
+6. **Copy the token immediately** — GitHub only shows it once. It starts with `ghp_`.
+
+> **Two things people get confused about with classic tokens:**
+> - **You cannot limit a classic token to one repository.** Ticking `repo` grants access to *all* your repositories — there is no per-repo option on the classic page. That's the inherent tradeoff, and the reason fine-grained is the safer choice. It's not a bug, and it doesn't stop sync from working.
+> - **You do not need the `workflow` scope** (or any other scope). The Curator only reads and writes ordinary files — it never touches GitHub Actions. Tick `repo` and nothing else.
+
+Paste whichever token you created into the wizard and click **Next**.
 
 > Your token is stored in a file called `.sync-config.json` in your project folder. This file is gitignored — it never leaves your computer.
 
@@ -150,11 +177,12 @@ The best way to avoid conflicts entirely is to **Sync now** at the start and end
 
 ### "403 Forbidden" or "authentication failed"
 
-Your Personal Access Token is wrong, expired, or doesn't have the right permissions.
+Your Personal Access Token is wrong, expired, or doesn't have the right permissions. This is almost always a **missing write permission** — the most common setup mistake.
 
-- Double-check that you ticked the `repo` scope when creating the token
-- If the token has expired, create a new one at [github.com/settings/tokens](https://github.com/settings/tokens) and update it in `.sync-config.json` (open the file in any text editor and replace the `token` value)
-- Classic tokens set to "no expiration" will not expire — use this option to avoid re-doing this step
+- **Fine-grained token**: make sure **Contents** is set to **Read and write** (not Read-only), and that the token's **Repository access** actually includes this repository. Re-create the token if either is wrong.
+- **Classic token**: make sure you ticked the top-level **`repo`** scope when creating the token.
+- If the token has expired, create a new one and update it in `.sync-config.json` (open the file in any text editor and replace the `token` value). Fine-grained tokens are managed at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens); classic tokens at [github.com/settings/tokens](https://github.com/settings/tokens).
+- A **classic token set to "No expiration"** will never expire — use this option if you want to avoid re-doing this step.
 
 ### "404 Not Found" or "repository not found"
 
@@ -167,6 +195,50 @@ The repository URL is wrong, or the repository doesn't exist yet.
 ### "Network error" or "could not resolve host"
 
 The app can't reach GitHub. Check your internet connection. If you're on a university network, try a different connection or hotspot — some networks block git operations.
+
+### The wizard says "Something went wrong" / "Failed to fetch" with no other detail
+
+This means the browser couldn't get a reply from The Curator — almost always because **the server process stopped or crashed during setup**, not because of GitHub.
+
+1. Check that The Curator is still running. The window/terminal that launched it (on Windows, the PowerShell window running `node src/server.js`; on Mac, the Dock app) should still be open. If it closed or shows an error, that's the cause.
+2. Restart The Curator, reload `http://localhost:3333`, and run the wizard again.
+3. If it keeps happening, start the server in a visible terminal so you can read the crash:
+   - **Windows:** `cd` into the project folder, then `node src/server.js` — watch the window when the wizard fails; the real error prints there.
+   - **Mac/Linux:** `node src/server.js` in Terminal.
+
+### Setup keeps failing at the commit step — "Command failed: git … commit -m 'Initial The Curator sync'"
+
+If you're on **The Curator v3.0.1-beta.19 or newer**, this is already fixed — update via Settings → Check for Updates.
+
+On **older versions**, this happens when a previous setup attempt committed your files locally but its push to GitHub failed (e.g. the repo had a README, or a token problem). Every retry then trips over an already-committed repo. Reset the local sync state and start clean:
+
+```bash
+# from inside the project folder
+# macOS / Linux:
+rm -rf .knowledge-git .sync-config.json
+# Windows PowerShell:
+Remove-Item -Recurse -Force .knowledge-git
+Remove-Item -Force .sync-config.json -ErrorAction SilentlyContinue
+```
+
+> This is safe — it only removes sync bookkeeping. Your actual notes live in the `domains/` folder and are untouched.
+
+Then create a **fresh, empty** private repo (no README/.gitignore/license) and re-run the wizard in **Push** mode.
+
+### Windows: a GitHub sign-in window pops up, or sync hangs forever
+
+Git for Windows ships with **Git Credential Manager**, which can intercept the push and pop up a GitHub login window — if you don't notice it, the whole operation stalls until it times out (which then shows as "Failed to fetch").
+
+- Watch for a **GitHub sign-in popup** during sync and complete or close it.
+- Clear any **stale saved credential** that may be conflicting with the token The Curator uses:
+  ```powershell
+  cmdkey /list | findstr github
+  # if you see a github entry:
+  cmdkey /delete:git:https://github.com
+  ```
+- Then retry. With no stale credential, Git for Windows uses the token The Curator already embeds — no popup.
+
+> **Is sync a "Windows problem"?** No. The underlying behaviour is identical on Mac and Windows. The cases above are triggered by *state* (a failed first push, a non-empty repo, a stale Windows credential), not by the operating system — a Mac in the same state behaves the same way.
 
 ### "Push rejected" or "non-fast-forward update"
 
@@ -203,8 +275,9 @@ Your Gemini API key (in `.env`) is also never synced.
 
 ## Token expiry
 
-When creating a Personal Access Token, GitHub gives you expiry options: 30 days, 60 days, 90 days, 1 year, or **No expiration**.
+Expiry options depend on which token type you chose:
 
-For this use case, **No expiration is recommended**. Sync is meant to be a quiet background habit — having a token expire and break sync after a few months is disruptive. Since the token only has access to one private repository (yours), the risk is low.
+- **Classic tokens** offer 30 days, 60 days, 90 days, 1 year, or **No expiration**. For this set-and-forget use case, **No expiration** is the lowest-maintenance choice — sync is meant to be a quiet background habit, and since the token only has access to your repositories, the risk is low.
+- **Fine-grained tokens** must have an expiry date (custom, up to **1 year**). They cannot be truly permanent. The upside is they're scoped to a single repository, so the security tradeoff favours fine-grained even though you'll renew it occasionally.
 
-If you do choose an expiry date, make a calendar reminder to renew the token before it expires.
+Whichever you choose, if the token has an expiry date, **make a calendar reminder to renew it** before it expires — otherwise sync will start failing with a `403` and you'll need to generate a fresh token and paste it into `.sync-config.json`. If you'd rather never deal with renewals, use a classic token set to "No expiration".
