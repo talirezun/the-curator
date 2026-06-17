@@ -397,7 +397,7 @@ HTTP response → { slug, displayName } or { deleted, syncWarning }
 
 Obsidian sees all changes instantly — it watches the same domains/ folder.
 If sync is configured, syncWarning: true is returned so the UI can
-prompt the user to Sync Up.
+prompt the user to sync.
 ```
 
 ---

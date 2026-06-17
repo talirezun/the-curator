@@ -24,7 +24,7 @@ Before any of these, you need a working Curator install on your computer (Mac/Wi
 
 ## 1 — Enable Shared Brain (one-time, both roles)
 
-Shared Brain is an **opt-in beta feature** in v3.0.0-beta.1. New installs don't see it until you enable it.
+Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New installs don't see it until you enable it.
 
 1. Open The Curator in your browser (http://localhost:3333).
 2. Click the **Sync** tab.

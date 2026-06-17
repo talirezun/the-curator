@@ -18,6 +18,20 @@ Running a Shared Brain is mostly turnkey, but a few duties land on you specifica
 
 ---
 
+## 2 — Inviting collaborators
+
+A Shared Brain needs two things for each contributor to be able to push: (1) the **invite token** you generated at setup, and (2) **GitHub collaborator access** to the private repo. The invite token alone is not enough — it carries only metadata (repo coordinates, brain name, data-handling terms), never a credential. Each contributor supplies their own GitHub PAT.
+
+Steps:
+
+1. **Add them as a GitHub collaborator.** On the private repo: *Settings → Collaborators → Add people*, and have them accept the email invitation. Without this, their PAT — however valid — will get a `403`/`repository not found` on the first push.
+2. **Send them the invite token.** Paste it to them over any channel; it's safe to share because it contains no token. They paste it into the Sync tab → *Shared Brains → Join a Shared Brain* wizard.
+3. **They create their own PAT** during the wizard (fine-grained, *Contents: Read and write* on the repo — or a classic token with `repo` scope). The wizard validates it live.
+
+The full step-by-step from the contributor's side is in [User Guide §2 — Contributor setup](shared-brain-user-guide.md#2--contributor-setup-join-an-existing-shared-brain). For your own initial brain creation, see [User Guide §3 — Admin setup](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain).
+
+---
+
 ## 3 — Revoking a contributor (Article 17)
 
 A contributor leaves the cohort, or asks to have their data removed under GDPR Article 17. You revoke them.

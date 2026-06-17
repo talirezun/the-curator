@@ -51,10 +51,11 @@
  *     messages. Spec Part 10 invariants 2 and 8.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileAtomicSync } from './atomic-write.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -80,8 +81,11 @@ function readRaw() {
   }
 }
 
+// v3.0.1-beta.20: atomic + 0600 — this file holds Shared Brain credentials
+// (github_pat, fellow_token, admin_token), so it must not be world-readable,
+// and a kill mid-write must not corrupt every connection's tokens.
 function writeRaw(data) {
-  writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
 // ── Masking ─────────────────────────────────────────────────────────────────

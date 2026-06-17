@@ -1,10 +1,11 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { mkdir, writeFile, readFile, unlink, rm } from 'fs/promises';
+import { mkdir, readFile, unlink, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { getDomainsDir } from './config.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT       = path.resolve(__dirname, '../..');
@@ -72,7 +73,9 @@ function friendlyError(err) {
   const msg = err.message.toLowerCase();
   if (msg.includes('authentication failed') || msg.includes('403') ||
       msg.includes('401') || msg.includes('could not read username')) {
-    return 'GitHub rejected the token. Make sure it has "repo" scope and hasn\'t expired.';
+    return 'GitHub rejected the token. For a fine-grained token, make sure it has ' +
+           '"Contents: Read and write" on the repo; for a classic token, make sure ' +
+           'it has the "repo" scope. Also check the token hasn\'t expired.';
   }
   if (msg.includes('repository not found') || msg.includes('does not exist') ||
       msg.includes('not found')) {
@@ -83,7 +86,7 @@ function friendlyError(err) {
     return 'Cannot reach GitHub. Check your internet connection and try again.';
   }
   if (msg.includes('non-fast-forward') || msg.includes('rejected')) {
-    return 'GitHub has changes you don\'t have locally. Click "Sync Down" first, then Sync Up again.';
+    return 'GitHub has changes you don\'t have locally. Click "Pull only" first (under Advanced), then sync again.';
   }
   if (msg.includes('nothing to commit')) {
     return null; // Not an error
@@ -94,7 +97,9 @@ function friendlyError(err) {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 async function saveConfig(repoUrl, token) {
-  await writeFile(CONFIG_FILE, JSON.stringify({ repoUrl, token }, null, 2), 'utf8');
+  // v3.0.1-beta.20: atomic + 0600 — .sync-config.json holds the GitHub PAT, so
+  // it must not be world-readable, and a kill mid-write must not lose the token.
+  await writeFileAtomic(CONFIG_FILE, JSON.stringify({ repoUrl, token }, null, 2), { mode: 0o600 });
 }
 
 async function loadConfig() {
@@ -127,7 +132,9 @@ async function ensureDomainsGitignore() {
     }
   }
   if (!existing || changed) {
-    await writeFile(p, lines.join('\n') + '\n', 'utf8');
+    // v3.0.1-beta.20: atomic — a truncated .gitignore could let raw/ source
+    // files get committed to GitHub on the next push.
+    await writeFileAtomic(p, lines.join('\n') + '\n', 'utf8');
   }
 }
 

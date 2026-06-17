@@ -2763,7 +2763,7 @@ function showRenamePanel(cardEl, stats) {
 
       if (data.syncWarning) {
         // Brief advisory before the card refreshes away
-        showStatus(statusEl, 'success', `✓ Renamed to "${newName}". Since sync is configured, run Sync Up soon to reflect this on GitHub.`);
+        showStatus(statusEl, 'success', `✓ Renamed to "${newName}". Since sync is configured, run Sync now soon to reflect this on GitHub.`);
         await new Promise(r => setTimeout(r, 2000));
       }
     } catch (err) {
@@ -2811,7 +2811,7 @@ function showDeletePanel(cardEl, stats) {
   fetch('/api/sync/status').then(r => r.json()).then(s => {
     if (s.configured) {
       const noteEl = panel.querySelector('.domain-delete-sync-note');
-      noteEl.textContent = 'This domain will also be removed from GitHub on the next Sync Up.';
+      noteEl.textContent = 'This domain will also be removed from GitHub on the next sync.';
       noteEl.classList.remove('hidden');
     }
   }).catch(() => {});

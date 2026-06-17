@@ -24,8 +24,10 @@ function readRaw() {
 // v3.0.1-beta.8: atomic write so a kill-mid-write of .curator-config.json
 // cannot wipe the user's API keys / domainsPath. Sync variant required —
 // callers in this module don't await.
+// v3.0.1-beta.20: 0600 — this file holds the Gemini/Anthropic API keys, so it
+// must not be readable by other local users.
 function writeRaw(data) {
-  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
 /** Returns the resolved, absolute path to the domains folder. */

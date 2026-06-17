@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, chmodSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { exec, spawn } from 'child_process';
 import domainsRouter from './routes/domains.js';
@@ -26,6 +26,26 @@ const { version } = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url))
 );
 
+// ── Credential-file permission hardening (v3.0.1-beta.20) ─────────────────────
+// New writes already land at 0600 via writeFileAtomic({mode}). This one-shot
+// startup sweep catches files created by an OLDER version (which wrote 0644),
+// so existing installs are hardened immediately rather than on the next write.
+// Best-effort + per-file try/catch: a file owned by another user, or absent,
+// must never block startup. .knowledge-git/config is included because git
+// embeds the sync PAT in the remote URL there.
+for (const rel of [
+  '.curator-config.json',
+  '.sync-config.json',
+  '.sharedbrain-config.json',
+  '.env',
+  '.knowledge-git/config',
+]) {
+  try {
+    const p = path.join(PROJECT_ROOT, rel);
+    if (existsSync(p)) chmodSync(p, 0o600);
+  } catch { /* best-effort */ }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3333;
 
@@ -35,6 +55,33 @@ const PORT = process.env.PORT || 3333;
 // generous limit carries no DoS risk.
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Cross-origin guard (v3.0.1-beta.20) ───────────────────────────────────────
+// The Curator binds to 127.0.0.1 (see startListen below), so it's not reachable
+// from the LAN. The remaining browser-side risk is a malicious web page the user
+// has open issuing state-changing fetch() calls to http://localhost:3333, or a
+// DNS-rebinding attack pointing an attacker hostname at the loopback address.
+// Both surface a cross-origin `Origin` header. We reject any MUTATING request
+// whose Origin is present and not one of our own loopback origins. Requests with
+// NO Origin header (curl, scripts, the documented revoke flow, server-to-server)
+// are allowed — they aren't browser-driven and so aren't the CSRF vector. GETs
+// are never blocked (static assets + SPA navigation).
+const ALLOWED_ORIGINS = new Set([
+  `http://localhost:${PORT}`,
+  `http://127.0.0.1:${PORT}`,
+]);
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+app.use((req, res, next) => {
+  if (!MUTATING_METHODS.has(req.method)) return next();
+  const origin = req.get('origin');
+  if (origin && !ALLOWED_ORIGINS.has(origin)) {
+    return res.status(403).json({
+      error: 'Cross-origin request blocked. The Curator only accepts requests ' +
+             `from its own interface (http://localhost:${PORT}).`,
+    });
+  }
+  next();
+});
 
 app.use('/api/domains', domainsRouter);
 app.use('/api/ingest', ingestRouter);
@@ -137,9 +184,16 @@ app.get('*', (req, res) => {
 const MAX_BIND_RETRIES = 60;
 const BIND_RETRY_DELAY_MS = 100;
 
+// v3.0.1-beta.20: bind to the loopback interface only. Previously the server
+// bound to 0.0.0.0 (all interfaces), so anyone on the same LAN/Wi-Fi could reach
+// :3333 and hit unauthenticated endpoints (config, sync, ingest). The Curator is
+// a single-user localhost app — 127.0.0.1 matches that intent and removes the
+// LAN attack surface entirely.
+const BIND_HOST = '127.0.0.1';
+
 let server;
 function startListen(retriesLeft = MAX_BIND_RETRIES) {
-  server = app.listen(PORT, () => {
+  server = app.listen(PORT, BIND_HOST, () => {
     try {
       const { provider, model } = getProviderInfo();
       const providerLabel = provider === 'gemini' ? '🟦 Gemini' : '🟣 Anthropic';

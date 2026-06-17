@@ -127,7 +127,7 @@ Rename a domain — changes the folder name and updates all internal references.
 }
 ```
 
-`syncWarning` is `true` when GitHub sync is configured — the rename appears as a delete + add on GitHub, so the user should Sync Up promptly.
+`syncWarning` is `true` when GitHub sync is configured — the rename appears as a delete + add on GitHub, so the user should sync promptly.
 
 **Error responses**
 
@@ -158,7 +158,7 @@ curl -X DELETE http://localhost:3333/api/domains/health-and-wellness
 }
 ```
 
-`syncWarning` is `true` when sync is configured — the deletion will propagate to GitHub on the next Sync Up.
+`syncWarning` is `true` when sync is configured — the deletion will propagate to GitHub on the next sync.
 
 **Error responses**
 

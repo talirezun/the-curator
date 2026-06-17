@@ -40,15 +40,30 @@
  *    rewrite would be a regression.
  */
 
-import { writeFile, rename, unlink, lstat } from 'fs/promises';
+import { writeFile, rename, unlink, lstat, chmod } from 'fs/promises';
 import {
   writeFileSync,
   renameSync,
   unlinkSync,
   lstatSync,
+  chmodSync,
   existsSync,
 } from 'fs';
 import path from 'path';
+
+/**
+ * Normalise the third argument, which historically was an encoding string.
+ * Now also accepts an options object `{ encoding, mode }` so credential files
+ * (.curator-config.json, .sync-config.json, .sharedbrain-config.json) can be
+ * written 0600 (v3.0.1-beta.20). Passing a bare string keeps the old behaviour.
+ */
+function normalizeOpts(opts) {
+  if (typeof opts === 'string') return { encoding: opts, mode: undefined };
+  if (opts && typeof opts === 'object') {
+    return { encoding: opts.encoding || 'utf8', mode: opts.mode };
+  }
+  return { encoding: 'utf8', mode: undefined };
+}
 
 // Per-process monotonic counter to avoid temp-file collisions on the same
 // millisecond in the same directory.
@@ -96,10 +111,13 @@ function isUnsafeSymlinkSync(targetPath) {
  *
  * @param {string} targetPath  Absolute path to the final file
  * @param {string|Buffer} content  Content to write
- * @param {string} [encoding]  Encoding for string content (default 'utf8')
+ * @param {string|{encoding?:string, mode?:number}} [opts]  Encoding string
+ *        (legacy) or an options object. `mode` (e.g. 0o600) tightens the
+ *        final file's permissions — used for credential files.
  * @returns {Promise<void>}
  */
-export async function writeFileAtomic(targetPath, content, encoding = 'utf8') {
+export async function writeFileAtomic(targetPath, content, opts = 'utf8') {
+  const { encoding, mode } = normalizeOpts(opts);
   if (await isUnsafeSymlink(targetPath)) {
     throw new Error(
       `Refusing to write through symlink: ${targetPath}. ` +
@@ -116,6 +134,10 @@ export async function writeFileAtomic(targetPath, content, encoding = 'utf8') {
       await writeFile(tmpPath, content, encoding);
     }
     written = true;
+    // Tighten permissions BEFORE the file becomes visible at its final path.
+    // Done as an explicit chmod (not the writeFile mode option) so it isn't
+    // subject to the process umask — credential files MUST end up 0600.
+    if (mode !== undefined) await chmod(tmpPath, mode);
     // POSIX rename is atomic. If targetPath already exists as a regular
     // file, it's atomically replaced. If it doesn't exist, the temp file
     // is moved into place.
@@ -135,7 +157,8 @@ export async function writeFileAtomic(targetPath, content, encoding = 'utf8') {
  * before the async runtime is fully online (key save flow + onboarding
  * wizard). Sync is required there because callers don't await.
  */
-export function writeFileAtomicSync(targetPath, content, encoding = 'utf8') {
+export function writeFileAtomicSync(targetPath, content, opts = 'utf8') {
+  const { encoding, mode } = normalizeOpts(opts);
   if (isUnsafeSymlinkSync(targetPath)) {
     throw new Error(
       `Refusing to write through symlink: ${targetPath}. ` +
@@ -151,6 +174,8 @@ export function writeFileAtomicSync(targetPath, content, encoding = 'utf8') {
       writeFileSync(tmpPath, content, encoding);
     }
     written = true;
+    // See writeFileAtomic — explicit chmod so umask can't loosen 0600.
+    if (mode !== undefined) chmodSync(tmpPath, mode);
     renameSync(tmpPath, targetPath);
   } catch (err) {
     if (written && existsSync(tmpPath)) {
