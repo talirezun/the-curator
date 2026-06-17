@@ -606,6 +606,7 @@ the-curator/
 
 | | |
 |-|-|
+| [Contributing](CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [Ingestion Pipeline](docs/ingestion-pipeline.md) | **The deep dive on the most important code path in The Curator** — every safeguard, every failure mode, the quality contract, Mermaid diagrams |
 | [Domains](docs/domains.md) | Full reference — managing domains, the CLAUDE.md schema, siloing model, custom templates |
 | [Model Lifecycle](docs/model-lifecycle.md) | Provider/model fallback policy, retiring deprecated models |
@@ -616,10 +617,10 @@ the-curator/
 
 ## Security
 
-- API keys can be stored via the **Settings** tab (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed
+- API keys can be stored via the **Settings** tab (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed. Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`) are written with `0600` permissions (owner-only) as of v3.0.1-beta.20
 - Sync token lives in `.sync-config.json` — gitignored, never committed
 - The app runs entirely on your local machine — the only outbound calls are to Gemini/Claude and (when syncing) to your own private GitHub repo
-- Do not expose the server on a public network (it has no authentication)
+- The server binds to `127.0.0.1` (loopback) only, so it is **not reachable from your local network**, and a cross-origin guard rejects state-changing requests from other web origins (CSRF / DNS-rebinding defense). It still has no per-request authentication — it is a single-user local app and should not be reverse-proxied onto a public network
 
 ---
 
