@@ -32,6 +32,7 @@ import { LocalFolderStorageAdapter } from '../src/brain/sharedbrain-local-adapte
 import { pullCollective, ensureSharedDomainExists } from '../src/brain/sharedbrain.js';
 import { pushDomain } from '../src/brain/sharedbrain.js';
 import { isDomainReadonly } from '../src/brain/files.js';
+import { __setDomainsDirOverride } from '../src/brain/config.js';
 
 // ── Harness ─────────────────────────────────────────────────────────────
 
@@ -54,6 +55,12 @@ const storageRoot = path.join(workspaceRoot, 'shared-storage');
 mkdirSync(storageRoot, { recursive: true });
 const domainsDir = path.join(workspaceRoot, 'domains');
 mkdirSync(domainsDir, { recursive: true });
+
+// Point every getDomainsDir() consumer (isDomainReadonly, pullCollective's
+// internal appendLog, etc.) at our throwaway workspace. The DOMAINS_PATH env
+// var can't do this on a real install where .curator-config.json sets
+// domainsPath (config wins over env). Cleared at cleanup.
+__setDomainsDirOverride(domainsDir);
 
 console.log(`Phase 2D workspace: ${workspaceRoot}`);
 
@@ -88,21 +95,10 @@ const patchFn = (id, patch) => {
 
 section('isDomainReadonly — accurate detection');
 
-// Use the env-var override that pullCollective uses to point getDomainsDir at our workspace
-const prevEnv = process.env.DOMAINS_PATH;
-process.env.DOMAINS_PATH = domainsDir;
-delete process.env.DOMAINS_PATH; // start clean
-
-// Helper to set DOMAINS_PATH for the duration of an isDomainReadonly call
+// The global __setDomainsDirOverride above already points getDomainsDir at our
+// workspace, so isDomainReadonly resolves into the tempdir we populate below.
 async function readonlyCheck(domain) {
-  const save = process.env.DOMAINS_PATH;
-  process.env.DOMAINS_PATH = domainsDir;
-  try {
-    return await isDomainReadonly(domain);
-  } finally {
-    if (save === undefined) delete process.env.DOMAINS_PATH;
-    else process.env.DOMAINS_PATH = save;
-  }
+  return await isDomainReadonly(domain);
 }
 
 // Set up a few test domains with various CLAUDE.md shapes
@@ -354,15 +350,13 @@ mkdirSync(fellow2_DomainsDir, { recursive: true });
 const conn2 = makeConnection({ shared_brain_slug: 'mcp-preview' });
 await ensureSharedDomainExists('shared-mcp-preview', conn2, fellow2_DomainsDir);
 
-// Point the env at this fellow's dir
-const saved = process.env.DOMAINS_PATH;
-process.env.DOMAINS_PATH = fellow2_DomainsDir;
+// Point the override at this fellow's dir for the duration of this one check.
+__setDomainsDirOverride(fellow2_DomainsDir);
 try {
   assert(await isDomainReadonly('shared-mcp-preview'),
     'ensureSharedDomainExists output is detected as readonly (Phase 4 MCP guard will work)');
 } finally {
-  if (saved === undefined) delete process.env.DOMAINS_PATH;
-  else process.env.DOMAINS_PATH = saved;
+  __setDomainsDirOverride(domainsDir); // restore the main workspace override
 }
 
 // Cleanup
@@ -370,9 +364,9 @@ console.log('\nCleaning up...');
 rmSync(workspaceRoot, { recursive: true, force: true });
 console.log(`Removed ${workspaceRoot}`);
 
-// Restore env if we touched it
-if (prevEnv === undefined) delete process.env.DOMAINS_PATH;
-else process.env.DOMAINS_PATH = prevEnv;
+// Clear the test-only domains-dir override so it can't leak into any other
+// code running in this process.
+__setDomainsDirOverride(null);
 
 // ── Summary ──────────────────────────────────────────────────────────────
 

@@ -30,6 +30,7 @@ import {
   __testing,
 } from '../src/brain/ingest.js';
 import { mergeIntoIndex } from '../src/brain/compile.js';
+import { __setDomainsDirOverride } from '../src/brain/config.js';
 
 const { buildOutlinePrompt, buildPrompt, buildBatchPrompt, stubPageContent, TEXT_CAP } = __testing;
 
@@ -546,11 +547,12 @@ console.log('\n10. Health scanner hyphen-variant detection (real pair)\n');
   writeFileSync(pathMod.join(wikiDir, 'entities', 'dr.-tali-rezun.md'), stub);
   writeFileSync(pathMod.join(wikiDir, 'entities', 'tali-rezun.md'), stub);
 
-  // Point ingest/health at this tempdir
-  const oldDomainsPath = process.env.DOMAINS_PATH;
-  process.env.DOMAINS_PATH = domainsPath;
+  // Point ingest/health at this tempdir. Use the override (checked before
+  // config) — the DOMAINS_PATH env var loses to .curator-config.json's
+  // domainsPath on a real install, so it can't redirect getDomainsDir here.
+  __setDomainsDirOverride(domainsPath);
 
-  // Bust ESM module cache — health.js reads getDomainsDir() at call time, OK
+  // health.js reads getDomainsDir() at call time, so the override applies.
   const { scanWiki } = await import('../src/brain/health.js');
   const report = await scanWiki('hvt');
 
@@ -569,8 +571,7 @@ console.log('\n10. Health scanner hyphen-variant detection (real pair)\n');
 
   // Cleanup
   rmSync(testRoot, { recursive: true, force: true });
-  if (oldDomainsPath) process.env.DOMAINS_PATH = oldDomainsPath;
-  else delete process.env.DOMAINS_PATH;
+  __setDomainsDirOverride(null);
 }
 
 // Case J: empty hints array → no originator-related injections.

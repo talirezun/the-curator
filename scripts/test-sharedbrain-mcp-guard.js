@@ -37,6 +37,7 @@ import { compileToWikiHandler } from '../mcp/tools/compile.js';
 import { fixWikiIssueHandler, scanWikiHealthHandler } from '../mcp/tools/health.js';
 import { dismissWikiIssueHandler, undismissWikiIssueHandler, getHealthDismissedHandler } from '../mcp/tools/dismissed.js';
 import { ensureSharedDomainExists } from '../src/brain/sharedbrain.js';
+import { __setDomainsDirOverride } from '../src/brain/config.js';
 
 // ── Harness ─────────────────────────────────────────────────────────────
 
@@ -52,8 +53,10 @@ function section(name) { console.log(`\n── ${name} ──`); }
 const workspaceRoot = mkdtempSync(path.join(tmpdir(), 'sharedbrain-4b-'));
 const domainsDir = path.join(workspaceRoot, 'domains');
 mkdirSync(domainsDir, { recursive: true });
-const prevEnv = process.env.DOMAINS_PATH;
-process.env.DOMAINS_PATH = domainsDir;
+// Redirect getDomainsDir at our tempdir via the override (checked before
+// config); the DOMAINS_PATH env var loses to .curator-config.json on a real
+// install, so it can't isolate this test.
+__setDomainsDirOverride(domainsDir);
 
 console.log(`Phase 4B workspace: ${workspaceRoot}`);
 
@@ -279,8 +282,7 @@ console.log('\nCleaning up...');
 rmSync(workspaceRoot, { recursive: true, force: true });
 console.log(`Removed ${workspaceRoot}`);
 
-if (prevEnv === undefined) delete process.env.DOMAINS_PATH;
-else process.env.DOMAINS_PATH = prevEnv;
+__setDomainsDirOverride(null);
 
 // ── Summary ──────────────────────────────────────────────────────────────
 

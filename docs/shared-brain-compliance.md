@@ -187,4 +187,4 @@ If any answer is "no" — pause the deployment and resolve the gap before inviti
 
 ---
 
-**Document version**: aligns with Curator v3.0.1-beta.20. Updated when the operational truth changes.
+**Document version**: aligns with the Shared Brain feature set on the Curator v3.0.x beta line. Updated when the operational truth changes.

@@ -13,7 +13,7 @@ You keep your private brain private. You only share what you choose. The collect
 
 **Why an LLM is required, and where it runs.** Mechanical file merge produces a bigger wiki. LLM synthesis produces a *better* wiki — resolving conflicting formulations, eliminating broken cross-fellow wikilinks, enriching sparse pages, attributing provenance. The LLM runs **locally on each contributor's machine** (using the Gemini Flash Lite key they already have configured for ingest), pre-processing their changed pages into compact `DeltaSummary` objects before pushing. The collective brain receives structured knowledge summaries — not raw wiki files.
 
-**Status**: opt-in beta (introduced in v3.0.0-beta.1; current app v3.0.1-beta.20). Storage backend is GitHub-only in v3.0; Cloudflare R2 lands in v3.1 (see [Roadmap](#7--roadmap)).
+**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta on the current v3.0.x line). Storage backend is GitHub-only in v3.0; Cloudflare R2 lands in v3.1 (see [Roadmap](#7--roadmap)).
 
 ---
 

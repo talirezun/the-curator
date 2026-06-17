@@ -39,7 +39,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { getDomainsDir } from './config.js';
+import { getDomainsDir, __setDomainsDirOverride } from './config.js';
 import { createStorageAdapter } from './sharedbrain-storage-factory.js';
 import { generateDeltaSummary } from './sharedbrain-delta.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
@@ -538,15 +538,18 @@ export async function pullCollective(connection, opts = {}) {
   // ── 2. Compute local mirror slug ───────────────────────────────────────
   const localDomain = `shared-${connection.shared_brain_slug}`;
 
-  // ── 3. Temporarily override DOMAINS_PATH if test wants it ──────────────
+  // ── 3. Temporarily override the domains dir if a test wants it ─────────
   // writePage / syncSummaryEntities / appendLog all read getDomainsDir()
   // internally. To support per-fellow test isolation without rewriting those
-  // functions, we set the env var around the duration of this call.
-  // .curator-config.json still wins over the env var (see config.js priority),
-  // so this override is a no-op in production where the user has a config file.
-  const prevEnv = process.env.DOMAINS_PATH;
+  // functions, we redirect getDomainsDir for the duration of this call.
+  // We use __setDomainsDirOverride (checked BEFORE config) rather than the
+  // DOMAINS_PATH env var, because the env var loses to .curator-config.json's
+  // domainsPath — which a real install almost always has — so the env-var
+  // form was a silent no-op on any configured machine (and broke the tests
+  // that relied on it). Production never passes opts.domainsDir, so this stays
+  // a no-op there.
   if (opts.domainsDir) {
-    process.env.DOMAINS_PATH = opts.domainsDir;
+    __setDomainsDirOverride(opts.domainsDir);
   }
 
   try {
@@ -710,10 +713,9 @@ export async function pullCollective(connection, opts = {}) {
     };
 
   } finally {
-    // Restore env regardless of success
+    // Clear the override regardless of success.
     if (opts.domainsDir) {
-      if (prevEnv === undefined) delete process.env.DOMAINS_PATH;
-      else process.env.DOMAINS_PATH = prevEnv;
+      __setDomainsDirOverride(null);
     }
   }
 }

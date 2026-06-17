@@ -30,8 +30,22 @@ function writeRaw(data) {
   writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
+// Test-only override. Production code NEVER sets this — it stays null, so
+// getDomainsDir's real precedence (config → env → default) is unchanged.
+// Battle tests use it to point the domains dir at a throwaway tempdir WITHOUT
+// mutating the user's real .curator-config.json. The env-var path can't serve
+// this role because a real install almost always has `domainsPath` in config,
+// which (correctly) wins over the env var.
+let _domainsDirOverride = null;
+
+/** Test seam — see _domainsDirOverride. Pass null to clear. */
+export function __setDomainsDirOverride(p) {
+  _domainsDirOverride = p || null;
+}
+
 /** Returns the resolved, absolute path to the domains folder. */
 export function getDomainsDir() {
+  if (_domainsDirOverride) return path.resolve(_domainsDirOverride);
   const cfg = readRaw();
   if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
