@@ -1,0 +1,28 @@
+name: Tests
+
+# Runs the OFFLINE test suite on every push and pull request (including PRs from
+# community forks). Offline tests are free, deterministic, and make no network or
+# API calls — credentials are stripped from the test processes by the runner.
+#
+# A second "live" job (real Gemini/Anthropic calls, gated to push-to-main + using
+# repo Secrets) is planned but NOT enabled yet: the live suites first need the
+# same domains-dir isolation fix the offline suites got in v3.0.1-beta.21 so they
+# are safe on both CI and a configured dev machine. See CONTRIBUTING.md →
+# "Continuous Integration".
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  offline:
+    name: Offline tests (free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test

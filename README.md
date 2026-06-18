@@ -12,6 +12,7 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
   <a href="https://github.com/talirezun/the-curator/blob/main/package.json"><img src="https://img.shields.io/github/package-json/v/talirezun/the-curator?label=Version&color=blue" alt="Current Version"></a>
+  <a href="https://github.com/talirezun/the-curator/actions/workflows/test.yml"><img src="https://github.com/talirezun/the-curator/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 

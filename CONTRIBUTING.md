@@ -78,6 +78,68 @@ A suite passes iff it exits `0` **and** its output shows no failure marker
 
 ---
 
+## Continuous Integration (GitHub Actions)
+
+Every push and pull request is checked automatically by
+[.github/workflows/test.yml](.github/workflows/test.yml) on GitHub's servers.
+
+**Live now — the offline job:**
+
+| Job | When it runs | API keys | Cost |
+|-----|--------------|----------|------|
+| **Offline tests** | every push (any branch) + every PR (incl. forks) | none | free |
+
+It runs `npm ci` + `npm test` on a clean Ubuntu machine. Because it's a *clean*
+machine with no `.curator-config.json`, it also catches the class of
+"works-on-my-machine" bug that hid on configured dev machines before
+v3.0.1-beta.21.
+
+### Planned next — a live-API CI job
+
+A second job will run the **live** suites (real Gemini/Anthropic calls) gated to
+**push-to-`main` + manual run only**, never on pull requests. The design:
+
+- **Why it's not enabled yet:** the live suites still isolate via
+  `process.env.DOMAINS_PATH` (or write into `getDomainsDir()`), which — exactly
+  like the offline bug fixed in beta.21 — is defeated by a configured
+  `domainsPath`, so they touch the real `domains/` folder on a dev machine, and
+  `test-beta13-chat-live` depends on real local data that doesn't exist on CI.
+  Before enabling live-CI we must give the live suites the same
+  `__setDomainsDirOverride()` isolation and split them into **CI-safe**
+  (self-contained) vs **local-only** (real-data benchmarks like
+  `test-beta13-chat-live`; the server-spawning `test-sharedbrain-routes`).
+- **Why it will never cost the community money:** GitHub withholds repo secrets
+  from fork-PR workflows, and the live job will additionally be gated to
+  `push`-to-`main` / manual only. So a contributor's PR gets the **free** offline
+  checks; the **paid** live checks only run when a maintainer pushes to `main`.
+- **Flakiness:** live tests call real providers, so a transient 503 can make the
+  job go red — you'd just re-run it.
+
+### Adding the API-key secrets (you can do this now)
+
+The secrets are harmless to add ahead of time (they sit unused until the live job
+ships). To add them:
+
+1. On GitHub, open the repo → **Settings** (top tab) → in the left sidebar,
+   **Secrets and variables** → **Actions**.
+2. Click **New repository secret**.
+3. **Name:** `GEMINI_API_KEY` — **Secret:** paste your Gemini key → **Add secret**.
+4. Repeat for **Name:** `ANTHROPIC_API_KEY` — **Secret:** your Anthropic key.
+5. (Optional, later) `GITHUB_TEST_REPO` (e.g. `you/curator-ci-throwaway`) and
+   `GITHUB_TEST_PAT` for the GitHub-backed Shared Brain live suites; otherwise
+   they self-skip.
+
+Secret **values** are encrypted and never shown again or printed in logs (GitHub
+auto-masks them). Anyone can see a secret's *name* exists, but not its value.
+
+> ⚠️ Until the live-CI job ships, **do not run `npm run test:live` on your own
+> configured machine** — the live suites currently write throwaway domains into
+> your real `domains/` folder (self-cleaning if the run finishes, but stray dirs
+> remain if it's interrupted). Run `npm test` (offline) locally; let CI handle
+> the rest once live-CI lands.
+
+---
+
 ## Adding a test
 
 1. Create `scripts/test-<subsystem>.js`. Follow an existing suite's shape (a
