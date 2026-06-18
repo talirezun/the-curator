@@ -1005,6 +1005,15 @@ The active provider switches automatically based on which keys are configured (G
 
 > Keys entered in Settings are stored in `.curator-config.json` at the project root. This file is gitignored and never committed. If you also have keys in `.env`, the Settings tab values take priority.
 
+### System Check (v3.0.1-beta.23+)
+
+The **System Check** panel confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider.
+
+- **Run system check** (free, instant) checks five things locally — no network call, no cost, and it never touches your wiki content: your installed version, whether an AI key is configured, that your knowledge folder is writable, that your credential files are locked down (`0600`), and your sync status. Each row shows ✅ OK, ⚠️ Review, ❌ Problem, or ℹ️ Info.
+- **Verify AI connection** (optional, ~$0.0001) makes one tiny request to your provider after a cost confirmation. It reports the provider, model, and response time on success — or the exact error on failure, so you can tell a bad key apart from a provider outage (e.g. an HTTP 503) in one click.
+
+> **System Check** (Settings) verifies the *app and your setup*. It's different from the **Health tab** (top navigation), which scans your wiki *content* for broken links and duplicates. Rule of thumb: System Check = is the app working? · Health tab = is my wiki clean? Full details: [system-check.md](system-check.md).
+
 ### Version and updates
 
 The Settings tab displays the current app version. Click **Check for Updates** to compare your version against the latest release on GitHub. If an update is available, click **Update Now** — the app pulls the latest code, reinstalls dependencies, rebuilds the Dock app, and restarts automatically. The browser reloads on its own.
@@ -1120,7 +1129,7 @@ Unlike the other Health fixes, this one:
 - **Is opt-in and user-gated.** Nothing happens until you click Scan, then Confirm.
 - **Is destructive when you merge a pair.** The duplicate file is deleted and every `[[old-slug]]` link in the domain is rewritten to the canonical slug. For this reason, the Merge button stays disabled until you open the **Preview diff** for that pair — the preview shows exactly which files will change.
 
-You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in Settings → AI Wiki Health. Defaults (50k tokens, 500 pairs) are suitable for domains up to ~5k pages; raise them for larger wikis.
+You can tune **Cost ceiling per scan** and **Maximum candidate pairs per scan** in Settings → **Wiki Health — Scan Limits**. Defaults (50k tokens, 500 pairs) are suitable for domains up to ~5k pages; raise them for larger wikis.
 
 For the full guide, see [ai-health.md](ai-health.md).
 
@@ -1354,6 +1363,7 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 📖 [Knowledge Immortality (essay)](../research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, and a section-by-section walkthrough of every part of the app |
 | 🔌 [My Curator MCP Guide](mcp-user-guide.md) | Connect the wiki to Claude Desktop / VS Code / LM Studio for frontier-model research |
 | 🧹 [AI Wiki Health Guide](ai-health.md) | Phase 1 / 2 / 3 details: broken-link rescue, orphan rescue, semantic duplicate detection — what data leaves your machine and what each call costs |
+| 🩺 [System Check](system-check.md) | Settings → System Check — confirm the app setup is correct + an optional AI connection test |
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |
 | 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained |

@@ -46,6 +46,7 @@ const OFFLINE = [
   'test-sharedbrain-github-offline.js',
   'test-sharedbrain-mcp-guard.js',
   'test-sharedbrain-revoke.js',
+  'test-diagnostics.js',
 ];
 
 // LIVE: hit real Gemini/Anthropic/GitHub, or stand up a server. Each self-skips

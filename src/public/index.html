@@ -167,7 +167,7 @@
         <div id="sync-landing" class="sync-landing">
           <div class="sync-hero">
             <div class="sync-hero-icon">🔄</div>
-            <h2>Sync your The Curator</h2>
+            <h2>Sync your knowledge</h2>
             <p>Keep your wiki and chat history in sync across all your computers —
                powered by a private GitHub repository that only you control.</p>
           </div>
@@ -1070,12 +1070,12 @@
 
       </div>
 
-      <!-- AI Health settings (Phase 3+) -->
+      <!-- Wiki Health scan limits (Phase 3+) -->
       <div class="settings-section">
-        <h3>AI Wiki Health</h3>
+        <h3>Wiki Health — Scan Limits</h3>
         <p class="hint">
-          Limits for the <strong>Scan for semantic duplicates</strong> feature in the Health tab.
-          Raise them if your domain is large and the scan refuses to start.
+          Cost limits for the AI scans in the <strong>Health</strong> tab (e.g. <em>Find duplicate pages</em>).
+          Raise them if a scan refuses to start on a large wiki.
         </p>
         <div class="form-group">
           <label for="ai-cost-ceiling">Cost ceiling per scan (tokens)</label>
@@ -1094,9 +1094,40 @@
           </span>
         </div>
         <div class="form-group">
-          <button id="ai-health-save" class="btn primary pill">Save AI Health limits</button>
+          <button id="ai-health-save" class="btn primary pill">Save scan limits</button>
           <span id="ai-health-save-status" class="hint" style="margin-left:12px"></span>
         </div>
+      </div>
+
+      <!-- System Check -->
+      <div class="settings-section">
+        <h3>System Check</h3>
+        <p class="hint">
+          Confirm the app itself is set up correctly — your API key, knowledge folder, credential
+          security, and sync. The <strong>quick check</strong> is free and instant, and never touches
+          your wiki content. The optional <strong>AI connection test</strong> makes one tiny request to
+          your provider (about $0.0001) to confirm your key actually works.
+          <br><span class="help-text">This checks the <em>app</em>; to clean up your <em>wiki content</em> (broken links, duplicates), use the <strong>Health</strong> tab.</span>
+        </p>
+        <div class="diag-actions">
+          <button id="diag-run-btn" class="btn primary pill">Run system check</button>
+          <button id="diag-live-btn" class="btn pill">Verify AI connection</button>
+        </div>
+
+        <!-- Cost-confirm gate for the live API test (mirrors the Health tab pattern) -->
+        <div id="diag-live-confirm" class="diag-confirm hidden">
+          <div class="diag-confirm-text">
+            This makes <strong>one small request</strong> to your configured AI provider to confirm the
+            key works and the service is responding. It costs roughly <strong>$0.0001</strong> (a tiny
+            fraction of a cent). Continue?
+          </div>
+          <div class="diag-confirm-actions">
+            <button id="diag-live-confirm-btn" class="btn primary pill">Run AI test</button>
+            <button id="diag-live-cancel" class="btn pill">Cancel</button>
+          </div>
+        </div>
+
+        <div id="diag-results" class="diag-results hidden"></div>
       </div>
 
       <!-- App -->

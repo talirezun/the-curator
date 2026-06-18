@@ -473,6 +473,47 @@ This endpoint never returns a non-200 status — availability is a soft signal, 
 
 ---
 
+## GET /api/diagnostics/quick
+
+Run the **free, local** self-diagnostics behind the Settings → System Check panel (v3.0.1-beta.23+). No network call, no API cost; never touches wiki content (the folder-writable probe writes a self-deleting temp file).
+
+**Success response** `200 OK`
+
+```json
+{
+  "checks": [
+    { "id": "version",     "label": "Installed version",            "status": "info", "detail": "The Curator v3.0.1-beta.23" },
+    { "id": "provider",    "label": "AI provider key",              "status": "ok",   "detail": "Configured: gemini · gemini-2.5-flash-lite" },
+    { "id": "domains",     "label": "Knowledge folder",             "status": "ok",   "detail": "Readable and writable: /…/domains" },
+    { "id": "credentials", "label": "Credential file permissions",  "status": "ok",   "detail": "All 4 credential file(s) are owner-only (0600)." },
+    { "id": "sync",        "label": "GitHub sync",                  "status": "ok",   "detail": "Configured: github.com/you/your-brain" }
+  ],
+  "summary": { "ok": 4, "warn": 0, "fail": 0, "info": 1 }
+}
+```
+
+`status` is one of `ok` | `warn` | `fail` | `info`.
+
+---
+
+## POST /api/diagnostics/live
+
+**Opt-in** AI connectivity test. Makes ONE tiny LLM call (a few tokens, ≈ $0.0001) to confirm the configured key works and the provider is responding. POST so the cross-origin guard applies and the frontend can gate it behind an explicit cost confirmation. Never throws — failures return `ok: false` with the error.
+
+**Success response** `200 OK` — provider responded
+
+```json
+{ "ok": true, "provider": "gemini", "model": "gemini-2.5-flash-lite", "latencyMs": 773, "sample": "OK", "fallback": null }
+```
+
+**Success response** `200 OK` — call failed (still HTTP 200; check `ok`)
+
+```json
+{ "ok": false, "provider": "gemini", "model": "gemini-2.5-flash-lite", "latencyMs": 41203, "error": "⚠ Gemini infrastructure is temporarily overloaded (HTTP 503). …" }
+```
+
+---
+
 ## POST /api/health/:domain/ai-suggest
 
 Ask the LLM to propose a target for an issue that the algorithmic scanner could not resolve. **Read-only — does not modify the wiki.** To apply the suggestion, call `POST /api/health/:domain/fix` with the returned target patched into `issue.suggestedTarget`.
@@ -933,6 +974,6 @@ The server also serves the web UI from `src/public/` at the root path.
 
 ## Notes
 
-- All endpoints are local-only (`localhost`). There is no authentication.
+- The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF / DNS-rebinding defense); requests with no `Origin` (curl, scripts) and all GETs pass through. There is no per-request authentication — it remains a single-user local app.
 - The ingest endpoint blocks until Claude returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to Claude).
 - The query endpoint sends up to 90,000 characters of wiki content to Claude in a single call. Very large wikis (150+ pages) may hit the context limit. In that case, consider splitting the domain or removing less useful pages.

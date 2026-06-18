@@ -106,7 +106,7 @@ The **🛠 Fix N safe issues** button runs every *deterministic* fix at once —
 
 Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
 
-Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** — it runs only when you click **Scan for semantic duplicates** in the Health tab. It's gated by a cost preview and a cost ceiling.
+Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** in the Health tab, click **Scan** first, then click the **✨ Find duplicate pages** button in the **⚡ Quick maintenance** bar at the top of the results. (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
 
 ### The pipeline
 
@@ -130,8 +130,8 @@ Clicking it shows a confirm step naming exactly how many pages will be deleted, 
 | Cap | Default | Configurable in |
 |---|---|---|
 | Max pages for a scan to run at all | 20,000 | hard-coded (contact maintainer to raise) |
-| Max candidate pairs sent to the LLM | 500 | Settings → AI Wiki Health → Maximum candidate pairs per scan |
-| Cost ceiling per scan (tokens) | 50,000 | Settings → AI Wiki Health → Cost ceiling per scan |
+| Max candidate pairs sent to the LLM | 500 | Settings → Wiki Health — Scan Limits → Maximum candidate pairs per scan |
+| Cost ceiling per scan (tokens) | 50,000 | Settings → Wiki Health — Scan Limits → Cost ceiling per scan |
 | Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
 | Max pairs per batch merge | 2,000 | hard-coded |
 

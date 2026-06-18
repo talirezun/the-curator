@@ -3074,6 +3074,92 @@ document.getElementById('ai-health-save')?.addEventListener('click', async () =>
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
+// SYSTEM CHECK (Settings) — free quick diagnostics + opt-in live API test
+// (UI label "System Check"; element IDs keep the diag-* prefix)
+// ══════════════════════════════════════════════════════════════════════════════
+const DIAG_ICON = { ok: '✅', warn: '⚠️', fail: '❌', info: 'ℹ️' };
+
+function renderDiagChecks(checks) {
+  return checks.map(c => `
+    <div class="diag-row diag-${c.status}">
+      <span class="diag-icon">${DIAG_ICON[c.status] || 'ℹ️'}</span>
+      <div class="diag-body">
+        <div class="diag-label">${escHtml(c.label)}</div>
+        <div class="diag-detail">${escHtml(c.detail)}</div>
+      </div>
+    </div>`).join('');
+}
+
+(function wireHealthCheck() {
+  const runBtn   = document.getElementById('diag-run-btn');
+  const liveBtn  = document.getElementById('diag-live-btn');
+  const results  = document.getElementById('diag-results');
+  const confirm  = document.getElementById('diag-live-confirm');
+  if (!runBtn || !results) return; // section not present
+
+  runBtn.addEventListener('click', async () => {
+    confirm?.classList.add('hidden');
+    runBtn.disabled = true;
+    results.classList.remove('hidden');
+    results.innerHTML = '<div class="hint"><span class="spinner"></span> Running checks…</div>';
+    try {
+      const r = await fetch('/api/diagnostics/quick');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Health check failed');
+      const s = data.summary || {};
+      const tone = s.fail ? 'fail' : (s.warn ? 'warn' : 'ok');
+      const headline = s.fail
+        ? `${s.fail} problem${s.fail === 1 ? '' : 's'} found`
+        : (s.warn ? `${s.warn} thing${s.warn === 1 ? '' : 's'} to review` : 'Everything looks good');
+      results.innerHTML =
+        `<div class="diag-headline diag-${tone}">${escHtml(headline)}</div>` +
+        renderDiagChecks(data.checks || []);
+    } catch (err) {
+      results.innerHTML = `<div class="status error">${escHtml(err.message)}</div>`;
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+
+  // The live test costs money, so it goes through an explicit confirm gate.
+  liveBtn?.addEventListener('click', () => { confirm?.classList.remove('hidden'); });
+  document.getElementById('diag-live-cancel')?.addEventListener('click', () => {
+    confirm?.classList.add('hidden');
+  });
+  document.getElementById('diag-live-confirm-btn')?.addEventListener('click', async () => {
+    confirm?.classList.add('hidden');
+    if (liveBtn) liveBtn.disabled = true;
+    results.classList.remove('hidden');
+    results.innerHTML = '<div class="hint"><span class="spinner"></span> Testing AI connection…</div>';
+    try {
+      const r = await fetch('/api/diagnostics/live', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await r.json();
+      if (data.ok) {
+        results.innerHTML = renderDiagChecks([{
+          status: 'ok',
+          label: 'AI connection',
+          detail: `Works — ${data.provider} · ${data.model} · responded in ${data.latencyMs} ms`
+            + (data.fallback ? ` (using fallback model ${data.fallback.model})` : ''),
+        }]);
+      } else {
+        results.innerHTML = renderDiagChecks([{
+          status: 'fail',
+          label: 'AI connection',
+          detail: data.error || 'The provider did not respond.',
+        }]);
+      }
+    } catch (err) {
+      results.innerHTML = `<div class="status error">${escHtml(err.message)}</div>`;
+    } finally {
+      if (liveBtn) liveBtn.disabled = false;
+    }
+  });
+})();
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MY CURATOR (MCP) — Settings section (landing → wizard → connected)
 // ══════════════════════════════════════════════════════════════════════════════
 

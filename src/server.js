@@ -15,6 +15,7 @@ import healthRouter from './routes/health.js';
 import mcpRouter    from './routes/mcp.js';
 import compileRouter from './routes/compile.js';
 import sharedbrainRouter from './routes/sharedbrain.js';
+import diagnosticsRouter from './routes/diagnostics.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 
@@ -94,6 +95,7 @@ app.use('/api/health',  healthRouter);
 app.use('/api/mcp',     mcpRouter);
 app.use('/api/compile', compileRouter);
 app.use('/api/sharedbrain', sharedbrainRouter);
+app.use('/api/diagnostics', diagnosticsRouter);
 
 // Version endpoint — used by the UI to display the current app version.
 // Also reports on-disk version (from package.json) so the UI can detect

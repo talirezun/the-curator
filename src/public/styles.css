@@ -3441,3 +3441,43 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   background: rgba(243,139,168,0.10);
   border: 1px solid rgba(243,139,168,0.3);
 }
+
+/* ── System Check (Settings) ──────────────────────────────────────────────── */
+.diag-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 0; }
+
+.diag-confirm {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--warning-dim);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+}
+.diag-confirm-text { font-size: 13px; line-height: 1.5; color: var(--text); }
+.diag-confirm-actions { display: flex; gap: 10px; margin-top: 12px; }
+
+.diag-results { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+
+.diag-headline { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.diag-headline.diag-ok   { color: var(--success); }
+.diag-headline.diag-warn { color: var(--warning); }
+.diag-headline.diag-fail { color: var(--error); }
+
+.diag-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+}
+.diag-row.diag-ok   { border-left-color: var(--success); }
+.diag-row.diag-warn { border-left-color: var(--warning); }
+.diag-row.diag-fail { border-left-color: var(--error); }
+.diag-row.diag-info { border-left-color: var(--accent); }
+
+.diag-icon { flex: 0 0 auto; font-size: 15px; line-height: 1.4; }
+.diag-body { min-width: 0; }
+.diag-label { font-weight: 600; font-size: 13px; color: var(--text); }
+.diag-detail { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }

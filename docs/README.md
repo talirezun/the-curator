@@ -46,6 +46,7 @@ For students, researchers, entrepreneurs, and lifelong learners: this is the dif
 | [use-cases.md](use-cases.md) | Detailed workflows for every user profile |
 | [mcp-user-guide.md](mcp-user-guide.md) | My Curator MCP — connect your wiki to Claude Desktop / VS Code / LM Studio for frontier-model research and write-back |
 | [ai-health.md](ai-health.md) | AI-assisted Wiki Health — broken-link rescue, orphan rescue, semantic-duplicate detection, persistent dismissals |
+| [system-check.md](system-check.md) | Settings → System Check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
 | [sync.md](sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers (wizard, token permissions, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
 | [shared-brain-user-guide.md](shared-brain-user-guide.md) | **Shared Brain — User Guide (v3.0.0-beta+)** — step-by-step setup for contributors AND admins, daily workflow, troubleshooting |
