@@ -3918,10 +3918,17 @@ function renderHealthReport(report) {
   if (_aiAvailable && orphanCount > 0) maintBtns.push(`<button class="btn health-maint-btn" data-maint="orphans">✨ Rescue ${orphanCount} orphan${orphanCount === 1 ? '' : 's'}</button>`);
   if (_aiAvailable) maintBtns.push(`<button class="btn health-maint-btn" data-maint="dupes">✨ Find duplicate pages</button>`);
 
-  // Show the bar whenever there are issues — even if no button qualifies (e.g.
-  // orphans/broken links present but no API key), so the "add an API key" hint
-  // still surfaces (audit M2).
-  const maintBar = (total > 0)
+  // Show the bar whenever there's something actionable OR any structural issue.
+  // The "✨ Find duplicate pages" button is in maintBtns whenever AI is
+  // available, so this makes the semantic-duplicate scan reachable even on a
+  // structurally-clean wiki (total === 0). Before v3.0.1-beta.22 the bar was
+  // gated on `total > 0`, which hid the ONLY entry point to the semantic scan
+  // on clean wikis — a wiki can be "✅ clean" of broken links/orphans yet still
+  // have a dozen semantic duplicates, which this scan is the only way to find.
+  // We still show the bar on `total > 0` even with no qualifying button so the
+  // "add an API key" hint surfaces (audit M2).
+  const showMaintBar = total > 0 || maintBtns.length > 0;
+  const maintBar = showMaintBar
     ? `<div class="health-maintenance-bar">
          <div class="health-maintenance-label">⚡ Quick maintenance${_aiAvailable ? '' : ' <span class="hint">— add an API key in Settings to unlock AI tools</span>'}</div>
          ${maintBtns.length ? `<div class="health-maintenance-actions">${maintBtns.join('')}</div>` : ''}
