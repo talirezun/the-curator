@@ -49,21 +49,37 @@ const OFFLINE = [
   'test-diagnostics.js',
 ];
 
-// LIVE: hit real Gemini/Anthropic/GitHub, or stand up a server. Each self-skips
-// when its required key/env is missing, so running test:live without keys is
-// harmless (those suites report SKIP and exit 0).
-const LIVE = [
+// LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
+// missing, so running test:live without keys is harmless (reports SKIP, exit 0).
+// Split into two tiers:
+//
+// LIVE_CI — self-contained + deterministic enough to gate CI. They isolate the
+//   domains dir via CURATOR_TEST_DOMAINS_DIR (beats config) so they never touch
+//   the real domains/ folder, on CI or a configured dev machine.
+const LIVE_CI = [
   'test-beta8-live-llm.js',
-  'test-beta13-chat-live.js',
   'test-beta14-anthropic-fix.js',
   'test-beta15-production.js',
   'test-beta16-production.js',
   'test-beta17-production.js',
   'test-ingest-real-llm.js',
+];
+
+// LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
+//   - test-beta13-chat-live: reads the dev machine's real 1000-page `articles`
+//     domain and judges LLM answer quality (no data on CI; non-deterministic).
+//   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
+//   - test-sharedbrain-github-live: needs a throwaway GITHUB_TEST_REPO + PAT.
+//   - test-sharedbrain-routes: spawns a server (heavier integration test).
+const LIVE_LOCAL = [
+  'test-beta13-chat-live.js',
   'test-ingest-deep.js',
   'test-sharedbrain-github-live.js',
   'test-sharedbrain-routes.js',
 ];
+
+// All live suites, for labelling.
+const LIVE = [...LIVE_CI, ...LIVE_LOCAL];
 
 // Env vars that grant API/network access. Stripped from offline children.
 const CREDENTIAL_ENV = [
@@ -71,16 +87,31 @@ const CREDENTIAL_ENV = [
   'GITHUB_TEST_REPO', 'GITHUB_TEST_PAT',
 ];
 
-const PER_SUITE_TIMEOUT_MS = 180_000; // 3 min — live LLM suites can be slow
+// Offline suites run in <1s; live suites do real multi-phase ingests on one or
+// two providers and legitimately take minutes (beta15-production ingests on BOTH
+// Gemini and Anthropic). Give live suites a generous ceiling so a slow-but-fine
+// run isn't killed; offline keeps a tight one.
+const OFFLINE_TIMEOUT_MS = 120_000;  // 2 min (deterministic; never approached)
+const LIVE_TIMEOUT_MS = 600_000;     // 10 min — heavy dual-provider live suites
 
 // ── Args ────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const runLive = args.includes('--live') || process.env.RUN_LIVE === '1';
+// On CI (GitHub sets CI=true) exclude the local-only suites: they either need
+// real local data, special secrets, or have flaky LLM-quality thresholds.
+const isCI = process.env.CI === 'true' || process.env.CI === '1';
 
-const suites = runLive ? [...OFFLINE, ...LIVE] : [...OFFLINE];
+let suites;
+if (!runLive) {
+  suites = [...OFFLINE];
+} else if (isCI) {
+  suites = [...OFFLINE, ...LIVE_CI];
+} else {
+  suites = [...OFFLINE, ...LIVE_CI, ...LIVE_LOCAL];
+}
 
 // ── Runner ────────────────────────────────────────────────────────────────
-function runSuite(file, { stripCreds }) {
+function runSuite(file, { stripCreds, timeoutMs }) {
   return new Promise((resolve) => {
     const env = { ...process.env };
     if (stripCreds) for (const k of CREDENTIAL_ENV) delete env[k];
@@ -99,7 +130,7 @@ function runSuite(file, { stripCreds }) {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve({ file, ok: false, ms: Date.now() - started, reason: 'TIMEOUT', out });
-    }, PER_SUITE_TIMEOUT_MS);
+    }, timeoutMs);
 
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -132,12 +163,18 @@ function tail(out, n = 12) {
 (async () => {
   console.log(`\n  The Curator — test aggregator`);
   console.log(`  Mode: ${runLive ? 'OFFLINE + LIVE (real API calls)' : 'OFFLINE only (no network, no cost)'}`);
+  if (runLive && isCI) {
+    console.log(`  CI detected → excluding ${LIVE_LOCAL.length} local-only suite(s): ${LIVE_LOCAL.join(', ')}`);
+  }
   console.log(`  Suites: ${suites.length}\n`);
 
   const results = [];
   for (const file of suites) {
     const isLive = LIVE.includes(file);
-    const r = await runSuite(file, { stripCreds: !runLive });
+    const r = await runSuite(file, {
+      stripCreds: !runLive,
+      timeoutMs: isLive ? LIVE_TIMEOUT_MS : OFFLINE_TIMEOUT_MS,
+    });
     results.push(r);
     const label = r.ok
       ? (r.skipped ? '\x1b[33m⏭ skip\x1b[0m' : '\x1b[32m✓ pass\x1b[0m')

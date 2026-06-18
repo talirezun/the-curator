@@ -41,6 +41,12 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
+// Isolate every createDomain() into a throwaway tempdir (beats config) so this
+// test never touches the real domains/ folder on a configured machine.
+const DOMAINS_TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-beta14-domains-'));
+process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS_TMP;
+process.on('exit', () => { try { rmSync(DOMAINS_TMP, { recursive: true, force: true }); } catch {} });
+
 let pass = 0, fail = 0;
 const failures = [];
 function ok(cond, label) {

@@ -1,28 +1,53 @@
 name: Tests
 
-# Runs the OFFLINE test suite on every push and pull request (including PRs from
-# community forks). Offline tests are free, deterministic, and make no network or
-# API calls — credentials are stripped from the test processes by the runner.
-#
-# A second "live" job (real Gemini/Anthropic calls, gated to push-to-main + using
-# repo Secrets) is planned but NOT enabled yet: the live suites first need the
-# same domains-dir isolation fix the offline suites got in v3.0.1-beta.21 so they
-# are safe on both CI and a configured dev machine. See CONTRIBUTING.md →
-# "Continuous Integration".
+# When this runs:
+#   - push to any branch        → offline tests (free); live tests only on main
+#   - pull request (incl forks) → offline tests only (NO secrets exposed to forks)
+#   - manual "Run workflow"      → offline + live
 on:
   push:
   pull_request:
   workflow_dispatch:
 
 jobs:
+  # ── Offline tests: free, no network, no API key. The required gate. ─────────
   offline:
     name: Offline tests (free)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
+
+  # ── Live tests: real Gemini/Anthropic calls (cost ≈ a few cents). ───────────
+  # Runs ONLY on a push to main or a manual run — NEVER on pull requests, so a
+  # community fork can never reach the API-key secrets. `needs: offline` means we
+  # don't spend a cent if the free tests already failed. On CI the runner sets
+  # CI=true, so run-tests.js automatically excludes the local-only suites
+  # (real-data / quality-benchmark / server-spawning) and runs only LIVE_CI.
+  live:
+    name: Live API tests (Gemini + Anthropic)
+    runs-on: ubuntu-latest
+    needs: offline
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:live
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Optional — only if you later add a throwaway GitHub test repo + PAT.
+          # When absent, the GitHub-backed live suites self-skip (exit 0).
+          GITHUB_TEST_REPO: ${{ secrets.GITHUB_TEST_REPO }}
+          GITHUB_TEST_PAT: ${{ secrets.GITHUB_TEST_PAT }}

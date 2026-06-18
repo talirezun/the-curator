@@ -101,9 +101,11 @@ const articleInRaw = path.join(rawDir, SOURCE_ARTICLE_NAME);
 copyFileSync(realArticlePath, articleInRaw);
 console.log(`Source article: ${SOURCE_ARTICLE_NAME} (${(readFileSync(articleInRaw, 'utf8').length / 1024).toFixed(1)} KB)\n`);
 
-// Pin DOMAINS_PATH to our tempdir so the real config.js doesn't redirect
-// us at the user's production wiki.
-process.env.DOMAINS_PATH = domainsPath;
+// Pin the domains dir to our tempdir so the real config.js doesn't redirect us
+// at the user's production wiki. CURATOR_TEST_DOMAINS_DIR beats config; plain
+// DOMAINS_PATH does NOT (it loses to a configured domainsPath), so the old line
+// silently wrote into the real domains/ on a configured machine.
+process.env.CURATOR_TEST_DOMAINS_DIR = domainsPath;
 
 // Cleanup hook — runs even on uncaught exception
 function cleanup() {

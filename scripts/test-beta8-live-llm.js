@@ -39,9 +39,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
-// Isolation: tempdir for the test wiki
+// Isolation: tempdir for the test wiki. Use CURATOR_TEST_DOMAINS_DIR (beats
+// config) — plain DOMAINS_PATH loses to a configured domainsPath and would make
+// this test write into the real domains/ folder.
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-beta8-live-'));
-process.env.DOMAINS_PATH = tempRoot;
+process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
 
 // Mute .curator-config.json by setting a fake path so config.js falls back to env
 const origConfig = path.join(PROJECT_ROOT, '.curator-config.json');

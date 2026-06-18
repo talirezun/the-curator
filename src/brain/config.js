@@ -45,7 +45,15 @@ export function __setDomainsDirOverride(p) {
 
 /** Returns the resolved, absolute path to the domains folder. */
 export function getDomainsDir() {
+  // In-process test override (set by __setDomainsDirOverride).
   if (_domainsDirOverride) return path.resolve(_domainsDirOverride);
+  // Cross-process test override (env). Unlike DOMAINS_PATH, this BEATS config —
+  // it exists so battle tests (including ones that spawn a child server, e.g.
+  // test-sharedbrain-routes) can point the domains dir at a throwaway tempdir
+  // even on a machine whose .curator-config.json sets domainsPath. Test-only;
+  // never set in production. The legacy DOMAINS_PATH (below, loses to config)
+  // remains for the documented developer fallback.
+  if (process.env.CURATOR_TEST_DOMAINS_DIR) return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
   const cfg = readRaw();
   if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);

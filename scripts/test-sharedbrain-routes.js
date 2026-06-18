@@ -101,7 +101,10 @@ const child = spawn(process.execPath, [path.join(PROJECT_ROOT, 'src/server.js')]
   env: {
     ...process.env,
     PORT: String(PORT),
-    DOMAINS_PATH: domainsDir,
+    // CURATOR_TEST_DOMAINS_DIR beats config in the spawned server; plain
+    // DOMAINS_PATH loses to a configured domainsPath, so the child server would
+    // otherwise operate on the real domains/ folder on a configured machine.
+    CURATOR_TEST_DOMAINS_DIR: domainsDir,
     CURATOR_NO_OPEN: '1',
   },
   stdio: ['ignore', 'pipe', 'pipe'],

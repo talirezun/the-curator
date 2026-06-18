@@ -70,8 +70,10 @@ const INPUTS_DIR = path.join(__dirname, 'test-ingest-deep-inputs');
 const QUICK = process.argv.includes('--quick');
 
 // ── Setup: isolated tempdir + config sidelined ────────────────────────────
+// CURATOR_TEST_DOMAINS_DIR beats config; plain DOMAINS_PATH loses to a
+// configured domainsPath and would write into the real domains/ folder.
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-deep-ingest-'));
-process.env.DOMAINS_PATH = tempRoot;
+process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
 
 const realConfig = path.join(PROJECT_ROOT, '.curator-config.json');
 const sidelinedConfig = realConfig + '.deep-test-bak';

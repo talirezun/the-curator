@@ -14,12 +14,19 @@
 import dotenv from 'dotenv';
 dotenv.config({ override: true });
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_FILE = path.join(ROOT, '.curator-config.json');
+
+// Isolate every createDomain() into a throwaway tempdir (beats config) so this
+// test never touches the real domains/ folder on a configured machine.
+const DOMAINS_TMP = mkdtempSync(path.join(os.tmpdir(), 'curator-beta16-domains-'));
+process.env.CURATOR_TEST_DOMAINS_DIR = DOMAINS_TMP;
+process.on('exit', () => { try { rmSync(DOMAINS_TMP, { recursive: true, force: true }); } catch {} });
 
 let passed = 0, failed = 0;
 const failures = [];
