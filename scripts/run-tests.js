@@ -59,20 +59,22 @@ const OFFLINE = [
 const LIVE_CI = [
   'test-beta8-live-llm.js',
   'test-beta14-anthropic-fix.js',
-  'test-beta15-production.js',
+  'test-beta15-production.js',   // large source = committed docs/ingestion-pipeline.md
   'test-beta16-production.js',
   'test-beta17-production.js',
-  'test-ingest-real-llm.js',
 ];
 
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
 //   - test-beta13-chat-live: reads the dev machine's real 1000-page `articles`
 //     domain and judges LLM answer quality (no data on CI; non-deterministic).
+//   - test-ingest-real-llm: tied to a SPECIFIC personal article (asserts the
+//     author "Dr. Tali Rezun") read from a hardcoded local path — not in the repo.
 //   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
 //   - test-sharedbrain-github-live: needs a throwaway GITHUB_TEST_REPO + PAT.
 //   - test-sharedbrain-routes: spawns a server (heavier integration test).
 const LIVE_LOCAL = [
   'test-beta13-chat-live.js',
+  'test-ingest-real-llm.js',     // tied to a specific personal article (author assertions) on a hardcoded local path
   'test-ingest-deep.js',
   'test-sharedbrain-github-live.js',
   'test-sharedbrain-routes.js',

@@ -103,10 +103,13 @@ tests already failed.
 **CI runs only the CI-safe live suites.** GitHub sets `CI=true`, and
 [scripts/run-tests.js](scripts/run-tests.js) uses that to run the `LIVE_CI` set
 (self-contained, deterministic) and skip the `LIVE_LOCAL` set (real-data
-benchmarks like `test-beta13-chat-live`, the quality-threshold
-`test-ingest-deep`, the GitHub-repo-needing `test-sharedbrain-github-live`, and
-the server-spawning `test-sharedbrain-routes`). Those local-only suites still run
-in a full local `npm run test:live`.
+benchmarks like `test-beta13-chat-live` and `test-ingest-real-llm`, the
+quality-threshold `test-ingest-deep`, the GitHub-repo-needing
+`test-sharedbrain-github-live`, and the server-spawning
+`test-sharedbrain-routes`). Those local-only suites still run in a full local
+`npm run test:live`. A CI-safe live suite must not read a file outside the repo:
+use a committed fixture (e.g. `docs/ingestion-pipeline.md` as a large source, or
+`scripts/test-ingest-deep-inputs/`) rather than anything under `domains/`.
 
 **Flakiness:** live tests call real providers, so a transient outage (e.g. a
 Gemini HTTP 503 "overloaded") can make the live job go red even though the code

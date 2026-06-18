@@ -104,7 +104,11 @@ async function runProviderSuite(provider) {
     // batch can hit the 16384 output cap; before beta.15 that KILLED the whole
     // ingest. Now it must recover and complete.
     section(`S1 [${provider}] — large multi-phase ingest recovers + completes`);
-    const bigSrc = path.join(ROOT, 'domains/projects/raw/ingestion-pipeline.md');
+    // Use the committed docs/ingestion-pipeline.md (~35k chars of dense technical
+    // prose) as the large source — it ships in the repo, so this works on CI and
+    // any clean checkout. The assertions below are behaviour-based (no
+    // token-limit crash, pages written, prose preserved), not content-specific.
+    const bigSrc = path.join(ROOT, 'docs/ingestion-pipeline.md');
     const bigCopy = path.join(tmp, 'big-source.md');
     writeFileSync(bigCopy, readFileSync(bigSrc, 'utf8'));
     try {
