@@ -2144,6 +2144,45 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   flex-shrink: 0;
 }
 
+/* Provider toggle — pick the active provider when both keys are stored */
+.provider-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 14px;
+}
+.provider-toggle-label {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.provider-toggle-buttons {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.provider-toggle-btn {
+  font-size: 12px;
+  padding: 5px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.provider-toggle-btn:hover:not(.active):not(:disabled) {
+  color: var(--text-1);
+}
+.provider-toggle-btn.active {
+  background: var(--accent, var(--success));
+  color: #fff;
+}
+.provider-toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Knowledge base path row */
 .settings-path-row {
   display: flex;

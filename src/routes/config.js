@@ -4,7 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus } from '../brain/llm.js';
 import {
@@ -289,6 +289,36 @@ router.post('/api-keys/disconnect', (req, res) => {
   }
   try {
     clearApiKey(provider);
+    let info = null;
+    try { info = getProviderInfo(); } catch {}
+    res.json({
+      ok: true,
+      activeProvider: info?.provider || null,
+      activeModel:    info?.model || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/config/api-keys/active — switch the active provider WITHOUT
+ *  re-saving its key. Body: { provider: 'gemini' | 'anthropic' }
+ *  Refuses (400) if the requested provider has no stored key.
+ */
+router.post('/api-keys/active', (req, res) => {
+  const { provider } = req.body || {};
+  if (provider !== 'gemini' && provider !== 'anthropic') {
+    return res.status(400).json({ error: 'provider must be "gemini" or "anthropic"' });
+  }
+  try {
+    const before = getApiKeys();
+    const hasKey = provider === 'gemini'
+      ? !!(before.geminiApiKey || process.env.GEMINI_API_KEY)
+      : !!(before.anthropicApiKey || process.env.ANTHROPIC_API_KEY);
+    if (!hasKey) {
+      return res.status(400).json({ error: `No ${provider} key is configured — add one before switching to it.` });
+    }
+    setActiveProvider(provider);
     let info = null;
     try { info = getProviderInfo(); } catch {}
     res.json({

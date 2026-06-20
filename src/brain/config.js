@@ -133,6 +133,29 @@ export function clearApiKey(provider) {
 }
 
 /**
+ * Explicitly set the active provider WITHOUT re-saving its key. Powers the
+ * Settings provider toggle: a user holding both a Gemini and an Anthropic key
+ * can flip which one is live with one click, instead of re-pasting a key
+ * (which the "last-saved-wins" path in setApiKeys requires) or disconnecting
+ * the other (which deletes a key).
+ *
+ * Refuses to activate a provider that has no stored key — switching to a
+ * provider with no key would break every subsequent LLM call. Returns the
+ * resulting active provider (unchanged if the switch was refused).
+ */
+export function setActiveProvider(provider) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return getActiveProvider();
+  const cfg = readRaw();
+  const hasKey = provider === 'gemini'
+    ? !!(cfg.geminiApiKey || process.env.GEMINI_API_KEY)
+    : !!(cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY);
+  if (!hasKey) return getActiveProvider();
+  cfg.activeProvider = provider;
+  writeRaw(cfg);
+  return provider;
+}
+
+/**
  * Returns the provider the user most recently activated via the Settings UI.
  * For legacy configs (pre-v2.4.2) that don't have an activeProvider field,
  * falls back to the previous "Gemini-first if both are set" behaviour so

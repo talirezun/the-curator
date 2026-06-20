@@ -3451,6 +3451,19 @@ async function loadApiKeyStatus() {
       badge.classList.add('hidden');
     }
 
+    // Provider toggle — only meaningful when BOTH keys are stored. Lets the
+    // user flip the active provider with one click instead of re-pasting a key.
+    const toggle = document.getElementById('settings-provider-toggle');
+    if (toggle) {
+      const bothKeys = data.hasGeminiKey && data.hasAnthropicKey;
+      toggle.classList.toggle('hidden', !bothKeys);
+      if (bothKeys) {
+        toggle.querySelectorAll('.provider-toggle-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.provider === data.activeProvider);
+        });
+      }
+    }
+
     // Surface model-lifecycle fallback when the provider has retired the
     // pinned default and we auto-recovered onto the next model in the chain.
     // Rendered as an amber callout just below the provider badge — tells the
@@ -3545,6 +3558,36 @@ document.addEventListener('click', async (e) => {
   } finally {
     btn.disabled = false;
     btn.textContent = origText;
+  }
+});
+
+// Provider toggle — flip the active provider without re-pasting a key.
+// Only rendered when both keys are stored (see loadApiKeyStatus).
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.provider-toggle-btn');
+  if (!btn) return;
+  const provider = btn.dataset.provider;
+  if (btn.classList.contains('active')) return; // already active — no-op
+
+  const group = btn.closest('.provider-toggle-buttons');
+  group?.querySelectorAll('.provider-toggle-btn').forEach(b => (b.disabled = true));
+  try {
+    const r = await fetch('/api/config/api-keys/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Switch failed');
+    const status = document.getElementById('settings-keys-status');
+    const label = provider === 'gemini' ? 'Gemini' : 'Anthropic';
+    showStatus(status, 'success', `✓ Switched to ${label} — ${data.activeModel}`);
+    await loadApiKeyStatus();
+  } catch (err) {
+    const status = document.getElementById('settings-keys-status');
+    showStatus(status, 'error', err.message);
+  } finally {
+    group?.querySelectorAll('.provider-toggle-btn').forEach(b => (b.disabled = false));
   }
 });
 

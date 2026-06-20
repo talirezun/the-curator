@@ -187,7 +187,7 @@ If you'd rather pay Anthropic than Google (e.g. for privacy preference, or becau
 3. Anthropic has **no free tier** — you must add billing before any call works
 4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). For higher quality, set `LLM_MODEL=claude-sonnet-4-5` in `.env`.
 
-If you configure both keys, **Gemini wins by default** (it's much cheaper). You can switch the active provider at any time in the Settings tab.
+**Switching between providers when you have both keys.** The Curator uses *last-saved-wins*: whenever you save a key, that provider automatically becomes the active one. So if you've been on Anthropic and then paste a Gemini key, the app switches to Gemini on its own — that's expected. To flip back **without re-pasting or deleting anything**, go to **Settings → API Keys**: when both keys are saved, a **`Use: Gemini | Anthropic`** toggle appears just under the "Active: …" badge. Click the provider you want — the switch is instant and applies to ingest, chat, and AI Wiki Health. (The badge always shows which provider and model are currently live.) If you only ever have one key saved, the toggle stays hidden — there's nothing to switch between.
 
 ---
 
@@ -1001,7 +1001,7 @@ The Settings tab shows your currently configured API keys (masked for security) 
 2. Paste a new key into the Gemini or Anthropic field
 3. Click **Save**
 
-The active provider switches automatically based on which keys are configured (Gemini takes priority when both are present).
+Saving a key makes that provider active (*last-saved-wins*). If you keep **both** a Gemini and an Anthropic key saved, a **`Use: Gemini | Anthropic`** toggle appears under the "Active: …" badge — click it to switch the live provider instantly, without re-pasting a key or disconnecting the other. The **Disconnect** button under each field removes that key entirely (use it only when you want to drop a provider, not just deactivate it). On a fresh install with no `activeProvider` saved yet, Gemini takes priority when both keys are present.
 
 > Keys entered in Settings are stored in `.curator-config.json` at the project root. This file is gitignored and never committed. If you also have keys in `.env`, the Settings tab values take priority.
 
