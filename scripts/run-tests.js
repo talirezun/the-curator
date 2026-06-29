@@ -194,31 +194,52 @@ function tail(out, n = 12) {
     };
     let r = await runSuite(file, opts);
 
-    // Live-suite flake tolerance (Option 1, v3.0.1-beta.26). A live suite that
-    // fails gets ONE retry. If it then passes, the first failure was an
-    // intermittent provider/LLM blip. If it still fails but the output shows
-    // only a transient provider error (503 / dropped stream / rate-limit /
-    // network), we mark it INCONCLUSIVE — a Google/Anthropic outage must not
-    // block a release. A second failure with NO transient marker is a genuine
-    // FAIL. Offline suites are deterministic and are never retried. A TIMEOUT is
-    // not retried either (it would double an already-10-minute wait).
+    // Live-suite flake tolerance (Option 1, v3.0.1-beta.26).
+    //
+    // A live suite hits real Gemini/Anthropic, so a transient provider error
+    // (503 / dropped stream / rate-limit / network) fails it through no fault of
+    // the code. Two cases, handled differently to keep the gate both honest AND
+    // fast:
+    //
+    //   • First failure ALREADY shows a transient marker → the provider is in a
+    //     storm right now. Do NOT retry — a retry would just grind through the
+    //     same 503 backoffs (minutes on a heavy multi-phase ingest, and a real
+    //     timeout risk). Mark INCONCLUSIVE immediately. During an outage
+    //     "inconclusive" is the honest verdict anyway.
+    //   • First failure has NO transient marker → it's ambiguous (an intermittent
+    //     blip or a non-deterministic LLM-quality miss that may pass on a second
+    //     look, and the suite ran at normal speed so a retry is cheap). Retry
+    //     ONCE: pass → pass; fail-with-transient → inconclusive; fail-with-no-
+    //     marker → genuine FAIL.
+    //
+    // Offline suites are deterministic and never retried. A TIMEOUT is never
+    // retried (it would double an already-10-minute wait) and stays a FAIL.
+    // Accepted trade-off: a real failure coinciding with a transient error in
+    // the same run is reported inconclusive, not fail — the deterministic offline
+    // suite + local `test:live` still catch real regressions, and a real bug
+    // recurs on the next healthy-provider run.
     if (!r.ok && isLive && r.reason !== 'TIMEOUT') {
-      console.log(`  \x1b[33m↻ retry\x1b[0m  ${file.padEnd(38)} live suite failed — retrying once (provider-flake tolerance)…`);
-      const firstOut = r.out;
-      const r2 = await runSuite(file, opts);
-      const outcome = classifyLiveOutcome({
-        firstOk: false,
-        retried: true,
-        retryOk: r2.ok,
-        firstTransient: hasTransientMarker(firstOut),
-        retryTransient: hasTransientMarker(r2.out),
-      });
-      if (outcome === 'pass') {
-        r = r2;
-      } else if (outcome === 'inconclusive') {
-        r = { ...r2, ok: true, skipped: true, inconclusive: true };
+      if (hasTransientMarker(r.out)) {
+        // Provider storm on the first attempt — skip the (slow, futile) retry.
+        console.log(`  \x1b[33m⚠ flake\x1b[0m  ${file.padEnd(38)} transient provider error on first attempt — skipping retry`);
+        r = { ...r, ok: true, skipped: true, inconclusive: true };
       } else {
-        r = r2; // genuine, reproducible failure
+        console.log(`  \x1b[33m↻ retry\x1b[0m  ${file.padEnd(38)} live suite failed (no provider error) — retrying once…`);
+        const r2 = await runSuite(file, opts);
+        const outcome = classifyLiveOutcome({
+          firstOk: false,
+          retried: true,
+          retryOk: r2.ok,
+          firstTransient: false,
+          retryTransient: hasTransientMarker(r2.out),
+        });
+        if (outcome === 'pass') {
+          r = r2;
+        } else if (outcome === 'inconclusive') {
+          r = { ...r2, ok: true, skipped: true, inconclusive: true };
+        } else {
+          r = r2; // genuine, reproducible failure
+        }
       }
     }
 

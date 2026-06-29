@@ -39,14 +39,15 @@ function runAggregator(liveOnly, extraEnv = {}) {
   return { code: res.status, out: (res.stdout || '') + (res.stderr || '') };
 }
 
-// ── 1. Sustained transient provider error → INCONCLUSIVE, build stays green ─────
-section('1. Sustained transient (HTTP 503) → inconclusive, exit 0');
+// ── 1. Transient provider error on first attempt → INCONCLUSIVE, no retry ───────
+section('1. Transient (HTTP 503) on first attempt → inconclusive, retry skipped, exit 0');
 {
   const r = runAggregator('test-fixtures/runner-transient.js');
   ok(r.code === 0, `exit code is 0 (got ${r.code}) — provider outage does NOT fail the build`);
   ok(/inconclusive/i.test(r.out), 'output reports "inconclusive"');
   ok(/flake/i.test(r.out), 'suite is labelled as a flake, not a pass');
-  ok(/retry/i.test(r.out), 'a retry was attempted before giving the inconclusive verdict');
+  ok(/skipping retry/i.test(r.out), 'the slow retry is skipped when the first attempt is already a provider storm');
+  ok(!/retrying once/i.test(r.out), 'no full retry was performed for a transient first failure');
   ok(!/FAILED suites/.test(r.out), 'not listed under FAILED suites');
 }
 
@@ -66,7 +67,7 @@ section('3. Fails once then passes on retry → exit 0, pass');
   try { fs.rmSync(marker, { force: true }); } catch {}
   const r = runAggregator('test-fixtures/runner-recover.js', { RECOVER_MARKER: marker });
   ok(r.code === 0, `exit code is 0 (got ${r.code}) — intermittent flake recovered`);
-  ok(/retry/i.test(r.out), 'a retry was attempted');
+  ok(/retrying once/i.test(r.out), 'a retry WAS attempted (non-transient first failure)');
   ok(!/inconclusive/i.test(r.out) && !/FAILED suites/.test(r.out),
     'recovered run is a clean pass (not inconclusive, not failed)');
   try { fs.rmSync(marker, { force: true }); } catch {}
