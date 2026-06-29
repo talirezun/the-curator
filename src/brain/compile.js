@@ -77,7 +77,7 @@ function formatTranscript(messages) {
   }).join('\n\n');
 }
 
-function buildCompilePrompt({ today, index, existingFiles, conversation, summaryPath }) {
+export function buildCompilePrompt({ today, existingFiles, conversation, summaryPath }) {
   const transcript = formatTranscript(conversation.messages);
   const entityFileList = existingFiles.entities.length
     ? existingFiles.entities.map(f => `  entities/${f}`).join('\n')
@@ -89,6 +89,16 @@ function buildCompilePrompt({ today, index, existingFiles, conversation, summary
   // Note: the domain schema is delivered via `generateText`'s systemPrompt
   // argument (same pattern ingest uses). Do NOT embed it again in the user
   // prompt body — that doubles input tokens on every compile.
+  //
+  // v3.0.1-beta.25 (Fix #1): the full index.md is deliberately NOT included
+  // here. On a large domain the index is tens of KB (96 KB on the dev machine's
+  // articles domain); feeding that bloated, repetitive table into the request
+  // pushed Gemini into a degeneration/repeat loop that filled the entire output
+  // budget and surfaced as "hit the output token limit (65536 tokens)". The LLM
+  // does not need the index: link grounding comes from the entity/concept
+  // filename lists above, the summary path is forced below, and the app updates
+  // index.md programmatically via mergeIntoIndex AFTER this call (the LLM is told
+  // not to touch it). Removing the index is the root-cause fix — do not re-add it.
   return `Today's date: ${today}
 
 You are compiling a conversation into a persistent knowledge wiki.
@@ -106,9 +116,6 @@ ${entityFileList}
 
 Existing concept files:
 ${conceptFileList}
-
-Current wiki index:
-${index || '(empty — this is the first compile)'}
 
 --- CONVERSATION (title: "${conversation.title || 'untitled'}") ---
 ${transcript}
@@ -317,7 +324,9 @@ export async function compileConversation(domain, conversationId, onProgress = (
   try {
     raw = (await generateText(
       schema,
-      buildCompilePrompt({ today, index, existingFiles, conversation, summaryPath }),
+      // Note: `index` is intentionally NOT passed to the prompt (Fix #1, see
+      // buildCompilePrompt). It is still read above for mergeIntoIndex below.
+      buildCompilePrompt({ today, existingFiles, conversation, summaryPath }),
       65536,
       'json',
       (msg) => progress(20, msg),
