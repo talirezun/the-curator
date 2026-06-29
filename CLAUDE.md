@@ -372,12 +372,15 @@ The vault root should point to `domains/<domain>/wiki/` (or a parent folder cove
 ```bash
 # Run the test suite (v3.0.1-beta.21+)
 npm test            # OFFLINE suites only — fast, free, no network, no API key.
-                    # 15 suites, runs in ~1.3s. Safe to run anytime / in CI.
+                    # 19 suites, runs in ~2s. Safe to run anytime / in CI.
                     # Children are spawned with API/network credentials stripped,
                     # so a mis-classified suite can never make a paid call.
 npm run test:live   # OFFLINE + LIVE suites. LIVE suites hit real
                     # Gemini/Anthropic/GitHub and need keys in .env; each one
                     # self-skips (exit 0) if its key is missing. Costs a few cents.
+                    # Live suites get transient-error tolerance (v3.0.1-beta.26):
+                    # a provider 503 / dropped stream is reported "inconclusive",
+                    # not a failure. See ci-flake.js + CONTRIBUTING.md.
 # Manifest of which suites are offline vs live lives in scripts/run-tests.js.
 
 # Retroactive backlink injection (all domains)

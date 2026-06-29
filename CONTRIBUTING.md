@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (25 suites, hundreds of
+The Curator has an extensive battle-test suite (30 suites, hundreds of
 assertions). One command runs them all and prints a single pass/fail report:
 
 ```bash
@@ -76,6 +76,10 @@ The offline-vs-live split is an explicit manifest at the top of
 A suite passes iff it exits `0` **and** its output shows no failure marker
 (`Failed: <n>` / `<n> failed` / a bare `✗`).
 
+**Live suites additionally get flake tolerance (v3.0.1-beta.26+)** so a provider
+outage can't red the build — see the *Flakiness* subsection below. Offline suites
+are deterministic and are never retried.
+
 ---
 
 ## Continuous Integration (GitHub Actions)
@@ -111,9 +115,43 @@ quality-threshold `test-ingest-deep`, the GitHub-repo-needing
 use a committed fixture (e.g. `docs/ingestion-pipeline.md` as a large source, or
 `scripts/test-ingest-deep-inputs/`) rather than anything under `domains/`.
 
-**Flakiness:** live tests call real providers, so a transient outage (e.g. a
-Gemini HTTP 503 "overloaded") can make the live job go red even though the code
-is fine. Just re-run the job from the **Actions** tab.
+**Flakiness — transient-error tolerance (v3.0.1-beta.26+).** Live tests call real
+providers, so a transient outage (Gemini HTTP 503 "overloaded", an Anthropic
+"Premature close" dropped stream, a 429 rate-limit, a network blip) used to red
+the live job even though the code was fine. The runner now distinguishes a
+provider outage from a real defect, so the live gate stays useful (**red == real
+bug**) and you almost never need to re-run it manually:
+
+- A failed live suite whose **first attempt already shows a transient marker**
+  (the provider is in a storm) is **not** retried — a retry would just grind
+  through the same backoffs — and is reported **inconclusive** (⚠ flake), which
+  does **not** fail the build.
+- A failed live suite with **no** transient marker is **retried once** (an
+  intermittent blip or a non-deterministic LLM-quality miss often passes on a
+  second look). If the retry passes → pass; if it fails with a transient marker →
+  inconclusive; if it fails again with **no** transient marker → genuine **FAIL**.
+- Offline suites are deterministic and are **never** retried. A suite **timeout**
+  is never retried and stays a FAIL.
+
+The transient-marker list and the `pass`/`fail`/`inconclusive` decision live in
+[scripts/ci-flake.js](scripts/ci-flake.js) (pure, unit-tested by
+`test-ci-flake.js`); the retry/inconclusive orchestration in
+[scripts/run-tests.js](scripts/run-tests.js) is integration-tested by
+`test-runner-integration.js` (which drives the real runner via the test-only
+`RUN_TESTS_LIVE_ONLY` seam against deterministic fixtures in
+`scripts/test-fixtures/`). **When a provider emits a new transient error string,
+add it to `TRANSIENT_MARKERS` in `ci-flake.js`.**
+
+Accepted trade-off: a real failure that coincides with a transient error in the
+same run is reported inconclusive rather than fail — acceptable for a live-API
+gate, because the deterministic offline suite + a local `npm run test:live` still
+catch real regressions, and a real bug recurs on the next healthy-provider run.
+
+A **quality assertion that depends on the LLM's subjective judgment** (e.g. "did
+the model choose to link this orphan?") should not be a hard CI gate at all —
+the retry only helps if it's intermittent. Assert the *correctness and safety* of
+whichever choice the model makes (as `test-beta17-production.js` does), or move
+the suite to `LIVE_LOCAL`.
 
 ### Adding the API-key secrets (one-time, maintainer)
 
