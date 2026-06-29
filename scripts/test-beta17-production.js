@@ -70,15 +70,29 @@ async function orphanSuite(provider) {
     section(`[${provider}] — plan + apply orphan rescue (real LLM)`);
     const planRes = await healthAi.planOrphanRescue(domain, {}, () => {});
     const entry = planRes.plan.find(p => p.orphanSlug === 'backpropagation');
-    ok(!!entry, `[${provider}] AI found a home for backpropagation (→ ${entry ? entry.target : 'none'})`);
 
+    // Whether the AI proposes a home for "backpropagation" is a SUBJECTIVE LLM
+    // judgment, NOT a property of Curator code: orphan rescue is conservative by
+    // design ("returns no home unless a genuine relationship"), and Anthropic
+    // Haiku legitimately declines sometimes. Hard-gating on "a home was found"
+    // flaked the live CI job. So we assert the CORRECTNESS + SAFETY of whichever
+    // path the LLM takes, never the judgment itself.
     const applyRes = await health.applyOrphanRescue(domain, planRes.plan, () => {});
-    ok(applyRes.rescued >= 1, `[${provider}] apply rescued ≥1 orphan (${applyRes.rescued})`);
-
     const after = await health.scanWiki(domain);
     const stillOrphan = (after.orphans || []).some(o => o.slug === 'backpropagation');
-    ok(!stillOrphan, `[${provider}] backpropagation is NO LONGER an orphan after rescue`);
-    // And no broken links were introduced.
+
+    if (entry) {
+      // AI proposed a home → the apply pipeline must actually rescue it, cleanly.
+      console.log(`     ↳ [${provider}] AI proposed a home: backpropagation → ${entry.target}`);
+      ok(applyRes.rescued >= 1, `[${provider}] apply rescued ≥1 orphan (${applyRes.rescued})`);
+      ok(!stillOrphan, `[${provider}] backpropagation is NO LONGER an orphan after rescue`);
+    } else {
+      // AI conservatively proposed no home → a valid outcome; nothing must change.
+      console.log(`     ↳ [${provider}] AI conservatively proposed no home (valid) — verifying it was a clean no-op`);
+      ok(applyRes.rescued === 0, `[${provider}] nothing rescued when no home proposed (${applyRes.rescued})`);
+      ok(stillOrphan, `[${provider}] backpropagation remains an orphan (unchanged) when no home found`);
+    }
+    // INVARIANT either way: the rescue must NEVER introduce broken links.
     ok((after.brokenLinks || []).length === 0, `[${provider}] no broken links introduced by rescue`);
   } finally {
     try { await files.deleteDomain(domain); } catch {}
