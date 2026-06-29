@@ -798,6 +798,17 @@ if (compileBtn) {
         changes: final.changes || [],
       });
 
+      // v3.0.1-beta.27: surface non-fatal degradation notes (large conversation
+      // → concise / summary-only fallback) above the change list, so the user
+      // knows when only a summary was saved rather than a full extraction.
+      const compileWarnings = Array.isArray(final.warnings) ? final.warnings : [];
+      if (compileWarnings.length) {
+        const note = document.createElement('div');
+        note.className = 'compile-note';
+        note.innerHTML = compileWarnings.map(w => `<div>ℹ️ ${escHtml(w)}</div>`).join('');
+        compileResultEl.prepend(note);
+      }
+
       // Refresh the wiki tab and domain stats so changes propagate everywhere
       // (existing post-mutation pattern used after sync/ingest).
       try { if (typeof loadDomainList === 'function') await loadDomainList(); } catch {}

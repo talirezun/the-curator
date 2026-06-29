@@ -17,7 +17,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'node:crypto';
 import { generateText } from './llm.js';
-import { parseJSON } from './ingest.js';
+import { parseJSON, isOutputTokenLimit } from './ingest.js';
 import {
   readSchema,
   readIndex,
@@ -77,7 +77,7 @@ function formatTranscript(messages) {
   }).join('\n\n');
 }
 
-export function buildCompilePrompt({ today, existingFiles, conversation, summaryPath }) {
+export function buildCompilePrompt({ today, existingFiles, conversation, summaryPath, mode = 'full' }) {
   const transcript = formatTranscript(conversation.messages);
   const entityFileList = existingFiles.entities.length
     ? existingFiles.entities.map(f => `  entities/${f}`).join('\n')
@@ -85,6 +85,63 @@ export function buildCompilePrompt({ today, existingFiles, conversation, summary
   const conceptFileList = existingFiles.concepts.length
     ? existingFiles.concepts.map(f => `  concepts/${f}`).join('\n')
     : '  (none yet)';
+
+  // v3.0.1-beta.27 (Fix #2): summary-only fallback. When the full and concise
+  // extractions both overflowed the output-token limit, we ask for ONLY the
+  // summary page so the conversation is still captured (degraded but useful)
+  // rather than the compile failing outright. Mirrors ingest's "reduce scope on
+  // overflow" safety net. The page flows through the same writePage pipeline.
+  if (mode === 'summary-only') {
+    return `Today's date: ${today}
+
+You are compiling a conversation into a persistent knowledge wiki, but a previous
+attempt produced too much output. Produce ONLY a single summary page — do NOT
+create any entity or concept pages this time.
+
+--- CONVERSATION (title: "${conversation.title || 'untitled'}") ---
+${transcript}
+--- END CONVERSATION ---
+
+REQUIRED summary page path: "${summaryPath}"
+You MUST use this exact path. Do NOT invent another summaries/ path.
+
+Write the summary page: capture what was learned, the conclusions reached, and
+which entities/concepts were discussed. Keep it to 5–10 concise bullet points.
+You MAY mention entities/concepts as [[wikilinks]] using the EXACT slug from the
+existing filenames below, but do NOT create separate pages for them.
+
+Existing entity files:
+${entityFileList}
+
+Existing concept files:
+${conceptFileList}
+
+Page body rules:
+- Do NOT include YAML frontmatter (--- blocks) — added automatically.
+- Include a "Tags: tag1, tag2" line.
+- Links: always [[page-name]] — NEVER [[concepts/x]] or [[entities/x]] (folder prefix forbidden).
+
+Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
+{
+  "title": "human-readable title for this compilation",
+  "pages": [
+    { "path": "${summaryPath}", "content": "...", "summary": "1-line description for the index" }
+  ]
+}`;
+  }
+
+  // v3.0.1-beta.27 (Fix #2): concise retry. Inserted when the full extraction
+  // overflowed the output-token limit. Asks for fewer, broader pages and shorter
+  // content so the response fits — still creates entity/concept pages, just terser.
+  const conciseDirective = mode === 'concise'
+    ? `\n⚠ RETRY — the previous attempt produced TOO MUCH output and was cut off.
+Be much more economical this time:
+- Create AT MOST ~10 pages total. Consolidate closely-related entities/concepts
+  into a single broader page instead of many small ones.
+- Cap each page at 3–5 short bullets.
+- ALWAYS include the summary page.
+\n`
+    : '';
 
   // Note: the domain schema is delivered via `generateText`'s systemPrompt
   // argument (same pattern ingest uses). Do NOT embed it again in the user
@@ -100,7 +157,7 @@ export function buildCompilePrompt({ today, existingFiles, conversation, summary
   // index.md programmatically via mergeIntoIndex AFTER this call (the LLM is told
   // not to touch it). Removing the index is the root-cause fix — do not re-add it.
   return `Today's date: ${today}
-
+${conciseDirective}
 You are compiling a conversation into a persistent knowledge wiki.
 Extract durable knowledge — facts, insights, concepts, and conclusions
 that emerged from the dialogue. Treat the conversation as a source document.
@@ -257,8 +314,11 @@ export function mergeIntoIndex(existingIndex, pages, writeRecords) {
   return existingIndex.trimEnd() + `\n\n## New pages\n\n| Page | Type | Summary |\n|---|---|---|\n${newRows.join('\n')}\n`;
 }
 
-export async function compileConversation(domain, conversationId, onProgress = () => {}) {
+export async function compileConversation(domain, conversationId, onProgress = () => {}, opts = {}) {
   const progress = (pct, message) => onProgress({ pct, message });
+  // Test seam (v3.0.1-beta.27): allow injecting a fake LLM to exercise the
+  // fallback ladder deterministically offline. Defaults to the real generateText.
+  const llm = opts.generateText || generateText;
 
   // 1. Load conversation
   progress(5, 'Loading conversation…');
@@ -316,35 +376,86 @@ export async function compileConversation(domain, conversationId, onProgress = (
     };
   }
 
-  // 5. Single LLM call to extract knowledge into wiki pages.
-  //    Output budget matches ingest single-pass (65536) — large domains can
-  //    produce sizable responses even without index regeneration.
-  progress(20, 'AI is extracting knowledge from the conversation…');
-  let raw;
-  try {
-    raw = (await generateText(
-      schema,
-      // Note: `index` is intentionally NOT passed to the prompt (Fix #1, see
-      // buildCompilePrompt). It is still read above for mergeIntoIndex below.
-      buildCompilePrompt({ today, existingFiles, conversation, summaryPath }),
-      65536,
-      'json',
-      (msg) => progress(20, msg),
-    )).trim();
-  } catch (err) {
-    return { ok: false, error: `LLM call failed: ${err.message}` };
+  // 5. Extract knowledge into wiki pages via the LLM, with a graceful fallback
+  //    ladder on output-token overflow (Fix #2, v3.0.1-beta.27). Mirrors ingest's
+  //    "reduce scope on overflow" safety net:
+  //      full → concise (fewer/broader pages) → summary-only (just the summary).
+  //    A step escalates ONLY on an output-token-limit error (or a JSON parse
+  //    failure — a smaller response parses cleaner). ANY OTHER LLM error
+  //    (503/429/auth/network) surfaces immediately, so we never mask a real
+  //    failure or burn retries on a provider outage. Output budget stays 65536;
+  //    the concise/summary-only prompts naturally produce far less.
+  const warnings = [];
+  const ATTEMPTS = [
+    { mode: 'full', pct: 20, msg: 'AI is extracting knowledge from the conversation…', note: null },
+    { mode: 'concise', pct: 30, msg: 'That was large — retrying with a more concise extraction…',
+      note: 'The conversation was large, so it was compiled with a more concise extraction (fewer, broader pages).' },
+    { mode: 'summary-only', pct: 30, msg: 'Still too large — saving a summary page only…',
+      note: 'The conversation was too large for full extraction, so only a summary page was saved. Entity and concept pages were not created — compile a shorter thread to capture more detail.' },
+  ];
+
+  let result = null;
+  let lastErr = null;
+  for (let i = 0; i < ATTEMPTS.length; i++) {
+    const attempt = ATTEMPTS[i];
+    const isLast = i === ATTEMPTS.length - 1;
+    progress(attempt.pct, attempt.msg);
+
+    let raw;
+    try {
+      raw = (await llm(
+        schema,
+        // Note: `index` is intentionally NOT passed to the prompt (Fix #1, see
+        // buildCompilePrompt). It is still read above for mergeIntoIndex below.
+        buildCompilePrompt({ today, existingFiles, conversation, summaryPath, mode: attempt.mode }),
+        65536,
+        'json',
+        (msg) => progress(attempt.pct, msg),
+      )).trim();
+    } catch (err) {
+      lastErr = err;
+      // Only an output-token overflow escalates to the next (smaller) attempt.
+      // Any other error is real (503/429/auth/network) — stop and surface it.
+      if (isOutputTokenLimit(err) && !isLast) continue;
+      break;
+    }
+
+    let parsed;
+    try {
+      parsed = parseJSON(raw);
+    } catch (err) {
+      lastErr = err;
+      console.error(`[compile] JSON parse failed (mode=${attempt.mode}). First 300 chars:`, raw.slice(0, 300));
+      // A parse failure on a large response is usually size-related; the next,
+      // smaller attempt is far more likely to parse. Out of attempts → error.
+      if (!isLast) continue;
+      break;
+    }
+
+    if (!parsed.pages || !Array.isArray(parsed.pages) || parsed.pages.length === 0) {
+      lastErr = new Error('AI returned no pages to write');
+      if (!isLast) continue;
+      break;
+    }
+
+    // Success — record any degradation note so the user knows what happened.
+    result = parsed;
+    if (attempt.note) warnings.push(attempt.note);
+    break;
   }
 
-  let result;
-  try {
-    result = parseJSON(raw);
-  } catch (err) {
-    console.error('[compile] JSON parse failed. First 300 chars:', raw.slice(0, 300));
-    return { ok: false, error: `Could not parse AI response: ${err.message}` };
-  }
-
-  if (!result.pages || !Array.isArray(result.pages) || result.pages.length === 0) {
-    return { ok: false, error: 'AI returned no pages to write' };
+  if (!result) {
+    // All attempts exhausted. Give COMPILE-SPECIFIC guidance — never ingest's
+    // "split the PDF by chapter" (the user compiled a CONVERSATION, not a file).
+    if (lastErr && isOutputTokenLimit(lastErr)) {
+      return {
+        ok: false,
+        error: `This conversation is too large or complex to compile — the AI kept exceeding its output limit even after retrying with a shorter extraction. ` +
+               `What to do: compile a shorter conversation (fewer or shorter messages), or split this discussion into separate conversations by topic and compile each one. ` +
+               `(This is an AI output-size limit, not a problem with The Curator or your data.)`,
+      };
+    }
+    return { ok: false, error: `LLM call failed: ${lastErr ? lastErr.message : 'unknown error'}` };
   }
 
   // 6. Deduplicate pages by path (LLM occasionally returns the same path twice)
@@ -420,5 +531,8 @@ export async function compileConversation(domain, conversationId, onProgress = (
     title: compileTitle,
     pagesWritten: canonicalPaths,
     changes,
+    // Non-fatal notes (e.g. the conversation was large → concise/summary-only
+    // fallback). Empty on a normal full compile. Surfaced in the result panel.
+    warnings,
   };
 }

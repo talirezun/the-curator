@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (30 suites, hundreds of
+The Curator has an extensive battle-test suite (32 suites, hundreds of
 assertions). One command runs them all and prints a single pass/fail report:
 
 ```bash

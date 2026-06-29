@@ -939,7 +939,7 @@ const MULTI_PHASE_SINGLE_PAGE_TOKENS = 8192;
  * degrade real content into stub pages. Those must propagate so the user sees
  * the genuine error instead of a wiki full of stubs. (v3.0.1-beta.15 audit fix.)
  */
-function isOutputTokenLimit(err) {
+export function isOutputTokenLimit(err) {
   return /output token limit/i.test((err && err.message) || '');
 }
 
