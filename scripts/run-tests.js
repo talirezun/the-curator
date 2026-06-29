@@ -39,6 +39,7 @@ const OFFLINE = [
   'test-beta15-fixes.js',
   'test-beta16-broken-links.js',
   'test-beta25-compile-prompt.js',
+  'test-beta27-compile-fallback.js',
   'test-ci-flake.js',
   'test-runner-integration.js',
   'test-ingest-fixes.js',
@@ -67,6 +68,7 @@ const LIVE_CI = [
   'test-beta16-production.js',
   'test-beta17-production.js',
   'test-beta25-compile-live.js', // compile on a seeded large-index domain (Fix #1)
+  'test-beta27-compile-live.js', // compile fallback prompts honoured by real models (Fix #2)
 ];
 
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:

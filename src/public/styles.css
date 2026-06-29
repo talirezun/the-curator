@@ -3461,6 +3461,18 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   padding: 10px 14px;
   font-size: 13px;
 }
+/* Non-fatal compile degradation notes (v3.0.1-beta.27): large conversation
+   compiled via the concise / summary-only fallback. */
+.compile-note {
+  background: rgba(137,180,250,0.08);
+  border: 1px solid rgba(137,180,250,0.25);
+  color: var(--text-secondary, #b8c0e0);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
 
 /* ── Settings tab inline status (v2.5.2+) ── */
 .status-inline {

@@ -98,6 +98,9 @@ router.post('/conversation', async (req, res) => {
       title: result.title,
       pagesWritten: result.pagesWritten,
       changes: result.changes,
+      // Non-fatal notes (e.g. large conversation → concise/summary-only
+      // fallback). Empty on a normal compile (v3.0.1-beta.27).
+      warnings: result.warnings || [],
     });
   } catch (err) {
     console.error('Compile error:', err);
