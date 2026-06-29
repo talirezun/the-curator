@@ -37,6 +37,7 @@ const OFFLINE = [
   'test-beta13-fixes.js',
   'test-beta15-fixes.js',
   'test-beta16-broken-links.js',
+  'test-beta25-compile-prompt.js',
   'test-ingest-fixes.js',
   'test-sharedbrain-local.js',
   'test-sharedbrain-push.js',
@@ -62,6 +63,7 @@ const LIVE_CI = [
   'test-beta15-production.js',   // large source = committed docs/ingestion-pipeline.md
   'test-beta16-production.js',
   'test-beta17-production.js',
+  'test-beta25-compile-live.js', // compile on a seeded large-index domain (Fix #1)
 ];
 
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
