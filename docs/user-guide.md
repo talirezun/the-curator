@@ -558,6 +558,16 @@ The Curator refuses re-compiles when nothing has changed:
 
 This is intentional — a second LLM run on identical input produces slightly different bullet phrasings, and the merge pipeline would silently inflate every related page's section bullets across dozens of files. If you want to add to the compiled summary, send another message in the conversation and click Compile again. The new turn changes the conversation hash → new slug → no collision → a fresh summary file is created alongside the old one.
 
+**Compiling a very large conversation (v3.0.1-beta.27)**
+
+Most compiles finish in one pass. If a conversation is unusually long or dense, the AI can run out of room to write all the pages at once. The Curator now handles this automatically instead of failing:
+
+1. It retries with a **more concise extraction** (fewer, broader pages). If that works, you'll see a small note on the result panel: *"compiled with a more concise extraction."*
+2. If it's still too large, it falls back to saving **just the summary page** — the conversation is still captured, but the individual entity/concept pages aren't created this time. The note will say so.
+3. Only if even the summary can't fit does it stop, with a clear message: *"This conversation is too large or complex to compile… compile a shorter conversation, or split this discussion into separate conversations by topic."*
+
+If you hit step 3, the fix is to compile a shorter thread (or break a sprawling chat into focused ones and compile each). This is an AI output-size limit, not a problem with The Curator or your data.
+
 **Good use cases**
 
 - **Brainstorming sessions** — explore an idea with the AI, then commit the conclusions to the wiki when you're done.

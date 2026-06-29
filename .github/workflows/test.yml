@@ -4,8 +4,17 @@ name: Tests
 #   - push to any branch        → offline tests (free); live tests only on main
 #   - pull request (incl forks) → offline tests only (NO secrets exposed to forks)
 #   - manual "Run workflow"      → offline + live
+#
+# Docs-only pushes are skipped (paths-ignore below): a push whose changed files
+# are ALL markdown / docs does NOT trigger the workflow, so we don't spend paid
+# Gemini/Anthropic credits (or Actions minutes) on a documentation-only commit.
+# A push that touches ANY non-doc file still runs normally. Pull requests are NOT
+# path-filtered, so a docs PR still gets the free offline check + a green tick.
 on:
   push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
   workflow_dispatch:
 

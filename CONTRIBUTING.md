@@ -93,6 +93,12 @@ Two jobs:
 | **Offline tests** | every push (any branch) + every PR (incl. forks) | none | free |
 | **Live API tests** | push to `main` + manual "Run workflow" only | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` from repo Secrets | a few cents per run |
 
+**Docs-only pushes are skipped (v3.0.1-beta.27+).** The `push` trigger has a
+`paths-ignore` for `**.md` and `docs/**`, so a push whose changed files are *all*
+documentation does **not** run the workflow — no Actions minutes, no paid live
+job. A push that touches any non-doc file runs normally. Pull requests are not
+path-filtered, so a docs PR still gets the free offline check.
+
 The offline job runs `npm ci` + `npm test` on a clean Ubuntu machine — which also
 catches the "works-on-my-machine" class of bug that hid on configured dev
 machines before v3.0.1-beta.21.
