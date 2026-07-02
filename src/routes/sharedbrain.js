@@ -37,7 +37,7 @@
  */
 
 import { Router } from 'express';
-import { randomUUID, createHash, timingSafeEqual } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual, randomBytes } from 'crypto';
 
 import {
   getSharedBrainEnabled,
@@ -53,7 +53,7 @@ import {
   newUuid,
 } from '../brain/sharedbrain-config.js';
 
-import { pushDomain, pullCollective, computePendingPages } from '../brain/sharedbrain.js';
+import { pushDomain, pullCollective, computePendingPages, listMembers } from '../brain/sharedbrain.js';
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
@@ -603,13 +603,65 @@ router.post('/parse-invite', gate, (req, res) => {
   }
 });
 
+// v3.0.5 (Phase 4.1): the admin token that gates contributor revocation.
+// Generated at brain setup, shown ONCE (like the invite token), stored on
+// the admin's connection at save. Prefix makes it recognisable in a
+// password manager; 20 random bytes ≈ 160 bits of entropy.
+export function generateAdminToken() {
+  return 'sbat_' + randomBytes(20).toString('hex');
+}
+
 router.post('/generate-invite', gate, (req, res) => {
   try {
     const { repo, name, shared_domain, branch, storage_type, data_handling_terms } = req.body || {};
     const token = encodeInviteToken({ repo, name, shared_domain, branch, storage_type, data_handling_terms });
-    res.json({ token });
+    // v3.0.5: a fresh admin token rides along for the admin wizard. The
+    // invite token is DETERMINISTIC (same metadata → same token, safe to
+    // re-display later); the admin token is random and independent — it is
+    // NOT embedded in the invite token and never reaches contributors.
+    res.json({ token, admin_token: generateAdminToken() });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Member directory (v3.0.5, Phase 4.3) ─────────────────────────────────
+//
+// Everyone who has ever contributed to this brain — the admin needs a
+// fellow_id to revoke, and it was previously undiscoverable from the UI.
+// Read-only. Identity is storage-path-derived (same trust rule as
+// synthesis); display names are informational.
+
+router.get('/:id/members', gate, async (req, res) => {
+  const conn = loadConnectionOr404(req.params.id, res);
+  if (!conn) return;
+  try {
+    const result = await listMembers(conn);
+    if (!result.ok) return res.status(502).json({ error: result.error });
+    res.json({ members: result.members, self_fellow_id: conn.fellow_id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin-token provision / rotation (v3.0.5, Phase 4.1) ─────────────────
+//
+// Generates a new admin token for this connection and returns it ONCE.
+// Used by: (a) pre-v3.0.5 admin connections that have no admin_token yet
+// (revoke was impossible without hand-editing config), (b) rotation after
+// a suspected leak. Rotating invalidates the previous token immediately.
+
+router.post('/:id/admin-token/rotate', gate, (req, res) => {
+  const conn = loadConnectionOr404(req.params.id, res);
+  if (!conn) return;
+  try {
+    const token = generateAdminToken();
+    // saveSharedBrain (not patch) — credential fields have a single audited
+    // write path with full validation. `conn` is the FULL record here.
+    saveSharedBrain({ ...conn, admin_token: token });
+    res.json({ ok: true, admin_token: token, rotated: !!conn.admin_token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -710,4 +762,5 @@ export const __testing = {
   INVITE_VERSION,
   INVITE_PREFIX,
   computeUnskipPatch,
+  generateAdminToken,
 };

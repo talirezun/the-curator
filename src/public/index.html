@@ -1142,7 +1142,7 @@
           This feature is in beta — opt in to try it.
         </p>
         <div id="sharedbrain-optin" class="hidden">
-          <button id="sharedbrain-enable-btn" class="btn primary">Enable Shared Brain (beta)</button>
+          <button id="sharedbrain-enable-btn" class="btn primary pill">Enable Shared Brain (beta)</button>
           <div id="sharedbrain-optin-status" class="status hidden" aria-live="polite"></div>
         </div>
         <div id="settings-sharedbrain-enabled" class="hidden">
@@ -1435,6 +1435,20 @@
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               <span>Copy</span>
             </button>
+          </div>
+
+          <!-- v3.0.5 (Phase 4.1) — the admin token, shown ONCE. Gates the
+               revoke operation; stored on the admin's connection at save. -->
+          <div class="sb-admin-token-block">
+            <h4>Your admin token — keep it secret, store it now</h4>
+            <p class="hint">This token authorises <strong>contributor revocation</strong> (GDPR erasure). It is shown <strong>only here, only once</strong> — save it in your password manager. Do NOT share it with contributors; it is not the invite token above.</p>
+            <div class="sb-invite-token-box">
+              <code id="sb-admin-admin-token" class="sb-invite-token-display">sbat_…</code>
+              <button id="sb-admin-copy-admin-token" class="btn pill sb-copy-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <span>Copy</span>
+              </button>
+            </div>
           </div>
 
           <div class="sb-share-checklist">

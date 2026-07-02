@@ -364,11 +364,16 @@ Irreversible. Documented prominently in admin guide and compliance reference.
 - MCP guard refuses direct writes to `shared-*` mirrors
 - Compliance documentation
 
-### v3.0.0 GA (planned)
+### v3.0.2 – v3.0.5 — production hardening (shipped)
 
-- Admin Revoke UI in Settings → Advanced
-- Bug fixes from beta feedback
-- Polish on the wizard flow (better error messages, retry guidance)
+- v3.0.2/v3.0.3: data-integrity + trust-boundary hardening (processed-submission tracking, fellow-payload sanitization, true-mirror pulls, truncation refusal, revocation marker — see the CLAUDE.md release history for the full lists)
+- v3.0.4: UI/UX upgrade — wizard fixes, per-connection in-flight registry, invisible state surfaced (pending pages, last synthesis, skipped-pages retry, conflict pages, rate-limit warnings), first-class **read-only membership**, wizard accessibility
+- v3.0.5: admin features — **admin-token provisioning** (shown once at brain setup; rotate from the card), **member directory** (`GET /:id/members`), **Revoke UI** on the connection card (member picker + typed confirmation + SSE progress), invite-token re-display, synthesis confirm step
+
+### v3.1.0 — Shared Brain GA (planned)
+
+- Production test program complete (revoke E2E on real GitHub, real-LLM delta/conflict prompts, concurrent-writer races, CI wiring, Playwright wizard test)
+- Structured beta pilot with a real cohort
 - More worked examples in the user guide
 
 ### v3.1 — Cloudflare R2-backed Shared Brains

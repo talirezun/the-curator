@@ -1530,6 +1530,79 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   margin-bottom: 18px;
 }
 
+/* v3.0.5 — admin-token block on admin wizard step 2 (Phase 4.1) */
+.sb-admin-token-block {
+  margin-bottom: 18px;
+}
+.sb-admin-token-block h4 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: var(--warning, #f9e2af);
+}
+.sb-admin-token-block .sb-invite-token-box {
+  border-color: var(--warning, #f9e2af);
+  margin-bottom: 0;
+}
+
+/* v3.0.5 — card token box (invite re-display / admin-token shown-once) */
+.sharedbrain-card-tokenbox {
+  margin: 0 12px 12px;
+  padding: 10px 12px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sharedbrain-card-tokenbox code {
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+  white-space: pre-wrap;
+  user-select: all;
+  cursor: text;
+  color: var(--accent-2);
+}
+.sharedbrain-card-tokenbox .btn { align-self: flex-start; font-size: 12px; padding: 4px 12px; }
+
+/* v3.0.5 — revoke panel (Phase 4.2) */
+.sharedbrain-card-revoke {
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid var(--error, #f38ba8);
+  border-radius: var(--radius);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sharedbrain-card-revoke h5 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--error, #f38ba8);
+}
+.sharedbrain-card-revoke label { font-size: 12px; color: var(--text-muted); }
+.sharedbrain-card-revoke input[type="password"],
+.sharedbrain-card-revoke input[type="text"] {
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--bg-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+}
+.sb-revoke-members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.sharedbrain-card-revoke .btn { align-self: flex-start; font-size: 12px; }
+
 .sb-invite-token-display {
   flex: 1;
   font-family: var(--mono);

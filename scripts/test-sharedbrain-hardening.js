@@ -37,7 +37,7 @@ import {
   runLocalSynthesis, mergeFactsForPage, extractSectionBullets,
   sanitizeFellowText, isSafeLinkSlug,
 } from '../src/brain/sharedbrain-synthesis.js';
-import { pushDomain, pullCollective, isTransientLlmError, MAX_RETRY_ATTEMPTS, computePendingPages } from '../src/brain/sharedbrain.js';
+import { pushDomain, pullCollective, isTransientLlmError, MAX_RETRY_ATTEMPTS, computePendingPages, listMembers, groupMembers } from '../src/brain/sharedbrain.js';
 import { revokeContributor } from '../src/brain/sharedbrain-revoke.js';
 import { GitHubStorageAdapter } from '../src/brain/sharedbrain-github-adapter.js';
 import { __testing as configTesting } from '../src/brain/sharedbrain-config.js';
@@ -964,6 +964,127 @@ section('21. Phase 3 source-level guards');
 
   const ghAdapter = src('src/brain/sharedbrain-github-adapter.js');
   assert(ghAdapter.includes('_onWarn'), 'GitHub adapter carries the onWarn channel (M18)');
+}
+
+// ═══ PHASE 4 (v3.0.5) — admin features ══════════════════════════════════════
+
+section('22. 4.3 — groupMembers / listMembers');
+
+{
+  const root22 = path.join(workspaceRoot, 'storage-p4-members');
+  mkdirSync(root22, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root22 });
+  const conn = makeConnection({ local_storage_path: root22 });
+
+  const fA = randomUUID(), fB = randomUUID();
+  await adapter.storeContribution(fA, randomUUID(), {
+    fellow_id: fA, fellow_display_name: 'Alice', domain: 'work-ai',
+    contributed_at: '2026-06-01T10:00:00.000Z',
+    deltas: [{ path: 'concepts/a.md', title: 'A', new_facts: ['fact'], new_links: [], removed_links: [] }],
+  });
+  await adapter.storeContribution(fA, randomUUID(), {
+    fellow_id: fA, fellow_display_name: 'Alice', domain: 'work-ai',
+    contributed_at: '2026-06-10T10:00:00.000Z',
+    deltas: [
+      { path: 'concepts/a.md', title: 'A', new_facts: ['fact2'], new_links: [], removed_links: [] },
+      { path: 'concepts/b.md', title: 'B', new_facts: ['fact3'], new_links: [], removed_links: [] },
+    ],
+  });
+  // fB spoofs someone else's fellow_id in the payload — identity must come
+  // from the storage path, exactly like synthesis (v3.0.3 trust rule).
+  await adapter.storeContribution(fB, randomUUID(), {
+    fellow_id: fA, fellow_display_name: 'Impostor\nBob', domain: 'work-ai',
+    contributed_at: '2026-06-05T10:00:00.000Z',
+    deltas: [{ path: 'concepts/c.md', title: 'C', new_facts: ['x'], new_links: [], removed_links: [] }],
+  });
+
+  const res = await listMembers(conn);
+  assert(res.ok === true, 'listMembers ok');
+  const members = res.members;
+  assert(members.length === 2, `two members from three submissions (got ${members.length})`);
+  const alice = members.find(m => m.fellow_id === fA);
+  const bob = members.find(m => m.fellow_id === fB);
+  assert(!!alice && alice.submissions === 2 && alice.pages === 3, 'per-fellow submission + page counts');
+  assert(alice.first_contributed_at === '2026-06-01T10:00:00.000Z' &&
+         alice.last_contributed_at === '2026-06-10T10:00:00.000Z', 'first/last contribution dates');
+  assert(alice.display_name === 'Alice', 'display name carried through');
+  assert(!!bob, 'path-derived identity: spoofed payload fellow_id does NOT merge fellows');
+  assert(bob.display_name === 'Impostor Bob', 'display name newline-flattened');
+  assert(alice.short_id === fA.replace(/-/g, '').slice(0, 8), 'short id matches Provenance convention');
+  assert(members[0].fellow_id === fA, 'sorted by last contribution, newest first');
+
+  const grouped = groupMembers([]);
+  assert(Array.isArray(grouped) && grouped.length === 0, 'empty listing → empty members');
+  assert(groupMembers([{ fellowId: '', payload: {} }, null]).length === 0, 'malformed entries dropped');
+}
+
+section('23. 4.1 — generateAdminToken');
+
+{
+  const { generateAdminToken } = routesTesting;
+  const t1 = generateAdminToken();
+  const t2 = generateAdminToken();
+  assert(/^sbat_[0-9a-f]{40}$/.test(t1), `token format sbat_<40 hex> (got ${t1.slice(0, 12)}…)`);
+  assert(t1 !== t2, 'tokens are unique per call');
+}
+
+section('24. 4.1/4.4 — validateConnection: admin_token + data_handling_terms');
+
+{
+  const base = {
+    id: randomUUID(), label: 'P4', storage_type: 'github',
+    github_repo_owner: 'octocat', github_repo_name: 'brain',
+    github_pat: 'github_pat_test_1234567890abcdef', github_branch: 'main',
+    fellow_id: randomUUID(), fellow_display_name: 'Admin',
+    shared_domain: 'work-ai', shared_brain_slug: 'cohort',
+    local_domains: ['work-ai'],
+  };
+  const okCases = [
+    ['admin_token sbat_… accepted', { ...base, admin_token: routesTesting.generateAdminToken() }],
+    ['admin_token null accepted (explicit no-token)', { ...base, admin_token: null }],
+    ['data_handling_terms contributor_retains accepted', { ...base, data_handling_terms: 'contributor_retains' }],
+    ['data_handling_terms organisational accepted', { ...base, data_handling_terms: 'organisational' }],
+  ];
+  for (const [label, conn] of okCases) {
+    try { configTesting.validateConnection(conn); ok(label); }
+    catch (err) { fail(label, err); }
+  }
+  assertThrows(() => configTesting.validateConnection({ ...base, admin_token: 'short' }),
+    'admin_token must be', 'too-short admin_token refused');
+  assertThrows(() => configTesting.validateConnection({ ...base, admin_token: 'sbat_line1\nline2_padded_to_length' }),
+    'admin_token must be', 'multi-line admin_token refused');
+  assertThrows(() => configTesting.validateConnection({ ...base, admin_token: 'sbat_12345678901234…' }),
+    'masked display value', 'masked-ellipsis admin_token round-trip refused');
+  assertThrows(() => configTesting.validateConnection({ ...base, data_handling_terms: 'finders_keepers' }),
+    'data_handling_terms', 'unknown data_handling_terms refused');
+}
+
+section('25. Phase 4 source-level guards');
+
+{
+  const routes = src('src/routes/sharedbrain.js');
+  assert(routes.includes("get('/:id/members'"), 'member-directory endpoint registered (4.3)');
+  assert(routes.includes("post('/:id/admin-token/rotate'"), 'admin-token rotate endpoint registered (4.1)');
+  assert(routes.includes('admin_token: generateAdminToken()'), 'generate-invite returns a fresh admin token (4.1)');
+
+  const appJs = src('src/public/app.js');
+  assert(appJs.includes('generatedAdminToken'), 'admin wizard stores the generated admin token (4.1)');
+  assert(appJs.includes('sb-admin-admin-token'), 'admin token displayed once on wizard step 2 (4.1)');
+  assert(appJs.includes('runSharedBrainRevoke') && appJs.includes('REVOKE-${member.fellow_id}'),
+    'revoke UI sends the full API confirmation literal (4.2)');
+  assert(appJs.includes('REVOKE-${selected.short_id}'),
+    'revoke unlock requires deliberately TYPING the short confirmation (4.2)');
+  assert(appJs.includes("data_handling_terms: meta.data_handling_terms || 'contributor_retains'"),
+    'connections persist data_handling_terms at save (4.4)');
+  assert(appJs.includes('sbToggleInviteBox'), 'invite-token re-display wired on the card (4.4)');
+  assert(appJs.includes("'synthesize', card, { ...opts, confirmed: true }"),
+    'synthesis runs only after inline confirm (4.5)');
+  assert(appJs.includes('sbHandleAdminToken'), 'admin-token generate/rotate affordance on the card (4.1)');
+
+  const html = src('src/public/index.html');
+  assert(html.includes('sb-admin-token-block'), 'admin-token block present on wizard step 2 (4.1)');
+  assert(html.includes('id="sharedbrain-enable-btn" class="btn primary pill"'),
+    'Settings enable button matches the Settings pill convention (user-reported design fix)');
 }
 
 // ═══ Result ════════════════════════════════════════════════════════════════

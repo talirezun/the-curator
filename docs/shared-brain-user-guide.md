@@ -121,7 +121,7 @@ The wizard closes. You'll see a new connection card in the Sync tab showing:
 - A **pending line** when you have pages waiting to push ("⏳ N pages ready to push")
 - **Push contributions** · **Pull updates** buttons (read-only members see only Pull)
 - A note telling you pulled content appears as the `shared-<slug>` domain in the Domains tab
-- An "Advanced" disclosure with synthesize + your fellow-ID + disconnect
+- An "Advanced" disclosure with: Run synthesis (with a confirm step, v3.0.5+) · Show invite token (re-display any time) · Generate/Rotate admin token · your fellow-ID pill · Revoke a contributor… (admins with an admin token) · Disconnect
 
 You're done. Skip to [§4 Daily workflow](#4--daily-workflow).
 
@@ -173,11 +173,13 @@ Fill in the form:
 
 Click **Continue →**.
 
-#### Step 2 — Invite token
+#### Step 2 — Invite token + admin token
 
 The wizard generates the invite token and displays it in a copy-to-clipboard box. Click **Copy** → token is in your clipboard.
 
 Send it to every cohort member via Slack, email, or any channel — the token contains no credentials, so it's safe to share. The wizard also gives you a link to the repo's **Settings → Collaborators** page so you can invite everyone if you haven't yet.
+
+Below the invite token, the wizard shows your **admin token** (`sbat_…`, v3.0.5+). This one is the opposite of the invite token: it is a **secret credential** that authorises contributor revocation (GDPR erasure), it is shown **only here, only once**, and you must NOT share it with contributors. Store it in your password manager now — the revoke panel will ask you to paste it. (Lost it? Advanced → **Rotate admin token** on the connection card issues a new one.)
 
 Click **Set up my contribution →** to continue. You're now setting up YOUR own contributor identity (the admin is also a contributor).
 
@@ -230,9 +232,10 @@ Same as contributors, plus periodic synthesis (recommended weekly):
 
 | Action | When |
 |---|---|
-| **Run synthesis (admin)** in Advanced disclosure | Weekly, or after a batch of pushes from your cohort. This is what merges contributions into the collective wiki. |
+| **Run synthesis (admin)** in Advanced disclosure | Weekly, or after a batch of pushes from your cohort. This is what merges contributions into the collective wiki. Since v3.0.5 a confirm step explains what it does before running (contributors who click it by accident can cancel). |
+| **Revoke a contributor…** in Advanced (v3.0.5+) | When someone requests GDPR erasure or must be fully removed. Opens the member directory, asks for your admin token + a typed confirmation, then streams the irreversible erasure + rebuild. |
 
-Detailed admin operations (synthesis cadence, contributor management, revocation) are in [`docs/shared-brain-admin.md`](shared-brain-admin.md).
+Detailed admin operations (synthesis cadence, contributor management, admin-token security, revocation) are in [`docs/shared-brain-admin.md`](shared-brain-admin.md).
 
 ### Using the collective wiki
 

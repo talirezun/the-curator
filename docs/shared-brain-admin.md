@@ -36,9 +36,19 @@ The full step-by-step from the contributor's side is in [User Guide §2 — Cont
 
 A contributor leaves the cohort, or asks to have their data removed under GDPR Article 17. You revoke them.
 
-### v3.0.0-beta.1 — API-only
+### v3.0.5+ — from the connection card (recommended)
 
-The revoke admin UI ships in v3.0.0 GA. For now, run the operation via curl:
+1. Sync tab → your connection card → **Advanced → Revoke a contributor…**
+2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
+3. Paste your **admin token** (the `sbat_…` credential shown once at brain setup — see §9; if your connection predates v3.0.5, click **Generate admin token** in Advanced first).
+4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
+5. Click **Permanently revoke this contributor**. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
+
+If the run ends with *"the rebuild synthesis FAILED"*, the erasure completed but the collective needs rebuilding — re-run the same revocation once the underlying problem (usually a rate limit) clears; every step is idempotent.
+
+### Via the API (scripting / headless)
+
+The same operation via curl:
 
 ```bash
 curl -X POST http://localhost:3333/api/sharedbrain/<connection_id>/revoke \
@@ -52,9 +62,9 @@ curl -X POST http://localhost:3333/api/sharedbrain/<connection_id>/revoke \
 
 Where:
 - `<connection_id>` — your own Shared Brain connection ID. Find it via `GET /api/sharedbrain/list`.
-- `<your-admin-token>` — the admin-only token stored in your local `.sharedbrain-config.json` under `admin_token` for this connection. (If your wizard didn't ask you to set one, the current beta defaults to using your local connection's stored admin_token field — if absent, the revoke endpoint refuses with 403.)
-- `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). Get it from their Provenance section in any collective page they contributed to, or ask them to share their UUID from their Sync tab connection card.
-- `confirmation` — literal string `"REVOKE-<contributor-uuid-to-revoke>"`. The brittle confirmation is a GitHub-style accident-prevention gate.
+- `<your-admin-token>` — the `sbat_…` token shown once at brain setup (v3.0.5+) or provisioned via **Advanced → Generate admin token** / `POST /api/sharedbrain/<id>/admin-token/rotate`. The revoke endpoint refuses with 403 if it doesn't match the token stored on the connection.
+- `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). v3.0.5+: get it from `GET /api/sharedbrain/<id>/members` (or the card's revoke panel); older fallbacks: their Provenance short-id, or ask them to read it off their connection card.
+- `confirmation` — literal string `"REVOKE-<contributor-uuid-to-revoke>"` (the FULL UUID). The brittle confirmation is a GitHub-style accident-prevention gate.
 
 The endpoint returns a SSE stream with progress events and a final `done` event containing:
 
@@ -127,9 +137,13 @@ A new person joins after the brain is already running.
 
 That's it. No new tokens, no admin action in the Curator.
 
-### Re-generating the invite token
+### Re-displaying the invite token
 
-If you ever need a fresh invite token (e.g. the old one was leaked publicly — though it grants no access, you may still want a fresh one):
+Lost the token? Since v3.0.5 it's one click: Sync tab → connection card → **Advanced → Show invite token**. The token is deterministic (pure metadata), so re-generating from the connection's stored settings reproduces the original — safe to show any time, safe to share with anyone.
+
+> Note for connections created before v3.0.5: the data-handling-terms choice wasn't stored back then, so the re-displayed token defaults to *contributor retains*. If your brain uses the *organisational* IP mode, share your originally generated token instead (the card shows a caution in this case).
+
+Via the API:
 
 ```bash
 curl -X POST http://localhost:3333/api/sharedbrain/generate-invite \
@@ -143,7 +157,7 @@ curl -X POST http://localhost:3333/api/sharedbrain/generate-invite \
   }'
 ```
 
-Returns `{"token": "sbi_..."}`. Same format; can be shared with anyone.
+Returns `{"token": "sbi_...", "admin_token": "sbat_..."}`. The `token` is the shareable invite; the `admin_token` is a fresh revocation credential generated for the admin wizard — **ignore it here** (it is not stored anywhere by this call; rotation goes through `/admin-token/rotate`).
 
 ---
 
@@ -220,11 +234,16 @@ A contributor tried to use MCP write tools (`compile_to_wiki`, `fix_wiki_issue`)
 
 ## 9 — Admin-token security
 
-The `admin_token` is the one privileged credential in your Shared Brain. It gates the revoke endpoint. You should:
+The `admin_token` is the one privileged credential in your Shared Brain. It gates the revoke endpoint.
 
-- **Keep it secret.** Don't share it with contributors. Don't commit it to anywhere.
-- **Generate a long random one** — at least 32 chars. The Curator stores it locally in `.sharedbrain-config.json`.
-- **Rotate it** if you suspect compromise — just `POST /api/sharedbrain/save` with the connection record carrying a new `admin_token` value. (UI for this lands in v3.0.0 GA.)
+**Provisioning (v3.0.5+):**
+- **New brains** — the admin wizard generates a `sbat_…` token (160 bits of entropy) and shows it **once** on step 2, next to the invite token. It's stored on your connection when you finish the wizard; save the plaintext in your password manager immediately.
+- **Existing connections** (created before v3.0.5) — Sync tab → connection card → **Advanced → Generate admin token**. Shown once, same rules.
+- **Rotation** — **Advanced → Rotate admin token** (or `POST /api/sharedbrain/:id/admin-token/rotate`). The old token stops working immediately; the new one is returned/shown once.
+
+**Handling rules:**
+- **Keep it secret.** Don't share it with contributors — it is NOT the invite token. Don't commit it anywhere.
+- The Curator stores it locally in `.sharedbrain-config.json` (0600, atomic writes) and masks it in every listing.
 - **Hash before logging.** The Curator itself only ever logs a sha256 hash of the admin_token (in `state/revocations.jsonl`). Don't log raw tokens yourself.
 
 ---
@@ -235,9 +254,11 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 |---|---|
 | Initial setup | Sync tab → **⚙ I'm starting a new Shared Brain** → Set up |
 | Add a contributor mid-cohort | GitHub repo → Settings → Collaborators → Add people |
-| Run synthesis | Sync tab → connection card → Advanced → Run synthesis |
-| Revoke a contributor | `POST /api/sharedbrain/:id/revoke` (UI coming v3.0.0 GA) |
-| Regenerate invite token | `POST /api/sharedbrain/generate-invite` |
+| Run synthesis | Sync tab → connection card → Advanced → Run synthesis (confirm dialog, v3.0.5+) |
+| See who has contributed | Card → Advanced → Revoke panel, or `GET /api/sharedbrain/:id/members` (v3.0.5+) |
+| Revoke a contributor | Card → **Advanced → Revoke a contributor…** (v3.0.5+), or `POST /api/sharedbrain/:id/revoke` |
+| Generate / rotate the admin token | Card → Advanced → Generate/Rotate admin token (v3.0.5+) |
+| Re-display the invite token | Card → Advanced → Show invite token (v3.0.5+), or `POST /api/sharedbrain/generate-invite` |
 | Check synthesis stats | `meta/state/last-synthesis.json` in the repo |
 | Read the audit log | `state/revocations.jsonl` in the repo |
 | Compliance / GDPR ref | [`docs/shared-brain-compliance.md`](shared-brain-compliance.md) |

@@ -905,5 +905,83 @@ export async function computePendingPages(connection, domainsDir) {
   return total;
 }
 
+// ── listMembers (v3.0.5, Phase 4.3) ────────────────────────────────────────
+
+/**
+ * Pure grouping core: turn a contribution listing (as returned by
+ * adapter.listContributionsSince) into a per-fellow member summary.
+ * Identity comes from the storage-path-derived fellowId (the same trust
+ * decision as synthesis, v3.0.3) — payload fields are informational only.
+ *
+ * @param {Array<{fellowId, submissionId, payload}>} listed
+ * @returns {Array<{fellow_id, short_id, submissions, first_contributed_at,
+ *                  last_contributed_at, display_name, pages}>}
+ */
+export function groupMembers(listed) {
+  const byFellow = new Map();
+  for (const c of (Array.isArray(listed) ? listed : [])) {
+    if (!c || typeof c.fellowId !== 'string' || !c.fellowId) continue;
+    let m = byFellow.get(c.fellowId);
+    if (!m) {
+      m = {
+        fellow_id: c.fellowId,
+        short_id: c.fellowId.replace(/-/g, '').slice(0, 8),
+        submissions: 0,
+        first_contributed_at: null,
+        last_contributed_at: null,
+        display_name: null,
+        pages: 0,
+      };
+      byFellow.set(c.fellowId, m);
+    }
+    m.submissions++;
+    const payload = c.payload && typeof c.payload === 'object' ? c.payload : {};
+    const t = typeof payload.contributed_at === 'string' ? Date.parse(payload.contributed_at) : NaN;
+    if (Number.isFinite(t)) {
+      const iso = new Date(t).toISOString();
+      if (!m.first_contributed_at || iso < m.first_contributed_at) m.first_contributed_at = iso;
+      if (!m.last_contributed_at || iso > m.last_contributed_at) m.last_contributed_at = iso;
+    }
+    if (typeof payload.fellow_display_name === 'string' && payload.fellow_display_name.trim()) {
+      // Informational only (single-line, capped) — the admin can read the raw
+      // payloads in the repo anyway; never treat this as identity.
+      m.display_name = payload.fellow_display_name.replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
+    }
+    m.pages += Array.isArray(payload.deltas) ? payload.deltas.length : 0;
+  }
+  return [...byFellow.values()].sort((a, b) =>
+    String(b.last_contributed_at || '').localeCompare(String(a.last_contributed_at || '')));
+}
+
+/**
+ * List everyone who has ever contributed to this connection's shared brain —
+ * the member directory the admin needs for revocation (a fellow_id was
+ * previously undiscoverable from the UI). Read-only; one listing pass over
+ * contributions/ (on GitHub this reads each contribution payload — fine at
+ * cohort scale, documented in shared-brain-admin.md).
+ *
+ * @param {object} connection  Full connection (with tokens).
+ * @param {object} [opts]      {onWarn} forwarded to the adapter.
+ * @returns {Promise<{ok, members?, error?}>}
+ */
+export async function listMembers(connection, opts = {}) {
+  if (!connection || typeof connection !== 'object') {
+    return { ok: false, error: 'listMembers: connection object is required' };
+  }
+  let adapter;
+  try {
+    adapter = createStorageAdapter(connection, { onWarn: opts.onWarn });
+  } catch (err) {
+    return { ok: false, error: `listMembers: storage adapter init failed: ${err.message}` };
+  }
+  let listed;
+  try {
+    listed = await adapter.listContributionsSince(null);
+  } catch (err) {
+    return { ok: false, error: `listMembers: could not list contributions: ${err.message}` };
+  }
+  return { ok: true, members: groupMembers(listed) };
+}
+
 // Exposed for testing only
 export const __testing = { resolveInsideBase };

@@ -182,6 +182,30 @@ function validateConnection(conn) {
   if (conn.read_only !== undefined && typeof conn.read_only !== 'boolean') {
     throw new Error('SharedBrain connection: read_only must be a boolean');
   }
+  // v3.0.5 (Phase 4.1): admin_token gates the revoke endpoint. Optional
+  // (only the cohort admin's connection has one); null is the explicit
+  // "no admin token" value from older schema examples.
+  if (conn.admin_token !== undefined && conn.admin_token !== null) {
+    if (typeof conn.admin_token !== 'string' ||
+        conn.admin_token.length < 16 || conn.admin_token.length > 200 ||
+        /[\r\n]/.test(conn.admin_token)) {
+      throw new Error('SharedBrain connection: admin_token must be a single-line string (16-200 chars) or null');
+    }
+    // Same masked-round-trip defense as github_pat: a value ending in the
+    // masking ellipsis almost certainly came from a masked listing and
+    // would clobber the real token.
+    if (/…$/.test(conn.admin_token)) {
+      throw new Error('SharedBrain connection: admin_token appears to be a masked display value (ends in …). Pass the full token or omit the field.');
+    }
+  }
+  // v3.0.5 (Phase 4.4): data_handling_terms persisted on the connection so
+  // the invite token can be re-displayed from the card with the right
+  // consent mode. Optional for back-compat (older connections default to
+  // contributor_retains at re-display time, with a UI caution).
+  if (conn.data_handling_terms !== undefined &&
+      !['contributor_retains', 'organisational'].includes(conn.data_handling_terms)) {
+    throw new Error('SharedBrain connection: data_handling_terms must be contributor_retains or organisational');
+  }
   // The shared-* namespace is reserved for read-only mirror domains. A mirror
   // as a contributing domain creates a feedback loop (pulled content gets
   // re-contributed, conflict markers re-ingested as facts). The wizard UI

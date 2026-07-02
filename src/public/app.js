@@ -1355,9 +1355,14 @@ function renderSharedBrainCard(conn) {
       <summary>Advanced</summary>
       <div class="sharedbrain-card-advanced-body">
         <button class="btn" data-action="synthesize">Run synthesis (admin)</button>
+        <button class="btn" data-action="show-invite">Show invite token</button>
+        <button class="btn" data-action="admin-token">Generate admin token</button>
         <span class="sharedbrain-card-meta-pill" data-field="fellow-id"></span>
+        <button class="btn sync-disconnect-btn" data-action="revoke">Revoke a contributor…</button>
         <button class="btn sync-disconnect-btn" data-action="disconnect">Disconnect</button>
       </div>
+      <div class="sharedbrain-card-tokenbox hidden" data-field="token-box"></div>
+      <div class="sharedbrain-card-revoke hidden" data-field="revoke-panel"></div>
     </details>
   `;
 
@@ -1385,11 +1390,24 @@ function renderSharedBrainCard(conn) {
 
   // v3.0.4 (H10): read-only member — Push and synthesis are impossible
   // with a read-only PAT; hide them and show the pill instead of letting
-  // the buttons fail with a GitHub 403.
+  // the buttons fail with a GitHub 403. v3.0.5: same for the admin ops
+  // (revocation deletes remote files — needs write access).
   if (conn.read_only === true) {
     card.querySelector('[data-field="readonly-pill"]').classList.remove('hidden');
     card.querySelector('button[data-action="push"]').classList.add('hidden');
     card.querySelector('button[data-action="synthesize"]').classList.add('hidden');
+    card.querySelector('button[data-action="admin-token"]').classList.add('hidden');
+    card.querySelector('button[data-action="revoke"]').classList.add('hidden');
+  } else {
+    // v3.0.5 (4.1/4.2): admin affordances. The masked listing still shows
+    // WHETHER an admin_token exists (non-empty masked value) — that gates
+    // the revoke button; the token itself never reaches the UI.
+    const hasAdminToken = typeof conn.admin_token === 'string' && conn.admin_token.length > 0;
+    card.querySelector('button[data-action="admin-token"]').textContent =
+      hasAdminToken ? 'Rotate admin token' : 'Generate admin token';
+    if (!hasAdminToken) {
+      card.querySelector('button[data-action="revoke"]').classList.add('hidden');
+    }
   }
 
   // v3.0.4 (M14): pending contributions at rest.
@@ -1435,9 +1453,10 @@ function renderSharedBrainCard(conn) {
     repoCell.replaceWith(a);
   }
 
-  // Hook actions
+  // Hook actions. The masked connection rides along for actions that need
+  // its non-secret fields (invite re-display, admin-token label, revoke).
   card.querySelectorAll('button[data-action]').forEach(btn => {
-    btn.addEventListener('click', () => onSharedBrainAction(conn.id, btn.dataset.action, card));
+    btn.addEventListener('click', () => onSharedBrainAction(conn.id, btn.dataset.action, card, { conn }));
   });
 
   // v3.0.4 (M12/M13): restore live or last-known status across re-renders.
@@ -1462,10 +1481,42 @@ function sbApplyStatusTo(card, message, isError) {
   statusEl.classList.add('active');
 }
 
-async function onSharedBrainAction(connId, action, card) {
+async function onSharedBrainAction(connId, action, card, opts = {}) {
   // v3.0.4 (M12): one operation per connection at a time. The status/busy
   // helpers below always resolve the CURRENT card in the DOM, so a Sync-tab
   // re-render mid-operation can't detach the status or re-enable buttons.
+  const conn = opts.conn || null;
+
+  // ── v3.0.5 (Phase 4) card actions ─────────────────────────────────────
+  if (action === 'show-invite')  return sbToggleInviteBox(connId, card, conn);
+  if (action === 'admin-token')  return sbHandleAdminToken(connId, card, conn);
+  if (action === 'revoke')       return sbToggleRevokePanel(connId, card, conn);
+
+  // v3.0.5 (4.5): synthesis merges every pending contribution into the
+  // collective — usually the admin's job. Confirm inline before running.
+  if (action === 'synthesize' && !opts.confirmed) {
+    if (_sbInFlight.has(connId)) {
+      sbSetCardStatus(connId, 'An operation is already running on this connection — wait for it to finish.', true);
+      return;
+    }
+    const statusEl = card.querySelector('[data-field="status"]');
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    statusEl.classList.remove('error');
+    statusEl.classList.add('active');
+    const text = document.createElement('span');
+    text.textContent = 'Run synthesis now? This merges all pending contributions into the collective wiki — it is usually run by the brain admin (weekly, or after a batch of pushes). ';
+    const yes = document.createElement('button');
+    yes.className = 'btn primary';
+    yes.textContent = 'Run synthesis';
+    const no = document.createElement('button');
+    no.className = 'btn';
+    no.textContent = 'Cancel';
+    statusEl.append(text, yes, document.createTextNode(' '), no);
+    no.addEventListener('click', () => { statusEl.textContent = ''; statusEl.classList.remove('active'); });
+    yes.addEventListener('click', () => onSharedBrainAction(connId, 'synthesize', card, { ...opts, confirmed: true }));
+    return;
+  }
 
   if (action === 'disconnect') {
     if (_sbInFlight.has(connId)) {
@@ -1625,6 +1676,322 @@ async function onSharedBrainAction(connId, action, card) {
   }
 }
 
+// ── v3.0.5 (4.4) — invite-token re-display from the card ───────────────────
+//
+// The invite token is DETERMINISTIC (base64 of the connection's metadata),
+// so re-generating from the stored fields reproduces the original token.
+// No secrets involved — safe to show any time.
+
+async function sbToggleInviteBox(connId, card, conn) {
+  const box = card.querySelector('[data-field="token-box"]');
+  if (!box) return;
+  if (!box.classList.contains('hidden')) {
+    box.classList.add('hidden');
+    box.textContent = '';
+    return;
+  }
+  if (!conn || conn.storage_type !== 'github') {
+    sbSetCardStatus(connId, 'Invite re-display is only available for GitHub-backed brains.', true);
+    return;
+  }
+  box.classList.remove('hidden');
+  box.textContent = 'Generating invite token…';
+  try {
+    const r = await fetch('/api/sharedbrain/generate-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo: `${conn.github_repo_owner}/${conn.github_repo_name}`,
+        name: conn.label,
+        shared_domain: conn.shared_domain,
+        branch: conn.github_branch || 'main',
+        storage_type: 'github',
+        data_handling_terms: conn.data_handling_terms || 'contributor_retains',
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `generate-invite returned ${r.status}`);
+    // NOTE: the response also carries a fresh admin_token — deliberately
+    // ignored here (this action re-displays the INVITE token only).
+    box.textContent = '';
+    sbRenderTokenBox(box, 'Invite token — share with new contributors (metadata only, no credentials):', j.token);
+    if (!conn.data_handling_terms) {
+      const warn = document.createElement('p');
+      warn.className = 'hint';
+      warn.textContent = '⚠ This connection predates v3.0.5, so the token above uses the default "contributor retains copyright" terms. If your brain was set up with the organisational (IP transfer) mode, contributors joining with this token would see the wrong consent text — use your originally shared token instead.';
+      box.appendChild(warn);
+    }
+  } catch (err) {
+    box.textContent = `Could not generate the invite token: ${err.message}`;
+  }
+}
+
+// Render a selectable token + Copy button into a container (textContent
+// only — never innerHTML with dynamic data).
+function sbRenderTokenBox(box, labelText, token) {
+  const label = document.createElement('div');
+  label.className = 'hint';
+  label.textContent = labelText;
+  const code = document.createElement('code');
+  code.className = 'sb-invite-token-display';
+  code.textContent = token;
+  const copy = document.createElement('button');
+  copy.className = 'btn';
+  copy.textContent = 'Copy';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      copy.textContent = 'Copied ✓';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1800);
+    } catch {
+      copy.textContent = 'Copy blocked — select the token manually';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 3500);
+    }
+  });
+  box.append(label, code, copy);
+}
+
+// ── v3.0.5 (4.1) — admin-token generation / rotation from the card ─────────
+
+function sbHandleAdminToken(connId, card, conn) {
+  if (_sbInFlight.has(connId)) {
+    sbSetCardStatus(connId, 'An operation is running on this connection — try again when it finishes.', true);
+    return;
+  }
+  const hasToken = !!(conn && typeof conn.admin_token === 'string' && conn.admin_token.length > 0);
+  const statusEl = card.querySelector('[data-field="status"]');
+  if (!statusEl) return;
+  statusEl.textContent = '';
+  statusEl.classList.remove('error');
+  statusEl.classList.add('active');
+  const text = document.createElement('span');
+  text.textContent = hasToken
+    ? 'Rotate the admin token? The CURRENT token stops working immediately — anywhere you stored it becomes invalid. '
+    : 'Generate an admin token for this connection? It authorises contributor revocation (GDPR erasure) and is shown only once — have your password manager ready. ';
+  const yes = document.createElement('button');
+  yes.className = 'btn primary';
+  yes.textContent = hasToken ? 'Rotate token' : 'Generate token';
+  const no = document.createElement('button');
+  no.className = 'btn';
+  no.textContent = 'Cancel';
+  statusEl.append(text, yes, document.createTextNode(' '), no);
+  no.addEventListener('click', () => { statusEl.textContent = ''; statusEl.classList.remove('active'); });
+  yes.addEventListener('click', async () => {
+    yes.disabled = true; no.disabled = true;
+    try {
+      const r = await fetch(`/api/sharedbrain/${connId}/admin-token/rotate`, { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok !== true) throw new Error(j.error || `rotate returned ${r.status}`);
+      statusEl.textContent = '';
+      statusEl.classList.remove('active');
+      // Show ONCE in the token box; deliberately no auto-refresh (a
+      // re-render would wipe the display before the admin copies it).
+      const box = card.querySelector('[data-field="token-box"]');
+      if (box) {
+        box.classList.remove('hidden');
+        box.textContent = '';
+        sbRenderTokenBox(box,
+          'Your admin token — shown ONCE. Store it in a password manager now; it authorises contributor revocation:',
+          j.admin_token);
+      }
+      // Update the current card in place so the admin affordances appear.
+      const btn = card.querySelector('button[data-action="admin-token"]');
+      if (btn) btn.textContent = 'Rotate admin token';
+      const revokeBtn = card.querySelector('button[data-action="revoke"]');
+      if (revokeBtn) revokeBtn.classList.remove('hidden');
+      if (conn) conn.admin_token = 'sbat_set…'; // presence marker for this render's closures
+    } catch (err) {
+      sbSetCardStatus(connId, `Could not ${hasToken ? 'rotate' : 'generate'} the admin token: ${err.message}`, true);
+    }
+  });
+}
+
+// ── v3.0.5 (4.2) — revoke UI (GDPR Article 17) ──────────────────────────────
+
+async function sbToggleRevokePanel(connId, card, conn) {
+  const panel = card.querySelector('[data-field="revoke-panel"]');
+  if (!panel) return;
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    panel.textContent = '';
+    return;
+  }
+  panel.classList.remove('hidden');
+  panel.textContent = 'Loading the member list from the shared repo…';
+  try {
+    const r = await fetch(`/api/sharedbrain/${connId}/members`);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `members returned ${r.status}`);
+    sbBuildRevokePanel(connId, card, panel, Array.isArray(j.members) ? j.members : [], j.self_fellow_id);
+  } catch (err) {
+    panel.textContent = `Could not load the member list: ${err.message}`;
+  }
+}
+
+function sbBuildRevokePanel(connId, card, panel, members, selfFellowId) {
+  panel.textContent = '';
+  const h = document.createElement('h5');
+  h.textContent = 'Revoke a contributor — GDPR Article 17 (irreversible)';
+  const intro = document.createElement('p');
+  intro.className = 'hint';
+  intro.textContent = 'Permanently erases the contributor\'s submissions and every collective page they touched, then rebuilds the collective from the remaining contributors. This cannot be undone.';
+  panel.append(h, intro);
+
+  if (members.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = 'No contributions found in this brain yet — there is nobody to revoke.';
+    panel.appendChild(p);
+    return;
+  }
+
+  let selected = null;
+
+  const list = document.createElement('div');
+  list.className = 'sb-revoke-members';
+
+  const tokenLabel = document.createElement('label');
+  tokenLabel.textContent = 'Admin token (from your password manager)';
+  const tokenInput = document.createElement('input');
+  tokenInput.type = 'password';
+  tokenInput.placeholder = 'sbat_…';
+  tokenInput.autocomplete = 'off';
+
+  const confirmLabel = document.createElement('label');
+  confirmLabel.textContent = 'Type the confirmation to unlock';
+  const confirmInput = document.createElement('input');
+  confirmInput.type = 'text';
+  confirmInput.placeholder = 'Select a member first';
+  confirmInput.autocomplete = 'off';
+  confirmInput.spellcheck = false;
+
+  const goBtn = document.createElement('button');
+  goBtn.className = 'btn sync-disconnect-btn';
+  goBtn.textContent = 'Permanently revoke this contributor';
+  goBtn.disabled = true;
+
+  function refreshGo() {
+    goBtn.disabled = !(
+      selected &&
+      tokenInput.value.trim().length >= 16 &&
+      confirmInput.value.trim() === `REVOKE-${selected.short_id}`
+    );
+  }
+  tokenInput.addEventListener('input', refreshGo);
+  confirmInput.addEventListener('input', refreshGo);
+
+  for (const m of members) {
+    const label = document.createElement('label');
+    label.className = 'sb-checkbox-label';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = `sb-revoke-pick-${connId}`;
+    const span = document.createElement('span');
+    const who = m.display_name ? `${m.display_name} (${m.short_id}…)` : `fellow ${m.short_id}…`;
+    const self = m.fellow_id === selfFellowId ? ' — YOU' : '';
+    span.textContent = `${who}${self} · ${m.submissions} submission${m.submissions === 1 ? '' : 's'} · last active ${formatRelativeTime(m.last_contributed_at)}`;
+    radio.addEventListener('change', () => {
+      selected = m;
+      confirmInput.placeholder = `Type REVOKE-${m.short_id}`;
+      refreshGo();
+    });
+    label.append(radio, span);
+    list.appendChild(label);
+  }
+
+  goBtn.addEventListener('click', () => {
+    runSharedBrainRevoke(connId, card, selected, tokenInput.value.trim(), goBtn);
+  });
+
+  panel.append(list, tokenLabel, tokenInput, confirmLabel, confirmInput, goBtn);
+}
+
+async function runSharedBrainRevoke(connId, card, member, adminToken, goBtn) {
+  if (!member || !adminToken) return;
+  if (_sbInFlight.has(connId)) {
+    sbSetCardStatus(connId, 'An operation is already running on this connection — wait for it to finish.', true);
+    return;
+  }
+  _sbInFlight.set(connId, { action: 'revoke', message: 'Starting revocation…', isError: false });
+  sbSetCardBusy(connId, true);
+  if (goBtn) goBtn.disabled = true;
+
+  function setStatus(msg, isError = false) {
+    const entry = _sbInFlight.get(connId);
+    if (entry) { entry.message = msg; entry.isError = isError; }
+    sbSetCardStatus(connId, msg, isError);
+  }
+  setStatus('Starting revocation…');
+
+  const busyKey = `sharedbrain:${connId}`;
+  if (window.__curatorIngestStart) window.__curatorIngestStart(busyKey);
+
+  let hadError = false;
+  try {
+    const r = await fetch(`/api/sharedbrain/${connId}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        admin_token: adminToken,
+        fellow_id: member.fellow_id,
+        // The user deliberately typed REVOKE-<short id>; the API contract
+        // requires the full literal — construct it from the picked member.
+        confirmation: `REVOKE-${member.fellow_id}`,
+      }),
+    });
+
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || `revoke returned ${r.status}`);
+    }
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop();
+      for (const event of events) {
+        if (!event.startsWith('data:')) continue;
+        try {
+          const payload = JSON.parse(event.slice(5).trim());
+          if (payload.type === 'error') {
+            hadError = true;
+            setStatus(`Error: ${payload.message}`, true);
+          } else if (payload.type === 'done') {
+            const res = payload.result || {};
+            setStatus(
+              `Revocation complete: ${res.contributions_deleted ?? '?'} contributions deleted, ` +
+              `${res.pages_deleted ?? '?'} pages removed, ${res.pages_rebuilt ?? '?'} rebuilt. ` +
+              'Next: tell every contributor to Pull updates (their mirrors drop the erased content), ' +
+              'and remove the person as a GitHub collaborator so they cannot push again.'
+            );
+          } else if (payload.message) {
+            setStatus(payload.message);
+          }
+        } catch { /* malformed SSE frame — ignore */ }
+      }
+    }
+  } catch (err) {
+    hadError = true;
+    setStatus(`Error: ${err.message}`, true);
+  } finally {
+    const entry = _sbInFlight.get(connId);
+    if (entry) _sbLastResult.set(connId, { message: entry.message, isError: entry.isError || hadError });
+    _sbInFlight.delete(connId);
+    sbSetCardBusy(connId, false);
+    if (window.__curatorIngestEnd) window.__curatorIngestEnd(busyKey);
+  }
+
+  if (!hadError) {
+    await refreshSharedBrainList();
+    refreshSyncPendingBadge();
+  }
+}
+
 // ── Shared Brain Wizard — Phase 4D (contributor path) ──────────────────────
 
 const sbWizard = {
@@ -1641,6 +2008,7 @@ const sbWizard = {
     saveInProgress: false,
     slugManuallyEdited: false,    // admin path: auto-derive slug until user overrides
     generatedInviteToken: null,   // admin path: token shown on Step 2
+    generatedAdminToken: null,    // admin path (v3.0.5): revocation credential, shown once
   },
   reset() {
     this.state = {
@@ -1656,6 +2024,7 @@ const sbWizard = {
       saveInProgress: false,
       slugManuallyEdited: false,
       generatedInviteToken: null,
+      generatedAdminToken: null,
     };
   },
 };
@@ -1709,6 +2078,8 @@ function openSharedBrainWizard(mode) {
   if (dhtDefault) dhtDefault.checked = true;
   const adminTokenDisplay = document.getElementById('sb-admin-invite-token');
   if (adminTokenDisplay) adminTokenDisplay.textContent = 'sbi_…';
+  const adminAdminToken = document.getElementById('sb-admin-admin-token');
+  if (adminAdminToken) adminAdminToken.textContent = 'sbat_…';
 
   // Reset disabled-button state
   document.getElementById('sb-step1-next').disabled = true;
@@ -2162,8 +2533,16 @@ function bindSharedBrainWizardStep5() {
       local_domains:       [...sbWizard.state.selectedDomains],
       attribute_by_name:   sbWizard.state.attributeByName,
       read_only:           sbIsReadOnlyVerdict(), // v3.0.4 (H10)
+      // v3.0.5 (4.4): persisted so the invite token can be re-displayed
+      // from the card with the right consent mode.
+      data_handling_terms: meta.data_handling_terms || 'contributor_retains',
       enabled: true,
     };
+    // v3.0.5 (4.1): the admin path stores the revocation credential shown
+    // on step 2. Contributor connections have no admin token.
+    if (sbWizard.state.mode === 'create' && sbWizard.state.generatedAdminToken) {
+      connection.admin_token = sbWizard.state.generatedAdminToken;
+    }
 
     try {
       const r = await fetch('/api/sharedbrain/save', {
@@ -2330,9 +2709,21 @@ function bindSharedBrainAdminStep1() {
         storage_type: 'github',
       };
       sbWizard.state.generatedInviteToken = j.token;
+      // v3.0.5 (Phase 4.1): the revocation credential — shown once on
+      // step 2, stored on the connection at save. Keep the FIRST generated
+      // one if the admin goes Back and regenerates the invite (the invite
+      // token is deterministic; the admin token is random, and silently
+      // replacing an already-noted-down token would strand the admin).
+      if (!sbWizard.state.generatedAdminToken && j.admin_token) {
+        sbWizard.state.generatedAdminToken = j.admin_token;
+      }
 
       // Populate the share screen
       document.getElementById('sb-admin-invite-token').textContent = j.token;
+      const adminTokEl = document.getElementById('sb-admin-admin-token');
+      if (adminTokEl && sbWizard.state.generatedAdminToken) {
+        adminTokEl.textContent = sbWizard.state.generatedAdminToken;
+      }
       const collabLink = document.getElementById('sb-admin-collab-link');
       if (collabLink) collabLink.href = `https://github.com/${repo}/settings/access`;
 
@@ -2350,34 +2741,38 @@ function bindSharedBrainAdminStep1() {
 
 // ── Admin Step 2: copy invite token + advance to PAT step ──
 
-function bindSharedBrainAdminStep2() {
-  const copyBtn = document.getElementById('sb-admin-copy-invite');
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      const token = sbWizard.state.generatedInviteToken;
-      if (!token) return;
-      try {
-        await navigator.clipboard.writeText(token);
-        const label = copyBtn.querySelector('span');
-        const original = label ? label.textContent : 'Copy';
-        copyBtn.classList.add('copied');
-        if (label) label.textContent = 'Copied ✓';
-        setTimeout(() => {
-          copyBtn.classList.remove('copied');
-          if (label) label.textContent = original;
-        }, 1800);
-      } catch {
-        // v3.0.4 (L14): inline hint instead of alert() — select-and-copy
-        // still works; the button label says why nothing happened.
-        const label = copyBtn.querySelector('span');
-        if (label) {
-          const original = label.textContent;
-          label.textContent = 'Copy blocked — select the token and copy manually';
-          setTimeout(() => { label.textContent = original; }, 4000);
-        }
+// Shared copy-button behaviour for wizard token boxes (invite + admin token).
+function bindSbCopyButton(btnId, getText) {
+  const copyBtn = document.getElementById(btnId);
+  if (!copyBtn) return;
+  copyBtn.addEventListener('click', async () => {
+    const text = getText();
+    if (!text) return;
+    const label = copyBtn.querySelector('span');
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = label ? label.textContent : 'Copy';
+      copyBtn.classList.add('copied');
+      if (label) label.textContent = 'Copied ✓';
+      setTimeout(() => {
+        copyBtn.classList.remove('copied');
+        if (label) label.textContent = original;
+      }, 1800);
+    } catch {
+      // v3.0.4 (L14): inline hint instead of alert() — select-and-copy
+      // still works; the button label says why nothing happened.
+      if (label) {
+        const original = label.textContent;
+        label.textContent = 'Copy blocked — select the token and copy manually';
+        setTimeout(() => { label.textContent = original; }, 4000);
       }
-    });
-  }
+    }
+  });
+}
+
+function bindSharedBrainAdminStep2() {
+  bindSbCopyButton('sb-admin-copy-invite', () => sbWizard.state.generatedInviteToken);
+  bindSbCopyButton('sb-admin-copy-admin-token', () => sbWizard.state.generatedAdminToken);
 
   const next = document.getElementById('sb-admin-step2-next');
   if (next) {
