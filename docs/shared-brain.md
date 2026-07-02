@@ -280,6 +280,8 @@ Two adapter paths, two different stories:
 
 Implementation: `ensureSharedDomainExists()` writes `domains/shared-<slug>/CLAUDE.md` with `readonly: true` frontmatter. New helper `isDomainReadonly(domain)` in `src/brain/files.js`. The MCP `refuseIfReadonly()` chokepoint in `mcp/util.js` is called from all four write tools — refuses with a structured error pointing the user back to their personal opted-in domain.
 
+**Extended in v3.0.2:** the same contract is now enforced by the app's own write surfaces, not just the MCP — the ingest route, the compile route, and all six mutating Health endpoints refuse read-only mirrors with the same steer message; the Ingest tab's domain dropdown excludes mirrors; and `validateConnection` + `pushDomain` reserve the `shared-*` namespace so a mirror can never be registered as a *contributing* domain (which would create a pull→push feedback loop).
+
 The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read/write contract from Claude's perspective so it knows where to compile when the user says "save this to the shared brain".
 
 ### Deferred (no decision needed for v1)

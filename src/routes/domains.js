@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { listDomains, createDomain, deleteDomain, renameDomain, getDomainStats, generateUniqueSlug } from '../brain/files.js';
+import { listDomains, createDomain, deleteDomain, renameDomain, getDomainStats, generateUniqueSlug, isDomainReadonly } from '../brain/files.js';
 import { isConfigured } from '../brain/sync.js';
 import { isDomainActive, conflictResponse } from '../brain/write-registry.js';
 
@@ -9,7 +9,14 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const domains = await listDomains();
-    res.json({ domains });
+    // v3.0.2: also report which domains are read-only Shared Brain
+    // mirrors so the UI can exclude them from write-target dropdowns
+    // (ingest). Additive field — older clients ignore it.
+    const readonlyDomains = [];
+    for (const d of domains) {
+      if (await isDomainReadonly(d)) readonlyDomains.push(d);
+    }
+    res.json({ domains, readonlyDomains });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

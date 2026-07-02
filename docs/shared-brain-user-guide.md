@@ -27,11 +27,16 @@ Before any of these, you need a working Curator install on your computer (Mac/Wi
 Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New installs don't see it until you enable it.
 
 1. Open The Curator in your browser (http://localhost:3333).
-2. Click the **Sync** tab.
-3. Scroll past the Personal Sync section. You'll see a **"Shared Brains"** block with a **"Enable Shared Brain (beta)"** button.
-4. Click it.
+2. Click the **Settings** tab.
+3. Scroll to the **"Shared Brain (beta)"** section and click **"Enable Shared Brain (beta)"**.
+4. Open the **Sync** tab (the confirmation links straight to it).
 
-The opt-in confirms by replacing the banner with two cards:
+> Since v3.0.2 the enable toggle lives in **Settings** (it's a one-time
+> configuration choice); the day-to-day operations stay in the **Sync** tab next
+> to Personal Sync. On older versions (v3.0.0-beta.1 → v3.0.1-beta.27) the
+> enable button was at the bottom of the Sync tab instead.
+
+Once enabled, the Sync tab shows a **"Shared Brains"** block with two cards:
 
 - **📨 I have an invite token** — *From my cohort, team, or research group.* — `[Join →]` button
 - **⚙ I'm starting a new Shared Brain** — *Set one up for my cohort or team.* — `[Set up →]` button
@@ -198,7 +203,7 @@ After setup, the Sync tab → Shared Brains → connection card has two main but
 
 | Action | When to use it |
 |---|---|
-| **Push contributions** | After ingesting new sources into your contributing domain. Pushes the changed pages as Delta summaries to the shared repo. |
+| **Push contributions** | After ingesting new sources into your contributing domains. Pushes the changed pages from **every opted-in domain** (v3.0.2+; older versions pushed only the first one) as Delta summaries to the shared repo. |
 | **Pull updates** | Before reading the collective wiki. Refreshes your local `shared-<slug>/` mirror with the latest synthesised pages. |
 
 A typical work session:
@@ -261,14 +266,23 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 **Push says "0 of 0 pages" but I added new content**
 - Your contributing domain's pages were ingested before your `last_push_at` timestamp. Either edit one page (touches mtime) to force re-push, OR ask the admin to run synthesis — they may have synced after your last push without you knowing.
 
+**A page was "marked permanent_skip" — is it gone forever?**
+- No. A page moves to permanent_skip after 3 genuine pre-processing failures. **Edit the page** (any change — even adding a blank line — updates its timestamp) and it retries automatically on your next Push (v3.0.2+). Temporary provider outages (503 / rate limits) never count toward the 3-failure limit — those pages just retry next time.
+
+**Push/Pull button says another operation is in progress**
+- Shared Brain operations now coordinate with ingest, app updates, and Personal Sync (v3.0.2+): you can't start a Pull while an ingest is writing, and you can't update/restart the app mid-Pull. Wait for the running operation to finish; the buttons re-enable automatically.
+
+**A failed push used to show "push completed."**
+- Fixed in v3.0.2 — failures (e.g. GitHub write errors) now show as errors with the real message, and successful operations show the real summary ("Pushed 7 pages. 3 will retry next time.").
+
 **Pull pulls 0 pages but the collective wiki has content**
 - The admin hasn't run synthesis since contributions arrived. Pull only fetches the synthesised collective pages, not raw contribution payloads. Ask the admin to run synthesis.
 
 **`shared-<slug>` domain appears in my domain list but I can't compile to it from Claude**
 - That's by design — the mirror is read-only. Direct writes wouldn't propagate. Use the MCP write tools on your personal opted-in domain instead, then Push.
 
-**Wiki Health "Fix" buttons are disabled on the `shared-<slug>` domain**
-- Same reason — fixes to the mirror would be overwritten. To fix a Health issue in the collective wiki, fix it upstream in your personal contributing domain, then Push.
+**Wiki Health "Fix" refuses to run on the `shared-<slug>` domain**
+- Same reason — fixes to the mirror would be overwritten. Scanning a mirror is allowed (useful for spotting conflict markers), but every fix action returns a clear refusal (v3.0.2+). To fix a Health issue in the collective wiki, fix it upstream in your personal contributing domain, then Push. The mirror also no longer appears in the Ingest tab's domain dropdown.
 
 **SSE stream shows "rate limit low: N requests remaining"**
 - GitHub fine-grained PATs get 5000 REST requests/hour. Heavy synthesis on a large brain can approach this. Wait an hour and retry; for cohort-scale brains this is rare.
@@ -296,7 +310,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 | Action | Where in the Curator app |
 |---|---|
-| Enable Shared Brain (beta) | Sync tab → "Enable Shared Brain (beta)" button |
+| Enable Shared Brain (beta) | Settings tab → "Shared Brain (beta)" section → Enable button (v3.0.2+; previously at the bottom of the Sync tab) |
 | Join a cohort (contributor) | Sync tab → **📨 I have an invite token** → Join → paste invite token |
 | Start a new cohort (admin) | Sync tab → **⚙ I'm starting a new Shared Brain** → Set up |
 | Push your contributions | Sync tab → connection card → "Push contributions" |

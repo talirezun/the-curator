@@ -423,23 +423,13 @@
 
       <!-- ── SHARED BRAINS (v3.0.0-beta+) ─────────────────────────────────────
            Independent of Personal Sync. Visible only when sharedBrainEnabled
-           is true. Opt-in CTA shown when the flag is off; full section when on. -->
+           is true. The opt-in toggle lives in Settings → Shared Brain (beta)
+           since v3.0.2; when the flag is off, the Sync tab shows no
+           Shared Brain content at all (solo users keep a clean Sync tab). -->
 
       <div id="sharedbrain-checking" class="sharedbrain-checking hidden">
         <div class="spinner-sm"></div>
         <span>Loading Shared Brain status…</span>
-      </div>
-
-      <!-- Opt-in banner shown when sharedBrainEnabled is false (default v2.8.0+) -->
-      <div id="sharedbrain-optin" class="sharedbrain-optin hidden">
-        <div class="sharedbrain-divider"></div>
-        <h3 class="sync-block-title">Shared Brains <span class="sharedbrain-beta-pill">beta</span></h3>
-        <p class="sync-block-hint">
-          Contribute to a collective wiki shared with your cohort, team, or research group.
-          Each contributor keeps their personal brain private; only opted-in domains are pushed.
-          This feature is in beta — opt in to try it.
-        </p>
-        <button id="sharedbrain-enable-btn" class="btn primary">Enable Shared Brain (beta)</button>
       </div>
 
       <!-- Full section shown when sharedBrainEnabled is true -->
@@ -1138,6 +1128,25 @@
         </div>
 
         <div id="diag-results" class="diag-results hidden"></div>
+      </div>
+
+      <!-- Shared Brain (beta) — opt-in toggle (moved here from the Sync tab in
+           v3.0.2: enabling a feature is configuration; the day-to-day
+           Push/Pull operations stay in the Sync tab next to Personal Sync). -->
+      <div class="settings-section">
+        <h3>Shared Brain <span class="sharedbrain-beta-pill">beta</span></h3>
+        <p class="hint">
+          Contribute to a collective wiki shared with your cohort, team, or research group.
+          Each contributor keeps their personal brain private; only opted-in domains are pushed.
+          This feature is in beta — opt in to try it.
+        </p>
+        <div id="sharedbrain-optin" class="hidden">
+          <button id="sharedbrain-enable-btn" class="btn primary">Enable Shared Brain (beta)</button>
+        </div>
+        <div id="settings-sharedbrain-enabled" class="hidden">
+          <p class="hint">✅ Shared Brain is enabled on this computer. Set up and manage your
+          connections in the <a href="#" id="settings-sharedbrain-goto-sync">Sync tab</a>.</p>
+        </div>
       </div>
 
       <!-- App -->

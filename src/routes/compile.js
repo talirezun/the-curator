@@ -16,7 +16,7 @@
 
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
-import { listDomains, domainPath } from '../brain/files.js';
+import { listDomains, domainPath, isDomainReadonly } from '../brain/files.js';
 import {
   registerWrite,
   acquireFileLock,
@@ -43,6 +43,16 @@ router.post('/conversation', async (req, res) => {
   const domains = await listDomains();
   if (!domains.includes(domain)) {
     return res.status(400).json({ error: `Unknown domain: ${domain}` });
+  }
+
+  // v3.0.2: refuse compiles into read-only Shared Brain mirrors —
+  // matches the MCP compile_to_wiki guard (Decision 7). Direct writes to a
+  // mirror don't propagate and are overwritten on the next Pull.
+  if (await isDomainReadonly(domain)) {
+    return res.status(400).json({
+      error: `Domain "${domain}" is a read-only Shared Brain mirror. ` +
+             `Compile into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+    });
   }
 
   // v3.0.1-beta.8: refuse if the app updater is mid-flight (matches the

@@ -12,9 +12,14 @@ List all available domains.
 
 ```json
 {
-  "domains": ["ai-tech", "business-finance", "personal-growth"]
+  "domains": ["ai-tech", "business-finance", "personal-growth", "shared-cohort"],
+  "readonlyDomains": ["shared-cohort"]
 }
 ```
+
+`readonlyDomains` (v3.0.2+, additive) lists domains whose `CLAUDE.md`
+declares `readonly: true` — Shared Brain mirror domains. The UI excludes them
+from write-target dropdowns (Ingest); write endpoints refuse them server-side.
 
 ---
 
@@ -415,6 +420,8 @@ Apply a single fix for a specific issue.
 ```
 
 `type` must be one of the auto-fixable types. `issue` must be an exact issue object returned by `GET /api/health/:domain`.
+
+**Read-only mirrors (v3.0.2+):** every mutating Health endpoint (`/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch`) returns **400** when `:domain` is a read-only Shared Brain mirror (`readonly: true` in the domain's `CLAUDE.md`) — fixes to a mirror would be overwritten on the next Pull. Scanning (`GET /api/health/:domain`) and read-only planning endpoints still work on mirrors.
 
 **Success response** `200 OK`
 
@@ -916,7 +923,7 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 
 ## Shared Brain endpoints (`v3.0.0-beta+`)
 
-Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the Sync tab.
+Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in **Settings → Shared Brain (beta)** (moved there from the Sync tab in v3.0.2).
 
 Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, message, ...meta}`) ending in `{type: "done", result: {...}}` or `{type: "error", message}`.
 
@@ -939,9 +946,9 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 
 | Path | Description |
 |---|---|
-| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}` (defaults to `connection.local_domains[0]`). Walks the local domain, finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. SSE. |
-| `POST /api/sharedbrain/:id/pull` | Pulls the synthesised collective wiki into the local `domains/shared-<slug>/` mirror via the existing `writePage` pipeline. SSE. |
-| `POST /api/sharedbrain/:id/synthesize` | Runs the synthesis pipeline locally (admin operation). Aggregates contributions since the last synthesis, applies merge rules 1-5 from the design doc, writes synthesised pages back to shared storage. SSE. |
+| `POST /api/sharedbrain/:id/push` | Body: `{local_domain?: string}`. With `local_domain` set, pushes just that domain; without it, pushes **every** domain in `connection.local_domains` sequentially (v3.0.2+ — previously only `local_domains[0]`). For each domain: finds pages changed since `last_push_at`, runs local-LLM Delta synthesis, uploads contribution payloads. Per-domain `ok:false` results are emitted as `error` events; a final `done` event carries an aggregate `message` + `results[]`. SSE. |
+| `POST /api/sharedbrain/:id/pull` | Pulls the synthesised collective wiki into the local `domains/shared-<slug>/` mirror via the existing `writePage` pipeline. Registers in the write-registry and takes the mirror domain's `.write-lock` (v3.0.2+), so update/restart/sync/ingest return 409 while it runs. SSE. |
+| `POST /api/sharedbrain/:id/synthesize` | Runs the synthesis pipeline locally (admin operation). Aggregates contributions since the last synthesis, applies merge rules 1-5 from the design doc, writes synthesised pages back to shared storage. A malformed contribution now degrades to a per-page warning (`pages_failed` in the result) instead of aborting the run (v3.0.2+). Registers in the write-registry. SSE. |
 | `POST /api/sharedbrain/:id/revoke` | Admin-only — GDPR Article 17. Body: `{admin_token, fellow_id, confirmation: "REVOKE-<fellow_id>"}`. Deletes the fellow's contributions + digest, scrubs Provenance-tainted collective pages, re-runs synthesis from scratch, appends to `state/revocations.jsonl`. SSE. |
 
 ### Invite-token utilities (no credentials)
@@ -974,6 +981,6 @@ The server also serves the web UI from `src/public/` at the root path.
 
 ## Notes
 
-- The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF / DNS-rebinding defense); requests with no `Origin` (curl, scripts) and all GETs pass through. There is no per-request authentication — it remains a single-user local app.
+- The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF defense); requests with no `Origin` (curl, scripts) and all GETs pass through. Additionally (v3.0.2+), a Host-header guard rejects any request whose `Host` is not a loopback form (`localhost:PORT` / `127.0.0.1:PORT` / `[::1]:PORT`) with 403 — this closes DNS-rebinding read access, where a rebound hostname made same-origin GETs readable by an attacker page. There is no per-request authentication — it remains a single-user local app.
 - The ingest endpoint blocks until Claude returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to Claude).
 - The query endpoint sends up to 90,000 characters of wiki content to Claude in a single call. Very large wikis (150+ pages) may hit the context limit. In that case, consider splitting the domain or removing less useful pages.

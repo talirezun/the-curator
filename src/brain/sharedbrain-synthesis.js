@@ -169,10 +169,20 @@ export function groupDeltasByPage(contributions) {
 export async function mergeFactsForPage(pageTitle, existingFacts, newContributions, llmFn, shortenId) {
   // Build the candidate pool: existing facts + all new contributions.
   // We track who contributed each fact (existing facts are attributed to "prior").
+  // Defense in depth (v3.0.2): stored contribution payloads are a
+  // TRUST BOUNDARY — any contributor with repo write access can hand-craft
+  // them, and a buggy client / corrupted write can produce non-string facts.
+  // A single non-string here used to throw out of the whole synthesis run
+  // (`c.text.trim()` below), permanently re-poisoning every future run.
+  // Skip anything that isn't a non-empty string.
   const candidates = [];
-  for (const f of existingFacts) candidates.push({ text: f, source: 'prior' });
+  for (const f of existingFacts) {
+    if (typeof f === 'string' && f.trim()) candidates.push({ text: f, source: 'prior' });
+  }
   for (const { contributorId, facts } of newContributions) {
-    for (const f of facts) candidates.push({ text: f, source: contributorId });
+    for (const f of facts) {
+      if (typeof f === 'string' && f.trim()) candidates.push({ text: f, source: contributorId });
+    }
   }
 
   // Stage 1: deduplicate exact-string matches (post-trim, case-insensitive).
@@ -547,6 +557,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
   const nowIso = nowDate.toISOString();
 
   let pagesWritten = 0;
+  let pagesFailed = 0;
   let totalConflicts = 0;
   const writtenPaths = [];
 
@@ -555,6 +566,15 @@ export async function runLocalSynthesis(connection, opts = {}) {
   for (const pagePath of sortedPaths) {
     const entries = grouped.get(pagePath);
     onProgress('progress', `Synthesizing ${pagePath} (${entries.length} contribution${entries.length !== 1 ? 's' : ''})`);
+
+    // v3.0.2: the whole per-page body is guarded so one malformed
+    // contribution (hand-crafted payload, corrupted JSON, adapter hiccup)
+    // degrades to a skipped page instead of aborting the entire synthesis
+    // run. Before this guard, an exception here escaped runLocalSynthesis
+    // and — because state.last-synthesis only advances at the end — the
+    // poisoned contribution was re-listed on EVERY future run, bricking
+    // synthesis until an admin manually deleted the file.
+    try {
 
     // Load existing collective page (may not exist on first synthesis)
     let existingContent;
@@ -585,10 +605,13 @@ export async function runLocalSynthesis(connection, opts = {}) {
     }
     if (!title) title = pagePath.split('/').pop().replace(/\.md$/, '');
 
-    // Merge facts (Rule 1 + Rule 3)
+    // Merge facts (Rule 1 + Rule 3). Non-string entries are dropped at the
+    // trust boundary — stored payloads may not have come from our delta module.
     const newContributions = entries.map(({ delta, contributorId }) => ({
       contributorId,
-      facts: Array.isArray(delta.new_facts) ? delta.new_facts : [],
+      facts: Array.isArray(delta.new_facts)
+        ? delta.new_facts.filter(f => typeof f === 'string' && f.trim())
+        : [],
     }));
     const { unifiedFacts, conflicts } = await mergeFactsForPage(
       title, existingFacts, newContributions, llmFn, shortenId
@@ -624,7 +647,17 @@ export async function runLocalSynthesis(connection, opts = {}) {
       pagesWritten++;
       writtenPaths.push(pagePath);
     } catch (err) {
+      pagesFailed++;
       console.error(`[sharedbrain-synthesis] writePage failed for "${pagePath}": ${err.message}`);
+      onProgress('warn', `${pagePath}: write to collective storage failed — ${err.message}`);
+    }
+
+    } catch (err) {
+      // Per-page guard (see comment at the top of the loop). Surface the
+      // failure loudly but keep going — other pages must still synthesize.
+      pagesFailed++;
+      console.error(`[sharedbrain-synthesis] page "${pagePath}" failed to synthesize: ${err.message}`);
+      onProgress('warn', `${pagePath}: skipped this cycle — ${err.message}`);
     }
   }
 
@@ -661,10 +694,12 @@ export async function runLocalSynthesis(connection, opts = {}) {
   patchFn(connection.id, { last_synthesis_at: nowIso });
 
   const summary = `Synthesis complete: ${pagesWritten} page${pagesWritten !== 1 ? 's' : ''} written from ${contributions.length} contribution${contributions.length !== 1 ? 's' : ''}` +
-    (totalConflicts > 0 ? `, ${totalConflicts} unresolved contradiction${totalConflicts !== 1 ? 's' : ''} flagged` : '');
+    (totalConflicts > 0 ? `, ${totalConflicts} unresolved contradiction${totalConflicts !== 1 ? 's' : ''} flagged` : '') +
+    (pagesFailed > 0 ? `, ${pagesFailed} page${pagesFailed !== 1 ? 's' : ''} failed (see warnings)` : '');
   onProgress('done', summary, {
     processed_contributions: contributions.length,
     pages_written: pagesWritten,
+    pages_failed: pagesFailed,
     conflicts: totalConflicts,
   });
 
@@ -672,6 +707,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
     ok: true,
     processed_contributions: contributions.length,
     pages_written: pagesWritten,
+    pages_failed: pagesFailed,
     conflicts: totalConflicts,
   };
 }

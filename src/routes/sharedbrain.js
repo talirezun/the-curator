@@ -56,6 +56,13 @@ import {
 import { pushDomain, pullCollective } from '../brain/sharedbrain.js';
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
+import { domainPath } from '../brain/files.js';
+import {
+  registerWrite,
+  acquireFileLock,
+  isUpdateInProgress,
+  conflictResponse,
+} from '../brain/write-registry.js';
 
 const router = Router();
 
@@ -83,6 +90,14 @@ const REPO_RE = /^([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9._-]{1,100})$/;
 
 function isUuid(s) { return typeof s === 'string' && UUID_RE.test(s); }
 function isSlug(s) { return typeof s === 'string' && SLUG_RE.test(s); }
+// REPO_RE's name part admits "." / ".." — no SSRF (the GitHub host is
+// hardcoded and URL normalisation stays on api.github.com), but reject them
+// explicitly for cleanliness (v3.0.2).
+function isValidRepo(s) {
+  if (typeof s !== 'string') return false;
+  const m = s.match(REPO_RE);
+  return !!m && m[2] !== '.' && m[2] !== '..';
+}
 
 // ── Invite token codec ───────────────────────────────────────────────────
 //
@@ -128,7 +143,7 @@ export function encodeInviteToken(metadata) {
   };
   // Sanity-check required fields BEFORE encoding so a bad invite token
   // can't be generated in the first place.
-  if (!REPO_RE.test(payload.repo || '')) throw new Error('encodeInviteToken: repo must be "owner/name"');
+  if (!isValidRepo(payload.repo || '')) throw new Error('encodeInviteToken: repo must be "owner/name"');
   if (typeof payload.name !== 'string' || !payload.name.trim()) throw new Error('encodeInviteToken: name is required');
   if (!isSlug(payload.shared_domain)) throw new Error('encodeInviteToken: shared_domain must be slug-shaped');
   if (!VALID_DATA_HANDLING_TERMS.includes(payload.data_handling_terms)) {
@@ -137,9 +152,17 @@ export function encodeInviteToken(metadata) {
   return INVITE_PREFIX + base64UrlEncode(JSON.stringify(payload));
 }
 
+// Real invite tokens are a few hundred bytes. Anything bigger is garbage —
+// cap BEFORE the regex/base64/JSON work so a pasted megabyte can't spike
+// memory (the JSON body limit is 50 MB for Health batch plans) (v3.0.2).
+const INVITE_TOKEN_MAX_CHARS = 8192;
+
 export function decodeInviteToken(token) {
   if (typeof token !== 'string' || !token.startsWith(INVITE_PREFIX)) {
     throw new Error('Invite token must start with "sbi_"');
+  }
+  if (token.length > INVITE_TOKEN_MAX_CHARS) {
+    throw new Error('Invite token is too long to be valid');
   }
   const body = token.slice(INVITE_PREFIX.length);
   if (!/^[A-Za-z0-9_-]+$/.test(body)) {
@@ -156,7 +179,7 @@ export function decodeInviteToken(token) {
   if (parsed.v > INVITE_VERSION) {
     throw new Error(`Invite token uses version ${parsed.v}; this Curator install supports up to v${INVITE_VERSION}. Update The Curator.`);
   }
-  if (!REPO_RE.test(parsed.repo || '')) throw new Error('Invite token: repo must be "owner/name"');
+  if (!isValidRepo(parsed.repo || '')) throw new Error('Invite token: repo must be "owner/name"');
   if (typeof parsed.name !== 'string' || !parsed.name.trim()) throw new Error('Invite token: name is required');
   if (!isSlug(parsed.shared_domain)) throw new Error('Invite token: shared_domain must be slug-shaped');
   if (parsed.branch) {
@@ -266,25 +289,72 @@ function loadConnectionOr404(id, res) {
 
 // ── Push / Pull / Synthesize (SSE) ───────────────────────────────────────
 
+// v3.0.2: the push/pull/synthesize/revoke operations now participate
+// in the write-registry (and, for pull, the per-domain file lock) exactly
+// like ingest/compile do. Before this, an app update or restart could kill
+// the process mid-pull or mid-revoke, and Personal Sync could snapshot a
+// half-pulled mirror — the same bug class v3.0.1-beta.8 fixed for ingest.
+
 router.post('/:id/push', gate, async (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
 
-  const localDomain = (req.body && req.body.local_domain) || conn.local_domains?.[0];
-  if (!isSlug(localDomain)) {
-    return res.status(400).json({ error: 'local_domain is required (or set in connection.local_domains[0])' });
+  // Explicit local_domain → push just that one. Otherwise push EVERY
+  // opted-in domain (v3.0.2 — previously only local_domains[0]
+  // was pushed and the other opted-in domains silently never contributed).
+  const explicit = req.body && req.body.local_domain;
+  let domainsToPush;
+  if (explicit !== undefined && explicit !== null && explicit !== '') {
+    if (!isSlug(explicit)) {
+      return res.status(400).json({ error: 'local_domain must be a slug-shaped domain name' });
+    }
+    domainsToPush = [explicit];
+  } else {
+    domainsToPush = Array.isArray(conn.local_domains) ? conn.local_domains.filter(isSlug) : [];
+  }
+  if (domainsToPush.length === 0) {
+    return res.status(400).json({ error: 'No contributing domains configured on this connection. Add at least one in the connection settings.' });
+  }
+
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('push Shared Brain contributions');
+    return res.status(status).json(body);
   }
 
   const emit = openSseStream(res);
+  const releases = domainsToPush.map(d => registerWrite(d, 'sharedbrain-push'));
   try {
-    const result = await pushDomain(conn, localDomain, {
-      onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
-    });
-    emit({ type: 'done', result });
+    const results = [];
+    for (const d of domainsToPush) {
+      if (domainsToPush.length > 1) emit({ type: 'info', message: `— Domain "${d}" —` });
+      const result = await pushDomain(conn, d, {
+        onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
+      });
+      results.push(result);
+      if (result && result.ok === false) {
+        emit({ type: 'error', message: `${d}: ${result.error || 'push failed'}` });
+      }
+    }
+
+    const okResults = results.filter(r => r && r.ok);
+    const failedCount = results.length - okResults.length;
+    if (okResults.length > 0) {
+      const totPushed  = okResults.reduce((n, r) => n + (r.pushed  || 0), 0);
+      const totSkipped = okResults.reduce((n, r) => n + (r.skipped || 0), 0);
+      const message =
+        `Push complete: ${totPushed} page${totPushed !== 1 ? 's' : ''} pushed` +
+        (domainsToPush.length > 1 ? ` across ${okResults.length} domain${okResults.length !== 1 ? 's' : ''}` : '') +
+        (totSkipped > 0 ? `, ${totSkipped} will retry next time` : '') +
+        (failedCount > 0 ? `, ${failedCount} domain${failedCount !== 1 ? 's' : ''} failed` : '') + '.';
+      emit({ type: 'done', message, results });
+    }
+    // If every domain failed, the error events above are the outcome —
+    // no 'done' is emitted, so the UI keeps the error styling.
   } catch (err) {
     console.error('[sharedbrain push]', err.message);
     emit({ type: 'error', message: err.message });
   } finally {
+    releases.forEach(r => r());
     res.end();
   }
 });
@@ -293,16 +363,49 @@ router.post('/:id/pull', gate, async (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
 
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('pull Shared Brain updates');
+    return res.status(status).json(body);
+  }
+
+  // Guard before any mkdir/lock — a malformed connection must not create a
+  // ghost "shared-undefined" domain directory.
+  if (!isSlug(conn.shared_brain_slug)) {
+    return res.status(400).json({ error: 'Connection has an invalid shared_brain_slug — re-save the connection.' });
+  }
+  const localDomain = `shared-${conn.shared_brain_slug}`;
   const emit = openSseStream(res);
+
+  // Pull writes wiki pages into the local mirror domain via writePage —
+  // register + file-lock it so update/restart/sync/ingest 409 instead of
+  // racing the writes (and the MCP child process sees the in-flight state).
+  const releaseRegistry = registerWrite(localDomain, 'sharedbrain-pull');
+  const releaseFileLock = await acquireFileLock(domainPath(localDomain), { op: 'sharedbrain-pull' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    emit({
+      type: 'error',
+      message: `Another process is already writing to "${localDomain}" (file lock held). ` +
+               `If this seems stuck, manually delete <domains>/${localDomain}/.write-lock and retry.`,
+    });
+    return res.end();
+  }
+
   try {
     const result = await pullCollective(conn, {
       onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
     });
-    emit({ type: 'done', result });
+    if (result && result.ok === false) {
+      emit({ type: 'error', message: result.error || 'Pull failed' });
+    } else {
+      emit({ type: 'done', result });
+    }
   } catch (err) {
     console.error('[sharedbrain pull]', err.message);
     emit({ type: 'error', message: err.message });
   } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
     res.end();
   }
 });
@@ -311,16 +414,30 @@ router.post('/:id/synthesize', gate, async (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
 
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('run Shared Brain synthesis');
+    return res.status(status).json(body);
+  }
+
   const emit = openSseStream(res);
+  // Synthesis writes only to REMOTE collective storage (+ a config patch),
+  // but a restart/update mid-run would leave the collective half-written
+  // with contributions consumed — register so those endpoints 409.
+  const releaseRegistry = registerWrite(`shared-${conn.shared_brain_slug}`, 'sharedbrain-synthesize');
   try {
     const result = await runLocalSynthesis(conn, {
       onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
     });
-    emit({ type: 'done', result });
+    if (result && result.ok === false) {
+      emit({ type: 'error', message: result.error || 'Synthesis failed' });
+    } else {
+      emit({ type: 'done', result });
+    }
   } catch (err) {
     console.error('[sharedbrain synthesize]', err.message);
     emit({ type: 'error', message: err.message });
   } finally {
+    releaseRegistry();
     res.end();
   }
 });
@@ -348,9 +465,19 @@ router.post('/:id/revoke', gate, async (req, res) => {
     });
   }
 
+  // v3.0.2: a revoke interrupted by update/restart is the worst
+  // possible state — remote contributions and pages already deleted but the
+  // rebuild synthesis never ran. Refuse to start during an update, and
+  // register so update/restart 409 for the duration.
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse('revoke a Shared Brain contributor');
+    return res.status(status).json(body);
+  }
+
   // Phase 4F (v3.0.0-beta+) — full Article 17 revocation orchestration.
   // SSE-streamed because pages-rebuild on a moderate brain can take 30s+.
   const emit = openSseStream(res);
+  const releaseRegistry = registerWrite(`shared-${conn.shared_brain_slug}`, 'sharedbrain-revoke');
   try {
     const result = await revokeContributor(conn, {
       fellowId: fellow_id,
@@ -366,6 +493,7 @@ router.post('/:id/revoke', gate, async (req, res) => {
     console.error('[sharedbrain revoke]', err.message);
     emit({ type: 'error', message: err.message });
   } finally {
+    releaseRegistry();
     res.end();
   }
 });
@@ -408,7 +536,7 @@ router.post('/validate-pat', gate, async (req, res) => {
   try {
     const { repo, pat } = req.body || {};
 
-    if (typeof repo !== 'string' || !REPO_RE.test(repo)) {
+    if (typeof repo !== 'string' || !isValidRepo(repo)) {
       return res.status(400).json({ error: 'repo must be "owner/name"' });
     }
     if (typeof pat !== 'string' || pat.length < 20 || pat.length > 400) {

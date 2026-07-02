@@ -178,6 +178,12 @@ The collective wiki is read-only for direct edits — that's by design. You reso
 
 ## 8 — When things go wrong (admin edition)
 
+### Synthesis warns "N pages failed (see warnings)"
+One or more contributions couldn't be processed for those pages (a malformed contribution payload, or a storage write failure). Since v3.0.2 a bad contribution degrades to a per-page warning instead of aborting the whole synthesis run — the rest of the brain still synthesizes. Check the SSE warnings for the page paths, inspect the matching `contributions/<fellow>/*.json` files in the repo, and delete any malformed ones; the pages recover on the next cycle.
+
+### "Cannot update/restart while a write operation is running: shared-… (sharedbrain-…)"
+Since v3.0.2, push/pull/synthesize/revoke register with the app's write-coordination layer: app updates, restarts, and Personal Sync return 409 while a Shared Brain operation runs (and vice versa — a Pull can't start mid-ingest on the same mirror). Wait for the running operation to finish and retry.
+
 ### Synthesis reported "0 pages written" but I see contributions in storage
 The contributions' `contributed_at` timestamps are earlier than `state.last-synthesis.at`. Synthesis only processes contributions newer than the last run. To force-reprocess everything: temporarily edit `meta/state/last-synthesis.json` in the repo, set `at` to `"1970-01-01T00:00:00Z"`, then trigger Run synthesis again. Restore the timestamp afterward if needed.
 

@@ -71,6 +71,34 @@ const ALLOWED_ORIGINS = new Set([
   `http://localhost:${PORT}`,
   `http://127.0.0.1:${PORT}`,
 ]);
+
+// ── Host-header guard (v3.0.2) ────────────────────────────────────────
+// The Origin guard below only covers MUTATING requests — a DNS-rebinding page
+// (attacker.com re-pointed at 127.0.0.1) makes what the browser considers
+// same-origin GETs, with no Origin header and a fully readable response. That
+// exposed every GET endpoint (wiki content, config, connection metadata).
+// Rebinding cannot forge the Host header, so validating it closes the hole
+// app-wide. Requests with no Host (bare HTTP/1.0 clients) are allowed — they
+// are not browsers. The server only binds 127.0.0.1, so no legitimate client
+// ever reaches us under a non-loopback hostname.
+const ALLOWED_HOSTS = new Set([
+  `localhost:${PORT}`,
+  `127.0.0.1:${PORT}`,
+  `[::1]:${PORT}`,
+  'localhost',
+  '127.0.0.1',
+  '[::1]',
+]);
+app.use((req, res, next) => {
+  const host = req.headers.host;
+  if (host && !ALLOWED_HOSTS.has(host.toLowerCase())) {
+    return res.status(403).json({
+      error: 'Invalid Host header. The Curator only serves requests addressed ' +
+             `to http://localhost:${PORT} or http://127.0.0.1:${PORT}.`,
+    });
+  }
+  next();
+});
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 app.use((req, res, next) => {
   if (!MUTATING_METHODS.has(req.method)) return next();

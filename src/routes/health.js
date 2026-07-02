@@ -10,7 +10,7 @@
  */
 import { Router } from 'express';
 import { readFileSync } from 'fs';
-import { listDomains } from '../brain/files.js';
+import { listDomains, isDomainReadonly } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE } from '../brain/health.js';
 import {
   suggestBrokenLinkTarget,
@@ -81,6 +81,24 @@ async function assertDomain(domain) {
   }
 }
 
+// v3.0.2: mutating Health endpoints refuse read-only Shared Brain
+// mirrors (Decision 7) — a "fix" applied to a mirror is silently overwritten
+// on the next Pull. Scanning mirrors stays allowed (read-only, and useful to
+// spot conflict markers). This matches the promise docs/shared-brain-user-guide.md
+// has made since beta.1 ("Fix buttons are disabled on the shared-<slug> domain").
+async function assertWritableDomain(domain) {
+  await assertDomain(domain);
+  if (await isDomainReadonly(domain)) {
+    const err = new Error(
+      `Domain "${domain}" is a read-only Shared Brain mirror — fixes here would be ` +
+      `overwritten on the next Pull. Fix the issue in your personal contributing domain, ` +
+      `then push contributions from the Sync tab.`
+    );
+    err.status = 400;
+    throw err;
+  }
+}
+
 router.get('/:domain', async (req, res) => {
   try {
     const { domain } = req.params;
@@ -99,7 +117,7 @@ router.post('/:domain/fix', async (req, res) => {
     const { type, issue } = req.body || {};
     if (!type)                 return res.status(400).json({ error: 'Missing type' });
     if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
-    await assertDomain(domain);
+    await assertWritableDomain(domain);
     const result = await fixIssue(domain, type, issue || null);
     res.json({ ok: true, ...result });
   } catch (err) {
@@ -268,7 +286,7 @@ router.post('/:domain/broken-links/plan', async (req, res) => {
 const MAX_BROKEN_LINK_PLAN = 20000;
 router.post('/:domain/broken-links/apply', async (req, res) => {
   const { domain } = req.params;
-  try { await assertDomain(domain); }
+  try { await assertWritableDomain(domain); }
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
 
   const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
@@ -346,7 +364,7 @@ router.post('/:domain/orphans/plan', async (req, res) => {
 const MAX_ORPHAN_PLAN = 20000;
 router.post('/:domain/orphans/apply', async (req, res) => {
   const { domain } = req.params;
-  try { await assertDomain(domain); }
+  try { await assertWritableDomain(domain); }
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
 
   const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
@@ -388,7 +406,7 @@ router.post('/:domain/fix-all-safe', async (req, res) => {
   const { domain } = req.params;
   // Validate the domain BEFORE acquiring the lock / mkdir — otherwise a bogus
   // domain manufactures a ghost directory + .write-lock on disk (audit H1).
-  try { await assertDomain(domain); }
+  try { await assertWritableDomain(domain); }
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
   if (isUpdateInProgress()) {
     const { status, body } = conflictResponse(`bulk-fix domain "${domain}"`);
@@ -423,7 +441,7 @@ const MAX_BATCH_MERGE_PAIRS = 2000;
 router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
   const { domain } = req.params;
   try {
-    await assertDomain(domain);
+    await assertWritableDomain(domain);
   } catch (err) {
     return res.status(err.status || 500).json({ error: err.message });
   }
@@ -491,7 +509,7 @@ router.post('/:domain/fix-all', async (req, res) => {
   const { domain } = req.params;
   // Validate domain + body BEFORE acquiring the lock / mkdir (audit H1) so a
   // bogus domain or malformed body never manufactures a ghost directory.
-  try { await assertDomain(domain); }
+  try { await assertWritableDomain(domain); }
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
   const { type } = req.body || {};
   if (!type)                  return res.status(400).json({ error: 'Missing type' });

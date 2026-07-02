@@ -40,10 +40,16 @@ const domainSelects = ['ingest-domain', 'wiki-domain', 'health-domain'];
 
 async function loadDomains() {
   const res = await fetch('/api/domains');
-  const { domains } = await res.json();
+  const { domains, readonlyDomains = [] } = await res.json();
   domainSelects.forEach(id => {
     const el = document.getElementById(id);
-    el.innerHTML = domains
+    // Read-only Shared Brain mirrors can't be ingested into (the backend
+    // refuses too) — keep them out of the ingest target dropdown. Wiki and
+    // Health dropdowns keep them: reading + scanning a mirror is fine.
+    const list = id === 'ingest-domain'
+      ? domains.filter(d => !readonlyDomains.includes(d))
+      : domains;
+    el.innerHTML = list
       .map(d => `<option value="${d}">${formatDomain(d)}</option>`)
       .join('');
   });
@@ -967,6 +973,23 @@ function _applyIngestBusyState() {
       delete el.dataset.preIngestDisabled;
     }
   });
+  // Shared Brain card buttons (created dynamically per-card) — a Shared
+  // Brain pull writes wiki pages, so it must not start mid-ingest (and vice
+  // versa: SB operations register through this same gate, disabling
+  // Update/Sync/Delete while they run). v3.0.2.
+  document.querySelectorAll('.sharedbrain-card button[data-action]').forEach(el => {
+    if (busy) {
+      if (!el.dataset.preIngestDisabled) {
+        el.dataset.preIngestDisabled = el.disabled ? '1' : '0';
+      }
+      el.disabled = true;
+      el.title = 'Another operation is in progress — please wait for it to finish.';
+    } else {
+      if (el.dataset.preIngestDisabled === '0') el.disabled = false;
+      el.removeAttribute('title');
+      delete el.dataset.preIngestDisabled;
+    }
+  });
 }
 function ingestStart(domain) {
   _activeIngests.set(domain, (_activeIngests.get(domain) || 0) + 1);
@@ -1027,17 +1050,18 @@ document.querySelector('[data-tab="sync"]').addEventListener('click', () => {
 // instead. Flipping the flag is one POST away — UI updates immediately.
 
 const sbChecking = () => document.getElementById('sharedbrain-checking');
-const sbOptin    = () => document.getElementById('sharedbrain-optin');
 const sbSection  = () => document.getElementById('sharedbrain-section');
 const sbEmpty    = () => document.getElementById('sharedbrain-empty');
 const sbList     = () => document.getElementById('sharedbrain-list');
 const sbAddMore  = () => document.getElementById('sharedbrain-add-more');
 
+// v3.0.2: the enable/opt-in toggle moved to Settings → Shared Brain
+// (beta). The Sync tab shows the operational section ONLY when the flag is
+// on — solo users (the vast majority) see no Shared Brain content here.
 async function initSharedBrainSection() {
   const checking = sbChecking();
   if (!checking) return; // index.html doesn't have the section (older app file?)
   showEl(checking);
-  hideEl(sbOptin());
   hideEl(sbSection());
 
   try {
@@ -1045,21 +1069,32 @@ async function initSharedBrainSection() {
     const flag    = await flagRes.json();
     hideEl(checking);
 
-    if (!flag.enabled) {
-      showEl(sbOptin());
-      return;
-    }
+    if (!flag.enabled) return; // enable lives in Settings → Shared Brain (beta)
 
     showEl(sbSection());
     await refreshSharedBrainList();
   } catch (err) {
     hideEl(checking);
-    showEl(sbOptin()); // fall back to opt-in if API errored
     console.error('[sharedbrain] init failed', err);
   }
 }
 
-// Opt-in button — flips the feature flag and shows the full section
+// Settings → Shared Brain (beta): show either the enable button or the
+// "enabled — go to the Sync tab" state, based on the current flag.
+async function refreshSharedBrainSettings() {
+  const optin   = document.getElementById('sharedbrain-optin');
+  const enabled = document.getElementById('settings-sharedbrain-enabled');
+  if (!optin || !enabled) return;
+  try {
+    const r = await fetch('/api/sharedbrain/feature-flag');
+    const j = await r.json();
+    if (j.enabled) { hideEl(optin); showEl(enabled); }
+    else           { showEl(optin); hideEl(enabled); }
+  } catch { /* leave both hidden — transient error; next Settings visit retries */ }
+}
+
+// Opt-in button (Settings tab) — flips the feature flag. The Sync tab picks
+// the new state up on its next open (its click handler re-inits the section).
 function bindSharedBrainOptin() {
   const btn = document.getElementById('sharedbrain-enable-btn');
   if (!btn) return;
@@ -1070,15 +1105,22 @@ function bindSharedBrainOptin() {
       const r = await fetch('/api/sharedbrain/enable-flag', { method: 'POST' });
       const j = await r.json();
       if (!j.enabled) throw new Error(j.error || 'Could not enable Shared Brain');
-      hideEl(sbOptin());
-      showEl(sbSection());
-      await refreshSharedBrainList();
+      await refreshSharedBrainSettings();
     } catch (err) {
+      alert(`Could not enable Shared Brain: ${err.message}`);
+    } finally {
       btn.disabled = false;
       btn.textContent = 'Enable Shared Brain (beta)';
-      alert(`Could not enable Shared Brain: ${err.message}`);
     }
   });
+  // "Sync tab" link in the enabled state — jump straight there.
+  const goto = document.getElementById('settings-sharedbrain-goto-sync');
+  if (goto) {
+    goto.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelector('[data-tab="sync"]')?.click();
+    });
+  }
 }
 
 async function refreshSharedBrainList() {
@@ -1246,6 +1288,12 @@ async function onSharedBrainAction(connId, action, card) {
   buttons.forEach(b => { b.disabled = true; });
   setStatus(`Starting ${action}…`);
 
+  // v3.0.2: register through the same busy-state gate as ingest so
+  // Update / Sync / Delete buttons are disabled while a Shared Brain
+  // operation writes (mirrors the backend write-registry 409 guard).
+  const busyKey = `sharedbrain:${connId}`;
+  if (window.__curatorIngestStart) window.__curatorIngestStart(busyKey);
+
   try {
     const r = await fetch(`/api/sharedbrain/${connId}/${action}`, {
       method: 'POST',
@@ -1279,10 +1327,18 @@ async function onSharedBrainAction(connId, action, card) {
             hadError = true;
             setStatus(`Error: ${payload.message}`, true);
           } else if (payload.type === 'done') {
-            const summary = payload.result && payload.result.message
-              ? payload.result.message
-              : `${action} completed.`;
-            setStatus(summary);
+            // v3.0.2: prefer the backend's real summary ("Pushed 7
+            // pages. 3 will retry next time."). The route's final done event
+            // carries the raw result object without a message — in that case
+            // keep what the stream last showed instead of downgrading to a
+            // generic "completed".
+            if (payload.message) {
+              setStatus(payload.message);
+            } else if (payload.result && payload.result.message) {
+              setStatus(payload.result.message);
+            } else if (!lastMessage) {
+              setStatus(`${action} completed.`);
+            }
           } else if (payload.message) {
             lastMessage = payload.message;
             setStatus(lastMessage);
@@ -1292,12 +1348,21 @@ async function onSharedBrainAction(connId, action, card) {
     }
 
     if (!hadError) {
-      // Refresh the list so updated last_push_at/last_pull_at appears.
+      // Refresh the list so updated last_push_at/last_pull_at appears —
+      // then re-apply the final status message to the freshly rendered card
+      // (the re-render replaces the DOM node that held it, v3.0.2).
+      const finalMsg = statusEl.textContent;
       await refreshSharedBrainList();
+      const newCard = sbList() && sbList().querySelector(`.sharedbrain-card[data-id="${connId}"]`);
+      if (newCard && finalMsg) {
+        const s = newCard.querySelector('[data-field="status"]');
+        if (s) { s.textContent = finalMsg; s.classList.add('active'); }
+      }
     }
   } catch (err) {
     setStatus(`Error: ${err.message}`, true);
   } finally {
+    if (window.__curatorIngestEnd) window.__curatorIngestEnd(busyKey);
     buttons.forEach(b => { b.disabled = false; });
   }
 }
@@ -2973,6 +3038,7 @@ document.querySelector('[data-tab="settings"]')?.addEventListener('click', () =>
     // Already initialised — still refresh the MCP section so stale UI state
     // (e.g. from closing the wizard) gets reconciled with current server status.
     refreshMcpSection();
+    refreshSharedBrainSettings();
   }
 });
 
@@ -2991,6 +3057,8 @@ async function initSettings() {
   await loadAiHealthSettings();
   // Load default-domain dropdown (v2.5.2+)
   await loadDefaultDomain();
+  // Shared Brain (beta) opt-in state (v3.0.2)
+  await refreshSharedBrainSettings();
 }
 
 async function loadDefaultDomain() {

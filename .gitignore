@@ -30,6 +30,9 @@ Second Brain.app/
 # ── Shared Brain feature (local only — contains tokens, never commit) ─────────
 .sharedbrain-config.json
 
+# ── Private working documents (internal planning — never commit) ──────────────
+SHARED-BRAIN-UPGRADE.md
+
 # ── Domains folder (personal wiki data — lives outside the app repo) ──────────
 # The wiki is managed separately (via the Sync tab / a private GitHub repo).
 # Clone this repo to get the app; your wiki folder is pointed to by DOMAINS_PATH.

@@ -979,7 +979,7 @@ Two completely different concepts that beginners often confuse. Get this right a
 
 ### Getting started
 
-The feature is opt-in beta. To enable: Sync tab → scroll to "Shared Brains" → click **Enable Shared Brain (beta)**. Then choose your path:
+The feature is opt-in beta. To enable: **Settings tab → "Shared Brain (beta)" section → Enable Shared Brain (beta)** (moved from the Sync tab in v3.0.2). The operational "Shared Brains" block then appears in the **Sync** tab, where you choose your path:
 
 | Path | Take this if… |
 |---|---|

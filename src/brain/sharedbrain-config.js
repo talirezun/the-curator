@@ -118,6 +118,11 @@ function validateConnection(conn) {
   if (typeof conn.label !== 'string' || !conn.label.trim()) {
     throw new Error('SharedBrain connection: label is required');
   }
+  // Single-line only — the label is interpolated into log.md lines and the
+  // mirror CLAUDE.md heading; a newline would forge log entries (v3.0.2).
+  if (/[\r\n]/.test(conn.label)) {
+    throw new Error('SharedBrain connection: label must be a single line');
+  }
   if (!['local', 'github', 'cloudflare-r2'].includes(conn.storage_type)) {
     throw new Error(`SharedBrain connection: storage_type must be one of local|github|cloudflare-r2 (got ${conn.storage_type})`);
   }
@@ -135,7 +140,8 @@ function validateConnection(conn) {
       throw new Error('SharedBrain connection: github_repo_owner must be a valid GitHub login (alphanumeric + hyphen, ≤39 chars)');
     }
     if (typeof conn.github_repo_name !== 'string' ||
-        !/^[A-Za-z0-9._-]{1,100}$/.test(conn.github_repo_name)) {
+        !/^[A-Za-z0-9._-]{1,100}$/.test(conn.github_repo_name) ||
+        conn.github_repo_name === '.' || conn.github_repo_name === '..') {
       throw new Error('SharedBrain connection: github_repo_name must be a valid GitHub repo name');
     }
     if (conn.github_branch !== undefined && conn.github_branch !== '' &&
@@ -169,6 +175,15 @@ function validateConnection(conn) {
   }
   if (!Array.isArray(conn.local_domains) || !conn.local_domains.every(d => typeof d === 'string' && /^[a-z0-9][a-z0-9_-]*$/i.test(d))) {
     throw new Error('SharedBrain connection: local_domains must be an array of slug-shaped strings');
+  }
+  // The shared-* namespace is reserved for read-only mirror domains. A mirror
+  // as a contributing domain creates a feedback loop (pulled content gets
+  // re-contributed, conflict markers re-ingested as facts). The wizard UI
+  // already filters mirrors; this closes the hand-edited/API path
+  // (v3.0.2).
+  const mirror = conn.local_domains.find(d => d.toLowerCase().startsWith('shared-'));
+  if (mirror) {
+    throw new Error(`SharedBrain connection: "${mirror}" is a read-only Shared Brain mirror and cannot be a contributing domain`);
   }
 }
 

@@ -51,6 +51,7 @@ const OFFLINE = [
   'test-sharedbrain-github-offline.js',
   'test-sharedbrain-mcp-guard.js',
   'test-sharedbrain-revoke.js',
+  'test-sharedbrain-hardening.js',
   'test-diagnostics.js',
 ];
 

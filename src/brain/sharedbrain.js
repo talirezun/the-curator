@@ -35,7 +35,7 @@
 
 import { readFile, readdir, stat, mkdir, writeFile, lstat } from 'fs/promises';
 import { existsSync } from 'fs';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -45,10 +45,26 @@ import { generateDeltaSummary } from './sharedbrain-delta.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
 import { writePage, syncSummaryEntities, appendLog } from './files.js';
 
-const execAsync = promisify(exec);
+// execFile — NOT exec. Page paths come from readdir over a folder the user
+// (or, via pull, a remote shared brain) controls; exec would interpolate
+// them into a shell string where backticks/$() execute (v3.0.2).
+const execFileAsync = promisify(execFile);
 
 /** Retry attempt threshold beyond which a page is moved to permanent_skip. */
 export const MAX_RETRY_ATTEMPTS = 3;
+
+/**
+ * Transient-error markers (v3.0.2). A delta-generation failure whose
+ * message matches one of these is a provider/network blip, NOT a problem with
+ * the page — it must not count toward the MAX_RETRY_ATTEMPTS permanent-skip
+ * strike counter. Matches the strings src/brain/llm.js surfaces (and the CI
+ * flake detector in scripts/ci-flake.js).
+ */
+const TRANSIENT_ERROR_RE = /(503|429|temporarily overloaded|Service Unavailable|Too Many Requests|RESOURCE_EXHAUSTED|Premature close|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up|fetch failed|network)/i;
+
+export function isTransientLlmError(message) {
+  return typeof message === 'string' && TRANSIENT_ERROR_RE.test(message);
+}
 
 /** Folders within a domain's wiki/ that we consider for changed-page detection. */
 const WIKI_FOLDERS = ['entities', 'concepts', 'summaries'];
@@ -141,15 +157,19 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
     if (!existsSync(gitDir)) return null;
 
     const sinceIso = sinceDate.toISOString();
-    const { stdout: shaOut } = await execAsync(
-      `git --git-dir="${gitDir}" --work-tree="${domainsDir}" log --format="%H" --before="${sinceIso}" -1 -- "domains/${domain}/wiki/${pagePath}"`,
+    const { stdout: shaOut } = await execFileAsync(
+      'git',
+      [`--git-dir=${gitDir}`, `--work-tree=${domainsDir}`,
+       'log', '--format=%H', `--before=${sinceIso}`, '-1', '--',
+       `domains/${domain}/wiki/${pagePath}`],
       { encoding: 'utf-8' }
     );
     const sha = shaOut.trim();
     if (!sha) return null;
 
-    const { stdout: content } = await execAsync(
-      `git --git-dir="${gitDir}" show "${sha}:domains/${domain}/wiki/${pagePath}"`,
+    const { stdout: content } = await execFileAsync(
+      'git',
+      [`--git-dir=${gitDir}`, 'show', `${sha}:domains/${domain}/wiki/${pagePath}`],
       { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10 }
     );
     return content;
@@ -208,6 +228,19 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
              `Add it to the connection's local_domains in the Sync tab settings before pushing.`,
     };
   }
+  // v3.0.2: the shared-* namespace is reserved for read-only mirror
+  // domains. Contributing FROM a mirror would create a feedback loop (pulled
+  // collective content re-contributed, conflict markers re-ingested as facts)
+  // and lets remotely-chosen page names flow back into local git commands.
+  // The UI already filters mirrors out of the wizard; this closes the
+  // hand-edited-config path.
+  if (domainSlug.startsWith('shared-')) {
+    return {
+      ok: false,
+      error: `pushDomain: "${domainSlug}" is a read-only Shared Brain mirror — it cannot be a contributing domain. ` +
+             `Contribute from a personal domain instead.`,
+    };
+  }
 
   const wikiDir = path.join(domainsDir, domainSlug, 'wiki');
   if (!existsSync(wikiDir)) {
@@ -223,15 +256,44 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   const pendingRetry = { ...(connection.pending_retry || {}) };
   const permanentSkip = new Set(connection.permanent_skip || []);
 
+  // v3.0.2: un-skip on edit. The permanent_skip warn message has
+  // always told the user "re-edit the page; it will retry on next push" —
+  // this is the code that makes that true. A skipped page whose mtime is
+  // newer than the last push was edited by the user after it was skipped:
+  // give it a fresh set of attempts.
+  for (const p of [...permanentSkip]) {
+    const pageAbs = path.join(wikiDir, p);
+    if (!existsSync(pageAbs)) { permanentSkip.delete(p); continue; } // deleted → drop stale entry
+    if (!sinceDate) { permanentSkip.delete(p); continue; }           // no baseline → let it retry
+    try {
+      const st = await stat(pageAbs);
+      if (st.mtime > sinceDate) {
+        permanentSkip.delete(p);
+        delete pendingRetry[p]; // fresh strike counter
+        onProgress('info', `${p}: edited since it was skipped — retrying.`);
+      }
+    } catch { /* can't stat → leave skipped */ }
+  }
+
   let changedPages = await findChangedPages(wikiDir, sinceDate, pendingRetry);
-  // Remove any pages already in permanent_skip — those need manual user attention.
+  // Remove any pages still in permanent_skip — those need manual user attention.
   changedPages = changedPages.filter(p => !permanentSkip.has(p));
 
   if (changedPages.length === 0) {
     onProgress('info', 'No pages changed since last push.');
     // Still update last_push_at so subsequent pushes don't re-scan everything.
+    // Also persist the pruned permanent_skip / pending_retry (stale entries
+    // for deleted pages are dropped above / here) — v3.0.2.
     const pushTimestamp = nowFn().toISOString();
-    patchFn(connection.id, { last_push_at: pushTimestamp });
+    const prunedRetry = {};
+    for (const [p, n] of Object.entries(pendingRetry)) {
+      if (existsSync(path.join(wikiDir, p))) prunedRetry[p] = n;
+    }
+    patchFn(connection.id, {
+      last_push_at: pushTimestamp,
+      permanent_skip: Array.from(permanentSkip),
+      pending_retry: prunedRetry,
+    });
     return {
       ok: true, pushed: 0, skipped: 0,
       permanent_skip: Array.from(permanentSkip),
@@ -282,6 +344,15 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     if (result.ok) {
       deltas.push(result.delta);
       // Don't re-queue this page — it succeeded.
+    } else if (isTransientLlmError(result.error)) {
+      // v3.0.2: a provider outage / rate limit is NOT the page's
+      // fault — re-queue without advancing the strike counter, so a 503
+      // window can never permanently exclude a page from the shared brain.
+      newPendingRetry[pagePath] = pendingRetry[pagePath] || 0;
+      onProgress('warn',
+        `${pagePath}: AI provider temporarily unavailable — will retry next push (does not count against the retry limit).`
+      );
+      skippedCount++;
     } else {
       // LLM/parse failure. Track for retry per Decision 3.
       const prevCount = pendingRetry[pagePath] || 0;
@@ -290,7 +361,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
         newPermanentSkip.add(pagePath);
         onProgress('warn',
           `${pagePath}: failed ${newCount} times — marked permanent_skip. ` +
-          `Review and re-edit the page; it will retry on next push.`
+          `Edit the page (any change updates its timestamp) and it will retry on the next push.`
         );
       } else {
         newPendingRetry[pagePath] = newCount;

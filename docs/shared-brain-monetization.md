@@ -149,7 +149,15 @@ flowchart TB
 
 **Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. People who genuinely contribute also pay for the privilege of being attributed in the Provenance of every page they enriched.
 
-How to implement on day 1 (no code, just admin instructions):
+> ⚠ **Known limitation (as of v3.0.2):** the join wizard currently
+> requires a token with write access to complete — a read-only PAT shows the
+> yellow warning but blocks the "Continue" button, so the read-only tier
+> cannot be set up through the wizard yet. First-class read-only membership
+> (save with a read-only PAT, Pull-only connection card) is on the Shared
+> Brain hardening roadmap. Until it ships, treat every member as a
+> contributor (Contents: Read and write) or hold off on the read-only tier.
+
+How to implement once read-only membership ships (no code, just admin instructions):
 
 1. When someone joins the read-only tier, you instruct them: *"When creating your PAT, set Contents permission to Read-only (NOT Read and write)."* The Curator wizard will show a yellow warning *"Token works but is read-only"* — for the read-only tier, that's the desired outcome. They can Pull but not Push.
 2. When someone upgrades to contributor, instruct them: *"Re-create your PAT with Contents: Read AND write."* They re-paste in the wizard, the green ✓ appears, they can now Push.
@@ -225,9 +233,9 @@ Welcome! Three things to get you started:
 2. Install The Curator (free, open source):
    https://github.com/talirezun/the-curator#quick-start
 
-3. In the Curator, open the Sync tab, scroll to "Shared Brains",
-   click "Enable Shared Brain (beta)", then click the "📨 I have an
-   invite token → Join" card. Paste this invite token:
+3. In the Curator, open Settings → "Shared Brain (beta)" and click
+   "Enable Shared Brain (beta)". Then open the Sync tab and click the
+   "📨 I have an invite token → Join" card. Paste this invite token:
 
    sbi_xxxxxxxxxxxxxxxxxx
 

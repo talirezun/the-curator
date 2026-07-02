@@ -494,7 +494,7 @@ Alice's Mac     Bob's PC       Carlos's laptop
 
 **Use cases:** educational cohorts (each student contributes a `work` domain), enterprise knowledge management (employees opt-in their work domain), research teams (shared `research` domain compounds everyone's reading).
 
-**v3.0.0-beta.1 is opt-in.** Open the Sync tab, scroll to "Shared Brains", click **Enable Shared Brain (beta)**. Then pick a card: **📨 I have an invite token → Join** if your cohort admin sent you a token, or **⚙ I'm starting a new Shared Brain → Set up** if you're spinning one up for your team. The 5-step wizard (Token → Access → PAT → Domains → Save) walks through it.
+**Shared Brain is opt-in.** Open **Settings → Shared Brain (beta)** and click **Enable Shared Brain (beta)** (on versions before v3.0.2 the button was at the bottom of the Sync tab). Then open the Sync tab and pick a card: **📨 I have an invite token → Join** if your cohort admin sent you a token, or **⚙ I'm starting a new Shared Brain → Set up** if you're spinning one up for your team. The 5-step wizard (Token → Access → PAT → Domains → Save) walks through it.
 
 Future generations: v3.1 adds Cloudflare R2 as a second storage backend for EU data residency and custom-domain endpoints. v3.2 adds GitHub App mode and SSO for enterprise. See the [roadmap](docs/shared-brain.md#7--roadmap).
 

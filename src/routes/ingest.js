@@ -4,7 +4,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { ingestFile } from '../brain/ingest.js';
-import { listDomains, rawPath, domainPath } from '../brain/files.js';
+import { listDomains, rawPath, domainPath, isDomainReadonly } from '../brain/files.js';
 import {
   registerWrite,
   acquireFileLock,
@@ -37,6 +37,18 @@ router.post('/', upload.single('file'), async (req, res) => {
   const domains = await listDomains();
   if (!domains.includes(domain)) {
     return res.status(400).json({ error: `Unknown domain: ${domain}` });
+  }
+
+  // v3.0.2: Shared Brain mirror domains are read-only (Decision 7).
+  // Before this check only the MCP write tools refused — the app's own UI
+  // would happily ingest into a mirror, and the next Pull silently
+  // obliterated the pages.
+  if (await isDomainReadonly(domain)) {
+    return res.status(400).json({
+      error: `Domain "${domain}" is a read-only Shared Brain mirror — it is updated by ` +
+             `"Pull updates" in the Sync tab, and direct writes would be overwritten on the next pull. ` +
+             `Ingest into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+    });
   }
 
   if (!req.file) return res.status(400).json({ error: 'file is required' });
