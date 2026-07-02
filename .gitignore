@@ -38,3 +38,4 @@ SHARED-BRAIN-UPGRADE.md
 # Clone this repo to get the app; your wiki folder is pointed to by DOMAINS_PATH.
 domains/*
 !domains/.gitkeep
+.playwright-mcp/
