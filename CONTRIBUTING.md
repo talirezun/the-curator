@@ -113,13 +113,39 @@ tests already failed.
 **CI runs only the CI-safe live suites.** GitHub sets `CI=true`, and
 [scripts/run-tests.js](scripts/run-tests.js) uses that to run the `LIVE_CI` set
 (self-contained, deterministic) and skip the `LIVE_LOCAL` set (real-data
-benchmarks like `test-beta13-chat-live` and `test-ingest-real-llm`, the
-quality-threshold `test-ingest-deep`, the GitHub-repo-needing
-`test-sharedbrain-github-live`, and the server-spawning
-`test-sharedbrain-routes`). Those local-only suites still run in a full local
-`npm run test:live`. A CI-safe live suite must not read a file outside the repo:
-use a committed fixture (e.g. `docs/ingestion-pipeline.md` as a large source, or
-`scripts/test-ingest-deep-inputs/`) rather than anything under `domains/`.
+benchmarks like `test-beta13-chat-live` and `test-ingest-real-llm`, and the
+quality-threshold `test-ingest-deep`). Those local-only suites still run in a
+full local `npm run test:live`. A CI-safe live suite must not read a file
+outside the repo: use a committed fixture (e.g. `docs/ingestion-pipeline.md`
+as a large source, or `scripts/test-ingest-deep-inputs/`) rather than anything
+under `domains/`.
+
+Since v3.0.6 (Phase 5 of the Shared Brain hardening plan) the `LIVE_CI` set
+also includes the three Shared Brain integration suites, so the
+`GITHUB_TEST_*` secrets are actually consumed when present:
+
+- `test-sharedbrain-github-live` — the REAL GitHub adapter end-to-end:
+  contributions, synthesis, **revoke E2E (GDPR Article 17)**, and true
+  concurrent-writer races. Self-skips without `GITHUB_TEST_REPO`/`_PAT`;
+  every run uses fresh slugs and cleans up exhaustively.
+- `test-sharedbrain-routes` — spawns the real server on port 3334 and drives
+  every `/api/sharedbrain/*` endpoint over HTTP, including the revoke
+  success path. Its config handling backs up `.curator-config.json` /
+  `.sharedbrain-config.json` **on disk** (`<file>.pre-test-backup`) and
+  recovers them automatically even after a crash mid-run.
+- `test-sharedbrain-llm-live` — the delta-generation and conflict-resolution
+  prompts against every configured REAL provider (Gemini + Anthropic),
+  through the GitHub adapter when the secrets are present (local adapter
+  otherwise).
+
+To run the GitHub-backed suites locally without minting a fine-grained PAT,
+the `gh` CLI token works (it has `repo` scope):
+
+```bash
+GITHUB_TEST_REPO=<you>/<throwaway-private-repo> \
+GITHUB_TEST_PAT=$(gh auth token) \
+npm run test:live
+```
 
 **Flakiness — transient-error tolerance (v3.0.1-beta.26+).** Live tests call real
 providers, so a transient outage (Gemini HTTP 503 "overloaded", an Anthropic

@@ -643,7 +643,19 @@ export async function runLocalSynthesis(connection, opts = {}) {
   // Back-compat: old state files have only `at` — used as the initial
   // watermark (one-time reprocessing of the last skew-window is idempotent).
   let prevState = null;
-  try { prevState = await adapter.readMeta('state.last-synthesis'); } catch { /* first synthesis */ }
+  if (opts.stateOverride !== undefined) {
+    // v3.0.6 (found by the 5.1 live revoke E2E): the revoke orchestrator
+    // resets state.last-synthesis and immediately re-runs synthesis — but
+    // GitHub's contents API is only eventually consistent, so this read
+    // served the STALE pre-reset state (old watermark + processed_ids),
+    // the rebuild dedup'd every surviving contribution as "already
+    // processed", and the revoke deleted pages WITHOUT rebuilding them
+    // while reporting success. The orchestrator now hands its reset state
+    // in directly, removing the read-after-write dependency entirely.
+    prevState = opts.stateOverride;
+  } else {
+    try { prevState = await adapter.readMeta('state.last-synthesis'); } catch { /* first synthesis */ }
+  }
   // If the state carries a `watermark` key at all (v3.0.3+ writer), trust it
   // even when null (null = "nothing fully processed yet — list everything").
   // Only legacy states (pre-v3.0.3, no watermark key) fall back to `at`.

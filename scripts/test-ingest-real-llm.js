@@ -38,6 +38,8 @@ import { mkdtempSync, rmSync, mkdirSync, copyFileSync, readFileSync, existsSync,
 import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+dotenv.config(); // standalone script — .env keys aren't loaded via server.js here (v3.0.6)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,8 +120,8 @@ process.on('exit', cleanup);
   // ── Sanity check: API key present ────────────────────────────────────────
   const apiKey = process.env.GEMINI_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    console.error('No GEMINI_API_KEY or ANTHROPIC_API_KEY in env. Aborting.');
-    process.exit(2);
+    console.error('SKIP: no GEMINI_API_KEY or ANTHROPIC_API_KEY available — live-suite convention is self-skip.');
+    process.exit(0);
   }
   console.log(`Using ${process.env.GEMINI_API_KEY ? 'Gemini' : 'Anthropic'} for this test.\n`);
 

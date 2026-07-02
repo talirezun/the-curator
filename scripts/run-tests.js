@@ -52,6 +52,7 @@ const OFFLINE = [
   'test-sharedbrain-mcp-guard.js',
   'test-sharedbrain-revoke.js',
   'test-sharedbrain-hardening.js',
+  'test-sharedbrain-scenarios.js', // v3.0.6 Phase 5: 5.8-5.12 (local adapter, mock LLM/fetch, tempdir git)
   'test-diagnostics.js',
 ];
 
@@ -70,6 +71,11 @@ const LIVE_CI = [
   'test-beta17-production.js',
   'test-beta25-compile-live.js', // compile on a seeded large-index domain (Fix #1)
   'test-beta27-compile-live.js', // compile fallback prompts honoured by real models (Fix #2)
+  // v3.0.6 Phase 5 (plan 5.6) — the GITHUB_TEST_* workflow secrets are no
+  // longer dead config; all three self-skip or self-degrade without them:
+  'test-sharedbrain-github-live.js', // self-skips without GITHUB_TEST_*; unique slugs per run; exhaustive cleanup
+  'test-sharedbrain-routes.js',      // spawns a server on 3334; on-disk config backup (L21 fixed); no network unless GITHUB_TEST_* set
+  'test-sharedbrain-llm-live.js',    // real delta+conflict prompts on every configured provider; GitHub storage when secrets present, local otherwise
 ];
 
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
@@ -78,14 +84,10 @@ const LIVE_CI = [
 //   - test-ingest-real-llm: tied to a SPECIFIC personal article (asserts the
 //     author "Dr. Tali Rezun") read from a hardcoded local path — not in the repo.
 //   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
-//   - test-sharedbrain-github-live: needs a throwaway GITHUB_TEST_REPO + PAT.
-//   - test-sharedbrain-routes: spawns a server (heavier integration test).
 const LIVE_LOCAL = [
   'test-beta13-chat-live.js',
   'test-ingest-real-llm.js',     // tied to a specific personal article (author assertions) on a hardcoded local path
   'test-ingest-deep.js',
-  'test-sharedbrain-github-live.js',
-  'test-sharedbrain-routes.js',
 ];
 
 // All live suites, for labelling.

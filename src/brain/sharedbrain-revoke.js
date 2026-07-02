@@ -172,8 +172,18 @@ export async function revokeContributor(connection, opts = {}) {
   // ── Step 4: reset synthesis state, then run synthesis from scratch ───────
 
   onProgress('info', 'Resetting last-synthesis state and rebuilding from remaining contributions…');
+  // v3.0.6: the reset carries the FULL v3.0.3 state shape — `watermark: null`
+  // ("nothing processed — list everything") and empty `processed_ids`. The
+  // old `{at: epoch}` shape relied on the legacy fallback and left readers
+  // free to dedup against a stale processed_ids list.
+  const resetState = {
+    at: new Date(0).toISOString(),
+    watermark: null,
+    processed_ids: [],
+    run_number: 0,
+  };
   try {
-    await adapter.writeMeta('state.last-synthesis', { at: new Date(0).toISOString(), run_number: 0 });
+    await adapter.writeMeta('state.last-synthesis', resetState);
   } catch (err) {
     console.error(`[sharedbrain-revoke] could not reset last-synthesis: ${err.message}`);
   }
@@ -185,6 +195,12 @@ export async function revokeContributor(connection, opts = {}) {
       llmFn: opts.llmFn,
       patchFn: opts.patchFn,
       allowDuringRevocation: true, // our own marker is active — see Step 0
+      // v3.0.6 (5.1 live finding): hand the rebuild its baseline DIRECTLY.
+      // Re-reading state.last-synthesis right after writing it raced
+      // GitHub's eventual consistency — the rebuild saw the stale
+      // pre-reset processed_ids, "rebuilt" nothing, and the revoke
+      // reported success over missing pages.
+      stateOverride: resetState,
     });
   } catch (err) {
     console.error(`[sharedbrain-revoke] re-synthesis failed: ${err.message}`);

@@ -363,13 +363,24 @@ section('writePage: persistent 409 after retry → throws SHARED_BRAIN_SHA_CONFL
     () => mockResponse({ status: 200, body: { content: b64('v1'), sha: 'sha-v2' }}),
     () => mockResponse({ status: 409, body: { message: 'sha does not match again' }}),
   ]);
-  const adapter = makeAdapter(fetch);
+  // maxRetries pinned to 1: this scenario scripts exactly one retry cycle.
+  // (The production DEFAULT is 3 since v3.0.6 — the live 5.4 concurrency
+  // test showed one immediate retry loses the create-race against GitHub's
+  // read-after-write lag. Asserted below.)
+  const adapter = makeAdapter(fetch, { maxRetries: 1 });
   await expectThrow(
     () => adapter.writePage('work-ai', 'entities/contested.md', 'v2'),
     'writePage throws on persistent conflict',
     /SHARED_BRAIN_SHA_CONFLICT|409/,
   );
   assertEq(fetch.remaining(), 0, 'all 4 conflict handlers consumed before throw');
+}
+
+// v3.0.6: the production retry default must stay ≥3 (create-race + GitHub
+// eventual-consistency absorption). A regression to 1 re-opens the 5.4 bug.
+{
+  const a = makeAdapter(makeMockFetch([]));
+  assert(a._maxRetries >= 3, `default maxRetries is ≥3 for real-world create races (got ${a._maxRetries})`);
 }
 
 // ── 9. listPages: tree → filter to domain ───────────────────────────────

@@ -43,6 +43,7 @@
 import { randomUUID } from 'crypto';
 import { GitHubStorageAdapter } from '../src/brain/sharedbrain-github-adapter.js';
 import { runLocalSynthesis } from '../src/brain/sharedbrain-synthesis.js';
+import { revokeContributor } from '../src/brain/sharedbrain-revoke.js';
 
 // ── Env-var gate ────────────────────────────────────────────────────────
 
@@ -186,7 +187,13 @@ try {
   createdPaths.add(`contributions/${fellowA}/${subA}.json`);
   ok('storeContribution(fellow A) succeeded');
 
-  const exists = await adapterA.contributionExists(fellowA, subA);
+  // Poll briefly — a freshly stored contribution can take a moment to
+  // become visible through the contents API (read-after-write lag).
+  let exists = false;
+  for (let i = 0; i < 8 && !exists; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 1500));
+    exists = await adapterA.contributionExists(fellowA, subA);
+  }
   assert(exists, 'contributionExists(fellow A) returns true');
 } catch (err) {
   fail('Fellow A push', err);
@@ -319,6 +326,115 @@ section('6. Pull check — Fellow C (read-only) sees the synthesised page');
   }
 }
 
+// ── 6b. (Phase 5.4) True concurrent writers ─────────────────────────────
+
+section('6b. (5.4) Concurrent writers — real SHA races resolve without loss');
+
+{
+  // Two independent adapter instances hammer the SAME page at the same
+  // moment. GitHub's contents API serialises via blob SHAs: at least one
+  // writer typically gets a 409/422 and must refetch-and-retry. The
+  // adapter's retry ladder must absorb that — no throw, no corrupt result.
+  const w1 = makeAdapter();
+  const w2 = makeAdapter();
+  const racePath = 'concepts/race-target.md';
+  const contentA = `# Race Target\n\n## Key Facts\n\n- Written by writer A (${runId}).\n`;
+  const contentB = `# Race Target\n\n## Key Facts\n\n- Written by writer B (${runId}).\n`;
+
+  try {
+    const results = await Promise.allSettled([
+      w1.writePage(sharedDomain, racePath, contentA),
+      w2.writePage(sharedDomain, racePath, contentB),
+    ]);
+    createdPaths.add(`collective/${sharedDomain}/wiki/${racePath}`);
+    const rejected = results.filter(r => r.status === 'rejected');
+    assert(rejected.length === 0,
+      `both concurrent page writers succeed (rejections: ${rejected.map(r => r.reason && r.reason.message).join('; ') || 'none'})`);
+
+    const final = await w1.readPage(sharedDomain, racePath);
+    assert(final === contentA || final === contentB,
+      'final page content is exactly ONE writer\'s payload (no corruption/merge artifact)');
+
+    // Same race on a meta key (synthesis state is the real-world contention
+    // point when two admins synthesize simultaneously — documented
+    // last-writer-wins, but it must never corrupt or throw).
+    const metaResults = await Promise.allSettled([
+      w1.writeMeta('state.race-test', { writer: 'A', run: runId }),
+      w2.writeMeta('state.race-test', { writer: 'B', run: runId }),
+    ]);
+    const metaRejected = metaResults.filter(r => r.status === 'rejected');
+    assert(metaRejected.length === 0, 'both concurrent meta writers succeed');
+    const meta = await w1.readMeta('state.race-test');
+    assert(meta && (meta.writer === 'A' || meta.writer === 'B') && meta.run === runId,
+      'final meta is one writer\'s intact payload (last-writer-wins, parseable)');
+  } catch (err) {
+    fail('concurrent writers', err);
+  }
+}
+
+// ── 6c. (Phase 5.1) Revoke E2E on the REAL GitHub adapter ───────────────
+//
+// THE highest-risk gap of the whole program: the GDPR Article 17 claim had
+// never run against the production storage backend. Fellow A (whose fact
+// is on the synthesised page) is revoked; fellow B's content must survive
+// the rebuild.
+
+section('6c. (5.1) Revoke E2E — Article 17 against the live repo');
+
+if (synthesisResult && synthesisResult.ok) {
+  try {
+    const rev = await revokeContributor(connection, {
+      fellowId: fellowA,
+      adminTokenHash: 'sha256:live-test',
+      llmFn: mockLLM,
+      patchFn: noopPatch,
+      onProgress: (level, msg) => console.log(`    [${level}] ${msg}`),
+    });
+    createdPaths.add('meta/state/revocation-in-progress.json');
+
+    assert(rev.ok === true, `revoke completes ok (error: ${rev.error || 'none'})`);
+    assert(rev.contributions_deleted >= 1, `fellow A's contributions deleted (${rev.contributions_deleted})`);
+    assert(rev.pages_deleted >= 1, `provenance-tainted page(s) deleted (${rev.pages_deleted})`);
+    assert(rev.audit_record && rev.audit_record.rebuild_ok === true, 'audit record says rebuild_ok');
+
+    // Erasure verified directly against the remote.
+    const subsLeft = await adapterA.listFellowSubmissions(fellowA);
+    assert(subsLeft.length === 0, 'listFellowSubmissions(fellow A) is empty on the remote');
+    const stillThere = await adapterA.contributionExists(fellowA, subA);
+    assert(stillThere === false, 'fellow A\'s contribution file is gone from the repo');
+
+    // The page was rebuilt from fellow B's surviving contribution ONLY.
+    const rebuilt = await adapterA.readPage(sharedDomain, 'entities/context-engineering.md');
+    assert(typeof rebuilt === 'string' && rebuilt.length > 0, 'page rebuilt from remaining contributors');
+    assert(!rebuilt.includes('Coined in 2024'), 'revoked fellow\'s fact is GONE from the rebuilt page');
+    assert(rebuilt.includes('Coined in 2023'), 'surviving fellow\'s fact preserved');
+    const shortA = fellowA.replace(/-/g, '').slice(0, 8);
+    assert(!rebuilt.includes(shortA), 'revoked fellow\'s short id absent from rebuilt Provenance');
+    assert(!/CONFLICTING SOURCES/.test(rebuilt),
+      'conflict marker dissolved (the contradicting party was erased)');
+
+    // Audit log on the remote records the revocation (hash only, no name).
+    // Freshly created files take a moment to become visible through the
+    // contents API (read-after-write lag) — poll briefly.
+    let auditText = '';
+    for (let i = 0; i < 8 && !auditText.includes(fellowA); i++) {
+      if (i > 0) await new Promise(r => setTimeout(r, 1500));
+      const auditRaw = await adapterA._apiGetContents('state/revocations.jsonl').catch(() => null);
+      auditText = auditRaw && auditRaw.content ? auditRaw.content : '';
+    }
+    assert(auditText.includes(fellowA), 'audit JSONL contains the revoked fellow UUID');
+    assert(auditText.includes('sha256:live-test'), 'audit JSONL contains the admin-token HASH (never the raw token)');
+
+    // In-progress marker cleared only on full success.
+    const marker = await adapterA.readMeta('state.revocation-in-progress');
+    assert(marker && marker.active === false, 'revocation-in-progress marker cleared after success');
+  } catch (err) {
+    fail('revoke E2E', err);
+  }
+} else {
+  warn('skipping revoke E2E — synthesis phase did not complete');
+}
+
 // ── 7. Cleanup (best-effort) ───────────────────────────────────────────
 
 section('7. Cleanup — delete every path we created');
@@ -341,6 +457,9 @@ try {
     `digests/${fellowB}/`,
     `digests/${fellowC}/`,
     `meta/state/last-synthesis.json`,
+    `meta/state/revocation-in-progress.json`, // v3.0.6 (5.1)
+    `meta/state/race-test.json`,              // v3.0.6 (5.4)
+    `state/revocations.jsonl`,                // v3.0.6 (5.1) — throwaway repo's audit log
   ];
   const targets = entries.filter(e => ourPrefixes.some(p => e.path === p || e.path.startsWith(p)));
 

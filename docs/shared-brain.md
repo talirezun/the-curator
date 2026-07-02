@@ -346,11 +346,13 @@ Per Decision 6b:
 1. Delete all `contributions/<fellow_id>/*.json`
 2. Delete `digests/<fellow_id>/latest.json`
 3. Scan all collective pages; delete any whose Provenance section references the revoked fellow
-4. Reset `meta/state/last-synthesis.json` to epoch
-5. Re-run synthesis from scratch (rebuilds remaining pages, leaves zero-contributor pages deleted)
+4. Reset `meta/state/last-synthesis.json` to the full v3.0.3 zero-state (`watermark: null`, `processed_ids: []`)
+5. Re-run synthesis from scratch (rebuilds remaining pages, leaves zero-contributor pages deleted). v3.0.6: the rebuild receives the reset state **directly** (`stateOverride`) instead of re-reading the meta it just wrote — the Phase-5 live revoke E2E caught GitHub's read-after-write lag serving the STALE pre-reset state, which made the rebuild dedup every surviving contribution and "successfully" rebuild nothing.
 6. Append entry to `state/revocations.jsonl` (UUID + timestamp + sha256-hashed admin token + counts; NO PII)
 
 Irreversible. Documented prominently in admin guide and compliance reference.
+
+**Write-concurrency note (v3.0.6):** the GitHub adapter's SHA-conflict retry defaults to **3 attempts with a growing backoff** (was 1 immediate retry). The Phase-5 live concurrency test showed that two writers CREATING the same new file race GitHub's eventual consistency: the loser's refetch can miss the winner's just-committed blob, so a single immediate retry re-sent the same sha-less PUT and threw. Concurrent same-page/meta writes are last-writer-wins by design (Decision: L19), but they must never throw or corrupt — verified live in `test-sharedbrain-github-live.js` §6b.
 
 ---
 

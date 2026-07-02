@@ -192,7 +192,14 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
     if (typeof this._fetch !== 'function') {
       throw new Error('GitHubStorageAdapter: no fetch implementation available (Node 18+ required)');
     }
-    this._maxRetries = typeof config.maxRetries === 'number' ? config.maxRetries : 1;
+    // v3.0.6 (found by the 5.4 live concurrency test): default raised 1 → 3.
+    // Two writers CREATING the same new file race like this: the loser's
+    // PUT-without-sha gets 422 "sha wasn't supplied", and the immediate
+    // refetch can MISS the winner's just-committed blob (GitHub's contents
+    // API is only eventually consistent for a second or two) — with a
+    // single retry the loser threw. Three attempts with a small backoff
+    // (see _writeWithRetry) absorb the real-world consistency window.
+    this._maxRetries = typeof config.maxRetries === 'number' ? config.maxRetries : 3;
     this._onWarn = typeof config.onWarn === 'function' ? config.onWarn : null;
   }
 
@@ -418,6 +425,11 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
           throw err;
         }
         attempt++;
+        // v3.0.6: brief growing backoff BEFORE the refetch. The refetch
+        // after a create-race 422 raced GitHub's read-after-write lag and
+        // returned 404 — so the retry repeated the exact same sha-less PUT.
+        // A few hundred ms lets the winner's commit become visible.
+        await new Promise(r => setTimeout(r, 250 * attempt));
         // Refetch the latest SHA and retry. If the file disappeared between
         // the conflict and now (unlikely but possible), sha goes back to null.
         const refreshed = await this._apiGetContents(repoPath).catch(() => null);
