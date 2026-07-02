@@ -384,7 +384,7 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   if (deltas.length > 0) {
     let adapter;
     try {
-      adapter = createStorageAdapter(connection);
+      adapter = createStorageAdapter(connection, { onWarn: (msg) => onProgress('warn', msg) });
     } catch (err) {
       // v3.0.3 (L3): persist this cycle's retry/skip bookkeeping even though
       // the push failed — do NOT advance last_push_at (the pages must
@@ -651,7 +651,7 @@ export async function pullCollective(connection, opts = {}) {
     // ── 5. Read all collective pages ────────────────────────────────────
     let adapter;
     try {
-      adapter = createStorageAdapter(connection);
+      adapter = createStorageAdapter(connection, { onWarn: (msg) => onProgress('warn', msg) });
     } catch (err) {
       return { ok: false, error: `pullCollective: storage adapter init failed: ${err.message}` };
     }
@@ -664,11 +664,25 @@ export async function pullCollective(connection, opts = {}) {
       return { ok: false, error: `pullCollective: listPages failed: ${err.message}` };
     }
 
+    // v3.0.4 (M16): learn when the collective was last synthesised so the
+    // connection card can show it ("Pull pulls 0 pages" almost always means
+    // "no synthesis has run yet" — invisible to contributors before this).
+    // Best-effort: one extra meta read; a failure changes nothing.
+    let lastSynthesisAt;
+    try {
+      const synthState = await adapter.readMeta('state.last-synthesis');
+      if (synthState && typeof synthState.at === 'string') {
+        lastSynthesisAt = synthState.at;
+      }
+    } catch { /* no synthesis yet, or meta unreadable — leave undefined */ }
+    const synthPatch = lastSynthesisAt !== undefined ? { last_synthesis_at: lastSynthesisAt } : {};
+
     if (!Array.isArray(pagePaths) || pagePaths.length === 0) {
-      onProgress('info', 'Collective brain is empty — nothing to pull.');
+      onProgress('info', 'Collective brain is empty — nothing to pull. ' +
+        (lastSynthesisAt ? '' : 'No synthesis has run yet — ask your admin to run one after contributors push.'));
       const pulledAt = nowFn().toISOString();
-      patchFn(connection.id, { last_pull_at: pulledAt });
-      return { ok: true, created: 0, updated: 0, skipped: 0, local_domain: localDomain };
+      patchFn(connection.id, { last_pull_at: pulledAt, ...synthPatch });
+      return { ok: true, created: 0, updated: 0, skipped: 0, local_domain: localDomain, last_synthesis_at: lastSynthesisAt || null };
     }
 
     onProgress('info', `Pulling ${pagePaths.length} page${pagePaths.length !== 1 ? 's' : ''}...`);
@@ -830,7 +844,7 @@ export async function pullCollective(connection, opts = {}) {
 
     // ── 9. Update connection state ───────────────────────────────────────
     const pulledAt = nowFn().toISOString();
-    patchFn(connection.id, { last_pull_at: pulledAt });
+    patchFn(connection.id, { last_pull_at: pulledAt, ...synthPatch });
 
     const summary = `Pull complete: ${created} new, ${updated} updated, ${unchanged} unchanged${pruned > 0 ? `, ${pruned} removed` : ''}${skipped > 0 ? `, ${skipped} skipped` : ''}. Local domain: ${localDomain}`;
     onProgress('done', summary, { created, updated, unchanged, pruned, skipped, local_domain: localDomain });
@@ -843,6 +857,7 @@ export async function pullCollective(connection, opts = {}) {
       pruned,
       skipped,
       local_domain: localDomain,
+      last_synthesis_at: lastSynthesisAt || null,
     };
 
   } finally {
@@ -851,6 +866,43 @@ export async function pullCollective(connection, opts = {}) {
       __setDomainsDirOverride(null);
     }
   }
+}
+
+// ── computePendingPages ────────────────────────────────────────────────────
+
+/**
+ * Cheap local count of pages that would be pushed if the user clicked
+ * "Push contributions" right now — the same detection pushDomain uses
+ * (mtime > last_push_at ∪ pending_retry, minus permanent_skip), but
+ * read-only: no LLM, no network, no state change. Powers the navbar
+ * pending badge and the connection card (v3.0.4, M14).
+ *
+ * Read-only connections always return 0 (they cannot push).
+ *
+ * @param {object} connection   Masked or full connection — no tokens needed.
+ * @param {string} [domainsDir] Override for tests; defaults to getDomainsDir().
+ * @returns {Promise<number>}
+ */
+export async function computePendingPages(connection, domainsDir) {
+  if (!connection || typeof connection !== 'object') return 0;
+  if (connection.enabled === false) return 0;
+  if (connection.read_only === true) return 0;
+  const root = domainsDir || getDomainsDir();
+  const sinceDate = connection.last_push_at ? new Date(connection.last_push_at) : null;
+  if (sinceDate && isNaN(sinceDate.getTime())) return 0;
+  const skip = new Set(connection.permanent_skip || []);
+  let total = 0;
+  for (const d of (Array.isArray(connection.local_domains) ? connection.local_domains : [])) {
+    if (typeof d !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(d)) continue;
+    if (d.toLowerCase().startsWith('shared-')) continue;
+    const wikiDir = path.join(root, d, 'wiki');
+    if (!existsSync(wikiDir)) continue;
+    try {
+      const changed = await findChangedPages(wikiDir, sinceDate, connection.pending_retry || {});
+      total += changed.filter(p => !skip.has(p)).length;
+    } catch { /* unreadable domain → contribute 0 */ }
+  }
+  return total;
 }
 
 // Exposed for testing only

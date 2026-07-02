@@ -176,6 +176,12 @@ function validateConnection(conn) {
   if (!Array.isArray(conn.local_domains) || !conn.local_domains.every(d => typeof d === 'string' && /^[a-z0-9][a-z0-9_-]*$/i.test(d))) {
     throw new Error('SharedBrain connection: local_domains must be an array of slug-shaped strings');
   }
+  // v3.0.4 (H10): read-only membership flag — set by the wizard when the
+  // PAT verdict is valid-but-no-write-access. Boolean only; the push and
+  // synthesize routes refuse read-only connections.
+  if (conn.read_only !== undefined && typeof conn.read_only !== 'boolean') {
+    throw new Error('SharedBrain connection: read_only must be a boolean');
+  }
   // The shared-* namespace is reserved for read-only mirror domains. A mirror
   // as a contributing domain creates a feedback loop (pulled content gets
   // re-contributed, conflict markers re-ingested as facts). The wizard UI

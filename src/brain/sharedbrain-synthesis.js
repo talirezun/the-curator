@@ -604,7 +604,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
   // Build adapter
   let adapter;
   try {
-    adapter = createStorageAdapter(connection);
+    adapter = createStorageAdapter(connection, { onWarn: (msg) => onProgress('warn', msg) });
   } catch (err) {
     return { ok: false, error: `runLocalSynthesis: adapter init failed: ${err.message}` };
   }
@@ -703,6 +703,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
   let totalConflicts = 0;
   const writtenPaths = [];
   const failedPages = new Set(); // v3.0.3 — drives processed-submission tracking
+  const conflictPages = [];      // v3.0.4 (M17) — pages with unresolved contradictions
 
   // Process each page in deterministic order (sorted by path)
   const sortedPaths = [...grouped.keys()].sort();
@@ -769,6 +770,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
       title, existingFacts, newContributions, llmFn, shortenId
     );
     totalConflicts += conflicts;
+    if (conflicts > 0) conflictPages.push(pagePath);
     if (unifiedFacts.length > FACTS_PER_PAGE_SOFT_CAP) {
       // Deliberately warn-not-evict: silently dropping a contributor's fact
       // would violate the conservation invariant. The admin should split or
@@ -906,14 +908,18 @@ export async function runLocalSynthesis(connection, opts = {}) {
   // Update connection state (last_synthesis_at for visibility in UI later)
   patchFn(connection.id, { last_synthesis_at: nowIso });
 
+  const conflictPagesText = conflictPages.length > 0
+    ? ` in ${conflictPages.slice(0, 5).join(', ')}${conflictPages.length > 5 ? ` (+${conflictPages.length - 5} more)` : ''}`
+    : '';
   const summary = `Synthesis complete: ${pagesWritten} page${pagesWritten !== 1 ? 's' : ''} written from ${contributions.length} contribution${contributions.length !== 1 ? 's' : ''}` +
-    (totalConflicts > 0 ? `, ${totalConflicts} unresolved contradiction${totalConflicts !== 1 ? 's' : ''} flagged` : '') +
+    (totalConflicts > 0 ? `, ${totalConflicts} unresolved contradiction${totalConflicts !== 1 ? 's' : ''} flagged${conflictPagesText}` : '') +
     (pagesFailed > 0 ? `, ${pagesFailed} page${pagesFailed !== 1 ? 's' : ''} failed (see warnings)` : '');
   onProgress('done', summary, {
     processed_contributions: contributions.length,
     pages_written: pagesWritten,
     pages_failed: pagesFailed,
     conflicts: totalConflicts,
+    conflict_pages: conflictPages,
   });
 
   return {
@@ -922,6 +928,9 @@ export async function runLocalSynthesis(connection, opts = {}) {
     pages_written: pagesWritten,
     pages_failed: pagesFailed,
     conflicts: totalConflicts,
+    // v3.0.4 (M17): which pages carry ⚠️ CONFLICTING SOURCES markers this
+    // run — additive, so the UI can point the admin at the affected pages.
+    conflict_pages: conflictPages,
   };
 }
 

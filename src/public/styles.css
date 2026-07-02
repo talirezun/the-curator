@@ -1123,6 +1123,66 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   border: 1px solid var(--border-subtle);
 }
 
+/* v3.0.4 — read-only member pill (H10) */
+.sb-readonly-pill {
+  margin-left: 8px;
+  vertical-align: 2px;
+  color: var(--warning, #b58900);
+  border-color: var(--warning, #b58900);
+  font-family: inherit;
+  font-weight: 500;
+}
+
+/* v3.0.4 — pending-contributions line (M14) */
+.sharedbrain-card-pending {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: -6px 0 12px;
+}
+
+/* v3.0.4 — permanently-skipped pages block (M15) */
+.sharedbrain-card-skips {
+  margin-top: 12px;
+  border: 1px solid var(--warning, #b58900);
+  border-radius: var(--radius);
+  padding: 0;
+}
+.sharedbrain-card-skips summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--warning, #b58900);
+  user-select: none;
+}
+.sharedbrain-card-skips-list {
+  margin: 4px 0 8px;
+  padding-left: 28px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+.sharedbrain-card-skips .btn {
+  margin: 0 12px 10px;
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+/* v3.0.4 — where-does-pulled-content-go note (L15) */
+.sharedbrain-card-note {
+  font-size: 11px;
+  color: var(--text-faint, var(--text-muted));
+  margin: 10px 0 0;
+}
+
+/* v3.0.4 — inline disconnect confirm inside the status area (L14) */
+.sharedbrain-card-status .btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  margin-top: 6px;
+  margin-right: 4px;
+}
+
 .sharedbrain-add-more {
   display: flex;
   gap: 10px;

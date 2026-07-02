@@ -149,18 +149,16 @@ flowchart TB
 
 **Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. People who genuinely contribute also pay for the privilege of being attributed in the Provenance of every page they enriched.
 
-> ⚠ **Known limitation (as of v3.0.2):** the join wizard currently
-> requires a token with write access to complete — a read-only PAT shows the
-> yellow warning but blocks the "Continue" button, so the read-only tier
-> cannot be set up through the wizard yet. First-class read-only membership
-> (save with a read-only PAT, Pull-only connection card) is on the Shared
-> Brain hardening roadmap. Until it ships, treat every member as a
-> contributor (Contents: Read and write) or hold off on the read-only tier.
+> ✅ **Read-only membership is first-class as of v3.0.4.** A read-only PAT
+> shows a yellow notice in the join wizard but the member can continue,
+> skip domain selection entirely, and save. Their connection card shows a
+> **read-only member** pill, hides the Push button, and the backend refuses
+> Push/synthesis for that connection — they can only Pull.
 
-How to implement once read-only membership ships (no code, just admin instructions):
+How to implement (no code, just admin instructions):
 
-1. When someone joins the read-only tier, you instruct them: *"When creating your PAT, set Contents permission to Read-only (NOT Read and write)."* The Curator wizard will show a yellow warning *"Token works but is read-only"* — for the read-only tier, that's the desired outcome. They can Pull but not Push.
-2. When someone upgrades to contributor, instruct them: *"Re-create your PAT with Contents: Read AND write."* They re-paste in the wizard, the green ✓ appears, they can now Push.
+1. When someone joins the read-only tier, you instruct them: *"When creating your PAT, set Contents permission to Read-only (NOT Read and write)."* The Curator wizard shows the yellow notice *"Token works but is read-only. You can continue as a read-only member"* — for the read-only tier, that's the desired outcome. They continue through the wizard (contributing-domain selection is optional for them), save, and can Pull but not Push.
+2. When someone upgrades to contributor, instruct them: *"Re-create your PAT with Contents: Read AND write, then re-run the Join wizard with the same invite token."* The green ✓ appears, the new connection can Push.
 
 ---
 

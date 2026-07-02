@@ -53,7 +53,7 @@ import {
   newUuid,
 } from '../brain/sharedbrain-config.js';
 
-import { pushDomain, pullCollective } from '../brain/sharedbrain.js';
+import { pushDomain, pullCollective, computePendingPages } from '../brain/sharedbrain.js';
 import { runLocalSynthesis }          from '../brain/sharedbrain-synthesis.js';
 import { revokeContributor, hashAdminToken } from '../brain/sharedbrain-revoke.js';
 import { domainPath } from '../brain/files.js';
@@ -220,9 +220,17 @@ router.post('/enable-flag', (_req, res) => {
 
 // ── List, save, remove ───────────────────────────────────────────────────
 
-router.get('/list', gate, (_req, res) => {
+router.get('/list', gate, async (_req, res) => {
   try {
-    res.json({ connections: getSharedBrains() });
+    const connections = getSharedBrains();
+    // v3.0.4 (M14): cheap local pending-push count per connection —
+    // mtime scan only, no LLM/network. Powers the navbar badge and the
+    // connection card. Additive field; failures degrade to 0.
+    for (const c of connections) {
+      try { c.pending_pages = await computePendingPages(c); }
+      catch { c.pending_pages = 0; }
+    }
+    res.json({ connections });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -242,6 +250,7 @@ router.post('/save', gate, (req, res) => {
     if (!conn.permanent_skip) conn.permanent_skip = [];
     if (conn.enabled === undefined) conn.enabled = true;
     if (conn.attribute_by_name === undefined) conn.attribute_by_name = false;
+    if (conn.read_only === undefined) conn.read_only = false;
 
     const masked = saveSharedBrain(conn);
     res.json({ connection: masked });
@@ -298,6 +307,17 @@ function loadConnectionOr404(id, res) {
 router.post('/:id/push', gate, async (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
+
+  // v3.0.4 (H10): read-only members (PAT without write access) can Pull
+  // but never Push — refuse before any work so the error is crisp instead
+  // of a confusing GitHub 403 mid-stream.
+  if (conn.read_only === true) {
+    return res.status(400).json({
+      error: 'This connection is read-only — your access token can read the shared repo but not write to it. ' +
+             'You can Pull updates, but not push contributions. To contribute, create a token with ' +
+             'Contents: Read and write, then re-run the Join wizard.',
+    });
+  }
 
   // Explicit local_domain → push just that one. Otherwise push EVERY
   // opted-in domain (v3.0.2 — previously only local_domains[0]
@@ -414,6 +434,15 @@ router.post('/:id/synthesize', gate, async (req, res) => {
   const conn = loadConnectionOr404(req.params.id, res);
   if (!conn) return;
 
+  // v3.0.4 (H10): synthesis writes pages + state to the shared repo — a
+  // read-only token cannot do that.
+  if (conn.read_only === true) {
+    return res.status(400).json({
+      error: 'This connection is read-only — synthesis writes to the shared repo and needs a token with ' +
+             'Contents: Read and write.',
+    });
+  }
+
   if (isUpdateInProgress()) {
     const { status, body } = conflictResponse('run Shared Brain synthesis');
     return res.status(status).json(body);
@@ -439,6 +468,61 @@ router.post('/:id/synthesize', gate, async (req, res) => {
   } finally {
     releaseRegistry();
     res.end();
+  }
+});
+
+// ── Un-skip (v3.0.4, M15) ────────────────────────────────────────────────
+//
+// permanent_skip previously had NO user-facing recovery besides editing the
+// page (the mtime-based un-skip from v3.0.2). This endpoint lets the UI's
+// "Retry these pages" action clear skip entries directly: the pages get a
+// fresh strike counter and are re-attempted on the next push. Local config
+// change only — no network, no LLM.
+
+/**
+ * Pure core of the unskip operation (exported via __testing).
+ * Returns null when `requested` is malformed; otherwise
+ * { unskipped, patch: { permanent_skip, pending_retry } }.
+ * Requested paths not actually in permanent_skip are ignored.
+ */
+export function computeUnskipPatch(conn, requested) {
+  const currentSkip = Array.isArray(conn.permanent_skip) ? conn.permanent_skip : [];
+  let toClear;
+  if (requested === undefined || requested === null) {
+    toClear = currentSkip; // no body → clear everything
+  } else {
+    if (!Array.isArray(requested) || !requested.every(p => typeof p === 'string')) {
+      return null;
+    }
+    const skipSet = new Set(currentSkip);
+    toClear = requested.filter(p => skipSet.has(p)); // only paths actually skipped
+  }
+  const clearSet = new Set(toClear);
+  const newRetry = { ...(conn.pending_retry || {}) };
+  for (const p of toClear) delete newRetry[p]; // fresh strike counter
+  return {
+    unskipped: toClear.length,
+    patch: {
+      permanent_skip: currentSkip.filter(p => !clearSet.has(p)),
+      pending_retry: newRetry,
+    },
+  };
+}
+
+router.post('/:id/unskip', gate, (req, res) => {
+  const conn = loadConnectionOr404(req.params.id, res);
+  if (!conn) return;
+
+  const result = computeUnskipPatch(conn, req.body && req.body.pages);
+  if (result === null) {
+    return res.status(400).json({ error: 'pages must be an array of page-path strings (or omitted to retry all)' });
+  }
+
+  try {
+    patchSharedBrain(conn.id, result.patch);
+    res.json({ ok: true, unskipped: result.unskipped, permanent_skip: result.patch.permanent_skip });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -564,14 +648,18 @@ router.post('/validate-pat', gate, async (req, res) => {
       return res.json({
         valid: false,
         hasWriteAccess: false,
-        error: 'GitHub rejected the token (401/403). Check that the token is pasted correctly and that the admin has added you as a collaborator on this repo.',
+        error: 'GitHub rejected the token (401/403). Check that the token is pasted correctly, and that you have ' +
+               'ACCEPTED the collaborator invitation — GitHub emails it when the admin adds you, and the token is ' +
+               'rejected until you click Accept. Then re-paste the token here.',
       });
     }
     if (r.status === 404) {
       return res.json({
         valid: false,
         hasWriteAccess: false,
-        error: 'Repository not found, or your token does not have access. Ask the admin to confirm the repo URL and to add you as a collaborator.',
+        error: 'Repository not found, or your token does not have access. The most common cause: the collaborator ' +
+               'invitation email was never accepted (check your inbox/spam for "[GitHub]"). Otherwise ask the admin ' +
+               'to confirm the repo name and re-send the invitation.',
       });
     }
     if (!r.ok) {
@@ -600,7 +688,8 @@ router.post('/validate-pat', gate, async (req, res) => {
       // show the "go fix your token scopes" hint.
       message: hasWriteAccess
         ? 'Token is valid and has write access.'
-        : 'Token works but is read-only. Re-create with Contents: Read AND write.',
+        : 'Token works but is read-only. You can connect as a read-only member (Pull only) — ' +
+          'to contribute, re-create the token with Contents: Read and write.',
     });
   } catch (err) {
     // Network errors etc. Never include the PAT in the response.
@@ -620,4 +709,5 @@ export const __testing = {
   decodeInviteToken,
   INVITE_VERSION,
   INVITE_PREFIX,
+  computeUnskipPatch,
 };

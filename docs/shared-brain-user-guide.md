@@ -90,12 +90,12 @@ Within ~400ms the wizard validates the token against the cohort repo. Three poss
 | Result | What it means | What to do |
 |---|---|---|
 | **✓ Token verified** (green) | All good — token valid, write access confirmed | Click **Continue →** |
-| **⚠ Token is read-only** (yellow) | Token works but lacks Contents: Read AND write | Re-create the token with the correct permission, paste again |
-| **✗ Token rejected** (red) | GitHub said no | Likely causes: (a) token mis-copied → re-create and re-paste, (b) you didn't accept the collaborator invitation yet → see Step 2, (c) token scoped to wrong repo → re-create |
+| **⚠ Token is read-only** (yellow) | Token works but lacks Contents: Read AND write | **Two valid options (v3.0.4+):** click **Continue →** to join as a **read-only member** (you can Pull the collective wiki but never Push — some brains offer exactly this as a free/lower tier), or re-create the token with Contents: Read AND write and paste again to become a full contributor |
+| **✗ Token rejected** (red) | GitHub said no | Likely causes: (a) you didn't ACCEPT the collaborator invitation email yet → see Step 2 (this is the most common one), (b) token mis-copied → re-create and re-paste, (c) token scoped to wrong repo → re-create |
 
 #### Step 4 — Domains + display name + attribution
 
-- **Contributing domains**: tick which of YOUR personal domains push to this Shared Brain. The list filters out any `shared-*` mirrors (you can't contribute from one shared brain to another).
+- **Contributing domains**: tick which of YOUR personal domains push to this Shared Brain. The list filters out any `shared-*` mirrors (you can't contribute from one shared brain to another). Read-only members (yellow verdict in Step 3) can leave this empty — they don't push. Your ticks are remembered if you navigate Back and return.
 - **Your display name**: pick a friendly name for the Provenance section. Defaults to "Anonymous Fellow" if you don't fill it in.
 - **Show my name in Provenance sections**: leave unticked (default UUID) unless the admin specifically asked everyone to identify themselves. Even if you tick this, your name only appears if the ADMIN also enabled cohort-side name attribution — defensive double-gate per GDPR.
 
@@ -116,9 +116,11 @@ Tick the consent checkbox → **Save & Connect** activates → click it.
 
 The wizard closes. You'll see a new connection card in the Sync tab showing:
 
-- 🧠 **Brain name** with link to the GitHub repo
-- Last pushed: never · Last pulled: never · Domains: (your selection)
-- **Push contributions** · **Pull updates** buttons
+- 🧠 **Brain name** with link to the GitHub repo (read-only members get a **read-only member** pill)
+- Last pushed: never · Last pulled: never · **Last synthesis** (v3.0.4+ — "never — ask your admin to run synthesis" until the first one) · Domains: (your selection)
+- A **pending line** when you have pages waiting to push ("⏳ N pages ready to push")
+- **Push contributions** · **Pull updates** buttons (read-only members see only Pull)
+- A note telling you pulled content appears as the `shared-<slug>` domain in the Domains tab
 - An "Advanced" disclosure with synthesize + your fellow-ID + disconnect
 
 You're done. Skip to [§4 Daily workflow](#4--daily-workflow).
@@ -214,7 +216,13 @@ A typical work session:
 4. Ingest new sources into your **personal opted-in domain** (e.g. `work-ai/`) — NOT the shared mirror
 5. **Push contributions** at the end of your session
 
-Both Push and Pull are SSE-streamed: you'll see live progress as the operation runs. The connection card status box shows messages like *"Synthesizing entities/context-engineering.md (2 contributions)"* during synthesis.
+Both Push and Pull are SSE-streamed: you'll see live progress as the operation runs. The connection card status box shows messages like *"Synthesizing entities/context-engineering.md (2 contributions)"* during synthesis. Since v3.0.4 the final summary **stays on the card** after the operation (surviving tab switches), only one operation can run per connection at a time, and Disconnect is blocked while an operation runs.
+
+**Card at-a-glance state (v3.0.4+):**
+
+- **⏳ N pages ready to push** — pages changed since your last push (plus any queued retries). The same count feeds the navbar **Sync badge**, so from any tab you can see you have un-pushed Shared Brain contributions.
+- **Last synthesis: …** — when the collective was last synthesised (learned from your own synthesis run, or from the repo on every Pull). *"never — ask your admin to run synthesis"* explains the classic "Pull pulled 0 pages" confusion.
+- **⚠ N pages skipped after repeated failures** — expandable list of pages in `permanent_skip`, with a **Retry these pages on next push** button that re-queues them with a fresh strike counter (no page editing needed).
 
 ### For admins
 
@@ -248,7 +256,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - Open the repo URL in a new browser tab. If you see 404 or "you don't have access", that's the problem.
 
 **"Token is read-only" warning**
-- You created the PAT with **Contents: Read-only**. Regenerate with **Contents: Read AND write** and paste again.
+- You created the PAT with **Contents: Read-only**. If you intend to contribute, regenerate with **Contents: Read AND write** and paste again. If you're joining a Pull-only (read-only) tier, this is expected — since v3.0.4 you can click **Continue** and save; your card shows a **read-only member** pill and only the Pull button.
 
 **"Repository not found"**
 - Check the repo URL the admin gave you (typo in owner/name).
@@ -267,7 +275,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - Your contributing domain's pages were ingested before your `last_push_at` timestamp. Either edit one page (touches mtime) to force re-push, OR ask the admin to run synthesis — they may have synced after your last push without you knowing.
 
 **A page was "marked permanent_skip" — is it gone forever?**
-- No. A page moves to permanent_skip after 3 genuine pre-processing failures. **Edit the page** (any change — even adding a blank line — updates its timestamp) and it retries automatically on your next Push (v3.0.2+). Temporary provider outages (503 / rate limits) never count toward the 3-failure limit — those pages just retry next time.
+- No. A page moves to permanent_skip after 3 genuine pre-processing failures. Since v3.0.4 the connection card shows a **"⚠ N pages skipped"** block — expand it and click **Retry these pages on next push** to re-queue them with a fresh strike counter. (The older recovery also still works: **edit the page** — any change updates its timestamp — and it retries automatically, v3.0.2+.) Temporary provider outages (503 / rate limits) never count toward the 3-failure limit — those pages just retry next time.
 
 **Push/Pull button says another operation is in progress**
 - Shared Brain operations now coordinate with ingest, app updates, and Personal Sync (v3.0.2+): you can't start a Pull while an ingest is writing, and you can't update/restart the app mid-Pull. Wait for the running operation to finish; the buttons re-enable automatically.
@@ -276,7 +284,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - Fixed in v3.0.2 — failures (e.g. GitHub write errors) now show as errors with the real message, and successful operations show the real summary ("Pushed 7 pages. 3 will retry next time.").
 
 **Pull pulls 0 pages but the collective wiki has content**
-- The admin hasn't run synthesis since contributions arrived. Pull only fetches the synthesised collective pages, not raw contribution payloads. Ask the admin to run synthesis.
+- The admin hasn't run synthesis since contributions arrived. Pull only fetches the synthesised collective pages, not raw contribution payloads. Ask the admin to run synthesis. Since v3.0.4 the connection card's **Last synthesis** stat makes this state visible directly — if it says "never", that's your answer.
 
 **`shared-<slug>` domain appears in my domain list but I can't compile to it from Claude**
 - That's by design — the mirror is read-only. Direct writes wouldn't propagate. Use the MCP write tools on your personal opted-in domain instead, then Push.
@@ -284,8 +292,8 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 **Wiki Health "Fix" refuses to run on the `shared-<slug>` domain**
 - Same reason — fixes to the mirror would be overwritten. Scanning a mirror is allowed (useful for spotting conflict markers), but every fix action returns a clear refusal (v3.0.2+). To fix a Health issue in the collective wiki, fix it upstream in your personal contributing domain, then Push. The mirror also no longer appears in the Ingest tab's domain dropdown.
 
-**SSE stream shows "rate limit low: N requests remaining"**
-- GitHub fine-grained PATs get 5000 REST requests/hour. Heavy synthesis on a large brain can approach this. Wait an hour and retry; for cohort-scale brains this is rare.
+**Status shows "GitHub rate limit is running low"**
+- GitHub fine-grained PATs get 5000 REST requests/hour. Heavy synthesis on a large brain can approach this. Since v3.0.4 the warning appears directly in the operation's progress stream (previously it only went to the server log). Wait an hour and retry; for cohort-scale brains this is rare.
 
 **SSE stream shows "SHARED_BRAIN_RATE_LIMIT"**
 - You've exhausted the per-hour limit. Wait for the reset (check `x-ratelimit-reset` in browser DevTools network tab, or wait ~1 hour).
@@ -299,7 +307,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - They don't. Each contributor creates their own PAT and pastes it into their own Curator. Never share PATs. See [`shared-brain.md` §4](shared-brain.md#4--the-two-primitives--invite-token-vs-pat).
 
 **Conflicting facts in the collective wiki**
-- After synthesis, look for `## CONFLICTING SOURCES` markers in the Wiki tab. Each marker shows the contributors who disagreed (UUIDs or names). To resolve: discuss with the cohort. The contributor whose fact is correct edits their personal opted-in domain, then Push + Run synthesis again. The marker disappears once consensus is reached.
+- After synthesis, look for `## CONFLICTING SOURCES` markers in the Wiki tab. Since v3.0.4 the synthesis summary on the connection card names the affected pages directly ("2 unresolved contradictions flagged in concepts/x.md, entities/y.md"). Each marker shows the contributors who disagreed (UUIDs or names). To resolve: discuss with the cohort. The contributor whose fact is correct edits their personal opted-in domain, then Push + Run synthesis again. The marker disappears once consensus is reached.
 
 **Want to remove a contributor**
 - See [`docs/shared-brain-admin.md` §6](shared-brain-admin.md#6--removing-a-contributor-without-revoking) — typically remove them as GitHub collaborator (stops future pushes but keeps past contributions). For full GDPR Article 17 erasure, see [§3 Revoking a contributor](shared-brain-admin.md#3--revoking-a-contributor-article-17).

@@ -172,6 +172,8 @@ After synthesis, the collective wiki may grow `CONFLICTING SOURCES` markers wher
    ```
 4. Decide which is correct (sometimes neither — sometimes both). Discuss with the cohort. Resolve manually by editing the **personal** opted-in domain of the contributor whose fact is correct, then **Push contributions** and **Run synthesis** again.
 
+Since v3.0.4 you don't have to hunt: the synthesis summary on your connection card names the affected pages directly (*"2 unresolved contradictions flagged in concepts/x.md, entities/y.md"*), and the API result carries a `conflict_pages` array.
+
 The collective wiki is read-only for direct edits — that's by design. You resolve conflicts upstream (in someone's personal domain), not downstream.
 
 ---
@@ -200,7 +202,13 @@ Verify:
 3. Pull updates on your end so your local mirror reflects the new pages
 
 ### Rate-limited by GitHub
-Fine-grained PATs get 5000 REST API requests/hour. Synthesis on a 500-page brain with 50 contributions uses around 600 requests (tree listing + per-file reads + writes). You can run it 8x/hour at that scale before hitting the limit. The adapter emits a stderr warning at <50 remaining and throws a typed error at 0.
+Fine-grained PATs get 5000 REST API requests/hour. Synthesis on a 500-page brain with 50 contributions uses around 600 requests (tree listing + per-file reads + writes). You can run it 8x/hour at that scale before hitting the limit. The adapter warns at <50 remaining — since v3.0.4 the warning appears in the operation's own progress stream/UI (once per operation), not just stderr — and throws a typed error at 0.
+
+### A member's card says "read-only member" and they can't Push
+Expected (v3.0.4): their PAT was created with **Contents: Read** only, and they saved the connection as a read-only member — they can Pull but the backend refuses Push/synthesis for that connection. To upgrade them to contributor: have them re-create the PAT with **Contents: Read and write** and re-run the Join wizard with the same invite token.
+
+### A contributor reports "N pages skipped after repeated failures" on their card
+That's the `permanent_skip` list (3 genuine LLM pre-processing failures on the same page). They can expand the block and click **Retry these pages on next push** (v3.0.4, `POST /api/sharedbrain/:id/unskip`) — no page editing needed. If the same pages keep striking out, inspect them for unusual content (enormous size, binary-ish text) and consider splitting them.
 
 ### Invite token says "uses version 2; this Curator install supports up to v1"
 Your contributor's Curator is older than the one that generated the token. The wizard's error includes the version mismatch. Have them update to v3.0.0-beta.1 or later, then retry.

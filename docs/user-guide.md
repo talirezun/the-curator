@@ -986,6 +986,8 @@ The feature is opt-in beta. To enable: **Settings tab → "Shared Brain (beta)" 
 | **📨 I have an invite token → Join** | You received an invite token (`sbi_...`) from your cohort admin |
 | **⚙ I'm starting a new Shared Brain → Set up** | You're starting one for your cohort, team, or research group |
 
+Each connection then appears as a card in the Sync tab with Push/Pull buttons and at-a-glance state (v3.0.4): pages pending push (also counted in the navbar Sync badge), when the collective was last synthesised, any pages skipped after repeated failures (with a one-click retry), and a "read-only member" pill for Pull-only memberships (a PAT with Contents: Read only).
+
 ### Where to go from here
 
 The full setup walkthrough, daily workflow, troubleshooting, and admin operations live in dedicated guides — keep them open when you're working with Shared Brain:

@@ -427,6 +427,7 @@
            since v3.0.2; when the flag is off, the Sync tab shows no
            Shared Brain content at all (solo users keep a clean Sync tab). -->
 
+      <div id="sharedbrain-init-error" class="status error hidden" aria-live="polite"></div>
       <div id="sharedbrain-checking" class="sharedbrain-checking hidden">
         <div class="spinner-sm"></div>
         <span>Loading Shared Brain status…</span>
@@ -1142,6 +1143,7 @@
         </p>
         <div id="sharedbrain-optin" class="hidden">
           <button id="sharedbrain-enable-btn" class="btn primary">Enable Shared Brain (beta)</button>
+          <div id="sharedbrain-optin-status" class="status hidden" aria-live="polite"></div>
         </div>
         <div id="settings-sharedbrain-enabled" class="hidden">
           <p class="hint">✅ Shared Brain is enabled on this computer. Set up and manage your
@@ -1281,7 +1283,7 @@
 
     <!-- ── SHARED BRAIN WIZARD (Phase 4D contributor path) ──────────────── -->
 
-    <div id="sharedbrain-wizard" class="onboarding-overlay hidden">
+    <div id="sharedbrain-wizard" class="onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="sb-wizard-title">
       <div class="onboarding-card sb-wizard-card">
         <button id="sb-wizard-close" class="sb-wizard-close" aria-label="Close">×</button>
         <div class="onboarding-header">
@@ -1323,7 +1325,7 @@
               <dt>Shared domain slug</dt><dd data-field="shared_domain"></dd>
             </dl>
           </div>
-          <div id="sb-step1-status" class="status hidden"></div>
+          <div id="sb-step1-status" class="status hidden" aria-live="polite"></div>
           <div class="ob-actions">
             <button class="btn sb-cancel-btn" data-action="close">Cancel</button>
             <button id="sb-step1-next" class="btn primary pill" disabled>Continue →</button>
@@ -1339,7 +1341,7 @@
             <div class="sb-access-icon">📨</div>
             <div class="sb-access-text">
               <strong>Check your email</strong>
-              <span>Look for "<em><span data-field="admin-name">your admin</span> invited you</em>" — the subject typically starts with "[GitHub]". Click <strong>View invitation</strong> → <strong>Accept invitation</strong>.</span>
+              <span>Look for an invitation to <strong><span data-field="invite-repo">the cohort repo</span></strong> — the subject typically starts with "[GitHub]". Click <strong>View invitation</strong> → <strong>Accept invitation</strong>.</span>
             </div>
           </div>
 
@@ -1414,7 +1416,7 @@
             </div>
           </div>
 
-          <div id="sb-admin-step1-status" class="status hidden"></div>
+          <div id="sb-admin-step1-status" class="status hidden" aria-live="polite"></div>
 
           <div class="ob-actions">
             <button class="btn sb-cancel-btn" data-action="close">Cancel</button>
@@ -1442,6 +1444,7 @@
               <li>Click <strong>Add people</strong>, type each contributor's GitHub username or email, send.</li>
               <li>Send them the invite token above. They run the Shared Brain wizard with the <strong>"I have an invite token"</strong> option.</li>
             </ol>
+            <p class="hint sb-share-note">⚠ If you go <strong>Back</strong> and change any setting, a <strong>new</strong> invite token is generated — make sure contributors get the latest one.</p>
             <p class="hint sb-share-note">Now we'll set up <strong>your own</strong> contribution to this brain — your PAT, your domains, your consent. Same as any other contributor.</p>
           </div>
 
@@ -1476,7 +1479,7 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
             </div>
-            <div id="sb-pat-validation" class="sb-pat-validation hidden"></div>
+            <div id="sb-pat-validation" class="sb-pat-validation hidden" aria-live="polite"></div>
           </div>
 
           <div class="ob-actions">
@@ -1510,6 +1513,8 @@
             </label>
             <span class="help-text">Per Decision 6a, name attribution requires BOTH this flag and an admin-enabled cohort setting. If either is off, you appear as a short UUID.</span>
           </div>
+
+          <div id="sb-step4-status" class="status hidden" aria-live="polite"></div>
 
           <div class="ob-actions">
             <button class="btn" data-action="back">← Back</button>
@@ -1545,7 +1550,7 @@
             </label>
           </div>
 
-          <div id="sb-step5-status" class="status hidden"></div>
+          <div id="sb-step5-status" class="status hidden" aria-live="polite"></div>
 
           <div class="ob-actions">
             <button class="btn" data-action="back">← Back</button>

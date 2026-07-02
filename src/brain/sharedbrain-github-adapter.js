@@ -160,6 +160,10 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
    * @param {string} [config.branch="main"]
    * @param {Function} [config.fetchImpl=globalThis.fetch]  Injectable for offline tests.
    * @param {number} [config.maxRetries=1]  Max SHA-conflict retries after first attempt.
+   * @param {Function} [config.onWarn]  Optional (message) => void — operational
+   *   warnings (rate-limit pressure) for the caller's progress stream. stderr
+   *   logging still happens regardless; this is the user-visible channel
+   *   (v3.0.4, M18 — rate-limit warnings used to go to stderr only).
    */
   constructor(config) {
     super();
@@ -189,6 +193,7 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
       throw new Error('GitHubStorageAdapter: no fetch implementation available (Node 18+ required)');
     }
     this._maxRetries = typeof config.maxRetries === 'number' ? config.maxRetries : 1;
+    this._onWarn = typeof config.onWarn === 'function' ? config.onWarn : null;
   }
 
   // ── Internal repo-path builders ──────────────────────────────────────────
@@ -251,6 +256,23 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
           `[sharedbrain-github] rate limit low: ${n} requests remaining ` +
           `(${this.owner}/${this.repo})`,
         );
+        // v3.0.4 (M18): also surface to the caller's progress stream so the
+        // user sees the pressure in the UI, not just the server log. At most
+        // once per adapter instance — one push/pull/synthesis makes many
+        // HTTP calls and a warning per call would drown the real progress.
+        if (this._onWarn && !this._warnedRateLimit) {
+          this._warnedRateLimit = true;
+          const reset = response.headers.get('x-ratelimit-reset');
+          const resetText = reset && Number.isFinite(Number(reset))
+            ? ` It resets at ${new Date(Number(reset) * 1000).toLocaleTimeString()}.`
+            : '';
+          try {
+            this._onWarn(
+              `GitHub rate limit is running low (${n} requests remaining this hour).` +
+              `${resetText} Large operations may fail until it resets.`
+            );
+          } catch { /* a warn callback must never break the operation */ }
+        }
       }
     }
   }

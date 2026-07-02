@@ -484,9 +484,15 @@ let compileBusy    = false;  // prevents double-compiles
 const COMPILE_MIN_USER_MESSAGES = 1;
 
 // ── Domain selector ───────────────────────────────────────────────────────────
+// v3.0.4: chatting WITH a read-only mirror is fine, but Compile writes to
+// it — hide the Compile button for mirrors instead of letting the backend
+// 400 surprise the user (Phase-1 deferral, now closed).
+let chatReadonlyDomains = new Set();
+
 async function loadChatDomains() {
   const res = await fetch('/api/domains');
-  const { domains } = await res.json();
+  const { domains, readonlyDomains = [] } = await res.json();
+  chatReadonlyDomains = new Set(readonlyDomains);
   chatDomainEl.innerHTML = domains
     .map(d => `<option value="${d}">${formatDomain(d)}</option>`)
     .join('');
@@ -585,7 +591,10 @@ function updateCompileButtonVisibility(messages) {
   // good question→answer exchange is worth compiling).
   const userTurns = messages.filter(m => m.role === 'user').length;
   if (compileBtn) {
-    if (userTurns >= COMPILE_MIN_USER_MESSAGES) {
+    // v3.0.4: never offer Compile into a read-only Shared Brain mirror —
+    // the backend refuses (400) and the write would be overwritten on the
+    // next Pull anyway.
+    if (userTurns >= COMPILE_MIN_USER_MESSAGES && !chatReadonlyDomains.has(chatDomain)) {
       compileBtn.classList.remove('hidden');
     } else {
       compileBtn.classList.add('hidden');
@@ -868,22 +877,49 @@ let wizardLastMode = 'push';
 // a domain deletion) without needing to open the Sync tab. Hidden when sync
 // is not configured, or when there are no pending changes.
 
+// v3.0.4 (M14): the badge also covers Shared Brain pending contributions —
+// pages changed since the last push (or queued for retry) across every
+// enabled connection. The count comes from /api/sharedbrain/list's additive
+// pending_pages field, cached here between refreshes.
+let _sbPendingCount = 0;
+
 function applySyncPendingBadge(status) {
   const badge = document.getElementById('sync-pending-badge');
   if (!badge) return;
-  const count = (status && status.configured) ? (status.changesCount | 0) : 0;
-  if (count > 0) {
-    badge.textContent = String(count);
-    badge.title = `${count} local change${count === 1 ? '' : 's'} not yet pushed to GitHub. Click Sync to push them.`;
+  const gitCount = (status && status.configured) ? (status.changesCount | 0) : 0;
+  const sbCount = _sbPendingCount | 0;
+  const total = gitCount + sbCount;
+  if (total > 0) {
+    badge.textContent = String(total);
+    const parts = [];
+    if (gitCount > 0) parts.push(`${gitCount} local change${gitCount === 1 ? '' : 's'} not yet pushed to GitHub`);
+    if (sbCount > 0) parts.push(`${sbCount} page${sbCount === 1 ? '' : 's'} not yet pushed to your Shared Brain${sbCount === 1 ? '' : 's'}`);
+    badge.title = `${parts.join('; ')}. Open the Sync tab to push.`;
     badge.classList.remove('hidden');
   } else {
     badge.classList.add('hidden');
   }
 }
 
+async function fetchSharedBrainPendingCount() {
+  try {
+    const r = await fetch('/api/sharedbrain/list');
+    if (!r.ok) return 0; // 404 = feature off — nothing pending by definition
+    const j = await r.json();
+    return (Array.isArray(j.connections) ? j.connections : [])
+      .reduce((n, c) => n + (c.pending_pages | 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
 async function refreshSyncPendingBadge() {
   try {
-    const res = await fetch('/api/sync/status');
+    const [res, sbCount] = await Promise.all([
+      fetch('/api/sync/status'),
+      fetchSharedBrainPendingCount(),
+    ]);
+    _sbPendingCount = sbCount;
     if (!res.ok) {
       applySyncPendingBadge(null);
       return;
@@ -1055,6 +1091,15 @@ const sbEmpty    = () => document.getElementById('sharedbrain-empty');
 const sbList     = () => document.getElementById('sharedbrain-list');
 const sbAddMore  = () => document.getElementById('sharedbrain-add-more');
 
+// v3.0.4 (L12): init/list failures render an inline error row instead of
+// silently hiding the section (which read as "Shared Brain is off").
+function showSharedBrainError(message) {
+  const errEl = document.getElementById('sharedbrain-init-error');
+  if (!errEl) return;
+  errEl.textContent = `${message} Click the Sync tab again to retry.`;
+  errEl.classList.remove('hidden');
+}
+
 // v3.0.2: the enable/opt-in toggle moved to Settings → Shared Brain
 // (beta). The Sync tab shows the operational section ONLY when the flag is
 // on — solo users (the vast majority) see no Shared Brain content here.
@@ -1063,6 +1108,8 @@ async function initSharedBrainSection() {
   if (!checking) return; // index.html doesn't have the section (older app file?)
   showEl(checking);
   hideEl(sbSection());
+  const errEl = document.getElementById('sharedbrain-init-error');
+  if (errEl) errEl.classList.add('hidden');
 
   try {
     const flagRes = await fetch('/api/sharedbrain/feature-flag');
@@ -1076,6 +1123,7 @@ async function initSharedBrainSection() {
   } catch (err) {
     hideEl(checking);
     console.error('[sharedbrain] init failed', err);
+    showSharedBrainError(`Could not load the Shared Brain section: ${err.message}.`);
   }
 }
 
@@ -1101,13 +1149,20 @@ function bindSharedBrainOptin() {
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     btn.textContent = 'Enabling…';
+    const statusEl = document.getElementById('sharedbrain-optin-status');
+    if (statusEl) statusEl.classList.add('hidden');
     try {
       const r = await fetch('/api/sharedbrain/enable-flag', { method: 'POST' });
       const j = await r.json();
       if (!j.enabled) throw new Error(j.error || 'Could not enable Shared Brain');
       await refreshSharedBrainSettings();
     } catch (err) {
-      alert(`Could not enable Shared Brain: ${err.message}`);
+      // v3.0.4 (L14): inline status instead of alert().
+      if (statusEl) {
+        statusEl.textContent = `Could not enable Shared Brain: ${err.message}`;
+        statusEl.className = 'status error';
+        statusEl.classList.remove('hidden');
+      }
     } finally {
       btn.disabled = false;
       btn.textContent = 'Enable Shared Brain (beta)';
@@ -1134,6 +1189,9 @@ async function refreshSharedBrainList() {
     const j = await r.json();
     const conns = Array.isArray(j.connections) ? j.connections : [];
 
+    // Keep the navbar badge in sync with the freshest pending counts (M14).
+    _sbPendingCount = conns.reduce((n, c) => n + (c.pending_pages | 0), 0);
+
     if (conns.length === 0) {
       showEl(sbEmpty());
       hideEl(sbList());
@@ -1146,6 +1204,8 @@ async function refreshSharedBrainList() {
     }
   } catch (err) {
     console.error('[sharedbrain] refresh failed', err);
+    // v3.0.4 (L12): a failed list render used to leave a blank void.
+    showSharedBrainError(`Could not load Shared Brain connections: ${err.message}.`);
   }
 }
 
@@ -1172,6 +1232,72 @@ function formatRelativeTime(iso) {
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day} day${day !== 1 ? 's' : ''} ago`;
   return then.toLocaleDateString();
+}
+
+// ── Per-connection in-flight-op registry (v3.0.4, M12/M13) ─────────────────
+//
+// initSharedBrainSection re-runs on every Sync-tab click, and a successful
+// operation triggers refreshSharedBrainList — both replace the card DOM.
+// Before this registry, a re-render mid-operation detached the card that
+// held the status text and re-enabled the fresh card's buttons, so a second
+// click could start a duplicate push (or a Disconnect mid-push). Now:
+//   - _sbInFlight tracks the running op per connection; renders restore the
+//     live status and keep buttons disabled; duplicate ops are refused.
+//   - _sbLastResult keeps the final message so tab switches don't wipe it.
+const _sbInFlight   = new Map(); // connId → { action, message, isError }
+const _sbLastResult = new Map(); // connId → { message, isError }
+
+function sbCardEl(connId) {
+  const list = sbList();
+  return list ? list.querySelector(`.sharedbrain-card[data-id="${connId}"]`) : null;
+}
+
+// Status + busy setters always resolve the CURRENT card in the DOM — never
+// a captured node that a re-render may have detached.
+function sbSetCardStatus(connId, message, isError = false) {
+  const card = sbCardEl(connId);
+  if (!card) return;
+  const statusEl = card.querySelector('[data-field="status"]');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.classList.toggle('error', !!isError);
+  statusEl.classList.add('active');
+}
+
+function sbSetCardBusy(connId, busy) {
+  const card = sbCardEl(connId);
+  if (!card) return;
+  card.querySelectorAll('button[data-action]').forEach(b => { b.disabled = !!busy; });
+}
+
+// Compose the final status line for a 'done' SSE frame. Prefers the
+// backend's own summary; falls back to assembling one from the raw result
+// fields; keeps the last streamed message as the final fallback (M13).
+function sbComposeDoneMessage(action, payload, lastShown) {
+  if (payload.message) return payload.message;
+  const r = payload.result;
+  if (r && typeof r === 'object') {
+    if (typeof r.message === 'string' && r.message) return r.message;
+    if (action === 'pull' && 'created' in r) {
+      return `Pull complete: ${r.created} new, ${r.updated} updated` +
+        ('unchanged' in r ? `, ${r.unchanged} unchanged` : '') +
+        (r.pruned > 0 ? `, ${r.pruned} removed` : '') +
+        (r.skipped > 0 ? `, ${r.skipped} skipped` : '') + '.';
+    }
+    if (action === 'synthesize' && 'pages_written' in r) {
+      let m = `Synthesis complete: ${r.pages_written} page${r.pages_written === 1 ? '' : 's'} written` +
+        ('processed_contributions' in r ? ` from ${r.processed_contributions} contribution${r.processed_contributions === 1 ? '' : 's'}` : '');
+      if (r.conflicts > 0) {
+        m += `, ${r.conflicts} conflict${r.conflicts === 1 ? '' : 's'} flagged`;
+        if (Array.isArray(r.conflict_pages) && r.conflict_pages.length > 0) {
+          m += ` in ${r.conflict_pages.slice(0, 5).join(', ')}${r.conflict_pages.length > 5 ? ` (+${r.conflict_pages.length - 5} more)` : ''}`;
+        }
+      }
+      if (r.pages_failed > 0) m += `, ${r.pages_failed} page${r.pages_failed === 1 ? '' : 's'} failed`;
+      return m + '.';
+    }
+  }
+  return lastShown || `${action} completed.`;
 }
 
 function renderSharedBrainCard(conn) {
@@ -1202,19 +1328,29 @@ function renderSharedBrainCard(conn) {
   // this template string.
   card.innerHTML = `
     <div class="sharedbrain-card-header">
-      <h4 class="sharedbrain-card-title">🧠 <span data-field="label"></span></h4>
+      <h4 class="sharedbrain-card-title">🧠 <span data-field="label"></span><span class="sharedbrain-card-meta-pill sb-readonly-pill hidden" data-field="readonly-pill">read-only member</span></h4>
       <span class="sharedbrain-card-repo" data-field="repo"></span>
     </div>
     <div class="sharedbrain-card-stats">
       <span><span class="sharedbrain-card-stat-label">Last pushed:</span> <span data-field="last-pushed"></span></span>
       <span><span class="sharedbrain-card-stat-label">Last pulled:</span> <span data-field="last-pulled"></span></span>
+      <span><span class="sharedbrain-card-stat-label">Last synthesis:</span> <span data-field="last-synthesis"></span></span>
       <span><span class="sharedbrain-card-stat-label">Domains:</span> <span data-field="domains"></span></span>
     </div>
+    <div class="sharedbrain-card-pending hidden" data-field="pending"></div>
     <div class="sharedbrain-card-actions">
       <button class="btn primary" data-action="push">Push contributions</button>
       <button class="btn" data-action="pull">Pull updates</button>
     </div>
-    <div class="sharedbrain-card-status" data-field="status"></div>
+    <div class="sharedbrain-card-skips hidden" data-field="skips">
+      <details>
+        <summary data-field="skips-summary"></summary>
+        <ul class="sharedbrain-card-skips-list" data-field="skips-list"></ul>
+        <button class="btn" data-action="retry-skipped">Retry these pages on next push</button>
+      </details>
+    </div>
+    <div class="sharedbrain-card-status" data-field="status" aria-live="polite"></div>
+    <p class="sharedbrain-card-note" data-field="mirror-note"></p>
     <details class="sharedbrain-card-advanced">
       <summary>Advanced</summary>
       <div class="sharedbrain-card-advanced-body">
@@ -1232,8 +1368,58 @@ function renderSharedBrainCard(conn) {
   card.querySelector('[data-field="label"]').textContent = conn.label || '(unnamed)';
   card.querySelector('[data-field="last-pushed"]').textContent = formatRelativeTime(conn.last_push_at);
   card.querySelector('[data-field="last-pulled"]').textContent = formatRelativeTime(conn.last_pull_at);
+  // v3.0.4 (M16): when the collective was last synthesised — learned from
+  // the admin's own synthesis run, or from state.last-synthesis on Pull.
+  // "Pull pulled 0 pages" almost always means "no synthesis yet".
+  card.querySelector('[data-field="last-synthesis"]').textContent = conn.last_synthesis_at
+    ? formatRelativeTime(conn.last_synthesis_at)
+    : 'never — ask your admin to run synthesis';
   card.querySelector('[data-field="domains"]').textContent = localDomains;
   card.querySelector('[data-field="fellow-id"]').textContent = `fellow ${fellowShort}…`;
+
+  // v3.0.4 (L15): say where pulled content lands — users couldn't find it.
+  const slug = typeof conn.shared_brain_slug === 'string' ? conn.shared_brain_slug : '';
+  card.querySelector('[data-field="mirror-note"]').textContent = slug
+    ? `Pulled content appears as the read-only domain "shared-${slug}" in the Domains tab.`
+    : '';
+
+  // v3.0.4 (H10): read-only member — Push and synthesis are impossible
+  // with a read-only PAT; hide them and show the pill instead of letting
+  // the buttons fail with a GitHub 403.
+  if (conn.read_only === true) {
+    card.querySelector('[data-field="readonly-pill"]').classList.remove('hidden');
+    card.querySelector('button[data-action="push"]').classList.add('hidden');
+    card.querySelector('button[data-action="synthesize"]').classList.add('hidden');
+  }
+
+  // v3.0.4 (M14): pending contributions at rest.
+  const pendingEl = card.querySelector('[data-field="pending"]');
+  const pendingCount = conn.pending_pages | 0;
+  const retryCount = conn.pending_retry && typeof conn.pending_retry === 'object'
+    ? Object.keys(conn.pending_retry).length : 0;
+  if (conn.read_only !== true && (pendingCount > 0 || retryCount > 0)) {
+    const bits = [];
+    if (pendingCount > 0) bits.push(`${pendingCount} page${pendingCount === 1 ? '' : 's'} ready to push`);
+    if (retryCount > 0) bits.push(`${retryCount} queued for automatic retry`);
+    pendingEl.textContent = `⏳ ${bits.join(' · ')}`;
+    pendingEl.classList.remove('hidden');
+  }
+
+  // v3.0.4 (M15): permanently-skipped pages get a resting-state pill with
+  // an expandable list and a one-click "retry" action (POST /:id/unskip).
+  const skips = Array.isArray(conn.permanent_skip) ? conn.permanent_skip.filter(p => typeof p === 'string') : [];
+  if (skips.length > 0) {
+    const skipsEl = card.querySelector('[data-field="skips"]');
+    skipsEl.classList.remove('hidden');
+    card.querySelector('[data-field="skips-summary"]').textContent =
+      `⚠ ${skips.length} page${skips.length === 1 ? '' : 's'} skipped after repeated failures`;
+    const listEl = card.querySelector('[data-field="skips-list"]');
+    for (const p of skips) {
+      const li = document.createElement('li');
+      li.textContent = p;
+      listEl.appendChild(li);
+    }
+  }
 
   // Repo cell — promote the span to an anchor when we have a URL.
   const repoCell = card.querySelector('[data-field="repo"]');
@@ -1254,38 +1440,115 @@ function renderSharedBrainCard(conn) {
     btn.addEventListener('click', () => onSharedBrainAction(conn.id, btn.dataset.action, card));
   });
 
+  // v3.0.4 (M12/M13): restore live or last-known status across re-renders.
+  const inFlight = _sbInFlight.get(conn.id);
+  if (inFlight) {
+    sbApplyStatusTo(card, inFlight.message, inFlight.isError);
+    card.querySelectorAll('button[data-action]').forEach(b => { b.disabled = true; });
+  } else {
+    const last = _sbLastResult.get(conn.id);
+    if (last) sbApplyStatusTo(card, last.message, last.isError);
+  }
+
   return card;
 }
 
-async function onSharedBrainAction(connId, action, card) {
+// Apply a status to a specific (possibly not-yet-attached) card node.
+function sbApplyStatusTo(card, message, isError) {
   const statusEl = card.querySelector('[data-field="status"]');
-  const buttons  = card.querySelectorAll('button[data-action]');
+  if (!statusEl) return;
+  statusEl.textContent = message;
+  statusEl.classList.toggle('error', !!isError);
+  statusEl.classList.add('active');
+}
 
-  function setStatus(msg, isError = false) {
-    statusEl.textContent = msg;
-    statusEl.classList.toggle('error', isError);
-    statusEl.classList.add('active');
-  }
+async function onSharedBrainAction(connId, action, card) {
+  // v3.0.4 (M12): one operation per connection at a time. The status/busy
+  // helpers below always resolve the CURRENT card in the DOM, so a Sync-tab
+  // re-render mid-operation can't detach the status or re-enable buttons.
 
   if (action === 'disconnect') {
-    if (!confirm('Disconnect this Shared Brain? This removes it from THIS computer only — the shared repo and other contributors are not affected.')) return;
-    try {
-      const r = await fetch(`/api/sharedbrain/${connId}`, { method: 'DELETE' });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `disconnect failed: ${r.status}`);
+    if (_sbInFlight.has(connId)) {
+      sbSetCardStatus(connId, 'An operation is running on this connection — wait for it to finish before disconnecting.', true);
+      return;
+    }
+    // v3.0.4 (L14): inline confirm in the card status area instead of the
+    // browser confirm() dialog.
+    const statusEl = card.querySelector('[data-field="status"]');
+    if (!statusEl) return;
+    statusEl.textContent = '';
+    statusEl.classList.remove('error');
+    statusEl.classList.add('active');
+    const text = document.createElement('span');
+    text.textContent = 'Disconnect this Shared Brain? This removes it from THIS computer only — the shared repo and other contributors are not affected. ';
+    const yes = document.createElement('button');
+    yes.className = 'btn sync-disconnect-btn';
+    yes.textContent = 'Disconnect';
+    const no = document.createElement('button');
+    no.className = 'btn';
+    no.textContent = 'Cancel';
+    statusEl.append(text, yes, document.createTextNode(' '), no);
+    no.addEventListener('click', () => {
+      statusEl.textContent = '';
+      statusEl.classList.remove('active');
+    });
+    yes.addEventListener('click', async () => {
+      yes.disabled = true; no.disabled = true;
+      try {
+        const r = await fetch(`/api/sharedbrain/${connId}`, { method: 'DELETE' });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error || `disconnect failed: ${r.status}`);
+        }
+        _sbLastResult.delete(connId);
+        await refreshSharedBrainList();
+        refreshSyncPendingBadge();
+      } catch (err) {
+        sbSetCardStatus(connId, `Could not disconnect: ${err.message}`, true);
       }
+    });
+    return;
+  }
+
+  // v3.0.4 (M15): "Retry these pages" — clears permanent_skip via the
+  // unskip endpoint; the pages get a fresh strike counter on the next push.
+  if (action === 'retry-skipped') {
+    if (_sbInFlight.has(connId)) {
+      sbSetCardStatus(connId, 'An operation is already running on this connection — try again when it finishes.', true);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/sharedbrain/${connId}/unskip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok !== true) throw new Error(j.error || `unskip returned ${r.status}`);
+      const msg = `${j.unskipped} page${j.unskipped === 1 ? '' : 's'} re-queued — they will be retried on the next Push.`;
+      _sbLastResult.set(connId, { message: msg, isError: false });
       await refreshSharedBrainList();
     } catch (err) {
-      alert(`Could not disconnect: ${err.message}`);
+      sbSetCardStatus(connId, `Could not re-queue skipped pages: ${err.message}`, true);
     }
     return;
   }
 
   if (!['push', 'pull', 'synthesize'].includes(action)) return;
 
-  // Disable buttons while the SSE stream runs
-  buttons.forEach(b => { b.disabled = true; });
+  if (_sbInFlight.has(connId)) {
+    const running = _sbInFlight.get(connId);
+    sbSetCardStatus(connId, `A ${running.action} is already running on this connection — wait for it to finish.`, true);
+    return;
+  }
+  _sbInFlight.set(connId, { action, message: `Starting ${action}…`, isError: false });
+  sbSetCardBusy(connId, true);
+
+  function setStatus(msg, isError = false) {
+    const entry = _sbInFlight.get(connId);
+    if (entry) { entry.message = msg; entry.isError = isError; }
+    sbSetCardStatus(connId, msg, isError);
+  }
   setStatus(`Starting ${action}…`);
 
   // v3.0.2: register through the same busy-state gate as ingest so
@@ -1294,6 +1557,7 @@ async function onSharedBrainAction(connId, action, card) {
   const busyKey = `sharedbrain:${connId}`;
   if (window.__curatorIngestStart) window.__curatorIngestStart(busyKey);
 
+  let hadError = false;
   try {
     const r = await fetch(`/api/sharedbrain/${connId}/${action}`, {
       method: 'POST',
@@ -1311,7 +1575,6 @@ async function onSharedBrainAction(connId, action, card) {
     const decoder = new TextDecoder();
     let buffer = '';
     let lastMessage = '';
-    let hadError = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1327,18 +1590,11 @@ async function onSharedBrainAction(connId, action, card) {
             hadError = true;
             setStatus(`Error: ${payload.message}`, true);
           } else if (payload.type === 'done') {
-            // v3.0.2: prefer the backend's real summary ("Pushed 7
-            // pages. 3 will retry next time."). The route's final done event
-            // carries the raw result object without a message — in that case
-            // keep what the stream last showed instead of downgrading to a
-            // generic "completed".
-            if (payload.message) {
-              setStatus(payload.message);
-            } else if (payload.result && payload.result.message) {
-              setStatus(payload.result.message);
-            } else if (!lastMessage) {
-              setStatus(`${action} completed.`);
-            }
+            // v3.0.4 (M13): prefer the backend's real summary; otherwise
+            // compose one from the result fields (pull counts, synthesis
+            // conflicts incl. affected pages); never downgrade to a bare
+            // "completed" while a richer message was streamed.
+            setStatus(sbComposeDoneMessage(action, payload, lastMessage));
           } else if (payload.message) {
             lastMessage = payload.message;
             setStatus(lastMessage);
@@ -1346,24 +1602,26 @@ async function onSharedBrainAction(connId, action, card) {
         } catch { /* malformed SSE frame — ignore */ }
       }
     }
-
-    if (!hadError) {
-      // Refresh the list so updated last_push_at/last_pull_at appears —
-      // then re-apply the final status message to the freshly rendered card
-      // (the re-render replaces the DOM node that held it, v3.0.2).
-      const finalMsg = statusEl.textContent;
-      await refreshSharedBrainList();
-      const newCard = sbList() && sbList().querySelector(`.sharedbrain-card[data-id="${connId}"]`);
-      if (newCard && finalMsg) {
-        const s = newCard.querySelector('[data-field="status"]');
-        if (s) { s.textContent = finalMsg; s.classList.add('active'); }
-      }
-    }
   } catch (err) {
+    hadError = true;
     setStatus(`Error: ${err.message}`, true);
   } finally {
+    // Persist the final message BEFORE any re-render so the fresh card
+    // restores it (M13), then release the registries.
+    const entry = _sbInFlight.get(connId);
+    if (entry) _sbLastResult.set(connId, { message: entry.message, isError: entry.isError || hadError });
+    _sbInFlight.delete(connId);
+    // Re-enable BEFORE releasing the global gate: if another ingest is still
+    // active, the gate's re-application re-disables with correct bookkeeping.
+    sbSetCardBusy(connId, false);
     if (window.__curatorIngestEnd) window.__curatorIngestEnd(busyKey);
-    buttons.forEach(b => { b.disabled = false; });
+  }
+
+  if (!hadError) {
+    // Refresh so updated stats (last pushed/pulled/synthesis, pending count)
+    // appear — the re-render restores the final status from _sbLastResult.
+    await refreshSharedBrainList();
+    refreshSyncPendingBadge();
   }
 }
 
@@ -1456,17 +1714,55 @@ function openSharedBrainWizard(mode) {
   document.getElementById('sb-step1-next').disabled = true;
   document.getElementById('sb-step3-next').disabled = true;
   document.getElementById('sb-step5-save').disabled = true;
-  for (const stepId of ['sb-step1-status', 'sb-step5-status', 'sb-admin-step1-status']) {
+  for (const stepId of ['sb-step1-status', 'sb-step4-status', 'sb-step5-status', 'sb-admin-step1-status']) {
     const el = document.getElementById(stepId);
     if (el) { el.classList.add('hidden'); el.textContent = ''; }
   }
 
-  sbWizardGoToStep(1);
+  // v3.0.4 (L16): remember what had focus so closing returns the user
+  // where they were; trap Tab inside the dialog while it is open.
+  _sbWizardPrevFocus = document.activeElement;
   document.getElementById('sharedbrain-wizard').classList.remove('hidden');
+  document.addEventListener('keydown', sbWizardKeydown, true);
+  sbWizardGoToStep(1);
+}
+
+// v3.0.4 (L16): modal keyboard behaviour — Escape closes, Tab cycles
+// within the wizard card (focus trap).
+let _sbWizardPrevFocus = null;
+function sbWizardKeydown(e) {
+  const overlay = document.getElementById('sharedbrain-wizard');
+  if (!overlay || overlay.classList.contains('hidden')) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeSharedBrainWizard();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const focusables = overlay.querySelectorAll(
+    'button:not([disabled]), a[href], input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'
+  );
+  const visible = [...focusables].filter(el => el.offsetParent !== null);
+  if (visible.length === 0) return;
+  const first = visible[0];
+  const last = visible[visible.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) {
+    e.preventDefault();
+    first.focus();
+  }
 }
 
 function closeSharedBrainWizard() {
   document.getElementById('sharedbrain-wizard').classList.add('hidden');
+  document.removeEventListener('keydown', sbWizardKeydown, true);
+  // Restore focus to where the user was before the dialog opened (L16).
+  if (_sbWizardPrevFocus && typeof _sbWizardPrevFocus.focus === 'function') {
+    try { _sbWizardPrevFocus.focus(); } catch { /* element may be gone */ }
+  }
+  _sbWizardPrevFocus = null;
 }
 
 // Step IDs by mode. Admin path replaces contributor steps 1 & 2 with its
@@ -1495,6 +1791,13 @@ function sbWizardGoToStep(n) {
   const active = activeId ? document.getElementById(activeId) : null;
   if (active) active.classList.remove('hidden');
 
+  // v3.0.4 (M9): populate outbound links when their panel becomes VISIBLE,
+  // not when it is left. Before this, the step-2 "Open the repo on GitHub"
+  // link was empty on first entry — the one step designed for the
+  // collaborator-invite confusion case opened the Curator page itself.
+  if (activeId === 'sb-step-2') refreshStep2Links();
+  if (activeId === 'sb-step-3') refreshPatCreateLink();
+
   // Update progress indicator labels + active/done states
   const labels = SB_STEP_LABELS[mode] || SB_STEP_LABELS.join;
   const steps = document.querySelectorAll('.sb-progress .ob-step');
@@ -1502,9 +1805,21 @@ function sbWizardGoToStep(n) {
     const num = Number(el.dataset.step);
     el.classList.toggle('active', num === n);
     el.classList.toggle('done', num < n);
+    // v3.0.4 (L16): announce the current step to assistive tech.
+    if (num === n) el.setAttribute('aria-current', 'step');
+    else el.removeAttribute('aria-current');
     const labelEl = el.querySelector(`[data-label="step${num}"]`);
     if (labelEl && labels[num - 1]) labelEl.textContent = labels[num - 1];
   });
+
+  // v3.0.4 (L16): move focus to the newly visible panel's heading region.
+  if (active) {
+    const heading = active.querySelector('h3');
+    if (heading) {
+      heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: false });
+    }
+  }
 }
 
 // ── Step 1: invite token paste + decode ────────────────────────────────────
@@ -1516,10 +1831,15 @@ function bindSharedBrainWizardStep1() {
   const statusEl = document.getElementById('sb-step1-status');
   if (!input) return;
 
+  // v3.0.4 (M11): monotonic sequence guard — a slow response for an OLD
+  // input value must never overwrite the verdict for the current one.
   let debounce = null;
+  let seq = 0;
   input.addEventListener('input', () => {
     clearTimeout(debounce);
+    const mySeq = ++seq; // anything in flight is now stale
     nextBtn.disabled = true;
+    sbWizard.state.inviteMetadata = null;
     statusEl.classList.add('hidden');
     preview.classList.add('hidden');
     const token = input.value.trim();
@@ -1532,6 +1852,7 @@ function bindSharedBrainWizardStep1() {
           body: JSON.stringify({ token }),
         });
         const j = await r.json();
+        if (mySeq !== seq) return; // stale response — a newer input superseded it
         if (!j.valid) {
           statusEl.textContent = j.error || 'Invite token is invalid.';
           statusEl.className = 'status error';
@@ -1546,6 +1867,7 @@ function bindSharedBrainWizardStep1() {
         preview.classList.remove('hidden');
         nextBtn.disabled = false;
       } catch (err) {
+        if (mySeq !== seq) return;
         statusEl.textContent = `Could not parse token: ${err.message}`;
         statusEl.className = 'status error';
         statusEl.classList.remove('hidden');
@@ -1561,28 +1883,29 @@ function bindSharedBrainWizardStep1() {
 function bindSharedBrainWizardStep2() {
   const next  = document.getElementById('sb-step2-next');
   if (!next) return;
-  next.addEventListener('click', () => {
-    // Populate the repo link on entry
-    const meta = sbWizard.state.inviteMetadata;
-    const link = document.getElementById('sb-repo-link');
-    if (link && meta) link.href = `https://github.com/${meta.repo}`;
-    sbWizardGoToStep(3);
-
-    // Also prep the PAT-create deep link with the right token name
-    const patLink = document.getElementById('sb-pat-create-link');
-    if (patLink && meta) {
-      const name = `Curator Shared Brain - ${meta.name}`.slice(0, 60);
-      patLink.href = `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent(name)}`;
-    }
-  });
+  // Link population happens on panel ENTRY via sbWizardGoToStep (M9) —
+  // this button only advances.
+  next.addEventListener('click', () => sbWizardGoToStep(3));
 }
 
-// Update sb-repo-link href when step 2 becomes visible, even if user backs in
+// Populate step-2 links + copy whenever the panel becomes visible (first
+// entry, Back-nav, or re-entry) — v3.0.4 (M9, L18).
 function refreshStep2Links() {
   const meta = sbWizard.state.inviteMetadata;
   if (!meta) return;
   const repoLink = document.getElementById('sb-repo-link');
   if (repoLink) repoLink.href = `https://github.com/${meta.repo}`;
+  // L18: the invitation-email hint names the repo (we never know the
+  // admin's personal name — the invite token carries the brain name only).
+  const repoName = document.querySelector('#sb-step-2 [data-field="invite-repo"]');
+  if (repoName) repoName.textContent = meta.repo;
+}
+
+// Populate the PAT-create deep link whenever step 3 becomes visible —
+// works for both the contributor and admin paths (M9).
+function refreshPatCreateLink() {
+  const meta = sbWizard.state.inviteMetadata;
+  if (!meta) return;
   const patLink = document.getElementById('sb-pat-create-link');
   if (patLink) {
     const name = `Curator Shared Brain - ${meta.name}`.slice(0, 60);
@@ -1604,10 +1927,17 @@ function bindSharedBrainWizardStep3() {
     validation.classList.remove('hidden');
   }
 
+  // v3.0.4 (M11): sequence guard, and the PAT is stored in wizard state
+  // ONLY after a valid verdict — a stale/rejected token can no longer
+  // linger in state and get saved.
   let debounce = null;
+  let seq = 0;
   input.addEventListener('input', () => {
     clearTimeout(debounce);
+    const mySeq = ++seq;
     nextBtn.disabled = true;
+    sbWizard.state.pat = '';
+    sbWizard.state.patValidation = null;
     const pat = input.value.trim();
 
     if (!pat) {
@@ -1633,22 +1963,31 @@ function bindSharedBrainWizardStep3() {
           body: JSON.stringify({ repo: meta.repo, pat }),
         });
         const j = await r.json();
-        sbWizard.state.patValidation = j;
-        sbWizard.state.pat = pat;
+        if (mySeq !== seq) return; // stale response — a newer paste superseded it
 
         if (!j.valid) {
           setValidation('err', j.error || 'Token rejected by GitHub.');
           return;
         }
+        // Valid token → store it (M11: only on valid).
+        sbWizard.state.patValidation = j;
+        sbWizard.state.pat = pat;
+
         if (!j.hasWriteAccess) {
+          // v3.0.4 (H10): read-only tokens may proceed as read-only
+          // members — they can Pull the collective wiki but not Push.
           setValidation('warn',
-            '⚠️ Token works but is read-only. Re-create with Contents: Read AND write, then re-paste.');
+            '⚠️ Token works but is read-only. You can continue as a read-only member — ' +
+            'you\'ll be able to Pull the collective wiki, but not push contributions. ' +
+            'To contribute, re-create the token with Contents: Read AND write, then re-paste.');
+          nextBtn.disabled = false;
           return;
         }
         setValidation('ok',
           `✓ Token verified. Authenticated against ${j.repoFullName || meta.repo}.`);
         nextBtn.disabled = false;
       } catch (err) {
+        if (mySeq !== seq) return;
         setValidation('err', `Could not reach the Curator server: ${err.message}`);
       }
     }, 400);
@@ -1682,6 +2021,15 @@ async function populateSharedBrainDomains() {
       return;
     }
 
+    // v3.0.4 (M10): the checkboxes are REBUILT every time this panel is
+    // entered, but state.selectedDomains persists across back/forward.
+    // Restore the checked state from state (and drop selections whose
+    // domain no longer exists) so what the user sees is what gets saved.
+    const eligibleNames = new Set(eligible.map(d => (typeof d === 'string' ? d : d.name)));
+    for (const sel of [...sbWizard.state.selectedDomains]) {
+      if (!eligibleNames.has(sel)) sbWizard.state.selectedDomains.delete(sel);
+    }
+
     container.innerHTML = '';
     for (const d of eligible) {
       const name = typeof d === 'string' ? d : d.name;
@@ -1693,6 +2041,7 @@ async function populateSharedBrainDomains() {
       `;
       const cb = label.querySelector('input');
       cb.value = name;
+      cb.checked = sbWizard.state.selectedDomains.has(name); // M10
       label.querySelector('span').textContent = name;
       cb.addEventListener('change', () => {
         if (cb.checked) sbWizard.state.selectedDomains.add(name);
@@ -1709,10 +2058,18 @@ async function populateSharedBrainDomains() {
   }
 }
 
+// A connection is read-only when the PAT verdict was valid-but-no-write
+// (v3.0.4, H10).
+function sbIsReadOnlyVerdict() {
+  const v = sbWizard.state.patValidation;
+  return !!(v && v.valid && !v.hasWriteAccess);
+}
+
 function bindSharedBrainWizardStep4() {
   const nameEl = document.getElementById('sb-display-name');
   const attrEl = document.getElementById('sb-attribute-name');
   const next   = document.getElementById('sb-step4-next');
+  const status = document.getElementById('sb-step4-status');
   if (!next) return;
 
   if (nameEl) nameEl.addEventListener('input', () => {
@@ -1723,15 +2080,24 @@ function bindSharedBrainWizardStep4() {
   });
 
   next.addEventListener('click', () => {
-    // Validate at least one domain selected
-    if (sbWizard.state.selectedDomains.size === 0) {
-      alert('Please select at least one personal domain to contribute. (You can change this later.)');
+    if (status) status.classList.add('hidden');
+    // Validate at least one domain selected — unless this is a read-only
+    // member (H10): they can't push, so contributing domains are optional.
+    if (sbWizard.state.selectedDomains.size === 0 && !sbIsReadOnlyVerdict()) {
+      // v3.0.4 (L14): inline status instead of alert().
+      if (status) {
+        status.textContent = 'Please select at least one personal domain to contribute. (You can change this later.)';
+        status.className = 'status error';
+        status.classList.remove('hidden');
+      }
       return;
     }
     if (!sbWizard.state.displayName) {
       // Default display name = "Fellow <short fellow_id>" — we don't have a fellow_id yet
-      // (server assigns it on save). Use a generic placeholder.
+      // (server assigns it on save). Use a generic placeholder — and reflect
+      // it in the input so Back-nav shows what will actually be saved (L17).
       sbWizard.state.displayName = 'Anonymous Fellow';
+      if (nameEl) nameEl.value = 'Anonymous Fellow';
     }
     refreshConsentTextForMode();
     populateSharedBrainReview();
@@ -1746,9 +2112,11 @@ function populateSharedBrainReview() {
   const box  = document.querySelector('.sb-review-box');
   if (!box || !meta) return;
   box.querySelector('[data-field="name"]').textContent = meta.name;
-  box.querySelector('[data-field="repo"]').textContent = meta.repo;
+  box.querySelector('[data-field="repo"]').textContent =
+    meta.repo + (sbIsReadOnlyVerdict() ? ' (read-only member — Pull only)' : '');
   box.querySelector('[data-field="domains"]').textContent =
-    [...sbWizard.state.selectedDomains].join(', ') || '(none)';
+    [...sbWizard.state.selectedDomains].join(', ') ||
+    (sbIsReadOnlyVerdict() ? '(none — read-only members don\'t push)' : '(none)');
   box.querySelector('[data-field="display-name"]').textContent = sbWizard.state.displayName;
   box.querySelector('[data-field="attribution"]').textContent =
     sbWizard.state.attributeByName
@@ -1793,6 +2161,7 @@ function bindSharedBrainWizardStep5() {
       shared_brain_slug:   brainSlug,
       local_domains:       [...sbWizard.state.selectedDomains],
       attribute_by_name:   sbWizard.state.attributeByName,
+      read_only:           sbIsReadOnlyVerdict(), // v3.0.4 (H10)
       enabled: true,
     };
 
@@ -1806,7 +2175,13 @@ function bindSharedBrainWizardStep5() {
       if (!r.ok) throw new Error(j.error || 'Save failed');
 
       closeSharedBrainWizard();
+      // v3.0.4 (L17): don't keep the PAT in wizard state after it has been
+      // persisted — reset the whole state and clear the input field.
+      sbWizard.reset();
+      const patField = document.getElementById('sb-pat-input');
+      if (patField) patField.value = '';
       await refreshSharedBrainList();
+      refreshSyncPendingBadge();
     } catch (err) {
       status.textContent = `Could not save: ${err.message}`;
       status.className = 'status error';
@@ -1832,11 +2207,9 @@ function bindSharedBrainWizardChrome() {
         closeSharedBrainWizard();
       } else if (action === 'back') {
         const n = sbWizard.state.currentStep;
-        if (n > 1) {
-          sbWizardGoToStep(n - 1);
-          // Re-prep step-2 links if user goes back there
-          if (n - 1 === 2) refreshStep2Links();
-        }
+        // Panel-entry side effects (link population) run inside
+        // sbWizardGoToStep — nothing extra needed here (M9).
+        if (n > 1) sbWizardGoToStep(n - 1);
       }
     });
   });
@@ -1993,26 +2366,23 @@ function bindSharedBrainAdminStep2() {
           copyBtn.classList.remove('copied');
           if (label) label.textContent = original;
         }, 1800);
-      } catch (err) {
-        alert(`Could not copy automatically — please select and copy manually. (${err.message})`);
+      } catch {
+        // v3.0.4 (L14): inline hint instead of alert() — select-and-copy
+        // still works; the button label says why nothing happened.
+        const label = copyBtn.querySelector('span');
+        if (label) {
+          const original = label.textContent;
+          label.textContent = 'Copy blocked — select the token and copy manually';
+          setTimeout(() => { label.textContent = original; }, 4000);
+        }
       }
     });
   }
 
   const next = document.getElementById('sb-admin-step2-next');
   if (next) {
-    next.addEventListener('click', () => {
-      // Prep the PAT-create deep link with the brain's name
-      const meta = sbWizard.state.inviteMetadata;
-      if (meta) {
-        const patLink = document.getElementById('sb-pat-create-link');
-        if (patLink) {
-          const name = `Curator Shared Brain - ${meta.name}`.slice(0, 60);
-          patLink.href = `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent(name)}`;
-        }
-      }
-      sbWizardGoToStep(3);
-    });
+    // PAT-link population happens on step-3 entry via sbWizardGoToStep (M9).
+    next.addEventListener('click', () => sbWizardGoToStep(3));
   }
 }
 

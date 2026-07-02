@@ -19,7 +19,15 @@
 import { LocalFolderStorageAdapter } from './sharedbrain-local-adapter.js';
 import { GitHubStorageAdapter } from './sharedbrain-github-adapter.js';
 
-export function createStorageAdapter(connection) {
+/**
+ * @param {object} connection
+ * @param {object} [opts]
+ * @param {Function} [opts.onWarn]  Optional (message) => void — operational
+ *   warnings from the adapter (e.g. GitHub rate-limit pressure) surfaced to
+ *   the caller's progress stream (v3.0.4, M18). Ignored by adapters that
+ *   have no such warnings (local).
+ */
+export function createStorageAdapter(connection, opts = {}) {
   if (!connection || typeof connection !== 'object') {
     throw new Error('createStorageAdapter: connection object is required');
   }
@@ -36,6 +44,7 @@ export function createStorageAdapter(connection) {
         repo: connection.github_repo_name,
         pat: connection.github_pat,
         branch: connection.github_branch || 'main',
+        onWarn: opts.onWarn,
       });
 
     case 'cloudflare-r2':

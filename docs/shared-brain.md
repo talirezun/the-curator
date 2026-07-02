@@ -182,6 +182,8 @@ Per-fellow fine-grained PATs give the one critical security property — *per-fe
 
 **Branch protection mode + GitHub App mode are explicitly deferred** to v3.1 (high-security mode) and v3.2 (enterprise) respectively.
 
+**Read-only membership (v3.0.4):** a PAT created with **Contents: Read** only is a first-class tier. The wizard's yellow verdict allows Continue; the saved connection carries `read_only: true` (validated boolean), may have zero `local_domains`, renders with a "read-only member" pill and no Push button, and the push + synthesize routes refuse it with 400. Useful as the free/sample tier in monetised brains — see [`shared-brain-monetization.md`](shared-brain-monetization.md).
+
 ### Decision 2 — Cross-domain link contamination
 
 **Decision: Strict domain-link filtering at delta-generation time.**
@@ -199,8 +201,8 @@ Implemented in `filterToDomainLinks(links, domainPageSlugs)` in `src/brain/share
 Implementation:
 - `.sharedbrain-config.json` connection gains `last_push_at` (set BEFORE push starts) + `pending_retry: { [pagePath]: attemptCount }`.
 - `findChangedPages(wikiDir, sinceDate, pendingRetry)` returns the union of (mtime > sinceDate) ∪ (paths in `pending_retry`).
-- A page that fails 3 consecutive times moves to `permanent_skip` and is surfaced in the UI.
-- User-visible push result: `"Pushed 7 of 10 pages. 3 will retry next time."`
+- A page that fails 3 consecutive times moves to `permanent_skip` and is surfaced in the UI. Recovery paths: edit-the-page (mtime > last_push_at un-skips automatically, v3.0.2) or the card's **Retry these pages** action → `POST /api/sharedbrain/:id/unskip` (v3.0.4), which clears entries + resets strike counters. Transient provider errors (503/429/network) never advance the strike counter.
+- User-visible push result: `"Pushed 7 of 10 pages. 3 will retry next time."` Since v3.0.4 the card also shows the resting-state pieces: a `pending_pages` count (from `GET /list`, computed by `computePendingPages()` — same detection as push, read-only), the skipped-pages block, and `last_synthesis_at` (patched locally by the admin's synthesis run and learned from `state.last-synthesis` on every contributor Pull).
 
 ### Decision 4 — Conflict resolution
 
@@ -228,7 +230,7 @@ For each pair (a, b) of incoming new_facts on the same page:
   - Context Engineering coined in 2023 *(per fellow-b7c1)*
 ```
 
-Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP libraries. Health scanner detects the marker via regex; the user resolves interactively by editing the upstream personal opted-in domain and re-pushing.
+Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP libraries. Health scanner detects the marker via regex; the user resolves interactively by editing the upstream personal opted-in domain and re-pushing. Since v3.0.4 the synthesis result carries an additive `conflict_pages: string[]` and the summary names the affected pages, so the admin doesn't have to hunt for markers.
 
 ### Decision 5 — Domain isolation
 

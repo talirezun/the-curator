@@ -37,7 +37,7 @@ import {
   runLocalSynthesis, mergeFactsForPage, extractSectionBullets,
   sanitizeFellowText, isSafeLinkSlug,
 } from '../src/brain/sharedbrain-synthesis.js';
-import { pushDomain, pullCollective, isTransientLlmError, MAX_RETRY_ATTEMPTS } from '../src/brain/sharedbrain.js';
+import { pushDomain, pullCollective, isTransientLlmError, MAX_RETRY_ATTEMPTS, computePendingPages } from '../src/brain/sharedbrain.js';
 import { revokeContributor } from '../src/brain/sharedbrain-revoke.js';
 import { GitHubStorageAdapter } from '../src/brain/sharedbrain-github-adapter.js';
 import { __testing as configTesting } from '../src/brain/sharedbrain-config.js';
@@ -749,6 +749,221 @@ section('14. Phase 2 source-level guards');
   const synth = src('src/brain/sharedbrain-synthesis.js');
   assert(synth.includes('watermark') && synth.includes('processed_ids'), 'synthesis uses processed-submission tracking');
   assert(synth.includes('allowDuringRevocation'), 'revocation-marker gate present');
+}
+
+// ═══ PHASE 3 (v3.0.4) — UI/UX hardening ════════════════════════════════════
+
+section('15. 3.6 (M14) — computePendingPages');
+
+{
+  const pendRoot = path.join(workspaceRoot, 'pending-domains');
+  const wikiDir = path.join(pendRoot, 'work-ai', 'wiki');
+  mkdirSync(path.join(wikiDir, 'concepts'), { recursive: true });
+  mkdirSync(path.join(wikiDir, 'entities'), { recursive: true });
+  writeFileSync(path.join(wikiDir, 'concepts', 'a.md'), '# A\n');
+  writeFileSync(path.join(wikiDir, 'concepts', 'b.md'), '# B\n');
+  writeFileSync(path.join(wikiDir, 'entities', 'c.md'), '# C\n');
+
+  const base = makeConnection();
+  assert(await computePendingPages({ ...base, last_push_at: null }, pendRoot) === 3,
+    'never-pushed connection counts every page');
+
+  const future = new Date(Date.now() + 3600_000).toISOString();
+  assert(await computePendingPages({ ...base, last_push_at: future }, pendRoot) === 0,
+    'nothing pending when last push is newer than every mtime');
+
+  assert(await computePendingPages({ ...base, last_push_at: future, pending_retry: { 'concepts/a.md': 1 } }, pendRoot) === 1,
+    'pending_retry pages count even without fresh edits');
+
+  assert(await computePendingPages({ ...base, last_push_at: null, permanent_skip: ['concepts/a.md'] }, pendRoot) === 2,
+    'permanently-skipped pages are excluded');
+
+  assert(await computePendingPages({ ...base, last_push_at: null, read_only: true }, pendRoot) === 0,
+    'read-only connections always report 0 (they cannot push)');
+
+  assert(await computePendingPages({ ...base, last_push_at: null, local_domains: ['shared-cohort'] }, pendRoot) === 0,
+    'shared-* mirror domains are never counted');
+
+  assert(await computePendingPages({ ...base, last_push_at: null, enabled: false }, pendRoot) === 0,
+    'disabled connections report 0');
+}
+
+section('16. 3.4 (M16) — pull learns last_synthesis_at from collective state');
+
+{
+  const root16 = path.join(workspaceRoot, 'storage-m16');
+  mkdirSync(root16, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root16 });
+  const conn = makeConnection({ local_storage_path: root16, shared_brain_slug: 'synthtime' });
+  const mirrorDomains = path.join(workspaceRoot, 'mirror-domains-m16');
+  mkdirSync(mirrorDomains, { recursive: true });
+
+  const patches = [];
+  const capturePatch = (id, patch) => { patches.push(patch); return patch; };
+
+  // No synthesis state yet → pull succeeds, no last_synthesis_at learned.
+  await adapter.writePage('work-ai', 'concepts/x.md', '# X\n\n## Key Facts\n\n- Fact.\n');
+  const p1 = await pullCollective(conn, { domainsDir: mirrorDomains, patchFn: capturePatch });
+  assert(p1.ok, 'pull ok with no synthesis state');
+  assert(p1.last_synthesis_at === null, 'result reports last_synthesis_at null when no state exists');
+
+  // With synthesis state → learned and patched onto the connection.
+  const synthAt = '2026-07-01T12:00:00.000Z';
+  await adapter.writeMeta('state.last-synthesis', { at: synthAt, watermark: synthAt, processed_ids: [] });
+  const p2 = await pullCollective(conn, { domainsDir: mirrorDomains, patchFn: capturePatch });
+  assert(p2.ok && p2.last_synthesis_at === synthAt, 'pull result carries the collective last-synthesis time');
+  const lastPatch = patches[patches.length - 1];
+  assert(lastPatch.last_synthesis_at === synthAt, 'connection patched with last_synthesis_at (drives the card display)');
+}
+
+section('17. 3.4 (M17) — synthesis reports conflict_pages');
+
+{
+  const root17 = path.join(workspaceRoot, 'storage-m17');
+  mkdirSync(root17, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root17 });
+  const conn = makeConnection({ local_storage_path: root17 });
+  connections[conn.id] = conn;
+
+  const f1 = randomUUID(), f2 = randomUUID();
+  await adapter.storeContribution(f1, randomUUID(), {
+    fellow_id: f1, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/dispute.md', title: 'Dispute', new_facts: ['The framework was released in the year 2023 by the research team.'], new_links: [], removed_links: [] }],
+  });
+  await adapter.storeContribution(f2, randomUUID(), {
+    fellow_id: f2, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/dispute.md', title: 'Dispute', new_facts: ['The framework was released in the year 2024 by the research team.'], new_links: [], removed_links: [] }],
+  });
+
+  const r = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r.ok, 'synthesis ok');
+  assert(Array.isArray(r.conflict_pages), 'result carries conflict_pages array');
+  assert(r.conflicts > 0 && r.conflict_pages.includes('concepts/dispute.md'),
+    `conflicted page named in conflict_pages (got ${JSON.stringify(r.conflict_pages)})`);
+}
+
+section('18. 3.4 (M18) — GitHub adapter surfaces rate-limit pressure via onWarn');
+
+{
+  const lowLimitFetch = async (url) => ({
+    ok: true, status: 200,
+    headers: { get: (k) => (k === 'x-ratelimit-remaining' ? '10' : null) },
+    json: async () => ({ tree: [], truncated: false }),
+    text: async () => '',
+  });
+  const warns = [];
+  const gh = new GitHubStorageAdapter({
+    owner: 'octocat', repo: 'mock', pat: 'github_pat_test_1234567890abcdef', branch: 'main',
+    fetchImpl: lowLimitFetch,
+    onWarn: (m) => warns.push(m),
+  });
+  await gh.listPages('work-ai');
+  assert(warns.length === 1 && /rate limit/i.test(warns[0]),
+    'low rate limit fires onWarn with a user-readable message');
+  await gh.listPages('work-ai');
+  assert(warns.length === 1, 'onWarn fires at most once per adapter instance (no spam)');
+
+  // A throwing onWarn must never break the operation.
+  const gh2 = new GitHubStorageAdapter({
+    owner: 'octocat', repo: 'mock', pat: 'github_pat_test_1234567890abcdef', branch: 'main',
+    fetchImpl: lowLimitFetch,
+    onWarn: () => { throw new Error('boom'); },
+  });
+  let threw = false;
+  try { await gh2.listPages('work-ai'); } catch { threw = true; }
+  assert(!threw, 'a throwing onWarn callback never breaks the adapter call');
+}
+
+section('19. 3.5 (H10) — read_only connection flag');
+
+{
+  const validRo = {
+    id: randomUUID(), label: 'RO', storage_type: 'github',
+    github_repo_owner: 'octocat', github_repo_name: 'brain',
+    github_pat: 'github_pat_test_1234567890abcdef', github_branch: 'main',
+    fellow_id: randomUUID(), fellow_display_name: 'Reader',
+    shared_domain: 'work-ai', shared_brain_slug: 'cohort',
+    local_domains: [], read_only: true,
+  };
+  try {
+    configTesting.validateConnection(validRo);
+    ok('read_only: true accepted with zero contributing domains (Pull-only member)');
+  } catch (err) {
+    fail('read_only: true accepted with zero contributing domains (Pull-only member)', err);
+  }
+  assertThrows(
+    () => configTesting.validateConnection({ ...validRo, read_only: 'yes' }),
+    'read_only must be a boolean',
+    'non-boolean read_only refused'
+  );
+}
+
+section('20. 3.4 (M15) — computeUnskipPatch (unskip endpoint core)');
+
+{
+  const { computeUnskipPatch } = routesTesting;
+  const conn = {
+    permanent_skip: ['concepts/a.md', 'concepts/b.md'],
+    pending_retry: { 'concepts/a.md': 3, 'concepts/c.md': 1 },
+  };
+
+  const all = computeUnskipPatch(conn, undefined);
+  assert(all.unskipped === 2 && all.patch.permanent_skip.length === 0,
+    'no body → every skipped page re-queued');
+  assert(!('concepts/a.md' in all.patch.pending_retry) && all.patch.pending_retry['concepts/c.md'] === 1,
+    'cleared pages get a fresh strike counter; unrelated retry entries untouched');
+
+  const one = computeUnskipPatch(conn, ['concepts/b.md', 'concepts/NOT-SKIPPED.md']);
+  assert(one.unskipped === 1 && one.patch.permanent_skip.join() === 'concepts/a.md',
+    'explicit list clears only paths actually in permanent_skip');
+
+  assert(computeUnskipPatch(conn, [42]) === null, 'malformed pages array refused');
+  assert(computeUnskipPatch(conn, 'concepts/a.md') === null, 'non-array pages refused');
+  assert(conn.permanent_skip.length === 2, 'input connection object is not mutated');
+}
+
+section('21. Phase 3 source-level guards');
+
+{
+  const routes = src('src/routes/sharedbrain.js');
+  assert(routes.includes("post('/:id/unskip'"), 'unskip endpoint registered');
+  assert(routes.includes('pending_pages'), 'list computes pending_pages (M14)');
+  assert((routes.match(/read_only === true/g) || []).length >= 2,
+    'push AND synthesize refuse read-only connections (H10)');
+
+  const brain = src('src/brain/sharedbrain.js');
+  assert(brain.includes('onWarn') && brain.includes('computePendingPages'),
+    'brain layer wires adapter warnings + pending count');
+
+  const appJs = src('src/public/app.js');
+  assert(appJs.includes('_sbInFlight') && appJs.includes('_sbLastResult'),
+    'per-connection in-flight registry present (M12/M13)');
+  assert(appJs.includes('sbComposeDoneMessage'), 'done-message composer present (M13)');
+  assert((appJs.match(/mySeq !== seq/g) || []).length >= 2,
+    'sequence guards on BOTH debounced validations (M11)');
+  assert(appJs.includes('sbWizard.state.selectedDomains.has(name)'),
+    'step-4 checkboxes restored from state (M10)');
+  assert(appJs.includes("activeId === 'sb-step-2') refreshStep2Links()"),
+    'step-2 links populated on panel ENTRY (M9)');
+  assert(appJs.includes('read_only:') && appJs.includes('sbIsReadOnlyVerdict'),
+    'wizard saves the read_only flag on warn verdicts (H10)');
+  assert(appJs.includes("'aria-current', 'step'") && appJs.includes('sbWizardKeydown') && appJs.includes("e.key === 'Escape'"),
+    'wizard a11y: aria-current pips, focus trap, Escape-close (L16)');
+  assert(appJs.includes('pending_pages'), 'navbar badge includes Shared Brain pending pages (M14)');
+  assert(appJs.includes('never — ask your admin to run synthesis'),
+    'card shows last-synthesis state incl. the never case (M16)');
+  assert(appJs.includes('retry-skipped'), 'skipped-pages retry action wired (M15)');
+  assert(appJs.includes('chatReadonlyDomains'), 'Compile hidden for read-only mirrors (Phase-1 deferral closed)');
+
+  const html = src('src/public/index.html');
+  assert(html.includes('role="dialog"') && html.includes('aria-modal="true"'),
+    'wizard overlay is a proper modal dialog (L16)');
+  assert(html.includes('sb-step4-status'), 'step-4 inline status element present (L14)');
+  assert(html.includes('invite-repo'), 'step-2 email hint names the repo, not a phantom admin name (L18)');
+  assert(html.includes('sharedbrain-init-error'), 'init-failure error row present (L12)');
+
+  const ghAdapter = src('src/brain/sharedbrain-github-adapter.js');
+  assert(ghAdapter.includes('_onWarn'), 'GitHub adapter carries the onWarn channel (M18)');
 }
 
 // ═══ Result ════════════════════════════════════════════════════════════════
