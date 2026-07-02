@@ -474,6 +474,24 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
     return { entries, truncated: !!body.truncated };
   }
 
+  /**
+   * v3.0.3 (H9): GitHub truncates recursive tree listings at ~100k entries /
+   * 7 MB. A truncated tree means listings would SILENTLY miss files —
+   * synthesis would skip contributions, pull would skip pages, and worst,
+   * revoke would report a successful Article 17 erasure while missing
+   * submissions. Refuse loudly instead.
+   */
+  _refuseTruncatedTree(op, truncated) {
+    if (!truncated) return;
+    throw new GitHubAdapterError(
+      'SHARED_BRAIN_TREE_TRUNCATED',
+      `${op}: GitHub returned a TRUNCATED tree listing for this repo — it has grown past ` +
+      `GitHub's recursive-listing limit, so any operation relying on a full listing would ` +
+      `silently miss files. Aborting to avoid data loss / incomplete erasure. ` +
+      `Archive or remove old contribution files to shrink the tree, then retry.`,
+    );
+  }
+
   // ── Public interface — page operations ───────────────────────────────────
 
   async readPage(domain, relPath) {
@@ -506,7 +524,8 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
     const wikiRoot = `collective/${domain}/wiki/`;
     const queryPrefix = safePrefix ? `${wikiRoot}${safePrefix}/` : wikiRoot;
 
-    const { entries } = await this._apiTree();
+    const { entries, truncated } = await this._apiTree();
+    this._refuseTruncatedTree('listPages', truncated);
     const out = [];
     for (const e of entries) {
       if (!e.path.startsWith(queryPrefix)) continue;
@@ -570,7 +589,8 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
       throw new Error(`listContributionsSince: invalid sinceIso "${sinceIso}"`);
     }
 
-    const { entries } = await this._apiTree();
+    const { entries, truncated } = await this._apiTree();
+    this._refuseTruncatedTree('listContributionsSince', truncated);
     const candidates = entries.filter(e => /^contributions\/[^/]+\/[^/]+\.json$/.test(e.path));
 
     // Fetch contents in bounded parallel batches.
@@ -589,10 +609,14 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
           let payload;
           try { payload = JSON.parse(data.content); }
           catch { return null; }
+          // v3.0.3 (M8): a missing or unparseable contributed_at must NOT
+          // silently drop the contribution — include it and let synthesis
+          // decide (its processed-ID tracking prevents endless reprocessing;
+          // garbage stamps never advance the watermark).
           const contributedAt = payload && payload.contributed_at
             ? new Date(payload.contributed_at).getTime()
-            : 0;
-          if (contributedAt >= sinceMs) {
+            : NaN;
+          if (Number.isNaN(contributedAt) || contributedAt >= sinceMs) {
             return { fellowId, submissionId, payload };
           }
         } catch (err) {
@@ -692,7 +716,10 @@ export class GitHubStorageAdapter extends SharedBrainStorageAdapter {
 
   async listFellowSubmissions(fellowId) {
     if (!isSafeId(fellowId)) return [];
-    const { entries } = await this._apiTree();
+    const { entries, truncated } = await this._apiTree();
+    // Refusing here makes REVOKE abort on truncation — an incomplete
+    // Article 17 erasure reported as success is the worst possible outcome.
+    this._refuseTruncatedTree('listFellowSubmissions', truncated);
     const prefix = `contributions/${fellowId}/`;
     return entries
       .filter(e => e.path.startsWith(prefix) && e.path.endsWith('.json'))

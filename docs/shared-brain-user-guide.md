@@ -204,7 +204,7 @@ After setup, the Sync tab → Shared Brains → connection card has two main but
 | Action | When to use it |
 |---|---|
 | **Push contributions** | After ingesting new sources into your contributing domains. Pushes the changed pages from **every opted-in domain** (v3.0.2+; older versions pushed only the first one) as Delta summaries to the shared repo. |
-| **Pull updates** | Before reading the collective wiki. Refreshes your local `shared-<slug>/` mirror with the latest synthesised pages. |
+| **Pull updates** | Before reading the collective wiki. Refreshes your local `shared-<slug>/` mirror with the latest synthesised pages. Since v3.0.3 the pull is a **true mirror**: pages deleted from the collective (e.g. after a contributor revocation) are removed locally, and facts removed upstream actually disappear instead of lingering. |
 
 A typical work session:
 

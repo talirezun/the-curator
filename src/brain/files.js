@@ -804,7 +804,14 @@ function injectFrontmatter(content, relativePath, today) {
 // entity files on disk for the same person (v3.0.1-beta.2 fix).
 const TITLE_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor|the)\.?-/;
 
-export async function writePage(domain, relativePath, content) {
+export async function writePage(domain, relativePath, content, opts = {}) {
+  // opts.replace (v3.0.3+): skip the union merge with the existing file —
+  // the incoming content IS the page (replace semantics). Used by Shared
+  // Brain mirror pulls so facts deleted from the collective (conflict
+  // resolution, GDPR revocation) actually disappear locally instead of
+  // being resurrected by the ACCUMULATE-section merge. Every other stage
+  // (path normalisation, dedup passes, frontmatter, link normalisation,
+  // backlinks) runs unchanged, so this stays the single write path.
   const today = new Date().toISOString().slice(0, 10);
 
   // 1. Redirect mis-filed paths to canonical folders
@@ -899,7 +906,7 @@ export async function writePage(domain, relativePath, content) {
   //    sections (Key Facts, Related, etc.) accumulate across ingests.
   let final = processed;
   const skipMerge = canonPath === 'index.md' || canonPath === 'log.md';
-  if (!skipMerge && existedBefore) {
+  if (!skipMerge && existedBefore && !opts.replace) {
     try {
       final = mergeWikiPage(existingContent, processed);
     } catch {

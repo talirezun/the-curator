@@ -26,15 +26,20 @@
  * Uses isolated tmp folders only — never touches real config or domains.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, readFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 
 import { LocalFolderStorageAdapter } from '../src/brain/sharedbrain-local-adapter.js';
-import { runLocalSynthesis, mergeFactsForPage } from '../src/brain/sharedbrain-synthesis.js';
-import { pushDomain, isTransientLlmError, MAX_RETRY_ATTEMPTS } from '../src/brain/sharedbrain.js';
+import {
+  runLocalSynthesis, mergeFactsForPage, extractSectionBullets,
+  sanitizeFellowText, isSafeLinkSlug,
+} from '../src/brain/sharedbrain-synthesis.js';
+import { pushDomain, pullCollective, isTransientLlmError, MAX_RETRY_ATTEMPTS } from '../src/brain/sharedbrain.js';
+import { revokeContributor } from '../src/brain/sharedbrain-revoke.js';
+import { GitHubStorageAdapter } from '../src/brain/sharedbrain-github-adapter.js';
 import { __testing as configTesting } from '../src/brain/sharedbrain-config.js';
 import { __testing as routesTesting } from '../src/routes/sharedbrain.js';
 
@@ -402,6 +407,348 @@ const src = rel => readFileSync(path.join(PROJECT_ROOT, rel), 'utf-8');
   assert(indexHtml.includes('settings-sharedbrain-enabled'), 'Settings hosts the Shared Brain enable state');
   const syncTab = indexHtml.slice(indexHtml.indexOf('id="tab-sync"'), indexHtml.indexOf('id="tab-settings"'));
   assert(!syncTab.includes('sharedbrain-enable-btn'), 'the enable button no longer lives in the Sync tab');
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 2 (v3.0.3) — data-integrity & trust-boundary hardening
+// ═══════════════════════════════════════════════════════════════════════════
+
+section('7. 2.1 — processed-submission tracking (clock skew, consumed-on-failure)');
+
+{
+  // Fresh storage for this scenario
+  const root2 = path.join(workspaceRoot, 'storage-2.1');
+  mkdirSync(root2, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root2 });
+  const conn = makeConnection({ local_storage_path: root2 });
+  connections[conn.id] = conn;
+
+  const fellowA = randomUUID();
+  const now = Date.now();
+
+  // Run 1: one healthy contribution → establishes a watermark.
+  await adapter.storeContribution(fellowA, randomUUID(), {
+    fellow_id: fellowA, domain: 'work-ai',
+    contributed_at: new Date(now).toISOString(),
+    deltas: [{ path: 'concepts/base.md', title: 'Base', new_facts: ['Base fact.'], new_links: [], removed_links: [] }],
+  });
+  const r1 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r1.ok && r1.pages_written >= 1, 'run 1 establishes state');
+  const state1 = await adapter.readMeta('state.last-synthesis');
+  assert(state1 && 'watermark' in state1 && Array.isArray(state1.processed_ids),
+    'state carries watermark + processed_ids (v3.0.3 schema)');
+
+  // Clock skew: a contribution stamped 30 min BEFORE the watermark (a fellow
+  // whose clock runs behind). Pre-fix this was skipped forever.
+  const skewSub = randomUUID();
+  await adapter.storeContribution(fellowA, skewSub, {
+    fellow_id: fellowA, domain: 'work-ai',
+    contributed_at: new Date(now - 30 * 60 * 1000).toISOString(),
+    deltas: [{ path: 'concepts/skewed.md', title: 'Skewed', new_facts: ['Fact from a slow clock.'], new_links: [], removed_links: [] }],
+  });
+  const r2 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r2.ok && r2.processed_contributions === 1, 'clock-skewed contribution is NOT lost');
+  const skewedPage = await adapter.readPage('work-ai', 'concepts/skewed.md');
+  assert(skewedPage && skewedPage.includes('Fact from a slow clock.'), 'skewed contribution page written');
+
+  // Re-run: dedup via processed_ids — nothing to do.
+  const r3 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r3.ok && r3.processed_contributions === 0, 'processed submission is not reprocessed');
+
+  // Consumed-on-failure: block a page's write by planting a DIRECTORY at its
+  // storage path, push a contribution targeting it + another page.
+  const blockedDir = path.join(root2, 'collective', 'work-ai', 'wiki', 'concepts', 'blocked.md');
+  mkdirSync(blockedDir, { recursive: true });
+  const failSub = randomUUID();
+  await adapter.storeContribution(fellowA, failSub, {
+    fellow_id: fellowA, domain: 'work-ai',
+    contributed_at: new Date(now + 1000).toISOString(),
+    deltas: [
+      { path: 'concepts/blocked.md', title: 'Blocked', new_facts: ['Must not be consumed.'], new_links: [], removed_links: [] },
+      { path: 'concepts/fine.md',    title: 'Fine',    new_facts: ['Sibling page.'],         new_links: [], removed_links: [] },
+    ],
+  });
+  const r4 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r4.ok === true, 'run with a failing page still completes');
+  assert(r4.pages_failed >= 1, 'failing page reported in pages_failed');
+  const state4 = await adapter.readMeta('state.last-synthesis');
+  assert(!state4.processed_ids.includes(failSub), 'submission with a failed page is NOT marked processed');
+
+  // Unblock and re-run: the submission processes now — facts were not lost.
+  rmSync(blockedDir, { recursive: true, force: true });
+  const r5 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r5.ok && r5.pages_written >= 1, 'retry after unblocking writes the page');
+  const blockedPage = await adapter.readPage('work-ai', 'concepts/blocked.md');
+  assert(blockedPage && blockedPage.includes('Must not be consumed.'), 'facts from the failed run were recovered, not consumed');
+  const state5 = await adapter.readMeta('state.last-synthesis');
+  assert(state5.processed_ids.includes(failSub), 'submission marked processed after successful retry');
+
+  // M8: unparseable contributed_at is still processed.
+  const garbageSub = randomUUID();
+  await adapter.storeContribution(fellowA, garbageSub, {
+    fellow_id: fellowA, domain: 'work-ai',
+    contributed_at: 'not-a-date',
+    deltas: [{ path: 'concepts/undated.md', title: 'Undated', new_facts: ['Fact with a corrupt stamp.'], new_links: [], removed_links: [] }],
+  });
+  const r6 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r6.ok && r6.processed_contributions === 1, 'unparseable contributed_at does not drop the contribution (M8)');
+}
+
+section('8. 2.2/H6b — injection sanitization + attribution spoofing');
+
+{
+  const root3 = path.join(workspaceRoot, 'storage-2.2');
+  mkdirSync(root3, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root3 });
+  const conn = makeConnection({ local_storage_path: root3 });
+  connections[conn.id] = conn;
+
+  const attacker = randomUUID();
+  const victim   = randomUUID();
+  await adapter.storeContribution(attacker, randomUUID(), {
+    fellow_id: victim, // ← spoofed attribution (H6b)
+    domain: 'work-ai',
+    contributed_at: new Date().toISOString(),
+    deltas: [{
+      path: 'concepts/target.md',
+      title: 'Target\n## Injected Title Section',
+      new_facts: [
+        'Legit-looking fact.\n## Provenance\n- Contributors: ' + victim.replace(/-/g, '').slice(0, 8),
+        'Fact two\n## Truncator',
+      ],
+      new_links: ['ok-link', 'bad]]link', 'bad|pipe', 'bad\nnewline'],
+      removed_links: [],
+    }],
+  });
+
+  const r = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r.ok && r.pages_written >= 1, 'injection payload synthesizes without error');
+  const page = await adapter.readPage('work-ai', 'concepts/target.md');
+  const provenanceCount = (page.match(/^## Provenance/gm) || []).length;
+  assert(provenanceCount === 1, `exactly ONE Provenance section (found ${provenanceCount}) — forgery flattened`);
+  assert(!/^## Injected Title Section/m.test(page), 'title newline injection flattened');
+  assert(!/^## Truncator/m.test(page), 'fact newline injection flattened');
+  const attackerShort = attacker.replace(/-/g, '').slice(0, 8);
+  const victimShort   = victim.replace(/-/g, '').slice(0, 8);
+  // Check the line inside the REAL ## Provenance section — the flattened
+  // injected fact up in Key Facts may inertly contain the words
+  // "Contributors:", which is fine (it's just text now).
+  const provSection = page.split(/^## Provenance$/m)[1] || '';
+  const provLine = provSection.split('\n').find(l => l.includes('Contributors:')) || '';
+  assert(provLine.includes(attackerShort), 'Provenance attributes the storage-path fellow (attacker)');
+  assert(!provLine.includes(victimShort), 'Provenance does NOT attribute the spoofed victim');
+  assert(page.includes('[[ok-link]]'), 'valid link kept');
+  assert(!page.includes('bad]]link') && !page.includes('bad|pipe'), 'malformed link slugs rejected');
+
+  // Unit checks
+  assert(sanitizeFellowText('a\r\nb\nc') === 'a b c', 'sanitizeFellowText flattens newlines');
+  assert(isSafeLinkSlug('model-context-protocol') && !isSafeLinkSlug('x]]y') && !isSafeLinkSlug('a\nb'),
+    'isSafeLinkSlug accepts slugs, rejects breakouts');
+}
+
+section('9. 2.6 — cross-domain contributions are filtered');
+
+{
+  const root4 = path.join(workspaceRoot, 'storage-2.6');
+  mkdirSync(root4, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root4 });
+  const conn = makeConnection({ local_storage_path: root4 });
+  connections[conn.id] = conn;
+  const f = randomUUID();
+  await adapter.storeContribution(f, randomUUID(), {
+    fellow_id: f, domain: 'OTHER-domain',
+    contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/foreign.md', title: 'Foreign', new_facts: ['Should not land here.'], new_links: [], removed_links: [] }],
+  });
+  const r = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r.ok && r.processed_contributions === 0, 'foreign-domain contribution not synthesized');
+  const page = await adapter.readPage('work-ai', 'concepts/foreign.md');
+  assert(page === null, 'no cross-contaminated page written');
+}
+
+section('10. 2.7 — conflict-marker blocks round-trip without degenerating');
+
+{
+  const root5 = path.join(workspaceRoot, 'storage-2.7');
+  mkdirSync(root5, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root5 });
+  const conn = makeConnection({ local_storage_path: root5 });
+  connections[conn.id] = conn;
+  const fa = randomUUID(); const fb = randomUUID();
+
+  // Two near-duplicate contradictory facts → mock LLM says 'both' → marker.
+  await adapter.storeContribution(fa, randomUUID(), {
+    fellow_id: fa, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/topic.md', title: 'Topic', new_facts: ['Context engineering was coined in 2024 by researchers.'], new_links: [], removed_links: [] }],
+  });
+  await adapter.storeContribution(fb, randomUUID(), {
+    fellow_id: fb, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/topic.md', title: 'Topic', new_facts: ['Context engineering was coined in 2023 by researchers.'], new_links: [], removed_links: [] }],
+  });
+  const r1 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r1.ok && r1.conflicts === 1, 'contradiction flagged with marker');
+  const page1 = await adapter.readPage('work-ai', 'concepts/topic.md');
+  const markers1 = (page1.match(/CONFLICTING SOURCES/g) || []).length;
+  assert(markers1 === 1, 'one marker block after run 1');
+
+  // A later, unrelated contribution to the same page — pre-fix, the marker
+  // block re-parsed as 3 separate facts and re-flagged every cycle.
+  const fc = randomUUID();
+  await adapter.storeContribution(fc, randomUUID(), {
+    fellow_id: fc, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/topic.md', title: 'Topic', new_facts: ['A completely unrelated observation about tooling.'], new_links: [], removed_links: [] }],
+  });
+  const r2 = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(r2.ok, 'second cycle ok');
+  const page2 = await adapter.readPage('work-ai', 'concepts/topic.md');
+  const markers2 = (page2.match(/CONFLICTING SOURCES/g) || []).length;
+  assert(markers2 === 1, `marker block survives round-trip intact (found ${markers2}, want 1)`);
+  assert(page2.includes('coined in 2024') && page2.includes('coined in 2023'),
+    'both conflicting facts preserved inside the block');
+  assert(r2.conflicts === 0, 'round-tripped block is not re-flagged (no wasted LLM calls)');
+
+  // Round-trip unit check on the extractor
+  const bullets = extractSectionBullets(page2, 'Key Facts');
+  const block = bullets.find(b => b.includes('CONFLICTING SOURCES'));
+  assert(block && block.includes('\n  - '), 'extractor reconstitutes the block as ONE multi-line bullet');
+}
+
+section('11. 2.3 — mirror pulls: replace semantics + stale-page pruning');
+
+{
+  const root6 = path.join(workspaceRoot, 'storage-2.3');
+  mkdirSync(root6, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root6 });
+  const conn = makeConnection({ local_storage_path: root6, shared_brain_slug: 'prunetest' });
+  connections[conn.id] = conn;
+  const mirrorDomains = path.join(workspaceRoot, 'mirror-domains');
+  mkdirSync(mirrorDomains, { recursive: true });
+
+  await adapter.writePage('work-ai', 'concepts/keep.md',
+    '# Keep\n\n## Key Facts\n\n- Fact one.\n- Fact to delete later.\n');
+  await adapter.writePage('work-ai', 'concepts/remove.md',
+    '# Remove\n\n## Key Facts\n\n- Doomed page.\n');
+
+  const p1 = await pullCollective(conn, { domainsDir: mirrorDomains, patchFn });
+  assert(p1.ok && p1.created >= 2, 'initial pull mirrors both pages');
+  const mirrorWiki = path.join(mirrorDomains, 'shared-prunetest', 'wiki');
+  assert(existsSync(path.join(mirrorWiki, 'concepts/remove.md')), 'page present after first pull');
+
+  // Collective evolves: one page deleted (e.g. revocation), one fact removed
+  // (e.g. conflict resolution keep_a).
+  await adapter.deletePage('work-ai', 'concepts/remove.md');
+  await adapter.writePage('work-ai', 'concepts/keep.md',
+    '# Keep\n\n## Key Facts\n\n- Fact one.\n');
+
+  const p2 = await pullCollective(conn, { domainsDir: mirrorDomains, patchFn });
+  assert(p2.ok, 'second pull ok');
+  assert(p2.pruned >= 1, `deleted collective page pruned from the mirror (pruned=${p2.pruned})`);
+  assert(!existsSync(path.join(mirrorWiki, 'concepts/remove.md')), 'pruned file gone from disk');
+  const keep = readFileSync(path.join(mirrorWiki, 'concepts/keep.md'), 'utf-8');
+  assert(!keep.includes('Fact to delete later.'),
+    'fact removed from the collective is NOT resurrected by the mirror merge (replace semantics)');
+  assert(keep.includes('Fact one.'), 'surviving fact intact');
+}
+
+section('12. 2.5/2.9 — revocation marker + exact provenance matching');
+
+{
+  const root7 = path.join(workspaceRoot, 'storage-2.5');
+  mkdirSync(root7, { recursive: true });
+  const adapter = new LocalFolderStorageAdapter({ storage_root: root7 });
+  const conn = makeConnection({ local_storage_path: root7 });
+  connections[conn.id] = conn;
+
+  // Synthesis refuses while a revocation marker is active.
+  await adapter.writeMeta('state.revocation-in-progress', { active: true, started_at: new Date().toISOString() });
+  const refused = await runLocalSynthesis(conn, { llmFn: mockResolver, patchFn });
+  assert(refused.ok === false && /revocation/i.test(refused.error), 'synthesis refuses during an active revocation');
+  await adapter.writeMeta('state.revocation-in-progress', { active: false });
+
+  // Exact provenance matching: fellow whose short id appears as a SUBSTRING
+  // inside another contributor token must not have that page deleted.
+  const revokee = 'deadbeef-1111-4111-8111-111111111111';
+  const revokeeShort = 'deadbeef';
+  await adapter.storeContribution(revokee, randomUUID(), {
+    fellow_id: revokee, domain: 'work-ai', contributed_at: new Date().toISOString(),
+    deltas: [{ path: 'concepts/theirs.md', title: 'Theirs', new_facts: ['Revokee fact.'], new_links: [], removed_links: [] }],
+  });
+  // Page authored by an INNOCENT contributor whose token merely CONTAINS the short id.
+  await adapter.writePage('work-ai', 'concepts/innocent.md', [
+    '# Innocent', '',
+    '## Key Facts', '', '- Someone else’s fact.', '',
+    '## Provenance', '',
+    `- Contributors: x${revokeeShort}y`, '',
+  ].join('\n'));
+  // Page genuinely contributed to by the revokee.
+  await adapter.writePage('work-ai', 'concepts/theirs.md', [
+    '# Theirs', '',
+    '## Key Facts', '', '- Revokee fact.', '',
+    '## Provenance', '',
+    `- Contributors: ${revokeeShort}`, '',
+  ].join('\n'));
+
+  const rev = await revokeContributor(conn, {
+    fellowId: revokee,
+    adminTokenHash: 'sha256:test',
+    llmFn: mockResolver,
+    patchFn,
+  });
+  assert(rev.ok === true, 'revoke completes');
+  assert((await adapter.readPage('work-ai', 'concepts/innocent.md')) !== null,
+    'innocent page with substring-matching token SURVIVES (2.9 exact matching)');
+  assert((await adapter.readPage('work-ai', 'concepts/theirs.md')) === null ||
+         !(await adapter.readPage('work-ai', 'concepts/theirs.md') || '').includes('Revokee fact.'),
+    'revokee page erased (or rebuilt without their facts)');
+  const marker = await adapter.readMeta('state.revocation-in-progress');
+  assert(marker && marker.active === false, 'revocation marker cleared after full success');
+}
+
+section('13. H9 — GitHub tree truncation refused');
+
+{
+  const truncatedFetch = async (url) => {
+    if (url.includes('/git/trees/')) {
+      return {
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ tree: [], truncated: true }),
+        text: async () => '',
+      };
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}), text: async () => '' };
+  };
+  const gh = new GitHubStorageAdapter({
+    owner: 'octocat', repo: 'mock', pat: 'github_pat_test_1234567890abcdef', branch: 'main',
+    fetchImpl: truncatedFetch,
+  });
+  for (const [label, fn] of [
+    ['listPages', () => gh.listPages('work-ai')],
+    ['listContributionsSince', () => gh.listContributionsSince(null)],
+    ['listFellowSubmissions', () => gh.listFellowSubmissions('00000000-0000-4000-8000-000000000000')],
+  ]) {
+    try {
+      await fn();
+      fail(`${label} refuses a truncated tree`, new Error('no throw'));
+    } catch (err) {
+      assert(err.code === 'SHARED_BRAIN_TREE_TRUNCATED', `${label} refuses a truncated tree`);
+    }
+  }
+}
+
+section('14. Phase 2 source-level guards');
+
+{
+  const filesJs = src('src/brain/files.js');
+  assert(filesJs.includes('opts.replace'), 'writePage carries the replace flag');
+  const brain = src('src/brain/sharedbrain.js');
+  assert(brain.includes('{ replace: true }'), 'pullCollective uses replace semantics');
+  assert(brain.includes('skipped === 0'), 'prune is gated on a fully-processed pull');
+  const routes = src('src/routes/sharedbrain.js');
+  assert(routes.includes('timingSafeEqual'), 'admin-token compare is constant-time');
+  const synth = src('src/brain/sharedbrain-synthesis.js');
+  assert(synth.includes('watermark') && synth.includes('processed_ids'), 'synthesis uses processed-submission tracking');
+  assert(synth.includes('allowDuringRevocation'), 'revocation-marker gate present');
 }
 
 // ═══ Result ════════════════════════════════════════════════════════════════

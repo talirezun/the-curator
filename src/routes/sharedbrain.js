@@ -37,7 +37,7 @@
  */
 
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 
 import {
   getSharedBrainEnabled,
@@ -452,8 +452,14 @@ router.post('/:id/revoke', gate, async (req, res) => {
 
   // The admin_token in the body must match the one stored in the connection.
   // (Connections used by non-admin contributors won't have an admin_token at
-  // all — only the connection cohort admin has stored theirs.)
-  if (!conn.admin_token || typeof admin_token !== 'string' || admin_token !== conn.admin_token) {
+  // all — only the connection cohort admin has stored theirs.) v3.0.3:
+  // constant-time comparison over sha256 digests — a plain !== leaks match
+  // length/position through timing. Low practical risk on loopback, but the
+  // fix is one line.
+  const tokensMatch = (a, b) =>
+    typeof a === 'string' && typeof b === 'string' &&
+    timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+  if (!conn.admin_token || !tokensMatch(admin_token, conn.admin_token)) {
     return res.status(403).json({ error: 'admin_token is required and must match the connection' });
   }
   if (!isUuid(fellow_id)) {

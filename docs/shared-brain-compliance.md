@@ -57,7 +57,7 @@ When `POST /api/sharedbrain/:connection_id/revoke` runs with valid credentials a
 ### 2c — What revocation does NOT remove
 
 - **Git history.** GitHub retains commit history. Old commits still contain the revoked contributor's data. The admin can prune git history via `git filter-repo` if absolute erasure is required — see §2d.
-- **Local copies on other contributors' machines.** Each contributor's Curator pulls a local mirror of the shared brain. Those local mirrors are NOT automatically purged on revoke. Contributors with stale mirrors will see the revoked content until they next pull, which will reflect the post-revocation state.
+- **Local copies on other contributors' machines.** Each contributor's Curator pulls a local mirror of the shared brain. Those local mirrors are NOT automatically purged on revoke. Contributors with stale mirrors will see the revoked content until they next pull. Since v3.0.3, Pull is a true mirror operation: pages deleted from the collective are removed from the local mirror and facts removed from surviving pages disappear (older versions union-merged pulls, which retained revoked content indefinitely — contributors must be on v3.0.3+ for erasure to propagate).
 - **Backups.** If your cohort takes external backups of the shared repo (e.g. a CI mirror to another git host), revocation does not propagate to those backups. The admin must manually purge backups if absolute erasure is required.
 
 ### 2d — Absolute erasure procedure (for high-compliance scenarios)

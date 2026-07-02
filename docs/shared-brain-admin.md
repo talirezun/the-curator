@@ -81,7 +81,7 @@ The operation is irreversible. If the revoked contributor's local wiki is also g
 ### What revoke does NOT do (and what to do if you need it to)
 
 - **Git history retention** — revoke doesn't rewrite git history. Old commits still contain the revoked content. For absolute erasure (e.g. strict GDPR), follow the manual `git filter-repo` procedure in [`docs/shared-brain-compliance.md` §2d](shared-brain-compliance.md#2d--absolute-erasure-procedure-for-high-compliance-scenarios).
-- **Other contributors' local mirrors** — revoke doesn't reach their machines. The revoked content stays in their `shared-<slug>/` domain until they next Pull (which will reflect the post-revoke state).
+- **Other contributors' local mirrors** — revoke doesn't reach their machines. The revoked content stays in their `shared-<slug>/` domain until they next Pull. Since v3.0.3, Pull is a true mirror operation — pages deleted from the collective are **removed** from the local mirror, and facts removed from surviving pages actually disappear (older versions union-merged, which resurrected deleted content indefinitely). Contributors on pre-v3.0.3 versions must update for erasure to propagate.
 - **External backups** — revoke doesn't touch backups of the shared repo. Purge those manually if absolute erasure is needed.
 
 ---
@@ -185,7 +185,13 @@ One or more contributions couldn't be processed for those pages (a malformed con
 Since v3.0.2, push/pull/synthesize/revoke register with the app's write-coordination layer: app updates, restarts, and Personal Sync return 409 while a Shared Brain operation runs (and vice versa — a Pull can't start mid-ingest on the same mirror). Wait for the running operation to finish and retry.
 
 ### Synthesis reported "0 pages written" but I see contributions in storage
-The contributions' `contributed_at` timestamps are earlier than `state.last-synthesis.at`. Synthesis only processes contributions newer than the last run. To force-reprocess everything: temporarily edit `meta/state/last-synthesis.json` in the repo, set `at` to `"1970-01-01T00:00:00Z"`, then trigger Run synthesis again. Restore the timestamp afterward if needed.
+Since v3.0.3 synthesis tracks **processed submission IDs** (plus a watermark derived from the contributions' own timestamps), so the classic causes of this — a contributor's clock running behind yours, or a push landing while synthesis was running — no longer silently skip contributions. If it still happens, the likely causes are: (a) the contributions were already processed (check `processed_ids` in `meta/state/last-synthesis.json`), or (b) they target a **different shared domain** than this connection (the SSE stream warns about these). To force-reprocess everything from scratch: edit `meta/state/last-synthesis.json` and set `at` AND `watermark` to `"1970-01-01T00:00:00Z"` **and `processed_ids` to `[]`** (on pre-v3.0.3 state files only `at` exists), then trigger Run synthesis again. Re-processing is idempotent — facts dedup on merge.
+
+### Synthesis or revoke fails with "GitHub returned a TRUNCATED tree listing"
+The repo has grown past GitHub's recursive-listing limit (~100k files). Operations that rely on a full listing (synthesis, pull, and especially revoke) **refuse instead of silently missing files** (v3.0.3) — an incomplete Article 17 erasure reported as success would be far worse. Archive or delete old `contributions/<fellow>/*.json` files (e.g. move them to a separate archive repo) to shrink the tree, then retry.
+
+### Revoke failed with "the rebuild synthesis FAILED"
+The erasure part completed (contributions + provenance-tainted pages deleted) but the rebuild didn't run — commonly a rate-limit, since the rebuild re-reads every remaining contribution. The collective is missing the deleted pages until the rebuild completes, and an **in-progress marker** (v3.0.3) blocks ordinary synthesis so nothing is rebuilt from half-erased state. **Re-run the same revoke command** once the underlying problem clears (it's idempotent and finishes the job); the marker clears automatically on success.
 
 ### A contributor pushed but their pages don't appear in collective
 Verify:

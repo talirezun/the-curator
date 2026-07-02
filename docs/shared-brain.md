@@ -288,9 +288,10 @@ The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read
 
 | Topic | Resolution |
 |---|---|
-| Deletion propagation | **Defer to v3.1.** Zombie pages will accumulate; Health's orphan detection surfaces them. |
-| Corpus scale ceiling | **Defer.** For cohort-scale (≤500 pages), no special handling. |
+| Deletion propagation | **Resolved for mirrors in v3.0.3** — Pull is now replace-semantics + prunes pages deleted from the collective, so revocations and conflict resolutions propagate to every contributor's mirror on their next pull. Deletion propagation for *contributions* (a fellow deleting a page in their personal domain removing it from the collective) remains deferred to v3.1. |
+| Corpus scale ceiling | **Partially addressed in v3.0.3.** GitHub tree-truncation (~100k files) is now REFUSED loudly instead of silently missing files; synthesis warns when a page exceeds 500 accumulated facts (approaching the 1 MB file cap). Contribution pruning/archival (the long-term fix — contributions accumulate forever because revoke rebuilds from them) is deferred until digests are wired as the per-fellow rebuild source. |
 | Worker vs Node code sharing | **Defer to v3.1.** When the Cloudflare R2 adapter ships, synthesis pipeline will be written in dependency-free JS that bundles cleanly for both targets. |
+| Digests (`digests/<fellow>/latest.json`) | **Deferred, documented (v3.0.3 evaluation):** the digest adapter methods exist but nothing writes or reads digests today — revoke's digest-delete step is a no-op on every real deployment. Wiring them up (per-fellow accumulated state) is the prerequisite for contribution pruning and cheaper revoke rebuilds. |
 
 ---
 
@@ -332,6 +333,10 @@ Triggered weekly or on admin demand. Per Decision 4, applies rules 1-5:
 - **Rule 5** — Collective `index.md` rebuilt
 
 Runs locally on admin's machine. Collective storage just receives the written pages — no cloud compute.
+
+**Processed-submission tracking (v3.0.3).** `meta/state/last-synthesis.json` carries a `watermark` (the max `contributed_at` across fully-processed submissions — derived from the contributions' own stamps, never the admin's clock) plus a window-bounded `processed_ids` list. Contributions are listed from `watermark − 24h` and deduplicated by ID, so clock skew between machines and pushes landing mid-synthesis can no longer silently skip anyone. A submission is marked processed **only when every page it touches wrote successfully** — failed pages leave their submissions queued for the next run instead of being consumed.
+
+**Trust boundary (v3.0.3).** Synthesis treats stored contribution payloads as hostile input: non-string facts are dropped, newlines in facts/titles are flattened (blocks forged `## Provenance` sections and section-truncation attacks), link slugs are shape-validated, contributor identity comes from the storage path (not the payload's `fellow_id` field), and contributions targeting a different shared domain are skipped. One malformed contribution degrades to a per-page warning — it can no longer abort (or permanently brick) synthesis.
 
 ### Revoke (admin, GDPR Article 17)
 

@@ -33,7 +33,7 @@
 
 import { generateText } from './llm.js';
 import { parseJSON } from './ingest.js';
-import { jaccardSimilarity } from './sharedbrain-delta.js';
+import { jaccardSimilarity, tokenize } from './sharedbrain-delta.js';
 import { createStorageAdapter } from './sharedbrain-storage-factory.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
 
@@ -50,6 +50,56 @@ const PROVENANCE_UUID_DISPLAY_LEN = 8;
 
 /** Limit on contradiction pairs per page per synthesis cycle (cost guard). */
 const MAX_CONTRADICTION_PAIRS_PER_PAGE = 10;
+
+/**
+ * Clock-skew allowance for the processed-submission watermark (v3.0.3).
+ * Contributions are listed from (watermark − this window) and deduplicated
+ * against `processed_ids`, so a contributor whose clock is behind the
+ * watermark by up to this much can never be silently skipped.
+ */
+const SKEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Server-side caps applied to fellow-supplied strings at the synthesis trust
+ * boundary (v3.0.3). Slightly above the delta module's client-side caps —
+ * the client caps are courtesy; these are the enforcement.
+ */
+const SERVER_MAX_FACT_CHARS  = 600;
+const SERVER_MAX_TITLE_CHARS = 200;
+const SERVER_MAX_LINK_CHARS  = 200;
+
+/**
+ * Soft ceiling on facts per collective page. We deliberately do NOT evict
+ * (dropping a contributor's fact silently would violate the conservation
+ * invariant) — we warn the admin so they can split/curate the page before
+ * it approaches the storage backend's 1 MB file ceiling.
+ */
+const FACTS_PER_PAGE_SOFT_CAP = 500;
+
+/**
+ * Sanitize a fellow-supplied FACT/TITLE string (v3.0.3). Stored contribution
+ * payloads are a trust boundary — a fact containing "\n## Provenance" could
+ * inject a forged Provenance section (revoke evasion / short-ID spoofing),
+ * and "\n## X" would truncate other fellows' facts on the next cycle
+ * (extractSectionBullets stops at the next H2). Newline removal is the
+ * load-bearing part; the length cap is belt-and-braces.
+ */
+export function sanitizeFellowText(s, maxLen = SERVER_MAX_FACT_CHARS) {
+  if (typeof s !== 'string') return '';
+  return s.replace(/[\r\n]+/g, ' ').trim().slice(0, maxLen);
+}
+
+/**
+ * Validate a fellow-supplied wikilink slug (v3.0.3). Links are rendered
+ * inside `[[${slug}]]` — brackets/pipes/newlines would break out of the
+ * link syntax and inject arbitrary markdown.
+ */
+export function isSafeLinkSlug(l) {
+  return typeof l === 'string' &&
+    l.length > 0 &&
+    l.length <= SERVER_MAX_LINK_CHARS &&
+    !/[\[\]|\r\n]/.test(l);
+}
 
 // ── Pure helpers — parsing existing pages ──────────────────────────────────
 
@@ -90,8 +140,22 @@ export function extractSectionBullets(content, sectionName) {
   const section = nextH2 ? rest.slice(0, nextH2.index) : rest;
   const bullets = [];
   for (const line of section.split(/\r?\n/)) {
-    const lm = line.match(/^\s*[-*]\s+(.+?)\s*$/);
-    if (lm) bullets.push(lm[1]);
+    const top = line.match(/^[-*]\s+(.+?)\s*$/);
+    if (top) { bullets.push(top[1]); continue; }
+    const nested = line.match(/^\s+[-*]\s+(.+?)\s*$/);
+    if (nested) {
+      // v3.0.3: a CONFLICTING SOURCES block is ONE multi-line bullet — the
+      // marker line plus its indented children. Pre-fix, the children came
+      // back as separate facts with baked-in "(per …)" suffixes, so each
+      // cycle stacked degenerate markers and burned LLM calls re-flagging
+      // them. Reconstitute the block so it round-trips byte-stable.
+      const prev = bullets.length ? bullets[bullets.length - 1] : null;
+      if (prev !== null && prev.startsWith(CONFLICT_MARKER)) {
+        bullets[bullets.length - 1] = prev + '\n  - ' + nested[1];
+      } else {
+        bullets.push(nested[1]); // pre-existing behaviour for ordinary nested bullets
+      }
+    }
   }
   return bullets;
 }
@@ -136,7 +200,14 @@ export function groupDeltasByPage(contributions) {
   const grouped = new Map();
   for (const { fellowId, payload } of contributions) {
     if (!payload || !Array.isArray(payload.deltas)) continue;
-    const contributorId = payload.fellow_id || fellowId;
+    // v3.0.3 (trust boundary): the storage-path-derived fellowId wins over
+    // the fellow-controlled payload field — a hand-crafted payload could
+    // otherwise attribute its facts to a victim's UUID (and manipulate
+    // which pages the victim's GDPR revocation deletes).
+    const contributorId = fellowId || payload.fellow_id;
+    if (fellowId && payload.fellow_id && payload.fellow_id !== fellowId) {
+      console.error(`[sharedbrain-synthesis] fellow_id mismatch: payload claims "${payload.fellow_id}" but was stored under "${fellowId}" — using the storage path`);
+    }
     for (const delta of payload.deltas) {
       if (!delta || typeof delta.path !== 'string') continue;
       const arr = grouped.get(delta.path) || [];
@@ -195,9 +266,20 @@ export async function mergeFactsForPage(pageTitle, existingFacts, newContributio
   const deduped = [...seen.values()];
 
   // Stage 2: pairwise Jaccard scan for contradiction candidates.
-  // O(N²) per page — fine because contributions are bounded per page per cycle.
-  // We pair only NEW-VS-EXISTING and NEW-VS-NEW (within this cycle). prior-vs-prior
-  // already passed scrutiny in previous cycles.
+  // O(N²) per page. v3.0.3: token sets are memoized per candidate BEFORE the
+  // pair loop — the previous per-pair re-tokenisation made the scan
+  // O(N² × tokenize) which turned into minutes of CPU on fact-heavy hub
+  // pages. The set-based Jaccard below is numerically identical to
+  // jaccardSimilarity(a.text, b.text).
+  const tokenSets = deduped.map(c => new Set(tokenize(c.text)));
+  const jaccardFromSets = (A, B) => {
+    if (A.size === 0 && B.size === 0) return 1;
+    if (A.size === 0 || B.size === 0) return 0;
+    let inter = 0;
+    const [small, large] = A.size <= B.size ? [A, B] : [B, A];
+    for (const t of small) if (large.has(t)) inter++;
+    return inter / (A.size + B.size - inter);
+  };
   const flaggedPairs = []; // {a: candidate, b: candidate, sim: number}
   for (let i = 0; i < deduped.length; i++) {
     if (flaggedPairs.length >= MAX_CONTRADICTION_PAIRS_PER_PAGE) break;
@@ -206,7 +288,7 @@ export async function mergeFactsForPage(pageTitle, existingFacts, newContributio
       const b = deduped[j];
       // Skip if both are prior (already resolved in previous cycles).
       if (a.source === 'prior' && b.source === 'prior') continue;
-      const sim = jaccardSimilarity(a.text, b.text);
+      const sim = jaccardFromSets(tokenSets[i], tokenSets[j]);
       if (sim >= JACCARD_INDEPENDENT_THRESHOLD && sim < 1.0) {
         flaggedPairs.push({ a, b, sim });
         if (flaggedPairs.length >= MAX_CONTRADICTION_PAIRS_PER_PAGE) break;
@@ -400,12 +482,11 @@ export function composeCollectivePage(parts) {
     lines.push('## Key Facts');
     lines.push('');
     for (const fact of keyFacts) {
-      // If the fact contains the conflict marker, it's a multi-line block.
-      if (fact.startsWith(CONFLICT_MARKER)) {
-        lines.push(`- ${fact}`);
-      } else {
-        lines.push(`- ${fact}`);
-      }
+      // Conflict-marker blocks are multi-line strings that already carry
+      // their own "\n  - child" structure — `- ${fact}` renders both plain
+      // facts and blocks correctly (and round-trips through the
+      // marker-aware extractSectionBullets, v3.0.3).
+      lines.push(`- ${fact}`);
     }
     lines.push('');
   }
@@ -528,20 +609,81 @@ export async function runLocalSynthesis(connection, opts = {}) {
     return { ok: false, error: `runLocalSynthesis: adapter init failed: ${err.message}` };
   }
 
-  // Load last-synthesis state
-  let lastSynthesisIso = null;
-  try {
-    const state = await adapter.readMeta('state.last-synthesis');
-    if (state && typeof state.at === 'string') lastSynthesisIso = state.at;
-  } catch { /* missing state → first synthesis */ }
+  // v3.0.3: refuse to synthesize while a revocation is in progress (or was
+  // interrupted). Synthesizing mid-revoke could re-create pages from data
+  // the revoke is in the middle of erasing. The revoke orchestrator itself
+  // passes allowDuringRevocation to run its own rebuild step.
+  if (!opts.allowDuringRevocation) {
+    try {
+      const marker = await adapter.readMeta('state.revocation-in-progress');
+      if (marker && marker.active === true) {
+        return {
+          ok: false,
+          error: 'A contributor revocation is in progress or was interrupted before completing. ' +
+                 'Re-run the revocation to finish the erasure, then synthesize.',
+        };
+      }
+    } catch { /* unreadable marker → proceed */ }
+  }
 
-  // Load all contributions since last synthesis
-  onProgress('info', `Loading contributions since ${lastSynthesisIso || 'beginning'}...`);
-  let contributions;
+  // ── Load last-synthesis state (v3.0.3 processed-submission tracking) ────
+  //
+  // Pre-v3.0.3, "new" contributions were those with contributed_at (the
+  // CONTRIBUTOR's wall clock) newer than state.at (the ADMIN's wall clock).
+  // A contributor whose clock ran behind, or a push landing during a
+  // synthesis run, was silently skipped FOREVER. Now:
+  //   - `watermark` = max contributed_at over fully-processed submissions
+  //     (derived from contribution stamps, never the admin clock);
+  //   - contributions are listed from (watermark − SKEW_WINDOW) and
+  //     deduplicated against `processed_ids`;
+  //   - a submission is marked processed ONLY when every page it touches
+  //     was written successfully — failed pages leave their submissions
+  //     unprocessed and they retry next run (fixes the consumed-on-failure
+  //     data loss).
+  // Back-compat: old state files have only `at` — used as the initial
+  // watermark (one-time reprocessing of the last skew-window is idempotent).
+  let prevState = null;
+  try { prevState = await adapter.readMeta('state.last-synthesis'); } catch { /* first synthesis */ }
+  // If the state carries a `watermark` key at all (v3.0.3+ writer), trust it
+  // even when null (null = "nothing fully processed yet — list everything").
+  // Only legacy states (pre-v3.0.3, no watermark key) fall back to `at`.
+  const watermarkIso = (prevState && 'watermark' in prevState)
+    ? (typeof prevState.watermark === 'string' ? prevState.watermark : null)
+    : (prevState && typeof prevState.at === 'string' ? prevState.at : null);
+  const processedIds = new Set(
+    prevState && Array.isArray(prevState.processed_ids)
+      ? prevState.processed_ids.filter(id => typeof id === 'string')
+      : []
+  );
+
+  const watermarkMs = watermarkIso ? Date.parse(watermarkIso) : NaN;
+  const sinceIso = Number.isFinite(watermarkMs)
+    ? new Date(Math.max(0, watermarkMs - SKEW_WINDOW_MS)).toISOString()
+    : null;
+
+  onProgress('info', `Loading contributions since ${sinceIso || 'beginning'}...`);
+  let listed;
   try {
-    contributions = await adapter.listContributionsSince(lastSynthesisIso);
+    listed = await adapter.listContributionsSince(sinceIso);
   } catch (err) {
     return { ok: false, error: `runLocalSynthesis: listContributionsSince failed: ${err.message}` };
+  }
+
+  // Filter: drop already-processed submissions and (v3.0.3, trust boundary)
+  // contributions targeting a DIFFERENT shared domain — a repo can host
+  // multiple domains, and pre-fix everything was synthesized into this
+  // connection's domain regardless of payload.domain.
+  const contributions = [];
+  const foreignIds = []; // conclusively not-ours → tracked as processed
+  for (const c of listed) {
+    if (processedIds.has(c.submissionId)) continue;
+    const payloadDomain = c.payload ? c.payload.domain : undefined;
+    if (payloadDomain !== connection.shared_domain) {
+      onProgress('warn', `Skipping contribution ${c.submissionId.slice(0, 8)}… — targets domain "${payloadDomain || '(none)'}", not "${connection.shared_domain}".`);
+      foreignIds.push(c.submissionId);
+      continue;
+    }
+    contributions.push(c);
   }
 
   if (contributions.length === 0) {
@@ -560,6 +702,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
   let pagesFailed = 0;
   let totalConflicts = 0;
   const writtenPaths = [];
+  const failedPages = new Set(); // v3.0.3 — drives processed-submission tracking
 
   // Process each page in deterministic order (sorted by path)
   const sortedPaths = [...grouped.keys()].sort();
@@ -576,10 +719,15 @@ export async function runLocalSynthesis(connection, opts = {}) {
     // synthesis until an admin manually deleted the file.
     try {
 
-    // Load existing collective page (may not exist on first synthesis)
-    let existingContent;
-    try { existingContent = await adapter.readPage(connection.shared_domain, pagePath); }
-    catch { existingContent = null; }
+    // Load existing collective page (may not exist on first synthesis).
+    // v3.0.3: adapters signal "missing" by returning null — a THROW here is
+    // a real error (rate limit, network, or FILE_TOO_LARGE past the 1 MB
+    // GitHub ceiling) and must NOT be treated as "page doesn't exist":
+    // pre-fix, an oversized page's accumulated facts were silently
+    // discarded and replaced by a from-scratch compose. Let the throw reach
+    // the per-page guard → page marked failed → its submissions stay
+    // unprocessed and retry next run.
+    const existingContent = await adapter.readPage(connection.shared_domain, pagePath);
 
     const existingBody = existingContent ? stripFrontmatter(existingContent) : '';
     const existingTitle = existingContent ? extractTitleFromContent(existingContent) : null;
@@ -596,32 +744,43 @@ export async function runLocalSynthesis(connection, opts = {}) {
     else if (pagePath.startsWith('summaries/')) type = 'summary';
 
     // Title: first non-empty delta.title wins, falling back to existing.
+    // Sanitized (v3.0.3) — the title lands in `# ${title}` and the YAML
+    // frontmatter; a newline would inject markdown structure.
     let title = existingTitle;
     for (const { delta } of entries) {
       if (delta.title && typeof delta.title === 'string' && delta.title.trim()) {
-        title = delta.title.trim();
+        title = sanitizeFellowText(delta.title, SERVER_MAX_TITLE_CHARS);
         break;
       }
     }
     if (!title) title = pagePath.split('/').pop().replace(/\.md$/, '');
 
-    // Merge facts (Rule 1 + Rule 3). Non-string entries are dropped at the
-    // trust boundary — stored payloads may not have come from our delta module.
+    // Merge facts (Rule 1 + Rule 3). Sanitized at the trust boundary
+    // (v3.0.3): non-strings dropped, newlines flattened (blocks Provenance
+    // forgery + section truncation — see sanitizeFellowText), server-side
+    // length cap enforced.
     const newContributions = entries.map(({ delta, contributorId }) => ({
       contributorId,
       facts: Array.isArray(delta.new_facts)
-        ? delta.new_facts.filter(f => typeof f === 'string' && f.trim())
+        ? delta.new_facts.map(f => sanitizeFellowText(f)).filter(Boolean)
         : [],
     }));
     const { unifiedFacts, conflicts } = await mergeFactsForPage(
       title, existingFacts, newContributions, llmFn, shortenId
     );
     totalConflicts += conflicts;
+    if (unifiedFacts.length > FACTS_PER_PAGE_SOFT_CAP) {
+      // Deliberately warn-not-evict: silently dropping a contributor's fact
+      // would violate the conservation invariant. The admin should split or
+      // curate the page before it approaches the backend's 1 MB file cap.
+      onProgress('warn', `${pagePath}: ${unifiedFacts.length} accumulated facts (soft cap ${FACTS_PER_PAGE_SOFT_CAP}) — consider splitting this page; very large pages will eventually hit the storage backend's 1 MB file limit.`);
+    }
 
-    // Merge links (Rule 2)
+    // Merge links (Rule 2). Link slugs render inside [[...]] — validate the
+    // shape so a crafted slug can't break out of the wikilink (v3.0.3).
     const linkContribs = entries.map(({ delta }) => ({
-      addedLinks: Array.isArray(delta.new_links) ? delta.new_links : [],
-      removedLinks: Array.isArray(delta.removed_links) ? delta.removed_links : [],
+      addedLinks: Array.isArray(delta.new_links) ? delta.new_links.filter(isSafeLinkSlug) : [],
+      removedLinks: Array.isArray(delta.removed_links) ? delta.removed_links.filter(isSafeLinkSlug) : [],
     }));
     const mergedLinks = mergeLinksForPage(existingLinks, linkContribs);
 
@@ -648,6 +807,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
       writtenPaths.push(pagePath);
     } catch (err) {
       pagesFailed++;
+      failedPages.add(pagePath);
       console.error(`[sharedbrain-synthesis] writePage failed for "${pagePath}": ${err.message}`);
       onProgress('warn', `${pagePath}: write to collective storage failed — ${err.message}`);
     }
@@ -656,6 +816,7 @@ export async function runLocalSynthesis(connection, opts = {}) {
       // Per-page guard (see comment at the top of the loop). Surface the
       // failure loudly but keep going — other pages must still synthesize.
       pagesFailed++;
+      failedPages.add(pagePath);
       console.error(`[sharedbrain-synthesis] page "${pagePath}" failed to synthesize: ${err.message}`);
       onProgress('warn', `${pagePath}: skipped this cycle — ${err.message}`);
     }
@@ -675,16 +836,68 @@ export async function runLocalSynthesis(connection, opts = {}) {
     console.error(`[sharedbrain-synthesis] index rebuild failed: ${err.message}`);
   }
 
-  // Update last-synthesis state
+  // ── Update last-synthesis state (v3.0.3 processed-submission tracking) ──
+  // A submission counts as processed ONLY if none of its target pages
+  // failed this run. Failed pages leave their submissions unprocessed so
+  // the facts are re-synthesized next run instead of being consumed by a
+  // partial failure. Deltas with invalid paths contribute nothing, so they
+  // don't block processing.
+  const nowProcessed = contributions.filter(c =>
+    !(Array.isArray(c.payload.deltas) ? c.payload.deltas : []).some(
+      d => d && typeof d.path === 'string' && failedPages.has(d.path)
+    )
+  );
+
+  // New watermark. Two rules, in order:
+  //   1. Advance to the max clamped contributed_at across processed
+  //      submissions (future-dated / unparseable stamps never advance it —
+  //      M8 — they'd otherwise skip everyone else's honest contributions).
+  //   2. INVARIANT — never advance so far that an UNPROCESSED submission
+  //      falls out of the next listing window (watermark − SKEW_WINDOW):
+  //      a failed submission must stay listable until it processes, even
+  //      if much newer submissions processed fine this run.
+  const nowProcessedSet = new Set(nowProcessed.map(c => c.submissionId));
+  let newWatermarkMs = Number.isFinite(watermarkMs) ? watermarkMs : 0;
+  const nowMs = nowDate.getTime();
+  for (const c of nowProcessed) {
+    const t = Date.parse(c.payload.contributed_at);
+    if (Number.isFinite(t)) newWatermarkMs = Math.max(newWatermarkMs, Math.min(t, nowMs));
+  }
+  for (const c of contributions) {
+    if (nowProcessedSet.has(c.submissionId)) continue;
+    const t = Date.parse(c.payload.contributed_at);
+    if (Number.isFinite(t)) {
+      // Keep this unprocessed submission inside the window with a 1-minute
+      // safety margin. (Unparseable stamps are always re-listed by the
+      // adapters, so they can't be lost to the window.)
+      newWatermarkMs = Math.min(newWatermarkMs, Math.min(t, nowMs) + SKEW_WINDOW_MS - 60_000);
+    }
+  }
+
+  // processed_ids: (previous ∩ still-listed) ∪ newly processed ∪ foreign.
+  // Anything no longer returned by the window-filtered listing is either
+  // older than the window (excluded by the since-filter forever) or deleted
+  // — safe to drop, which keeps the set bounded to one skew-window.
+  const listedIds = new Set(listed.map(c => c.submissionId));
+  const newProcessedIds = [
+    ...[...processedIds].filter(id => listedIds.has(id)),
+    ...nowProcessed.map(c => c.submissionId),
+    ...foreignIds,
+  ];
+
   try {
-    const prevState = await adapter.readMeta('state.last-synthesis');
     const runNumber = (prevState && typeof prevState.run_number === 'number') ? prevState.run_number + 1 : 1;
     await adapter.writeMeta('state.last-synthesis', {
-      at: nowIso,
+      at: nowIso, // kept for display + back-compat with older readers
+      // null = nothing fully processed yet → next run lists everything.
+      // (Readers check for the KEY's presence, so null never falls back to `at`.)
+      watermark: newWatermarkMs > 0 ? new Date(newWatermarkMs).toISOString() : null,
+      processed_ids: newProcessedIds,
       run_number: runNumber,
       pages_written: pagesWritten,
+      pages_failed: pagesFailed,
       conflicts: totalConflicts,
-      processed_contributions: contributions.length,
+      processed_contributions: nowProcessed.length,
     });
   } catch (err) {
     console.error(`[sharedbrain-synthesis] failed to write last-synthesis meta: ${err.message}`);
@@ -717,6 +930,9 @@ export const __testing = {
   CONFLICT_MARKER,
   JACCARD_INDEPENDENT_THRESHOLD,
   MAX_CONTRADICTION_PAIRS_PER_PAGE,
+  SKEW_WINDOW_MS,
+  FACTS_PER_PAGE_SOFT_CAP,
+  SERVER_MAX_FACT_CHARS,
   defaultShortenId,
   resolveContradiction,
   rebuildIndex,

@@ -221,11 +221,14 @@ export class LocalFolderStorageAdapter extends SharedBrainStorageAdapter {
         const raw = await readFile(abs, 'utf8');
         let payload;
         try { payload = JSON.parse(raw); } catch { continue; }
-        // Filter by contributed_at if present.
+        // Filter by contributed_at if present. v3.0.3 (M8): missing or
+        // unparseable stamps are INCLUDED — silently dropping a contribution
+        // over a corrupt date would lose a fellow's work; synthesis's
+        // processed-ID tracking bounds the reprocessing cost.
         const contributedAt = payload && payload.contributed_at
           ? new Date(payload.contributed_at).getTime()
-          : 0;
-        if (contributedAt >= sinceMs) {
+          : NaN;
+        if (Number.isNaN(contributedAt) || contributedAt >= sinceMs) {
           out.push({ fellowId, submissionId, payload });
         }
       }

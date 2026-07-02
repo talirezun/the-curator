@@ -84,6 +84,22 @@ export async function revokeContributor(connection, opts = {}) {
     return { ok: false, error: `revokeContributor: could not derive short id from fellowId` };
   }
 
+  // ── Step 0 (v3.0.3): write an in-progress marker to shared storage ───────
+  // If the revoke is interrupted (process killed, network drop) after the
+  // deletions but before the rebuild, the marker survives: synthesis refuses
+  // to run while it's active (it could otherwise re-create pages from data
+  // mid-erasure), and the admin gets a clear "re-run the revocation" steer.
+  // Re-running the revoke is safe — every step below is idempotent.
+  try {
+    await adapter.writeMeta('state.revocation-in-progress', {
+      active: true,
+      fellow_short_id: shortId, // short id only — no PII beyond what Provenance already shows
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    return { ok: false, error: `revokeContributor: could not write the in-progress marker: ${err.message}` };
+  }
+
   // ── Step 1: delete contributions ─────────────────────────────────────────
 
   onProgress('info', `Listing contributions for ${shortId}…`);
@@ -128,13 +144,18 @@ export async function revokeContributor(connection, opts = {}) {
       // Tolerate both bare short-ids and "Name (short-id)" formats — the
       // helper already extracts the canonical id; we compare prefixes too
       // since Provenance lines historically have stored short-IDs.
+      // v3.0.3: EXACT matching only. The previous `norm.includes(shortId)`
+      // was collision-prone — 8 hex chars appearing anywhere inside another
+      // fellow's UUID or a display name would delete an innocent page.
+      // extractProvenanceContributors already unwraps "Name (short-id)" to
+      // the parenthesised id, so the remaining legitimate shapes are the
+      // bare short id and the full UUID.
+      const shortIdLc = shortId.toLowerCase();
       const hit = contributors.some(c => {
         if (!c) return false;
-        const norm = String(c).trim();
-        // Exact short-id, or contains the short-id as a token
-        return norm === shortId
-            || norm.startsWith(shortId + '-')   // full UUID prefix shape
-            || norm.includes(shortId);          // "Name (shortid)" or similar
+        const norm = String(c).trim().toLowerCase();
+        return norm === shortIdLc
+            || (shortenFellowId(norm) === shortIdLc && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(norm));
       });
       if (hit) {
         const removed = await adapter.deletePage(connection.shared_domain, pagePath);
@@ -163,14 +184,14 @@ export async function revokeContributor(connection, opts = {}) {
       onProgress: (stage, message, meta) => onProgress('progress', `synthesis: ${message}`, meta),
       llmFn: opts.llmFn,
       patchFn: opts.patchFn,
+      allowDuringRevocation: true, // our own marker is active — see Step 0
     });
   } catch (err) {
     console.error(`[sharedbrain-revoke] re-synthesis failed: ${err.message}`);
     synthesisResult = { ok: false, error: err.message };
   }
-  const pagesRebuilt = synthesisResult && synthesisResult.ok
-    ? (synthesisResult.pages_written || 0)
-    : 0;
+  const rebuildOk = !!(synthesisResult && synthesisResult.ok);
+  const pagesRebuilt = rebuildOk ? (synthesisResult.pages_written || 0) : 0;
 
   // ── Step 5: append audit log entry ───────────────────────────────────────
 
@@ -181,12 +202,49 @@ export async function revokeContributor(connection, opts = {}) {
     contributions_deleted: contributionsDeleted,
     pages_deleted: pagesDeleted,
     pages_rebuilt: pagesRebuilt,
+    rebuild_ok: rebuildOk, // v3.0.3 — false = erasure done, rebuild pending
     revocation_id: randomUUID(),
   };
   try {
     await adapter.appendAudit(REVOCATIONS_LOG_PATH, auditRecord);
   } catch (err) {
     console.error(`[sharedbrain-revoke] could not write audit log: ${err.message}`);
+  }
+
+  // ── Step 6 (v3.0.3): clear the in-progress marker ONLY on full success ───
+  // On rebuild failure the marker stays active: synthesis keeps refusing and
+  // the admin is steered to re-run the revoke (which is idempotent and will
+  // finish the rebuild).
+  if (rebuildOk) {
+    try {
+      await adapter.writeMeta('state.revocation-in-progress', {
+        active: false,
+        finished_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`[sharedbrain-revoke] could not clear the in-progress marker: ${err.message}`);
+    }
+  }
+
+  if (!rebuildOk) {
+    // v3.0.3: pre-fix this returned ok:true — the admin saw "Revocation
+    // complete" while the collective sat gutted (pages deleted, rebuild
+    // never ran). Now the failure is loud and carries the recovery path.
+    const errMsg =
+      `Erasure completed (${contributionsDeleted} contributions + ${pagesDeleted} pages deleted), ` +
+      `but the rebuild synthesis FAILED: ${synthesisResult && synthesisResult.error ? synthesisResult.error : 'unknown error'}. ` +
+      `The collective is missing the deleted pages until the rebuild runs. ` +
+      `Re-run this revocation (safe — every step is idempotent) once the underlying problem is resolved.`;
+    onProgress('error', errMsg);
+    return {
+      ok: false,
+      partial: true,
+      error: errMsg,
+      contributions_deleted: contributionsDeleted,
+      pages_deleted: pagesDeleted,
+      pages_rebuilt: 0,
+      audit_record: auditRecord,
+    };
   }
 
   onProgress('done', `Revocation complete: ${contributionsDeleted} contributions deleted, ${pagesDeleted} pages removed, ${pagesRebuilt} rebuilt.`);

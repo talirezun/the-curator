@@ -33,7 +33,7 @@
  *     in Phase 4+; stdout reserved for MCP JSON-RPC stream).
  */
 
-import { readFile, readdir, stat, mkdir, writeFile, lstat } from 'fs/promises';
+import { readFile, readdir, stat, mkdir, writeFile, lstat, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -253,6 +253,13 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     return { ok: false, error: `pushDomain: connection.last_push_at is not a valid date: "${connection.last_push_at}"` };
   }
 
+  // v3.0.3 (L2): capture the push timestamp BEFORE the change scan. When it
+  // was captured after, a page edited during the scan window could carry an
+  // mtime below the recorded timestamp and never be pushed. Overlap in the
+  // other direction (re-pushing an already-pushed page) is safe — the
+  // collective's exact-string dedup absorbs it; a gap is not.
+  const pushTimestamp = nowFn().toISOString();
+
   const pendingRetry = { ...(connection.pending_retry || {}) };
   const permanentSkip = new Set(connection.permanent_skip || []);
 
@@ -284,7 +291,6 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     // Still update last_push_at so subsequent pushes don't re-scan everything.
     // Also persist the pruned permanent_skip / pending_retry (stale entries
     // for deleted pages are dropped above / here) — v3.0.2.
-    const pushTimestamp = nowFn().toISOString();
     const prunedRetry = {};
     for (const [p, n] of Object.entries(pendingRetry)) {
       if (existsSync(path.join(wikiDir, p))) prunedRetry[p] = n;
@@ -307,7 +313,6 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   const domainPagePaths = await getAllPagePaths(wikiDir);
 
   // ── 4. Generate DeltaSummaries ──────────────────────────────────────────
-  const pushTimestamp = nowFn().toISOString();
   const deltas = [];
   const newPendingRetry = {};
   const newPermanentSkip = new Set(permanentSkip);
@@ -381,6 +386,13 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     try {
       adapter = createStorageAdapter(connection);
     } catch (err) {
+      // v3.0.3 (L3): persist this cycle's retry/skip bookkeeping even though
+      // the push failed — do NOT advance last_push_at (the pages must
+      // rescan next time).
+      patchFn(connection.id, {
+        pending_retry: newPendingRetry,
+        permanent_skip: Array.from(newPermanentSkip),
+      });
       return {
         ok: false,
         error: `pushDomain: storage adapter init failed: ${err.message}`,
@@ -406,6 +418,13 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
       await adapter.storeContribution(connection.fellow_id, submissionId, payload);
       pushedSubmissionId = submissionId;
     } catch (err) {
+      // v3.0.3 (L3): as above — keep the retry bookkeeping, don't advance
+      // last_push_at, so both the failed deltas and the strike counters
+      // survive to the next push.
+      patchFn(connection.id, {
+        pending_retry: newPendingRetry,
+        permanent_skip: Array.from(newPermanentSkip),
+      });
       return {
         ok: false,
         error: `pushDomain: storage write failed: ${err.message}`,
@@ -723,13 +742,17 @@ export async function pullCollective(connection, opts = {}) {
 
       // ── 6c. Run through the existing writePage pipeline ─────────────
       // This is where v2.5.5 link grounding, Pass A/B/C link normalisation,
-      // frontmatter injection, merge logic, and backlink injection all run.
-      // The returned result.status is authoritative ("created"|"updated"|
-      // "unchanged") — far more accurate than our own existsSync check
-      // because writePage may redirect the path via cross-folder dedup.
+      // frontmatter injection, and backlink injection all run. v3.0.3:
+      // `replace: true` — the mirror is a MIRROR, not a merge target. The
+      // union merge used to resurrect facts the collective had removed
+      // (conflict resolution, GDPR revocation) from the stale local copy on
+      // every pull, forever. The returned result.status is authoritative
+      // ("created"|"updated"|"unchanged") — more accurate than our own
+      // existsSync check because writePage may redirect the path via
+      // cross-folder dedup.
       let result;
       try {
-        result = await writePage(localDomain, remotePath, content);
+        result = await writePage(localDomain, remotePath, content, { replace: true });
       } catch (err) {
         console.error(`[pullCollective] writePage failed for "${remotePath}": ${err.message}`);
         skipped++;
@@ -761,9 +784,47 @@ export async function pullCollective(connection, opts = {}) {
       }
     }
 
+    // ── 7b. Prune local pages deleted from the collective (v3.0.3, H8) ──
+    // The mirror must not retain pages the collective no longer has — most
+    // importantly after a GDPR revocation, where "the revoked content stays
+    // on every contributor's machine forever" was a real erasure gap.
+    // Guards:
+    //   - Only when this pull processed EVERY remote page (skipped === 0):
+    //     a page skipped over a read error is still remote — pruning by an
+    //     incomplete written-set would delete live content.
+    //   - Only .md files inside the three canonical wiki folders; index.md,
+    //     log.md and dot-files (e.g. .health-dismissed.jsonl) are untouched.
+    //   - The empty-collective case never reaches here (early return above),
+    //     so a transient empty listing can't wipe the mirror.
+    let pruned = 0;
+    if (skipped === 0) {
+      const writtenSet = new Set(writtenPaths);
+      for (const folder of WIKI_FOLDERS) {
+        const folderAbs = path.join(wikiBase, folder);
+        if (!existsSync(folderAbs)) continue;
+        let entries;
+        try { entries = await readdir(folderAbs, { withFileTypes: true }); }
+        catch { continue; }
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+          const rel = `${folder}/${entry.name}`;
+          if (writtenSet.has(rel)) continue;
+          try {
+            await unlink(path.join(folderAbs, entry.name));
+            pruned++;
+            onProgress('info', `Removed ${rel} — no longer in the collective.`);
+          } catch (err) {
+            console.error(`[pullCollective] prune failed for "${rel}": ${err.message}`);
+          }
+        }
+      }
+    } else {
+      onProgress('warn', `${skipped} page(s) could not be processed this pull — skipping stale-page cleanup to be safe.`);
+    }
+
     // ── 8. appendLog ─────────────────────────────────────────────────────
     const today = nowFn().toISOString().slice(0, 10);
-    const logMsg = `[${today}] Shared Brain pull from "${connection.label}": ${created} new, ${updated} updated, ${unchanged} unchanged${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
+    const logMsg = `[${today}] Shared Brain pull from "${connection.label}": ${created} new, ${updated} updated, ${unchanged} unchanged${pruned > 0 ? `, ${pruned} removed` : ''}${skipped > 0 ? `, ${skipped} skipped` : ''}.`;
     try { await appendLog(localDomain, logMsg); }
     catch (err) { console.error(`[pullCollective] appendLog failed: ${err.message}`); }
 
@@ -771,14 +832,15 @@ export async function pullCollective(connection, opts = {}) {
     const pulledAt = nowFn().toISOString();
     patchFn(connection.id, { last_pull_at: pulledAt });
 
-    const summary = `Pull complete: ${created} new, ${updated} updated, ${unchanged} unchanged${skipped > 0 ? `, ${skipped} skipped` : ''}. Local domain: ${localDomain}`;
-    onProgress('done', summary, { created, updated, unchanged, skipped, local_domain: localDomain });
+    const summary = `Pull complete: ${created} new, ${updated} updated, ${unchanged} unchanged${pruned > 0 ? `, ${pruned} removed` : ''}${skipped > 0 ? `, ${skipped} skipped` : ''}. Local domain: ${localDomain}`;
+    onProgress('done', summary, { created, updated, unchanged, pruned, skipped, local_domain: localDomain });
 
     return {
       ok: true,
       created,
       updated,
       unchanged,
+      pruned,
       skipped,
       local_domain: localDomain,
     };
