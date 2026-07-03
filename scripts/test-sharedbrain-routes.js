@@ -614,7 +614,11 @@ try {
       assertEq(r.status, 400, 'validate-pat rejects bad repo format with 400');
     }
   } else {
-    console.log('  (SKIPPED — set GITHUB_TEST_REPO + GITHUB_TEST_PAT to run live validation)');
+    // Wording matters: the run-tests.js aggregator classifies a suite whose
+    // output contains all-caps "SKIPPED" as fully self-skipped — which made
+    // CI display this 73-assertion suite as "⏭ skip" even though everything
+    // ran green (v3.0.6 CI run #30). This is a partial, optional section.
+    console.log('  (validate-pat live section not run — set GITHUB_TEST_REPO + GITHUB_TEST_PAT to include it)');
   }
 
   // ── Summary ──────────────────────────────────────────────────────────
