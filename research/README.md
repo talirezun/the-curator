@@ -58,6 +58,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun & Dražen Kapusta  
   *On The Curator v3.0.0-beta and the Shared Brain feature — how cohorts, research teams, and organisations can build attributed, AI-queryable collective intelligence on plain markdown and Git, without giving up individual privacy or ownership.*
 
+- **[Second Brain to Shared Brain: Building a Neural Network of Your Own Knowledge](./articles/neural-network-of-your-own-knowledge.md)**  
+  By Dr. Tali Režun  
+  *The complete case, from the foundations up — why a compounding personal knowledge graph beats retrieval, how My Curator MCP turns it into a research partner, and what happened when Shared Brain came through five structured hardening phases (and two production-grade bugs) on the road to a real cohort pilot.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -109,6 +113,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {May},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-shared-brain-thinking-together.md}
+}
+
+@article{rezun2026neural-network-of-knowledge,
+  author = {Režun, Tali},
+  title = {Second Brain to Shared Brain: Building a Neural Network of Your Own Knowledge},
+  year = {2026},
+  month = {July},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/neural-network-of-your-own-knowledge.md}
 }
 ```
 
