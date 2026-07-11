@@ -54,6 +54,7 @@ const OFFLINE = [
   'test-sharedbrain-hardening.js',
   'test-sharedbrain-scenarios.js', // v3.0.6 Phase 5: 5.8-5.12 (local adapter, mock LLM/fetch, tempdir git)
   'test-diagnostics.js',
+  'test-chat-truncation.js',       // v3.0.7: text-mode graceful truncation + context-neutral MAX_TOKENS error
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
@@ -71,6 +72,7 @@ const LIVE_CI = [
   'test-beta17-production.js',
   'test-beta25-compile-live.js', // compile on a seeded large-index domain (Fix #1)
   'test-beta27-compile-live.js', // compile fallback prompts honoured by real models (Fix #2)
+  'test-chat-truncation-live.js', // v3.0.7: real Gemini/Anthropic — text partial-return, JSON throw + isOutputTokenLimit
   // v3.0.6 Phase 5 (plan 5.6) — the GITHUB_TEST_* workflow secrets are no
   // longer dead config; all three self-skip or self-degrade without them:
   'test-sharedbrain-github-live.js', // self-skips without GITHUB_TEST_*; unique slugs per run; exhaustive cleanup

@@ -473,7 +473,11 @@ export async function sendMessage(domain, conversationId, userMessage) {
   const history = conversation.messages.slice(-20);
 
   const prompt = buildPrompt(domain, pages, history, userMessage);
-  const answer = await generateText(schema, prompt, 4096);
+  // v3.0.7: 4096 → 8192. Analytical chat questions (e.g. "evaluate these three
+  // ideas and recommend one") legitimately need more room than a quick lookup.
+  // Combined with text-mode graceful truncation in llm.js, an over-long answer
+  // now degrades to a partial-with-note instead of a hard error.
+  const answer = await generateText(schema, prompt, 8192);
 
   const citations = [...answer.matchAll(/\[source:\s*([^\]]+)\]/g)].map(m => m[1].trim());
   const uniqueCitations = [...new Set(citations)];

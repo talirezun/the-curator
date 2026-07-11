@@ -31,7 +31,10 @@ Instructions:
 - Synthesize across pages rather than quoting large blocks.
 - End your response with a "## Sources" section listing every page you cited.`;
 
-  const answer = await generateText(schema, userPrompt, 4096);
+  // v3.0.7: 4096 → 8192, matching the Chat tab. Same one-shot Q&A class; also
+  // benefits from text-mode graceful truncation in llm.js (partial-with-note
+  // instead of a hard error on a long answer).
+  const answer = await generateText(schema, userPrompt, 8192);
 
   // Extract cited pages from [source: path] patterns
   const citations = [...answer.matchAll(/\[source:\s*([^\]]+)\]/g)].map(

@@ -223,6 +223,51 @@ function isModelNotFound(err) {
 }
 
 /**
+ * Handle an output-token-limit (MAX_TOKENS) truncation, uniformly across
+ * providers and response formats. Exported for offline unit testing.
+ *
+ * The behaviour DIFFERS by responseFormat, which is the whole point:
+ *
+ *   • JSON mode — a truncated JSON body is unparseable garbage, so we THROW.
+ *     The message deliberately keeps the phrase "output token limit" so that
+ *     `isOutputTokenLimit(err)` in ingest.js (and its consumers compile.js /
+ *     the single-pass→multi-phase switch) keeps firing and the fallback
+ *     ladders recover. The wording is CONTEXT-NEUTRAL — it no longer tells the
+ *     caller to "split the source by chapter and ingest each separately" or to
+ *     tune "the Phase 2 batch size in src/brain/ingest.js", because this single
+ *     chokepoint is shared by chat, query, health-AI, shared-brain, compile and
+ *     ingest. Callers that want feature-specific guidance (ingest, compile) add
+ *     it at their own level.
+ *
+ *   • Text mode — a truncated PROSE answer is still useful (a 95%-complete chat
+ *     answer beats a hard error). We RETURN the partial text with a clear,
+ *     human-readable note appended, instead of discarding it. This is why the
+ *     Chat tab used to surface the misleading ingest error on a long question
+ *     (see the v3.0.7 fix): chat is text mode, and text mode should degrade,
+ *     not fail.
+ *
+ * @param {string} providerName  'Gemini' | 'Claude'
+ * @param {number} maxTokens     the budget that was hit (post-clamp for Anthropic)
+ * @param {'text'|'json'} responseFormat
+ * @param {string} partialText   whatever text was generated before truncation
+ * @returns {string}             text-mode partial answer + note (json mode throws)
+ */
+export function handleOutputTokenLimit(providerName, maxTokens, responseFormat, partialText) {
+  if (responseFormat === 'json') {
+    throw new Error(
+      `⚠ ${providerName} hit the output token limit (${maxTokens} tokens) on this call. ` +
+      `The structured response was cut off before it could be completed and cannot be parsed. ` +
+      `This is not a transient error — retrying identically will hit the same limit.`
+    );
+  }
+  const text = typeof partialText === 'string' ? partialText : '';
+  const note =
+    `\n\n_[⚠ This answer was cut off because it reached the response length limit ` +
+    `(${maxTokens} tokens). Ask a more specific or narrower question to see the rest.]_`;
+  return text.trimEnd() + note;
+}
+
+/**
  * Invoke a specific provider+model. No retry/fallback here — pure dispatch.
  * Called by `callLLM` which handles fallback, and by the retry loop in `generateText`.
  */
@@ -249,18 +294,17 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
     // exceeded `maxOutputTokens`. Pre-fix this surfaced as the
     // "AI returned malformed JSON twice in a row" message at parseJSON time —
     // misleadingly framed as "transient" when in fact the next attempt would
-    // hit the same wall. Now we throw a clear, actionable error BEFORE the
-    // truncated text reaches the JSON parser.
+    // hit the same wall.
+    //
+    // v3.0.7: routed through handleOutputTokenLimit — JSON mode still throws
+    // (so ingest/compile fallbacks recover), but TEXT mode (chat, query) now
+    // returns the partial answer with a note instead of hard-failing on a
+    // misleading ingest-specific error.
     const finishReason = result?.response?.candidates?.[0]?.finishReason;
     if (finishReason === 'MAX_TOKENS') {
-      throw new Error(
-        `⚠ Gemini hit the output token limit (${maxTokens} tokens) on this call. ` +
-        `The response was cut off mid-way and cannot be parsed. This is NOT a ` +
-        `transient JSON error — retrying will hit the same limit. What to do: ` +
-        `split the source into smaller parts (e.g. by chapter) and ingest each ` +
-        `separately. If you regularly ingest very long documents, the ` +
-        `Phase 2 batch size in src/brain/ingest.js may need tuning.`
-      );
+      let partial = '';
+      try { partial = result.response.text(); } catch { /* candidate had no text part */ }
+      return handleOutputTokenLimit('Gemini', maxTokens, responseFormat, partial);
     }
     return result.response.text();
   }
@@ -300,17 +344,14 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // Especially impactful for Anthropic users because they have no JSON-mode
   // safety net — Gemini's MAX_TOKENS check (above) catches the analogous
   // condition there.
+  // v3.0.7: routed through handleOutputTokenLimit — JSON mode still throws
+  // (preserving the "output token limit" phrase isOutputTokenLimit matches on,
+  // so ingest/compile fallbacks recover), but TEXT mode (chat, query) returns
+  // the partial answer with a note instead of a misleading ingest error.
   if (message.stop_reason === 'max_tokens') {
-    throw new Error(
-      `⚠ Claude hit the output token limit (${effectiveMaxTokens} tokens) on this call. ` +
-      `The response was cut off mid-way and cannot be parsed. This is NOT a ` +
-      `transient JSON error — retrying will hit the same limit. What to do: ` +
-      `split the source into smaller parts (e.g. by chapter) and ingest each ` +
-      `separately; or switch to a model with a larger output budget (Settings → ` +
-      `LLM_MODEL = claude-sonnet-4-5). Note: Claude Haiku 4.5 has a smaller ` +
-      `output cap than Sonnet — heavy documents are more likely to hit this ` +
-      `limit on Haiku.`
-    );
+    const firstBlock = message?.content?.[0];
+    const partial = firstBlock && typeof firstBlock.text === 'string' ? firstBlock.text : '';
+    return handleOutputTokenLimit('Claude', effectiveMaxTokens, responseFormat, partial);
   }
   // Defensive: text field can be missing if the assistant produced only
   // tool-use blocks (shouldn't happen for these prompts, but better to
