@@ -135,6 +135,14 @@
           <!-- Compile result panel (also reused later by other write-flows) -->
           <div id="compile-result" class="result-panel hidden"></div>
 
+          <div class="chat-style-row" role="group" aria-label="Response length">
+            <span class="chat-style-label">Length</span>
+            <div class="chat-style-toggle" id="chat-style-toggle">
+              <button type="button" class="chat-style-opt" data-style="concise" title="Short, direct answer — the key point and a few sources.">Concise</button>
+              <button type="button" class="chat-style-opt is-active" data-style="balanced" title="The default — a well-rounded answer.">Balanced</button>
+              <button type="button" class="chat-style-opt" data-style="comprehensive" title="Thorough — more depth and more supporting sources.">Detailed</button>
+            </div>
+          </div>
           <div class="chat-input-bar">
             <textarea
               id="chat-input"

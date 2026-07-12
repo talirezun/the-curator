@@ -443,7 +443,48 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
   };
 }
 
-function buildPrompt(domain, pages, history, userMessage) {
+// ── Response-style control (Tier 2) ────────────────────────────────────────
+//
+// ORTHOGONAL to intent: `detectQueryIntent` picks the answer SHAPE
+// (decision / enumerate / synthesis); the response style picks the DETAIL and
+// LENGTH. The style directive is appended AFTER the intent instructions, and it
+// NEVER relaxes the anti-catalogue-dump guardrails — "comprehensive" means
+// deeper reasoning, not a longer list of every page. Each style also carries an
+// output-token cap; on overflow the v3.0.7 text-mode path returns a partial
+// answer with a note rather than failing, so a larger cap is always safe.
+export const RESPONSE_STYLES = {
+  concise: {
+    maxTokens: 4096,
+    directive:
+      'RESPONSE STYLE — CONCISE: Keep the answer short and direct — 1–3 tight ' +
+      'paragraphs (or a short list). Lead with the answer in the first sentence. ' +
+      'Cite only the 2–3 most important sources. Omit background the user did not ask for.',
+  },
+  balanced: {
+    maxTokens: 8192,
+    directive: '',   // the intent instructions already produce a balanced answer
+  },
+  comprehensive: {
+    maxTokens: 12288,
+    directive:
+      'RESPONSE STYLE — COMPREHENSIVE: Be thorough. Cover the relevant angles in ' +
+      'more depth and include more supporting citations where they genuinely add ' +
+      'value. Do NOT pad with tangential material, and NEVER reproduce the domain ' +
+      'catalogue or bare file paths — depth means better reasoning, not a longer list.',
+  },
+};
+
+// Normalise an arbitrary client value to a known style; default 'balanced'.
+// Uses an OWN-property check (not truthiness) so inherited keys like
+// '__proto__' / 'constructor' — which are truthy on a plain object — can't slip
+// through and yield an undefined cap/directive downstream.
+export function normalizeResponseStyle(style) {
+  return (typeof style === 'string' && Object.hasOwn(RESPONSE_STYLES, style.toLowerCase()))
+    ? style.toLowerCase()
+    : 'balanced';
+}
+
+function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balanced') {
   // Pull recent history into the query context so a multi-turn
   // conversation about "vector databases" still finds the right pages
   // when the user types just "tell me more about HNSW".
@@ -507,10 +548,17 @@ function buildPrompt(domain, pages, history, userMessage) {
 - NEVER paste the domain catalogue verbatim or output bare file paths — cite with [source: …] beside prose.
 - Be conversational — this is a multi-turn chat, not a one-shot Q&A. Keep answers focused and concise.`;
 
-  const instructions =
+  const intentInstructions =
     intent === 'enumerate' ? enumerateInstructions
     : intent === 'decision' ? decisionInstructions
     : synthesisInstructions;
+
+  // Tier 2: append the response-style directive (detail/length) after the
+  // intent instructions (shape). Balanced adds nothing (unchanged behaviour).
+  const styleDirective = RESPONSE_STYLES[normalizeResponseStyle(responseStyle)].directive;
+  const instructions = styleDirective
+    ? `${intentInstructions}\n\n${styleDirective}`
+    : intentInstructions;
 
   return `The user is having a conversation about the "${domain}" domain wiki.
 
@@ -557,7 +605,8 @@ export function stripCatalogueEcho(answer) {
   return cleaned.length ? cleaned : answer;           // never return empty
 }
 
-export async function sendMessage(domain, conversationId, userMessage) {
+export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
+  const responseStyle = normalizeResponseStyle(opts.responseStyle);
   const schema = await readSchema(domain);
   const pages = await readWikiPages(domain);
 
@@ -593,12 +642,12 @@ export async function sendMessage(domain, conversationId, userMessage) {
   // Use up to last 20 messages (10 turns) for context
   const history = conversation.messages.slice(-20);
 
-  const prompt = buildPrompt(domain, pages, history, userMessage);
-  // v3.0.7: 4096 → 8192. Analytical chat questions (e.g. "evaluate these three
-  // ideas and recommend one") legitimately need more room than a quick lookup.
-  // Combined with text-mode graceful truncation in llm.js, an over-long answer
-  // now degrades to a partial-with-note instead of a hard error.
-  const rawAnswer = await generateText(schema, prompt, 8192);
+  const prompt = buildPrompt(domain, pages, history, userMessage, responseStyle);
+  // v3.0.7: base cap 8192 (analytical questions need room; text-mode truncation
+  // degrades to partial-with-note, never a hard error). Tier 2: the response
+  // style sets the cap — concise 4096 / balanced 8192 / comprehensive 12288.
+  const maxTokens = RESPONSE_STYLES[responseStyle].maxTokens;
+  const rawAnswer = await generateText(schema, prompt, maxTokens);
   // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
   // the saved history. Citations are extracted from the CLEANED answer so a
   // stripped bare-path run never counts as a citation.
@@ -617,8 +666,9 @@ export async function sendMessage(domain, conversationId, userMessage) {
     title: conversation.title,
     answer,
     citations: uniqueCitations,
+    responseStyle,
   };
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle };

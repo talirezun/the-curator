@@ -126,14 +126,18 @@ section('4. Source guard — llm.js MAX_TOKENS handling routes through the helpe
     'llm.js no longer says "split the source into smaller parts"');
 }
 
-// ── 5. Source-level guards on the callers — caps bumped to 8192
-section('5. Source guard — chat.js + query.js request 8192 (not 4096)');
+// ── 5. Source-level guards on the callers — caps ≥ 8192 (not the old 4096) ──
+section('5. Source guard — chat balanced cap is 8192, query requests 8192');
 {
   const chatSrc = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
-  ok(/generateText\(schema, prompt, 8192\)/.test(chatSrc),
-    'chat.js requests 8192 output tokens');
+  // Tier 2: chat's cap comes from RESPONSE_STYLES (balanced 8192); the literal
+  // moved out of the generateText call into the style table.
+  ok(/balanced:\s*\{\s*[\s\S]*?maxTokens:\s*8192/.test(chatSrc),
+    'chat.js balanced response style caps at 8192 output tokens');
+  ok(/const maxTokens = RESPONSE_STYLES\[responseStyle\]\.maxTokens/.test(chatSrc),
+    'chat.js sends the response-style cap to generateText');
   ok(!/generateText\(schema, prompt, 4096\)/.test(chatSrc),
-    'chat.js no longer requests 4096');
+    'chat.js no longer hard-codes the old 4096 cap');
 
   const querySrc = readFileSync(path.join(ROOT, 'src/brain/query.js'), 'utf8');
   ok(/generateText\(schema, userPrompt, 8192\)/.test(querySrc),

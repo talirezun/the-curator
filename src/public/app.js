@@ -474,10 +474,46 @@ const compileProgressPct = document.getElementById('compile-progress-pct');
 const compileProgressFill = document.getElementById('compile-progress-fill');
 const chatInputEl    = document.getElementById('chat-input');
 const chatSendBtn    = document.getElementById('chat-send-btn');
+const chatStyleToggle = document.getElementById('chat-style-toggle');
 
 let activeConvId   = null;   // currently open conversation ID
 let chatDomain     = null;   // currently selected domain
 let chatBusy       = false;  // prevents double-sends
+
+// ── Response-style selector (Tier 2) ──────────────────────────────────────────
+// Concise / Balanced / Detailed. Sent with each message; the backend normalises
+// unknown values to 'balanced'. Persisted client-side so the choice survives
+// reloads. 'Detailed' is the friendly label for the 'comprehensive' style.
+const CHAT_STYLE_KEY = 'curator-chat-response-style';
+const CHAT_STYLES = ['concise', 'balanced', 'comprehensive'];
+let chatResponseStyle = (() => {
+  try {
+    const saved = localStorage.getItem(CHAT_STYLE_KEY);
+    return CHAT_STYLES.includes(saved) ? saved : 'balanced';
+  } catch { return 'balanced'; }
+})();
+
+function applyChatStyleUI() {
+  if (!chatStyleToggle) return;
+  chatStyleToggle.querySelectorAll('.chat-style-opt').forEach(btn => {
+    const active = btn.dataset.style === chatResponseStyle;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+
+if (chatStyleToggle) {
+  chatStyleToggle.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chat-style-opt');
+    if (!btn) return;
+    const style = btn.dataset.style;
+    if (!CHAT_STYLES.includes(style) || style === chatResponseStyle) return;
+    chatResponseStyle = style;
+    try { localStorage.setItem(CHAT_STYLE_KEY, style); } catch { /* ignore */ }
+    applyChatStyleUI();
+  });
+  applyChatStyleUI();
+}
 let compileBusy    = false;  // prevents double-compiles
 // Show "Compile to Wiki" after the first answer — one good exchange is enough
 // to be worth saving (v3.0.1-beta.15; backend MIN_USER_MESSAGES matches).
@@ -686,7 +722,7 @@ chatSendBtn.addEventListener('click', async () => {
     const res = await fetch(`/api/chat/${chatDomain}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, conversationId: activeConvId }),
+      body: JSON.stringify({ message, conversationId: activeConvId, responseStyle: chatResponseStyle }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Chat failed');

@@ -700,6 +700,46 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   border-radius: 14px;
   border-bottom-left-radius: 4px;
 }
+/* Response-style selector (Tier 2) */
+.chat-style-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 0;
+  background: var(--bg-alt);
+}
+.chat-style-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.chat-style-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.chat-style-opt {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.chat-style-opt:hover { color: var(--text); }
+.chat-style-opt.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .chat-input-bar {
   display: flex;
   gap: 10px;

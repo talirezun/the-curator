@@ -42,7 +42,7 @@ router.get('/:domain/:id', async (req, res) => {
 router.post('/:domain', async (req, res) => {
   try {
     const { domain } = req.params;
-    const { message, conversationId } = req.body;
+    const { message, conversationId, responseStyle } = req.body;
 
     if (!message) return res.status(400).json({ error: 'message is required' });
 
@@ -51,7 +51,9 @@ router.post('/:domain', async (req, res) => {
       return res.status(400).json({ error: `Unknown domain: ${domain}` });
     }
 
-    const result = await sendMessage(domain, conversationId || null, message);
+    // Tier 2: responseStyle is optional; sendMessage normalises it to a known
+    // value (default 'balanced'), so an absent/garbage value is always safe.
+    const result = await sendMessage(domain, conversationId || null, message, { responseStyle });
     res.json(result);
   } catch (err) {
     console.error('Chat error:', err);
