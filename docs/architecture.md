@@ -8,7 +8,7 @@ The Curator is a local Node.js web application. It has no external database — 
 
 ### Core design philosophy: Curation, not retrieval
 
-The Curator implements the "compiling wiki" pattern rather than standard RAG. When a source is ingested, the LLM does not merely index it for later retrieval — it integrates the knowledge into persistent wiki pages. On every subsequent ingest, existing entity and concept pages are updated rather than duplicated. The result is a knowledge base that compounds over time: cross-references are pre-built, contradictions are flagged at write time, and the synthesis already reflects the full corpus when a query arrives. This is why the chat pipeline can send the entire wiki to the LLM in a single context window rather than relying on embedding-based chunk retrieval.
+The Curator implements the "compiling wiki" pattern rather than standard RAG. When a source is ingested, the LLM does not merely index it for later retrieval — it integrates the knowledge into persistent wiki pages. On every subsequent ingest, existing entity and concept pages are updated rather than duplicated. The result is a knowledge base that compounds over time: cross-references are pre-built, contradictions are flagged at write time, and the synthesis already reflects the full corpus when a query arrives. This is why the chat pipeline can answer from the compiled wiki rather than relying on embedding-based chunk retrieval. On small domains that means the whole wiki fits in one context window; on large ones the chat selects the pages most relevant to the query (entity-pivot + keyword scoring within a fixed budget) plus a compact catalogue of everything else, then routes the answer to a decision / list / synthesis shape based on the question (see [ingestion-pipeline.md §10b–§10c](ingestion-pipeline.md)).
 
 ```
 Browser (http://localhost:3333)
@@ -328,14 +328,20 @@ src/brain/chat.js
       ├─ 1. Load or create conversation from domains/<domain>/conversations/
       ├─ 2. Load domains/<domain>/CLAUDE.md  (system prompt)
       ├─ 3. Read all .md files under domains/<domain>/wiki/
-      ├─ 4. Build prompt with last 20 messages as conversation history
-      ├─ 5. Call LLM via llm.js  (text mode, 4 096 max output tokens)
-      │     System:  domain schema
-      │     User:    all wiki pages (≤90 000 chars) + history + message
+      ├─ 4. detectQueryIntent(message) → decision | enumerate | synthesis
+      │     (classifies the user's ASK via extractAsk; see
+      │      docs/ingestion-pipeline.md §10c)
+      ├─ 5. selectRelevantPages() — entity-pivot + keyword-scored pages up to a
+      │     60 KB budget + a 12 KB enriched catalogue (NOT the whole wiki)
+      ├─ 6. Build prompt: selected pages + catalogue + the intent's answer-shape
+      │     instruction block, with last 20 messages as conversation history
+      ├─ 7. Call LLM via llm.js  (text mode, 8 192 max output tokens; on
+      │     truncation, returns the partial answer + a note — never hard-fails)
       │     Returns: markdown answer with [source: path] citation tags
-      ├─ 6. Parse [source: ...] tags → deduplicated citation list
-      ├─ 7. Append user + assistant messages to conversation
-      └─ 8. Save conversation JSON to domains/<domain>/conversations/<id>.json
+      ├─ 8. stripCatalogueEcho() — remove any residual bare-file-path blob
+      ├─ 9. Parse [source: ...] tags → deduplicated citation list
+      ├─ 10. Append user + assistant messages to conversation
+      └─ 11. Save conversation JSON to domains/<domain>/conversations/<id>.json
 
 HTTP response → { conversationId, isNew, title, answer, citations: [...] }
 
