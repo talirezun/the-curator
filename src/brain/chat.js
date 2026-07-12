@@ -155,27 +155,109 @@ export function extractSummaryBacklinks(entityContent) {
 // queries getting the synthesis prompt under-report, which is the bug we're
 // fixing).
 //
+// Extract the user's actual ASK from a possibly-long, possibly-pasted message:
+// the interrogative sentences, or the final sentence if there are none. Intent
+// is classified on THIS, so list-like or decision-like words buried in pasted
+// CONTENT (a topic idea that happens to say "everything", a pasted "List: A, B,
+// C" line) can't hijack the routing. A single-sentence message is returned
+// whole, so short questions behave exactly as before. Exported for tests.
+const ASK_OPENER = /^(list|name|enumerate|show|give|tell|explain|describe|summari[sz]e|compare|contrast|recommend|suggest|advise|evaluate|rank|find|count|how|what|which|who|when|where|why|should|would|could|can|do|does|did|are|is|please)\b/i;
+
+// Common abbreviations whose trailing period must NOT be treated as a sentence
+// boundary ("Dr.", "e.g.", "U.S." …). Their periods are neutralised before the
+// split and restored after.
+const ABBR_RE = /\b(dr|prof|mr|mrs|ms|sr|jr|st|vs|etc|e\.g|i\.e|u\.s|u\.k|a\.m|p\.m)\./gi;
+const ABBR_DOT = '~CURATOR_DOT~';  // visible placeholder; never appears in real input
+
+export function extractAsk(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  // Split into sentence-ish units on . ! ? followed by whitespace, or newlines —
+  // after protecting abbreviations so "Dr. X" / "e.g. Y" don't false-split.
+  const protectedText = t.replace(ABBR_RE, (m) => m.replace(/\./g, ABBR_DOT));
+  const units = protectedText
+    .split(/(?<=[?!.])\s+|\n+/)
+    .map(s => s.split(ABBR_DOT).join('.').trim())
+    .filter(Boolean);
+  if (units.length <= 1) return t;                 // single sentence → use whole
+  // The real ask is the LAST qualifying clause — a trailing question, or a
+  // trailing imperative/interrogative command. Scanning from the end correctly
+  // prefers a final decision question over a pasted "List:" line (a content-line
+  // hijack), AND a final "List every source" command over a quoted question in
+  // the preamble (a content-question hijack). Both are the same failure shape as
+  // the original "everything" bug, resolved by focusing on what the user
+  // actually asked last.
+  const qualifies = (u) => /\?\s*$/.test(u) || ASK_OPENER.test(u);
+  for (let i = units.length - 1; i >= 0; i--) {
+    if (qualifies(units[i])) return units[i];
+  }
+  return t;                                          // nothing qualifies → whole message
+}
+
 // Exported for tests.
 export function detectQueryIntent(queryText) {
   if (typeof queryText !== 'string') return 'synthesis';
-  const lc = queryText.toLowerCase().trim();
+  // Classify on the ASK, not buried pasted content (v3.0.8, audit edge #1).
+  const lc = extractAsk(queryText).toLowerCase().trim();
+  if (!lc) return 'synthesis';
 
-  // Enumeration patterns. Each is a strong signal that the user wants a
-  // complete list rather than a synthesised answer.
-  const enumeratePatterns = [
-    /^(list|name|enumerate|show me all|show all|give me a list|give me all)\b/,
-    /^what (articles|sources|documents|papers|pages|entities|concepts|summaries|files|things)/,
-    /^which (articles|sources|documents|papers|pages|entities|concepts|summaries|files)/,
-    /^how many\b/,
-    /^count\b/,
-    /^(all|every)\s+(article|source|document|paper|page|entity|concept|summary|file)/,
-    /\b(complete list|full list|exhaustive list|everything|list them all|list all of)\b/,
+  // Analytical override: a question shaped like a list request but really asking
+  // about DISAGREEMENT/DIFFERENCE wants ANALYSIS, not a raw list
+  // ("which concepts have the most sources DISAGREEING?"). Kept deliberately
+  // NARROW (audit-tightened): bare "most"/"least" were dropped because they
+  // matched benign list phrasing ("list the MOST recent…", "list AT LEAST 10…"),
+  // and "differ" is whole-word so it can't fire on "different".
+  const analytical =
+    /\b(disagree|disagreement|conflict|conflicting|contradict|contradiction|contested|debate|controvers)/.test(lc) ||
+    /\bdiffer(s|ing)?\b/.test(lc);
+
+  // ── 1. STRONG enumerate anchors (a list/count COMMAND opening a clause) ────
+  // These BEAT incidental decision words (audit fix): "how many articles
+  // recommend X?" is a COUNT, not a recommendation; "list all papers evaluating
+  // X" is a LIST. Anchored to the start of the message OR any sentence/line so
+  // the real ask can sit after a preamble ("…newsletters. How many sources do I
+  // have?"). NOTE the bare word "everything" is NOT here — it matched ordinary
+  // prose in pasted content, which is how a decision question got misrouted into
+  // a full-domain dump (the community-reported bug).
+  const B = '(?:^|[.?!]\\s+|\\n)\\s*';
+  const strongEnumerate = [
+    new RegExp(B + '(list|name|enumerate|show me all|show all|give me a list|give me all)\\b'),
+    new RegExp(B + 'how many\\b'),
+    new RegExp(B + 'count\\b'),
+    new RegExp(B + '(all|every)\\s+(article|source|document|paper|page|entity|concept|summary|file)s?\\b'),
+    new RegExp(B + '(what|which)\\s+(articles|sources|documents|papers|pages|entities|concepts|summaries|files)\\b'),
+  ];
+  if (strongEnumerate.some(re => re.test(lc))) {
+    return analytical ? 'synthesis' : 'enumerate';
+  }
+
+  // ── 2. DECISION / RECOMMENDATION cues ──────────────────────────────────────
+  // "which of these is best?", "recommend one", "should I…", "evaluate…" — the
+  // user wants a CONCLUSION. Checked AFTER strong list/count commands so an
+  // explicit list request can't be hijacked, but BEFORE weak list phrases.
+  const decisionPatterns = [
+    /\b(recommend|recommendation|suggest|advise|advice)\b/,
+    /\bshould i\b/,
+    /\bhelp me (choose|decide|pick|prioriti[sz]e|figure out|work out)\b/,
+    /\bwhich (one|option|topic|idea|approach|of these|of the following|of those)\b/,
+    /\bwhat('?s| is)? the best\b/,
+    /\bevaluat(e|ing)\b/,
+    /\bpros and cons\b/,
+    /\bprioriti[sz]e\b/,
+    /\bworth (doing|writing|tackling|covering|pursuing)\b/,
+    /\bwhich\b[^?]{0,80}\b(best|better|strongest|most compelling)\b/,
+  ];
+  for (const re of decisionPatterns) if (re.test(lc)) return 'decision';
+
+  // ── 3. WEAK enumerate cues (list phrases / "by Dr X") ──────────────────────
+  const weakEnumerate = [
+    /\b(complete list|full list|exhaustive list|list them all|list all of)\b/,
     /\b(by\s+(dr|prof|mr|ms|mrs)\.?\s+\w)/,  // "articles by Dr. X"
   ];
-
-  for (const re of enumeratePatterns) {
-    if (re.test(lc)) return 'enumerate';
+  if (weakEnumerate.some(re => re.test(lc))) {
+    return analytical ? 'synthesis' : 'enumerate';
   }
+
   return 'synthesis';
 }
 
@@ -396,31 +478,43 @@ function buildPrompt(domain, pages, history, userMessage) {
   if (selectionParts.length === 0) selectionParts.push('no direct match — fell back to most-linked hubs');
   const selectionNote = `Retrieval: ${selectionParts.join(' + ')}. Loaded ${selected.length} pages in full (${(contentBytes/1024).toFixed(1)} KB).`;
 
-  // Intent-aware instructions block (v3.0.1-beta.13+).
-  const enumerateInstructions = `Instructions (ENUMERATION query — completeness matters more than synthesis):
-- The user is asking for a list. Give a COMPLETE list from the loaded pages AND the catalogue.
-- For each item, cite its path with [source: path/to/page.md].
-- For items you have FULL content for: include a 1-line topic summary.
-- For items you only see in the catalogue (referenced-by metadata, title): still LIST them by title and path. Do not skip them.
-- The catalogue's "· referenced by: X, Y, Z" suffix is the AUTHORSHIP/TOPIC signal — if a summary is referenced by an entity matching the user's query, it's almost certainly relevant; include it.
-- Group items if useful (by topic, by date) but do not drop any.
-- It is OK to say "(catalogue title only — full content not loaded)" for items you didn't get full content for.
-- Be precise about counts: if the user asks "how many", give an actual number.`;
+  // Intent-aware instructions block (v3.0.1-beta.13+; v3.0.7 Tier 1 reshaped
+  // enumerate, added decision, and hardened all three against catalogue dumps).
+  const enumerateInstructions = `Instructions (ENUMERATION query — the user wants a focused list):
+- Lead with ONE sentence summarising what the list covers and how many items there are.
+- List the RELEVANT items, grouped by topic where useful. Cite each with [source: path/to/page.md] next to a short readable title.
+- DEDUPLICATE: if two pages share the same or nearly the same title, list it once.
+- Cap the list at roughly the 40 most relevant items. If more exist, end with "…and N more — ask me to narrow by topic" instead of dumping everything.
+- Give a 1-line topic note for items you have full content for.
+- NEVER paste the domain catalogue verbatim or output bare file paths on their own — every path must sit inside a [source: …] citation beside prose.
+- If the user asked "how many", give an actual number.`;
+
+  const decisionInstructions = `Instructions (DECISION / RECOMMENDATION query — give a clear answer, not a list):
+- Lead with a direct recommendation in your FIRST sentence: state which option you would choose (or the single best answer) up front.
+- Then give brief supporting reasoning — at most a few sentences per option, grounded in what the wiki actually contains.
+- Cite only the MOST relevant 3–7 sources with [source: path/to/page.md]. Do NOT list every related page.
+- NEVER paste the domain catalogue or dump long lists of sources or bare file paths.
+- If the wiki genuinely can't support a recommendation, say what's missing instead of padding the answer with everything tangentially related.
+- Be decisive and concise. The user wants a conclusion, not an inventory.`;
 
   const synthesisInstructions = `Instructions:
+- Lead with the direct answer, then support it. Keep it focused.
 - Answer using the full content of the loaded pages above, plus the catalogue for what else exists in the domain.
 - If the answer is in a catalogue page that wasn't loaded in full, say "I see we have a page on X but I'd need to look at it directly" and cite the path.
 - If the answer is not in the wiki at all, say so honestly.
 - Cite pages inline using [source: path/to/page.md] format.
 - Synthesize across pages; do not quote large blocks verbatim.
-- Be conversational — this is a multi-turn chat, not a one-shot Q&A.
-- Keep answers focused and concise.`;
+- NEVER paste the domain catalogue verbatim or output bare file paths — cite with [source: …] beside prose.
+- Be conversational — this is a multi-turn chat, not a one-shot Q&A. Keep answers focused and concise.`;
 
-  const instructions = intent === 'enumerate' ? enumerateInstructions : synthesisInstructions;
+  const instructions =
+    intent === 'enumerate' ? enumerateInstructions
+    : intent === 'decision' ? decisionInstructions
+    : synthesisInstructions;
 
   return `The user is having a conversation about the "${domain}" domain wiki.
 
-[Domain catalogue — ALL pages available, with title preview + reference metadata]
+[Domain catalogue — FOR YOUR REFERENCE ONLY: this is the index of pages available. Do NOT copy it into your answer or reproduce bare file paths; cite what you use with [source: path].]
 ${catalogue}
 
 ---
@@ -434,6 +528,33 @@ ${historyText}[New message from user]
 ${userMessage}
 
 ${instructions}`;
+}
+
+// ── Catalogue-echo safety net (v3.0.7 Tier 1) ─────────────────────────────
+//
+// Even with the tamed prompts, a model can still regurgitate the internal
+// catalogue as a trailing blob of bare file paths glued together with no prose
+// (exactly what a community user saw at the end of a bloated answer). A
+// legitimate answer NEVER contains 5+ consecutive bare wiki paths — real
+// citations use the `[source: path]` form with a readable title between each,
+// which breaks the run. So we strip any run of 5+ bare `folder/slug.md` tokens
+// separated only by whitespace/commas/pipes. Conservative by construction:
+// formatted citation lists and normal prose are untouched.
+export function stripCatalogueEcho(answer) {
+  if (typeof answer !== 'string' || !answer) return answer;
+  // Runs of 5+ bare wiki paths separated ONLY by spaces/tabs (or glued directly
+  // with no separator — the actual reported blob). We deliberately do NOT treat
+  // commas, semicolons, pipes, or newlines as separators: a comma-separated
+  // source line, a code block listing paths, or a multi-path [source: …]
+  // citation are all legitimate and must survive.
+  const RUN = /(?:(?:summaries|concepts|entities)\/[a-z0-9][a-z0-9._-]*\.md[ \t]*){5,}/gi;
+  const replaced = answer.replace(RUN, ' ');
+  if (replaced === answer) return answer;             // nothing stripped
+  // Scoped tidy-up only: collapse blank lines the removal left behind and trim
+  // the end. We do NOT collapse internal runs of spaces/tabs — that would
+  // flatten legitimate code-block / nested-list indentation elsewhere.
+  const cleaned = replaced.replace(/\n{3,}/g, '\n\n').trimEnd();
+  return cleaned.length ? cleaned : answer;           // never return empty
 }
 
 export async function sendMessage(domain, conversationId, userMessage) {
@@ -477,7 +598,11 @@ export async function sendMessage(domain, conversationId, userMessage) {
   // ideas and recommend one") legitimately need more room than a quick lookup.
   // Combined with text-mode graceful truncation in llm.js, an over-long answer
   // now degrades to a partial-with-note instead of a hard error.
-  const answer = await generateText(schema, prompt, 8192);
+  const rawAnswer = await generateText(schema, prompt, 8192);
+  // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
+  // the saved history. Citations are extracted from the CLEANED answer so a
+  // stripped bare-path run never counts as a citation.
+  const answer = stripCatalogueEcho(rawAnswer);
 
   const citations = [...answer.matchAll(/\[source:\s*([^\]]+)\]/g)].map(m => m[1].trim());
   const uniqueCitations = [...new Set(citations)];
@@ -496,4 +621,4 @@ export async function sendMessage(domain, conversationId, userMessage) {
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk };

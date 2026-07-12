@@ -322,8 +322,10 @@ async function main() {
     const { buildPrompt } = __testing;
     const prompt = buildPrompt('articles', FIXTURE_PAGES, [], 'list all articles by Tali Rezun');
     truthy(prompt.includes('ENUMERATION query'), 'Test 15a: enumerate prompt used');
-    truthy(prompt.includes('completeness matters more than synthesis'),
-      'Test 15b: enumerate-specific guidance present');
+    // v3.0.7 Tier 1: the enumerate prompt was reshaped from "completeness matters
+    // more than synthesis" (which drove full-domain dumps) to a focused-list form.
+    truthy(prompt.includes('the user wants a focused list'),
+      'Test 15b: enumerate-specific guidance present (focused-list form)');
     truthy(!prompt.includes('do not quote large blocks verbatim'),
       'Test 15c: synthesis-specific guidance NOT used');
   }
