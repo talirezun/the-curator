@@ -93,7 +93,7 @@ This is the shift from a file cabinet to a neural network.
   that powers Obsidian's Properties panel, Dataview queries, and automatic graph coloring
 - **Auto-colored knowledge graph** — type tags (`type/entity`, `type/concept`, `type/summary`)
   let Obsidian color-code every node automatically; set it up once, every future ingest colors itself
-- **Multi-turn AI chat** with persistent conversation history — ask follow-ups, connect the dots
+- **Multi-turn AI chat** with persistent conversation history — ask follow-ups, connect the dots. Answers adapt to your question (recommendation vs. list vs. synthesis) and a **Length** selector (Concise · Balanced · Detailed) controls how much detail you get
   across sources, pick up where you left off
 - **Compile to Wiki (v2.5.0)** — turn any chat conversation into permanent wiki pages with one
   click. The AI reads the dialogue, extracts the durable knowledge, writes a summary page plus
@@ -425,6 +425,16 @@ AI:   RAG combines retrieval with generation… [source: concepts/rag.md]
 You:  How does it compare to fine-tuning?
 AI:   As I mentioned, the key advantage is… [source: summaries/rag-paper.md]
 ```
+
+**The answer adapts to your question (v3.0.8).** Ask for a *decision* ("which of these should
+I write — recommend one") and you get a recommendation up front; ask for a *list* ("list all my
+articles about X", "how many sources do I have?") and you get a focused, de-duplicated list;
+anything else gets a synthesised answer. It reads *what you're asking*, so trigger words buried in
+pasted-in text never turn a recommendation into a full-domain dump.
+
+**Control the length (v3.0.9).** A **Length** selector above the input — **Concise · Balanced ·
+Detailed** — dials how much detail you get, independent of the question type. Concise for a fast
+answer, Detailed when you're going deep. Your choice is remembered.
 
 Create multiple conversations per domain. Delete old ones. Pick up any thread later.
 
