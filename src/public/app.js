@@ -559,11 +559,13 @@ async function initChatModelSelector() {
   if (!dd || !menu) return;
   let data = {};
   try { data = await (await fetch('/api/config/api-keys')).json(); } catch { data = {}; }
-  // Use the "usable" flags (config OR .env) so availability matches the real
-  // call path. Fall back to the config-only flags for older servers.
+  // Availability = SAVED SETTINGS KEYS (config), so the dropdown mirrors exactly
+  // what the user has connected in Settings. NOT the "usable" (config OR .env)
+  // flags — a key Disconnected in Settings but still in .env must NOT appear here
+  // (and the backend's normalizeChatProvider gates on the same config state).
   const providers = [];
-  if (data.geminiUsable ?? data.hasGeminiKey) providers.push('gemini');
-  if (data.anthropicUsable ?? data.hasAnthropicKey) providers.push('anthropic');
+  if (data.hasGeminiKey) providers.push('gemini');
+  if (data.hasAnthropicKey) providers.push('anthropic');
   chatAvailableProviders = providers;
   const models = data.models || {};
 
@@ -4451,6 +4453,11 @@ async function loadApiKeyStatus() {
     // Rendered as an amber callout just below the provider badge — tells the
     // user exactly which model is in use and nudges them to Check for Updates.
     renderFallbackBanner(data.fallback);
+
+    // Keep the chat model selector in sync with the saved keys: a Disconnect /
+    // Save / provider switch here must be reflected in the chat dropdown right
+    // away (init is idempotent, so this is safe to call on every key refresh).
+    try { initChatModelSelector(); } catch { /* ignore */ }
   } catch {}
 }
 

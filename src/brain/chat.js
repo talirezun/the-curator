@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { generateText } from './llm.js';
-import { getEffectiveKey } from './config.js';
+import { getApiKeys } from './config.js';
 import { tokenize } from './sharedbrain-delta.js';
 import {
   readSchema,
@@ -618,11 +618,17 @@ export function stripCatalogueEcho(answer) {
   return cleaned.length ? cleaned : answer;           // never return empty
 }
 
-// Validate a per-chat provider override: only 'gemini'/'anthropic' with a
-// usable key are honoured; anything else → null (use the global active provider).
+// Validate a per-chat provider override against the SAVED SETTINGS KEYS (config
+// only — NOT getEffectiveKey / .env). This is deliberate: a provider the user
+// has Disconnected in Settings must not be usable in chat, even if the key still
+// lingers in .env — so the chat model selector exactly mirrors the saved-keys
+// state and a disconnected model can never silently answer. Anything invalid or
+// without a saved key → null (fall back to the global active provider).
 export function normalizeChatProvider(provider) {
-  if ((provider === 'gemini' || provider === 'anthropic') && getEffectiveKey(provider)) return provider;
-  return null;
+  if (provider !== 'gemini' && provider !== 'anthropic') return null;
+  const keys = getApiKeys();
+  const saved = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
+  return saved ? provider : null;
 }
 
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {

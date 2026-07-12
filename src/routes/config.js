@@ -4,7 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain, getEffectiveKey } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 import {
@@ -242,14 +242,13 @@ router.get('/api-keys', (_req, res) => {
   res.json({
     geminiApiKey:    maskKey(keys.geminiApiKey),
     anthropicApiKey: maskKey(keys.anthropicApiKey),
+    // Config-only (Settings) key presence. The chat model selector keys off
+    // THESE so it mirrors exactly what the user has connected in Settings — a
+    // key removed via Disconnect (but still in .env) must not appear or be usable
+    // in chat. (getEffectiveKey / .env still drives the GLOBAL provider for the
+    // documented dev fallback; the per-chat selector is deliberately config-only.)
     hasGeminiKey:    !!keys.geminiApiKey,
     hasAnthropicKey: !!keys.anthropicApiKey,
-    // "Usable" = a key resolvable via config OR .env — i.e. a call would actually
-    // work. The chat model selector uses THESE (not the config-only hasXKey) so
-    // its availability matches the real call path (getEffectiveKey / the provider
-    // override), which also honours a key set only in .env.
-    geminiUsable:    !!getEffectiveKey('gemini'),
-    anthropicUsable: !!getEffectiveKey('anthropic'),
     activeProvider:  provider?.provider || null,
     activeModel:     provider?.model || null,
     // Current default model id per provider, so the chat model selector's label

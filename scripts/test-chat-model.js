@@ -17,6 +17,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getDefaultModel, getProviderInfo } from '../src/brain/llm.js';
+import { getApiKeys } from '../src/brain/config.js';
 import { __testing } from '../src/brain/chat.js';
 
 const { normalizeChatProvider } = __testing;
@@ -44,27 +45,27 @@ for (const bad of ['garbage', 'GEMINI', '', null, undefined, 42, {}, []]) {
   eq(normalizeChatProvider(bad), null, `${JSON.stringify(bad)} → null`);
 }
 
-// ── 3. Key-gated honouring — a key-backed override IS honoured ──────────────
-// Config-independent: we set BOTH keys in this process's env so both providers
-// definitely have a usable key regardless of the machine's config/env state.
-// (The "keyless provider → fall back to global" branch can't be forced
-// deterministically here — gemini/anthropic may both be keyed — so it's covered
-// by the invalid-input cases above + the live garbage-fallback assertion.)
-section('3. normalizeChatProvider / getProviderInfo honour a key-backed override');
+// ── 3. normalizeChatProvider is CONFIG-based (Settings keys, NOT .env) ───────
+// The chat override is honoured iff the provider's key is SAVED IN SETTINGS
+// (config), regardless of any .env fallback. We assert this relative to the
+// machine's actual config, so it's deterministic on a configured dev machine
+// (keys present → honoured) AND on CI (no config → both null). Crucially, a
+// dummy .env key must NOT make a config-less provider honourable.
+section('3. normalizeChatProvider — config (Settings) keys only, not .env');
 {
-  const savedG = process.env.GEMINI_API_KEY;
+  const cfg = getApiKeys();
+  eq(normalizeChatProvider('gemini'), cfg.geminiApiKey ? 'gemini' : null,
+    `gemini honoured iff config has the key (config gemini=${!!cfg.geminiApiKey})`);
+  eq(normalizeChatProvider('anthropic'), cfg.anthropicApiKey ? 'anthropic' : null,
+    `anthropic honoured iff config has the key (config anthropic=${!!cfg.anthropicApiKey})`);
+
+  // A .env-only key must NOT flip a config-less provider to honourable.
   const savedA = process.env.ANTHROPIC_API_KEY;
   try {
-    process.env.GEMINI_API_KEY = 'dummy-gemini-key';
-    process.env.ANTHROPIC_API_KEY = 'dummy-anthropic-key';
-    eq(normalizeChatProvider('gemini'), 'gemini', 'gemini honoured when key present');
-    eq(normalizeChatProvider('anthropic'), 'anthropic', 'anthropic honoured when key present');
-    eq(getProviderInfo('gemini').provider, 'gemini', 'getProviderInfo(gemini) → gemini');
-    eq(getProviderInfo('gemini').model, 'gemini-2.5-flash-lite', 'gemini override resolves the provider default model');
-    eq(getProviderInfo('anthropic').provider, 'anthropic', 'getProviderInfo(anthropic) → anthropic');
-    eq(getProviderInfo('anthropic').model, 'claude-haiku-4-5', 'anthropic override resolves the provider default model');
+    process.env.ANTHROPIC_API_KEY = 'dummy-env-only-anthropic-key';
+    eq(normalizeChatProvider('anthropic'), cfg.anthropicApiKey ? 'anthropic' : null,
+      'a .env-only anthropic key does NOT make it chat-selectable (config decides)');
   } finally {
-    if (savedG === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedG;
     if (savedA === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedA;
   }
 }
@@ -80,6 +81,8 @@ section('4. Source guards — provider override wired through the stack');
 
   const chat = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
   ok(/export function normalizeChatProvider/.test(chat), 'chat.js exports normalizeChatProvider');
+  ok(/getApiKeys\(\)/.test(chat) && !/getEffectiveKey\(/.test(chat),
+    'normalizeChatProvider gates on config (getApiKeys), NOT a getEffectiveKey/.env call');
   ok(/normalizeChatProvider\(opts\.provider\)/.test(chat), 'sendMessage normalises opts.provider');
   ok(/\{ provider: chatProvider \}/.test(chat), 'sendMessage passes the provider override to generateText');
   ok(/provider: chatProvider,\s*\/\//.test(chat) || /provider: chatProvider,/.test(chat), 'sendMessage returns the resolved provider');
@@ -92,6 +95,16 @@ section('4. Source guards — provider override wired through the stack');
   ok(/models:\s*\{/.test(cfg), 'api-keys route returns a models map');
   ok(/getDefaultModel\('gemini'\)/.test(cfg) && /getDefaultModel\('anthropic'\)/.test(cfg),
     'models map is derived from getDefaultModel (auto-updates on a global model bump)');
+  ok(!/geminiUsable|anthropicUsable/.test(cfg),
+    'api-keys route no longer exposes the misleading usable (config-or-env) flags');
+
+  const app = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
+  ok(/if \(data\.hasGeminiKey\) providers\.push/.test(app) && /if \(data\.hasAnthropicKey\) providers\.push/.test(app),
+    'chat model selector availability keys off config-based hasXKey (Settings)');
+  ok(!/geminiUsable|anthropicUsable/.test(app),
+    'chat model selector no longer relies on the usable (config-or-env) flags');
+  ok(/renderFallbackBanner\(data\.fallback\);[\s\S]{0,500}initChatModelSelector\(\)/.test(app),
+    'loadApiKeyStatus re-inits the chat model selector so a Settings key change reflects immediately');
 }
 
 console.log(`\n${'─'.repeat(60)}`);
