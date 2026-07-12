@@ -765,6 +765,10 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   line-height: 1.5;
   display: block;
 }
+/* The textarea lives INSIDE .chat-composer, which owns the border + focus glow.
+   Override the global textarea:focus box-shadow so there's no "box within a box"
+   — the whole composer is one unified section (like Claude's). */
+.chat-input:focus { border: none; box-shadow: none; }
 .chat-composer-controls {
   display: flex;
   align-items: center;
@@ -783,7 +787,7 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   gap: 6px;
   background: transparent;
   border: 1px solid var(--border);
-  color: var(--text-dim);
+  color: var(--text-2);
   font-size: 12.5px;
   font-weight: 600;
   padding: 5px 9px;
@@ -821,13 +825,14 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   border-radius: 8px;
   padding: 7px 10px;
   cursor: pointer;
+  color: var(--text);           /* base colour so nothing inherits the button's UA black */
   transition: background 0.12s;
 }
 .chat-dd-opt:hover { background: var(--surface-2); }
 .chat-dd-opt.is-active { background: var(--accent-dim); }
 .chat-dd-opt-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .chat-dd-opt.is-active .chat-dd-opt-title { color: var(--accent-2); }
-.chat-dd-opt-desc { font-size: 11px; color: var(--text-dim); }
+.chat-dd-opt-desc { font-size: 11px; color: var(--text-2); }
 
 /* ── INPUT (shared) ── */
 .sync-input { width: 100%; }
