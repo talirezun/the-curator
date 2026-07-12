@@ -5,8 +5,8 @@
  * Tier 1 intent (decision / enumerate / synthesis): intent picks the answer
  * SHAPE, style picks the DETAIL and LENGTH. This suite verifies the contract:
  *   - normalisation (unknown / missing → balanced) so a bad client value is safe,
- *   - the style directive is appended to the prompt (balanced adds nothing, so
- *     existing behaviour is byte-identical),
+ *   - the style directive is appended to the prompt (all three styles carry one;
+ *     the 4-arg buildPrompt default still equals the 5-arg 'balanced' string),
  *   - each style carries a sane output-token cap,
  *   - the style layers on TOP of the intent without changing classification or
  *     relaxing the anti-catalogue-dump guardrails,
@@ -72,7 +72,9 @@ section('2. RESPONSE_STYLES — caps + directive presence');
 ok(RESPONSE_STYLES.concise.maxTokens === 4096, 'concise caps at 4096');
 ok(RESPONSE_STYLES.balanced.maxTokens === 8192, 'balanced caps at 8192');
 ok(RESPONSE_STYLES.comprehensive.maxTokens === 12288, 'comprehensive caps at 12288');
-ok(RESPONSE_STYLES.balanced.directive === '', 'balanced adds NO directive (unchanged behaviour)');
+ok(/balanced|middle ground/i.test(RESPONSE_STYLES.balanced.directive), 'balanced directive is present (soft moderate length)');
+ok(/not exhaustive/i.test(RESPONSE_STYLES.balanced.directive), 'balanced directive caps verbosity (not exhaustive)');
+ok(/longest|thorough/i.test(RESPONSE_STYLES.comprehensive.directive), 'comprehensive directive aims to be the longest');
 ok(/concise/i.test(RESPONSE_STYLES.concise.directive), 'concise directive is present');
 ok(/comprehensive/i.test(RESPONSE_STYLES.comprehensive.directive), 'comprehensive directive is present');
 // caps are within both providers' output limits (Gemini 65536, Anthropic Haiku 64000)
@@ -80,22 +82,23 @@ for (const [k, v] of Object.entries(RESPONSE_STYLES)) {
   ok(v.maxTokens >= 2048 && v.maxTokens <= 64000, `${k} cap within provider limits`);
 }
 
-// ── 3. buildPrompt — style directive appended, balanced is a no-op ──────────
+// ── 3. buildPrompt — style directive appended; 4-arg defaults to balanced ───
 section('3. buildPrompt — style directive layering');
 {
   const q = 'how does RAG work?';
   const balanced4 = buildPrompt('a', PAGES, [], q);            // 4-arg (existing callers)
   const balanced5 = buildPrompt('a', PAGES, [], q, 'balanced');
-  ok(balanced4 === balanced5, '4-arg call is byte-identical to 5-arg balanced (no regression)');
+  ok(balanced4 === balanced5, '4-arg call is identical to 5-arg balanced (default param)');
+  ok(balanced5.includes('RESPONSE STYLE — BALANCED'), 'balanced prompt carries the balanced directive');
 
   const concise = buildPrompt('a', PAGES, [], q, 'concise');
   ok(concise.includes('RESPONSE STYLE — CONCISE'), 'concise prompt carries the concise directive');
-  ok(concise.length > balanced5.length, 'concise prompt is longer than balanced (directive added)');
+  ok(!concise.includes('RESPONSE STYLE — BALANCED'), 'concise prompt does not carry the balanced directive');
 
   const comp = buildPrompt('a', PAGES, [], q, 'comprehensive');
   ok(comp.includes('RESPONSE STYLE — COMPREHENSIVE'), 'comprehensive prompt carries the comprehensive directive');
 
-  // Garbage style → treated as balanced (no directive)
+  // Garbage style → treated as balanced
   const garbage = buildPrompt('a', PAGES, [], q, 'garbage');
   ok(garbage === balanced5, 'unknown style → balanced prompt');
 }

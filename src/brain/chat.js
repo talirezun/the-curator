@@ -458,19 +458,30 @@ export const RESPONSE_STYLES = {
     directive:
       'RESPONSE STYLE — CONCISE: Keep the answer short and direct — 1–3 tight ' +
       'paragraphs (or a short list). Lead with the answer in the first sentence. ' +
-      'Cite only the 2–3 most important sources. Omit background the user did not ask for.',
+      'Give just the key point and its most important nuance. Cite only the 2–3 ' +
+      'most important sources. Omit background the user did not ask for.',
   },
   balanced: {
+    // NOT empty (fixed after live testing showed an unconstrained balanced answer
+    // running LONGER than comprehensive on content-rich questions): a soft
+    // moderate-length directive keeps balanced in the middle so the tiers are
+    // reliably ordered concise < balanced < comprehensive.
     maxTokens: 8192,
-    directive: '',   // the intent instructions already produce a balanced answer
+    directive:
+      'RESPONSE STYLE — BALANCED: A well-rounded answer that covers the main ' +
+      'points and their important nuances in a few short paragraphs. Aim for the ' +
+      'middle ground — more than a quick summary, but NOT exhaustive: hit the key ' +
+      'takeaways, skip the exhaustive enumeration of every detail.',
   },
   comprehensive: {
     maxTokens: 12288,
     directive:
-      'RESPONSE STYLE — COMPREHENSIVE: Be thorough. Cover the relevant angles in ' +
-      'more depth and include more supporting citations where they genuinely add ' +
+      'RESPONSE STYLE — COMPREHENSIVE: Be thorough and complete — this should be ' +
+      'your LONGEST, most detailed answer. Cover every relevant angle, sub-point, ' +
+      'and caveat in depth, with more supporting citations where they genuinely add ' +
       'value. Do NOT pad with tangential material, and NEVER reproduce the domain ' +
-      'catalogue or bare file paths — depth means better reasoning, not a longer list.',
+      'catalogue or bare file paths — depth means more reasoning and coverage, not a ' +
+      'raw list of pages.',
   },
 };
 
@@ -554,7 +565,8 @@ function buildPrompt(domain, pages, history, userMessage, responseStyle = 'balan
     : synthesisInstructions;
 
   // Tier 2: append the response-style directive (detail/length) after the
-  // intent instructions (shape). Balanced adds nothing (unchanged behaviour).
+  // intent instructions (shape). All three styles now carry a directive; the
+  // ternary's empty-directive branch is a defensive fallback only.
   const styleDirective = RESPONSE_STYLES[normalizeResponseStyle(responseStyle)].directive;
   const instructions = styleDirective
     ? `${intentInstructions}\n\n${styleDirective}`

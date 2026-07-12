@@ -57,6 +57,7 @@ const OFFLINE = [
   'test-chat-truncation.js',       // v3.0.7: text-mode graceful truncation + context-neutral MAX_TOKENS error
   'test-chat-intent.js',           // v3.0.7 Tier 1: decision/enumerate/synthesis intent + catalogue-echo stripper
   'test-chat-style.js',            // Tier 2: concise/balanced/comprehensive response-style control
+  'test-chat-markdown.js',         // chat Markdown renderer — XSS-safe, formatting
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is

@@ -59,9 +59,16 @@ async function runProvider(name, domain) {
     ok(concise.length < MAX_FOCUSED_CHARS && comprehensive.length < MAX_FOCUSED_CHARS,
       `[${name}] answers stay focused, not dumps (concise ${concise.length}, comp ${comprehensive.length} < ${MAX_FOCUSED_CHARS})`);
 
-    // The core behavioural contract: concise is shorter than comprehensive.
-    ok(concise.length < comprehensive.length,
-      `[${name}] concise (${concise.length}) < comprehensive (${comprehensive.length}) — style changes detail`);
+    // The core behavioural contract: the three styles are MONOTONICALLY ordered
+    // in length — concise < balanced < comprehensive. (This is exactly what the
+    // first live test got WRONG before the directive fix: an unconstrained
+    // balanced ran longer than comprehensive. The soft "not exhaustive" balanced
+    // directive + the "your longest answer" comprehensive directive restore it.)
+    console.log(`     lengths → concise ${concise.length} · balanced ${balanced.length} · comprehensive ${comprehensive.length}`);
+    ok(concise.length < balanced.length,
+      `[${name}] concise (${concise.length}) < balanced (${balanced.length})`);
+    ok(balanced.length < comprehensive.length,
+      `[${name}] balanced (${balanced.length}) < comprehensive (${comprehensive.length})`);
 
     // Audit follow-up: comprehensive must NOT undermine the Tier 1 anti-dump
     // guardrails. An enumerate query in comprehensive style on the large domain

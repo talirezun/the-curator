@@ -654,10 +654,16 @@ function appendMessage(role, content, citations = []) {
   hideEl(chatEmptyEl);
   showEl(chatThreadEl);
 
-  const formatted = escHtml(content).replace(
-    /\[source:\s*([^\]]+)\]/g,
-    (_, p) => `<span class="citation-tag">[source: ${escHtml(p)}]</span>`
-  );
+  // Render Markdown → safe HTML for assistant answers (bold, headings, lists,
+  // code, wikilinks, and [source:] chips). User bubbles stay plain text. The
+  // renderer escapes first, so it's XSS-safe; fall back to escaped text if the
+  // renderer script somehow didn't load.
+  const formatted = (role === 'assistant' && typeof window.renderChatMarkdown === 'function')
+    ? window.renderChatMarkdown(content)
+    : escHtml(content).replace(
+        /\[source:\s*([^\]]+)\]/g,
+        (_, p) => `<span class="citation-tag">[source: ${escHtml(p)}]</span>`
+      );
 
   const citHtml = citations.length
     ? `<div class="chat-citations">${citations.map(c =>
