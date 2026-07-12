@@ -135,25 +135,43 @@
           <!-- Compile result panel (also reused later by other write-flows) -->
           <div id="compile-result" class="result-panel hidden"></div>
 
-          <div class="chat-style-row" role="group" aria-label="Response length">
-            <span class="chat-style-label">Length</span>
-            <div class="chat-style-toggle" id="chat-style-toggle">
-              <button type="button" class="chat-style-opt" data-style="concise" title="Short, direct answer — the key point and a few sources.">Concise</button>
-              <button type="button" class="chat-style-opt is-active" data-style="balanced" title="The default — a well-rounded answer.">Balanced</button>
-              <button type="button" class="chat-style-opt" data-style="comprehensive" title="Thorough — more depth and more supporting sources.">Detailed</button>
-            </div>
-          </div>
-          <div class="chat-input-bar">
+          <div class="chat-composer">
             <textarea
               id="chat-input"
               class="chat-input"
               rows="1"
               placeholder="Ask anything… (⌘↵ to send)"
             ></textarea>
-            <button id="chat-send-btn" class="btn primary chat-send-btn pill">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-              Send
-            </button>
+            <div class="chat-composer-controls">
+              <div class="chat-composer-left">
+                <!-- Model selector — shown only when BOTH provider keys are configured -->
+                <div class="chat-dd" id="chat-model-dd" hidden>
+                  <button type="button" class="chat-dd-btn" id="chat-model-btn" aria-haspopup="listbox" aria-expanded="false" title="Model used for this chat">
+                    <span class="chat-dd-icon">🧠</span>
+                    <span class="chat-dd-value" id="chat-model-value">Gemini</span>
+                    <svg class="chat-dd-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+                  </button>
+                  <div class="chat-dd-menu" id="chat-model-menu" role="listbox" aria-label="Model" hidden></div>
+                </div>
+                <!-- Length selector -->
+                <div class="chat-dd" id="chat-length-dd">
+                  <button type="button" class="chat-dd-btn" id="chat-length-btn" aria-haspopup="listbox" aria-expanded="false" title="Answer length">
+                    <span class="chat-dd-icon">✦</span>
+                    <span class="chat-dd-value" id="chat-length-value">Balanced</span>
+                    <svg class="chat-dd-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+                  </button>
+                  <div class="chat-dd-menu" id="chat-length-menu" role="listbox" aria-label="Answer length" hidden>
+                    <button type="button" class="chat-dd-opt" role="option" data-style="concise"><span class="chat-dd-opt-title">Concise</span><span class="chat-dd-opt-desc">Short & direct — the key point</span></button>
+                    <button type="button" class="chat-dd-opt" role="option" data-style="balanced"><span class="chat-dd-opt-title">Balanced</span><span class="chat-dd-opt-desc">Well-rounded (default)</span></button>
+                    <button type="button" class="chat-dd-opt" role="option" data-style="comprehensive"><span class="chat-dd-opt-title">Detailed</span><span class="chat-dd-opt-desc">Thorough — more depth & sources</span></button>
+                  </div>
+                </div>
+              </div>
+              <button id="chat-send-btn" class="btn primary chat-send-btn pill">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:5px;vertical-align:-1px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                Send
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -94,6 +94,8 @@ When releasing a new version that updates a model default:
 3. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
 4. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
 
+> **The chat Model selector requires no change here.** It shows the provider (Gemini / Claude), and its version label reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`). Bumping `DEFAULTS` updates that label automatically — users never select a specific model version; that stays a global decision. (Pending example: Gemini `2.5-flash-lite` → its successor when Google retires it; the selector will reflect it the moment `DEFAULTS.gemini` is bumped.)
+
 When a model is retired without a direct successor (rare):
 
 1. Pick a sensible substitute from the current generation.

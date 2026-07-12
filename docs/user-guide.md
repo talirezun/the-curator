@@ -467,9 +467,18 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 - **Specific is better than vague**: *"What does my wiki say about HNSW vs IVF?"* finds the right pages. *"Tell me about vector search"* is much broader and may hit the catalogue fallback.
 - **For comprehensive author/topic queries, the My Curator MCP via Claude Desktop is even more thorough** — its `get_backlinks` tool gives the canonical, complete list. The in-app chat is best for content questions; MCP is best for graph-traversal queries.
 
+### The composer — Length and Model selectors
+
+The chat message box has two dropdowns tucked into the bottom-left, next to the Send button:
+
+- **Length** (always shown) — Concise · Balanced · Detailed, described below.
+- **Model** (shown only if you've configured **both** a Gemini and an Anthropic key) — pick **Gemini** or **Claude** for this chat. This lets you compare how each model answers the same question, without changing your global provider in Settings. If you have just one key, there's nothing to choose and the selector is hidden. The model version shown (e.g. `gemini-2.5-flash-lite`) is whatever The Curator currently uses for that provider — you don't pick specific model versions; that's set globally, and the label updates automatically when The Curator moves to a newer model.
+
+Both choices are remembered in your browser between questions.
+
 ### Answer length — Concise · Balanced · Detailed
 
-Above the message box is a **Length** selector that controls how much detail you get back. It's independent of the question type above — it changes *how much* the AI writes, not *what shape* the answer takes.
+The **Length** selector controls how much detail you get back. It's independent of the question type above — it changes *how much* the AI writes, not *what shape* the answer takes.
 
 | Setting | What you get | Good for |
 |---|---|---|

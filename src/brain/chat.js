@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { generateText } from './llm.js';
+import { getEffectiveKey } from './config.js';
 import { tokenize } from './sharedbrain-delta.js';
 import {
   readSchema,
@@ -617,8 +618,16 @@ export function stripCatalogueEcho(answer) {
   return cleaned.length ? cleaned : answer;           // never return empty
 }
 
+// Validate a per-chat provider override: only 'gemini'/'anthropic' with a
+// usable key are honoured; anything else → null (use the global active provider).
+export function normalizeChatProvider(provider) {
+  if ((provider === 'gemini' || provider === 'anthropic') && getEffectiveKey(provider)) return provider;
+  return null;
+}
+
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
   const responseStyle = normalizeResponseStyle(opts.responseStyle);
+  const chatProvider = normalizeChatProvider(opts.provider);   // null → global active provider
   const schema = await readSchema(domain);
   const pages = await readWikiPages(domain);
 
@@ -659,7 +668,9 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // degrades to partial-with-note, never a hard error). Tier 2: the response
   // style sets the cap — concise 4096 / balanced 8192 / comprehensive 12288.
   const maxTokens = RESPONSE_STYLES[responseStyle].maxTokens;
-  const rawAnswer = await generateText(schema, prompt, maxTokens);
+  // v3.0.11: honour the chat model selector via the provider override (null →
+  // global active provider). generateText re-validates the key defensively.
+  const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, { provider: chatProvider });
   // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
   // the saved history. Citations are extracted from the CLEANED answer so a
   // stripped bare-path run never counts as a citation.
@@ -679,8 +690,9 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     answer,
     citations: uniqueCitations,
     responseStyle,
+    provider: chatProvider,   // null → global active provider was used
   };
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider };

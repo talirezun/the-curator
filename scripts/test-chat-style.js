@@ -139,8 +139,8 @@ section('5. Source guard — sendMessage + route wiring');
 
   const routeSrc = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
   ok(/responseStyle/.test(routeSrc), 'chat route reads responseStyle from the body');
-  ok(/sendMessage\(domain, conversationId \|\| null, message, \{ responseStyle \}\)/.test(routeSrc),
-    'chat route passes responseStyle to sendMessage');
+  ok(/sendMessage\(domain, conversationId \|\| null, message, \{ responseStyle, provider \}\)/.test(routeSrc),
+    'chat route passes responseStyle (+ provider) to sendMessage');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

@@ -72,7 +72,32 @@ export function getFallbackStatus() {
   return _activeFallback;
 }
 
-export function getProviderInfo() {
+/**
+ * The default model id for a provider (respecting a global LLM_MODEL override
+ * only for the currently-active provider). Exported so the UI can display the
+ * CURRENT model per provider — when we bump DEFAULTS to a newer model, the
+ * chat model selector's label updates automatically with no frontend change.
+ */
+export function getDefaultModel(provider) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return null;
+  // LLM_MODEL is a single global dev override tied to the active provider; only
+  // surface it for that provider so we never label Gemini with a Claude id.
+  if (process.env.LLM_MODEL && getActiveProvider() === provider) return process.env.LLM_MODEL;
+  return DEFAULTS[provider];
+}
+
+/**
+ * @param {('gemini'|'anthropic'|null)} preferProvider - optional per-call
+ *   provider override (e.g. the chat model selector). Used ONLY if that
+ *   provider has a usable key; otherwise falls through to the global active
+ *   provider. The override always resolves the provider's DEFAULT model.
+ */
+export function getProviderInfo(preferProvider = null) {
+  // Per-call override (v3.0.11: chat model selector). Never honours a stale
+  // override whose key is missing — falls through to the global logic below.
+  if ((preferProvider === 'gemini' || preferProvider === 'anthropic') && getEffectiveKey(preferProvider)) {
+    return { provider: preferProvider, model: getDefaultModel(preferProvider) };
+  }
   // Honour the user's last-saved active provider (v2.4.2+). Falls back to
   // Gemini-first-if-both behaviour for legacy configs via getActiveProvider().
   const active = getActiveProvider();
@@ -142,21 +167,25 @@ function sleep(ms) {
  * @param {function|null} onWait          - optional callback(message) called before each retry wait
  * @returns {Promise<string>}
  */
-export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null) {
+export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {}) {
   const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
+  // v3.0.11: optional per-call provider override (chat model selector). Ignored
+  // unless it names a provider with a usable key (getProviderInfo enforces this).
+  const providerOverride = (opts && (opts.provider === 'gemini' || opts.provider === 'anthropic'))
+    ? opts.provider : null;
 
   // Resolve provider name once for consistent error messaging. If this fails
   // (e.g. no key configured), let the underlying call throw the original
   // "No LLM API key found" message — don't shadow it here.
   let providerName = 'AI provider';
   try {
-    const info = getProviderInfo();
+    const info = getProviderInfo(providerOverride);
     providerName = info.provider === 'gemini' ? 'Gemini' : info.provider === 'anthropic' ? 'Claude' : 'AI provider';
   } catch { /* surface real error from callLLM below */ }
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat);
+      return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride);
     } catch (err) {
       const retryable = is429(err) || is503(err);
       if (!retryable || attempt === MAX_RETRIES) {
@@ -378,8 +407,8 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
  * (auth, rate-limit, network, 5xx) is re-thrown immediately so the outer
  * retry loop or caller can handle it appropriately.
  */
-async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat) {
-  const { provider, model } = getProviderInfo();
+async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride = null) {
+  const { provider, model } = getProviderInfo(providerOverride);
   const chain = [model, ...(FALLBACK_CHAINS[provider] || [])];
   let lastErr = null;
 

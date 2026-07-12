@@ -32,6 +32,9 @@ tabBtns.forEach(btn => {
       if (wikiDomain && wikiDomain.value) loadWiki();
     }
     if (target === 'health') resetHealthPanel();
+    // Re-evaluate the chat model selector so a key added/removed in Settings
+    // this session is reflected without a page reload (init is idempotent).
+    if (target === 'chat') { try { initChatModelSelector(); } catch { /* ignore */ } }
   });
 });
 
@@ -474,46 +477,139 @@ const compileProgressPct = document.getElementById('compile-progress-pct');
 const compileProgressFill = document.getElementById('compile-progress-fill');
 const chatInputEl    = document.getElementById('chat-input');
 const chatSendBtn    = document.getElementById('chat-send-btn');
-const chatStyleToggle = document.getElementById('chat-style-toggle');
 
 let activeConvId   = null;   // currently open conversation ID
 let chatDomain     = null;   // currently selected domain
 let chatBusy       = false;  // prevents double-sends
 
-// ── Response-style selector (Tier 2) ──────────────────────────────────────────
-// Concise / Balanced / Detailed. Sent with each message; the backend normalises
-// unknown values to 'balanced'. Persisted client-side so the choice survives
-// reloads. 'Detailed' is the friendly label for the 'comprehensive' style.
+// ── Composer selectors: Length (Tier 2) + Model (per-chat provider) ───────────
+// Both are dropdowns in the unified composer. Length is always shown; Model is
+// shown only when BOTH provider keys are configured. Choices persist in
+// localStorage and are sent with each message; the backend normalises anything
+// unknown (length → 'balanced'; a keyless/absent provider → the global default).
 const CHAT_STYLE_KEY = 'curator-chat-response-style';
+const CHAT_MODEL_KEY = 'curator-chat-model-provider';
 const CHAT_STYLES = ['concise', 'balanced', 'comprehensive'];
+const STYLE_LABELS = { concise: 'Concise', balanced: 'Balanced', comprehensive: 'Detailed' };
+const PROVIDER_LABELS = { gemini: 'Gemini', anthropic: 'Claude' };
+
 let chatResponseStyle = (() => {
   try {
     const saved = localStorage.getItem(CHAT_STYLE_KEY);
     return CHAT_STYLES.includes(saved) ? saved : 'balanced';
   } catch { return 'balanced'; }
 })();
+// null → use the global active provider (also the state when only one key exists).
+let chatModelProvider = null;
+let chatAvailableProviders = [];   // populated from /api/config/api-keys
 
-function applyChatStyleUI() {
-  if (!chatStyleToggle) return;
-  chatStyleToggle.querySelectorAll('.chat-style-opt').forEach(btn => {
-    const active = btn.dataset.style === chatResponseStyle;
-    btn.classList.toggle('is-active', active);
-    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+// Close every open composer dropdown. One module-level pair of document
+// listeners (added once) handles outside-click + Escape for ALL dropdowns, so
+// re-running initChatModelSelector never stacks duplicate document handlers.
+function closeAllChatDropdowns() {
+  document.querySelectorAll('.chat-dd.open').forEach(dd => {
+    dd.classList.remove('open');
+    const b = dd.querySelector('.chat-dd-btn'); if (b) b.setAttribute('aria-expanded', 'false');
+    const m = dd.querySelector('.chat-dd-menu'); if (m) m.hidden = true;
+  });
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.chat-dd')) closeAllChatDropdowns(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllChatDropdowns(); });
+
+// Generic dropdown wiring: toggle open, close on select. IDEMPOTENT — a
+// data-wired flag prevents double-binding the button/menu listeners when
+// initChatModelSelector re-runs (e.g. after a key change).
+function wireDropdown(ddId, btnId, menuId, onSelect) {
+  const dd = document.getElementById(ddId);
+  const btn = document.getElementById(btnId);
+  const menu = document.getElementById(menuId);
+  if (!dd || !btn || !menu || dd.dataset.wired === '1') return;
+  dd.dataset.wired = '1';
+  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); dd.classList.remove('open'); };
+  const open = () => { closeAllChatDropdowns(); menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); dd.classList.add('open'); };
+  btn.addEventListener('click', (e) => { e.stopPropagation(); menu.hidden ? open() : close(); });
+  menu.addEventListener('click', (e) => {
+    const opt = e.target.closest('.chat-dd-opt');
+    if (!opt) return;
+    onSelect(opt);
+    close();
   });
 }
 
-if (chatStyleToggle) {
-  chatStyleToggle.addEventListener('click', (e) => {
-    const btn = e.target.closest('.chat-style-opt');
-    if (!btn) return;
-    const style = btn.dataset.style;
-    if (!CHAT_STYLES.includes(style) || style === chatResponseStyle) return;
-    chatResponseStyle = style;
-    try { localStorage.setItem(CHAT_STYLE_KEY, style); } catch { /* ignore */ }
-    applyChatStyleUI();
-  });
-  applyChatStyleUI();
+function applyStyleLabel() {
+  const v = document.getElementById('chat-length-value');
+  if (v) v.textContent = STYLE_LABELS[chatResponseStyle] || 'Balanced';
+  document.querySelectorAll('#chat-length-menu .chat-dd-opt').forEach(o =>
+    o.classList.toggle('is-active', o.dataset.style === chatResponseStyle));
 }
+
+function applyModelLabel() {
+  const v = document.getElementById('chat-model-value');
+  const shown = chatModelProvider || chatAvailableProviders[0] || 'gemini';
+  if (v) v.textContent = PROVIDER_LABELS[shown] || shown;
+  document.querySelectorAll('#chat-model-menu .chat-dd-opt').forEach(o =>
+    o.classList.toggle('is-active', o.dataset.provider === shown));
+}
+
+// Build the model dropdown from configured providers. Shown ONLY when both keys
+// exist (nothing to choose otherwise). Called after fetching /api/config/api-keys.
+async function initChatModelSelector() {
+  const dd = document.getElementById('chat-model-dd');
+  const menu = document.getElementById('chat-model-menu');
+  if (!dd || !menu) return;
+  let data = {};
+  try { data = await (await fetch('/api/config/api-keys')).json(); } catch { data = {}; }
+  // Use the "usable" flags (config OR .env) so availability matches the real
+  // call path. Fall back to the config-only flags for older servers.
+  const providers = [];
+  if (data.geminiUsable ?? data.hasGeminiKey) providers.push('gemini');
+  if (data.anthropicUsable ?? data.hasAnthropicKey) providers.push('anthropic');
+  chatAvailableProviders = providers;
+  const models = data.models || {};
+
+  if (providers.length < 2) {
+    // Nothing to choose — hide the selector; chat uses the global active provider.
+    dd.hidden = true;
+    chatModelProvider = null;
+    return;
+  }
+
+  // Default: saved choice (if still valid) → the global active provider → first available.
+  let saved = null;
+  try { saved = localStorage.getItem(CHAT_MODEL_KEY); } catch { /* ignore */ }
+  chatModelProvider = providers.includes(saved) ? saved
+    : (providers.includes(data.activeProvider) ? data.activeProvider : providers[0]);
+
+  menu.innerHTML = providers.map(p => `
+    <button type="button" class="chat-dd-opt" role="option" data-provider="${p}">
+      <span class="chat-dd-opt-title">${PROVIDER_LABELS[p] || p}</span>
+      <span class="chat-dd-opt-desc">${escHtml(models[p] || '')}</span>
+    </button>`).join('');
+
+  dd.hidden = false;
+  // onSelect validates against the LIVE provider list (chatAvailableProviders),
+  // not a closure snapshot — so re-running init with changed keys stays correct
+  // even though wireDropdown binds the listener only once.
+  wireDropdown('chat-model-dd', 'chat-model-btn', 'chat-model-menu', (opt) => {
+    const p = opt.dataset.provider;
+    if (!chatAvailableProviders.includes(p)) return;
+    chatModelProvider = p;
+    try { localStorage.setItem(CHAT_MODEL_KEY, p); } catch { /* ignore */ }
+    applyModelLabel();
+  });
+  applyModelLabel();
+}
+
+// Length dropdown (always present).
+wireDropdown('chat-length-dd', 'chat-length-btn', 'chat-length-menu', (opt) => {
+  const style = opt.dataset.style;
+  if (!CHAT_STYLES.includes(style)) return;
+  chatResponseStyle = style;
+  try { localStorage.setItem(CHAT_STYLE_KEY, style); } catch { /* ignore */ }
+  applyStyleLabel();
+});
+applyStyleLabel();
+initChatModelSelector();
 let compileBusy    = false;  // prevents double-compiles
 // Show "Compile to Wiki" after the first answer — one good exchange is enough
 // to be worth saving (v3.0.1-beta.15; backend MIN_USER_MESSAGES matches).
@@ -728,7 +824,7 @@ chatSendBtn.addEventListener('click', async () => {
     const res = await fetch(`/api/chat/${chatDomain}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, conversationId: activeConvId, responseStyle: chatResponseStyle }),
+      body: JSON.stringify({ message, conversationId: activeConvId, responseStyle: chatResponseStyle, provider: chatModelProvider }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Chat failed');

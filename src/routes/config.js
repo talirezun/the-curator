@@ -4,9 +4,9 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain, getEffectiveKey } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
-import { getProviderInfo, getFallbackStatus } from '../brain/llm.js';
+import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 import {
   hasActiveWrites,
   conflictResponse,
@@ -244,8 +244,20 @@ router.get('/api-keys', (_req, res) => {
     anthropicApiKey: maskKey(keys.anthropicApiKey),
     hasGeminiKey:    !!keys.geminiApiKey,
     hasAnthropicKey: !!keys.anthropicApiKey,
+    // "Usable" = a key resolvable via config OR .env — i.e. a call would actually
+    // work. The chat model selector uses THESE (not the config-only hasXKey) so
+    // its availability matches the real call path (getEffectiveKey / the provider
+    // override), which also honours a key set only in .env.
+    geminiUsable:    !!getEffectiveKey('gemini'),
+    anthropicUsable: !!getEffectiveKey('anthropic'),
     activeProvider:  provider?.provider || null,
     activeModel:     provider?.model || null,
+    // Current default model id per provider, so the chat model selector's label
+    // stays in sync with DEFAULTS automatically when we bump to a newer model.
+    models: {
+      gemini:    getDefaultModel('gemini'),
+      anthropic: getDefaultModel('anthropic'),
+    },
     // null if primary model is working; populated when the fallback chain kicked in
     // because the pinned default has been retired by the provider.
     fallback:        getFallbackStatus(),
