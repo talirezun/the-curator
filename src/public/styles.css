@@ -3579,14 +3579,29 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   box-shadow: 0 0 8px var(--accent-glow);
 }
 
-/* ── Result panel: shared by ingest + compile (v2.5.0) ── */
-.result-panel {
-  margin: 14px 18px;
-  flex-shrink: 0;
-  max-height: 38vh;
-  overflow-y: auto;
+/* ── Change-records panel: shared by ingest (.result) + compile (.chat-compile-card) ── */
+/* Compile outcome, rendered inline in the chat thread (v3.0.14).
+   Deliberately has NO max-height and NO overflow of its own: it is a normal
+   thread item that scrolls with the conversation. The previous fixed panel
+   (`flex-shrink: 0; max-height: 38vh; overflow-y: auto`) sat between the
+   thread and the composer and permanently compressed the message area into a
+   second scrollable box. */
+.chat-compile-card {
+  align-self: stretch;
+  max-width: 100%;
 }
-.result-panel .change-summary,
+/* Horizontal containment. A long "+7 bullets in Key Facts, Related, Entities
+   Mentioned, …" detail is `white-space: nowrap; flex-shrink: 0`, so a row's
+   min-content width can exceed the thread. The old panel's own overflow
+   absorbed that; without containment the overflow escapes to `.chat-thread`
+   and scrolls every message bubble sideways. Contain it on the inner summary
+   block — a normal-flow block — NOT on the card: giving the card an overflow
+   would flip its flex `min-height: auto` to 0, letting the thread squeeze it
+   back into a scroll box, which is the exact bug this release removes. */
+.chat-compile-card .change-summary {
+  overflow-x: auto;
+}
+.chat-compile-card .change-summary,
 .result .change-summary {
   background: var(--surface);
   border: 1px solid var(--border-subtle);

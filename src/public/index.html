@@ -132,8 +132,10 @@
 
           <div id="chat-thread" class="chat-thread hidden"></div>
 
-          <!-- Compile result panel (also reused later by other write-flows) -->
-          <div id="compile-result" class="result-panel hidden"></div>
+          <!-- v3.0.14: the compile outcome now renders as an inline card
+               appended into #chat-thread (class .chat-compile-card), so it
+               scrolls with the conversation instead of permanently shrinking
+               the message area. -->
 
           <div class="chat-composer">
             <textarea

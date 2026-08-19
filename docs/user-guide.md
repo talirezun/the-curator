@@ -566,7 +566,7 @@ A chat is a great place to think out loud, but the conversation itself is not pa
 
 1. Have a conversation in the Chat tab. The **Compile to Wiki** button appears in the top-right of the thread as soon as you've had one exchange (one of your messages plus the AI's answer) — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages).
 2. Click **Compile to Wiki**. A progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
-3. After 15–45 seconds you see a summary panel: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them.
+3. After 15–45 seconds a **result card appears inline in the conversation**, right below the last message: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them. The card is part of the thread, so it scrolls with the conversation and you can keep chatting underneath it at full size (before v3.0.14 the result opened in a fixed panel above the input box that permanently squeezed the chat area — that's fixed). The card scrolls into view at its top, so the title and the ✨/✏️ counts are always what you see first. Compile again and you get a second card; the cards clear when you switch conversations or start a new chat. If you switch conversations *while* a compile is running, the pages are still written — you just won't see the card, since it belongs to the other conversation.
 
 **What gets written**
 
@@ -589,7 +589,7 @@ This is intentional — a second LLM run on identical input produces slightly di
 
 Most compiles finish in one pass. If a conversation is unusually long or dense, the AI can run out of room to write all the pages at once. The Curator now handles this automatically instead of failing:
 
-1. It retries with a **more concise extraction** (fewer, broader pages). If that works, you'll see a small note on the result panel: *"compiled with a more concise extraction."*
+1. It retries with a **more concise extraction** (fewer, broader pages). If that works, you'll see a small note at the top of the result card: *"compiled with a more concise extraction."*
 2. If it's still too large, it falls back to saving **just the summary page** — the conversation is still captured, but the individual entity/concept pages aren't created this time. The note will say so.
 3. Only if even the summary can't fit does it stop, with a clear message: *"This conversation is too large or complex to compile… compile a shorter conversation, or split this discussion into separate conversations by topic."*
 

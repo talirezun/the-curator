@@ -600,6 +600,36 @@ A user with BOTH provider keys can pick **Gemini** or **Claude** for a single ch
 
 Test coverage: **30 offline** in [`scripts/test-chat-model.js`](../scripts/test-chat-model.js) (`getDefaultModel`, `normalizeChatProvider` on every invalid input incl. prototype keys, key-backed honouring, and end-to-end source guards) + **5 live on real Gemini AND Anthropic** in [`scripts/test-chat-model-live.js`](../scripts/test-chat-model-live.js) (routing resolves to each provider, both answer through the override, garbage falls back). An independent audit confirmed the backend override and the menu XSS are airtight.
 
+
+## 10f. Compile-to-Wiki result rendering (v3.0.14)
+
+The compile **outcome** (the change-records card) renders as an inline item inside `#chat-thread`, not as a fixed panel.
+
+**What it replaced.** Until v3.0.13 the outcome went into `#compile-result.result-panel`, a **sibling** of the thread sitting between `#chat-thread` and `.chat-composer`, styled `flex-shrink: 0; max-height: 38vh; overflow-y: auto`. Because `.chat-thread` is the `flex: 1` element in the `.chat-main` column, the panel took its height directly out of the message area and refused to give it back: measured on a 720px viewport, the thread collapsed **429px → 127px** the moment a compile finished, and the chat gained a second scrollbar. Worse, the panel was cleared only by `showChatEmpty()` / `renderThread()` — the send handler never touched it — so *every subsequent message in that conversation* stayed compressed until the user switched threads. A community user reported it as *"compiling opens a second window that compresses the chat"*.
+
+**The shape now.** Every outcome goes through ONE guarded renderer, `renderCompileOutcome(fill)`, which appends a `div.chat-compile-card` to `chatThreadEl`, lets the caller fill it, and scrolls it into view. Three call sites:
+
+| Path | Rendered into the card |
+|---|---|
+| success (≥1 change record) | `renderChangeRecords(card, { title, changes })` |
+| success with **zero** change records | same call site, else-branch: an explicit `.change-empty` block — `renderChangeRecords` *hides* an empty container, which inline would mean silent no-feedback |
+| refused (already compiled at this slug) | `.compile-refused` |
+| error | `.compile-error` |
+
+Degradation warnings (`result.warnings`, the v3.0.1-beta.27 concise / summary-only ladder) are still `prepend`ed above the change list, inside the card.
+
+**Invariants:**
+- **`.chat-compile-card` must never have its own `max-height`, `overflow`, or `flex-shrink`.** `max-height` re-creates the squeeze directly; `overflow` re-creates it indirectly, because a flex item whose overflow is not `visible` has its automatic `min-height` resolve to **0** — the thread would then be free to shrink the card back into a scroll box. Horizontal containment therefore lives on the inner `.change-summary` block (a normal-flow block, immune to the flex minimum rule): `.chat-compile-card .change-summary { overflow-x: auto; }`. Without it, a long `+7 bullets in Key Facts, Related, Entities Mentioned, Concepts Introduced or Referenced` detail (`white-space: nowrap; flex-shrink: 0`) pushes the overflow out to `.chat-thread` and scrolls every message bubble sideways — `#app` is capped at `max-width: 960px`, so the thread is ~667px on every machine and an 87-char detail is enough.
+- **Scroll to the card's TOP, not the thread's bottom.** `scrollCardIntoView(card)` puts the card's top edge at the top of the thread viewport. The old panel had its own scroll box that always started at the top, so the title and the ✨/✏️ counts — the entire point of the panel — were always visible. Scrolling the thread to its bottom instead buries them for any card taller than the thread, which a 20–40-page compile always is (a 25-page card is ~750px against a ~480px thread).
+- **A compile that finishes after the user navigated away must not be misfiled.** A compile runs 15–45s with the rest of the UI live. The handler captures `activeConvId` + `chatDomain` at click time; `renderCompileOutcome` refuses to append if either changed, because the card would otherwise land in an unrelated transcript (reading as if that conversation produced it) or — after New Chat — un-hide a headerless thread containing nothing but a floating card. The pages are still written and the wiki/domain refresh still runs; only the card is skipped (with a `console.warn`). For the same reason `appendCompileCard` deliberately does **not** touch `chatEmptyEl` / `chatThreadEl` visibility.
+- The card lives in the thread, so it takes part in conversation order — it appears between the messages that preceded it and any messages sent after — and is cleared by the normal thread lifecycle (`renderThread()` / `showChatEmpty()` wipe `chatThreadEl.innerHTML`). It is *not* persisted in the conversation JSON, so reopening a thread does not show past compile cards. That matches the previous behaviour, where the panel was also cleared on conversation switch.
+- Compiling repeatedly appends one card per attempt, in order — an honest event log rather than a silently-replaced panel. `renderChangeRecords` scopes its "Show unchanged" wiring with `container.querySelector`, so stacked cards each wire only their own toggle.
+- The **ingest** tab still uses its own `#ingest-result.result` panel and the shared `renderChangeRecords(container, {title, changes})` contract is unchanged; only the chat consumer moved. The `.result .change-summary` transparent override (no double-framing inside the ingest card) is preserved.
+
+**Known, unchanged:** `chatBusy` and `compileBusy` are independent, so a message sent *during* a compile can interleave (`user Q → compile card → assistant A`). Cosmetic; nothing breaks.
+
+Test coverage: **36 offline** source guards in [`scripts/test-chat-compile-card.js`](../scripts/test-chat-compile-card.js) — the fixed panel is gone everywhere, the card is appended to the thread and never un-hides it, `renderCompileOutcome` is the single entry point (3 call sites, 1 append), the navigated-away guard is present, the empty-state title is `escHtml`-escaped, the card rule carries no `max-height`/`overflow`/`flex-shrink` while the summary contains `overflow-x`, the thread keeps `flex: 1` + `overflow-y: auto` and is still wiped by both lifecycle functions, the composer directly follows the thread, and the ingest path is untouched.
+
 ---
 
 ## 11. Where to look next

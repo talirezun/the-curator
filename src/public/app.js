@@ -470,7 +470,6 @@ const chatThreadEl   = document.getElementById('chat-thread');
 const chatThreadHeader = document.getElementById('chat-thread-header');
 const chatThreadTitleText = document.getElementById('chat-thread-title-text');
 const compileBtn     = document.getElementById('compile-btn');
-const compileResultEl = document.getElementById('compile-result');
 const compileProgressEl = document.getElementById('compile-progress');
 const compileProgressLabel = document.getElementById('compile-progress-label');
 const compileProgressPct = document.getElementById('compile-progress-pct');
@@ -712,10 +711,8 @@ function showChatEmpty() {
   showEl(chatEmptyEl);
   hideEl(chatThreadEl);
   hideEl(chatThreadHeader);
-  hideEl(compileResultEl);
   hideEl(compileProgressEl);
   chatThreadEl.innerHTML = '';
-  compileResultEl.innerHTML = '';
 }
 
 function updateCompileButtonVisibility(messages) {
@@ -740,8 +737,6 @@ function renderThread(messages) {
   hideEl(chatEmptyEl);
   showEl(chatThreadEl);
   showEl(chatThreadHeader);
-  hideEl(compileResultEl);
-  compileResultEl.innerHTML = '';
   chatThreadEl.innerHTML = '';
   for (const msg of messages) appendMessage(msg.role, msg.content, msg.citations || []);
   chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
@@ -776,6 +771,36 @@ function appendMessage(role, content, citations = []) {
   `;
   chatThreadEl.appendChild(div);
   chatThreadEl.scrollTop = chatThreadEl.scrollHeight;
+}
+
+// v3.0.14: the compile outcome renders as an inline card INSIDE the thread.
+// It used to live in a fixed `#compile-result` panel wedged between the thread
+// and the composer (`flex-shrink: 0; max-height: 38vh`), which permanently
+// stole up to 38% of the chat area (measured 429px → 127px on a 720px
+// viewport), gave the thread a second scrollbar, and never cleared until the
+// user switched conversations. As a thread item it scrolls with the
+// conversation and costs the message area nothing.
+//
+// Deliberately does NOT touch chatEmptyEl / chatThreadEl visibility: the caller
+// guarantees the compiled conversation is still open, and un-hiding the thread
+// here would resurrect a headerless thread over the empty state if the user
+// hit New Chat mid-compile.
+function appendCompileCard() {
+  const card = document.createElement('div');
+  card.className = 'chat-compile-card';
+  chatThreadEl.appendChild(card);
+  return card;
+}
+
+// Scroll so the card's TOP is at the top of the visible thread area. The old
+// fixed panel always showed its own top — the "Compiled to wiki: X" title and
+// the ✨/✏️ counts, i.e. the whole point of the panel. Scrolling the thread to
+// the bottom instead buries that headline for any card taller than the thread
+// (a 25-page compile is ~750px against a ~480px thread). Overscroll is clamped
+// by the browser, so short cards still land flush at the bottom.
+function scrollCardIntoView(card) {
+  const delta = card.getBoundingClientRect().top - chatThreadEl.getBoundingClientRect().top;
+  chatThreadEl.scrollTop += delta - 8;
 }
 
 function appendSpinner() {
@@ -883,11 +908,28 @@ if (compileBtn) {
     if (compileBusy) return;
     if (!activeConvId || !chatDomain) return;
 
+    // A compile takes 15–45s and the rest of the UI stays live. Remember which
+    // conversation we compiled: if the user switches threads, starts a new
+    // chat, or changes domain meanwhile, the card must NOT be appended — it
+    // would land in an unrelated transcript (reading as if that conversation
+    // produced it) or float alone in a freshly-emptied thread. The pages are
+    // still written either way; the wiki + domain stats refresh below.
+    const compileConvId = activeConvId;
+    const compileDomain = chatDomain;
+    const renderCompileOutcome = (fill) => {
+      if (activeConvId !== compileConvId || chatDomain !== compileDomain) {
+        console.warn('[compile] finished after the user navigated away — card not shown');
+        return false;
+      }
+      const card = appendCompileCard();
+      fill(card);
+      scrollCardIntoView(card);
+      return true;
+    };
+
     compileBusy = true;
     compileBtn.disabled = true;
     compileBtn.classList.add('compiling');
-    hideEl(compileResultEl);
-    compileResultEl.innerHTML = '';
     showCompileProgress(0, 'Starting compile…');
 
     try {
@@ -939,30 +981,44 @@ if (compileBtn) {
 
       if (errored) throw new Error(errored);
       if (refused) {
-        compileResultEl.innerHTML = `<div class="compile-refused">${escHtml(refused)}</div>`;
-        showEl(compileResultEl);
+        renderCompileOutcome(card => {
+          card.innerHTML = `<div class="compile-refused">${escHtml(refused)}</div>`;
+        });
         return;
       }
       if (!final) throw new Error('Compilation produced no result');
 
-      // Brief moment of "100%" visible before swapping to the result panel
+      // Brief moment of "100%" visible before the result card lands in the thread
       showCompileProgress(100, 'Done');
 
-      renderChangeRecords(compileResultEl, {
-        title: `Compiled to wiki: ${final.title}`,
-        changes: final.changes || [],
-      });
-
-      // v3.0.1-beta.27: surface non-fatal degradation notes (large conversation
-      // → concise / summary-only fallback) above the change list, so the user
-      // knows when only a summary was saved rather than a full extraction.
+      const compileChanges = Array.isArray(final.changes) ? final.changes : [];
+      // v3.0.1-beta.27: non-fatal degradation notes (large conversation →
+      // concise / summary-only fallback) render above the change list, so the
+      // user knows when only a summary was saved rather than a full extraction.
       const compileWarnings = Array.isArray(final.warnings) ? final.warnings : [];
-      if (compileWarnings.length) {
-        const note = document.createElement('div');
-        note.className = 'compile-note';
-        note.innerHTML = compileWarnings.map(w => `<div>ℹ️ ${escHtml(w)}</div>`).join('');
-        compileResultEl.prepend(note);
-      }
+
+      renderCompileOutcome(card => {
+        if (compileChanges.length) {
+          renderChangeRecords(card, {
+            title: `Compiled to wiki: ${final.title}`,
+            changes: compileChanges,
+          });
+        } else {
+          // renderChangeRecords hides an empty container; inline we still owe
+          // the user a visible outcome, so render the empty state explicitly.
+          card.innerHTML = `
+            <div class="change-summary">
+              <h3 class="change-title">${escHtml(`Compiled to wiki: ${final.title}`)}</h3>
+              <div class="change-empty">No pages were written.</div>
+            </div>`;
+        }
+        if (compileWarnings.length) {
+          const note = document.createElement('div');
+          note.className = 'compile-note';
+          note.innerHTML = compileWarnings.map(w => `<div>ℹ️ ${escHtml(w)}</div>`).join('');
+          card.prepend(note);
+        }
+      });
 
       // Refresh the wiki tab and domain stats so changes propagate everywhere
       // (existing post-mutation pattern used after sync/ingest).
@@ -975,8 +1031,9 @@ if (compileBtn) {
       } catch {}
 
     } catch (err) {
-      compileResultEl.innerHTML = `<div class="compile-error">⚠️ ${escHtml(err.message)}</div>`;
-      showEl(compileResultEl);
+      renderCompileOutcome(card => {
+        card.innerHTML = `<div class="compile-error">⚠️ ${escHtml(err.message)}</div>`;
+      });
     } finally {
       compileBusy = false;
       compileBtn.disabled = false;

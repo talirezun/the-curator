@@ -59,6 +59,7 @@ const OFFLINE = [
   'test-chat-style.js',            // Tier 2: concise/balanced/comprehensive response-style control
   'test-chat-markdown.js',         // chat Markdown renderer — XSS-safe, formatting
   'test-chat-model.js',            // per-chat model (provider) selector + getDefaultModel exposure
+  'test-chat-compile-card.js',     // compile result renders inline in the thread (no fixed panel)
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
