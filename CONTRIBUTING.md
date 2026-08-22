@@ -63,13 +63,35 @@ node scripts/test-beta8-stress.js
 ```
 
 **Two new OFFLINE suites landed with v3.0.16** (the ingest prompt-slimming +
-sync/lock hygiene release): `test-ingest-prompt-slimming.js` (204 assertions
-covering the index-removal, the existing-page-inventory safety valve, the
-cache-ordered batch prompt, `opts.onUsage`, and the Phase-2 result-reconciliation
-fixes in `src/brain/ingest.js` — see [docs/ingestion-pipeline.md §1b](docs/ingestion-pipeline.md)
-for the behaviour they cover) and `test-sync-hygiene.js` (100 assertions
-covering `.DS_Store` untracking, stale-lock self-heal on `pull()`, and the
-non-ASCII-domain NUL-delimited `git ls-files` fix in `src/brain/sync.js`).
+sync/lock hygiene release): `test-ingest-prompt-slimming.js` (grew to 488
+assertions in v3.0.17 — see below) covering the existing-page-inventory safety
+valve, the cache-ordered batch prompt, `opts.onUsage`, and the Phase-2
+result-reconciliation fixes in `src/brain/ingest.js` (see
+[docs/ingestion-pipeline.md §1b](docs/ingestion-pipeline.md) for the behaviour
+they cover) and `test-sync-hygiene.js` (covering `.DS_Store` untracking,
+stale-lock self-heal on `pull()`, and the non-ASCII-domain NUL-delimited
+`git ls-files` fix in `src/brain/sync.js`).
+
+**`test-ingest-prompt-slimming.js` grew 204 → 488 assertions in v3.0.17**
+(the ingest-report and orchestration-hardening release). The new section
+(§20 in the suite, +284 assertions) drives `ingestMultiPhase` through a
+**scripted fake LLM** instead of asserting against prompt text — its header
+comment states the rule this exists to enforce: *"a source guard can confirm
+a line exists, it cannot confirm the line runs."* `ingestMultiPhase` takes a
+trailing `llm` parameter (defaulted to the real `generateText`), the same
+test-only injection pattern `compile.js` already used via `opts.generateText`
+— see *Test-only LLM injection seams* below. Driving the real orchestration
+this way is what caught two real defects that had shipped with passing
+source-level assertions next to them: a dead-assignment bug that made the
+Phase 1 budget-sizing instrument silently report the FAILED attempt's spend
+instead of the recovered retry's (implying a ~10× wrong per-page cost, in
+the one case the instrument exists to measure), and a Phase 2 batch-response
+gate that let `{"pages": []}` silently drop every planned page with no
+warning while a non-array `"pages"` threw `TypeError: … is not iterable` and
+killed the entire ingest. See
+[docs/ingestion-pipeline.md §9.7](docs/ingestion-pipeline.md) for the full
+list of what the new section covers, and Stage 1c / Stage 7b for the
+underlying behaviour.
 
 ---
 
@@ -243,6 +265,43 @@ are test-only seams checked before config and unset in production.)
    override is checked before config and is `null` in production.
 
 Run `npm test` and confirm your suite shows up and passes.
+
+### Test-only LLM injection seams (`opts.generateText` / `ingestMultiPhase`'s `llm` param)
+
+**The rule this pattern exists to enforce: assert behaviour, not the presence
+of a line of source.** A `grep`-shaped assertion ("does this string appear in
+`ingest.js`?") can confirm a line exists; it cannot confirm the line *runs*,
+still less that it runs *correctly* on every input shape that reaches it.
+v3.0.17 found this the hard way: a source-regex assertion for the Phase 1
+budget-sizing instrument gave positive assurance for a value that was
+**always wrong** — a dead-assignment bug meant the "which attempt does this
+measurement report?" question was never actually exercised, because nothing
+drove the code path that would have shown the bug. The fix wasn't a smarter
+regex; it was making the real orchestration function runnable offline.
+
+**The pattern**, first shipped in `compile.js` (`opts.generateText`, v3.0.1-
+beta.27) and reused by `ingestMultiPhase` in `ingest.js` (a trailing `llm`
+parameter, v3.0.17): the orchestration function that drives an LLM through a
+retry/fallback ladder accepts the LLM-calling function itself as a parameter,
+**defaulted to the real one** so every production call site is unaffected.
+A test then passes a small scripted fake — a list of
+`{out: '...', tokens: N}` / `{throw: () => new Error(...), tokens: N}` steps,
+returned in order — and asserts on what the *real* function does with those
+responses: which pages get written, which warnings get pushed, what the
+`console.error`/`console.warn` sizing lines actually say. See
+`scripts/test-ingest-prompt-slimming.js` §20 (`makeFakeLLM`,
+`runMultiPhase`) for the concrete shape, and
+[docs/ingestion-pipeline.md §9.7](docs/ingestion-pipeline.md) for what it
+caught.
+
+**When to reach for this:** the function under test (a) touches no
+filesystem/network itself — only the injected LLM call does — and (b) has a
+retry, fallback, or recovery ladder whose FAILURE paths are exactly the ones
+a source-regex or a single happy-path live-API call won't reliably exercise.
+Both `compile.js` and `ingest.js`'s multi-phase path fit: their defects live
+in "what happens when the second attempt also comes back malformed" territory,
+which is expensive and non-deterministic to hit against a real provider but
+trivial to script.
 
 ### CSS custom-property hygiene (`scripts/test-css-tokens.js`)
 

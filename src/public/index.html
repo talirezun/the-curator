@@ -274,11 +274,20 @@
       <div id="ingest-progress" class="ingest-progress hidden">
         <div class="progress-header">
           <span id="progress-label" class="progress-label">Preparing…</span>
-          <span id="progress-pct" class="progress-pct">0%</span>
+          <span class="progress-meta">
+            <span id="progress-pct" class="progress-pct">0%</span>
+            <span id="progress-elapsed" class="progress-elapsed"></span>
+          </span>
         </div>
         <div class="progress-track">
           <div id="progress-fill" class="progress-fill"></div>
         </div>
+        <!-- v3.0.17: honest expectation-setting note — a single LLM call has no
+             sub-progress to report, so a large document can sit on one phase
+             for a minute or more with no visible movement. The elapsed timer
+             above (ticks every second) + this note replace what used to read
+             as an unexplained hang. -->
+        <div class="progress-note">Large documents can take a minute or more per phase — especially planning. The timer above keeps ticking while the AI works; it isn't stuck.</div>
       </div>
       <div id="ingest-status" class="status hidden"></div>
       <div id="ingest-result" class="result hidden"></div>

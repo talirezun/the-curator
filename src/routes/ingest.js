@@ -144,6 +144,14 @@ router.post('/', upload.single('file'), async (req, res) => {
         warnings: result.warnings || [],  // non-fatal issues (v3.0.1-beta.1)
         truncated: !!result.truncated,    // source-text was longer than 80k chars
         wasOverwrite: overwrite === 'true',
+        // v3.0.16 added real per-call token/cache accounting on the result
+        // ({calls, inputTokens, outputTokens, cachedReadTokens,
+        // cacheWriteTokens, provider, model} — see makeUsageAccumulator in
+        // src/brain/ingest.js), but this route used to pick fields
+        // explicitly and never relayed it, so it never reached the UI.
+        // Passed through as-is (possibly undefined on an older/partial
+        // result shape) — the frontend degrades gracefully when absent.
+        tokenUsage: result.tokenUsage,
       });
     } catch (err) {
       console.error('Ingest error:', err);

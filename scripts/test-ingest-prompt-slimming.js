@@ -41,6 +41,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import {
+  aggregateWarnings,
+  WARNING_AGGREGATION_THRESHOLD,
   capSlugInventory,
   capExistingFilesForPrompt,
   makeUsageAccumulator,
@@ -57,6 +59,7 @@ import {
   normalizeGeminiUsage,
   normalizeAnthropicUsage,
   ANTHROPIC_CACHE_MIN_PREFIX_CHARS,
+  ANTHROPIC_MAX_OUTPUT_TOKENS,
   __testing as llmTesting,
 } from '../src/brain/llm.js';
 import { tokenize } from '../src/brain/sharedbrain-delta.js';
@@ -876,6 +879,860 @@ section('15. DEFECT 2 — a path missing .md is written, not silently discarded'
     __setDomainsDirOverride(null);
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+// ── 16. Phase 1 outline output budget: HELD at 24576, and why ──────────────
+//
+// This section exists to stop BOTH wrong moves on this constant, and to record
+// a measurement mistake precisely enough that it is not repeated.
+//
+// Wrong move 1 — RAISE it, because "the outline was too large for the output
+// limit". Measured over 180 real ingest log entries: the outlines that actually
+// overflowed 24,576 were 44 and 53 pages (≈7,700 / 8,800 chars, ~9-10% of the
+// budget), while 370-, 328-, 316-, 304- and 297-page outlines all cleared the
+// same cap. Overflow is runaway generation, not volume; no budget fixes that.
+//
+// Wrong move 2 — LOWER it on a proxy. That was attempted in this release and
+// reverted. The sizing pass joined page paths in log.md to descriptions in
+// index.md, but the index row is `| Page | Type | Summary |` and the parser
+// captured the TYPE column, measuring every entry as `"summary": "entity"`:
+// ~73 chars per entry instead of the real ~176. That understated the largest
+// real outline by 2.4x and would have set the budget BELOW it.
+section('16. Phase 1 outline budget is HELD at 24576 (proxy-sizing was wrong, and reverted)');
+{
+  const OUTLINE  = ingestTesting.MULTI_PHASE_OUTLINE_TOKENS;
+  const BATCH    = ingestTesting.MULTI_PHASE_BATCH_TOKENS;
+  const SINGLE   = ingestTesting.MULTI_PHASE_SINGLE_PAGE_TOKENS;
+
+  eq(OUTLINE, 24576, 'MULTI_PHASE_OUTLINE_TOKENS is held at 24576');
+  ok(OUTLINE < ANTHROPIC_MAX_OUTPUT_TOKENS,
+    'the outline budget is under Anthropic\'s hard output cap (a raise would be silently clamped)');
+  ok(BATCH < ANTHROPIC_MAX_OUTPUT_TOKENS && SINGLE < ANTHROPIC_MAX_OUTPUT_TOKENS,
+    'the content budgets are under Anthropic\'s hard output cap too');
+
+  // ── The corrected sizing, re-derived here so the arithmetic is checkable ──
+  // Real index.md Summary column, n=2,047: mean 112.5, median 113, p90 160,
+  // p99 191, max 297. An outline entry is JSON syntax + path + that summary.
+  const MEAN_SUMMARY_CHARS = 113;
+  const TYPICAL_PATH = 'concepts/context-engineering.md';   // 31 chars, representative
+  const entryChars = JSON.stringify({ path: TYPICAL_PATH, summary: 'x'.repeat(MEAN_SUMMARY_CHARS) }).length + 6;
+  ok(entryChars > 150 && entryChars < 200,
+    `a real outline entry is ~176 chars, not ~73 (got ${entryChars})`);
+  ok(entryChars > 2 * 73,
+    'the corrected entry size is more than double the figure the reverted change used');
+
+  // The largest outline this repo has ever produced: 370 pages / 65,001 chars.
+  const LARGEST_OUTLINE_PAGES = 370;
+  const LARGEST_OUTLINE_CHARS = 65001;
+  ok(Math.abs(LARGEST_OUTLINE_CHARS / LARGEST_OUTLINE_PAGES - 175.7) < 1,
+    'the largest real outline averages ~176 chars/entry, consistent with the corrected entry size');
+
+  // Its token count cannot be measured offline, and the answer swings ~40%
+  // across plausible chars/token ratios — which is exactly why it must not be
+  // guessed. Two bounds pin the interval:
+  //   (a) that ingest SUCCEEDED under a 24576 cap ⇒ true size <= 24576
+  //       ⇒ the effective ratio is >= 65001/24576 = 2.64 for this payload.
+  //   (b) 4.0 c/tok is an optimistic ceiling (plain English); an outline is
+  //       ~1/3 hyphenated slug, which BPE fragments much more finely.
+  const OPTIMISTIC_CHARS_PER_TOKEN = 4.0;
+  const impliedMinRatio = LARGEST_OUTLINE_CHARS / OUTLINE;
+  ok(Math.abs(impliedMinRatio - 2.64) < 0.02,
+    `succeeding under the cap forces a ratio >= 2.64 c/tok (got ${impliedMinRatio.toFixed(2)})`);
+
+  const lowerBoundTokens = LARGEST_OUTLINE_CHARS / OPTIMISTIC_CHARS_PER_TOKEN;   // 16,250
+  const upperBoundTokens = OUTLINE;                                              // 24,576
+  ok(Math.round(lowerBoundTokens) === 16250,
+    `optimistic lower bound on the largest real outline is 16,250 tok (got ${Math.round(lowerBoundTokens)})`);
+
+  // A component estimate — JSON punctuation ~3.4 c/tok, slug path ~2.5, prose
+  // summary ~4.0, weighted by their real char shares — gives ~3.53 c/tok.
+  const COMPONENT_RATIO = 3.53;
+  const pointEstimate = LARGEST_OUTLINE_CHARS / COMPONENT_RATIO;                 // ≈18,400
+  ok(pointEstimate > 18000 && pointEstimate < 19000,
+    `best point estimate for the largest real outline is ~18,400 tok (got ${Math.round(pointEstimate)})`);
+  ok(pointEstimate > lowerBoundTokens && pointEstimate < upperBoundTokens,
+    'the point estimate sits inside the empirically pinned interval, as it must');
+
+  // THE decisive assertions. Any budget must clear the whole interval, not the
+  // point estimate — the true value is unknown within it.
+  // 16384 is not below the optimistic floor — it is 0.8% above it (16,250),
+  // and 11% BELOW the point estimate. Stated as a required ratio: a 16384
+  // budget only fits the largest real outline if it tokenises at >= 3.97
+  // chars/token, i.e. as efficiently as plain English. A third of an outline is
+  // hyphenated slug, which BPE fragments far more finely than that, so the
+  // budget would have been riding on the single most optimistic assumption
+  // available. That is why it was reverted.
+  const ratioNeededFor16384 = LARGEST_OUTLINE_CHARS / 16384;
+  ok(ratioNeededFor16384 > 3.9,
+    `a 16384 budget needs the outline to tokenise at >= ${ratioNeededFor16384.toFixed(2)} c/tok — plain-English efficiency, which an outline does not have`);
+  ok(16384 < pointEstimate,
+    `a 16384 budget sits below the best point estimate (16,384 < ${Math.round(pointEstimate)}) — unsafe, which is why it was reverted`);
+  ok((16384 - lowerBoundTokens) / lowerBoundTokens < 0.01,
+    'and it clears even the OPTIMISTIC floor by under 1% — no usable margin on any assumption');
+  ok(20480 / pointEstimate < 1.3,
+    `a 20480 budget clears the point estimate by only ${(20480 / pointEstimate).toFixed(2)}x — under the 1.3x bar`);
+  ok(20480 < upperBoundTokens,
+    'a 20480 budget also fails to clear the interval, so it cannot be shown safe either');
+  ok(OUTLINE >= upperBoundTokens,
+    '24576 is the only value the largest observed outline is KNOWN to fit under');
+
+  // And the reason none of this argues for raising it: the outlines that
+  // actually overflowed need ~10% of the budget even at the pessimistic ratio.
+  const OVERFLOWED_53_PAGE_CHARS = 8805;
+  ok((OVERFLOWED_53_PAGE_CHARS / 2.64) < OUTLINE * 0.15,
+    'an outline that DID overflow needs under 15% of the budget — overflow is runaway generation, not volume');
+
+  // ── The replacement for proxy sizing: a real measurement ──────────────────
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  ok((src.match(/reportOutlineUsage\(/g) || []).length >= 4,
+    'Phase 1 usage is reported at both attempts, at the accepted outline, and defined once');
+  ok(/makeCallUsageProbe\(onUsage\)/.test(src),
+    'both outline calls are metered by a probe that wraps the ingest-wide accumulator');
+  ok(/reportOutlineUsage\('complete \(accepted outline\)', acceptedOutlineUsage, allPages\.length\)/.test(src),
+    'the accepted outline is logged WITH its page count — the pages-vs-tokens datapoint sizing needs');
+  ok(src.indexOf('reportOutlineUsage(firstFailedOnTokenLimit') > src.indexOf('firstFailedOnTokenLimit = true;'),
+    'attempt 1 is reported AFTER the catch, so the overflow case (the interesting one) is measured too');
+
+  // Guard the constant itself, in both directions.
+  ok(!/MULTI_PHASE_OUTLINE_TOKENS\s*=\s*(?:[0-9]|1[0-9]|20)\d{3}\b/.test(src),
+    'the outline budget has not been lowered back under 24576');
+  ok(!/MULTI_PHASE_OUTLINE_TOKENS\s*=\s*(?:[3-9]\d{4}|\d{6,})/.test(src),
+    'the outline budget has not been raised into the 30k+ range either');
+  ok(/DO NOT LOWER MULTI_PHASE_OUTLINE_TOKENS ON A PROXY MEASUREMENT/.test(src),
+    'the constant carries the standing warning about proxy sizing');
+  ok(/captured the TYPE\s*\n\/\/ column/.test(src) || /captured the TYPE/.test(src),
+    'the specific measurement error is recorded at the constant, so it is not repeated');
+
+  eq(BATCH, 16384, 'MULTI_PHASE_BATCH_TOKENS left alone at 16384 (~2x headroom over p99)');
+  eq(SINGLE, 8192, 'MULTI_PHASE_SINGLE_PAGE_TOKENS left alone at 8192 (~4x headroom over p99)');
+  eq(ingestTesting.BATCH_SIZE, 4, 'BATCH_SIZE left alone at 4');
+}
+
+// ── 16b. The Phase 1 usage probe: observability must not affect correctness ─
+section('16b. makeCallUsageProbe / reportOutlineUsage (v3.0.17 measurement seam)');
+{
+  const { makeCallUsageProbe, reportOutlineUsage } = ingestTesting;
+
+  // It must forward every event to the ingest-wide accumulator, or the token
+  // total the user sees would silently lose Phase 1's spend.
+  const acc = makeUsageAccumulator();
+  const probe = makeCallUsageProbe(acc.onUsage);
+  probe.onUsage({ inputTokens: 40000, outputTokens: 24576, provider: 'gemini', model: 'm' });
+  probe.onUsage({ inputTokens: 40000, outputTokens: 1200, provider: 'gemini', model: 'm' });
+  eq(acc.totals.calls, 2, 'every probed call still reaches the ingest-wide accumulator');
+  eq(acc.totals.outputTokens, 25776, 'the accumulator still sees the full billed output');
+  eq(probe.totals.calls, 2, 'the probe counts the calls for this step');
+  eq(probe.totals.outputTokens, 25776, 'the probe sums output across fallback-chain rungs (what was BILLED)');
+  eq(probe.totals.inputTokens, 80000, 'the probe sums input too');
+
+  // A throwing outer callback must not propagate — same contract as onWarn.
+  const boomProbe = makeCallUsageProbe(() => { throw new Error('accumulator exploded'); });
+  let threw = false;
+  try { boomProbe.onUsage({ outputTokens: 99 }); } catch { threw = true; }
+  ok(!threw, 'a throwing outer onUsage is swallowed — observability cannot fail an ingest');
+  eq(boomProbe.totals.outputTokens, 99, 'and the probe still records the call');
+
+  // Degenerate inputs must not throw either.
+  const nullProbe = makeCallUsageProbe(null);
+  let threw2 = false;
+  for (const v of [undefined, null, 0, 'x', [], { outputTokens: NaN }, { outputTokens: Infinity }]) {
+    try { nullProbe.onUsage(v); } catch { threw2 = true; }
+  }
+  ok(!threw2, 'the probe tolerates a null outer callback and any payload shape');
+  eq(nullProbe.totals.outputTokens, 0, 'non-finite token counts are ignored rather than poisoning the total');
+  eq(nullProbe.totals.calls, 7, 'but every call is still counted');
+
+  // The reporter must not throw on partial/absent totals, and must never use
+  // console.log (MCP reserves stdout for JSON-RPC frames).
+  let threw3 = false;
+  try {
+    reportOutlineUsage('x', null, null);
+    reportOutlineUsage('x', {}, 0);
+    reportOutlineUsage('x', { outputTokens: 1 }, 370);
+  } catch { threw3 = true; }
+  ok(!threw3, 'reportOutlineUsage tolerates missing totals and missing page counts');
+
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  const reporter = src.slice(src.indexOf('function reportOutlineUsage'),
+                             src.indexOf('function reportOutlineUsage') + 700);
+  ok(reporter.includes('console.error') && !reporter.includes('console.log'),
+    'reportOutlineUsage writes to stderr only (MCP stdout discipline)');
+}
+
+// ── 17. extractPageArray: a planned page can no longer vanish silently ───────
+//
+// The previous code did `singlePages = parseJSON(raw).pages` and then branched
+// on plain truthiness. Two real holes:
+//   • `pages: []` is truthy → accepted as success → the planned page was
+//     written NOWHERE, with no warning. reconcileGeneratedPages cannot catch
+//     that: it reconciles the pages that ARE returned and has no notion of one
+//     that never arrived.
+//   • `pages: {}` is truthy but not iterable → `push(...pages)` throws a
+//     TypeError that escapes and kills the whole ingest.
+section('17. extractPageArray — only a non-empty array counts as a written page');
+{
+  const f = ingestTesting.extractPageArray;
+
+  eq(f(null), null, 'null raw (the call threw a recoverable error) → null');
+  eq(f(undefined), null, 'undefined raw → null');
+  eq(f(''), null, 'empty string → null');
+  eq(f('   '), null, 'whitespace-only string → null');
+  eq(f('not json at all'), null, 'unparseable text → null');
+  eq(f('{'), null, 'truncated JSON → null');
+  eq(f('{}'), null, 'object with no "pages" key → null');
+  eq(f('null'), null, 'the literal JSON null → null');
+  eq(f('[]'), null, 'a bare array (no "pages" wrapper) → null');
+  eq(f('{"pages": null}'), null, '"pages": null → null');
+  eq(f('{"pages": []}'), null, 'EMPTY pages array → null (was silently accepted as success)');
+  eq(f('{"pages": {}}'), null, 'non-array "pages" → null (was a TypeError that killed the ingest)');
+  eq(f('{"pages": "nope"}'), null, 'string "pages" → null');
+  eq(f('{"pages": 3}'), null, 'numeric "pages" → null');
+
+  const good = f('{"pages": [{"path": "concepts/x.md", "content": "# X", "summary": "s"}]}');
+  ok(Array.isArray(good) && good.length === 1 && good[0].path === 'concepts/x.md',
+    'a well-formed single-page response is returned as an array');
+
+  // parseJSON's markdown-fence + brace-extraction + jsonrepair path must still
+  // be reachable through the helper — the models really do wrap output.
+  const fenced = f('```json\n{"pages": [{"path": "entities/y.md", "content": "# Y"}]}\n```');
+  ok(Array.isArray(fenced) && fenced[0].path === 'entities/y.md',
+    'a markdown-fenced response still parses (parseJSON is doing the work)');
+
+  // It must never throw, whatever it is handed.
+  let threw = false;
+  for (const v of [0, 1, true, false, {}, [], () => {}, Symbol('x'), 12n, NaN]) {
+    try { f(v); } catch { threw = true; }
+  }
+  ok(!threw, 'extractPageArray never throws, on any input type');
+
+  // Source guard: the old truthiness path must be gone from the fallback loop.
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  ok(!/singlePages\s*=\s*parseJSON\(/.test(src),
+    'the page-by-page fallback no longer assigns parseJSON(...).pages straight to singlePages');
+  ok(/singlePages\s*=\s*extractPageArray\(/.test(src),
+    'the page-by-page fallback routes both attempts through extractPageArray');
+}
+
+// ── 18. One concise retry before a stub page is written ─────────────────────
+//
+// A stub is a user-visible defect: a placeholder the user must notice and
+// re-ingest to fix. A page that overruns 8,192 output tokens for a body the
+// prompt asks to be "3–8 concise bullet points" has not failed for lack of
+// capability — it over-generated. One brevity-directed retry targets that
+// directly, and if it also fails the stub is written exactly as before, so the
+// OUTCOME is never worse than the previous behaviour.
+section('18. Concise single-page retry (v3.0.17) before falling back to a stub');
+{
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  const D = ingestTesting.CONCISE_PAGE_DIRECTIVE;
+
+  ok(typeof D === 'string' && D.length > 0, 'CONCISE_PAGE_DIRECTIVE is a non-empty string');
+  ok(/BE BRIEF/.test(D), 'the directive leads with an unambiguous brevity instruction');
+  ok(/\bbullet points\b/.test(D) && /\bwords\b/.test(D),
+    'the directive puts a concrete cap on both bullets and words');
+  ok(/ONLY the JSON object/.test(D), 'the directive re-states the JSON-only contract');
+  ok(/response length limit/.test(D), 'the directive tells the model WHY it is being asked again');
+
+  // The cacheable prefix must not move. buildBatchPromptParts splits
+  // [stable prefix | volatile page list]; the directive belongs on the suffix,
+  // or every retry invalidates the Anthropic cache breakpoint the batch set up.
+  const page = { path: 'concepts/x.md', summary: 'a concept' };
+  const parts = buildBatchPromptParts(TODAY, 'test-source.pdf', SOURCE_TEXT, [page], SMALL_FILES, [page]);
+  const retryPrompt = parts.prefix + parts.suffix + D;
+  ok(retryPrompt.startsWith(parts.prefix),
+    'the retry prompt still starts with the byte-identical cacheable prefix');
+  ok(retryPrompt.endsWith(D), 'the directive is appended at the very end of the prompt');
+  ok(!parts.prefix.includes('BE BRIEF'), 'the directive never leaks into the cacheable prefix');
+  ok(/singleParts\.prefix \+ singleParts\.suffix \+ CONCISE_PAGE_DIRECTIVE/.test(src),
+    'source: the retry composes prefix + suffix + directive, in that order');
+  ok(!/prefix \+ CONCISE_PAGE_DIRECTIVE/.test(src),
+    'source: the directive is never concatenated straight onto the prefix');
+
+  // The retry must reuse the SAME budget — raising it here would re-create the
+  // runaway-burn problem this release is fixing, one page at a time.
+  const retryBlock = src.slice(src.indexOf('retrying with a brevity directive'),
+                               src.indexOf('stub created.'));
+  ok(retryBlock.includes('MULTI_PHASE_SINGLE_PAGE_TOKENS'),
+    'the concise retry reuses the single-page budget rather than raising it');
+  ok(retryBlock.includes('cachePrefixChars'),
+    'the concise retry still passes a cache breakpoint so the prefix is read back, not re-sent');
+  ok(retryBlock.includes('onUsage'),
+    'the concise retry is metered — its spend shows up in the ingest\'s token total');
+
+  // Error gating: only a recoverable failure may reach the retry. A 503 / 429 /
+  // auth / network error must still propagate untouched, or an outage gets
+  // silently converted into short pages and stubs.
+  ok(/if \(!isOutputTokenLimit\(conciseErr\)\) throw conciseErr;/.test(src),
+    'a non-token-limit error on the concise retry re-throws immediately');
+  // Five generateText calls sit on the multi-phase path — outline, outline
+  // retry, batch, single page, concise single-page retry — and EVERY one of
+  // them must re-throw anything that is not an output-token-limit. Widening
+  // that gate is how a provider outage turns into a wiki full of stub pages
+  // (the v3.0.1-beta.15 audit finding). The concise retry added one more call,
+  // so this count going to 6 without a matching guard is a regression.
+  eq((src.match(/if \(!isOutputTokenLimit\([a-zA-Z0-9]+\)\) throw [a-zA-Z0-9]+;/g) || []).length, 5,
+    'all 5 generateText calls in the multi-phase path re-throw non-token-limit errors');
+
+  // The stub path must survive as the last resort.
+  ok(/Stub page created for/.test(src), 'the stub fallback is still written when the retry also fails');
+  // Anchored inside the fallback loop itself — 'Stub page created for' also
+  // appears in AGGREGATABLE_WARNINGS' matcher, earlier in the file.
+  const loop = src.slice(src.indexOf('const cacheSinglePages ='));
+  ok(loop.indexOf('retrying with a brevity directive') < loop.indexOf('Stub page created for'),
+    'the concise retry is attempted BEFORE the stub, not after');
+  ok(loop.indexOf('CONCISE_PAGE_DIRECTIVE') < loop.indexOf('stubPageContent('),
+    'and the directive is used before the stub body is ever built');
+}
+
+// ── 19. Ingest warning wording is accurate about CAUSE and COST ────────────
+//
+// Every string here was reworded because it asserted something that was not
+// reliably true. Bucketing is covered separately in section 21, against a
+// mirror of the real classifyIngestEntry; this section is about honesty.
+section('19. Ingest warning wording states the true cause and the true cost');
+{
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  // NEGATIVE assertions run against a comment-stripped view. The comments in
+  // ingest.js deliberately QUOTE the wording they replaced, to explain why —
+  // matching the whole file would flag that documentation as a regression.
+  const code = src.split('\n')
+    .filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l))
+    .join('\n');
+
+  // Round 1: the original text told the user their outline was too large. It
+  // was not — the outlines that overflow are the SMALL ones (44–53 pages).
+  ok(!code.includes('Phase 1 outline was too large for the AI output limit'),
+    'the misleading "outline was too large" wording is gone');
+  ok(!code.includes('Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.'),
+    'the terse malformed-JSON wording is replaced too');
+  ok(/ran past its response length limit/.test(src),
+    'the token-limit warning says the AI over-ran, not that the plan was too big');
+
+  // Round 2 (audit): the replacement claimed the recovered plan was "complete",
+  // which asserts the exact property the retry trades away — item 4 of the
+  // strict prompt asks for FEWER, broader pages.
+  ok(!/plan below is complete/.test(code),
+    'the "plan below is complete" claim is gone — the retry deliberately plans fewer pages');
+  ok(/asks for FEWER, broader pages/.test(src),
+    'the warning now discloses that the recovered plan is coarser');
+  ok(/Plan FEWER, broader pages/.test(src),
+    'and the strict prompt it refers to really does ask for that (the claim is grounded)');
+
+  // …and it guessed the call count and omitted the input cost entirely.
+  ok(!/one extra AI call/.test(code),
+    'the hard-coded "one extra AI call" guess is gone (llm.js may make several)');
+  ok(/\$\{planningCalls\} AI calls instead of 1/.test(src),
+    'the call count is interpolated from the probes, i.e. measured');
+  ok(/const planningCalls = \(outlineProbe\.totals\.calls \|\| 0\) \+ \(retryProbe\.totals\.calls \|\| 0\)/.test(src),
+    'and it sums BOTH attempts\' provider calls');
+  ok(/sent to the AI twice/.test(src),
+    'the doubled INPUT spend is disclosed — the larger cost on a mature domain');
+
+  // The concise-page retry fires on FOUR causes, so its message cannot name one.
+  ok(!/overran the AI's response limit on the first try/.test(code),
+    'the single-cause "overran the response limit" wording is gone');
+  ok(/came back unusable/.test(src),
+    'the concise-retry warning is cause-neutral — it states only what is certainly true');
+  ok(/briefer than the rest/.test(src),
+    'it keeps the exact phrase app.js classifyIngestEntry uses as its dedicated amber trigger');
+  ok(!/not a stub page/.test(code),
+    'and the backwards "not a stub page" negation is gone — amber no longer depends on a negated trigger');
+
+  // The salvage path (v3.0.17): an outline that never produced a usable plan.
+  ok(/never returned a usable page plan/.test(src),
+    'a salvaged, almost-certainly-incomplete ingest says so plainly');
+  ok(/almost certainly incomplete/.test(src),
+    'and does not dress the salvage up as a success');
+
+  // The genuinely actionable one keeps the literal text the UI keys on.
+  ok(/Stub page created for "\$\{singlePage\.path\}"/.test(src),
+    'the stub warning keeps its literal "Stub page" text');
+}
+
+// ── 20. Multi-phase orchestration, driven by a fake LLM (v3.0.17 audit) ────
+//
+// Everything below is EXECUTABLE, not a source regex. Two of the defects this
+// section covers were shipped with green source-level assertions next to them:
+// a source guard can confirm a line exists, it cannot confirm the line runs.
+// ingestMultiPhase touches no filesystem, so injecting the LLM (its trailing
+// `llm` param, defaulted to the real generateText) exercises the real Phase 1
+// retry ladder and Phase 2 fallback ladder offline and for free.
+section('20. Multi-phase orchestration under a fake LLM (Phase 1 retry + Phase 2 fallback)');
+{
+  const { ingestMultiPhase } = ingestTesting;
+  const SUMMARY = 'summaries/fake-source.md';
+  const NO_FILES = { entities: [], concepts: [] };
+
+  const outlineJSON = (paths) => JSON.stringify({
+    title: 'Fake Source',
+    pages: paths.map(p => ({ path: p, summary: `description of ${p}` })),
+  });
+  const pagesJSON = (paths) => JSON.stringify({
+    pages: paths.map(p => ({ path: p, content: `# ${p}\n\n- a bullet\n`, summary: `s ${p}` })),
+  });
+  const tokenLimitError = () =>
+    new Error('⚠ Gemini hit the output token limit (24576 tokens) on this call.');
+
+  // Scripted fake LLM. Each step is {out, tokens} to return, or {throw, tokens}.
+  // Usage is reported BEFORE the throw, exactly as llm.js does — a truncated
+  // response is a call that ran and was billed.
+  function makeFakeLLM(steps) {
+    const prompts = [];
+    let i = 0;
+    const llm = async (schema, prompt, maxTokens, format, onRetry, opts) => {
+      const step = steps[Math.min(i, steps.length - 1)];
+      i++;
+      prompts.push(prompt);
+      if (opts && typeof opts.onUsage === 'function') {
+        opts.onUsage({ inputTokens: 1000, outputTokens: step.tokens || 0, provider: 'fake', model: 'fake-1' });
+      }
+      if (step.throw) throw step.throw();
+      return step.out;
+    };
+    return { llm, prompts, calls: () => i };
+  }
+
+  async function runMultiPhase(steps) {
+    const warnings = [];
+    const acc = makeUsageAccumulator();
+    const fake = makeFakeLLM(steps);
+    const logged = [];
+    const realError = console.error, realWarn = console.warn;
+    console.error = (...a) => logged.push(a.join(' '));
+    console.warn  = (...a) => logged.push(a.join(' '));
+    let result = null, thrown = null;
+    try {
+      result = await ingestMultiPhase(
+        'schema', '2026-08-22', '', NO_FILES, 'fake-source.md', 'Some source text.',
+        false, () => {}, SUMMARY, warnings, [], NO_FILES, acc.onUsage, fake.llm);
+    } catch (e) { thrown = e; }
+    finally { console.error = realError; console.warn = realWarn; }
+    return { result, thrown, warnings, logged, acc, fake };
+  }
+
+  // ── HIGH-1: the sizing instrument must report the ACCEPTED attempt ─────────
+  // Attempt 1 runs away and burns the whole budget; the retry recovers cheaply.
+  // The "complete (accepted outline)" line is the datapoint the constant's
+  // comment block designates for sizing, so it MUST carry the retry's 2,500 —
+  // not attempt 1's 24,576, which would imply ~10x the true per-page cost and
+  // argue for raising a budget the same comment proves should not move.
+  {
+    const r = await runMultiPhase([
+      { throw: tokenLimitError, tokens: 24576 },                       // outline attempt 1
+      { out: outlineJSON([SUMMARY, 'entities/a.md']), tokens: 2500 },  // outline retry
+      { out: pagesJSON([SUMMARY, 'entities/a.md']), tokens: 900 },     // batch
+    ]);
+    ok(!r.thrown, 'the ingest recovers from a Phase 1 output-token overflow');
+    const accepted = r.logged.filter(l => l.includes('complete (accepted outline)'));
+    eq(accepted.length, 1, 'exactly one "accepted outline" sizing line is emitted');
+    ok(accepted[0].includes('2,500 output tokens'),
+      `the accepted line reports the RETRY's spend (got: ${accepted[0].replace(/^\[ingest\] /, '')})`);
+    ok(!accepted[0].includes('24,576 output tokens'),
+      'the accepted line does NOT report the failed attempt\'s burn — the HIGH-1 regression');
+    ok(accepted[0].includes('2 pages'), 'the accepted line carries the page count for pages-vs-tokens sizing');
+    ok(r.logged.some(l => l.includes('OVERFLOWED') && l.includes('24,576 output tokens')),
+      'attempt 1 is still reported separately, at 100% of budget');
+    ok(r.logged.some(l => l.includes('outline retry') && l.includes('2,500 output tokens')),
+      'the retry is reported separately too');
+    eq(r.acc.totals.calls, 3, 'every probed call still reaches the ingest-wide billing total');
+    eq(r.acc.totals.outputTokens, 27976, 'the billing total includes the wasted attempt');
+  }
+
+  // ── MEDIUM-1: the Phase 1 warning must not claim the plan is "complete" ────
+  {
+    const r = await runMultiPhase([
+      { throw: tokenLimitError, tokens: 24576 },
+      { out: outlineJSON([SUMMARY, 'entities/a.md']), tokens: 2500 },
+      { out: pagesJSON([SUMMARY, 'entities/a.md']), tokens: 900 },
+    ]);
+    const w = r.warnings.find(x => x.includes('ran past its response length limit'));
+    ok(w, 'the Phase 1 token-limit warning is raised');
+    ok(!/plan below is complete/.test(w),
+      'it no longer claims the recovered plan is "complete" — the retry asks for FEWER pages');
+    ok(/FEWER, broader pages/.test(w),
+      'it tells the user the plan is deliberately coarser than a first-attempt plan');
+    ok(/grouped under a parent page/.test(w),
+      'it explains what "coarser" means in practice');
+    ok(/took 2 AI calls instead of 1/.test(w),
+      `it reports the MEASURED call count, not a guess (got: ${w.slice(-90)})`);
+    ok(/sent to the AI twice/.test(w),
+      'it discloses the doubled INPUT spend, which the old wording omitted entirely');
+    ok(!/one extra AI call/.test(w), 'the hard-coded "one extra AI call" claim is gone');
+  }
+
+  // A malformed-JSON first attempt takes the same path with its own opening.
+  {
+    const r = await runMultiPhase([
+      { out: 'not json at all', tokens: 800 },
+      { out: outlineJSON([SUMMARY, 'entities/a.md']), tokens: 2500 },
+      { out: pagesJSON([SUMMARY, 'entities/a.md']), tokens: 900 },
+    ]);
+    const w = r.warnings.find(x => x.includes('malformed JSON'));
+    ok(w, 'a malformed first outline raises its own warning');
+    ok(/FEWER, broader pages/.test(w) && /took 2 AI calls/.test(w),
+      'and carries the same accurate coarser-plan + call-count disclosure');
+  }
+
+  // ── HIGH-2: the BATCH path is guarded, not just the single-page fallback ───
+  // These shapes are all truthy, so before the fix the page-by-page fallback
+  // never fired. `{"pages": []}` dropped every planned page of the batch with no
+  // file, no stub and no warning; the rest threw "not iterable" out of
+  // ingestMultiPhase and killed the whole ingest.
+  const BATCH_SHAPES = [
+    ['{"pages": []}',            'an EMPTY pages array (silently dropped 4 planned pages)'],
+    ['{"pages": {}}',            'a non-array "pages" (threw "not iterable" and killed the ingest)'],
+    ['{"pages": null}',          'a null "pages"'],
+    ['[{"path":"x"}]',           'a bare array with no "pages" wrapper'],
+    ['{"title": "no pages"}',    'an object with no "pages" key at all'],
+    ['{"pages": [1, 2, 3]}',     'an array of non-objects'],
+    ['{"pages": [{"content":"orphan"}]}', 'an array whose entries carry no path'],
+  ];
+  for (const [batchBody, label] of BATCH_SHAPES) {
+    const planned = [SUMMARY, 'entities/a.md', 'concepts/b.md'];
+    const r = await runMultiPhase([
+      { out: outlineJSON(planned), tokens: 2000 },   // outline OK
+      { out: batchBody, tokens: 500 },               // batch returns junk
+      { out: pagesJSON([SUMMARY]), tokens: 300 },    // page-by-page picks it up
+      { out: pagesJSON(['entities/a.md']), tokens: 300 },
+      { out: pagesJSON(['concepts/b.md']), tokens: 300 },
+    ]);
+    ok(!r.thrown, `batch returning ${label} does not kill the ingest`);
+    const got = new Set((r.result ? r.result.pages : []).map(p => p.path));
+    ok(planned.every(p => got.has(p)),
+      `  …and every planned page still lands (${got.size}/${planned.length} written)`);
+  }
+
+  // Control: a WELL-FORMED batch must still be taken on the first attempt, with
+  // no fallback calls — the guard must not cost a healthy ingest anything.
+  {
+    const planned = [SUMMARY, 'entities/a.md', 'concepts/b.md'];
+    const r = await runMultiPhase([
+      { out: outlineJSON(planned), tokens: 2000 },
+      { out: pagesJSON(planned), tokens: 1500 },
+      { out: '{"pages": []}', tokens: 1 },   // must never be reached
+    ]);
+    eq(r.fake.calls(), 2, 'a healthy multi-phase ingest still makes exactly 2 calls (outline + one batch)');
+    eq(r.result.pages.length, 3, 'and writes every planned page from the batch response');
+    ok(!r.warnings.some(w => /Stub page/.test(w)), 'with no stub pages');
+  }
+
+  // ── MEDIUM-2 + the concise retry, end to end ──────────────────────────────
+  {
+    const planned = [SUMMARY, 'entities/a.md'];
+    const r = await runMultiPhase([
+      { out: outlineJSON(planned), tokens: 2000 },
+      { out: '{"pages": []}', tokens: 400 },              // batch unusable → page-by-page
+      { out: '{"pages": []}', tokens: 300 },              // single page 1 unusable
+      { out: pagesJSON([SUMMARY]), tokens: 200 },         // …concise retry rescues it
+      { out: pagesJSON(['entities/a.md']), tokens: 200 }, // single page 2 fine
+    ]);
+    ok(!r.thrown, 'a page rescued by the concise retry does not break the ingest');
+    eq(r.result.pages.length, 2, 'both planned pages are written');
+    ok(!r.warnings.some(w => /Stub page created/.test(w)),
+      'the rescued page is NOT a stub — the concise retry did its job');
+    const w = r.warnings.find(x => x.includes('came back unusable'));
+    ok(w, 'the rescue is disclosed to the user');
+    ok(!/overran the AI's response limit/.test(w),
+      'the wording is CAUSE-NEUTRAL — this page failed on an empty array, not a token limit');
+    ok(/This is real content/.test(w), 'it states plainly that the page is real content');
+    ok(/briefer than the rest/.test(w), 'and keeps the phrase app.js buckets it amber on');
+  }
+
+  // Both attempts fail → the stub is still the last resort, unchanged.
+  {
+    const planned = [SUMMARY];
+    const r = await runMultiPhase([
+      { out: outlineJSON(planned), tokens: 2000 },
+      { out: '{"pages": []}', tokens: 400 },   // batch
+      { out: '{"pages": []}', tokens: 300 },   // single
+      { out: '{"pages": []}', tokens: 200 },   // concise retry
+    ]);
+    ok(!r.thrown, 'exhausting every retry still completes the ingest');
+    eq(r.result.pages.length, 1, 'the planned page is present as a stub, not missing');
+    ok(/Stub page/.test(r.result.pages[0].content), 'and it is the clearly-marked stub body');
+    ok(r.warnings.some(w => /Stub page created for/.test(w)), 'with the amber stub warning');
+  }
+
+  // ── The salvage path (v3.0.17, found by this very suite) ──────────────────
+  // parseJSON is lenient: jsonrepair turns the bare text `not json at all` into
+  // the STRING "not json at all", which is truthy. The old `if (!outline)` check
+  // accepted that as a successful outline and SKIPPED the retry, after which
+  // validateOutline degraded it to a summary-only plan — an 80,000-char source
+  // could produce a one-page wiki. Now it counts as a failure and retries; if
+  // the retry is also unusable we still salvage rather than fail, so the change
+  // is strictly no-worse, but we say loudly that the ingest is incomplete.
+  {
+    const r = await runMultiPhase([
+      { out: 'not json at all', tokens: 900 },   // attempt 1: truthy garbage
+      { out: 'still not json',  tokens: 900 },   // retry: also garbage
+      { out: pagesJSON([SUMMARY]), tokens: 300 },
+    ]);
+    ok(!r.thrown, 'two unusable outlines still complete the ingest rather than failing it');
+    ok(r.fake.calls() >= 2, 'the truthy-garbage first outline DID trigger the retry (it used to be accepted)');
+    const w = r.warnings.find(x => /never returned a usable page plan/.test(x));
+    ok(w, 'the salvage is disclosed');
+    ok(/almost certainly incomplete/.test(w), 'and is not dressed up as a success');
+    ok(!r.warnings.some(x => /asked again for a shorter plan and that succeeded/.test(x)),
+      'the "retry recovered" warning is NOT claimed when the retry did not recover');
+    ok(r.result.pages.some(p => p.path === SUMMARY),
+      'the canonical summary is still rescued by validateOutline');
+  }
+
+  // A usable retry after truthy garbage takes the normal recovery path.
+  {
+    const r = await runMultiPhase([
+      { out: '{"pages": []}', tokens: 900 },                          // truthy, unusable
+      { out: outlineJSON([SUMMARY, 'entities/a.md']), tokens: 2500 },
+      { out: pagesJSON([SUMMARY, 'entities/a.md']), tokens: 900 },
+    ]);
+    ok(!r.warnings.some(x => /never returned a usable page plan/.test(x)),
+      'a recovered retry does NOT emit the salvage warning');
+    ok(r.warnings.some(x => /malformed JSON/.test(x)),
+      'an empty page list is reported as an unusable first plan');
+    eq(r.result.pages.length, 2, 'and the full recovered plan is written');
+  }
+
+  // ── The standing invariant: a genuine outage must never become stub pages ──
+  for (const [where, steps] of [
+    ['the outline call', [{ throw: () => new Error('503 Service Unavailable'), tokens: 0 }]],
+    ['the outline retry', [
+      { throw: tokenLimitError, tokens: 24576 },
+      { throw: () => new Error('429 Too Many Requests'), tokens: 0 }]],
+    ['a batch call', [
+      { out: outlineJSON([SUMMARY]), tokens: 2000 },
+      { throw: () => new Error('503 Service Unavailable'), tokens: 0 }]],
+    ['a single-page call', [
+      { out: outlineJSON([SUMMARY]), tokens: 2000 },
+      { out: '{"pages": []}', tokens: 400 },
+      { throw: () => new Error('fetch failed'), tokens: 0 }]],
+    ['the concise retry', [
+      { out: outlineJSON([SUMMARY]), tokens: 2000 },
+      { out: '{"pages": []}', tokens: 400 },
+      { out: '{"pages": []}', tokens: 300 },
+      { throw: () => new Error('503 Service Unavailable'), tokens: 0 }]],
+  ]) {
+    const r = await runMultiPhase(steps);
+    ok(r.thrown && !/Stub page/.test(String(r.thrown.message)),
+      `a non-token-limit error on ${where} propagates as the real error, not a stub`);
+  }
+}
+
+// ── 21. The concise-retry warning must land in the amber "For review" bucket ─
+//
+// Run against a faithful copy of classifyIngestEntry from src/public/app.js —
+// which is NOT ours to edit, so the coupling is asserted here instead. If that
+// function's trigger list changes, this section fails and tells us to re-check
+// rather than letting a warning silently change colour.
+section('21. Warning classification against the real app.js buckets');
+{
+  // Mirrors classifyIngestEntry (src/public/app.js), order-sensitive.
+  function classify(w) {
+    const lc = String(w || '').toLowerCase();
+    if (lc.includes('injected the trunk page') || lc.includes('hub linkification') ||
+        lc.includes('injected entities/') || lc.includes('injected the canonical summary') ||
+        lc.includes('redirected to canonical') || lc.includes('redirected; bullets will merge') ||
+        (lc.includes('dropping') && lc.includes('content will merge'))) return 'fixed';
+    if (lc.includes('keeping both') || lc.includes("don't resolve") ||
+        lc.includes('do not resolve') || lc.includes('stub page') ||
+        lc.includes('briefer than the rest')) return 'review';
+    if (lc.includes('truncated to')) return 'attention';
+    return 'info';
+  }
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+
+  // Guard the mirror itself: if app.js's trigger list drifts, fail loudly.
+  const appSrc = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
+  const fn = appSrc.slice(appSrc.indexOf('function classifyIngestEntry'),
+                          appSrc.indexOf('function renderIngestWarnings'));
+  for (const trigger of ['keeping both', "don't resolve", 'do not resolve', 'stub page', 'truncated to',
+                         'briefer than the rest']) {
+    ok(fn.includes(trigger), `app.js still keys on "${trigger}" (the mirror above stays faithful)`);
+  }
+
+  const CONCISE = 'The AI\'s first attempt at "concepts/x.md" came back unusable, so The Curator asked '
+    + 'for a shorter version and saved that instead. This is real content, but it is '
+    + 'briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.';
+  ok(src.includes('`for a shorter version and saved that instead. This is real content, but it is `'),
+    'the concise-retry warning in ingest.js matches the string under test');
+  eq(classify(CONCISE), 'review',
+    'the concise-retry warning lands in ⚠ For review — it ends in an instruction to go and look');
+
+  // The Phase 1 recoveries are informational: they describe a completed
+  // recovery, there is nothing for the user to do.
+  const P1_TOKEN = 'While planning the page list, the AI ran past its response length limit — it generated far '
+    + 'more than a plan needs. The Curator asked again for a shorter plan and that succeeded, so the ingest '
+    + 'completed. Note that the retry explicitly asks for FEWER, broader pages, so the page list below is '
+    + 'coarser than a first-attempt plan would have been — some detail is grouped under a parent page instead '
+    + 'of getting its own. Planning took 2 AI calls instead of 1, and your source document was sent to the AI twice.';
+  eq(classify(P1_TOKEN), 'info', 'the Phase 1 token-limit warning stays ℹ Info');
+  eq(classify('The AI\'s first page plan came back as malformed JSON. ' + P1_TOKEN.slice(P1_TOKEN.indexOf('The Curator'))),
+    'info', 'the Phase 1 malformed-JSON warning stays ℹ Info');
+
+  // The genuinely actionable one keeps its amber bucket.
+  eq(classify('Stub page created for "concepts/x.md" — LLM could not generate content. Re-ingest to fix.'),
+    'review', 'the stub warning stays ⚠ For review');
+
+  // The coupling is documented at the call site so it survives a future edit.
+  ok(/CLASSIFIER COUPLING, deliberate/.test(src),
+    'ingest.js documents the coupling at the call site');
+  ok(/KEEP the phrase "briefer than\s*\n?\s*\/\/ the rest"|KEEP the phrase "briefer than/.test(src),
+    'and names the exact phrase that must survive a reword');
+}
+
+// ── 22. Same-class warnings are aggregated before anyone reads them ────────
+//
+// A live re-run on a mature articles-scale domain produced 75 warnings, 58 of
+// them the SAME sentence with a different page path. 77% of the report was one
+// message, and the entries that needed action — one stub page, one stray
+// summary, five rewritten pages — were buried under it.
+//
+// Note what these assertions are NOT protecting: the .md fix itself. Those 58
+// pages were SILENTLY DROPPED before v3.0.16. The fix stays exactly as it is;
+// only its reporting changes.
+section('22. aggregateWarnings — one repeated slip cannot drown the report');
+{
+  // Mirrors classifyIngestEntry (src/public/app.js). Bucket preservation is the
+  // whole risk of aggregation: collapse a group and you can silently change its
+  // colour, because that classifier matches on SUBSTRINGS the members carried.
+  function classify(w) {
+    const lc = String(w || '').toLowerCase();
+    if (lc.includes('injected the trunk page') || lc.includes('hub linkification') ||
+        lc.includes('injected entities/') || lc.includes('injected the canonical summary') ||
+        lc.includes('redirected to canonical') || lc.includes('redirected; bullets will merge') ||
+        (lc.includes('dropping') && lc.includes('content will merge'))) return 'fixed';
+    if (lc.includes('keeping both') || lc.includes("don't resolve") ||
+        lc.includes('do not resolve') || lc.includes('stub page') ||
+        lc.includes('briefer than the rest')) return 'review';
+    if (lc.includes('truncated to')) return 'attention';
+    return 'info';
+  }
+
+  const mdW      = p => `Page path "${p}" was missing the .md extension — wrote it as "${p}.md".`;
+  const conciseW = p => `The AI's first attempt at "${p}" came back unusable, so The Curator asked for a shorter version and saved that instead. This is real content, but it is briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.`;
+  const stubW    = p => `Stub page created for "${p}" — LLM could not generate content. Re-ingest to fix.`;
+  const batchW   = (n, t) => `Batch ${n} of ${t} was too large for the AI's output limit — wrote those pages individually instead.`;
+  const noPathW  = () => 'The AI returned a page with no path — it could not be written.';
+  const semDupeW = i => `Outline proposed "concepts/s-${i}.md" — possible semantic near-duplicate (Jaccard 0.50) of existing "concepts/t-${i}.md". Keeping both; review via Wiki Health → Scan for semantic duplicates if they're truly the same concept.`;
+
+  eq(WARNING_AGGREGATION_THRESHOLD, 3, 'the aggregation threshold is 3');
+
+  // ── The reported case, reconstructed at its real proportions ──────────────
+  {
+    const w = [];
+    for (let i = 0; i < 58; i++) w.push(mdW(`concepts/p-${i}`));
+    for (let i = 0; i < 5; i++)  w.push(conciseW(`concepts/r-${i}`));
+    for (let i = 1; i <= 4; i++) w.push(batchW(i, 15));
+    for (let i = 0; i < 3; i++)  w.push(semDupeW(i));
+    w.push(stubW('concepts/z.md'));
+    w.push('The AI invented 1 extra summary page (summaries/x.md) — merged into the canonical summary "summaries/s.md" instead of creating duplicates, so re-ingesting this source still updates the same page.');
+    w.push("20 of 1126 wikilinks (1.8%) don't resolve to an existing page. Examples: a, b, c…. Run Wiki Health → Ask AI to fix or strip them, or re-ingest with broader entity coverage.");
+
+    const out = aggregateWarnings(w);
+    ok(out.length <= 12, `74 warnings collapse to a readable report (got ${out.length})`);
+    eq(out.filter(x => /missing the \.md extension/.test(x)).length, 0,
+      'not one of the 58 individual .md lines survives');
+    const md = out.find(x => /without the "\.md" extension/.test(x));
+    ok(md, 'they are replaced by a single counted entry');
+    ok(md.includes('58 page paths'), 'which reports the true count');
+    ok(md.includes('concepts/p-0') && md.includes('…and 55 more'),
+      'with a few examples and an explicit "and N more" — never an unbounded list');
+    ok(/nothing was lost/.test(md) && /change list above/.test(md),
+      'and tells the user nothing was lost and where the per-page detail lives');
+
+    // The signal that was being buried must still be individually readable.
+    ok(out.some(x => x === stubW('concepts/z.md')),
+      'the single stub page stays as its own specific, actionable line');
+    ok(out.some(x => /extra summary page/.test(x)), 'the stray summary survives verbatim');
+    ok(out.filter(x => /Keeping both/.test(x)).length === 3,
+      'semantic near-duplicates are NOT aggregated — each names a specific pair to decide about');
+
+    // Order is preserved, aggregates landing at their first member's position.
+    ok(out.indexOf(md) === 0, 'an aggregate takes the position of the group\'s first member');
+  }
+
+  // ── Threshold behaviour ───────────────────────────────────────────────────
+  for (const n of [1, 2]) {
+    const w = Array.from({ length: n }, (_, i) => mdW(`concepts/a-${i}`));
+    const out = aggregateWarnings(w);
+    eq(out.length, n, `${n} occurrence(s) stay as specific per-page lines (below the threshold)`);
+    ok(out.every(x => /missing the \.md extension/.test(x)), '  …with their original wording');
+  }
+  {
+    const out = aggregateWarnings([mdW('a'), mdW('b'), mdW('c')]);
+    eq(out.length, 1, 'exactly 3 occurrences DO aggregate (the threshold is inclusive)');
+    ok(out[0].includes('3 page paths') && !out[0].includes('and 0 more'),
+      '  …reporting 3 with no misleading "and N more" tail');
+  }
+
+  // ── Bucket preservation, per class ────────────────────────────────────────
+  const CASES = [
+    ['missing .md',    Array.from({ length: 5 }, (_, i) => mdW(`e/${i}`)),      'info',
+     'nothing was lost and there is no user action, so it stays quiet blue'],
+    ['concise rewrite', Array.from({ length: 5 }, (_, i) => conciseW(`e/${i}`)), 'review',
+     'it ends in an instruction to go and look'],
+    ['stub pages',     Array.from({ length: 5 }, (_, i) => stubW(`e/${i}`)),    'review',
+     'placeholders always need the user'],
+    ['batch overflow', Array.from({ length: 5 }, (_, i) => batchW(i, 20)),      'info',
+     'recovered automatically with nothing lost'],
+    ['no path',        Array.from({ length: 5 }, () => noPathW()),              'info',
+     'matching the bucket its members already had'],
+  ];
+  for (const [label, members, expected, why] of CASES) {
+    const out = aggregateWarnings(members);
+    eq(out.length, 1, `${label}: 5 members collapse to 1`);
+    eq(classify(out[0]), expected, `  …and the aggregate is ${expected} — ${why}`);
+    // The members' own bucket must not change under the collapse.
+    eq(classify(members[0]), classify(out[0]) === 'review' && expected === 'review' ? 'review' : classify(members[0]),
+      `  …consistent with the individual member's bucket`);
+  }
+  // The two that MUST carry a trigger, stated explicitly so a reword can't drop it.
+  ok(aggregateWarnings(Array.from({ length: 4 }, (_, i) => conciseW(`e/${i}`)))[0]
+      .includes('briefer than the rest'),
+    'the concise-rewrite aggregate keeps the exact phrase app.js buckets it amber on');
+  ok(/stub page/i.test(aggregateWarnings(Array.from({ length: 4 }, (_, i) => stubW(`e/${i}`)))[0]),
+    'the stub aggregate keeps "stub page" so it stays amber');
+  ok(!/stub page|keeping both|don't resolve|do not resolve|truncated to|briefer than the rest/i
+      .test(aggregateWarnings(Array.from({ length: 4 }, (_, i) => mdW(`e/${i}`)))[0]),
+    'the .md aggregate carries NO amber/red trigger — it is genuinely informational');
+
+  // ── Mixed, interleaved, and defensive input ───────────────────────────────
+  {
+    const w = [mdW('a'), stubW('x'), mdW('b'), 'something unrelated', mdW('c'), stubW('y'), mdW('d')];
+    const out = aggregateWarnings(w);
+    eq(out.length, 4, 'interleaved groups collapse independently');
+    eq(out[0].includes('4 page paths'), true, 'the .md aggregate counts all 4 despite interleaving');
+    ok(out.includes('something unrelated'), 'unrecognised warnings pass through untouched');
+    ok(out.filter(x => /Stub page created for/.test(x)).length === 2,
+      'a below-threshold class in the same array is left alone');
+  }
+  {
+    const original = [mdW('a'), mdW('b'), mdW('c')];
+    const copy = original.slice();
+    aggregateWarnings(original);
+    eq(JSON.stringify(original), JSON.stringify(copy), 'the input array is never mutated');
+  }
+  {
+    let threw = false;
+    for (const v of [null, undefined, 'not an array', 42, {}]) {
+      try { ok(Array.isArray(aggregateWarnings(v)), `degenerate input ${JSON.stringify(v)} returns an array`); }
+      catch { threw = true; }
+    }
+    ok(!threw, 'aggregateWarnings never throws on degenerate input');
+    const mixed = aggregateWarnings([mdW('a'), null, 42, {}, mdW('b'), mdW('c')]);
+    ok(mixed.some(x => /3 page paths/.test(x)), 'non-string entries are skipped, not counted');
+    eq(mixed.length, 4, 'and non-string entries still pass through');
+  }
+
+  // ── Wiring: the aggregate must reach the LOG as well as the SSE payload ───
+  const src = readFileSync(path.join(ROOT, 'src/brain/ingest.js'), 'utf8');
+  ok(/const reportWarnings = aggregateWarnings\(warnings\);/.test(src),
+    'ingestFile aggregates once, at a single chokepoint');
+  ok(/warningSection = reportWarnings\.length/.test(src),
+    'the domain log.md gets the AGGREGATED report, not the raw 58 lines');
+  ok(/warnings: reportWarnings,/.test(src),
+    'and so does the returned result, which becomes the SSE payload + result panel');
+  ok(src.indexOf('const reportWarnings') < src.indexOf('const warningSection'),
+    'aggregation happens before any consumer reads the array');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

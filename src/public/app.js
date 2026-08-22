@@ -111,19 +111,72 @@ const ingestProgress = document.getElementById('ingest-progress');
 const progressFill   = document.getElementById('progress-fill');
 const progressLabel  = document.getElementById('progress-label');
 const progressPct    = document.getElementById('progress-pct');
+// v3.0.17: may be null if index.html and app.js ever drift — every use below
+// is guarded so a missing element degrades to "no elapsed display", never a
+// thrown error at module scope (app.js is one big ES module; one throw here
+// would blank the whole app for every user — see CLAUDE.md's boot-guard note).
+const progressElapsedEl = document.getElementById('progress-elapsed');
+
+// v3.0.17: "how long has the CURRENT step been running" clock. Ingest phases
+// (esp. Phase 1's single outline LLM call) can sit at the same pct/message
+// for a minute or more with zero sub-progress to report — previously
+// indistinguishable from a hang. This ticks every second and is reset only
+// on a genuine new progress step, NOT on wait/retry sub-events, so a stalled
+// phase visibly keeps counting instead of looking frozen mid-retry.
+let progressTimerId = null;
+let progressPhaseStartedAt = null;
+
+function formatElapsed(ms) {
+  // Defensive clamp: Date.now() - progressPhaseStartedAt is always a finite
+  // number in practice (tickProgressElapsed already guards the null case),
+  // but a non-finite input must never render "NaNs" if this is ever called
+  // from somewhere else.
+  const safeMs = Number.isFinite(ms) ? ms : 0;
+  const totalSec = Math.max(0, Math.floor(safeMs / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function tickProgressElapsed() {
+  if (!progressElapsedEl || progressPhaseStartedAt == null) return;
+  progressElapsedEl.textContent = formatElapsed(Date.now() - progressPhaseStartedAt);
+}
 
 function showProgress(pct, label, waiting = false) {
   ingestProgress.classList.remove('hidden');
   progressFill.style.width = pct + '%';
   progressFill.classList.toggle('waiting', waiting);
   progressLabel.textContent = label;
+  progressLabel.classList.toggle('waiting', waiting);
   progressPct.textContent = pct + '%';
+
+  // A genuine step change (not a wait/backoff sub-event) restarts the "how
+  // long has this step been running" clock.
+  if (!waiting) progressPhaseStartedAt = Date.now();
+
+  // Lazily start a single ticking interval; showProgress is called many
+  // times per ingest (every SSE event) and must never stack intervals.
+  if (progressTimerId == null) {
+    progressTimerId = setInterval(tickProgressElapsed, 1000);
+  }
+  tickProgressElapsed();
 }
 
 function hideProgress() {
   ingestProgress.classList.add('hidden');
   progressFill.style.width = '0%';
   progressFill.classList.remove('waiting');
+  progressLabel.classList.remove('waiting');
+  // Always tear down the interval here — this is the single cleanup point
+  // reached on success, error, and the duplicate-file early return (see
+  // submitIngest below), so the timer can never leak past one ingest.
+  if (progressTimerId != null) {
+    clearInterval(progressTimerId);
+    progressTimerId = null;
+  }
+  progressPhaseStartedAt = null;
+  if (progressElapsedEl) progressElapsedEl.textContent = '';
 }
 
 async function submitIngest(overwrite) {
@@ -289,6 +342,74 @@ function showIngestResult(data) {
   // outline-validator patches) above the change records so the user sees
   // them without having to inspect the log.
   renderIngestWarnings(data);
+  // v3.0.17: real per-call token/cache spend (additive `done` field) —
+  // compact secondary footer, appended last so it sits below everything else.
+  renderTokenUsage(ingestResult, data.tokenUsage);
+}
+
+// v3.0.17: format the additive tokenUsage payload
+// ({calls, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens,
+// provider, model} — see src/brain/ingest.js's makeUsageAccumulator) into a
+// compact HTML fragment, or null if there's nothing worth showing. Every
+// field is individually optional/possibly-missing — an older server, a
+// response that errored before any LLM call ran, or a future partial shape
+// must all degrade to "render nothing", never NaN/undefined text.
+function formatTokenUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  const isNum = v => typeof v === 'number' && Number.isFinite(v);
+  const calls            = isNum(u.calls) ? u.calls : null;
+  const inputTokens      = isNum(u.inputTokens) ? u.inputTokens : null;
+  const outputTokens     = isNum(u.outputTokens) ? u.outputTokens : null;
+  const cachedReadTokens = isNum(u.cachedReadTokens) ? u.cachedReadTokens : 0;
+  const cacheWriteTokens = isNum(u.cacheWriteTokens) ? u.cacheWriteTokens : 0;
+  const provider = typeof u.provider === 'string' && u.provider ? u.provider : null;
+  const model    = typeof u.model === 'string' && u.model ? u.model : null;
+
+  // Nothing usable at all — e.g. an empty/malformed object ({}), which the
+  // one current caller (ingestFile's tokenUsage) never actually sends (its
+  // accumulator always initialises calls/inputTokens/outputTokens to 0), but
+  // this is a shared render helper and a future or different caller could.
+  // Render nothing rather than an empty box.
+  if (calls == null && inputTokens == null && outputTokens == null && !provider && !model) {
+    return null;
+  }
+
+  const parts = [];
+  if (provider || model) {
+    const label = [provider, model].filter(Boolean).join(' · ');
+    parts.push(`<span class="token-usage-model">${escHtml(label)}</span>`);
+  }
+  if (calls != null) {
+    parts.push(`<span class="token-usage-stat">${calls} call${calls === 1 ? '' : 's'}</span>`);
+  }
+  if (inputTokens != null || outputTokens != null) {
+    const inStr  = inputTokens  != null ? inputTokens.toLocaleString()  : '—';
+    const outStr = outputTokens != null ? outputTokens.toLocaleString() : '—';
+    parts.push(`<span class="token-usage-stat">${inStr} in / ${outStr} out</span>`);
+  }
+  // Cache split only shown when non-zero — this is the v3.0.16 cost-saving
+  // signal the maintainer specifically asked to be able to see.
+  if (cachedReadTokens > 0 || cacheWriteTokens > 0) {
+    const bits = [];
+    if (cachedReadTokens > 0) bits.push(`${cachedReadTokens.toLocaleString()} cached read`);
+    if (cacheWriteTokens > 0) bits.push(`${cacheWriteTokens.toLocaleString()} cache write`);
+    parts.push(`<span class="token-usage-stat token-usage-cache">${bits.join(' · ')}</span>`);
+  }
+  return parts.length ? parts.join('') : null;
+}
+
+function renderTokenUsage(container, tokenUsage) {
+  if (!container) return;
+  // Idempotent re-render: drop any prior footer before appending a fresh
+  // one (submitIngest reuses the same #ingest-result container per ingest).
+  const existing = container.querySelector('.token-usage');
+  if (existing) existing.remove();
+  const inner = formatTokenUsage(tokenUsage);
+  if (!inner) return;
+  const el = document.createElement('div');
+  el.className = 'token-usage';
+  el.innerHTML = inner;
+  container.appendChild(el);
 }
 
 // v3.0.1-beta.12+: classify each entry in the ingest report by the kind
@@ -320,7 +441,21 @@ function classifyIngestEntry(w) {
   if (lc.includes('keeping both') ||
       lc.includes("don't resolve") ||
       lc.includes('do not resolve') ||
-      lc.includes('stub page')) {
+      lc.includes('stub page') ||
+      // v3.0.17: dedicated trigger for the concise-retry-success warning
+      // emitted by src/brain/ingest.js (multi-phase single-page fallback —
+      // search that file for "briefer than the rest"). That message ends
+      // in an instruction to go check the page in the Wiki tab, so it
+      // belongs here, not in the quiet blue Info bucket. It previously only
+      // landed here by accident, via the 'stub page' trigger above catching
+      // the negation "not a stub page" in its text — semantically backwards,
+      // and one reword away from silently going blue. If ingest.js's wording
+      // for this warning changes, update this trigger to match (that file's
+      // own test, scripts/test-ingest-prompt-slimming.js, pins the exact
+      // phrase "briefer than the rest" in its source, so a drift there is
+      // caught — but check this side too, since that test doesn't read
+      // app.js's trigger list for this specific phrase).
+      lc.includes('briefer than the rest')) {
     return { kind: 'review', icon: '⚠', color: '#d29922', label: 'For review' };
   }
   if (lc.includes('truncated to')) {

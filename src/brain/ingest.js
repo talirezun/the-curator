@@ -1327,22 +1327,271 @@ no index.md content — the app maintains the index itself):
 }`;
 }
 
+/**
+ * Collapse repeated same-class warnings into one counted entry (v3.0.17).
+ *
+ * WHY THIS EXISTS. A live re-run on a mature articles-scale domain produced 75
+ * warnings, 58 of which were the SAME sentence with a different page path:
+ * `Page path "X" was missing the .md extension — wrote it as "X.md"`. That is
+ * 77% of the report saying one thing, and it buried the entries that actually
+ * needed attention — one stub page, one stray summary, five rewritten pages.
+ *
+ * Note what it is NOT: those 58 pages were being SILENTLY DROPPED before
+ * v3.0.16. The fix is doing enormous work and stays exactly as it is. This is
+ * purely about how it is reported.
+ *
+ * WHY AT EMISSION, NOT AT RENDER. `warnings[]` feeds three consumers — the
+ * result panel, the SSE `done` payload, and the domain's log.md. Collapsing it
+ * in the frontend would leave the permanent log just as noisy, and the log is
+ * where anyone diagnosing a past ingest looks first. So it happens here, once,
+ * before any consumer sees the array.
+ *
+ * THRESHOLD = 3, deliberately. At one or two occurrences the specific path IS
+ * the most useful thing and costs at most two lines; from three the class
+ * starts to drown the report while the individual paths add little, because
+ * they are all the same class and the per-page detail already exists in the
+ * change records. Three is also the house notion of "this is a pattern, not an
+ * incident" — validateOutline's trunk-page detector fires at >= 3 siblings for
+ * the same reason.
+ *
+ * WHAT IS AGGREGATED. Only classes that scale PER PAGE or PER BATCH, i.e. the
+ * ones that can reach dozens on one ingest. Deliberately NOT aggregated:
+ * semantic near-duplicate notices and trunk-page injections. Each of those
+ * names a specific pair or cluster the user has to make a decision about, they
+ * are pre-existing wordings the maintainer reads regularly, and neither was
+ * part of the reported problem — collapsing them would trade real signal for
+ * tidiness.
+ *
+ * BUCKET PRESERVATION. classifyIngestEntry in src/public/app.js buckets by
+ * substring, so each aggregate below deliberately keeps (or deliberately
+ * avoids) the trigger its members carried: the stub aggregate keeps "stub
+ * page", the rewritten-pages aggregate keeps "briefer than the rest", and the
+ * .md aggregate carries none of them because nothing was lost and there is
+ * nothing for the user to do. Guarded in test-ingest-prompt-slimming.js.
+ *
+ * Pure and order-stable: an aggregate replaces its group AT THE POSITION OF THE
+ * FIRST MEMBER, so the report keeps its chronological shape. Non-string and
+ * unmatched entries pass through untouched.
+ */
+export const WARNING_AGGREGATION_THRESHOLD = 3;
+
+const MAX_WARNING_EXAMPLES = 3;
+
+/** `a, b, c, …and 55 more` — never an unbounded list. */
+function renderExamples(items, max = MAX_WARNING_EXAMPLES) {
+  const shown = items.slice(0, max);
+  const rest = items.length - shown.length;
+  return shown.join(', ') + (rest > 0 ? `, …and ${rest} more` : '');
+}
+
+/**
+ * One entry per aggregatable class. `match` must capture the per-occurrence
+ * detail used as an example in group 1 (or capture nothing, for classes whose
+ * text is identical every time).
+ */
+const AGGREGATABLE_WARNINGS = [
+  {
+    id: 'missing-md',
+    // Emitted by writePage in files.js and surfaced through its onWarn.
+    match: /^Page path "(.+?)" was missing the \.md extension/,
+    render: (n, ex) =>
+      `${n} page paths came back from the AI without the ".md" extension and were written correctly ` +
+      `(${renderExamples(ex)}). This is an AI formatting slip, not a problem with your wiki — ` +
+      `nothing was lost, and every page is listed in the change list above.`,
+  },
+  {
+    id: 'concise-rewrite',
+    match: /^The AI's first attempt at "(.+?)" came back unusable/,
+    render: (n, ex) =>
+      `${n} pages had to be rewritten more briefly: the AI's first attempt at each came back unusable, ` +
+      `so The Curator asked for a shorter version and saved that instead (${renderExamples(ex)}). ` +
+      `These are real content, but they are briefer than the rest — open them in the Wiki tab and ` +
+      `re-ingest if any reads too thin.`,
+  },
+  {
+    id: 'stub-page',
+    match: /^Stub page created for "(.+?)"/,
+    render: (n, ex) =>
+      `${n} stub pages were created because the AI could not generate content for them ` +
+      `(${renderExamples(ex)}). These are placeholders, not real pages — re-ingest this source to fix them.`,
+  },
+  {
+    id: 'batch-overflow',
+    match: /^Batch \d+ of \d+ was too large for the AI's output limit/,
+    render: (n) =>
+      `${n} content batches were too large for the AI's output limit — those pages were written one at a ` +
+      `time instead. Nothing was lost; the ingest just took longer than usual.`,
+  },
+  {
+    id: 'no-path',
+    match: /^The AI returned a page with no path/,
+    render: (n) =>
+      `${n} pages came back from the AI with no file path, so they could not be written. That content ` +
+      `did not make it into the wiki — re-ingest this source, and check the result for gaps.`,
+  },
+];
+
+/**
+ * @param {string[]} warnings
+ * @param {number} [threshold]
+ * @returns {string[]} a new array; the input is never mutated.
+ */
+export function aggregateWarnings(warnings, threshold = WARNING_AGGREGATION_THRESHOLD) {
+  const list = Array.isArray(warnings) ? warnings : [];
+  const min = Number.isFinite(threshold) && threshold > 1 ? threshold : WARNING_AGGREGATION_THRESHOLD;
+
+  // Pass 1 — classify every entry and collect each class's examples.
+  const classOf = new Array(list.length).fill(null);
+  const groups = new Map();   // id → {rule, examples: string[], count: number}
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    if (typeof w !== 'string') continue;
+    for (const rule of AGGREGATABLE_WARNINGS) {
+      const m = rule.match.exec(w);
+      if (!m) continue;
+      classOf[i] = rule.id;
+      let g = groups.get(rule.id);
+      if (!g) { g = { rule, examples: [], count: 0 }; groups.set(rule.id, g); }
+      g.count++;
+      if (m[1]) g.examples.push(m[1]);
+      break;
+    }
+  }
+
+  // Pass 2 — emit, replacing each over-threshold group at its first member.
+  const out = [];
+  const emitted = new Set();
+  for (let i = 0; i < list.length; i++) {
+    const id = classOf[i];
+    const g = id ? groups.get(id) : null;
+    if (!g || g.count < min) { out.push(list[i]); continue; }
+    if (emitted.has(id)) continue;                 // fold away the rest
+    emitted.add(id);
+    try { out.push(g.rule.render(g.count, g.examples)); }
+    catch { out.push(list[i]); }                   // a broken renderer must never eat the warning
+  }
+  return out;
+}
+
 // ── Multi-phase ingest (large documents) ─────────────────────────────────────
 
 // Smaller batches produce shorter JSON responses, dramatically reducing parse
 // failures from accumulated unescaped quotes in dense documents.
 const BATCH_SIZE = 4;
 
-// Output-token budgets for the multi-phase calls (v3.0.1-beta.15).
+// Output-token budgets for the multi-phase calls.
 // All three stay well under Claude Haiku's 64000 cap AND under the ~21333
 // streaming-guard threshold concerns for the smaller ones. The page-by-page
-// fallback budget was raised from 4096 → 8192 so a dense single page is far
-// less likely to truncate into a stub. The outline budget was raised from
-// 16384 → 24576 so a document that plans many pages doesn't blow the cap while
-// merely listing paths + one-line summaries.
+// fallback budget was raised from 4096 → 8192 (v3.0.1-beta.15) so a dense
+// single page is far less likely to truncate into a stub.
+//
+// ⚠ DO NOT LOWER MULTI_PHASE_OUTLINE_TOKENS ON A PROXY MEASUREMENT. ⚠
+//
+// v3.0.17 investigated the "Phase 1 hangs, then warns about the output limit"
+// report and established one thing firmly and one thing NOT firmly. Both are
+// recorded here because the second is what stopped this constant from moving.
+//
+// ESTABLISHED — the overflow is RUNAWAY GENERATION, not legitimate volume.
+// Measured over 180 real ingest log entries in this repo's own domains:
+//
+//   the outlines that actually OVERFLOWED 24576 ... 44 and 53 pages
+//                                                    ≈ 7,700 / 8,800 chars
+//                                                    ≈ 9–10% of this budget
+//   outlines that SUCCEEDED under the same cap ..... 370, 328, 316, 304, 297,
+//                                                    283, 269, 265 pages
+//
+// Read that twice. A 44-page outline blew a cap that a 370-page outline cleared.
+// Overflow correlates with page count not at all, with index size not at all
+// (the domain with the LARGEST index had ZERO overflows in 15 ingests), and with
+// source length not at all. It correlates with SOURCE CHARACTER: 6 of 7
+// overflows in one domain are highly repetitive "engagement session" logs — the
+// classic degeneration trigger, the same mechanism documented for compile.js in
+// v3.0.1-beta.25. So RAISING this budget is also pointless: it would let the
+// runaway burn longer for no benefit, and Anthropic would clamp it anyway at
+// ANTHROPIC_MAX_OUTPUT_TOKENS.
+//
+// NOT ESTABLISHED — how big the largest LEGITIMATE outline actually is.
+// A first pass at this lowered the budget to 16384. That was WRONG, and the
+// error is worth recording so it is not repeated. It sized entries at ~73 chars
+// by joining the page paths in log.md to the descriptions in index.md — but the
+// index.md row is `| Page | Type | Summary |` and the parser captured the TYPE
+// column, so every entry was measured as `"summary": "entity"`. Corrected
+// against the real Summary column (n=2,047: mean 112.5 chars, median 113,
+// p90 160, p99 191), an outline entry is ~176 chars, not ~73.
+//
+// Re-derived, the largest real outline — 370 pages — is 65,001 chars, and the
+// token count depends entirely on a chars/token ratio we cannot measure offline:
+//
+//   @2.5 c/tok → 26,000 tok      @3.5 c/tok → 18,572 tok
+//   @3.0 c/tok → 21,667 tok      @4.0 c/tok → 16,250 tok
+//
+// Two bounds pin it. (a) That ingest SUCCEEDED under a 24576 cap, so its true
+// size is ≤ 24,576, which forces the effective ratio ≥ 2.64 for this payload.
+// (b) 4.0 is an optimistic ceiling — it is the ratio for plain English, and an
+// outline is ~1/3 hyphenated slug, which BPE fragments far more finely. A
+// component estimate (JSON punctuation ~3.4, slug path ~2.5, prose summary ~4.0,
+// weighted by their real char shares) gives ~3.53 c/tok ⇒ ≈18,400 tokens.
+//
+// So the largest real outline sits somewhere in 16,250–24,576 tokens, best
+// estimate ~18,400. A 16384 budget is at the BOTTOM of that interval; 20480
+// clears the point estimate by only 1.11x and cannot be shown to clear the
+// interval at all. The upside of lowering — a shorter stall on the ~6% of
+// ingests that run away — is not worth converting the largest, most expensive
+// ingests a user runs into a forced double call, which is the exact harm this
+// release exists to remove.
+//
+// 24576 is therefore kept, because it is the only value the data actually
+// supports: it is the one budget the largest observed outline is KNOWN to fit
+// under. To move it, stop using proxies — reportOutlineUsage() below now logs
+// Phase 1's REAL output-token count against the budget on every ingest (v3.0.16
+// gave us opts.onUsage; this is the first use of it for sizing). Collect that
+// across a few large ingests on both providers and size this from measurement.
+//
+// The other two budgets are correctly sized and were deliberately LEFT ALONE.
+// Over the 5,019 pages on disk, a batch of 4 at the p99 page size is ≈7.8k
+// output tokens against 16384 (~2x headroom) and a single page at p99 is ≈2.0k
+// against 8192 (~4x). Unlike Phase 1 those are content calls whose output
+// legitimately scales with the source.
 const MULTI_PHASE_OUTLINE_TOKENS     = 24576;
 const MULTI_PHASE_BATCH_TOKENS       = 16384;
 const MULTI_PHASE_SINGLE_PAGE_TOKENS = 8192;
+
+/**
+ * Brevity directive appended to a Phase 2 SINGLE-PAGE prompt after that page has
+ * already failed once (v3.0.17).
+ *
+ * Before this, a single page that overflowed its 8,192-token budget — or came
+ * back unparseable — went straight to `stubPageContent`: a visible placeholder
+ * the user must notice and re-ingest to fix. But a page that overruns 8,192
+ * tokens for a body the prompt asks to be "3–8 concise bullet points" has not
+ * failed for lack of capability; it over-generated. Telling it to be brief
+ * targets that directly, at the cost of ONE extra call on a path that was
+ * already about to ship a defect.
+ *
+ * DESIGN CONSTRAINTS, all load-bearing:
+ *   • It is appended to the prompt's SUFFIX, never the prefix, so the
+ *     cache breakpoint set by buildBatchPromptParts stays byte-stable.
+ *   • It fires only after a recoverable failure (output-token-limit or parse).
+ *     A fatal generateText error still re-throws before this is reached, so an
+ *     outage cannot be burned on retries or degraded into stubs.
+ *   • If it fails too, the stub is written exactly as before.
+ *
+ * ONE narrow regression, accepted knowingly: this adds a provider call, and a
+ * non-token-limit error on it re-throws (required — see the gate above). So a
+ * 429/503 that lands in the window between the first attempt and this retry now
+ * aborts an ingest that previously would have finished with a stub page. That is
+ * the correct trade under the standing invariant — an outage must surface as an
+ * outage rather than as a wiki full of placeholders — but the outcome is NOT
+ * unconditionally "never worse", and the earlier version of this comment was
+ * wrong to say so.
+ */
+const CONCISE_PAGE_DIRECTIVE = `
+
+IMPORTANT — BE BRIEF. A previous attempt at this page ran past the response length limit.
+1. Write a SHORT page: at most 8 bullet points and at most 150 words of body text in total.
+2. Keep the "summary" value under 160 characters.
+3. Do not repeat yourself. Do not restate the source document.
+4. Return ONLY the JSON object — no markdown fences, no commentary before or after.`;
 
 /**
  * True when an LLM error is an output-token-limit (the model truncated its
@@ -1396,6 +1645,133 @@ export function makeUsageAccumulator() {
 }
 
 /**
+ * Parse one Phase 2 page-generation response into a usable `pages` array, or
+ * null if there is nothing usable in it (v3.0.17). Never throws.
+ *
+ * "Usable" is deliberately strict — a NON-EMPTY ARRAY, nothing else:
+ *
+ *   • `null` raw (the call threw a recoverable error) → null.
+ *   • unparseable JSON → null.
+ *   • `pages` missing / not an array → null. The previous code accepted any
+ *     truthy value and then did `push(...pages)`, which throws a TypeError on a
+ *     non-iterable object and takes the entire ingest down with it.
+ *   • `pages: []` → null. This is the important one: an empty array is truthy,
+ *     so it used to be accepted as success and the planned page was written
+ *     nowhere, with no warning — a silent drop of content the user paid for.
+ *     reconcileGeneratedPages cannot catch it either; it reconciles the pages
+ *     that ARE returned and has no notion of one that never arrived. Returning
+ *     null routes it to the concise retry and, failing that, to a stub the user
+ *     can actually see.
+ *   • an array with NO usable entry — `[1, 2, 3]`, `[{content: '…'}]`, `[null]`
+ *     → null. A non-empty check alone let these through, and downstream they hit
+ *     reconcileGeneratedPages' generic "The AI returned a page with no path"
+ *     warning, which drops the content, names no page, and renders as blue ℹ
+ *     Info. That is a silent-ish drop wearing a different hat. One usable entry
+ *     is enough to proceed (the rest still get that warning, which is the
+ *     correct partial-failure behaviour); zero usable entries means the response
+ *     is junk, so it goes to the retry and then to a stub the user can see.
+ *
+ * Exported for offline testing via __testing.
+ */
+function extractPageArray(raw) {
+  if (typeof raw !== 'string' || !raw) return null;
+  let parsed;
+  try { parsed = parseJSON(raw); }
+  catch { return null; }
+  return usablePageArray(parsed);
+}
+
+/**
+ * The shape gate itself, over an ALREADY-PARSED response (v3.0.17).
+ *
+ * Split out of extractPageArray because Phase 1 needs the same judgement on a
+ * value it parsed itself. Returns the `pages` array, or null if the response
+ * cannot be used.
+ *
+ * The "at least one entry with a path" rule matters because `parseJSON` is
+ * lenient by design — it falls back to jsonrepair, which happily turns the bare
+ * text `not json at all` into the STRING "not json at all". That is truthy, so
+ * a plain `if (!parsed)` check treats total garbage as a successful response.
+ * Arrays are NOT filtered here: partial junk is reported entry by entry
+ * downstream, and this gate only rejects a wholly unusable response.
+ */
+function usablePageArray(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  const pages = parsed.pages;
+  if (!Array.isArray(pages) || pages.length === 0) return null;
+  const usable = pages.some(p => p && typeof p === 'object' && !Array.isArray(p)
+    && typeof p.path === 'string' && p.path.trim() !== '');
+  return usable ? pages : null;
+}
+
+/**
+ * Wrap an ingest-wide `onUsage` so ONE call's spend can also be observed
+ * separately, without perturbing the running total (v3.0.17).
+ *
+ * This exists to end an argument with evidence. The Phase 1 output budget
+ * (MULTI_PHASE_OUTLINE_TOKENS) has only ever been sized from proxies — page
+ * counts in log.md, description lengths in index.md — and the first attempt at
+ * re-sizing it from those proxies was wrong by 2.4x because one of them was
+ * being read from the wrong table column. v3.0.16 added real per-call token
+ * reporting; this is the first use of it for sizing, so the NEXT person to
+ * touch that constant can read the actual number off a real ingest instead of
+ * estimating it.
+ *
+ * `generateText` may make several provider calls for one logical call (retries,
+ * fallback-chain rungs), and onUsage fires once per COMPLETED call, so the
+ * totals here are what was BILLED for this step — which is the number that
+ * matters for both sizing and cost.
+ *
+ * Contract, inherited from the v3.0.4 onWarn rule: observability must never
+ * affect correctness. The wrapper forwards to the outer callback first and
+ * cannot throw, so a broken probe can never fail an ingest.
+ */
+function makeCallUsageProbe(outerOnUsage) {
+  const totals = { calls: 0, inputTokens: 0, outputTokens: 0 };
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    totals,
+    onUsage(u) {
+      // Forward FIRST: the ingest-wide accumulator is the billing record and
+      // must be fed even if this probe's own bookkeeping somehow fails.
+      if (typeof outerOnUsage === 'function') {
+        try { outerOnUsage(u); } catch { /* llm.js also guards; never propagate */ }
+      }
+      try {
+        const r = u && typeof u === 'object' ? u : {};
+        totals.calls++;
+        totals.inputTokens  += num(r.inputTokens);
+        totals.outputTokens += num(r.outputTokens);
+      } catch { /* unreachable, but observability must not throw */ }
+    },
+  };
+}
+
+/**
+ * Log what Phase 1 actually cost against its budget. stderr only — this module
+ * is imported by the MCP child process, which reserves stdout for JSON-RPC
+ * frames (v2.5.2).
+ *
+ * On a healthy ingest this reads like `370 pages, 18,412 output tokens of
+ * 24,576 (74.9% of budget)`. On a runaway it reads ~100% of budget for a
+ * handful of pages — which is the whole "overflow is generation, not volume"
+ * claim, stated as a measurement rather than an inference.
+ */
+function reportOutlineUsage(label, totals, pageCount) {
+  const t = totals || {};
+  const out = typeof t.outputTokens === 'number' ? t.outputTokens : 0;
+  const pct = MULTI_PHASE_OUTLINE_TOKENS > 0
+    ? ((out / MULTI_PHASE_OUTLINE_TOKENS) * 100).toFixed(1)
+    : '?';
+  const pages = typeof pageCount === 'number' ? `${pageCount} pages, ` : '';
+  console.error(
+    `[ingest] Phase 1 ${label}: ${pages}${out.toLocaleString()} output tokens ` +
+    `of ${MULTI_PHASE_OUTLINE_TOKENS.toLocaleString()} (${pct}% of budget), ` +
+    `${(t.inputTokens || 0).toLocaleString()} input, ${t.calls || 0} provider call(s).`
+  );
+}
+
+/**
  * Build a clearly-marked stub page body used as a last-resort fallback when
  * the LLM cannot produce content for a planned page. The stub is rendered as
  * a visible warning so the user knows the page is a placeholder rather than
@@ -1423,7 +1799,19 @@ Tags: stub, type/${pagePath.startsWith('entities/') ? 'entity' : 'concept'}
  *   same arrays and the rendered prompts are byte-identical to pre-v3.0.16.
  * @param {function|null} onUsage token-usage callback threaded to every call.
  */
-async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null) {
+/**
+ * @param {function} llm  TEST-ONLY SEAM (v3.0.17), defaulting to the real
+ *   generateText. Same pattern and same rationale as compile.js's
+ *   `opts.generateText`: Phase 1's retry ladder and Phase 2's fallback ladder are
+ *   pure orchestration over LLM responses, and both had defects that only show
+ *   on the failure paths — a dead `acceptedOutlineUsage` assignment that made the
+ *   sizing instrument report the FAILED attempt, and an unguarded batch response
+ *   that could silently drop four planned pages. Neither is reachable from a
+ *   source-level assertion, and neither should need a paid API call to test.
+ *   This function touches no filesystem, so injecting the LLM makes the whole
+ *   multi-phase orchestration testable offline. Production callers pass nothing.
+ */
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText) {
   // Phase 1: outline
   // Diagnostics use console.error so this module is safe to import from the
   // MCP child process (which reserves stdout for JSON-RPC) — see v2.5.2.
@@ -1445,29 +1833,56 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   let outline = null;
   let outlineRaw = null;
   let firstFailedOnTokenLimit = false;
+  // v3.0.17: measure THIS call's real output tokens so MULTI_PHASE_OUTLINE_TOKENS
+  // can be sized from data next release instead of from proxies. See the block
+  // comment on that constant for why proxies were not good enough.
+  const outlineProbe = makeCallUsageProbe(onUsage);
   try {
-    outlineRaw = (await generateText(
+    outlineRaw = (await llm(
       schema,
       buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath),
       MULTI_PHASE_OUTLINE_TOKENS,
       'json',
       (msg) => progress(12, msg, 'wait'),
-      { onUsage }
+      { onUsage: outlineProbe.onUsage }
     )).trim();
   } catch (genErr) {
     if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
     firstFailedOnTokenLimit = true;
   }
+  // Reported unconditionally — the OVERFLOW case is the interesting one, and it
+  // is reached via the catch above, so this must sit outside the try.
+  reportOutlineUsage(firstFailedOnTokenLimit ? 'outline attempt 1 (OVERFLOWED)' : 'outline',
+    outlineProbe.totals, null);
+  // Tracks WHICH attempt produced the outline we actually use, so the
+  // pages-vs-tokens datapoint below is paired with the right call.
+  let acceptedOutlineUsage = outlineProbe.totals;
+  // A response that parses but carries no usable page list must be treated as a
+  // FAILURE, not a success (v3.0.17 — found by the fake-LLM suite).
+  //
+  // parseJSON is deliberately lenient: it falls back to jsonrepair, which turns
+  // the bare text `not json at all` into the STRING "not json at all". That is
+  // truthy, so the old `if (!outline)` check accepted it and skipped the retry
+  // entirely. validateOutline then degraded it to a summary-only plan — so an
+  // 80,000-character source could produce a wiki containing ONE page, when a
+  // single retry would very likely have produced the real plan.
+  //
+  // `degenerateOutline` keeps whatever we got so the outcome can never be WORSE
+  // than before: if the retry also fails to produce a usable plan, we fall back
+  // to it at the end rather than failing the ingest outright.
+  let degenerateOutline = null;
   if (outlineRaw !== null) {
     try { outline = parseJSON(outlineRaw); }
     catch { /* malformed JSON → stricter retry below */ }
+    if (outline && !usablePageArray(outline)) { degenerateOutline = outline; outline = null; }
   }
 
   if (!outline) {
     console.warn(`[ingest] Phase 1 outline failed (${firstFailedOnTokenLimit ? 'output token limit' : 'parse'}). Retrying with stricter prompt...`);
-    warnings.push(firstFailedOnTokenLimit
-      ? 'Phase 1 outline was too large for the AI output limit; auto-retried asking for a more concise plan.'
-      : 'Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.');
+    // NOTE: the user-facing warning is pushed AFTER the retry succeeds, not here.
+    // It has to be, for two reasons: it reports the REAL number of provider calls
+    // (retries and fallback-chain rungs mean "one extra call" is a guess), and if
+    // the retry fails we throw, so a warning pushed here would never be seen.
     progress(13, 'Phase 1: retrying…', 'wait');
 
     const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath)
@@ -1479,19 +1894,91 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       + '5. The response must parse with native JSON.parse on the first try.';
 
     let outlineRaw2 = null;
+    const retryProbe = makeCallUsageProbe(onUsage);
     try {
-      outlineRaw2 = (await generateText(
+      outlineRaw2 = (await llm(
         schema, strictPrompt, MULTI_PHASE_OUTLINE_TOKENS, 'json',
         (msg) => progress(13, msg, 'wait'),
-        { onUsage }
+        { onUsage: retryProbe.onUsage }
       )).trim();
     } catch (genErr2) {
       if (!isOutputTokenLimit(genErr2)) throw genErr2;   // fatal — surface it
       // token-limit on the retry too → fall through to the actionable error
     }
+    // The pair of numbers that settles the "runaway vs volume" question: attempt
+    // 1 at ~100% of budget followed by a recovery at ~10% is generation running
+    // away, not an outline that legitimately needed more room.
+    reportOutlineUsage('outline retry', retryProbe.totals, null);
     if (outlineRaw2 !== null) {
-      try { outline = parseJSON(outlineRaw2); console.error('[ingest] Phase 1 stricter retry succeeded.'); }
+      // The try wraps the PARSE and nothing else. Anything wider and a bug in
+      // the bookkeeping below would be silently re-cast as "the model returned
+      // malformed JSON", sending the user an error about their AI provider.
+      try { outline = parseJSON(outlineRaw2); }
       catch { /* still malformed → actionable error below */ }
+      if (outline && !usablePageArray(outline)) {
+        degenerateOutline = degenerateOutline || outline;
+        outline = null;
+      }
+    }
+    // Captured BEFORE the salvage below, so the "retry recovered" warning is
+    // only claimed when the retry genuinely produced a usable plan.
+    const retrySucceeded = !!outline;
+
+    // Last resort before failing: a degenerate-but-parsed outline still beats no
+    // ingest at all, and validateOutline will rescue a canonical summary page
+    // from it with loud warnings. This keeps the change strictly-no-worse.
+    if (!outline && degenerateOutline) {
+      outline = degenerateOutline;
+      warnings.push(
+        'The AI never returned a usable page plan for this source, even after a retry. ' +
+        'The Curator salvaged what it could, so this ingest is almost certainly incomplete — ' +
+        're-ingest this source, and consider splitting it into smaller parts first.'
+      );
+    }
+    if (retrySucceeded) {
+      console.error('[ingest] Phase 1 stricter retry succeeded.');
+
+      // Point the "accepted outline" measurement at the RETRY, which is the
+      // attempt that produced the outline we are about to use.
+      //
+      // This assignment used to sit above, guarded by `if (outline)` — inside
+      // the `if (!outline)` block and BEFORE this parse, so `outline` was
+      // provably falsy and it never ran. The effect was worse than a no-op:
+      // on exactly the runaway ingest this instrumentation exists to measure,
+      // the "accepted outline" line reported the FAILED attempt's ~100%-of-
+      // budget burn against the recovered outline's page count, implying a
+      // per-page cost ~10x the truth and arguing for RAISING the budget — the
+      // one conclusion the block comment on MULTI_PHASE_OUTLINE_TOKENS exists
+      // to rule out. An instrument that lies only in the case it was built for
+      // is worse than no instrument.
+      acceptedOutlineUsage = retryProbe.totals;
+
+      // Now, and only now, is the honest warning available: the retry
+      // SUCCEEDED, and both probes know how many provider calls it really took.
+      //
+      // The previous wording said the recovered "plan below is complete". That
+      // asserted the exact property the retry trades away: item 4 of the strict
+      // prompt above literally asks for "FEWER, broader pages", so a source
+      // that first planned 44 pages can come back with 20, and pages the user
+      // expected simply will not exist. It also claimed "one extra AI call"
+      // while llm.js may make several (429/503 backoff, fallback-chain rungs),
+      // and said nothing about the source document being re-sent — which
+      // roughly doubles Phase 1's INPUT spend, the larger cost on a mature
+      // domain. All three are now taken from measurement or stated plainly.
+      //
+      // Deliberately contains none of the substrings classifyIngestEntry in
+      // src/public/app.js keys on for its amber/red buckets, so this stays
+      // ℹ Info: it explains a completed recovery, it is not a to-do.
+      const planningCalls = (outlineProbe.totals.calls || 0) + (retryProbe.totals.calls || 0);
+      warnings.push(
+        (firstFailedOnTokenLimit
+          ? 'While planning the page list, the AI ran past its response length limit — it generated far more than a plan needs. '
+          : 'The AI\'s first page plan came back as malformed JSON. ')
+        + 'The Curator asked again for a shorter plan and that succeeded, so the ingest completed. '
+        + 'Note that the retry explicitly asks for FEWER, broader pages, so the page list below is coarser than a '
+        + 'first-attempt plan would have been — some detail is grouped under a parent page instead of getting its own. '
+        + `Planning took ${planningCalls} AI calls instead of 1, and your source document was sent to the AI twice.`
+      );
     }
 
     if (!outline) {
@@ -1549,7 +2036,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   // Gemini ignores the hint entirely — 2.5-family models cache prefixes
   // implicitly, so the reordering above is the whole benefit there.
   const cacheAcrossBatches = totalBatches >= 2;
-  console.error(`[ingest] Phase 1 complete — ${allPages.length} pages planned.`);
+  // THE sizing datapoint: how many output tokens a real outline of a known
+  // page count actually costs. Collect this across a few large ingests on both
+  // providers before anyone touches MULTI_PHASE_OUTLINE_TOKENS again.
+  reportOutlineUsage('complete (accepted outline)', acceptedOutlineUsage, allPages.length);
 
   // Phase 2: batched content  (20% → 78%)
   const writtenPages = []; // [{path, content, summary?}]
@@ -1574,7 +2064,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     // per-batch page list — that split is what makes the prefix cacheable.
     const batchParts = buildBatchPromptParts(today, originalName, text, batch, promptFiles, allPages);
     try {
-      batchRaw = (await generateText(
+      batchRaw = (await llm(
         schema,
         batchParts.prefix + batchParts.suffix,
         MULTI_PHASE_BATCH_TOKENS,
@@ -1588,11 +2078,31 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       warnings.push(`Batch ${batchNum} of ${totalBatches} was too large for the AI's output limit — wrote those pages individually instead.`);
     }
     if (batchRaw !== null) {
-      try {
-        batchResult = parseJSON(batchRaw);
-      } catch (parseErr) {
-        console.warn(`[ingest] Batch ${batchNum} parse failed (${batchRaw.length} chars) — retrying page-by-page...`);
-      }
+      // Routed through the SAME strict gate as the page-by-page fallback.
+      //
+      // This was `batchResult = parseJSON(batchRaw)` and then a bare truthiness
+      // check, which left the COMMON path — every batch of every multi-phase
+      // ingest, attempted before any fallback — open to the two shapes the
+      // single-page path was hardened against:
+      //   • `{"pages": []}`  → truthy, so the page-by-page fallback never fired
+      //     and all 4 planned pages VANISHED: no file, no stub, no warning, and
+      //     a green result panel. reconcileGeneratedPages cannot catch this —
+      //     its plannedPaths set only flags pages that were NOT planned; nothing
+      //     in this module detects a planned page that never arrived.
+      //   • `{"pages": {…}}` / `{"pages": null}` / a bare array / `{"title":"x"}`
+      //     → truthy, then `push(...batchResult.pages)` throws
+      //     "batchResult.pages is not iterable", which escapes ingestMultiPhase
+      //     uncaught and kills the whole ingest with a raw JS error in the UI.
+      //
+      // extractPageArray returns null for every one of those, so they now land
+      // in the page-by-page fallback below — which already handles them
+      // correctly, page by page, and ends in a VISIBLE stub if nothing works.
+      // That also makes the `batchResult.pages` reads further down safe by
+      // construction: the only two ways batchResult becomes non-null are this
+      // gate and the fallback's own `{ pages: [] }`.
+      const batchPages = extractPageArray(batchRaw);
+      if (batchPages) batchResult = { pages: batchPages };
+      else console.warn(`[ingest] Batch ${batchNum} returned no usable pages (${batchRaw.length} chars) — retrying page-by-page...`);
     }
 
     if (!batchResult) {
@@ -1609,7 +2119,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         let singleRaw = null;
         const singleParts = buildBatchPromptParts(today, originalName, text, [singlePage], promptFiles, allPages);
         try {
-          singleRaw = (await generateText(
+          singleRaw = (await llm(
             schema,
             singleParts.prefix + singleParts.suffix,
             MULTI_PHASE_SINGLE_PAGE_TOKENS,
@@ -1621,11 +2131,61 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
           if (!isOutputTokenLimit(singleGenErr)) throw singleGenErr;  // fatal — surface it
           // token-limit on a single page → fall through to a stub below
         }
-        let singlePages = null;
-        if (singleRaw !== null) {
-          try { singlePages = parseJSON(singleRaw).pages; }
-          catch { /* parse failure → stub below */ }
+        // Accept ONLY a non-empty array. Previously any truthy `.pages` was
+        // spread straight into batchResult, which meant an empty array silently
+        // produced no page at all for a path the outline had planned — the
+        // silent-content-loss shape v3.0.16 removed elsewhere — and a non-array
+        // object made `push(...)` throw and kill the whole ingest. Both now fall
+        // through to the concise retry and, failing that, to a VISIBLE stub.
+        let singlePages = extractPageArray(singleRaw);
+
+        // v3.0.17: one concise retry before giving up. Same budget, same prefix
+        // (so the cache still hits), plus a brevity directive on the suffix.
+        if (!singlePages) {
+          console.warn(`[ingest]   ↻ ${singlePage.path} — retrying with a brevity directive...`);
+          let conciseRaw = null;
+          try {
+            conciseRaw = (await llm(
+              schema,
+              singleParts.prefix + singleParts.suffix + CONCISE_PAGE_DIRECTIVE,
+              MULTI_PHASE_SINGLE_PAGE_TOKENS,
+              'json',
+              (msg) => progress(batchPct, msg, 'wait'),
+              { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0 }
+            )).trim();
+          } catch (conciseErr) {
+            if (!isOutputTokenLimit(conciseErr)) throw conciseErr;  // fatal — surface it
+            // token-limit again → fall through to a stub below
+          }
+          singlePages = extractPageArray(conciseRaw);
+          if (singlePages) {
+            // CAUSE-NEUTRAL BY DESIGN. The retry fires whenever extractPageArray
+            // returns null, which is FOUR different failures: an output-token
+            // limit, unparseable JSON, `pages: []`, and a non-array `pages`.
+            // The first wording named only the token limit, so a page that
+            // failed to parse was told it "overran the AI's response limit" —
+            // the same wrong-cause messaging the Phase 1 warning was just fixed
+            // for. Say what is certainly true (the first attempt was unusable)
+            // and what the user can act on (this page is briefer than the rest).
+            //
+            // ⚠ CLASSIFIER COUPLING, deliberate — KEEP the phrase "briefer than
+            // the rest". classifyIngestEntry in src/public/app.js buckets by
+            // SUBSTRING, and that phrase is its dedicated ⚠ For review trigger
+            // for this warning: the message ends in an instruction to go and
+            // look at the page, so amber is correct, not the quiet blue Info.
+            // (An earlier version reached amber only by ACCIDENT — the trigger
+            // 'stub page' matching inside the negation "not a stub page", which
+            // is semantically backwards and one reword away from silently going
+            // blue. That negation is gone now the trigger is first-class.)
+            // The aggregate form in AGGREGATABLE_WARNINGS keeps the same phrase.
+            warnings.push(
+              `The AI's first attempt at "${singlePage.path}" came back unusable, so The Curator asked ` +
+              `for a shorter version and saved that instead. This is real content, but it is ` +
+              `briefer than the rest — open it in the Wiki tab and re-ingest if it reads too thin.`
+            );
+          }
         }
+
         if (singlePages) {
           batchResult.pages.push(...singlePages);
           console.error(`[ingest]   ✓ ${singlePage.path}`);
@@ -2071,10 +2631,18 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     console.warn(`[ingest] Broken-link audit failed (non-fatal): ${auditErr.message}`);
   }
 
+  // v3.0.17: collapse repeated same-class warnings BEFORE any consumer sees the
+  // array. This is the single chokepoint — the log entry below and the returned
+  // `warnings` (which becomes the SSE `done` payload and the result panel) both
+  // read from it, so the permanent log gets the same readable report the user
+  // sees. See aggregateWarnings for the threshold and what is deliberately
+  // left un-aggregated.
+  const reportWarnings = aggregateWarnings(warnings);
+
   // Append to log — use canonical paths for accurate reporting
   const pageList = canonicalPaths.map(p => `  - ${p}`).join('\n');
-  const warningSection = warnings.length
-    ? `\nWarnings:\n${warnings.map(w => `  - ${w}`).join('\n')}`
+  const warningSection = reportWarnings.length
+    ? `\nWarnings:\n${reportWarnings.map(w => `  - ${w}`).join('\n')}`
     : '';
   const logEntry = `## [${today}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
@@ -2095,7 +2663,9 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     title: result.title,
     pagesWritten: canonicalPaths,
     changes,    // structured per-file change records (v2.5.0+)
-    warnings,   // user-visible non-fatal issues (v3.0.1-beta.1)
+    // user-visible non-fatal issues (v3.0.1-beta.1), same-class-aggregated
+    // (v3.0.17) so one repeated slip cannot drown the entries that need action.
+    warnings: reportWarnings,
     truncated,  // boolean — was the source longer than TEXT_CAP?
     // Additive (v3.0.16): measured spend across every LLM call this ingest
     // made. The SSE route picks fields explicitly, so this is invisible to
@@ -2315,5 +2885,15 @@ export const __testing = {
   slugLineCost,
   stubPageContent,
   isOutputTokenLimit,
+  extractPageArray,
+  usablePageArray,
+  ingestMultiPhase,
+  makeCallUsageProbe,
+  reportOutlineUsage,
+  CONCISE_PAGE_DIRECTIVE,
+  MULTI_PHASE_OUTLINE_TOKENS,
+  MULTI_PHASE_BATCH_TOKENS,
+  MULTI_PHASE_SINGLE_PAGE_TOKENS,
+  BATCH_SIZE,
   TEXT_CAP: 80_000,
 };

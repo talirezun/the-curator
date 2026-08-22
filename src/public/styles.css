@@ -410,6 +410,27 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   margin-left: 10px;
   flex-shrink: 0;
 }
+/* v3.0.17: groups pct + elapsed on the right. The 10px gap between label and
+   pct comes from .progress-pct's OWN margin-left (kept on the class itself,
+   not moved to this wrapper) so #compile-progress-pct — which reuses
+   .progress-pct but is NOT wrapped in .progress-meta (see index.html) —
+   keeps its original spacing too. This wrapper only adds the 6px gap between
+   pct and the new elapsed indicator. */
+.progress-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* v3.0.17: "how long has the CURRENT step been running" — ticks every second
+   via a JS setInterval, reset only when a genuine new phase/step message
+   arrives (not on wait/retry sub-events), so a stalled phase visibly keeps
+   counting instead of looking frozen. Empty string (not "0s") when idle. */
+.progress-elapsed {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
 .progress-track {
   height: 3px;
   background: var(--bg-alt);
@@ -430,6 +451,21 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 @keyframes progress-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
+}
+/* v3.0.17: while a retry/backoff wait event is active, colour the label so
+   it visually reads as "still trying" rather than a plain step description —
+   pairs with the pulsing bar above instead of looking identical to normal
+   progress text. */
+.progress-label.waiting {
+  color: var(--warning);
+}
+/* v3.0.17: brief, honest expectation-setting note under the progress bar —
+   see the HTML comment above it for why this exists. */
+.progress-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 /* ── Buttons ── */
@@ -3713,6 +3749,28 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   font-size: 12px;
   font-style: italic;
 }
+
+/* v3.0.17: compact token/cache telemetry footer under the ingest result
+   panel — supporting detail, not the headline, so it's small, muted, and
+   sits below the change records rather than competing with them. */
+.token-usage {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+.token-usage-model {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.token-usage-stat { white-space: nowrap; }
+.token-usage-cache { color: var(--accent-2); }
 
 /* Compile-specific feedback states */
 .compile-error {

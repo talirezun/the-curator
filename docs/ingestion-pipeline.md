@@ -4,7 +4,7 @@ This document is the definitive technical reference for The Curator's ingestion 
 
 If you're a user looking for how to drop a PDF in and what happens next, start with [the user guide](user-guide.md#8-ingest-a-source). If you're a developer wanting to understand the system at the level needed to debug or extend it, read on.
 
-**Last updated**: v3.0.16
+**Last updated**: v3.0.17
 
 ---
 
@@ -43,7 +43,8 @@ flowchart TD
     N --> O[mergeIntoIndex:<br/>programmatic, no LLM call]
     O --> P1[linkifyHubPages:<br/>wrap plain-text mentions in &lpar;&lpar;wikilinks&rpar;&rpar;<br/>v3.0.1-beta.11+]
     P1 --> P[auditBrokenWikilinks:<br/>count + sample]
-    P --> Q[appendLog with warnings]
+    P --> P2[aggregateWarnings:<br/>collapse same-class runs<br/>v3.0.17]
+    P2 --> Q[appendLog with warnings]
     Q --> Y[Done: change records + warnings + truncated flag]
 ```
 
@@ -116,6 +117,34 @@ Single-pass ingest is unaffected by the reorder (it has no batch loop to share a
 - When it does fire, `capSlugInventory` scores every filename by **token-overlap coverage** with the source document (using the same `tokenize()` the Shared Brain delta/synthesis code uses) and keeps the most relevant entries until the budget is spent; the result is still fully **deterministic** and never silent — a warning naming how many of how many pages were left out is pushed into `result.warnings` (see the [ingest-report reference](user-guide.md#full-reference-of-ingest-report-entries)).
 - **The dedup safety net keeps scanning the FULL list regardless.** `redirectSemanticDuplicates` — the Jaccard-based guard that catches slug drift (`expert-roundup-format` vs `experts-roundup-format`) — is called with the original, uncapped `existingFiles`, never `promptFiles`.
 - Distinct from this valve: the multi-phase batch prompt's "PAGES BEING CREATED IN THIS SAME INGEST" block (above) lists `allOutlinePages` — the *plan for this one ingest* (typically 5–40 pages, per the outline budget rule) — which is a different, much smaller input and is **not** subject to `SLUG_INVENTORY_BUDGET_CHARS` at all.
+
+### Stage 1c — Sizing the Phase 1 outline budget (v3.0.17)
+
+`MULTI_PHASE_OUTLINE_TOKENS` (`24576`) caps how many output tokens Phase 1's single outline call may spend. A community report that ingest "hangs, then fails with an output-limit error" prompted an investigation into whether this budget was simply too small. It produced one finding that is now established from real data, and one that explicitly is **not** — both are recorded in the block comment directly above the constant in `src/brain/ingest.js`, because the gap between the two is exactly what stops a future well-meaning "let's lower this" change from repeating the same mistake.
+
+**Established — the overflow is runaway generation, not legitimate volume.** Measured over 180 real ingest log entries across this repo's own domains, the outlines that actually overflowed the 24,576-token cap were **44 and 53 pages** (≈7,700–8,800 chars) — while outlines of **370, 328, 316, 304, 297, 283, 269 and 265 pages** all completed comfortably under the very same cap. A 44-page outline blew a cap that a 370-page outline cleared. Overflow correlates with page count not at all, with index size not at all, and with source length not at all — it correlates with source *character*: 6 of 7 overflow cases in one domain were highly repetitive "engagement session" logs, the classic LLM degeneration trigger (the same mechanism documented for `compile.js` in the v3.0.1-beta.25 release). Raising the budget would not help a runaway call — it would just let it burn longer before Anthropic's own output cap (`ANTHROPIC_MAX_OUTPUT_TOKENS`) clamps it anyway.
+
+**Not established — exactly how big the largest *legitimate* outline is.** A first attempt at re-deriving this budget from proxies (page counts in `log.md`, description lengths in `index.md`) lowered it to `16384` — and that was wrong: the proxy parser had captured `index.md`'s **Type** column (`"summary": "entity"`) instead of its **Summary** column, sizing a real outline entry at ~73 chars. Corrected against the real Summary column (n = 2,047: mean 112.5 chars, median 113, p90 160, p99 191), an outline entry is closer to **~176 chars**. Re-derived against the largest real outline on hand — 370 pages, 65,001 chars — the token cost depends on a chars-per-token ratio that cannot be measured offline:
+
+| Assumed ratio | Implied tokens |
+|---|---|
+| 2.5 chars/token | 26,000 |
+| 3.0 chars/token | 21,667 |
+| 3.5 chars/token | 18,572 |
+| 4.0 chars/token | 16,250 |
+
+Two bounds narrow this further. (a) That specific 370-page ingest is *known* to have succeeded under the 24,576-token cap, so its true size is ≤ 24,576, which forces the effective ratio to at least ≈2.64 chars/token for this payload. (b) 4.0 chars/token is an optimistic ceiling — it's the ratio for plain English, and an outline entry is roughly a third hyphenated slug, which BPE tokenizers fragment far more finely than prose. A component estimate — weighting JSON punctuation (~3.4 c/tok), slug paths (~2.5 c/tok), and prose summaries (~4.0 c/tok) by their real character shares — lands at ~3.53 chars/token, i.e. **≈18,400 tokens**, the single best estimate. So the largest real outline sits somewhere in **16,250–24,576 tokens**, best estimate ~18,400 — `16384` sits at the very bottom of that range and cannot be shown to clear it.
+
+**Why `24576` stays.** It's the only value the data actually supports: the one budget the largest *observed* real outline is *known* to fit under. Lowering it to `16384` on the strength of an uncertain, bottom-of-range estimate would very likely convert the largest, most valuable ingests a user runs (hundreds of pages) into a forced, doubled-cost retry — to save a shorter stall on the small share of ingests that run away regardless of the cap. The other two multi-phase budgets, `MULTI_PHASE_BATCH_TOKENS = 16384` and `MULTI_PHASE_SINGLE_PAGE_TOKENS = 8192`, were left untouched by this investigation — over the 5,019 pages on disk at the time, a 4-page batch at the p99 page size runs at ≈2× headroom and a single page at p99 runs at ≈4× headroom, and unlike Phase 1's plan-shaped output, their output legitimately scales with the source.
+
+**Measuring it properly, going forward.** `reportOutlineUsage(label, totals, pageCount)` logs Phase 1's *real*, per-call output-token spend to stderr on every ingest (this module reserves stdout for the MCP child process's JSON-RPC frames — see v2.5.2), e.g.:
+
+```
+[ingest] Phase 1 complete (accepted outline): 370 pages, 18,412 output tokens
+of 24,576 (74.9% of budget), 9,204 input, 1 provider call(s).
+```
+
+It fires at up to three points per ingest — the first attempt (labelled `OVERFLOWED` if it failed on the token limit), the stricter retry if one ran, and the accepted outline actually used — so a runaway-vs-legitimate-volume question can be answered by comparing the first two lines directly (a ~100%-of-budget first attempt followed by a ~10%-of-budget recovery is generation running away, not an outline that legitimately needed more room). Collect this across a few large real ingests on both providers before this constant is touched again — do not lower it on a proxy measurement.
 
 ### Stage 2 — Choose single-pass or multi-phase
 
@@ -260,6 +289,27 @@ After all writes complete, the pipeline runs a final audit (v3.0.1-beta.9+):
 
 This is the user's first signal that the LLM produced "phantom" wikilinks — entities mentioned in Phase 2 batches that weren't on the page plan in Phase 1. The user can then run Wiki Health → Ask AI to triage them.
 
+### Stage 7b — `aggregateWarnings` (v3.0.17)
+
+By the time all the stages above finish, `warnings` can hold dozens of near-identical entries — a document with many long pages routinely produces a dozen ".md extension" fixes or several batch-overflow recoveries, each pushed individually at the point it happened. Left as-is, those repeats bury the handful of entries a user actually needs to read. A real ingest log this stage was built from went from **75 warnings to 11**.
+
+`aggregateWarnings(warnings, threshold = WARNING_AGGREGATION_THRESHOLD)` runs once, immediately before the log entry is built, and is the single chokepoint for the report: `appendLog`'s log entry, the SSE `done` payload, and `result.warnings` (which becomes the result-panel banner) all read from its return value, so the permanent record and what the user sees always agree. It never mutates its input.
+
+- **Threshold is `3`** (`WARNING_AGGREGATION_THRESHOLD`). A class with 1 or 2 occurrences is left completely alone — at that count the individual message, which names the specific page, is more useful than a summary. At 3 or more, every member of the class is replaced — at the position of the *first* member — by one rendered summary naming the count and up to `MAX_WARNING_EXAMPLES` (3) examples, with `, …and N more` for the rest.
+- **Five classes aggregate**, matched by an exact regex (`AGGREGATABLE_WARNINGS`) against the warning text pushed elsewhere in the pipeline:
+
+  | id | Where the individual warning comes from | Bucket in `classifyIngestEntry` |
+  |---|---|---|
+  | `missing-md` | `writePage` step 5b2, via `warn()` | ℹ Info |
+  | `concise-rewrite` | The Phase 2 single-page brevity retry (`CONCISE_PAGE_DIRECTIVE`, §4 below) | ⚠ For review |
+  | `stub-page` | The last-resort `stubPageContent` fallback | ⚠ For review |
+  | `batch-overflow` | A Phase 2 batch call hitting its output-token limit | ℹ Info |
+  | `no-path` | `reconcileGeneratedPages`, a page with no `path` field | ℹ Info |
+
+- **Two classes never aggregate, on purpose**: semantic near-duplicate redirects (`redirectSemanticDuplicates`) and trunk-page injections (`validateOutline`'s trunk detector). Each names a specific pair or a specific injected parent page the user may want to sanity-check individually — folding "12 semantic duplicates were merged" into one line would hide exactly the auto-redirects worth double-checking.
+- **Classification is preserved deliberately, not incidentally.** `classifyIngestEntry` in `src/public/app.js` buckets by substring match against the *rendered* string, so each `render()` function in `AGGREGATABLE_WARNINGS` is written to keep (or knowingly change) the bucket its un-aggregated counterpart already had. The `concise-rewrite` and `stub-page` renderers deliberately retain the load-bearing substrings `"briefer than the rest"` and `"stub page"` for exactly this reason — losing either would silently drop the aggregate from amber to the blue Info default. (v3.0.17 also gave `classifyIngestEntry` a dedicated, first-class `'briefer than the rest'` trigger — it previously landed in the amber bucket only by accident, via the `'stub page'` trigger matching inside the negation *"not a stub page"*, which was semantically backwards and one reword away from silently going blue.)
+- A broken per-class `render()` can never eat a warning — `aggregateWarnings` wraps each call in a try/catch and falls back to passing the original, un-aggregated message through on any failure.
+
 ### Stage 8 — `appendLog`
 
 A markdown log entry is appended to `<domain>/wiki/log.md` with the title, the canonical paths written, and all warnings collected. This is the audit trail — every ingest leaves a permanent record of what happened.
@@ -296,6 +346,9 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | Phase 2 returns a stray/duplicate `summaries/*` path | Occasional | `reconcileGeneratedPages` redirects it to the canonical summary and merges the content in, instead of writing a second summary file (v3.0.16) |
 | Phase 2 returns a page path with no `.md` extension (e.g. `concepts/concurrency-control`) | Occasional | `writePage` appends `.md` and surfaces a warning via `opts.onWarn`, instead of silently discarding the page (v3.0.16) |
 | Phase 2 writes a page that wasn't on its own Phase 1 plan | Occasional | `reconcileGeneratedPages` keeps it (refusing would silently drop content the user paid for) and warns, naming the extra path(s), so it's visible for manual review (v3.0.16) |
+| A Phase 2 **batch** response is `{"pages": []}` or a non-array `"pages"` (e.g. `{}`, `null`, a bare array, no `"pages"` key at all, or an array of non-objects) | Rare, but catastrophic when it happens | `extractPageArray`/`usablePageArray` reject the shape and route to the page-by-page fallback instead of (a) accepting the truthy-but-empty `{"pages": []}` as success — silently dropping every page the batch was planned to write, with no file, no stub, and no warning — or (b) `push(...batchResult.pages)` throwing `TypeError: … is not iterable` on a non-array `"pages"`, which used to escape `ingestMultiPhase` uncaught and kill the *entire* ingest (v3.0.17) |
+| A Phase 1 outline response is lenient-parsed into a truthy non-plan — `parseJSON`'s `jsonrepair` fallback can turn bare garbage text (e.g. `not json at all`) into the truthy *string* `"not json at all"` | Rare | `usablePageArray` requires an actual `pages` array with at least one entry carrying a non-empty `path`; anything else is treated as a failed attempt and routes into the stricter-JSON retry, instead of silently degrading straight to a summary-only plan (previously an `if (!outline)` truthiness check accepted the garbage string as a "successful" outline and skipped the retry entirely — an 80,000-character source could produce a wiki containing exactly one page) (v3.0.17) |
+| A single Phase 2 page's first attempt is unusable — output-token limit or a parse failure, either of which trips `extractPageArray` | Occasional | One additional retry with a brevity directive (`CONCISE_PAGE_DIRECTIVE`, same prefix so the cache breakpoint still hits) before falling back to a visible stub page. Cause-neutral by design — the retry fires on any of the four ways a response can be unusable, not just a token-limit hit, so the warning says "came back unusable" rather than naming a specific cause it can't always be sure of (v3.0.17) |
 | Slug drift across re-ingest of related sources (`expert-roundup-format` vs `experts-roundup-format`) | Common | `redirectSemanticDuplicates` runs Jaccard at write time (v3.0.1-beta.11+) |
 | Summary "Entities Mentioned" lists 5 entities when 30 written | Every ingest | `syncSummaryEntities` reconciles |
 | Entity has no Related section | New entities | `injectBulletsIntoSection` creates the section |
@@ -494,12 +547,12 @@ PLUS 5 live-LLM scenarios in `scripts/test-beta13-chat-live.js` against the real
 - L4 count query (returns a specific number 30+)
 - L5 niche detail (energy/water footprint article correctly cited)
 
-### 9.7 — Prompt slimming (`scripts/test-ingest-prompt-slimming.js`, v3.0.16)
+### 9.7 — Prompt slimming + orchestration hardening (`scripts/test-ingest-prompt-slimming.js`, v3.0.16 + v3.0.17)
 
-204 offline assertions covering the §1b prompt-assembly changes end-to-end:
+**488 offline assertions** (grown from 204 in v3.0.16). The v3.0.16 portion covers the §1b prompt-assembly changes end-to-end:
 
-- `index.md` is absent from both the outline and single-pass prompts, with all other grounding (filename lists, forced summary path, "REQUIRED COVERAGE" text, `DO NOT touch index.md` instruction) intact
-- Below the budget, the safety valve is a no-op — the prompt is byte-identical to the pre-v3.0.16 output (small/fresh-domain regression guard)
+- `index.md` is **present** in both the outline and single-pass prompts — the "Current wiki index:" block appears in exactly the two prompts that had it in v3.0.15 (the index-removal path was implemented, then reverted before shipping; see §1b for why), with all other grounding (filename lists, forced summary path, "REQUIRED COVERAGE" text, `DO NOT touch index.md` instruction) intact
+- Below the budget, the existing-file safety valve is a no-op — the prompt is byte-identical to the pre-v3.0.16 output (small/fresh-domain regression guard)
 - A dedicated real-domain-scale check confirms the DEFAULT 160,000-char budget does NOT truncate the real `articles` domain's inventory (600 entities + 2,651 concepts) — the exact "never fires on real data today" property §1b documents
 - Above the budget, the valve keeps source-relevant slugs and drops the zero-overlap tail; ranking is deterministic and reproducible
 - Truncation surfaces a user-visible warning naming how many pages of how many were left out
@@ -509,7 +562,18 @@ PLUS 5 live-LLM scenarios in `scripts/test-beta13-chat-live.js` against the real
 - `reconcileGeneratedPages` merges stray summary paths into the canonical one, keeps-and-warns on unplanned pages, and is wired into both single-pass and multi-phase
 - `writePage` writes a page whose path is missing `.md` (appending it + warning) instead of silently discarding it
 
-Together these suites give **839 offline + 146 deep-ingest + 10 live chat = 995 assertions** that exercise the pipeline at every level (write + read).
+**The v3.0.17 growth (section 20 of the suite, +284 assertions) is qualitatively different: it drives the real orchestration, not source text.** Its own header comment states the rule it exists to enforce: *"Two of the defects this section covers were shipped with green source-level assertions next to them: a source guard can confirm a line exists, it cannot confirm the line runs."* `ingestMultiPhase` takes a trailing `llm` parameter (defaulted to the real `generateText`) — the same test-only-injection pattern `compile.js` established with `opts.generateText` — so a scripted fake LLM can drive Phase 1's retry ladder and Phase 2's fallback ladder entirely offline, for free, asserting on the actual returned pages/warnings/log lines rather than on whether a particular string appears in the source. It covers:
+
+- **HIGH-1 regression guard** — the "complete (accepted outline)" sizing line (`reportOutlineUsage`, Stage 1c) must report the *retry's* spend when Phase 1 needed one, not the failed first attempt's ~100%-of-budget burn. A dead assignment bug — the reassignment sat inside the `if (!outline)` block, guarded by a check that was provably false at that point — meant the line was, in the one case it exists to measure, silently reporting the WRONG attempt: implying a per-page cost roughly 10× the truth and arguing for *raising* the budget, the one conclusion Stage 1c's analysis rules out. Fixed by moving the reassignment to fire only once the retry is confirmed to have produced a usable outline.
+- **MEDIUM-1** — the Phase 1 recovery warning (Stage 1c) no longer claims the recovered plan is "complete"; it discloses the coarser-plan trade-off, the real measured call count, and that the source document was sent to the AI twice.
+- **HIGH-2** — seven malformed Phase 2 **batch** response shapes (`{"pages": []}`, `{"pages": {}}`, `{"pages": null}`, a bare array with no `"pages"` wrapper, an object with no `"pages"` key, an array of non-objects, and an array whose entries carry no `path`) all fall through to the page-by-page fallback instead of silently dropping every planned page or crashing the whole ingest with `TypeError: … is not iterable` — every planned page still lands regardless of which malformed shape the batch call returned.
+- **Control case** — a well-formed batch is still taken on the first attempt with zero fallback calls, confirming the new gate costs a healthy ingest nothing.
+- The single-page concise retry, end to end, including its aggregate form once 3+ pages hit it.
+- `aggregateWarnings` itself: below-threshold passthrough, at-threshold collapse with example capping (`, …and N more`) and the classification-preserving wording for `concise-rewrite`/`stub-page`, interleaved-group independence, non-mutation of the input array, and that a broken per-class renderer degrades to the original message rather than throwing.
+- Degenerate inputs (`null`, `undefined`, a non-array, a number, `{}`) to `aggregateWarnings` all return an array and never throw.
+- End-to-end wiring: `ingestFile` aggregates exactly once, at the single chokepoint described in Stage 7b, and both the domain `log.md` entry and the returned `result.warnings` (which becomes the SSE payload and the result panel) read the aggregated array, never the raw one.
+
+Together the suites described in this section run **756 offline + 174 live-LLM = 930 assertions** that exercise the pipeline at every level (write + read) — 9.1 (94) + 9.2 (70) + 9.5 (42) + 9.6 offline (62) + 9.7 (488) offline; 9.3 (18) + 9.4 (146) + 9.6 live (10) live-LLM.
 
 ---
 
@@ -520,7 +584,7 @@ The pipeline is mature but not perfect. Known limitations:
 - **80k character cap** — sources longer than 80k chars are truncated. A future version may chunk-and-recombine; the engineering work is non-trivial because cross-chunk entity/concept identity has to be preserved.
 - **No native JSON mode for Anthropic** — Claude users rely on `parseJSON` + `jsonrepair`. Anthropic's `tool_use` mechanism could be wired in for stricter compliance; left as future work. v3.0.1-beta.11 added several Anthropic-amplifying-bug fixes (hub linkification, full outline threading, Jaccard dedup) that significantly close the Haiku/Flash gap.
 - **Single-domain ingest** — every ingest writes to exactly one domain. Cross-domain ingest would require parser/scanner work in `health.js`, `compile.js`, and the MCP tools (see [docs/domains.md § 4](domains.md#4-how-domains-relate-to-each-other)).
-- **No streaming progress for the LLM call itself** — the user sees "AI is analyzing the document…" for tens of seconds at a time. Streaming the partial LLM output for user reassurance is a polish item left for a future release.
+- **No streaming progress for the LLM call itself** — the user sees "AI is analyzing the document…" for tens of seconds at a time. Streaming the partial LLM output for user reassurance is still a polish item left for a future release. v3.0.17 mitigated the WORST symptom of this at the UI level — a per-step elapsed-time counter and an honest "large documents can take a minute or more per phase" note in the frontend ([src/public/app.js](../src/public/app.js)'s `showProgress`/`tickProgressElapsed`), so a stalled-looking Phase 1 reads as "still working" instead of "hung" — but the underlying call itself is still one opaque request with no sub-progress to report.
 - **Heuristic, not LLM-driven, dedup** — `redirectSemanticDuplicates` uses Jaccard + lightweight stemming. Genuinely synonymous concepts with different vocabularies (e.g. "self-attention" vs "scaled-dot-product-attention") still slip through. The Wiki Health semantic-duplicate scan remains the LLM-judged backstop for that case.
 
 ---
@@ -720,6 +784,9 @@ Test coverage: **36 offline** source guards in [`scripts/test-chat-compile-card.
 | See the prompts the LLM actually receives | `src/brain/ingest.js` — `buildOutlinePrompt()`, `buildBatchPromptParts()` / `buildBatchPrompt()`, `buildPrompt()` |
 | Understand the prompt-size cap + relevance ranking | `src/brain/ingest.js` — `capSlugInventory()`, `capExistingFilesForPrompt()` (v3.0.16) |
 | Track real token spend (input/output/cache) across an ingest | `src/brain/ingest.js` — `makeUsageAccumulator()`; `generateText(…, opts)`'s `opts.onUsage` callback (v3.0.16) |
+| Understand how repeated warnings are collapsed into one report line | `src/brain/ingest.js` — `aggregateWarnings()`, `AGGREGATABLE_WARNINGS` (v3.0.17, Stage 7b) |
+| Understand the Phase 1 outline budget sizing evidence | `src/brain/ingest.js` — the block comment on `MULTI_PHASE_OUTLINE_TOKENS`; `reportOutlineUsage()` (v3.0.17, Stage 1c) |
+| See how the multi-phase orchestration is tested offline against a scripted fake LLM | `scripts/test-ingest-prompt-slimming.js` §20; `ingestMultiPhase`'s trailing `llm` parameter (v3.0.17) |
 | Read the architecture overview | [docs/architecture.md](architecture.md) |
 | Understand domains | [docs/domains.md](domains.md) |
 | Understand AI Wiki Health (the post-ingest cleanup layer) | [docs/ai-health.md](ai-health.md) |
