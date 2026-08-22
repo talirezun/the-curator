@@ -43,15 +43,14 @@
 
 import { readFileSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { SharedBrainStorageAdapter } from './sharedbrain-storage.js';
+import { appPath } from './paths.js';
 
 // ── Curator version (for User-Agent) ──────────────────────────────────────
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let CURATOR_VERSION = 'unknown';
 try {
-  const pkg = JSON.parse(readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));
+  const pkg = JSON.parse(readFileSync(appPath('package.json'), 'utf8'));
   CURATOR_VERSION = pkg.version || 'unknown';
 } catch { /* keep "unknown" */ }
 

@@ -87,9 +87,9 @@ function setFile(file) {
   hideEl(ingestResult);
 }
 
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => {
+dropZone?.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone?.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone?.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
   setFile(e.dataTransfer.files[0]);
@@ -98,13 +98,13 @@ dropZone.addEventListener('drop', e => {
 // but skip if the click came from the <label> inside — that
 // already triggers the input natively via its `for` attribute,
 // so calling fileInput.click() again would open the picker twice.
-dropZone.addEventListener('click', (e) => {
+dropZone?.addEventListener('click', (e) => {
   if (e.target.closest('label')) return;
-  fileInput.click();
+  fileInput?.click();
 });
-fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+fileInput?.addEventListener('change', () => setFile(fileInput.files[0]));
 
-ingestBtn.addEventListener('click', () => submitIngest(false));
+ingestBtn?.addEventListener('click', () => submitIngest(false));
 
 // ── Progress bar helpers ───────────────────────────────────────────────────
 const ingestProgress = document.getElementById('ingest-progress');
@@ -770,7 +770,7 @@ async function loadChatDomains() {
   }
 }
 
-chatDomainEl.addEventListener('change', async () => {
+chatDomainEl?.addEventListener('change', async () => {
   chatDomain = chatDomainEl.value;
   activeConvId = null;
   showChatEmpty();
@@ -949,14 +949,14 @@ function appendSpinner() {
 }
 
 // ── Send message ──────────────────────────────────────────────────────────────
-newChatBtn.addEventListener('click', () => {
+newChatBtn?.addEventListener('click', () => {
   activeConvId = null;
   showChatEmpty();
   highlightActiveConv(null);
   chatInputEl.focus();
 });
 
-chatInputEl.addEventListener('keydown', e => {
+chatInputEl?.addEventListener('keydown', e => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
     chatSendBtn.click();
@@ -964,12 +964,12 @@ chatInputEl.addEventListener('keydown', e => {
 });
 
 // Auto-grow textarea
-chatInputEl.addEventListener('input', () => {
+chatInputEl?.addEventListener('input', () => {
   chatInputEl.style.height = 'auto';
   chatInputEl.style.height = Math.min(chatInputEl.scrollHeight, 160) + 'px';
 });
 
-chatSendBtn.addEventListener('click', async () => {
+chatSendBtn?.addEventListener('click', async () => {
   if (chatBusy) return;
   const message = chatInputEl.value.trim();
   if (!message || !chatDomain) return;
@@ -1401,7 +1401,7 @@ async function initSyncTab() {
 
 // Only initialise when the Sync tab is first opened (lazy)
 let syncTabInitialised = false;
-document.querySelector('[data-tab="sync"]').addEventListener('click', () => {
+document.querySelector('[data-tab="sync"]')?.addEventListener('click', () => {
   if (!syncTabInitialised) {
     syncTabInitialised = true;
     initSyncTab();
@@ -3179,7 +3179,7 @@ function renderSyncConfigured(status) {
 }
 
 // ── Push only ─────────────────────────────────────────────────────────────────
-document.getElementById('sync-push-btn').addEventListener('click', async () => {
+document.getElementById('sync-push-btn')?.addEventListener('click', async () => {
   const btn = document.getElementById('sync-push-btn');
   const statusEl = document.getElementById('sync-op-status');
   btn.disabled = true;
@@ -3210,7 +3210,7 @@ document.getElementById('sync-push-btn').addEventListener('click', async () => {
 });
 
 // ── Pull only ─────────────────────────────────────────────────────────────────
-document.getElementById('sync-pull-btn').addEventListener('click', async () => {
+document.getElementById('sync-pull-btn')?.addEventListener('click', async () => {
   const btn = document.getElementById('sync-pull-btn');
   const statusEl = document.getElementById('sync-op-status');
   btn.disabled = true;
@@ -3241,7 +3241,7 @@ document.getElementById('sync-pull-btn').addEventListener('click', async () => {
 });
 
 // ── Sync now (bidirectional) ──────────────────────────────────────────────────
-document.getElementById('sync-both-btn').addEventListener('click', async () => {
+document.getElementById('sync-both-btn')?.addEventListener('click', async () => {
   const btn = document.getElementById('sync-both-btn');
   const statusEl = document.getElementById('sync-op-status');
   btn.disabled = true;
@@ -3281,7 +3281,7 @@ document.getElementById('sync-both-btn').addEventListener('click', async () => {
 });
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
-document.getElementById('sync-disconnect-btn').addEventListener('click', async () => {
+document.getElementById('sync-disconnect-btn')?.addEventListener('click', async () => {
   if (!confirm('Disconnect sync from this computer? Your GitHub repository will not be affected.')) return;
   try {
     await fetch('/api/sync/disconnect', { method: 'DELETE' });
@@ -3316,7 +3316,7 @@ function setProgressStep(n) {
 }
 
 // ── Wizard: open ─────────────────────────────────────────────────────────────
-document.getElementById('open-wizard-btn').addEventListener('click', () => {
+document.getElementById('open-wizard-btn')?.addEventListener('click', () => {
   hideEl(syncLanding);
   showEl(syncWizard);
   showWizardStep(syncStep1);
@@ -3326,7 +3326,7 @@ document.getElementById('open-wizard-btn').addEventListener('click', () => {
 });
 
 // ── Wizard: Step 1 → Step 2 ───────────────────────────────────────────────────
-document.getElementById('wizard-next-1').addEventListener('click', () => {
+document.getElementById('wizard-next-1')?.addEventListener('click', () => {
   const url = syncRepoUrlInput.value.trim();
   if (!url || !url.includes('github.com')) {
     syncRepoUrlInput.focus();
@@ -3339,12 +3339,12 @@ document.getElementById('wizard-next-1').addEventListener('click', () => {
   setProgressStep(2);
 });
 
-document.getElementById('wizard-back-1').addEventListener('click', () => {
+document.getElementById('wizard-back-1')?.addEventListener('click', () => {
   showSyncLanding();
 });
 
 // ── Wizard: Token show/hide ───────────────────────────────────────────────────
-document.getElementById('sync-token-toggle').addEventListener('click', () => {
+document.getElementById('sync-token-toggle')?.addEventListener('click', () => {
   const input = syncTokenInput;
   const btn   = document.getElementById('sync-token-toggle');
   if (input.type === 'password') {
@@ -3357,7 +3357,7 @@ document.getElementById('sync-token-toggle').addEventListener('click', () => {
 });
 
 // ── Wizard: Step 2 → Step 3 ───────────────────────────────────────────────────
-document.getElementById('wizard-next-2').addEventListener('click', () => {
+document.getElementById('wizard-next-2')?.addEventListener('click', () => {
   const tok = syncTokenInput.value.trim();
   if (!tok || tok.length < 10) {
     syncTokenInput.focus();
@@ -3370,12 +3370,12 @@ document.getElementById('wizard-next-2').addEventListener('click', () => {
   setProgressStep(3);
 });
 
-document.getElementById('wizard-back-2').addEventListener('click', () => {
+document.getElementById('wizard-back-2')?.addEventListener('click', () => {
   showWizardStep(syncStep1);
   setProgressStep(1);
 });
 
-document.getElementById('wizard-back-3').addEventListener('click', () => {
+document.getElementById('wizard-back-3')?.addEventListener('click', () => {
   showWizardStep(syncStep2);
   setProgressStep(2);
 });
@@ -3430,12 +3430,12 @@ async function submitSyncSetup(mode) {
 }
 
 // ── Error recovery ────────────────────────────────────────────────────────────
-document.getElementById('sync-try-again').addEventListener('click', () => {
+document.getElementById('sync-try-again')?.addEventListener('click', () => {
   showWizardStep(syncStep1);
   setProgressStep(1);
 });
 
-document.getElementById('sync-retry-same').addEventListener('click', () => {
+document.getElementById('sync-retry-same')?.addEventListener('click', () => {
   submitSyncSetup(wizardLastMode);
 });
 
@@ -3446,7 +3446,7 @@ const wikiSidebar = document.getElementById('wiki-sidebar');
 const wikiContent = document.getElementById('wiki-content');
 const wikiEmpty = document.getElementById('wiki-empty');
 
-wikiLoadBtn.addEventListener('click', loadWiki);
+wikiLoadBtn?.addEventListener('click', loadWiki);
 
 async function loadWiki() {
   const domain = document.getElementById('wiki-domain').value;
@@ -3629,10 +3629,15 @@ class CustomSelect {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function showEl(el) { el.classList.remove('hidden'); }
-function hideEl(el) { el.classList.add('hidden'); }
+// v3.1.0 (Track 1.2 frontend hardening): these three are called from dozens
+// of sites throughout the file, many with an element looked up moments
+// earlier. Null-safe here means one missing element degrades that one status
+// message/toggle instead of throwing inside whatever handler called it.
+function showEl(el) { if (!el) { console.error('showEl: target element is missing'); return; } el.classList.remove('hidden'); }
+function hideEl(el) { if (!el) { console.error('hideEl: target element is missing'); return; } el.classList.add('hidden'); }
 
 function showStatus(el, type, msg) {
+  if (!el) { console.error('showStatus: target element is missing'); return; }
   el.className = `status ${type}`;
   el.innerHTML = type === 'loading'
     ? `<span class="spinner"></span><span>${escHtml(msg)}</span>`
@@ -3791,7 +3796,7 @@ async function initKbPathPanel() {
 
 let domainsTabInitialised = false;
 
-document.querySelector('[data-tab="domains"]').addEventListener('click', () => {
+document.querySelector('[data-tab="domains"]')?.addEventListener('click', () => {
   if (!domainsTabInitialised) {
     domainsTabInitialised = true;
     initKbPathPanel();
@@ -4054,7 +4059,7 @@ const ndCreateBtn    = document.getElementById('nd-create-btn');
 const templateGrid   = document.getElementById('template-grid');
 let selectedTemplate = 'tech';
 
-newDomainBtn.addEventListener('click', () => {
+newDomainBtn?.addEventListener('click', () => {
   showEl(newDomainForm);
   ndDisplayName.value = '';
   ndDescription.value = '';
@@ -4068,16 +4073,16 @@ newDomainBtn.addEventListener('click', () => {
   newDomainForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
-document.getElementById('nd-cancel-btn').addEventListener('click', () => {
+document.getElementById('nd-cancel-btn')?.addEventListener('click', () => {
   hideEl(newDomainForm);
 });
 
-ndDisplayName.addEventListener('input', () => {
+ndDisplayName?.addEventListener('input', () => {
   const slug = clientGenerateSlug(ndDisplayName.value);
   ndSlugPreview.textContent = slug ? `Folder: domains/${slug}/` : '';
 });
 
-templateGrid.querySelectorAll('.template-card').forEach(card => {
+templateGrid?.querySelectorAll('.template-card').forEach(card => {
   card.addEventListener('click', () => {
     templateGrid.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
     card.classList.add('selected');
@@ -4085,7 +4090,7 @@ templateGrid.querySelectorAll('.template-card').forEach(card => {
   });
 });
 
-ndCreateBtn.addEventListener('click', async () => {
+ndCreateBtn?.addEventListener('click', async () => {
   const displayName = ndDisplayName.value.trim();
   if (!displayName) {
     ndDisplayName.focus();

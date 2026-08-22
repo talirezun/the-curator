@@ -119,6 +119,7 @@ the-curator/
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
+│   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
@@ -127,7 +128,7 @@ the-curator/
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
 │   │   ├── health-ai.js        AI suggestions for broken links (v2.4.3+), orphans (v2.4.4+), semantic duplicates (v2.4.5+) — READ-ONLY
 │   │   ├── health-dismissed.js Persistent skip-store for Health issues (v2.5.1+) — wiki/.health-dismissed.jsonl
-│   │   └── config.js           Persistent config (API keys, domains path)
+│   │   └── config.js           Persistent config (API keys, domains path) — resolves through paths.js
 │   └── public/
 │       ├── index.html          Single-page UI shell
 │       ├── app.js              Vanilla JS frontend (includes Settings tab + onboarding wizard)
@@ -174,6 +175,93 @@ the-curator/
 ├── .curator-config.json        API keys + settings from UI (never committed)
 └── .gitignore
 ```
+
+`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.knowledge-git/`, and `domains/` are drawn here at the project root because that is where they resolve **today** — every install is a repo install. They are user data, not code; see the next section for the module that now owns that resolution and the one condition under which it would move them elsewhere.
+
+---
+
+## Where user data lives (`src/brain/paths.js`)
+
+Everything above the divider is code — `src/`, `mcp/`, `scripts/`, `package.json` — checked into the checkout the auto-updater operates on. Everything a user actually owns — API keys, the domains folder, GitHub sync credentials, Shared Brain tokens — is a different category, and as of v3.1.0 exactly one module decides where it lives: `src/brain/paths.js`.
+
+**Why this exists now, with nothing yet consuming the interesting half.** An installed macOS `.app` bundle is code-signed and therefore read-only; writing anything inside it invalidates the signature and macOS refuses to launch it. Today The Curator only ships as a repo checkout (`git clone` + `npm install`, or the AppleScript-wrapper `.app` built by `scripts/build-app.sh`, which still runs the checkout — see below), so this has never mattered. It will matter the moment a real packaged bundle exists, so `paths.js` draws the line once, a full release ahead of any packaging work, specifically so the no-op mode — the only mode that exists today — can be proven before the interesting mode is ever exercised in production.
+
+The module exports two roots:
+
+- **`APP_ROOT`** — where the CODE is. `path.resolve(<paths.js's own directory>, '../..')`, i.e. exactly what every `src/brain/*` module used to compute for itself before this module existed. Read-only in a bundle. Used for `package.json`, `mcp/server.js`, `src/public/`, and as the auto-updater's checkout root.
+- **`getUserDataDir()`** — where USER DATA goes. Always writable.
+
+```
+repo install    → getUserDataDir() === APP_ROOT       (byte-identical to every prior version; nothing moves, ever)
+bundle install  → getUserDataDir() === ~/Library/Application Support/The Curator/
+```
+
+### The detection is a positive test for "bundle", never a test for "repo"
+
+This is the load-bearing decision in the module, and the reasoning is worth carrying forward because it is not the design a first pass would reach for. The two ways detection can be wrong are not symmetric:
+
+| Wrong guess | Consequence |
+|---|---|
+| Decides **bundle** for a real checkout | Catastrophic and silent. Every user-data path relocates at once. The user's wiki is still safe on disk in the old folder, but nothing in the running app points at it — they see onboarding, no API key, no domains. It presents as "the update deleted my second brain." |
+| Decides **repo** for a real bundle | Loud and immediate. The first write fails on the read-only bundle with a clear OS error. No data lost or orphaned. |
+
+Given that asymmetry, the default has to be "repo," and only an unambiguous positive signal may move data — an unrecognised layout must fall to the safe side, not the convenient one. Hence `isBundleInstall()` is the only function that inspects the filesystem; `isRepoInstall()` is simply `!isBundleInstall()`. The two accepted bundle signals are (a) `BUNDLE_MARKER_FILE` (`.curator-bundle`), a file only a future packager would write into a shipped tree — nothing in this repo creates it — and (b) the literal macOS bundle path shape, some path component ending in `.app` immediately followed by `Contents`.
+
+**Two earlier designs were tried and rejected, for real reasons worth recording so they aren't tried a third time:**
+
+1. `existsSync(APP_ROOT/.git)` alone. A checkout that loses `.git` — GitHub's "Download ZIP," a user deleting it to save space, a dotfile-dropping copy, an interrupted clone — would silently flip to bundle mode and relocate a *live* install. That's the catastrophic direction.
+2. Adding data markers (`.curator-config.json`, `domains`) as additional evidence for "repo." This fixes (1) but breaks the forward case: `domains/*` is gitignored except a tracked `domains/.gitkeep`, so **every shipped tree — anything built by archiving the source, i.e. any bundle built the obvious way — contains a `domains/` directory.** Bundle mode became unreachable by construction, which means a packaged app built this way would have quietly tried to write inside its own read-only bundle. `test-paths.js` §1 pins this exact premise (a shipped tree has `domains/` but not `.git`) precisely so this trap can't be reintroduced without a red test.
+
+Inverting the question to "is this positively a bundle?" removes both failure modes, and removes the dependency on which files happen to be tracked at any given moment.
+
+**`scripts/build-app.sh` was deliberately left untouched.** Today's `.app` is an AppleScript wrapper that launches the checkout — the code stays in the repo, so that `.app` genuinely *is* a repo install and must keep resolving to `APP_ROOT`. Writing `BUNDLE_MARKER_FILE` from that script now would flip every existing user into bundle mode on their next update. The marker belongs to a future build that actually copies the code into a bundle's Resources.
+
+**Why `~/Library/Application Support` and not `~/Documents`:** the three visible user folders (`~/Documents`, `~/Desktop`, `~/Downloads`) are TCC-protected on macOS — first access triggers a permission prompt attributed to the *accessing process*. The My Curator MCP server is spawned by Claude Desktop as a headless stdio child with no UI session; a TCC prompt attributed to Claude Desktop for a background child might never render, and the MCP would simply fail to read the wiki with no visible explanation. `~/Library/Application Support` is not TCC-protected and is the Apple-documented location for exactly this kind of data.
+
+### Precedence: `getDomainsDir()` (`src/brain/config.js`)
+
+Verified in source, in the order the code actually checks:
+
+1. `__setDomainsDirOverride(dir)` — in-process test override, highest precedence.
+2. `CURATOR_TEST_DOMAINS_DIR` env var — cross-process test override (needed because `__setDomainsDirOverride` can't reach a spawned child, e.g. `test-sharedbrain-routes.js`'s server-on-3334).
+3. `.curator-config.json`'s `domainsPath`, if set (the UI's "change knowledge base location" writes here).
+4. `DOMAINS_PATH` env var (developer fallback in `.env`).
+5. The default: `getDefaultDomainsDir()` in `paths.js` — `<user-data dir>/domains`, which in a repo install is `<APP_ROOT>/domains`, identical to every version before v3.1.0.
+
+Rungs 1–2 are test-only and always `null` in production, so production's real behaviour is unchanged: config beats the env var, exactly as before this release. `paths.js` only changed what rung 5 resolves *relative to* — from a hardcoded `path.join(PROJECT_ROOT, 'domains')` computed inline to `getUserDataDir()`'s output, which is `APP_ROOT` until a bundle exists.
+
+The same file (`config.js`) resolves `.curator-config.json` itself via `getCuratorConfigFile()` — called **per read/write, not cached at module load**, so both test seams stay effective for any module that imports `config.js` before a test sets them.
+
+### App ↔ MCP: one resolver, not two
+
+Before v3.1.0, `mcp/storage/local.js` re-derived the config file's location independently — its own `path.resolve(<its own directory>, '../..')` plus a literal `.curator-config.json`. That happened to agree with `config.js`'s computation because both were doing the same "walk up from my own file" arithmetic, but they were two *separate* pieces of logic that merely produced the same answer by construction. Nothing forced them to keep agreeing.
+
+As of v3.1.0, `mcp/storage/local.js` imports `getCuratorConfigFile()` and `getDefaultDomainsDir()` directly from `src/brain/paths.js` — the exact functions `config.js` calls. There is now one place that decides "where is `.curator-config.json`," used by both the web app and the MCP child process Claude Desktop spawns. This matters because a silent divergence here is a *silent* failure mode with no error to surface: if the MCP resolved a different absolute path than the UI, Claude Desktop would read and write a wiki the user never sees in the browser — no crash, no warning, just two different "second brains" that happen to share a name. Routing both through one module removes that possibility by construction rather than by convention.
+
+**One divergence remains, deliberately, and is unrelated to this release:** `config.js`'s `getDomainsDir()` ranks `.curator-config.json`'s `domainsPath` **above** the `DOMAINS_PATH` env var (rungs 3 and 4 above), while `mcp/storage/local.js`'s own `resolveDomainsPath()` ranks `DOMAINS_PATH` **above** config (its rungs 3 and 4). Both files' header comments now cross-reference this explicitly so it can't be "fixed" by accident while touching either one — see the comment block at the top of `mcp/storage/local.js`.
+
+### Named user-data locations and the credential-file list
+
+`paths.js` exports one accessor per user-data file — `getCuratorConfigFile()`, `getSyncConfigFile()`, `getSyncGitDir()`, `getSharedBrainConfigFile()`, `getDefaultDomainsDir()` — each a thin `userDataPath(...)` join, each previously a `path.join(PROJECT_ROOT, <name>)` computed independently inside `config.js`, `sync.js`, and `sharedbrain-config.js`. In a repo install every one of these resolves to the exact same absolute string as before.
+
+`getCredentialFiles()` returns the five files that must be owner-only (0600) as `{rel, abs}` pairs — `.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env` (anchored to `APP_ROOT`, since it's a developer file that lives with the source, not user data), and `.knowledge-git/config` (git embeds the sync PAT in the remote URL there). This single list now backs **both** the startup `chmod` sweep in `src/server.js` and the System Check credential-permission probe in `src/brain/diagnostics.js` — previously two independently-maintained lists that had to be kept in sync by hand.
+
+### The migration seam (not yet wired to anything)
+
+`getUserDataDirState()` returns one of `'ready' | 'empty' | 'missing' | 'blocked'` rather than a boolean, because "does the folder exist" isn't the question a future bundle install needs answered. A fresh bundle install finds an *empty* `~/Library/Application Support/The Curator` while the user's real wiki still sits in their old checkout — a bundle has no way to infer where that checkout is. `'empty'` (the directory exists but holds neither a config file nor a `domains/` folder) is the intended trigger for a future one-time "import your existing wiki" prompt, to be shown *before* onboarding rather than letting the user believe their second brain is gone. `'blocked'` distinguishes a genuinely broken path (a regular file where a directory should be, a broken symlink, an unreadable directory, a failed `mkdir`) from `'missing'`, because every subsequent write would fail and the caller needs to know that rather than proceed as if empty. **Nothing in v3.1.0 calls this yet** — it ships now, unwired, so the seam is settled before the packaging work that will need it.
+
+### Test seams
+
+Two independent overrides, both checked before any real detection logic runs, both `null`/unset in production:
+
+| Seam | Scope | Crosses process boundaries? |
+|---|---|---|
+| `__setDomainsDirOverride(dir)` (`config.js`) | `domains/` only | No — in-process only |
+| `CURATOR_TEST_DOMAINS_DIR` (env) | `domains/` only | Yes |
+| `__setUserDataDirOverride(dir)` (`paths.js`) | All of it: config, sync, Shared Brain, `.knowledge-git/`, and `domains/` (unless something higher in `getDomainsDir()`'s own chain overrides it — see the CONTRIBUTING.md guidance) | No — in-process only |
+| `CURATOR_TEST_USER_DATA_DIR` (env) | Same as above | Yes |
+
+See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-user-data) for which one to reach for and why the distinction is a real safety boundary, not a style choice.
 
 ---
 
@@ -551,6 +639,14 @@ The MCP server is a **standalone** Node process spawned by the MCP client
 HTTP server to be running. From v2.5.2+, it is a full read+write surface
 to the wiki — the same code path the in-app Compile and Health tabs use.
 
+Domain-path resolution in `storage/local.js` goes through `src/brain/paths.js`
+as of v3.1.0 — the same module the web app's `config.js` uses — so the MCP
+and the UI can no longer silently disagree about where `.curator-config.json`
+or the default `domains/` folder live. See
+[Where user data lives § App ↔ MCP](#where-user-data-lives-srcbrainpathsjs)
+above for the one precedence detail (`DOMAINS_PATH` vs config ordering) that
+still deliberately differs between the two.
+
 ```
 Claude Desktop launches
       │
@@ -629,13 +725,31 @@ dismissal store (.health-dismissed.jsonl), same idempotency guards.
 
 ## Module reference
 
-### `src/brain/config.js`
+### `src/brain/paths.js` (v3.1.0)
 
-Persistent app configuration stored in `.curator-config.json` at the project root.
+Single source of truth for where user data lives. See [Where user data lives](#where-user-data-lives-srcbrainpathsjs) above for the full design rationale (repo vs bundle detection, the fail-safe asymmetry, the rejected designs). Pure resolver in repo mode — no filesystem writes, no directory creation. Imported by the MCP stdio child process, so it imports only Node builtins and never writes to stdout.
 
 | Export | Description |
 |--------|-------------|
-| `getDomainsDir()` | Resolved absolute path to the domains folder (config file → env var → default) |
+| `APP_ROOT` | Absolute path to the CODE root. Read-only in a bundle; never write here. |
+| `getUserDataDir()` | Absolute path to the writable user-data root. `APP_ROOT` in a repo install (today, always); `~/Library/Application Support/The Curator` in a (future) bundle install. Memoised per process; both test seams are re-read on every call. |
+| `userDataPath(...segments)` | Joins segments onto `getUserDataDir()`. |
+| `appPath(...segments)` | Joins segments onto `APP_ROOT`. Never write to the result. |
+| `isBundleInstall()` / `isRepoInstall()` | Positive bundle detection (`BUNDLE_MARKER_FILE` present, or `APP_ROOT` sits inside a `*.app/Contents` path). `isRepoInstall()` is `!isBundleInstall()` — unknown layouts default to repo. |
+| `getAppSupportDir()` | The macOS Application Support path bundle mode would use, independent of which mode is actually active. |
+| `getCuratorConfigFile()`, `getSyncConfigFile()`, `getSyncGitDir()`, `getSharedBrainConfigFile()`, `getDefaultDomainsDir()` | Named user-data locations — each a thin `userDataPath(...)` join. Call these per-use; don't snapshot into a module-level `const` (defeats both test seams for anything imported before they're set). |
+| `getCredentialFiles()` | The 5 files that must be 0600, as `{rel, abs}` pairs. Shared by the `server.js` startup chmod sweep and the `diagnostics.js` System Check probe. |
+| `userDataDirExists()` | True only if the path exists **and** is a real directory (a regular file there is not "exists"). |
+| `getUserDataDirState()` | `'ready' \| 'empty' \| 'missing' \| 'blocked'` — the seam a future first-launch migration will key off. Not yet called anywhere in v3.1.0. |
+| `__setUserDataDirOverride(dir)` | Test-only, in-process. Pass `null` to clear. |
+
+### `src/brain/config.js`
+
+Persistent app configuration stored in `.curator-config.json` in the user-data directory (`src/brain/paths.js`; the project root for a repo install — the only install type that exists today).
+
+| Export | Description |
+|--------|-------------|
+| `getDomainsDir()` | Resolved absolute path to the domains folder. Precedence: in-process test override → `CURATOR_TEST_DOMAINS_DIR` (env, test-only) → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default (`paths.js`'s `getDefaultDomainsDir()`). The two test rungs are always inert in production, so production behaviour is unchanged from before v3.1.0: config beats the env var. |
 | `setDomainsDir(newPath)` | Persists a new domains path to `.curator-config.json` |
 | `getConfig()` | Returns `{ domainsPath, domainsPathSource }` for the UI |
 | `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
@@ -759,6 +873,18 @@ GET  /api/config/update-check  → compare local vs GitHub version
 POST /api/config/update        → git pull + npm install + rebuild .app (build-app.sh)
 POST /api/restart               → spawn new server process, exit current one
 ```
+
+---
+
+## Frontend binding hardening (`src/public/app.js`, v3.1.0)
+
+`app.js` is one ~6,800-line ES module with roughly 90 top-level `const x = document.getElementById(...)` / `document.querySelector(...)` declarations (the exact count a new suite now pins is reported by `scripts/test-frontend-null-safety.js` on every run). `getElementById`/`querySelector` never throw — a missing element just returns `null` — but *dereferencing* that `null` does. If the dereference happens at module scope (not inside a function body), the resulting `TypeError` aborts evaluation of the rest of the module: every listener below that point never binds, every tab past that point is dead, and the auto-updater ships that blank/broken page to every user on their next check-for-updates.
+
+An audit ahead of this release found this shape live in several places — most notably two bare `document.querySelector('[data-tab="…"]').addEventListener(...)` calls (an absent tab button, e.g. from a future markup typo, would have blanked the whole app) plus a dozen `getElementById(...)` siblings of the same shape, plus a handful of module-scope consts (`dropZone`, `fileInput`, `chatInputEl`, and others) dereferenced unguarded at module scope. The fix is exactly 33 `?.` guards added at each dereference point — the same idiom the file already used consistently elsewhere — plus the three most heavily-reused helpers (`showEl`, `hideEl`, `showStatus`) now log via `console.error` and return instead of throwing when passed a missing element.
+
+**Scope, stated precisely so this isn't over-read:** this closes the *load-time* failure mode — a missing element can no longer blank the entire app during module evaluation. It does **not** make every runtime dereference in the file null-safe. Two known examples remain deliberately unfixed: `chatSendBtn.click()` inside `chatInputEl`'s own (now-guarded) `keydown` listener, and `chatInputEl.focus()` inside `newChatBtn`'s own (now-guarded) `click` listener — both bare references to a *different* element than the one whose listener just fired. If that inner element were ever missing while the outer one was present, that specific handler would still throw when triggered. Closing every cross-element reference inside every handler body is restructuring work (a tab-navigation registry, splitting the file into modules) explicitly out of scope for this release; `scripts/test-frontend-null-safety.js`'s header documents both known instances by name so the gap isn't silently forgotten.
+
+`scripts/test-frontend-null-safety.js` is a dependency-free scanner (no parser dependency, in the spirit of `scripts/test-css-tokens.js`) that verifies every top-level-equivalent dereference is `?.`-guarded or provably narrowed by an earlier guard. It deliberately carries a second, independent, "dumb" recount of the same declarations, cross-checked for exact agreement with the main scanner — see [CONTRIBUTING.md § Writing a good test](../CONTRIBUTING.md#writing-a-good-test) for why that redundancy is load-bearing rather than decorative.
 
 ---
 

@@ -12,15 +12,14 @@ import express from 'express';
 import path from 'path';
 import os from 'os';
 import { existsSync, readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { spawn, execFile } from 'child_process';
 import { getDomainsDir } from '../brain/config.js';
+import { appPath } from '../brain/paths.js';
 
 const router = express.Router();
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const MCP_SERVER_PATH = path.join(PROJECT_ROOT, 'mcp', 'server.js');
+// mcp/server.js is CODE — it ships inside the app, never in the user-data dir.
+const MCP_SERVER_PATH = appPath('mcp', 'server.js');
 const MCP_SERVER_NAME = 'my-curator';
 const CLAUDE_CONFIG_PATH = path.join(
   os.homedir(),

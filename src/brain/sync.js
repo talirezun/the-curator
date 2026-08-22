@@ -3,15 +3,22 @@ import { promisify } from 'util';
 import path from 'path';
 import { mkdir, readFile, readdir, unlink, rm } from 'fs/promises';
 import { existsSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { clearStaleLock } from './write-registry.js';
+import { APP_ROOT, getSyncGitDir, getSyncConfigFile } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT       = path.resolve(__dirname, '../..');
-const GIT_DIR    = path.join(ROOT, '.knowledge-git');
-const CONFIG_FILE = path.join(ROOT, '.sync-config.json');
+// v3.1.0+: the git dir and the stored PAT are USER DATA — they resolve through
+// paths.js so they can live outside a read-only .app bundle. In a repo install
+// getUserDataDir() === APP_ROOT, so both are byte-identical to the previous
+// `path.join(ROOT, …)`. ROOT stays the CODE root: it is only used as an exec
+// cwd (a directory guaranteed to exist), never written to.
+//
+// Resolved PER CALL below (currentGitDir/currentConfigFile) rather than
+// snapshotted into consts — a module-load snapshot would defeat paths.js's test
+// seams for anything imported before they're set, and this file's config holds
+// the user's GitHub PAT.
+const ROOT       = APP_ROOT;
 
 const execAsync = promisify(exec);
 
@@ -31,8 +38,8 @@ export function __setSyncTestOverrides({ gitDir, configFile } = {}) {
   _gitDirOverride = gitDir || null;
   _configFileOverride = configFile || null;
 }
-function currentGitDir()     { return _gitDirOverride || GIT_DIR; }
-function currentConfigFile() { return _configFileOverride || CONFIG_FILE; }
+function currentGitDir()     { return _gitDirOverride || getSyncGitDir(); }
+function currentConfigFile() { return _configFileOverride || getSyncConfigFile(); }
 
 // AppleScript's `do shell script` launches us with a minimal PATH. Prepend the
 // usual locations for git/node/npm so subprocesses resolve them reliably.

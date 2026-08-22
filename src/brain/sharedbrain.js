@@ -44,6 +44,7 @@ import { createStorageAdapter } from './sharedbrain-storage-factory.js';
 import { generateDeltaSummary } from './sharedbrain-delta.js';
 import { patchSharedBrain } from './sharedbrain-config.js';
 import { writePage, syncSummaryEntities, appendLog } from './files.js';
+import { getSyncGitDir } from './paths.js';
 
 // execFile — NOT exec. Page paths come from readdir over a folder the user
 // (or, via pull, a remote shared brain) controls; exec would interpolate
@@ -152,8 +153,27 @@ export async function findChangedPages(wikiDir, sinceDate, pendingRetry = {}) {
 export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) {
   if (!sinceDate) return null;
   try {
-    const projectRoot = path.resolve(domainsDir, '..');
-    const gitDir = path.join(projectRoot, '.knowledge-git');
+    // ⚠ THIS FUNCTION IS CURRENTLY DEAD — it returns null on EVERY call, and
+    // the v3.1.0 path change below did NOT revive it.
+    //
+    // The pathspec at the bottom of this function is `domains/<domain>/wiki/...`,
+    // but Personal Sync's work-tree IS the domains dir (see `git()` in sync.js,
+    // which passes --work-tree=getDomainsDir()), so tracked paths carry NO
+    // `domains/` prefix. Verified against the real repo: 0 of 5242 tracked
+    // files match. The sha lookup therefore always comes back empty and every
+    // Shared Brain delta is generated as if the page were brand new — degraded
+    // quality and wasted tokens, but not corruption.
+    //
+    // The fix (drop the `domains/` prefix) is deliberately DEFERRED: it changes
+    // LLM prompt content on the Shared Brain path, which must not ride in a
+    // release whose whole purpose is proving a no-op. Tracked separately.
+    //
+    // v3.1.0+: the git DIR now comes from paths.js — the SAME resolver sync.js
+    // uses. It used to be derived as `<domainsDir>/..`, which silently missed
+    // the real repo for anyone with a custom domainsPath, and would miss it
+    // again in a packaged .app. Because the function is dead either way, this
+    // change is provably a no-op on its output (null before, null after).
+    const gitDir = getSyncGitDir();
     if (!existsSync(gitDir)) return null;
 
     const sinceIso = sinceDate.toISOString();

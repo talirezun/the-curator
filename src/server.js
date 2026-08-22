@@ -18,9 +18,12 @@ import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
+import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '..');
+// APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
+// restart spawn and as its cwd. User-data paths come from paths.js instead.
+const PROJECT_ROOT = APP_ROOT;
 
 // Read version once at startup
 const { version } = JSON.parse(
@@ -34,16 +37,12 @@ const { version } = JSON.parse(
 // Best-effort + per-file try/catch: a file owned by another user, or absent,
 // must never block startup. .knowledge-git/config is included because git
 // embeds the sync PAT in the remote URL there.
-for (const rel of [
-  '.curator-config.json',
-  '.sync-config.json',
-  '.sharedbrain-config.json',
-  '.env',
-  '.knowledge-git/config',
-]) {
+// v3.1.0+: the list comes from paths.js (shared with diagnostics.js), so the
+// sweep automatically follows these files if the user-data dir moves out of the
+// app root — as it does in a packaged .app.
+for (const { abs } of getCredentialFiles()) {
   try {
-    const p = path.join(PROJECT_ROOT, rel);
-    if (existsSync(p)) chmodSync(p, 0o600);
+    if (existsSync(abs)) chmodSync(abs, 0o600);
   } catch { /* best-effort */ }
 }
 

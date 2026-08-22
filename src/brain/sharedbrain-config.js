@@ -2,7 +2,8 @@
  * Shared Brain — Connection Config
  *
  * Stores user-configured Shared Brain connections in
- * `.sharedbrain-config.json` at the project root. Gitignored — contains
+ * `.sharedbrain-config.json` in the user-data dir (see src/brain/paths.js;
+ * the project root for a repo install). Gitignored — contains
  * tokens. Mirrors the storage pattern used by .sync-config.json.
  *
  * Schema (one file per install, contains an array of connections):
@@ -54,12 +55,16 @@
 import { readFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { writeFileAtomicSync } from './atomic-write.js';
+import { getSharedBrainConfigFile } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const CONFIG_FILE  = path.join(PROJECT_ROOT, '.sharedbrain-config.json');
+// v3.1.0+: resolves through paths.js so this token-bearing file can live
+// outside a read-only .app bundle. Byte-identical in a repo install.
+//
+// Resolved PER CALL, not snapshotted at module load — a snapshot would defeat
+// paths.js's test seams for anything imported before they're set, and this file
+// holds Shared Brain PATs plus admin/fellow tokens.
+const configFile = () => getSharedBrainConfigFile();
 
 // Fields that are credentials — masked in UI listings, never logged.
 const TOKEN_FIELDS = ['github_pat', 'fellow_token', 'admin_token'];
@@ -71,9 +76,9 @@ const MASK_VISIBLE_PREFIX = 8;
 // ── File I/O ────────────────────────────────────────────────────────────────
 
 function readRaw() {
-  if (!existsSync(CONFIG_FILE)) return { connections: [] };
+  if (!existsSync(configFile())) return { connections: [] };
   try {
-    const parsed = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
+    const parsed = JSON.parse(readFileSync(configFile(), 'utf8'));
     if (!parsed || !Array.isArray(parsed.connections)) return { connections: [] };
     return parsed;
   } catch {
@@ -85,7 +90,7 @@ function readRaw() {
 // (github_pat, fellow_token, admin_token), so it must not be world-readable,
 // and a kill mid-write must not corrupt every connection's tokens.
 function writeRaw(data) {
-  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+  writeFileAtomicSync(configFile(), JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
 // ── Masking ─────────────────────────────────────────────────────────────────

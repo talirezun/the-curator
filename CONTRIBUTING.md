@@ -35,13 +35,13 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (48 suites total — 31 OFFLINE
+The Curator has an extensive battle-test suite (50 suites total — 33 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report:
 
 ```bash
-npm test            # OFFLINE suites only — fast (~1.3s), free, no network,
-                    # no API key. Run this before every commit.
+npm test            # OFFLINE suites only — fast (a few seconds), free, no
+                    # network, no API key. Run this before every commit.
 
 npm run test:live   # OFFLINE + LIVE suites. LIVE suites make real
                     # Gemini / Anthropic / GitHub calls and need keys in .env
@@ -92,6 +92,26 @@ killed the entire ingest. See
 [docs/ingestion-pipeline.md §9.7](docs/ingestion-pipeline.md) for the full
 list of what the new section covers, and Stage 1c / Stage 7b for the
 underlying behaviour.
+
+**Two new OFFLINE suites landed with v3.1.0** (Track 1 Foundation — the
+`src/brain/paths.js` path-resolution module + `src/public/app.js` frontend
+binding hardening; the release is designed to be invisible to users, and
+these two suites are what prove that): `test-paths.js` (**127 assertions**)
+covers repo-mode path-by-path byte equivalence against the pre-`paths.js`
+computation, `isBundleInstall()`/`isRepoInstall()` in both directions against
+a synthetic app tree, the TCC-avoidance rationale for
+`~/Library/Application Support` over `~/Documents`, both test seams and their
+precedence, `getUserDataDirState()`'s four-way migration seam, and — the
+premise the whole bundle-detection design rests on — that a shipped tree
+contains a tracked `domains/.gitkeep` but never a `.git` directory (see
+[docs/architecture.md § Where user data lives](docs/architecture.md#where-user-data-lives-srcbrainpathsjs)
+for why that premise sank an earlier detection design).
+`test-frontend-null-safety.js` (**63 assertions**) is a dependency-free
+scanner that verifies
+every top-level-equivalent `getElementById`/`querySelector` dereference in
+`app.js` is `?.`-guarded or provably narrowed; see
+[§ Writing a good test](#writing-a-good-test) below for the design lesson it
+exists to demonstrate.
 
 ---
 
@@ -235,16 +255,47 @@ auto-masks them). Anyone can see a secret's *name* exists, but not its value. To
 run the live suite on demand without pushing: repo → **Actions** → **Tests** →
 **Run workflow**.
 
-### Test domains-dir isolation (important when writing live tests)
+### Test seams: domains vs. user data
 
-Live suites must **never** touch the real `domains/` folder. Use the
-`CURATOR_TEST_DOMAINS_DIR` env var (set it to a tempdir) — it beats
-`.curator-config.json`'s `domainsPath`, works across a spawned child process, and
-is read by `getDomainsDir()`. Do **not** use `process.env.DOMAINS_PATH` for
-isolation: it *loses* to a configured `domainsPath`, so on a real install it
-silently no-ops and the test writes into the user's actual wiki. (In-process
-offline tests may instead use `__setDomainsDirOverride()` from `config.js`; both
-are test-only seams checked before config and unset in production.)
+The Curator has **two** test-isolation env vars, and they isolate different
+things. Reaching for the narrower one when your test starts a real server is
+the mistake this section exists to prevent.
+
+| Seam | Isolates | Does NOT isolate |
+|---|---|---|
+| `CURATOR_TEST_DOMAINS_DIR` (env) / `__setDomainsDirOverride()` (`config.js`, in-process) | `domains/` only | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/` |
+| `CURATOR_TEST_USER_DATA_DIR` (env) / `__setUserDataDirOverride()` (`src/brain/paths.js`, in-process) | All of the above, unconditionally — **plus** `domains/`, unless something higher in `getDomainsDir()`'s own precedence chain overrides it (a `DOMAINS_PATH` env var, or `--domains-path` for the MCP) | Nothing, when used alone and nothing else is set |
+
+**The safety rule, stated plainly: if your test starts a server (spawns
+`src/server.js`, or `mcp/server.js`), set `CURATOR_TEST_USER_DATA_DIR`, not
+just `CURATOR_TEST_DOMAINS_DIR` — or the server holds the developer's real
+GitHub PAT and Shared Brain tokens for the duration of the test.** This is
+not theoretical: before `CURATOR_TEST_USER_DATA_DIR` existed,
+`CURATOR_TEST_DOMAINS_DIR` isolated only the wiki content a test wrote to —
+the same server process still read and could write
+`.curator-config.json`/`.sync-config.json` from the maintainer's real
+`APP_ROOT`. A test-suite bug that clicked Sync (or called the sync route
+directly) on that server would have pushed to the maintainer's real GitHub
+repository. Use `CURATOR_TEST_DOMAINS_DIR` alone only for in-process,
+no-server tests that exclusively touch `domains/` content and never construct
+a `sync`/`sharedbrain` code path.
+
+Both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` beat
+`.curator-config.json`'s `domainsPath`/config values respectively (that's the
+point — they need to win on a maintainer's fully-configured machine, not just
+a clean CI runner), work across a spawned child process (env vars are
+inherited; the in-process overrides are not), and are always unset/`null` in
+production. Do **not** use plain `process.env.DOMAINS_PATH` for isolation: it
+*loses* to a configured `domainsPath` in `getDomainsDir()`'s precedence chain,
+so on a real install it silently no-ops and the test writes into the user's
+actual wiki — this exact trap broke four suites before v3.0.1-beta.21 (see
+CLAUDE.md's history for that release) and is precisely why the override seams
+exist instead of reusing `DOMAINS_PATH`.
+
+See [docs/architecture.md § Where user data lives](docs/architecture.md#where-user-data-lives-srcbrainpathsjs)
+for the full precedence chain both seams sit in front of, and why
+`CURATOR_TEST_USER_DATA_DIR` had to be a new, separate seam rather than an
+extension of the domains-only one.
 
 ---
 
@@ -262,7 +313,11 @@ are test-only seams checked before config and unset in production.)
    `process.env.DOMAINS_PATH` for this purpose — it loses to a configured
    `domainsPath` in `.curator-config.json` and silently no-ops on any real
    install (this exact trap broke four suites before v3.0.1-beta.21). The
-   override is checked before config and is `null` in production.
+   override is checked before config and is `null` in production. **If your
+   test spawns a real server rather than calling functions in-process, use
+   `CURATOR_TEST_USER_DATA_DIR` instead** — see
+   [§ Test seams: domains vs. user data](#test-seams-domains-vs-user-data)
+   above for why the domains-only seam isn't enough there.
 
 Run `npm test` and confirm your suite shows up and passes.
 
@@ -302,6 +357,51 @@ Both `compile.js` and `ingest.js`'s multi-phase path fit: their defects live
 in "what happens when the second attempt also comes back malformed" territory,
 which is expensive and non-deterministic to hit against a real provider but
 trivial to script.
+
+### Writing a good test
+
+Two lessons this repo has now learned the hard way, twice each — worth
+internalising before adding your own suite:
+
+**1. Assert behaviour, not the presence of a line of source.** A `grep`-
+shaped assertion ("does string X appear in file Y?") can confirm a line
+exists; it cannot confirm the line *runs*, still less that it runs correctly
+on every input shape that reaches it. The v3.0.17 budget-instrument bug
+described above is the canonical case: a source-regex assertion gave positive
+assurance for a measurement that was **always wrong**, because nothing in the
+test actually drove the code path that would have exposed it. Prefer driving
+the real function (via a test-only injection seam like the ones above, or by
+calling it directly against a tempdir) and asserting on its output over
+asserting that some string is present in the file that defines it.
+
+**2. If a test's own correctness depends on a clever heuristic — a hand-
+rolled scanner, a regex-based lexer, a "does this pattern match" classifier —
+give it an independent, deliberately DUMB cross-check, and assert the two
+agree exactly.** Both of the source-scanning suites in this repo were fooled
+this way, and both incidents are worth knowing about because a plausible-
+looking scanner is exactly the kind of test that stays green while quietly
+missing the thing it exists to catch: `test-css-tokens.js` had silently
+**baselined away** two real undefined-CSS-variable bugs (`--font-mono`,
+`--text-1`) as "already known," so a *third* occurrence of either would have
+passed silently — fixed in v3.0.15 by turning those two into named, positive
+regression assertions instead of a blanket baseline (see CLAUDE.md's v3.0.15
+history entry). `test-frontend-null-safety.js`'s string/regex-vs-division
+stripper was found blind twice during its own construction — once on a
+nested template literal, once on a `return /regex containing "quotes"/` —
+with every one of its assertions passing both times, because the assertions
+only checked what the sophisticated scanner *thought* it saw, never whether
+that view of the file was complete. Its fix is the pattern to copy: a second,
+independently-implemented, much simpler counting pass
+(`dumbColumnZeroDeclCount` — no string/comment stripping, no
+regex-vs-division judgment calls, just "does this line start at column 0 and
+look like a declaration") that has
+no way to share the sophisticated scanner's blind spots, cross-checked for
+**exact set equality** (same count, same line numbers) against the real
+scanner's output on the actual file, every run. A silent desync between the
+two — even one line — fails loudly with both lists printed. The dumb check
+doesn't need to be *right* in some absolute sense; it needs to be *wrong in a
+different way* than the clever one, so the two disagreeing is itself the
+signal.
 
 ### CSS custom-property hygiene (`scripts/test-css-tokens.js`)
 

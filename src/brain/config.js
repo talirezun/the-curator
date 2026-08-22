@@ -1,23 +1,32 @@
 /**
- * Persistent app configuration — stored in .curator-config.json at project root.
+ * Persistent app configuration — stored in .curator-config.json in the user-data
+ * directory (see src/brain/paths.js; the project root for a repo install).
  * Priority order for domainsPath:
  *   1. .curator-config.json  (set via UI)
  *   2. DOMAINS_PATH env var  (set in .env)
- *   3. ./domains             (default, relative to project root)
+ *   3. <user-data dir>/domains (default — see src/brain/paths.js)
  */
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { writeFileAtomicSync } from './atomic-write.js';
+import { getCuratorConfigFile, getDefaultDomainsDir } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const CONFIG_FILE  = path.join(PROJECT_ROOT, '.curator-config.json');
-const DEFAULT_DOMAINS = path.join(PROJECT_ROOT, 'domains');
+// v3.1.0+: these resolve through paths.js instead of this file's own location.
+// In a repo install getUserDataDir() === APP_ROOT, so both are byte-identical
+// to the previous `path.join(PROJECT_ROOT, …)`. In a (future) packaged .app
+// they move to ~/Library/Application Support/The Curator, which is writable.
+//
+// Resolved PER CALL, not snapshotted into a const at module load. A snapshot
+// would be taken at import time and would silently defeat paths.js's test seams
+// (__setUserDataDirOverride / CURATOR_TEST_USER_DATA_DIR) for any test that
+// imports this module before setting them — which would mean the test reading
+// and WRITING the developer's real .curator-config.json.
+const configFile = () => getCuratorConfigFile();
 
 function readRaw() {
-  if (!existsSync(CONFIG_FILE)) return {};
-  try { return JSON.parse(readFileSync(CONFIG_FILE, 'utf8')); }
+  const f = configFile();
+  if (!existsSync(f)) return {};
+  try { return JSON.parse(readFileSync(f, 'utf8')); }
   catch { return {}; }
 }
 
@@ -27,7 +36,7 @@ function readRaw() {
 // v3.0.1-beta.20: 0600 — this file holds the Gemini/Anthropic API keys, so it
 // must not be readable by other local users.
 function writeRaw(data) {
-  writeFileAtomicSync(CONFIG_FILE, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
+  writeFileAtomicSync(configFile(), JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
 // Test-only override. Production code NEVER sets this — it stays null, so
@@ -57,7 +66,7 @@ export function getDomainsDir() {
   const cfg = readRaw();
   if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
-  return DEFAULT_DOMAINS;
+  return getDefaultDomainsDir();
 }
 
 /** Persists a new domains path to .curator-config.json. */

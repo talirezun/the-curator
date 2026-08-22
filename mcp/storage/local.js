@@ -4,33 +4,53 @@
  * Phase 1 — reads markdown files directly from the user's domains/ folder.
  * Phase 3 will add an r2.js adapter with the same interface.
  *
- * Domains path resolution order:
- *   1. --domains-path CLI arg (passed from the generated Claude Desktop config)
- *   2. DOMAINS_PATH env var
- *   3. .curator-config.json in the Curator project root (alongside this file)
- *   4. ./domains relative to process.cwd()
+ * Domains path resolution order (do not reorder rungs 2-5 without checking
+ * src/brain/config.js's getDomainsDir, which deliberately ranks config ABOVE
+ * DOMAINS_PATH; see the note on that divergence below):
+ *   1. CURATOR_TEST_DOMAINS_DIR env var  (TEST-ONLY; never set in production)
+ *   2. --domains-path CLI arg (passed from the generated Claude Desktop config)
+ *   3. DOMAINS_PATH env var
+ *   4. .curator-config.json in the Curator user-data dir
+ *   5. <user-data dir>/domains
+ *
+ * Rung 1 exists so a spawned MCP child can be isolated onto a throwaway
+ * tempdir wholesale, exactly as the app already allows (getDomainsDir ranks
+ * CURATOR_TEST_DOMAINS_DIR above config for the same reason). It sits ABOVE the
+ * CLI arg deliberately: a test that sets it means it, and the CLI arg is
+ * supplied by the generated Claude Desktop config, not by the test. It is never
+ * set in production — Claude Desktop is launched by launchd and does not
+ * inherit a developer's shell environment.
+ *
+ * v3.1.0+: steps 3 and 4 resolve through src/brain/paths.js — the SAME module
+ * the app itself uses. This file used to re-derive the config path from its own
+ * location. If that derivation ever disagreed with the app's, the MCP server
+ * would read a different domains folder than the UI and the user's Claude
+ * Desktop would silently see a stale or empty wiki. paths.js imports only Node
+ * builtins and logs nothing, so it is safe for this stdio child process (stdout
+ * is reserved for JSON-RPC frames).
  */
 
 import fs from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CURATOR_ROOT = path.resolve(__dirname, '../..');
+import { getCuratorConfigFile, getDefaultDomainsDir } from '../../src/brain/paths.js';
 
 export function createStorageAdapter({ domainsPath } = {}) {
   const resolveDomainsPath = () => {
+    // TEST-ONLY wholesale isolation — see rung 1 in the header.
+    if (process.env.CURATOR_TEST_DOMAINS_DIR) {
+      return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
+    }
     if (domainsPath) return path.resolve(domainsPath);
     if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
-    const configPath = path.join(CURATOR_ROOT, '.curator-config.json');
+    const configPath = getCuratorConfigFile();
     if (existsSync(configPath)) {
       try {
         const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
         if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
       } catch { /* fall through */ }
     }
-    return path.join(CURATOR_ROOT, 'domains');
+    return getDefaultDomainsDir();
   };
 
   const base = resolveDomainsPath();

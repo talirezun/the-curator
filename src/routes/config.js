@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
@@ -13,10 +12,12 @@ import {
   beginUpdate,
   endUpdate,
 } from '../brain/write-registry.js';
+import { APP_ROOT } from '../brain/paths.js';
 
 const execAsync = promisify(exec);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
+// The CODE root — package.json + the git checkout the auto-updater operates on.
+// Never user data (see src/brain/paths.js).
+const PROJECT_ROOT = APP_ROOT;
 
 /**
  * When The Curator is launched via the .app wrapper, AppleScript's `do shell script`

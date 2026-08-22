@@ -19,28 +19,20 @@
 import { readFileSync, statSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { getDomainsDir } from './config.js';
+import { appPath, getCredentialFiles } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
 import { writeFileAtomic } from './atomic-write.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
-
-// Files that should be owner-only (0600). Mirrors the beta.20 hardening +
-// startup sweep in server.js.
-const CREDENTIAL_FILES = [
-  '.curator-config.json',
-  '.sync-config.json',
-  '.sharedbrain-config.json',
-  '.env',
-  '.knowledge-git/config',
-];
+// Files that should be owner-only (0600). getCredentialFiles() in paths.js is
+// the SINGLE source of truth, shared with the startup chmod sweep in
+// server.js — the two lists previously had to be kept in sync by hand.
 
 function readVersion() {
   try {
-    const pkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
+    // package.json is CODE, not user data — always read from the app root.
+    const pkg = JSON.parse(readFileSync(appPath('package.json'), 'utf8'));
     return pkg.version || 'unknown';
   } catch {
     return 'unknown';
@@ -102,9 +94,7 @@ function checkCredentialPerms() {
     return check('credentials', 'Credential file permissions', 'info',
       'Not applicable on Windows (POSIX file modes are not enforced).');
   }
-  const present = CREDENTIAL_FILES
-    .map(rel => ({ rel, abs: path.join(PROJECT_ROOT, rel) }))
-    .filter(f => existsSync(f.abs));
+  const present = getCredentialFiles().filter(f => existsSync(f.abs));
   if (present.length === 0) {
     return check('credentials', 'Credential file permissions', 'info',
       'No credential files yet (nothing to secure until you add a key or set up sync).');

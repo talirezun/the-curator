@@ -32,6 +32,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // ── Suite manifest ────────────────────────────────────────────────────────
 // OFFLINE: pure, deterministic, no network, no API key. The default `npm test`.
 const OFFLINE = [
+  'test-frontend-null-safety.js',
+  'test-paths.js',
   'test-ingest-prompt-slimming.js',
   'test-sync-hygiene.js',
   'test-beta8-stress.js',
