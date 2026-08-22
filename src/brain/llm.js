@@ -39,24 +39,118 @@ export const ANTHROPIC_MAX_OUTPUT_TOKENS = 64000;
  * Successful fallback is logged and exposed via getFallbackStatus() so the
  * Settings UI can prompt the user to update.
  *
- * Order: most-similar model first, then broadly-available stable aliases.
+ * Order: FORWARD IN TIME, cheapest-first. A chain exists because the primary
+ * was RETIRED, so escalating backwards to an older generation is the wrong
+ * direction — an older model is more likely to be retired than the one that
+ * just replaced it. Each rung is therefore the closest-priced live successor
+ * first, then progressively pricier ones, so a user whose default disappears
+ * lands on the cheapest still-working model rather than on one that is also
+ * dead. Note "closest-priced" is not "same-priced": every Gemini rung costs
+ * MORE than the default, which is why getFallbackStatus() reports a costTier.
+ *
  * Rate-limit (429) and service-unavailable (503) errors DO NOT trigger
  * fallback — those are handled by the existing retry loop.
  */
 const FALLBACK_CHAINS = {
+  // Verified against the live Gemini API (2026-08-22) with the Curator's exact
+  // call shape (JSON mode + maxOutputTokens: 65536). The previous chain's
+  // `gemini-1.5-flash` and `gemini-1.5-flash-latest` rungs both 404 — two of
+  // three rungs were already dead — and have been removed.
   gemini: [
-    'gemini-2.5-flash',             // next tier up in the same family
-    'gemini-1.5-flash',             // previous-gen stable
-    'gemini-1.5-flash-latest',      // Google's rolling alias as last resort
+    'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
+    'gemini-3.5-flash-lite',        // next flash-lite generation — 3x in / 6.25x out
+    'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
   anthropic: [
-    'claude-3-5-haiku-latest',      // previous Haiku gen — same cost tier, SDK-typed
+    'claude-3-5-haiku-latest',      // previous Haiku gen — actually CHEAPER ($0.80/$4), SDK-typed
     'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
     'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
     'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
     'claude-3-5-sonnet-latest',     // deep fallback — broadly-available Sonnet
   ],
 };
+
+/**
+ * Published API prices, USD per 1M tokens, keyed by EXACT model id.
+ *
+ * Scope is deliberately tiny: the ~10 ids this app can actually run — DEFAULTS
+ * plus every rung of FALLBACK_CHAINS. Those are ids WE choose and change
+ * deliberately, so staleness is bounded by our own release process (see the
+ * release checklist in docs/model-lifecycle.md: adding a rung means adding its
+ * price here).
+ *
+ * This replaced a family-name heuristic (flash-lite/flash, haiku/sonnet) that
+ * looked reasonable and was structurally wrong: the family word is stable
+ * ACROSS generations while the price is not. It scored
+ * gemini-2.5-flash-lite → gemini-3.1-flash-lite as "same tier" when that
+ * successor is 2.5x the input and 3.75x the output price — i.e. it stayed
+ * silent on the exact rung the chain reaches FIRST. Only an exact-id table can
+ * see a within-family price change.
+ *
+ * The numbers are used ONLY for ordering comparisons and are never displayed to
+ * the user, so a stale absolute value is harmless as long as the ORDER is right.
+ *
+ * Verified 2026-08-22 against ai.google.dev/gemini-api/docs/pricing and
+ * platform.claude.com/docs/en/about-claude/pricing (standard tier, text).
+ */
+const MODEL_PRICES_USD_PER_MTOK = {
+  // ── Gemini ──
+  'gemini-2.5-flash-lite':     { input: 0.10, output: 0.40 },   // current default
+  'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // 2.5x in / 3.75x out vs default
+  'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },   // 3x in / 6.25x out vs default
+  'gemini-2.5-flash':          { input: 0.30, output: 2.50 },
+  // ── Anthropic ──
+  'claude-haiku-4-5':          { input: 1.00, output: 5.00 },   // current default
+  // Haiku 3.5 is genuinely CHEAPER than Haiku 4.5 — a fallback onto it must not
+  // warn about cost. Exactly the kind of case a family heuristic cannot see.
+  'claude-3-5-haiku-latest':   { input: 0.80, output: 4.00 },
+  'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00 },
+  'claude-sonnet-4-5':         { input: 3.00, output: 15.00 },
+  // 3.7 / 3.5 Sonnet are retired from the published table; these are their last
+  // published rates, kept for ORDERING only (Sonnet > Haiku is not in doubt).
+  'claude-3-7-sonnet-latest':  { input: 3.00, output: 15.00 },
+  'claude-3-5-sonnet-latest':  { input: 3.00, output: 15.00 },
+};
+
+/**
+ * Published price for an exact model id, or null if we don't ship it.
+ * @returns {null | {input: number, output: number}}
+ */
+export function getModelPrice(modelId) {
+  if (typeof modelId !== 'string') return null;
+  return Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)
+    ? MODEL_PRICES_USD_PER_MTOK[modelId]
+    : null;
+}
+
+/**
+ * Compare what the user CONFIGURED against what they are actually being billed
+ * for right now. Three states, because two would force us to lie:
+ *
+ *   'costlier' — confirmed higher on input and/or output. Warn plainly.
+ *   'similar'  — confirmed same-or-cheaper. Say nothing about cost.
+ *   'unknown'  — at least one id is not in the price table. NEVER imply parity
+ *                here: any fallback means the user is off the model they chose,
+ *                so the honest line is "pricing may differ", not silence.
+ *
+ * @returns {'costlier'|'similar'|'unknown'}
+ */
+export function compareModelCost(requestedModel, usingModel) {
+  const a = getModelPrice(requestedModel);
+  const b = getModelPrice(usingModel);
+  if (!a || !b) return 'unknown';
+  return (b.input > a.input || b.output > a.output) ? 'costlier' : 'similar';
+}
+
+/**
+ * Boolean form of the 'costlier' verdict. Kept as a separate export because the
+ * fallback payload carries `costlier` for backwards compatibility; new code
+ * should prefer compareModelCost() so the 'unknown' state isn't collapsed into
+ * a misleading `false`.
+ */
+export function isCostlierModel(requestedModel, usingModel) {
+  return compareModelCost(requestedModel, usingModel) === 'costlier';
+}
 
 /**
  * Module-level snapshot of the most recent fallback event.
@@ -66,10 +160,27 @@ const FALLBACK_CHAINS = {
 let _activeFallback = null;
 
 /**
- * @returns {null | {provider: string, requestedModel: string, usingModel: string, at: string}}
+ * @returns {null | {provider: string, requestedModel: string, usingModel: string,
+ *                   at: string, costTier: 'costlier'|'similar'|'unknown',
+ *                   costlier: boolean}}
+ *
+ * `costlier` is DERIVED here (not stored on _activeFallback) so the flag always
+ * reflects the current tier heuristic, and so the stored record keeps the exact
+ * shape it has had since v2.4.0. It is additive: every pre-existing field is
+ * returned unchanged, and `/api/config/api-keys` passes this object straight
+ * through, so the frontend gets the flag with no route change.
  */
 export function getFallbackStatus() {
-  return _activeFallback;
+  if (!_activeFallback) return null;
+  const costTier = compareModelCost(_activeFallback.requestedModel, _activeFallback.usingModel);
+  return {
+    ..._activeFallback,
+    costTier,
+    // Legacy boolean kept so anything reading `costlier` keeps working. It
+    // collapses 'similar' and 'unknown' into false, which is exactly why the
+    // banner drives off costTier instead.
+    costlier: costTier === 'costlier',
+  };
 }
 
 /**
@@ -452,3 +563,11 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
   // Should be unreachable — the loop either returns or throws — but be safe
   throw lastErr || new Error(`All ${provider} models failed`);
 }
+
+/**
+ * Test-only surface. Lets an offline suite assert the standing invariant that
+ * EVERY model id this app can run is present in the price table — so adding a
+ * fallback rung without its price fails the suite instead of silently
+ * downgrading the user's cost warning to 'unknown'.
+ */
+export const __testing = { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK };

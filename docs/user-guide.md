@@ -1044,6 +1044,26 @@ Saving a key makes that provider active (*last-saved-wins*). If you keep **both*
 
 > Keys entered in Settings are stored in `.curator-config.json` at the project root. This file is gitignored and never committed. If you also have keys in `.env`, the Settings tab values take priority.
 
+### If you see an amber "Using fallback model" banner
+
+AI providers retire models. When the model The Curator normally uses disappears, the app doesn't break — it automatically falls back to the next model on a short list, and shows an amber banner under the "Active: …" badge naming the model it switched to. Everything (ingest, chat, Health, sync) keeps working.
+
+The banner will usually carry a second line:
+
+> 💰 This model costs more than your usual one — every ingest, compile and chat is billed at the higher rate until the default is restored.
+
+Take it seriously: with Gemini, **every** model the app can fall back to is more expensive than the default — the closest successor costs 2.5× more per input token and 3.75× more per output token, and a big ingest is where that shows up on your bill. (Claude users may land on a genuinely cheaper model, in which case no cost line appears at all.)
+
+You may instead see a softer note:
+
+> ℹ️ Pricing for this model may differ from your usual one — check your provider's pricing page before a large ingest.
+
+That means the app doesn't have a published price for the model it landed on and won't guess. Check your provider's pricing page if you're about to ingest something large.
+
+What to do, either way: click **Check for Updates** in Settings and update. New releases pin a current model, and the banner clears on the first successful call. If you'd rather not ingest anything large until then, that's a reasonable call — chat and Health are cheap enough to ignore ([§19](#19-api-keys-cost--free-tier) has the numbers).
+
+Full detail: [model-lifecycle.md](model-lifecycle.md).
+
 ### System Check (v3.0.1-beta.23+)
 
 The **System Check** panel confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider.
@@ -1209,6 +1229,14 @@ No API key is configured. Open the app in your browser — the onboarding wizard
 **The server starts but `http://localhost:3333` shows "This site can't be reached"**
 
 The server stopped or crashed. Go back to your terminal and run `node src/server.js` again.
+
+**The app opens to a blank page, or a panel says "The Curator could not finish loading"**
+
+Rare, but it can happen after an update if a file didn't download completely. Instead of an empty window you'll get a panel headed **"The Curator could not finish loading"**, with the technical error at the bottom.
+
+**Your knowledge is not affected.** Every wiki page is a plain markdown file on your disk; a startup failure in the browser interface cannot touch them, and you can open your domains folder in Obsidian or a text editor while the app is broken.
+
+Work through the panel's steps in order: reload the page, then quit The Curator completely (right-click the Dock icon → **Quit**) and relaunch. If it still fails after a relaunch, reinstall — and please paste the technical detail from the panel into a [GitHub issue](https://github.com/talirezun/the-curator/issues) so it can be fixed for everyone.
 
 **Ingest spins for a very long time then fails**
 

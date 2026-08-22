@@ -115,6 +115,11 @@ async function loadConfig() {
 const DOMAINS_GITIGNORE_RULES = [
   '*/raw/',
   '*/.mcp-write-log.jsonl',
+  // Cross-process write lock (src/brain/write-registry.js) is machine-local
+  // state, not wiki content. If it's synced and a crash leaves it stale, a
+  // machine that pulls it can refuse writes for up to 30 minutes because
+  // isPidAlive() sees a foreign PID number.
+  '*/.write-lock',
 ];
 
 async function ensureDomainsGitignore() {
@@ -123,8 +128,19 @@ async function ensureDomainsGitignore() {
   if (existsSync(p)) {
     try { existing = await readFile(p, 'utf8'); } catch {}
   }
+  // A CRLF-saved .gitignore (e.g. edited on Windows, or normalised by some
+  // text editor — Windows is a supported manual-install target) has a
+  // trailing \r on every line. git's own gitignore parser does NOT strip
+  // that \r, so a pattern written as "*/.write-lock\r" matches nothing —
+  // silently. Our own existence check below runs .trim() (which DOES strip
+  // \r) to decide whether a rule is "already present", so without this
+  // guard we'd conclude the file is already correct and never rewrite it,
+  // leaving the ineffective \r-suffixed pattern in place forever. Force a
+  // rewrite (which always emits clean LF-only lines) whenever any \r is
+  // found anywhere in the existing file, regardless of the trimmed match.
+  const hasCarriageReturn = existing.includes('\r');
   const lines = existing.split('\n').map(l => l.trim()).filter(Boolean);
-  let changed = false;
+  let changed = hasCarriageReturn;
   for (const rule of DOMAINS_GITIGNORE_RULES) {
     if (!lines.includes(rule)) {
       lines.push(rule);
@@ -136,6 +152,41 @@ async function ensureDomainsGitignore() {
     // files get committed to GitHub on the next push.
     await writeFileAtomic(p, lines.join('\n') + '\n', 'utf8');
   }
+}
+
+// A gitignore rule does NOT untrack a file that's already committed — it only
+// keeps NEW/untracked files out. If a `.write-lock` was committed before this
+// rule existed (realistically reachable: the MCP server is a SEPARATE child
+// process from the web server, so it can hold the *file* lock — see
+// src/brain/write-registry.js — while the web server's in-memory write
+// registry is empty; a Sync click in that window runs `git add -A` and
+// commits the lock file), it would keep propagating to every machine forever.
+// This walks the ACTUAL tracked paths (via `git ls-files`, never a raw shell
+// glob) and untracks only the ones matching the exact expected shape.
+async function untrackStaleWriteLocks() {
+  let stdout;
+  try {
+    ({ stdout } = await git('ls-files -- "*/.write-lock"'));
+  } catch {
+    return []; // no repo / nothing tracked yet — safe no-op
+  }
+  const candidates = stdout.split('\n').map(s => s.trim()).filter(Boolean);
+  const untracked = [];
+  for (const p of candidates) {
+    // Hard guard, stricter than a suffix check: exactly one path segment
+    // (a domain slug — alnum/hyphen/underscore only, matching the domain-slug
+    // validation used elsewhere, e.g. mcp/util.js's isValidSlug) followed by
+    // the literal filename. No `..`, no extra `/`, no quote/`$`/backtick/
+    // semicolon — nothing that could escape the quoting below and let a
+    // crafted path act on any file other than the exact one `git ls-files`
+    // reported. Anything that doesn't match this shape is left untouched.
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*\/\.write-lock$/.test(p)) continue;
+    try {
+      await git(`rm --cached --ignore-unmatch -- "${p}"`);
+      untracked.push(p);
+    } catch { /* best-effort — a failed untrack here must never block sync */ }
+  }
+  return untracked;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -216,6 +267,18 @@ export async function setup(repoUrl, token, mode) {
 }
 
 export async function push() {
+  // Self-heal: existing installs configured before a DOMAINS_GITIGNORE_RULES
+  // addition (e.g. the */.write-lock rule) never re-run ensureDomainsGitignore()
+  // otherwise — it was previously only called from setup(). Idempotent no-op
+  // when the file is already current.
+  await ensureDomainsGitignore();
+
+  // Self-heal part 2: the gitignore rule only keeps FUTURE .write-lock files
+  // from being tracked — it does nothing for one already committed. Untrack
+  // any that are, BEFORE the status/commit below, so the removal rides along
+  // with this push's commit instead of needing a second sync round-trip.
+  await untrackStaleWriteLocks();
+
   // Stage and commit any uncommitted changes
   const { stdout } = await git('status --porcelain');
   const uncommittedCount = stdout.split('\n').filter(Boolean).length;
@@ -225,7 +288,20 @@ export async function push() {
     const date = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     await git('add -A');
-    await git(`commit -m "The Curator sync — ${date} ${time} — ${uncommittedCount} change${uncommittedCount !== 1 ? 's' : ''}"`);
+    // `add -A` can legitimately cancel out everything `status --porcelain`
+    // counted above — most concretely, untrackStaleWriteLocks() staging a
+    // "D  <domain>/.write-lock" deletion (counted as 1+ of uncommittedCount)
+    // followed by this add -A RE-ADDING that same still-on-disk file if the
+    // domains .gitignore doesn't yet effectively exclude it (e.g. a stale
+    // CRLF-suffixed pattern on a pre-fix install) — the add cancels the
+    // delete back to a clean index, and an unguarded commit then throws
+    // "nothing to commit" and takes push() down with it. setup() and pull()
+    // already guard their own commits this way; push() must match.
+    try {
+      await git(`commit -m "The Curator sync — ${date} ${time} — ${uncommittedCount} change${uncommittedCount !== 1 ? 's' : ''}"`);
+    } catch (err) {
+      if (!err.message.includes('nothing to commit')) throw err;
+    }
   }
 
   // Determine what will be pushed BEFORE pushing. We want the union of files
@@ -287,6 +363,10 @@ export async function push() {
 }
 
 export async function pull() {
+  // Self-heal: see push() — keeps .gitignore current on installs configured
+  // before a DOMAINS_GITIGNORE_RULES addition.
+  await ensureDomainsGitignore();
+
   // Auto-commit local changes so the pull merge succeeds
   const { stdout } = await git('status --porcelain');
   if (stdout.trim()) {

@@ -34,12 +34,12 @@ When a provider retires or supersedes one of these, we bump the constant in a ne
 ```js
 const FALLBACK_CHAINS = {
   gemini: [
-    'gemini-2.5-flash',             // next tier up in the same family
-    'gemini-1.5-flash',             // previous-gen stable
-    'gemini-1.5-flash-latest',      // Google's rolling alias as last resort
+    'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
+    'gemini-3.5-flash-lite',        // next flash-lite generation — 3x in / 6.25x out
+    'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
   anthropic: [
-    'claude-3-5-haiku-latest',      // previous Haiku gen — same cost tier, SDK-typed
+    'claude-3-5-haiku-latest',      // previous Haiku gen — actually CHEAPER ($0.80/$4), SDK-typed
     'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
     'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
     'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
@@ -49,6 +49,10 @@ const FALLBACK_CHAINS = {
 ```
 
 The first model that responds is the one used for that call. Subsequent calls retry the primary first — when the provider restores it (or when you update), the Curator silently goes back to primary.
+
+**Chains run forward in time, cheapest-first.** A chain only fires because the primary was *retired*, so escalating **backwards** to an older generation is the wrong direction — an older model is more likely to be retired than the one that just replaced it. Each rung is therefore the closest-priced live successor first, then progressively pricier ones. This was a real defect: until v3.0.15 the Gemini chain escalated to `gemini-1.5-flash` and `gemini-1.5-flash-latest`, and a live probe on 2026-08-22 (with the Curator's exact call shape — JSON mode, `maxOutputTokens: 65536`) found **both already returning 404**. Two of the three rungs were dead, so a real retirement of `gemini-2.5-flash-lite` would have fallen through to a single working model. Verify every rung against the live API when you edit a chain — a fallback chain is untested by definition until the day it is needed.
+
+**The default is deliberately NOT bumped to the successor.** `gemini-2.5-flash-lite` stays the pinned default because it is 2.5x cheaper on input and 3.75x cheaper on output than `gemini-3.1-flash-lite`, its own closest successor (and cheaper still than the rungs below it). The chain exists to keep users *working* when the default disappears, not to move them off it early — which is also precisely why a fallback warrants a cost warning.
 
 **Only `model-not-found` errors trigger fallback.** Rate limits (429), service-unavailable (503), and authentication failures (401) go through their existing retry / surface paths. They don't cascade through the chain.
 
@@ -66,7 +70,39 @@ Nothing. The Settings tab shows the usual provider badge:
 
 An amber banner appears just below the provider badge in Settings:
 
-> ⚠ **Using fallback model.** Gemini's `gemini-2.5-flash-lite` is unavailable; currently running on `gemini-2.5-flash`. Open **Check for Updates** above to pull the latest Curator with an updated default model.
+> ⚠ **Using fallback model.** Gemini's `gemini-2.5-flash-lite` is unavailable; currently running on `gemini-3.1-flash-lite`. Open **Check for Updates** above to pull the latest Curator with an updated default model.
+>
+> 💰 This model costs more than your usual one — every ingest, compile and chat is billed at the higher rate until the default is restored.
+
+That is the real first rung of the Gemini chain, and it is `costlier` — so this is exactly what a Gemini user sees the moment the pinned default is retired.
+
+Why it matters: without it, a retirement silently multiplies the user's per-ingest bill with nothing on screen connecting the two. **Every rung of the current Gemini chain is more expensive than the default**, so this line is the normal case, not an edge case.
+
+**How the verdict is reached** (v3.0.15). `getFallbackStatus()` returns `costTier`, and `GET /api/config/api-keys` passes it straight through:
+
+| `costTier` | Meaning | Banner |
+|---|---|---|
+| `costlier` | Confirmed higher input and/or output price | 💰 "This model costs more than your usual one…" |
+| `similar` | Confirmed same-or-cheaper | no cost line |
+| `unknown` | We have no price for one of the two ids | ℹ️ "Pricing for this model may differ… check your provider's pricing page" |
+
+The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering only the ~10 ids we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung), with published per-1M-token prices. The values are used **only for ordering** and are never shown to the user, so a stale absolute price is harmless as long as the order is right. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
+
+> **Why not infer the tier from the model family?** That was the first implementation and it was structurally wrong. The family word (`flash-lite`, `haiku`) is stable *across generations* while the price is not: it scored `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite` as "same tier" when that successor is **2.5× input / 3.75× output** — staying silent on the rung the chain reaches **first**, which defeated the entire feature. Only an exact-id table can see a within-family price change. The same table also correctly stays quiet on `claude-haiku-4-5` → `claude-3-5-haiku-latest`, which is genuinely *cheaper* ($0.80/$4 vs $1/$5).
+
+**Never imply parity when we don't know.** An id missing from the table yields `unknown`, not `similar`. Any fallback means the user is off the model they configured, so the honest line is "pricing may differ" — silence would be a claim we can't support.
+
+Prices verified 2026-08-22 against [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing) and [platform.claude.com pricing](https://platform.claude.com/docs/en/about-claude/pricing):
+
+| Model | Input / 1M | Output / 1M | vs its default |
+|---|---|---|---|
+| `gemini-2.5-flash-lite` *(default)* | $0.10 | $0.40 | — |
+| `gemini-3.1-flash-lite` | $0.25 | $1.50 | 2.5× / 3.75× |
+| `gemini-3.5-flash-lite` | $0.30 | $2.50 | 3× / 6.25× |
+| `gemini-2.5-flash` | $0.30 | $2.50 | 3× / 6.25× |
+| `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
+| `claude-3-5-haiku-*` | $0.80 | $4.00 | cheaper |
+| `claude-sonnet-4-5`, `claude-3-*-sonnet-latest` | $3.00 | $15.00 | 3× / 3× |
 
 What to do:
 1. Click **Check for Updates** in Settings → **App**.
@@ -90,9 +126,11 @@ You'd then update and get a fresh chain.
 When releasing a new version that updates a model default:
 
 1. **Update `DEFAULTS`** in [`src/brain/llm.js`](../src/brain/llm.js).
-2. **Update `FALLBACK_CHAINS`** if the *previous* primary should now be a fallback (so users mid-update still work).
-3. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
-4. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
+2. **Update `FALLBACK_CHAINS`** — put the closest-priced live successor first, and **probe every rung against the live API before shipping** (a chain is untested by definition until it fires). Never add a rung that is older than the primary. Adding the *previous* primary is only right when it is still alive and still cheaper-or-equal.
+   - A costlier rung is fine — it is the last resort — and the cost banner will tell the user.
+3. **Add the new model's published price to `MODEL_PRICES_USD_PER_MTOK`** in [`llm.js`](../src/brain/llm.js), for both the new default and every new rung. Without it the fallback degrades to the vaguer `unknown` wording. `test-chat-model.js` §5 asserts that **every** `DEFAULTS` + `FALLBACK_CHAINS` id is priced, so forgetting this fails `npm test` rather than shipping silently.
+4. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
+5. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
 
 > **The chat Model selector requires no change here.** It shows the provider (Gemini / Claude), and its version label reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`). Bumping `DEFAULTS` updates that label automatically — users never select a specific model version; that stays a global decision. (Pending example: Gemini `2.5-flash-lite` → its successor when Google retires it; the selector will reflect it the moment `DEFAULTS.gemini` is bumped.)
 
@@ -154,8 +192,8 @@ LLM_MODEL=gemini-nonexistent-retired npm start
 Then trigger any LLM call (chat, ingest a tiny file, etc.). The server log should show:
 
 ```
-[llm] Model "gemini-nonexistent-retired" returned "not found"; trying fallback "gemini-2.5-flash"...
-[llm] Primary model "gemini-nonexistent-retired" is unavailable; using fallback "gemini-2.5-flash". Please run "Check for Updates" in Settings to upgrade to a current model.
+[llm] Model "gemini-nonexistent-retired" returned "not found"; trying fallback "gemini-3.1-flash-lite"...
+[llm] Primary model "gemini-nonexistent-retired" is unavailable; using fallback "gemini-3.1-flash-lite". Please run "Check for Updates" in Settings to upgrade to a current model.
 ```
 
 And the Settings provider area will show the amber banner. Remove the env override and restart — banner clears on the next successful call.

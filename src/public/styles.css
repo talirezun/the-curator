@@ -168,7 +168,7 @@ nav {
 /* ── Version badge ── */
 .app-version {
   font-size: 10px;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   color: var(--text-muted);
   background: var(--bg-alt);
   border: 1px solid var(--border-subtle);
@@ -405,7 +405,7 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 }
 .progress-pct {
   font-size: 11px;
-  font-family: var(--font-mono);
+  font-family: var(--mono);
   color: var(--accent-2);
   margin-left: 10px;
   flex-shrink: 0;
@@ -2354,6 +2354,21 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   line-height: 1.55;
 }
 .settings-fallback-banner strong { color: var(--warning); }
+/* Cost note inside the fallback banner — its own line so the money
+   consequence isn't buried mid-paragraph (v3.0.15). */
+.settings-fallback-banner .settings-fallback-cost {
+  display: block;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(249,226,175,0.25);
+  font-weight: 600;
+}
+/* The "we don't know the price" variant is informational, not a warning —
+   same line, lighter weight, so it doesn't shout like a confirmed cost rise. */
+.settings-fallback-banner .settings-fallback-cost-unknown {
+  font-weight: 400;
+  color: var(--text-2);
+}
 .settings-fallback-banner code {
   background: rgba(0,0,0,0.25);
   padding: 1px 6px;
@@ -2412,7 +2427,7 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   transition: background 0.12s, color 0.12s;
 }
 .provider-toggle-btn:hover:not(.active):not(:disabled) {
-  color: var(--text-1);
+  color: var(--text);
 }
 .provider-toggle-btn.active {
   background: var(--accent, var(--success));

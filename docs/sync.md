@@ -29,6 +29,7 @@ Compared to alternatives:
 | API keys (`.env`) | No | Never synced — stays on each machine only |
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
+| Write locks (`.write-lock`) | No | Machine-local state, not knowledge. Syncing one meant a crash on machine A could block writes on machine B for up to 30 minutes (fixed in v3.0.15) |
 
 ---
 

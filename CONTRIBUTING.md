@@ -234,6 +234,32 @@ are test-only seams checked before config and unset in production.)
 
 Run `npm test` and confirm your suite shows up and passes.
 
+### CSS custom-property hygiene (`scripts/test-css-tokens.js`)
+
+CSS custom properties (`var(--name)`) fail **silently** — an undefined name
+just falls back to the inherited/UA color with no error, anywhere in the
+browser or build. That's exactly what shipped in v3.0.12: `styles.css`
+referenced `var(--text-dim)`, a variable that didn't exist, and the dropdown
+text rendered near-black on a dark menu until a user reported it. There was
+no CSS test at all at the time. `test-css-tokens.js` is a small,
+dependency-free scanner (offline, in the `OFFLINE` manifest) that reads every
+local stylesheet `index.html` links, extracts every `--name: value;`
+definition (wherever it appears — `:root`, a media query, a `[data-theme]`
+block) and every `var(--name)`/`var(--name, fallback)` reference (including
+nested ones inside a fallback), and fails if a referenced name has no
+definition anywhere. If you add a new theme token, define it in `:root` (or
+wherever appropriate) before referencing it — the test catches the typo
+class of bug (`--font-mono` vs. the real `--mono`), not just missing new
+tokens: `var(--font-mono)` and `var(--text-1)` were exactly that typo, and
+are now locked in by a dedicated regression assertion (section 3b of the
+suite) rather than being folded into the generic "undefined variable"
+check, so a reintroduction fails with an unmistakable, name-specific
+message. Three other pre-existing undefined references (all carrying a
+working hex fallback, so they render correctly today — dead token names,
+not rendering bugs) are intentionally baselined by name at the top of the
+file so the suite stays honest without silently forgetting them; fixing one
+of those in `styles.css` just means deleting its baseline entry.
+
 ---
 
 ## Cutting a release

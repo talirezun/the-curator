@@ -16,7 +16,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { getDefaultModel, getProviderInfo } from '../src/brain/llm.js';
+import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
+         isCostlierModel, __testing as llmTesting } from '../src/brain/llm.js';
 import { getApiKeys } from '../src/brain/config.js';
 import { __testing } from '../src/brain/chat.js';
 
@@ -105,6 +106,109 @@ section('4. Source guards — provider override wired through the stack');
     'chat model selector no longer relies on the usable (config-or-env) flags');
   ok(/renderFallbackBanner\(data\.fallback\);[\s\S]{0,500}initChatModelSelector\(\)/.test(app),
     'loadApiKeyStatus re-inits the chat model selector so a Settings key change reflects immediately');
+}
+
+// ── 5. Fallback cost comparison — exact-id price map ────────────────────────
+// A fallback silently changes what the user is billed. The verdict MUST be
+// driven by an exact-id price table: a family-name heuristic (flash-lite /
+// haiku) cannot see a within-family price change, and scored
+// gemini-2.5-flash-lite → gemini-3.1-flash-lite as "same tier" when it is
+// 2.5x input / 3.75x output — silent on the rung the chain reaches FIRST.
+section('5. Model price map — every shipped model id is priced');
+{
+  const { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK } = llmTesting;
+  const shipped = [
+    ...Object.values(DEFAULTS),
+    ...Object.values(FALLBACK_CHAINS).flat(),
+  ];
+  // Standing invariant: adding a fallback rung without its price must FAIL here
+  // rather than silently downgrade that rung's cost warning to 'unknown'.
+  const unpriced = shipped.filter(id => !getModelPrice(id));
+  ok(unpriced.length === 0,
+    `every DEFAULTS + FALLBACK_CHAINS id has a price${unpriced.length ? ` (missing: ${unpriced.join(', ')})` : ''}`);
+  ok(Object.keys(MODEL_PRICES_USD_PER_MTOK).length === new Set(shipped).size,
+    'price map has no entries beyond the ids we actually ship');
+  for (const [id, price] of Object.entries(MODEL_PRICES_USD_PER_MTOK)) {
+    ok(typeof price.input === 'number' && typeof price.output === 'number'
+       && price.input > 0 && price.output > 0, `${id} has positive input+output prices`);
+  }
+}
+
+section('6. compareModelCost — every rung of every shipped chain');
+{
+  const { DEFAULTS, FALLBACK_CHAINS } = llmTesting;
+  // Verified 2026-08-22 against the providers' published pricing pages.
+  const expected = {
+    // Gemini: EVERY rung is costlier than the default — the exact case the old
+    // family heuristic got wrong on the first two.
+    'gemini-3.1-flash-lite':     'costlier',   // $0.25/$1.50 vs $0.10/$0.40
+    'gemini-3.5-flash-lite':     'costlier',   // $0.30/$2.50
+    'gemini-2.5-flash':          'costlier',   // $0.30/$2.50
+    // Anthropic: Haiku 3.5 is genuinely CHEAPER than Haiku 4.5 — must not warn.
+    'claude-3-5-haiku-latest':   'similar',    // $0.80/$4 vs $1/$5
+    'claude-3-5-haiku-20241022': 'similar',
+    'claude-sonnet-4-5':         'costlier',   // $3/$15
+    'claude-3-7-sonnet-latest':  'costlier',
+    'claude-3-5-sonnet-latest':  'costlier',
+  };
+  for (const provider of ['gemini', 'anthropic']) {
+    for (const rung of FALLBACK_CHAINS[provider]) {
+      eq(compareModelCost(DEFAULTS[provider], rung), expected[rung],
+        `${provider}: ${DEFAULTS[provider]} → ${rung}`);
+    }
+  }
+  eq(compareModelCost('gemini-2.5-flash-lite', 'gemini-2.5-flash-lite'), 'similar',
+    'identical models → similar');
+  eq(compareModelCost('gemini-2.5-flash', 'gemini-2.5-flash-lite'), 'similar',
+    'a cheaper fallback is not costlier');
+}
+
+section('7. compareModelCost — unknown ids never imply parity');
+{
+  eq(compareModelCost('gemini-2.5-flash-lite', 'gemini-9.9-unreleased'), 'unknown',
+    'unknown target → unknown (not a silent "similar")');
+  eq(compareModelCost('some-retired-model', 'gemini-2.5-flash-lite'), 'unknown',
+    'unknown source → unknown');
+  eq(compareModelCost('a', 'b'), 'unknown', 'both unknown → unknown');
+  eq(compareModelCost(null, undefined), 'unknown', 'null/undefined → unknown');
+  ok(isCostlierModel('gemini-2.5-flash-lite', 'gemini-9.9-unreleased') === false,
+    'the legacy boolean is false for unknown (why the banner uses costTier)');
+  ok(isCostlierModel('gemini-2.5-flash-lite', 'gemini-3.1-flash-lite') === true,
+    'the legacy boolean is true for a confirmed costlier fallback');
+  // Prototype keys must not resolve through the plain object.
+  for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    eq(getModelPrice(k), null, `getModelPrice(${JSON.stringify(k)}) → null`);
+  }
+  eq(getModelPrice(123), null, 'non-string → null');
+  eq(getModelPrice(null), null, 'null → null');
+}
+
+section('8. Source guards — cost warning + boot guard wiring');
+{
+  const llm = readFileSync(path.join(ROOT, 'src/brain/llm.js'), 'utf8');
+  ok(!/getModelCostTier|flash-lite'\)\s*\)\s*return 1/.test(llm),
+    'the family-name cost heuristic is gone (exact-id map only)');
+  ok(/costTier/.test(llm) && /compareModelCost/.test(llm),
+    'getFallbackStatus exposes costTier via compareModelCost');
+  ok(/costlier: costTier === 'costlier'/.test(llm),
+    'the legacy costlier boolean is preserved (additive payload)');
+
+  const app = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
+  ok(/fallback\.costTier \|\| \(fallback\.costlier \? 'costlier' : 'similar'\)/.test(app),
+    'banner drives off costTier, falling back to the legacy boolean');
+  ok(/costTier === 'unknown'/.test(app),
+    'banner has a distinct wording for the unknown-price state');
+  ok(/settings-fallback-cost/.test(app), 'cost note is rendered in its own styled span');
+
+  const html = readFileSync(path.join(ROOT, 'src/public/index.html'), 'utf8');
+  ok(/__curatorBooted/.test(html), 'boot guard is inline in index.html (before app.js can throw)');
+  ok(/\/app\\.js/.test(html) && !/\(app\|markdown\)/.test(html),
+    'boot guard treats ONLY app.js as load-bearing (markdown.js has a designed fallback)');
+  const appSrc = readFileSync(path.join(ROOT, 'src/public/app.js'), 'utf8');
+  ok(/typeof window\.renderChatMarkdown === 'function'/.test(appSrc),
+    'app.js still guards renderChatMarkdown — the reason markdown.js is not fatal');
+  ok(/window\.__curatorBooted = true;\s*$/.test(appSrc.trimEnd() + '\n'),
+    'the boot sentinel is the last statement in app.js');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

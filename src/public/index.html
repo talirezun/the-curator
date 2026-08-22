@@ -10,6 +10,205 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
+  <!--
+    Boot guard (v3.0.15) — a visible error surface for a FATAL frontend failure.
+
+    Why this lives inline in <head> rather than inside app.js: app.js is a single
+    ES module whose top level resolves ~79 `document.getElementById` consts. If
+    one element is renamed or removed, the module throws during evaluation, every
+    listener after that line never binds, and the user gets a BLANK PAGE — shipped
+    automatically by the updater, with no in-app recovery and no signal back to
+    us. A handler registered inside app.js cannot catch app.js failing to
+    evaluate, so the net has to be outside it, and has to run first.
+
+    Fatal vs. ordinary: app.js sets window.__curatorBooted = true on its LAST
+    line, so the flag is a load-completion sentinel — true only if the whole
+    module evaluated. Non-async module scripts are deferred and always run BEFORE
+    DOMContentLoaded, so "not booted by DOMContentLoaded" is a precise signal, not
+    a timing guess (no arbitrary timeout, no false positives on a slow machine).
+    Errors arriving AFTER boot — a failed fetch in a background poll, a rejected
+    promise in one handler — are logged and ignored: the page still works, and a
+    scary full-screen panel would be worse than the bug.
+
+    Self-contained by necessity: styles.css may itself be the thing that failed,
+    so every style here is inline. Error text is inserted with textContent only
+    — never interpolated into HTML.
+  -->
+  <script>
+  (function () {
+    'use strict';
+    window.__curatorBooted = false;
+    var shown = false;
+
+    function showFatalPanel(detail) {
+      if (shown) return;
+      shown = true;
+      try {
+        var host = document.body || document.documentElement;
+        // Hide the half-built app so the panel is not competing with a broken shell.
+        var app = document.getElementById('app');
+        if (app) app.style.display = 'none';
+
+        var box = document.createElement('div');
+        box.setAttribute('role', 'alert');
+        box.style.cssText = [
+          'position:fixed', 'inset:0', 'z-index:2147483647',
+          'display:flex', 'align-items:center', 'justify-content:center',
+          'padding:24px', 'box-sizing:border-box',
+          'background:#181825', 'overflow:auto',
+          'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+          'color:#cdd6f4', 'line-height:1.6', 'font-size:14px'
+        ].join(';');
+
+        var card = document.createElement('div');
+        card.style.cssText = [
+          'max-width:620px', 'width:100%',
+          'background:#1e1e2e', 'border:1px solid #45475a', 'border-radius:12px',
+          'padding:28px 30px', 'box-sizing:border-box'
+        ].join(';');
+
+        var h = document.createElement('h1');
+        h.textContent = '🧠 The Curator could not finish loading';
+        h.style.cssText = 'margin:0 0 14px;font-size:19px;font-weight:600;color:#f9e2af;';
+        card.appendChild(h);
+
+        var p1 = document.createElement('p');
+        p1.textContent = 'The app’s interface hit an error while starting up, so the page stayed blank. This is a bug in The Curator itself, not something you did.';
+        p1.style.cssText = 'margin:0 0 14px;';
+        card.appendChild(p1);
+
+        var p2 = document.createElement('p');
+        p2.style.cssText = 'margin:0 0 14px;';
+        var safe = document.createElement('strong');
+        safe.textContent = 'Your knowledge is safe.';
+        safe.style.color = '#a6e3a1';
+        p2.appendChild(safe);
+        p2.appendChild(document.createTextNode(' Every wiki page is a plain markdown file on your disk. Nothing here touched them — this failure is in the browser interface only, and your domains folder is exactly as you left it. You can open it in Obsidian or any text editor right now.'));
+        card.appendChild(p2);
+
+        var h2 = document.createElement('h2');
+        h2.textContent = 'What to do';
+        h2.style.cssText = 'margin:22px 0 8px;font-size:14px;font-weight:600;color:#cdd6f4;';
+        card.appendChild(h2);
+
+        var ol = document.createElement('ol');
+        ol.style.cssText = 'margin:0 0 18px;padding-left:22px;';
+        [
+          'Reload this page — a partly-downloaded file usually fixes itself.',
+          'If that fails: quit The Curator completely (right-click its Dock icon → Quit) and launch it again.',
+          'If it still fails after a relaunch, the last update may be broken. Reinstall The Curator, and please report the error below at github.com/talirezun/the-curator/issues so it can be fixed.'
+        ].forEach(function (t) {
+          var li = document.createElement('li');
+          li.textContent = t;
+          li.style.marginBottom = '6px';
+          ol.appendChild(li);
+        });
+        card.appendChild(ol);
+
+        var btn = document.createElement('button');
+        btn.textContent = 'Reload the page';
+        btn.style.cssText = [
+          'appearance:none', 'border:0', 'cursor:pointer',
+          'background:#89b4fa', 'color:#11111b', 'font-weight:600', 'font-size:14px',
+          'padding:9px 18px', 'border-radius:8px', 'font-family:inherit'
+        ].join(';');
+        btn.onclick = function () { window.location.reload(); };
+        card.appendChild(btn);
+
+        var lbl = document.createElement('div');
+        lbl.textContent = 'Technical detail (include this in a report):';
+        lbl.style.cssText = 'margin:22px 0 6px;font-size:12px;color:#a6adc8;';
+        card.appendChild(lbl);
+
+        var pre = document.createElement('pre');
+        // textContent ONLY — the message can contain arbitrary text.
+        pre.textContent = String(detail || 'Unknown startup error.');
+        pre.style.cssText = [
+          'margin:0', 'padding:10px 12px', 'background:#11111b', 'border:1px solid #45475a',
+          'border-radius:8px', 'font-size:12px', 'color:#f38ba8',
+          'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
+          'white-space:pre-wrap', 'word-break:break-word', 'max-height:180px', 'overflow:auto'
+        ].join(';');
+        card.appendChild(pre);
+
+        box.appendChild(card);
+        host.appendChild(box);
+      } catch (e) {
+        // Absolute last resort: if even DOM construction fails, don't leave the
+        // user staring at nothing.
+        try { document.documentElement.textContent =
+          'The Curator could not finish loading. Your markdown files on disk are safe. Quit and relaunch the app.'; } catch (e2) {}
+      }
+    }
+
+    function describe(err, ev) {
+      if (err && err.stack) return String(err.stack).split('\n').slice(0, 4).join('\n');
+      if (err && err.message) return String(err.message);
+      if (ev && ev.message) {
+        return String(ev.message) + (ev.filename ? '\n  at ' + ev.filename + ':' + ev.lineno + ':' + ev.colno : '');
+      }
+      return err ? String(err) : 'Unknown startup error.';
+    }
+
+    // Pre-boot errors are RECORDED, not acted on. The verdict is deferred to the
+    // DOMContentLoaded check below, which is the only thing that actually knows
+    // whether app.js booted.
+    //
+    // This matters because the server's SPA fallback answers any missing path
+    // with index.html and HTTP 200 — so a missing markdown.js is not a resource
+    // error at all: the browser parses HTML as JavaScript and throws a
+    // SyntaxError, while __curatorBooted is still false (markdown.js is a
+    // classic script and runs before the deferred app.js module). Acting on that
+    // error immediately would blank a perfectly healthy app: app.js guards the
+    // renderer with `typeof window.renderChatMarkdown === 'function'` and falls
+    // back to escaped plain text, so chat works fine without it. Deferring means
+    // the only question that decides the panel is "did app.js finish?".
+    var preBootError = null;
+    function recordPreBoot(detail) { if (!preBootError) preBootError = detail; }
+
+    // capture:true is required — a <script>/<link> that fails to DOWNLOAD fires a
+    // non-bubbling error event on the element, which is only observable at the
+    // window during the capture phase.
+    window.addEventListener('error', function (ev) {
+      var t = ev && ev.target;
+      if (t && t !== window && t.tagName) {
+        // Resource load failure. app.js is the ONLY load-bearing asset; a
+        // missing font, favicon, stylesheet or markdown.js still leaves a
+        // working app. Recorded (not shown) purely to give the panel a better
+        // message if app.js turns out not to have booted.
+        var url = String(t.src || t.href || '');
+        if (/\/app\.js(\?|$)/.test(url)) {
+          recordPreBoot('Failed to download ' + url + '\nThe app\u2019s main script could not be loaded.');
+        }
+        return;
+      }
+      if (window.__curatorBooted) { console.error('[curator] runtime error after boot:', ev && ev.error); return; }
+      recordPreBoot(describe(ev && ev.error, ev));
+    }, true);
+
+    window.addEventListener('unhandledrejection', function (ev) {
+      if (window.__curatorBooted) { console.error('[curator] unhandled rejection after boot:', ev && ev.reason); return; }
+      recordPreBoot(describe(ev && ev.reason, null));
+    });
+
+    document.addEventListener('DOMContentLoaded', function () {
+      // Deferred module scripts have all evaluated by now, so this is the
+      // authoritative check: if app.js had finished, the sentinel would be set.
+      // setTimeout(0) yields once so a same-task error is recorded first (its
+      // message is far more useful than the generic one).
+      setTimeout(function () {
+        if (window.__curatorBooted) {
+          // Booted despite an earlier error (e.g. optional markdown.js failed) —
+          // the app works; log it and stay out of the way.
+          if (preBootError) console.error('[curator] non-fatal error during startup:\n' + preBootError);
+          return;
+        }
+        showFatalPanel(preBootError ||
+          'app.js did not finish loading (no boot signal). The module threw while starting up or never ran.');
+      }, 0);
+    });
+  })();
+  </script>
 </head>
 <body>
   <div id="app">

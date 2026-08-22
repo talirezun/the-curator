@@ -33,6 +33,9 @@ Second Brain.app/
 # ── Private working documents (internal planning — never commit) ──────────────
 SHARED-BRAIN-UPGRADE.md
 ENTERPRISE-TIER-PLAN.md
+HANDOFF.md
+NEXT-PHASE-PLAN.md
+curator-memory-layer-research-proposal.md
 
 # ── Domains folder (personal wiki data — lives outside the app repo) ──────────
 # The wiki is managed separately (via the Sync tab / a private GitHub repo).

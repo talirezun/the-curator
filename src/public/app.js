@@ -4532,10 +4532,32 @@ function renderFallbackBanner(fallback) {
     badge?.parentNode?.insertBefore(el, badge.nextSibling);
   }
   const providerLabel = fallback.provider === 'gemini' ? 'Gemini' : 'Anthropic';
+  // `costTier` comes from getFallbackStatus(), which compares the PUBLISHED
+  // prices of the configured model and the one actually being billed. Three
+  // states on purpose:
+  //   costlier — confirmed more expensive; say so plainly, because a silent
+  //              2.5x-3.75x jump per ingest is the whole reason this exists.
+  //   unknown  — we don't have a price for one of the ids. Never imply parity:
+  //              the user is off the model they chose, so point them at their
+  //              provider's pricing rather than saying nothing.
+  //   similar  — confirmed same-or-cheaper; no cost line at all.
+  // Falls back to the legacy boolean so an older payload still warns.
+  const costTier = fallback.costTier || (fallback.costlier ? 'costlier' : 'similar');
+  let costNote = '';
+  if (costTier === 'costlier') {
+    costNote =
+      `<span class="settings-fallback-cost">💰 This model costs more than your usual one — ` +
+      `every ingest, compile and chat is billed at the higher rate until the default is restored.</span>`;
+  } else if (costTier === 'unknown') {
+    costNote =
+      `<span class="settings-fallback-cost settings-fallback-cost-unknown">ℹ️ Pricing for this model may ` +
+      `differ from your usual one — check your provider's pricing page before a large ingest.</span>`;
+  }
   el.innerHTML =
     `<strong>⚠ Using fallback model.</strong> ${providerLabel}'s <code>${escapeHtml(fallback.requestedModel)}</code> ` +
     `is unavailable; currently running on <code>${escapeHtml(fallback.usingModel)}</code>. ` +
-    `Open <strong>Check for Updates</strong> above to pull the latest Curator with an updated default model.`;
+    `Open <strong>Check for Updates</strong> above to pull the latest Curator with an updated default model.` +
+    costNote;
 }
 
 // Save API keys
@@ -6614,3 +6636,13 @@ async function applyOrphanPlan() {
     _orphPlan = null;
   }
 }
+
+// ── Boot sentinel ─────────────────────────────────────────────────────────────
+// MUST stay the last statement in this file. The boot guard in index.html treats
+// "this flag is still false at DOMContentLoaded" as proof that the module threw
+// during evaluation (one bad getElementById at the top is enough to blank the
+// whole page), and renders a visible recovery panel instead of leaving the user
+// with an empty window. It also switches the global error/unhandledrejection
+// handlers from "fatal" to "log and ignore", so ordinary post-boot failures —
+// a background poll's fetch rejecting, say — never trigger that panel.
+window.__curatorBooted = true;
