@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          isCostlierModel, __testing as llmTesting } from '../src/brain/llm.js';
-import { getApiKeys } from '../src/brain/config.js';
+import { getApiKeys, getActiveProvider } from '../src/brain/config.js';
 import { __testing } from '../src/brain/chat.js';
 
 const { normalizeChatProvider } = __testing;
@@ -34,11 +34,44 @@ function eq(a, b, label) { ok(a === b, `${label} (got ${JSON.stringify(a)})`); }
 function section(t) { console.log(`\n${t}`); }
 
 // ── 1. getDefaultModel — deterministic, key-independent ─────────────────────
+// getDefaultModel deliberately honours the LLM_MODEL dev override for the
+// ACTIVE provider, so asserting the pinned default has to neutralise that env
+// var first — otherwise a developer with a perfectly legitimate override
+// (`LLM_MODEL=gemini-3.1-flash-lite npm test`) reds the build for no reason.
+// The override's own behaviour is asserted separately, below.
 section('1. getDefaultModel — current default model id per provider');
-eq(getDefaultModel('gemini'), 'gemini-2.5-flash-lite', 'gemini default model');
-eq(getDefaultModel('anthropic'), 'claude-haiku-4-5', 'anthropic default model');
-eq(getDefaultModel('foo'), null, 'unknown provider → null');
-eq(getDefaultModel(null), null, 'null → null');
+{
+  const savedModel = process.env.LLM_MODEL;
+  try {
+    delete process.env.LLM_MODEL;
+    eq(getDefaultModel('gemini'), 'gemini-2.5-flash-lite', 'gemini default model');
+    eq(getDefaultModel('anthropic'), 'claude-haiku-4-5', 'anthropic default model');
+    eq(getDefaultModel('foo'), null, 'unknown provider → null');
+    eq(getDefaultModel(null), null, 'null → null');
+
+    // The override applies to the ACTIVE provider only — never label one
+    // provider with the other's model id.
+    const active = getActiveProvider();
+    process.env.LLM_MODEL = 'zz-test-override-model';
+    if (active === 'gemini' || active === 'anthropic') {
+      const other = active === 'gemini' ? 'anthropic' : 'gemini';
+      eq(getDefaultModel(active), 'zz-test-override-model',
+        `LLM_MODEL overrides the active provider (${active})`);
+      eq(getDefaultModel(other), llmTesting.DEFAULTS[other],
+        `LLM_MODEL does NOT leak into the inactive provider (${other})`);
+    } else {
+      // No key configured anywhere (clean CI checkout) — no active provider,
+      // so the override must not apply to either.
+      eq(getDefaultModel('gemini'), 'gemini-2.5-flash-lite',
+        'no active provider → LLM_MODEL does not apply (gemini)');
+      eq(getDefaultModel('anthropic'), 'claude-haiku-4-5',
+        'no active provider → LLM_MODEL does not apply (anthropic)');
+    }
+  } finally {
+    if (savedModel === undefined) delete process.env.LLM_MODEL;
+    else process.env.LLM_MODEL = savedModel;
+  }
+}
 
 // ── 2. normalizeChatProvider — invalid inputs → null (no key needed) ────────
 section('2. normalizeChatProvider — invalid inputs fall back to global (null)');
@@ -77,7 +110,7 @@ section('4. Source guards — provider override wired through the stack');
   const llm = readFileSync(path.join(ROOT, 'src/brain/llm.js'), 'utf8');
   ok(/export function getDefaultModel\(provider\)/.test(llm), 'llm.js exports getDefaultModel');
   ok(/export function getProviderInfo\(preferProvider = null\)/.test(llm), 'getProviderInfo takes a preferProvider override');
-  ok(/async function callLLM\([^)]*providerOverride = null\)/.test(llm), 'callLLM takes providerOverride');
+  ok(/async function callLLM\([^)]*providerOverride = null[,)]/.test(llm), 'callLLM takes providerOverride');
   ok(/generateText\([^)]*opts = \{\}\)/.test(llm), 'generateText takes an opts object');
 
   const chat = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
@@ -131,6 +164,20 @@ section('5. Model price map — every shipped model id is priced');
   for (const [id, price] of Object.entries(MODEL_PRICES_USD_PER_MTOK)) {
     ok(typeof price.input === 'number' && typeof price.output === 'number'
        && price.input > 0 && price.output > 0, `${id} has positive input+output prices`);
+  }
+
+  // The table is shared module state reached through __testing. A test that
+  // mutated it would silently corrupt every later cost comparison in the same
+  // process, so it is frozen at definition — table AND entries.
+  ok(Object.isFrozen(MODEL_PRICES_USD_PER_MTOK), 'exported price table is frozen');
+  ok(Object.values(MODEL_PRICES_USD_PER_MTOK).every(p => Object.isFrozen(p)),
+    'each price entry is frozen (no per-field mutation)');
+  {
+    const before = getModelPrice('claude-haiku-4-5').input;
+    try { MODEL_PRICES_USD_PER_MTOK['claude-haiku-4-5'].input = 0; } catch { /* strict mode */ }
+    try { MODEL_PRICES_USD_PER_MTOK['zz-injected'] = { input: 0, output: 0 }; } catch { /* strict mode */ }
+    eq(getModelPrice('claude-haiku-4-5').input, before, 'a mutation attempt cannot change a price');
+    eq(getModelPrice('zz-injected'), null, 'a mutation attempt cannot add a model id');
   }
 }
 

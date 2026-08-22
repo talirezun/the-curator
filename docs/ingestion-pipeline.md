@@ -4,7 +4,7 @@ This document is the definitive technical reference for The Curator's ingestion 
 
 If you're a user looking for how to drop a PDF in and what happens next, start with [the user guide](user-guide.md#8-ingest-a-source). If you're a developer wanting to understand the system at the level needed to debug or extend it, read on.
 
-**Last updated**: v3.0.1-beta.13
+**Last updated**: v3.0.16
 
 ---
 
@@ -31,9 +31,10 @@ flowchart TD
     F -- No --> G[Truncate + warn user]
     F -- Yes --> H[Extract author hints<br/>byline + YAML]
     G --> H
-    H --> I{Text > 15k chars?}
-    I -- No --> J[SINGLE-PASS<br/>one LLM call]
-    I -- Yes --> K[MULTI-PHASE<br/>Phase 1 outline → Phase 2 batches]
+    H --> H2[Prompt assembly:<br/>index.md unchanged, still embedded<br/>full entity/concept filename lists sent<br/>&lpar;safety-valve cap only on pathological wikis&rpar;<br/>v3.0.16]
+    H2 --> I{Text > 15k chars?}
+    I -- No --> J[SINGLE-PASS<br/>one LLM call, no cache breakpoint]
+    I -- Yes --> K[MULTI-PHASE<br/>Phase 1 outline → Phase 2 batches<br/>cache-ordered prefix, batch page list last]
     J --> L[validateOutline:<br/>summary path + originator + trunk detector + structural checks]
     K --> L
     L --> L2[redirectSemanticDuplicates:<br/>Jaccard-based pre-write dedup<br/>v3.0.1-beta.11+]
@@ -65,7 +66,7 @@ The frontend sends a `multipart/form-data` POST. The route handler:
 
 Everything from this point flows through `ingestFile()` in `src/brain/ingest.js`.
 
-### Stage 1 — Raw save + text extraction (`ingestFile` lines 824–874)
+### Stage 1 — Raw save + text extraction (`ingestFile`)
 
 The uploaded file is copied atomically to `<domain>/raw/<filename>`. PDFs go through `pdf-parse` (with a try/catch + raw-file rollback on failure); MD and TXT files are read directly.
 
@@ -79,6 +80,42 @@ The uploaded file is copied atomically to `<domain>/raw/<filename>`. PDFs go thr
 - "Author:" / "Authors:" lines
 
 The detected names are passed to `validateOutline` later, which will inject the originator entity if the LLM omits it.
+
+### Stage 1b — Prompt caching + the existing-page safety valve (v3.0.16)
+
+Before either LLM path runs, `ingestFile` assembles what actually gets sent to the model. **`index.md` is embedded in the outline and single-pass prompts exactly as it always was — this release does NOT change that.** An earlier iteration of this work also removed the index from those two prompts (mirroring the v3.0.1-beta.25 fix that did the same for the *compile* prompt), and that removal is what an earlier draft of this document described. It was reverted before shipping: live testing found the measured saving from removing the index alone (-16.2% for the canonical multi-batch case) was roughly half of what prompt caching delivers on its own (-30.3%, see below), while the index-removal path was the one carrying open questions about behaviour on Gemini. Caching does not change anything the model is given — same content, same order for the two prompts that matter — so it shipped alone. `buildOutlinePrompt` and `buildPrompt` are otherwise **byte-identical to v3.0.15**.
+
+What this release actually ships is two things: a reorder of the Phase 2 batch prompt that enables caching, and a rarely-firing safety valve on the existing-page filename lists (unrelated to the index; covered second, below).
+
+**Phase 2 batch prompts are reordered for caching — this is the headline of this release.** `buildBatchPromptParts` splits the batch prompt into a `{prefix, suffix}` pair instead of one string. Every field that is identical across every batch of one ingest — today's date, the source document, the existing-files inventory, the outline's full page list, and all instructional/formatting rules — lives in `prefix`; only the specific page paths this call must write live in `suffix`, at the very end. Concatenating `prefix + suffix` reproduces the exact same prompt content and size as before v3.0.16; **only the order of two blocks changed, nothing was removed.** That's exactly why this is low-risk: the model sees identical content on every batch, just re-sequenced so the front of the prompt is byte-stable call to call.
+
+Measured on one Phase 2 batch, real `articles` domain (600 entity pages, 2,651 concept pages), 57,060-byte source: the batch prompt is **145,879 chars, unchanged in size** — of that, **145,352 chars are a stable prefix shared byte-for-byte across every batch of this ingest**, with only a **527-char tail** varying per call. That prefix is what the caching below exploits.
+
+This reorder buys two different things per provider:
+
+- **Anthropic** — the caller can mark `prefix` with an explicit `cache_control` breakpoint (see §7.2). Reads cost ~0.1× base input; writes cost 1.25×, so a breakpoint only pays for itself across ≥2 uses. Verified live across multiple real multi-batch ingests: effective input-token saving landed **roughly in the 50–70% range** on the ingest's cacheable calls (one run: 41,783 cache-write + 167,132 cache-read tokens ≈ 52%; another: 25,933 cache-write + 259,330 cache-read tokens ≈ 71% — the exact ratio depends on how many batches share the prefix, so treat this as a range, not a fixed number).
+- **Gemini** — 2.5-family models cache a stable prefix **implicitly**, no API change required; a longer, byte-stable prefix is simply worth more automatically. Observed implicit-cache hit rate on two live runs: **84.6% and 91.9%** — a single-run observation, not a guarantee.
+
+**Headline total-ingest saving: -30.3%** for the canonical multi-batch case (outline call + 3 batches, real `articles` domain, 57,060-byte source, Anthropic caching engaged) — this is caching's contribution alone, with the index unchanged in every prompt.
+
+Single-pass ingest is unaffected by the reorder (it has no batch loop to share a prefix across) and deliberately gets no cache breakpoint at all — a one-shot prefix would pay the 1.25× cache-write premium for zero reads, making that single call more expensive, not less. See §7.2 for the full gating logic.
+
+**On quality:** reordering the batch prompt does not change what the model is given, only the sequence it arrives in, so no quality effect is expected from this change and none was reliably measured. Do not read the broken-wikilink percentages anywhere in this document as evidence about the current shipping code's link quality — they were gathered under configurations (a capped inventory; a since-reverted index removal) that either no longer ship or, where they do ship (the safety valve, below), essentially never engage on a real domain.
+
+**The existing entity/concept filename lists are a safety valve, not a cost cap.** `capExistingFilesForPrompt(existingFiles, sourceText)` runs once per ingest, before either path branches, and produces the `promptFiles` object every prompt builder actually receives — unrelated to the index/caching work above. Read the block comment on `SLUG_INVENTORY_BUDGET_CHARS` in `ingest.js` before touching this — it exists specifically to stop a future well-meaning "let's shrink this further" change from repeating the mistake below.
+
+- **What happened:** the cap originally shipped at a 24,000-character-per-list budget as a cost measure. A controlled A/B test on the real `articles` domain (Anthropic `claude-haiku-4-5`, n=2 per arm, under a now-reverted build that also removed the index) measured its effect on the broken-wikilink rate of the resulting pages:
+
+  | Arm | Broken-wikilink rate |
+  |---|---|
+  | Full inventory (no cap) | 4.3% (range 2.4%–6.1%) |
+  | Capped at 24,000 chars/list | **9.2%** (range 5.4%–13.0%) — **2.2× worse** |
+
+  Haiku leans on the full slug list to ground its `[[wikilinks]]`; trimming it to the most-relevant 562 of 2,651 concepts didn't make it link more carefully, it made it invent slugs it couldn't verify. Gemini's link quality was unharmed in that arm. **This specific comparison is old, small-sample (n=2), and superseded by a later, larger measurement that could not reliably resolve a quality effect at all (see above) — it is kept here only as the historical reason the budget was raised, not as a standing claim about current quality.**
+- **What it is today:** the budget was raised to `SLUG_INVENTORY_BUDGET_CHARS = 160,000` characters per list — derived from the tightest context window this app ships against (`claude-haiku-4-5` at 200,000 tokens), not chosen for cost. At that size the valve **does not fire on any real domain measured so far** — the largest list on hand (the `articles` domain's 2,651 concepts) renders to ~112,200 chars, about 70% of the budget. It starts truncating only around ~3,780 pages in a single folder at today's average filename length — a genuinely pathological wiki size. **Do not lower this constant to save tokens** — it is an inert safety valve against a hard context-window failure on a pathological domain, not a cost lever; the actual cost saving in this release is the caching above.
+- When it does fire, `capSlugInventory` scores every filename by **token-overlap coverage** with the source document (using the same `tokenize()` the Shared Brain delta/synthesis code uses) and keeps the most relevant entries until the budget is spent; the result is still fully **deterministic** and never silent — a warning naming how many of how many pages were left out is pushed into `result.warnings` (see the [ingest-report reference](user-guide.md#full-reference-of-ingest-report-entries)).
+- **The dedup safety net keeps scanning the FULL list regardless.** `redirectSemanticDuplicates` — the Jaccard-based guard that catches slug drift (`expert-roundup-format` vs `experts-roundup-format`) — is called with the original, uncapped `existingFiles`, never `promptFiles`.
+- Distinct from this valve: the multi-phase batch prompt's "PAGES BEING CREATED IN THIS SAME INGEST" block (above) lists `allOutlinePages` — the *plan for this one ingest* (typically 5–40 pages, per the outline budget rule) — which is a different, much smaller input and is **not** subject to `SLUG_INVENTORY_BUDGET_CHARS` at all.
 
 ### Stage 2 — Choose single-pass or multi-phase
 
@@ -255,7 +292,10 @@ The pipeline catches the following LLM-compliance failures programmatically (no 
 | Source > 80,000 chars | Common on books | Truncate + warn user |
 | LLM mentions entities in pages not on the plan | Common | `auditBrokenWikilinks` warns user (v3.0.1-beta.9+) |
 | Hub page enumerates items as plain text instead of wikilinks | Common, esp. on Haiku | `linkifyHubPages` wraps mentions in `[[brackets]]` post-batch (v3.0.1-beta.11+) |
-| Phase 2 batch unaware of other batches' slugs | Common, esp. on Haiku | Full outline slug list now threaded into every batch prompt (v3.0.1-beta.11+) |
+| Phase 2 batch unaware of other batches' slugs | Common, esp. on Haiku | Full outline slug list (this ingest's own plan — not the on-disk inventory, and not affected by the v3.0.16 cap) now threaded into every batch prompt (v3.0.1-beta.11+) |
+| Phase 2 returns a stray/duplicate `summaries/*` path | Occasional | `reconcileGeneratedPages` redirects it to the canonical summary and merges the content in, instead of writing a second summary file (v3.0.16) |
+| Phase 2 returns a page path with no `.md` extension (e.g. `concepts/concurrency-control`) | Occasional | `writePage` appends `.md` and surfaces a warning via `opts.onWarn`, instead of silently discarding the page (v3.0.16) |
+| Phase 2 writes a page that wasn't on its own Phase 1 plan | Occasional | `reconcileGeneratedPages` keeps it (refusing would silently drop content the user paid for) and warns, naming the extra path(s), so it's visible for manual review (v3.0.16) |
 | Slug drift across re-ingest of related sources (`expert-roundup-format` vs `experts-roundup-format`) | Common | `redirectSemanticDuplicates` runs Jaccard at write time (v3.0.1-beta.11+) |
 | Summary "Entities Mentioned" lists 5 entities when 30 written | Every ingest | `syncSummaryEntities` reconciles |
 | Entity has no Related section | New entities | `injectBulletsIntoSection` creates the section |
@@ -345,7 +385,8 @@ The LLM dispatch lives in `src/brain/llm.js`. Two providers are supported with s
 - **Default model**: `gemini-2.5-flash-lite`
 - **JSON mode**: native — `responseMimeType: 'application/json'` forces token-level JSON validity
 - **Truncation detection** (v3.0.1-beta.8+): if `finishReason === 'MAX_TOKENS'`, throws an actionable error before the truncated text reaches `parseJSON`
-- **Fallback chain**: `gemini-2.5-flash` → `gemini-1.5-flash` → `gemini-1.5-flash-latest`
+- **Fallback chain** (re-verified live and reordered forward-in-time in v3.0.15 — the prior chain's `gemini-1.5-flash` / `gemini-1.5-flash-latest` rungs both 404'd): `gemini-3.1-flash-lite` → `gemini-3.5-flash-lite` → `gemini-2.5-flash`
+- **Prompt caching**: implicit — 2.5-family models cache a stable prompt prefix automatically once the v3.0.16 reorder (§1b) makes that prefix byte-stable across a multi-phase ingest's batches. No API call or code change is needed to enable it. Observed live hit rate on the real `articles` domain: **84.6% and 91.9%** across two runs.
 
 ### 7.2 — Anthropic Claude
 
@@ -354,6 +395,12 @@ The LLM dispatch lives in `src/brain/llm.js`. Two providers are supported with s
 - **Truncation detection** (v3.0.1-beta.8+): if `stop_reason === 'max_tokens'`, throws the same actionable error as Gemini
 - **Fallback chain**: Haiku family first, then Sonnet only as deep fallback
 - **Known gap**: Anthropic users see slightly higher rates of trunk-page-detector and broken-link warnings because there's no JSON-mode token rail. The trunk-detector and Pass-A/B/C link normalisation are precisely the safeguards that compensate.
+- **Why the v3.0.16 existing-page-inventory cap ships as a rarely-firing safety valve, not a routine cost saving.** An early, small-sample test found trimming the entity/concept filename list to 24,000 chars/list measurably increased Haiku's broken-wikilink rate; a later, larger measurement could not reliably resolve a link-quality effect either way on either provider (see §1b). The budget was set high enough (160,000 chars/list) that it does not fire on any real domain measured so far — the caution from the small-sample test is why it should not be tuned back down, not evidence about current quality.
+- **Explicit prompt caching (v3.0.16).** Unlike Gemini, Anthropic caching is opt-in per call — the caller marks a `cache_control: { type: 'ephemeral' }` breakpoint on the prefix it wants cached. `buildAnthropicUserContent(userPrompt, cachePrefixChars)` in `llm.js` places that breakpoint at `cachePrefixChars`, but only when the caller (`ingestMultiPhase`) opts in, gated by two independent conditions:
+  - **Reuse gate** — the breakpoint is only set when `totalBatches >= 2` for this ingest. A cache **write** costs 1.25× the base input rate; a cache **read** costs ~0.1×. A prefix used exactly once is therefore 25% MORE expensive, not less — break-even is two uses (1.25 + 0.1 = 1.35 vs. 2.0 uncached), so a single-batch ingest never sets a breakpoint.
+  - **Size gate** — `ANTHROPIC_CACHE_MIN_PREFIX_CHARS = 16,000` characters (~4,000 tokens). This is the real cache-eligibility floor on `claude-haiku-4-5` (2,048 tokens on the `claude-3-5-haiku` fallback rungs); a prefix below the active model's minimum is silently NOT cached by the API (no error, no write charge), so being wrong in either direction is cheap — but a breakpoint on a too-short prefix is simply a no-op, so `llm.js` enforces the floor itself rather than relying on the API to no-op gracefully.
+  - **Single-pass ingest never gets a breakpoint at all** — it is exactly one LLM call, so there is no second use to amortise a cache write against.
+  - Verified live on the real `articles` domain across multiple multi-batch ingests: **roughly 50–70% input-token saving** across the ingest's cacheable batches (41,783 cache-write + 167,132 cache-read tokens ≈ 52% on one run; 25,933 cache-write + 259,330 cache-read tokens ≈ 71% on another). The ratio depends on how many batches share the cached prefix — present it as a range, not a single figure.
 
 Both providers go through the same retry path for 429 (rate limit) and 503 (overloaded) — up to 4 attempts with exponential backoff. Users see "Service busy — retrying in 9s… (attempt 2/3)" during the backoff — this is the **retry surface, not a bug**, and ingests routinely succeed after the wait.
 
@@ -374,6 +421,18 @@ Measured on the deep-test harness against live Gemini 2.5 Flash Lite (Mac M2 Pro
 Re-ingest of the same source is comparable in time — the LLM still produces fresh output, but `writePage` merges with existing content rather than recreating from scratch. Re-ingest is fully idempotent (deterministic summary slug; 3-pass entity dedup; index skips already-present rows).
 
 Cost at Gemini 2.5 Flash Lite list price (~$0.10/M input, ~$0.40/M output, May 2026): a single typical multi-phase ingest costs roughly **$0.001 to $0.005** depending on document length. The deep-test harness's full 9-scenario run costs about **$0.03**.
+
+The table above is a **call-count and wall-time** measurement — the v3.0.16 prompt-slimming work (§1b) is a **token-size** change, not a call-count change: the same LLM calls happen in the same order, they're just smaller. Wall time is dominated by model latency per call, not payload size, so the table above is unaffected.
+
+### 8.1 — Prompt caching, the actual cost saving in this release (v3.0.16)
+
+**Neither the outline nor the single-pass prompt changed size in this release.** `index.md` remains embedded in both, exactly as in v3.0.15 — see §1b for why an earlier draft of this work removed it and was reverted. The entity/concept filename-list cap contributes nothing to ordinary-domain cost either: it's an inert safety valve (§1b) that does not fire on any real domain measured so far.
+
+**The saving that does ship comes entirely from the Phase 2 batch-prompt reorder enabling caching.** The batch prompt itself is unchanged in size — 145,879 chars, of which 145,352 are a stable, byte-for-byte-identical prefix across every batch of one ingest, and 527 chars vary per call (see §1b for the full breakdown). What changes is that Anthropic can now read that prefix from cache after the first batch (~0.1× the base input rate) instead of paying full price on every batch, and Gemini caches it implicitly with no code change. Measured on the canonical multi-batch case (outline call + 3 batches, real `articles` domain, 57,060-byte source): **-30.3% total ingest input from caching alone.**
+
+Reproduce the prompt-shape measurements yourself with `node scripts/measure-ingest-prompt.js --domain=<yours> --raw=<file>` (read-only, free, writes nothing) — its own before/after delta math assumes the index-removal path that was reverted, so read its raw prompt lengths rather than its printed "delta" line if you run it against current code.
+
+These figures will shift if `SLUG_INVENTORY_BUDGET_CHARS` or the caching gates are retuned in a future release — check `src/brain/ingest.js`'s block comment on the constant, or `CLAUDE.md`'s v3.0.16 entry, for the current values.
 
 ---
 
@@ -435,7 +494,22 @@ PLUS 5 live-LLM scenarios in `scripts/test-beta13-chat-live.js` against the real
 - L4 count query (returns a specific number 30+)
 - L5 niche detail (energy/water footprint article correctly cited)
 
-Together these suites give **635 offline + 146 deep-ingest + 10 live chat = 791 assertions** that exercise the pipeline at every level (write + read).
+### 9.7 — Prompt slimming (`scripts/test-ingest-prompt-slimming.js`, v3.0.16)
+
+204 offline assertions covering the §1b prompt-assembly changes end-to-end:
+
+- `index.md` is absent from both the outline and single-pass prompts, with all other grounding (filename lists, forced summary path, "REQUIRED COVERAGE" text, `DO NOT touch index.md` instruction) intact
+- Below the budget, the safety valve is a no-op — the prompt is byte-identical to the pre-v3.0.16 output (small/fresh-domain regression guard)
+- A dedicated real-domain-scale check confirms the DEFAULT 160,000-char budget does NOT truncate the real `articles` domain's inventory (600 entities + 2,651 concepts) — the exact "never fires on real data today" property §1b documents
+- Above the budget, the valve keeps source-relevant slugs and drops the zero-overlap tail; ranking is deterministic and reproducible
+- Truncation surfaces a user-visible warning naming how many pages of how many were left out
+- `buildBatchPromptParts` puts the stable content in `prefix` and only the per-batch page list in `suffix`; concatenating them reproduces the exact prior prompt
+- `cache_control` is placed only when both the ≥2-batch reuse gate and the `ANTHROPIC_CACHE_MIN_PREFIX_CHARS` size gate are satisfied; single-pass never gets a breakpoint; the Gemini branch is untouched
+- Token usage (`opts.onUsage`) is normalised identically across both providers and never affects the call's outcome, even when the callback throws
+- `reconcileGeneratedPages` merges stray summary paths into the canonical one, keeps-and-warns on unplanned pages, and is wired into both single-pass and multi-phase
+- `writePage` writes a page whose path is missing `.md` (appending it + warning) instead of silently discarding it
+
+Together these suites give **839 offline + 146 deep-ingest + 10 live chat = 995 assertions** that exercise the pipeline at every level (write + read).
 
 ---
 
@@ -636,13 +710,16 @@ Test coverage: **36 offline** source guards in [`scripts/test-chat-compile-card.
 
 | You want to… | Read… |
 |---|---|
-| Understand the canonical write path | `src/brain/files.js` — `writePage()` |
+| Understand the canonical write path | `src/brain/files.js` — `writePage()` (accepts `opts.onWarn` and `opts.replace`, v3.0.16) |
 | Understand the LLM dispatch + retry/fallback | `src/brain/llm.js` — `generateText()`, `callLLM()` |
 | Understand the outline validator | `src/brain/ingest.js` — `validateOutline()` |
+| Understand the post-write reconciliation of what Phase 2 actually returned | `src/brain/ingest.js` — `reconcileGeneratedPages()` (v3.0.16) |
 | Trace an ingest end-to-end | `src/brain/ingest.js` — `ingestFile()` |
 | Understand atomic-write semantics | `src/brain/atomic-write.js` |
 | Understand the concurrency model | `src/brain/write-registry.js` |
-| See the prompts the LLM actually receives | `src/brain/ingest.js` — `buildOutlinePrompt`, `buildBatchPrompt`, `buildPrompt` |
+| See the prompts the LLM actually receives | `src/brain/ingest.js` — `buildOutlinePrompt()`, `buildBatchPromptParts()` / `buildBatchPrompt()`, `buildPrompt()` |
+| Understand the prompt-size cap + relevance ranking | `src/brain/ingest.js` — `capSlugInventory()`, `capExistingFilesForPrompt()` (v3.0.16) |
+| Track real token spend (input/output/cache) across an ingest | `src/brain/ingest.js` — `makeUsageAccumulator()`; `generateText(…, opts)`'s `opts.onUsage` callback (v3.0.16) |
 | Read the architecture overview | [docs/architecture.md](architecture.md) |
 | Understand domains | [docs/domains.md](domains.md) |
 | Understand AI Wiki Health (the post-ingest cleanup layer) | [docs/ai-health.md](ai-health.md) |

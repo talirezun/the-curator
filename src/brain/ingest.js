@@ -10,8 +10,17 @@ import {
   writePage,
   appendLog,
   syncSummaryEntities,
+  mergeWikiPage,
 } from './files.js';
 import { mergeIntoIndex } from './compile.js';
+// Reused, not reimplemented: the same tokeniser the Shared Brain delta/synthesis
+// code uses (lowercase, punctuation-stripped, stop-worded). Keeping one
+// tokeniser means "relevant to this source" means the same thing everywhere.
+// ⚠ CIRCULAR IMPORT (sharedbrain-delta.js → ... → ingest.js). It
+// resolves today only because `tokenize` is a HOISTED `function` declaration —
+// converting it (or anything else in that cycle) to a `const` arrow would make
+// it undefined at module-evaluation time on some load orders.
+import { tokenize } from './sharedbrain-delta.js';
 import { writeFileAtomic } from './atomic-write.js';
 
 /**
@@ -38,6 +47,207 @@ export function computeSummarySlugFromSource(originalName) {
     .slice(0, 80)
     .replace(/^-+|-+$/g, '');    // strip leading + trailing hyphens
   return slug || 'untitled';
+}
+
+// ── Slug-inventory safety valve (v3.0.16) ───────────────────────────────────
+//
+// Every ingest prompt embeds the domain's existing entity/concept filenames so
+// the model reuses `lumina-ai.md` instead of inventing `lumina.md`, and so it
+// can ground [[wikilinks]] in slugs that actually exist. On a mature domain that
+// inventory is large: on the real `articles` domain, 600 entity files render to
+// ~16,100 chars and 2,651 concept files to ~112,200.
+//
+// ⚠ THIS IS A SAFETY VALVE, NOT A COST OPTIMISATION. READ BEFORE TUNING. ⚠
+//
+// It shipped as a cost measure with a 24,000-char budget and a controlled A/B on
+// the real articles domain measured a REGRESSION, so the intent was changed:
+//
+//   Anthropic (claude-haiku-4-5), broken-wikilink rate, n=2 per arm:
+//     full inventory ................ 4.3%   (2.4%, 6.1%)
+//     capped at 24,000 chars ........ 9.2%   (5.4%, 13.0%)   ← 2.2x WORSE
+//     uncapped, index removed ....... 4.0%   (back to baseline)
+//
+// Haiku leans on the full slug list to ground its links. Starving it to 562 of
+// 2,651 concepts did not make it link more carefully — it made it invent slugs.
+// Gemini's link quality was unharmed in every arm, so this is provider-specific,
+// and the provider it harms is one we ship as a default.
+//
+// The cost win this release actually ships comes from dropping index.md from the
+// prompt (~-39%) plus Anthropic prompt caching — the inventory was never where
+// most of the money was. So: DO NOT lower this constant to save tokens. If you
+// are here to reduce prompt size, remove something the model does not use;
+// the slug list is load-bearing for link grounding on at least one provider.
+//
+// What the valve still protects against: a pathological domain (tens of
+// thousands of pages in one folder) whose inventory alone would overflow the
+// provider context window and hard-fail every ingest. Truncating with a visible
+// warning strictly beats a failed ingest. Ranking is by token overlap with the
+// source so the zero-overlap tail — pages the model was never going to name,
+// because none of their words appear in the document — is what gets dropped.
+//
+// Residual risk when it DOES fire is the same one the A/B measured, which is
+// exactly why the budget is set where nothing real reaches it. The post-answer
+// safety net still applies either way: writePage's Pass A/B/C dedup, cross-folder
+// dedup, and redirectSemanticDuplicates at Jaccard >= 0.85 — which deliberately
+// keeps scanning the FULL on-disk list, never the capped one.
+
+/**
+ * Character budget for ONE rendered slug list (entities, concepts).
+ *
+ * ⚠ The arithmetic below was FIRST derived assuming index.md had been removed
+ * from the outline / single-pass prompts. That removal was deferred (see the
+ * note on buildOutlinePrompt), so the index — an unbounded term with no valve of
+ * its own — is back in the prompt and the margin is tighter than originally
+ * written. Corrected here rather than left stale.
+ *
+ * Tightest window we ship against is claude-haiku-4-5 at 200,000 tokens. The
+ * largest output reservation on that path is the 64,000-token clamp used by
+ * single-pass, which pairs with a sub-15,000-char source (~5,000 tok) and
+ * ~1,000 tok of instructions.
+ *
+ * CHARS/TOKEN ASSUMED: 2.5 for slug lists, 3 for the index. Slug lists are the
+ * pessimistic case — a hyphenated slug fragments into several tokens, so they
+ * run well below the ~4 chars/token of English prose. An earlier version of this
+ * comment assumed 3 for slugs and reported the symmetric case as "11% under the
+ * window"; at the defensible 2.5 it is clearly OVER. Recomputed honestly:
+ *
+ *   REALISTIC pathological case — one dominant list at the cap (today's real
+ *   ratio is 4.4:1 concepts:entities), index at today's ~121,000 chars:
+ *     64,000 (inventory) + 40,300 (index) + 5,000 + 1,000 + 64,000 = 174,300  ✓
+ *
+ *   SYMMETRIC worst case — BOTH lists at the cap (~3,780 entities AND ~3,780
+ *   concepts, a shape no real domain has):
+ *     128,000 + 40,300 + 5,000 + 1,000 + 64,000 = 238,300  ✗ over the window
+ *
+ * So this valve BOUNDS THE LARGEST CONTROLLABLE TERM; it does not on its own
+ * guarantee the request fits. It cannot: index.md grows with the domain too and
+ * has no cap. If a domain ever gets large enough to overflow in practice, the
+ * index is the next term to bound, not this one — lowering this budget re-enters
+ * the measured-regression zone described above for a term that is no longer the
+ * biggest one.
+ *
+ * It does NOT fire on anything real today: the largest list we have anywhere is
+ * the articles domain's 2,651 concepts at ~112,200 chars — 70% of the budget,
+ * with entities at 10%. It starts truncating at roughly 3,780 pages in a single
+ * folder (today's ~42.3 chars/entry average), i.e. ~1.4x the largest real list.
+ */
+export const SLUG_INVENTORY_BUDGET_CHARS = 160_000;
+
+/**
+ * Rendered cost, in characters, of one filename in a prompt's slug inventory.
+ *
+ * Measured against the outline / single-pass rendering, `"  entities/x.md\n"`:
+ * 2 (indent) + 9 (`entities/` or `concepts/`, both 9 chars) + name + 1 (\n).
+ * The batch prompt renders the same inventory more densely (comma-separated,
+ * `.md` stripped), so budgeting with the LINE cost is conservative there —
+ * deliberately, because it means BOTH prompts are built from the SAME kept set:
+ * a slug the outline saw stays visible to the batch that writes the page, and
+ * the batch prompt's cacheable prefix stays byte-stable across batches.
+ */
+function slugLineCost(filename) { return filename.length + 12; }
+
+/**
+ * Cap one slug list to a character budget, keeping the entries most relevant to
+ * the source document.
+ *
+ * SAFETY VALVE — see the block comment on SLUG_INVENTORY_BUDGET_CHARS before
+ * changing anything here or calling this with a smaller budget. At the default
+ * budget this is a NO-OP on every real domain we have; it exists so a
+ * pathological wiki degrades with a warning instead of hard-failing on a context
+ * overflow. Capping measurably HURT Anthropic link quality (2.2x the
+ * broken-wikilink rate at a 24,000-char budget), so firing it is a last resort,
+ * not an optimisation.
+ *
+ * DETERMINISTIC by construction (no clock, no randomness, total ordering with
+ * the original index as the final tie-break), so it is unit-testable and two
+ * ingests of the same source produce the same prompt.
+ *
+ * When everything fits — which is the expected case — the input array is
+ * returned UNCHANGED and in its original order, so the rendered prompt is
+ * byte-identical to what it would be with no cap at all.
+ *
+ * @param {string[]} files        filenames, e.g. ['tali-rezun.md', ...]
+ * @param {Set<string>} sourceTokens  tokenize()d source document, built once
+ * @returns {{files: string[], kept: number, omitted: number, total: number}}
+ */
+export function capSlugInventory(files, sourceTokens, budgetChars = SLUG_INVENTORY_BUDGET_CHARS) {
+  const list = Array.isArray(files) ? files.filter(f => typeof f === 'string' && f) : [];
+  let total = 0;
+  for (const f of list) total += slugLineCost(f);
+  if (total <= budgetChars) return { files: list, kept: list.length, omitted: 0, total };
+
+  const tokens = sourceTokens instanceof Set ? sourceTokens : new Set();
+  const scored = list.map((f, i) => {
+    // Slugs are hyphen-joined, and tokenize() splits on whitespace only — so
+    // "tali-rezun.md" must become "tali rezun" first, or it scores as one
+    // unmatched token.
+    const slugTokens = tokenize(f.replace(/\.md$/i, '').replace(/[-_]+/g, ' '));
+    let matched = 0;
+    for (const t of slugTokens) if (tokens.has(t)) matched++;
+    return {
+      f, i, matched,
+      // Coverage, not raw overlap: a 2-word slug fully present in the source is
+      // a stronger signal than one word of a 5-word slug matching by accident.
+      coverage: slugTokens.length ? matched / slugTokens.length : 0,
+    };
+  });
+  scored.sort((a, b) =>
+    (b.coverage - a.coverage) ||
+    (b.matched - a.matched) ||
+    (slugLineCost(a.f) - slugLineCost(b.f)) ||
+    (a.i - b.i));
+
+  const keptIdx = [];
+  let used = 0;
+  for (const s of scored) {
+    const cost = slugLineCost(s.f);
+    // `continue`, not `break`: once a long entry no longer fits, shorter
+    // lower-ranked ones still can. Still fully deterministic.
+    if (used + cost > budgetChars) continue;
+    used += cost;
+    keptIdx.push(s.i);
+  }
+  keptIdx.sort((a, b) => a - b);   // restore on-disk order for a stable render
+  const kept = keptIdx.map(i => list[i]);
+  return { files: kept, kept: kept.length, omitted: list.length - kept.length, total };
+}
+
+/**
+ * Apply the slug-inventory safety valve to BOTH lists for prompt embedding.
+ *
+ * Expected outcome on every real domain today: no truncation, no warnings, and
+ * the same arrays back. It only does anything on a domain large enough that the
+ * inventory alone would threaten the provider context window — see the block
+ * comment on SLUG_INVENTORY_BUDGET_CHARS for why the budget sits where it does
+ * and why lowering it is a measured regression, not a saving.
+ *
+ * If it ever does fire, that must not be silent: every omission is reported
+ * through the same `warnings[]` array the ingest result already carries and the
+ * UI already renders, because a dropped slug is a slug the model may then
+ * re-invent as a duplicate page.
+ *
+ * The returned object is for PROMPTS ONLY. The full, uncapped list must keep
+ * flowing to redirectSemanticDuplicates — capping the dedup guard's input would
+ * weaken the very safety net that covers a truncation.
+ */
+export function capExistingFilesForPrompt(existingFiles, sourceText, budgetChars = SLUG_INVENTORY_BUDGET_CHARS) {
+  const sourceTokens = new Set(tokenize(typeof sourceText === 'string' ? sourceText : ''));
+  const warnings = [];
+  const files = { entities: [], concepts: [] };
+  for (const kind of ['entities', 'concepts']) {
+    const r = capSlugInventory(existingFiles?.[kind], sourceTokens, budgetChars);
+    files[kind] = r.files;
+    if (r.omitted > 0) {
+      const noun = kind === 'entities' ? 'entity' : 'concept';
+      warnings.push(
+        `This domain has grown large enough that the AI request had to be trimmed: ${r.omitted} of ` +
+        `${r.kept + r.omitted} ${noun} pages were left out, keeping the ${r.kept} most relevant to this ` +
+        `source. Without trimming, the request would exceed what the AI can read at once. Watch for ` +
+        `near-duplicate pages after this ingest and merge them from the Health tab.`
+      );
+    }
+  }
+  return { files, warnings };
 }
 
 async function extractText(filePath) {
@@ -92,6 +302,20 @@ export function parseJSON(raw) {
 
 // ── Phase 1: outline ──────────────────────────────────────────────────────────
 
+/**
+ * Phase 1 outline prompt.
+ *
+ * NOTE ON index.md (v3.0.16): dropping the full index from this prompt was
+ * implemented, measured, and then DEFERRED. It saved ~16% of the canonical
+ * request on its own, but it is the only part of the prompt-slimming work that
+ * changes WHAT THE MODEL SEES rather than merely the order it sees it in, and a
+ * paired live A/B (n=3 per arm on Gemini) could not resolve its effect on
+ * broken-wikilink rate or page count in either direction — the arms overlapped.
+ * The caching + reorder work is worth roughly twice as much (~30%) and changes
+ * only ordering, so that shipped and this did not. If you pick this back up,
+ * the blocker is measurement power, not implementation: you need enough paired
+ * runs to separate an effect from the run-to-run variance.
+ */
 function buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath) {
   const overwriteNote = isOverwrite
     ? 'NOTE: This document has been ingested before. Update existing pages rather than duplicating content.'
@@ -193,7 +417,34 @@ function makeProgress(onProgress) {
 
 // ── Phase 2: page content (batched) ──────────────────────────────────────────
 
-function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
+/**
+ * Phase 2 batch prompt, split into a STABLE PREFIX and a VOLATILE SUFFIX.
+ *
+ * Within one ingest, every Phase 2 call shares `today`, `originalName`, the
+ * source text, the existing-files inventory and the outline page list. The ONLY
+ * thing that differs between batch 1..N is `pageBatch`. Pre-v3.0.16 the batch
+ * page list sat near the TOP (immediately after the source), so the shared
+ * prefix ended after the source and everything downstream re-processed on every
+ * call. Moving the page list to the END makes the entire instruction +
+ * inventory + source block one reusable prefix:
+ *
+ *   • Anthropic — the caller can place a `cache_control` breakpoint at
+ *     prefix.length (see generateText's opts.cachePrefixChars). Cache reads are
+ *     ~0.1x base input; writes are 1.25x, so break-even is 2 calls — which is
+ *     why the caller only enables it when the ingest will actually make >= 2
+ *     calls against the same prefix.
+ *   • Gemini — 2.5-family models do implicit prefix caching automatically, with
+ *     no API change; a longer stable prefix is simply worth more.
+ *
+ * The reorder is deliberately MINIMAL: the source document stays where it has
+ * always been (early), and only the page list moves. That yields the identical
+ * cacheable prefix while keeping the shipped prompt's behaviour as close to
+ * unchanged as possible, and it lands on the canonical long-context shape —
+ * document, then instructions, then the specific ask, then the output format.
+ *
+ * @returns {{prefix: string, suffix: string}}  prefix + suffix === the prompt
+ */
+function buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
   const pageList = pageBatch
     .map(p => `  { "path": "${p.path}", "summary": "${p.summary}" }`)
     .join(',\n');
@@ -218,16 +469,12 @@ function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = 
     else if (slug.startsWith('summaries/')) inThisIngest.summaries.push(slug);
   }
 
-  return `Today's date: ${today}
+  // ── STABLE across every batch of this ingest ──────────────────────────────
+  const prefix = `Today's date: ${today}
 
 --- SOURCE DOCUMENT: ${originalName} ---
 ${text}
 --- END SOURCE DOCUMENT ---
-
-Write the full markdown content for EXACTLY these wiki pages (no others):
-[
-${pageList}
-]
 
 Guidelines:
 - Each page: 3–8 concise bullet points or sentences. No long prose.
@@ -257,8 +504,16 @@ Every path MUST start with one of the three prefixes above.
 CROSS-FOLDER RULE: If a file already exists in entities/, do NOT create a concepts/ file with the same or similar name, and vice versa. Companies (Google, Microsoft), organizations (IEA), and countries (Chile, Japan) are ALWAYS entities, never concepts.
 
 Each "page.summary" is a 1-line description that will be added to the wiki
-index. Keep each under 160 characters. For pages already listed above with a
-summary, you may reuse that summary text verbatim.
+index. Keep each under 160 characters. Where a page listed BELOW already comes
+with a summary, you may reuse that summary text verbatim.`;
+
+  // ── VARIES per batch — must stay AFTER the cache breakpoint ───────────────
+  const suffix = `
+
+Write the full markdown content for EXACTLY these wiki pages (no others):
+[
+${pageList}
+]
 
 Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
 {
@@ -267,6 +522,14 @@ Return ONLY valid JSON in this exact shape (no markdown fences, no commentary):
     { "path": "concepts/some-concept.md",    "content": "...", "summary": "1-line description" }
   ]
 }`;
+
+  return { prefix, suffix };
+}
+
+/** The assembled Phase 2 batch prompt. Kept for callers/tests that want the string. */
+function buildBatchPrompt(today, originalName, text, pageBatch, existingFiles = { entities: [], concepts: [] }, allOutlinePages = []) {
+  const { prefix, suffix } = buildBatchPromptParts(today, originalName, text, pageBatch, existingFiles, allOutlinePages);
+  return prefix + suffix;
 }
 
 // ── Phase 3 (REMOVED in v3.0.1-beta.1) ────────────────────────────────────────
@@ -806,8 +1069,160 @@ export function redirectSemanticDuplicates(outline, existingFiles) {
   return { warnings, redirects };
 }
 
+/**
+ * The `.md`-normalised form of a page path.
+ *
+ * The model returns a planned page WITHOUT its extension often enough that any
+ * identity comparison on the raw string is wrong: writePage appends the
+ * extension (v3.0.16), so "concepts/x" and "concepts/x.md" are the SAME FILE.
+ * Comparing raw strings mis-reports a planned page as unplanned, mis-classifies
+ * a canonical summary returned without ".md" as an invented one, and lets both
+ * spellings survive a de-duplication pass so one file gets written twice.
+ */
+function withMdExtension(p) {
+  if (typeof p !== 'string' || !p) return p;
+  return /\.md$/i.test(p) ? p.slice(0, -3) + '.md' : p + '.md';
+}
+
+/**
+ * Enforce the outline's structural guarantees on what Phase 2 actually RETURNED.
+ *
+ * THE HOLE THIS CLOSES (found in live testing, pre-existing since multi-phase
+ * shipped): Phase 2 pushed `batchResult.pages` straight into the result, trusting
+ * whatever `path` the model put in its batch JSON. `validateOutline` runs on the
+ * OUTLINE, so its guarantees — exactly one summary, at the canonical path — were
+ * enforced on the plan and then trivially bypassed by the content phase. A real
+ * run produced BOTH `summaries/ingestion-pipeline.md` (canonical) and
+ * `summaries/the-ingestion-pipeline-technical-deep-dive.md` (invented), with no
+ * warning anywhere, because the outline had been clean.
+ *
+ * Why a stray summary is worse than a stray file: the deterministic summary slug
+ * exists so re-ingesting the same source MERGES into the same summary instead of
+ * duplicating it. One stray summary permanently breaks idempotency for that
+ * source — every later re-ingest merges into the canonical page while the stray
+ * lingers with divergent content.
+ *
+ * Handling, by case:
+ *   • summaries/<other> → REDIRECTED to the canonical summaryPath, never written
+ *     as a second file. If an entry already occupies that path, the two are
+ *     merged rather than one overwriting the other (see below) — content is
+ *     never dropped, and the caller ends up with exactly ONE entry per path, so
+ *     nothing double-writes.
+ *   • a non-summary path that is not in the outline at all → ALLOWED, with a
+ *     warning. Rationale: writePage already normalises folders, dedups against
+ *     existing slugs and enforces canonical prefixes, so a renamed or
+ *     spontaneously-added entity/concept is usually still useful content the
+ *     user paid for — refusing it would be the silent-drop failure mode this
+ *     very fix exists to remove. The warning makes it visible, and Wiki Health
+ *     surfaces it if it turns out to be junk.
+ *   • a path that IS in the outline but belongs to a different batch → allowed
+ *     silently. That is benign cross-batch chatter (the page is planned, and the
+ *     owning batch writes it); the caller's existing keep-last-occurrence dedup
+ *     already collapses it, and warning on it would bury the real signals.
+ *
+ * MERGE DIRECTION for a summary collision: `mergeWikiPage(existing, incoming)`
+ * treats `incoming` as the base and injects `existing`'s ACCUMULATE bullets plus
+ * any prose section `incoming` dropped entirely. So the AUTHORITATIVE entry (the
+ * one the model actually returned at the canonical path) is passed as `incoming`
+ * and wins every conflict, while the redirected entry's unique bullets and
+ * sections survive as `existing`. If no authoritative entry exists, the first
+ * redirected entry becomes the base.
+ *
+ * Pure and deterministic — no I/O, no clock. Exported for offline testing.
+ *
+ * @returns {{pages: Array, warnings: string[]}}
+ */
+export function reconcileGeneratedPages(pages, { summaryPath, plannedPaths = [] } = {}) {
+  const list = Array.isArray(pages) ? pages : [];
+  // Without a canonical summary path there is nothing to reconcile TO. Returning
+  // the pages untouched is the only safe answer: the redirect below would
+  // otherwise rewrite every summary entry's path to `undefined`/null, writePage
+  // would refuse it, and the content would be destroyed. `ingestFile` always
+  // supplies one, so this is defensive — but the function is exported and pure,
+  // and a pure function must not destroy data on a degenerate input.
+  if (typeof summaryPath !== 'string' || !summaryPath) {
+    return { pages: list, warnings: [] };
+  }
+  const warnings = [];
+  const planned = new Set((plannedPaths || []).filter(Boolean).map(withMdExtension));
+  const canonicalSummary = withMdExtension(summaryPath);
+  const out = [];
+  let summaryIdx = -1;              // index in `out` of the canonical summary
+  let summaryIsAuthoritative = false;
+  const redirected = [];
+  const unplanned = [];
+
+  for (const page of list) {
+    if (!page || typeof page.path !== 'string' || !page.path) {
+      warnings.push('The AI returned a page with no path — it could not be written.');
+      continue;
+    }
+
+    if (page.path.startsWith('summaries/')) {
+      const authoritative = withMdExtension(page.path) === canonicalSummary;
+      if (!authoritative) {
+        redirected.push(page.path);
+      }
+      // Always pin to the exact canonical string — including the extension-less
+      // spelling of the canonical path itself — so there can only ever be ONE
+      // entry for this file and nothing double-writes.
+      page.path = summaryPath;
+      if (summaryIdx === -1) {
+        summaryIdx = out.length;
+        summaryIsAuthoritative = authoritative;
+        out.push(page);
+        continue;
+      }
+      // Collision: fold the two into ONE entry so the caller never double-writes.
+      const held = out[summaryIdx];
+      const base = (authoritative && !summaryIsAuthoritative) ? page : held;
+      const other = base === page ? held : page;
+      let merged = base.content;
+      try {
+        if (other.content && base.content) merged = mergeWikiPage(other.content, base.content);
+        else merged = base.content || other.content;
+      } catch { /* merge failure → keep the base content rather than crash */ }
+      out[summaryIdx] = {
+        ...base,
+        path: summaryPath,
+        content: merged,
+        summary: base.summary || other.summary,
+      };
+      if (authoritative) summaryIsAuthoritative = true;
+      continue;
+    }
+
+    if (!planned.has(withMdExtension(page.path))) unplanned.push(page.path);
+    out.push(page);
+  }
+
+  if (redirected.length) {
+    warnings.push(
+      `The AI invented ${redirected.length} extra summary page${redirected.length > 1 ? 's' : ''} ` +
+      `(${redirected.join(', ')}) — merged into the canonical summary "${summaryPath}" instead of ` +
+      `creating duplicates, so re-ingesting this source still updates the same page.`
+    );
+  }
+  if (unplanned.length) {
+    const shown = unplanned.slice(0, 5).join(', ');
+    warnings.push(
+      `The AI wrote ${unplanned.length} page${unplanned.length > 1 ? 's' : ''} that ` +
+      `${unplanned.length > 1 ? 'were' : 'was'} not in its own plan ` +
+      `(${shown}${unplanned.length > 5 ? ', …' : ''}). They were kept — check them in the Wiki tab and ` +
+      `merge or delete any that duplicate an existing page.`
+    );
+  }
+  return { pages: out, warnings };
+}
+
 // ── Single-pass prompt (small documents) ─────────────────────────────────────
 
+/**
+ * Single-pass prompt (documents under MULTI_PHASE_INPUT_THRESHOLD).
+ *
+ * See the note on buildOutlinePrompt: removing index.md from this prompt was
+ * implemented and then deferred for the same reason. Byte-identical to v3.0.15.
+ */
 function buildPrompt(today, index, existingFiles, originalName, text, strict, isOverwrite = false, summaryPath = null) {
   const conciseness = strict
     ? 'CRITICAL: Maximum 3 bullet points per page. No prose. The shorter the better.'
@@ -944,6 +1359,43 @@ export function isOutputTokenLimit(err) {
 }
 
 /**
+ * Accumulate real token usage across every LLM call an ingest makes.
+ *
+ * `generateText` returns a bare string (18 call sites depend on that), so spend
+ * arrives out-of-band through `opts.onUsage` — fired once per COMPLETED provider
+ * call, retries and fallback-chain rungs included. That means the totals here
+ * are what was actually BILLED, not just what the successful call cost.
+ *
+ * The callback never throws (llm.js also guards it) and never affects the
+ * ingest's outcome.
+ */
+export function makeUsageAccumulator() {
+  // Field semantics are the provider-neutral convention documented on
+  // normalizeGeminiUsage in llm.js: inputTokens EXCLUDES cached tokens on BOTH
+  // providers, so `inputTokens + cachedReadTokens + cacheWriteTokens` is the
+  // total prompt size and a cost calculation never branches on provider.
+  const totals = {
+    calls: 0, inputTokens: 0, outputTokens: 0,
+    cachedReadTokens: 0, cacheWriteTokens: 0,
+    provider: null, model: null,
+  };
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    totals,
+    onUsage(u) {
+      const r = u && typeof u === 'object' ? u : {};
+      totals.calls++;
+      totals.inputTokens      += num(r.inputTokens);
+      totals.outputTokens     += num(r.outputTokens);
+      totals.cachedReadTokens += num(r.cachedReadTokens);
+      totals.cacheWriteTokens += num(r.cacheWriteTokens);
+      if (r.provider) totals.provider = r.provider;
+      if (r.model)    totals.model = r.model;
+    },
+  };
+}
+
+/**
  * Build a clearly-marked stub page body used as a last-resort fallback when
  * the LLM cannot produce content for a planned page. The stub is rendered as
  * a visible warning so the user knows the page is a placeholder rather than
@@ -963,7 +1415,15 @@ Tags: stub, type/${pagePath.startsWith('entities/') ? 'entity' : 'concept'}
 `;
 }
 
-async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = []) {
+/**
+ * @param {object} existingFiles  FULL on-disk entity/concept filename lists —
+ *   used by redirectSemanticDuplicates, which must never see a capped list.
+ * @param {object} promptFiles    the same lists after capExistingFilesForPrompt,
+ *   i.e. what is safe to embed in a prompt. On a small domain these are the
+ *   same arrays and the rendered prompts are byte-identical to pre-v3.0.16.
+ * @param {function|null} onUsage token-usage callback threaded to every call.
+ */
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null) {
   // Phase 1: outline
   // Diagnostics use console.error so this module is safe to import from the
   // MCP child process (which reserves stdout for JSON-RPC) — see v2.5.2.
@@ -988,10 +1448,11 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   try {
     outlineRaw = (await generateText(
       schema,
-      buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath),
+      buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath),
       MULTI_PHASE_OUTLINE_TOKENS,
       'json',
-      (msg) => progress(12, msg, 'wait')
+      (msg) => progress(12, msg, 'wait'),
+      { onUsage }
     )).trim();
   } catch (genErr) {
     if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
@@ -1009,7 +1470,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       : 'Phase 1 outline returned malformed JSON; auto-retried with stricter prompt.');
     progress(13, 'Phase 1: retrying…', 'wait');
 
-    const strictPrompt = buildOutlinePrompt(today, index, existingFiles, originalName, text, isOverwrite, summaryPath)
+    const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath)
       + '\n\nIMPORTANT — STRICT JSON REQUIREMENTS:\n'
       + '1. Return ONLY the JSON object. No markdown fences, no "```json" wrapper, no commentary before or after.\n'
       + '2. Inside "summary" string values: do NOT use double quotes. Use single quotes if you need quotation marks. Avoid backslashes and special characters.\n'
@@ -1021,7 +1482,8 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     try {
       outlineRaw2 = (await generateText(
         schema, strictPrompt, MULTI_PHASE_OUTLINE_TOKENS, 'json',
-        (msg) => progress(13, msg, 'wait')
+        (msg) => progress(13, msg, 'wait'),
+        { onUsage }
       )).trim();
     } catch (genErr2) {
       if (!isOutputTokenLimit(genErr2)) throw genErr2;   // fatal — surface it
@@ -1072,6 +1534,21 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
 
   const allPages = outline.pages; // [{path, summary}]
   const totalBatches = Math.ceil(allPages.length / BATCH_SIZE);
+
+  // v3.0.16 — prompt caching, enabled ONLY where it can pay for itself.
+  //
+  // An Anthropic cache WRITE costs 1.25x the base input rate; a READ costs
+  // ~0.1x. So a breakpoint on a prefix used exactly once makes the call 25%
+  // MORE expensive, and break-even is two calls (1.25 + 0.1 = 1.35 vs 2.0).
+  // Every Phase 2 batch of this ingest shares the identical prefix, so >= 2
+  // batches means >= 2 uses. Single-pass ingest is ONE call and never gets a
+  // breakpoint (it does not go through this path at all). llm.js additionally
+  // refuses to mark a prefix shorter than ANTHROPIC_CACHE_MIN_PREFIX_CHARS,
+  // because Anthropic silently declines to cache below the model's minimum
+  // (4096 tokens on claude-haiku-4-5, the Curator's Anthropic default).
+  // Gemini ignores the hint entirely — 2.5-family models cache prefixes
+  // implicitly, so the reordering above is the whole benefit there.
+  const cacheAcrossBatches = totalBatches >= 2;
   console.error(`[ingest] Phase 1 complete — ${allPages.length} pages planned.`);
 
   // Phase 2: batched content  (20% → 78%)
@@ -1093,13 +1570,17 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     // recovers, but only for token-limit/parse — not for genuine outages.
     let batchResult = null;
     let batchRaw = null;
+    // prefix is byte-identical across every batch; only `suffix` carries the
+    // per-batch page list — that split is what makes the prefix cacheable.
+    const batchParts = buildBatchPromptParts(today, originalName, text, batch, promptFiles, allPages);
     try {
       batchRaw = (await generateText(
         schema,
-        buildBatchPrompt(today, originalName, text, batch, existingFiles, allPages),
+        batchParts.prefix + batchParts.suffix,
         MULTI_PHASE_BATCH_TOKENS,
         'json',
-        (msg) => progress(batchPct, msg, 'wait')
+        (msg) => progress(batchPct, msg, 'wait'),
+        { onUsage, cachePrefixChars: cacheAcrossBatches ? batchParts.prefix.length : 0 }
       )).trim();
     } catch (genErr) {
       if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
@@ -1119,15 +1600,22 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       // to (a) stay under any model's output cap and (b) be essentially
       // impossible to fail parsing.
       batchResult = { pages: [] };
+      // The single-page prompts reuse the SAME prefix as the batch call above
+      // (only the page list differs), so the cache set up by the batch attempt
+      // is read back here. Worth a breakpoint whenever >= 2 calls will share
+      // it: either this batch writes >= 2 pages, or other batches follow.
+      const cacheSinglePages = cacheAcrossBatches || batch.length >= 2;
       for (const singlePage of batch) {
         let singleRaw = null;
+        const singleParts = buildBatchPromptParts(today, originalName, text, [singlePage], promptFiles, allPages);
         try {
           singleRaw = (await generateText(
             schema,
-            buildBatchPrompt(today, originalName, text, [singlePage], existingFiles, allPages),
+            singleParts.prefix + singleParts.suffix,
             MULTI_PHASE_SINGLE_PAGE_TOKENS,
             'json',
-            (msg) => progress(batchPct, msg, 'wait')
+            (msg) => progress(batchPct, msg, 'wait'),
+            { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0 }
           )).trim();
         } catch (singleGenErr) {
           if (!isOutputTokenLimit(singleGenErr)) throw singleGenErr;  // fatal — surface it
@@ -1166,10 +1654,22 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     writtenPages.push(...batchResult.pages);
   }
 
+  // v3.0.16: enforce the outline's structural guarantees on what Phase 2 actually
+  // returned. Covers BOTH the batch path and the page-by-page fallback, since
+  // both feed writtenPages.
+  const reconciled = reconcileGeneratedPages(writtenPages, {
+    summaryPath,
+    plannedPaths: allPages.map(p => p && p.path).filter(Boolean),
+  });
+  for (const w of reconciled.warnings) {
+    console.warn(`[ingest] Phase 2 path check: ${w}`);
+    warnings.push(w);
+  }
+
   // No Phase 3 — index is merged programmatically by the caller.
   return {
     title: outline.title,
-    pages: writtenPages,
+    pages: reconciled.pages,
     // outlinePages carries the LLM's per-page `summary` strings so the
     // programmatic index merge can populate the description column even if a
     // page-content response omitted the summary field.
@@ -1290,6 +1790,23 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     concepts:  await readdir(path.join(wikiDir, 'concepts')).then(f => f.filter(x => x.endsWith('.md'))).catch(() => []),
   };
 
+  // v3.0.16: the inventory embedded in PROMPTS is capped and ranked by
+  // relevance to this source (see capExistingFilesForPrompt). `existingFiles`
+  // itself stays FULL — redirectSemanticDuplicates below must keep scanning
+  // every on-disk slug, since it is the safety net that covers anything the cap
+  // drops. On a domain small enough to fit the budget, promptFiles holds the
+  // same arrays and every rendered prompt is byte-identical to pre-v3.0.16.
+  const capped = capExistingFilesForPrompt(existingFiles, text);
+  const promptFiles = capped.files;
+  for (const w of capped.warnings) {
+    console.warn(`[ingest] ${w}`);
+    warnings.push(w);
+  }
+
+  // v3.0.16: real token spend, gathered out-of-band from every LLM call this
+  // ingest makes (including retries and model-fallback rungs).
+  const usage = makeUsageAccumulator();
+
   let result;
 
   // ── Single-pass attempt (works for most documents) ─────────────────────────
@@ -1307,10 +1824,14 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     progress(15, 'AI is analyzing the document…');
     const raw = (await generateText(
       schema,
-      buildPrompt(today, index, existingFiles, originalName, text, false, isOverwrite, summaryPath),
+      buildPrompt(today, index, promptFiles, originalName, text, false, isOverwrite, summaryPath),
       65536,
       'json',
-      (msg) => progress(15, msg, 'wait')
+      (msg) => progress(15, msg, 'wait'),
+      // No cache breakpoint here: single-pass is ONE call, and an Anthropic
+      // cache write costs 1.25x the base input rate — marking a prefix that is
+      // used exactly once would make this call MORE expensive, not less.
+      { onUsage: usage.onUsage }
     )).trim();
 
     try {
@@ -1331,10 +1852,11 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
 
         const raw2 = (await generateText(
           schema,
-          buildPrompt(today, index, existingFiles, originalName, text, true, isOverwrite, summaryPath),
+          buildPrompt(today, index, promptFiles, originalName, text, true, isOverwrite, summaryPath),
           65536,
           'json',
-          (msg) => progress(15, msg, 'wait')
+          (msg) => progress(15, msg, 'wait'),
+          { onUsage: usage.onUsage }
         )).trim();
 
         try {
@@ -1366,13 +1888,35 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (!result) {
       progress(10, 'Large document — switching to multi-phase ingest…');
     }
-    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints);
+    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints, promptFiles, usage.onUsage);
   } else {
     // v3.0.1-beta.1: single-pass also runs through the outline validator so a
     // missing/non-canonical summary page is patched the same way as multi-phase.
     // Originator hints are passed in so an omitted author entity is injected
     // before write.
     // The single-pass response shape is {title, pages:[{path, content, summary?}]}.
+    //
+    // v3.0.16: run the Phase-2-style path reconciliation FIRST. Single-pass hits
+    // the same class of defect (the model returning a second, invented summary),
+    // and validateOutline's remedy there is to DROP the extra — which discards
+    // content the user paid for, because unlike an outline entry a single-pass
+    // entry carries the page body. Reconciling first merges the stray into the
+    // canonical summary, after which validateOutline sees exactly one canonical
+    // summary and is a no-op for that check. plannedPaths is the response's own
+    // path set, since in single-pass the pages ARE the plan — so the
+    // "not in the plan" warning can never fire spuriously here.
+    {
+      const rec = reconcileGeneratedPages(result.pages, {
+        summaryPath,
+        plannedPaths: (result.pages || []).map(p => p && p.path).filter(Boolean),
+      });
+      result.pages = rec.pages;
+      for (const w of rec.warnings) {
+        console.warn(`[ingest] Single-pass path check: ${w}`);
+        warnings.push(w);
+      }
+    }
+
     const validated = validateOutline(result, summaryPath, originalName, originatorHints);
     result = validated.outline;
     for (const w of validated.warnings) {
@@ -1395,8 +1939,12 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // Keep the LAST occurrence so the most-complete LLM version wins; writePage's
   // mergeWikiPage will still union it with any existing on-disk content.
   {
+    // v3.0.16: key on the .md-normalised path. writePage now appends a missing
+    // extension, so "concepts/x" and "concepts/x.md" are the same file — keying
+    // on the raw string let both survive and write the same file twice (create,
+    // then merge), producing two change records and two warnings for one page.
     const seen = new Map();
-    for (const page of result.pages) seen.set(page.path, page);
+    for (const page of result.pages) seen.set(withMdExtension(page.path), page);
     result.pages = [...seen.values()];
   }
 
@@ -1431,7 +1979,12 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const changes = [];
   const writeRecords = [];
   for (const page of result.pages) {
-    const record = await writePage(domain, page.path, page.content);
+    // v3.0.16: writePage refusals and path auto-corrections now surface to the
+    // user instead of dying in a console line — a discarded page means content
+    // the user paid for silently vanished.
+    const record = await writePage(domain, page.path, page.content, {
+      onWarn: (w) => warnings.push(w),
+    });
     writeRecords.push(record ? { originalPath: page.path, record } : null);
     if (record) {
       canonicalPaths.push(record.canonPath);
@@ -1526,6 +2079,17 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   const logEntry = `## [${today}] ingest | ${result.title}\nPages created or updated:\n${pageList}${warningSection}\n`;
   await appendLog(domain, logEntry);
 
+  // v3.0.16: real token spend for this ingest. stderr, never stdout — this
+  // module is imported by the MCP child process (v2.5.2).
+  {
+    const t = usage.totals;
+    console.error(
+      `[ingest] Token usage — ${t.calls} call(s) via ${t.provider || 'unknown'}/${t.model || 'unknown'}: ` +
+      `${t.inputTokens} in, ${t.outputTokens} out, ` +
+      `${t.cachedReadTokens} cached-read, ${t.cacheWriteTokens} cache-write.`
+    );
+  }
+
   progress(100, 'Done!');
   return {
     title: result.title,
@@ -1533,6 +2097,16 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     changes,    // structured per-file change records (v2.5.0+)
     warnings,   // user-visible non-fatal issues (v3.0.1-beta.1)
     truncated,  // boolean — was the source longer than TEXT_CAP?
+    // Additive (v3.0.16): measured spend across every LLM call this ingest
+    // made. The SSE route picks fields explicitly, so this is invisible to
+    // existing clients; it exists for measurement + future cost metering.
+    //
+    // {calls, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens,
+    //  provider, model}. inputTokens EXCLUDES cached tokens on BOTH providers
+    // (normalised — see normalizeGeminiUsage in llm.js), so total prompt size is
+    // inputTokens + cachedReadTokens + cacheWriteTokens and a cost calculation
+    // never has to branch on which provider ran.
+    tokenUsage: usage.totals,
   };
 }
 
@@ -1737,6 +2311,8 @@ export const __testing = {
   buildOutlinePrompt,
   buildPrompt,
   buildBatchPrompt,
+  buildBatchPromptParts,
+  slugLineCost,
   stubPageContent,
   isOutputTokenLimit,
   TEXT_CAP: 80_000,

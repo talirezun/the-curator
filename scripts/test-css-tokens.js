@@ -104,8 +104,23 @@ function stripBlockComments(text) {
 
 /** Blank out any `// ...` line comment, UNLESS it's part of a URL scheme
  *  like `https://` (real .css never uses `//` comments; this is a defensive
- *  fallback in case a preprocessor-flavoured `//` sneaks into the file).
- *  Preserves length + newlines.
+ *  fallback in case a preprocessor-flavoured `//` sneaks into the file — and,
+ *  since v3.0.16, the mechanism this suite reuses to strip real JS `//`
+ *  comments when scanning app.js in section 4). Preserves length + newlines.
+ *
+ *  Performance note: the "previous non-whitespace character" check walks
+ *  BACKWARD OVER THE INPUT `text` from the current position, not over the
+ *  growing `out` accumulator. An earlier version did
+ *  `out.replace(/\s+$/, '').slice(-1)`, which re-scans the ENTIRE
+ *  accumulated buffer on every single `//` occurrence — invisible on a small
+ *  CSS file (few or no `//` sequences) but O(n²) on a large JS file full of
+ *  legitimate `//` (comments, `http://` URLs, regex literals): pointing this
+ *  scanner at src/public/app.js (section 4) measured 22+ SECONDS with the
+ *  old approach vs a few milliseconds with this one. The two are
+ *  behaviourally equivalent — nothing before the current position can have
+ *  been masked by a LATER `//` span, and a comment span is always jumped
+ *  over via `i = j` rather than re-scanned, so `text[i-1]` (skipping
+ *  whitespace) always agrees with what the old `out`-based check saw.
  */
 function stripLineComments(text) {
   let out = '';
@@ -113,7 +128,9 @@ function stripLineComments(text) {
   const n = text.length;
   while (i < n) {
     if (text[i] === '/' && text[i + 1] === '/') {
-      const prevNonSpace = out.replace(/\s+$/, '').slice(-1);
+      let k = i - 1;
+      while (k >= 0 && /\s/.test(text[k])) k--;
+      const prevNonSpace = k >= 0 ? text[k] : '';
       if (prevNonSpace === ':') {
         // e.g. "https:" immediately before "//" — part of a URL, not a comment.
         out += text[i];
@@ -122,7 +139,7 @@ function stripLineComments(text) {
       }
       let j = text.indexOf('\n', i);
       j = j === -1 ? n : j;
-      for (let k = i; k < j; k++) out += ' ';
+      for (let k2 = i; k2 < j; k2++) out += ' ';
       i = j;
     } else {
       out += text[i];
@@ -510,6 +527,77 @@ ok(text1Refs.length === 0,
     ? 'REGRESSION GUARD: var(--text-1) is not referenced anywhere (likely meant --text/--text-2; this was the v3.0.12-class no-fallback bug)'
     : `REGRESSION: var(--text-1) reintroduced at ${text1Refs.map(r => `${r.file}:${lineNumberFor(r.lineStarts, r.index)}`).join(', ')} — likely meant --text/--text-2`
 );
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3c. Self-tests for scanning var(--x) references embedded in JS source
+//    (section 4 below applies this to the real src/public/app.js)
+// ─────────────────────────────────────────────────────────────────────────
+section('3c. Self-tests — var() references embedded in JS string/template literals');
+
+{
+  // The whole point of section 4 is to find var(--x) usages that live INSIDE
+  // JS string/template literals (e.g. `status.innerHTML = 'color:var(--x)'`)
+  // — unlike a real .css file, where "var(--x)" inside a quoted string is
+  // decorative content to be ignored (maskStrings' job there). So the JS scan
+  // deliberately does NOT run maskStrings/maskPlainUrls — only comment
+  // stripping. This proves that choice: a reference inside a real JS
+  // comment is excluded, but one inside a JS string literal is NOT masked
+  // away (which full cleanCss() WOULD do, defeating the entire scan).
+  const src = `
+// var(--commented-out) should not count
+status.innerHTML = 'color:var(--real-ref)';
+/* var(--also-commented) should not count either */
+const x = \`<span style="color:var(--template-ref)">\`;
+`;
+  const cleaned = stripLineComments(stripBlockComments(src));
+  const refs = extractReferences(cleaned).map(r => r.name);
+  ok(!refs.includes('commented-out'), 'a var() reference inside a JS // comment is not counted');
+  ok(!refs.includes('also-commented'), 'a var() reference inside a JS /* */ comment is not counted');
+  ok(refs.includes('real-ref'),
+    'a var() reference inside a single-quoted JS string literal is still found (NOT masked — this is the point of scanning app.js)');
+  ok(refs.includes('template-ref'),
+    'a var() reference inside a JS template (backtick) literal is still found');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 4. Inline var(--x) references embedded in src/public/app.js (CSS-in-JS)
+// ─────────────────────────────────────────────────────────────────────────
+// app.js builds a handful of inline `style="color:var(--x)"` HTML snippets
+// as JS string/template literals (status banners, the update-progress UI,
+// the markdown renderer's <hr> rule). These live entirely outside
+// styles.css's <link> discovery in section 1, so section 3 never sees them —
+// a token typo here would fail SILENTLY exactly like the --text-dim bug,
+// just in a JS file instead of a CSS one. We check them against the SAME
+// `globalDefs` set collected from the real stylesheets in section 2 (the
+// tokens app.js's inline styles rely on come from styles.css; app.js
+// defines none of its own).
+section('4. Inline var(--x) references in src/public/app.js (CSS-in-JS)');
+
+const appJsPath = path.join(ROOT, 'src/public/app.js');
+const appJsRaw = readFileSync(appJsPath, 'utf8');
+const appJsCleaned = stripLineComments(stripBlockComments(appJsRaw));
+const appJsRefs = extractReferences(appJsCleaned);
+const appJsLineStarts = computeLineStarts(appJsRaw);
+
+ok(appJsRefs.length > 0, `found ${appJsRefs.length} var() reference(s) in app.js`);
+
+const appJsRealOffenders = [];
+for (const ref of appJsRefs) {
+  if (globalDefs.has(ref.name)) continue;
+  const line = lineNumberFor(appJsLineStarts, ref.index);
+  const declaration = appJsRaw.split('\n')[line - 1]?.trim() ?? '(unavailable)';
+  appJsRealOffenders.push({ file: 'src/public/app.js', line, name: ref.name, declaration });
+}
+
+ok(appJsRealOffenders.length === 0,
+  appJsRealOffenders.length === 0
+    ? 'every var(--x) reference in app.js resolves to a token defined in styles.css'
+    : `found ${appJsRealOffenders.length} undefined custom-property reference(s) in app.js:\n` +
+      appJsRealOffenders.map(o => `        ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`).join('\n')
+);
+
+const appJsDistinctNames = [...new Set(appJsRefs.map(r => r.name))].sort();
+console.log(`  → app.js references ${appJsRefs.length} var() usage(s) across ${appJsDistinctNames.length} distinct token(s): ${appJsDistinctNames.join(', ')}`);
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

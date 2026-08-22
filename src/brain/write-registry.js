@@ -271,6 +271,102 @@ export async function isFileLocked(domainDir) {
   }
 }
 
+/**
+ * Best-effort cleanup pass: remove the `.write-lock` file under `domainDir`
+ * ONLY if the SAME staleness rule used by acquireFileLock()/isFileLocked()
+ * already considers it dead — age > LOCK_STALE_MS, or the owning PID is no
+ * longer alive; an unparseable lock file also counts as stale, exactly as
+ * it does in acquireFileLock(). This is deliberately the ONE definition of
+ * "stale" in the module; callers must never grow a second, looser one.
+ *
+ * Unlike acquireFileLock(), this does NOT claim the lock afterward — it's a
+ * pure hygiene pass, not an acquire. It exists because `git rm --cached`
+ * (used by sync.js's untrackStaleWriteLocks()) only removes a committed lock
+ * from git's INDEX; it never touches the file on disk, so a genuinely dead
+ * lock can be left sitting in the working tree indefinitely (v3.0.15 shipped
+ * that gap — see CLAUDE.md's "Deferred to v3.0.16" note). A FRESH lock — one
+ * a live process, in this process or the separate MCP child process, still
+ * legitimately holds — is never touched: the age/PID checks are identical to
+ * the ones acquireFileLock() itself uses to decide whether to self-heal.
+ *
+ * TOCTOU note (audit finding, fixed here): the read → staleness-check →
+ * unlink sequence is not atomic. Between the read and the unlink, a SEPARATE
+ * process (classically the MCP child process) can independently decide this
+ * SAME lock is stale via its own acquireFileLock(), clear it, and write a
+ * brand-new FRESH lock in its place. Blindly unlinking at that point deletes
+ * the OTHER process's live lock instead of the dead one we inspected —
+ * opening the door to two concurrent writers, exactly the corruption this
+ * lock exists to prevent (the holder's own release() then silently no-ops
+ * because the file is already gone). This can't be closed to a zero-width
+ * window without a lower-level OS primitive (acquireFileLock() itself has
+ * the same non-atomic shape), but re-reading immediately before the unlink
+ * and bailing if the bytes changed shrinks the window from "however long we
+ * held stale data" down to the gap between two adjacent syscalls.
+ *
+ * @param {string} domainDir  absolute path to <domainsDir>/<domain>/
+ * @param {{ __onBeforeRecheck?: () => Promise<void> }} [opts]  test-only —
+ *   see the note at the recheck call site below. Production callers never
+ *   pass this.
+ * @returns {Promise<boolean>}  true if a stale lock was removed
+ */
+export async function clearStaleLock(domainDir, opts = {}) {
+  const lockFile = lockPath(domainDir);
+  if (!existsSync(lockFile)) return false;
+
+  let firstRaw;
+  try {
+    firstRaw = await readFile(lockFile, 'utf8');
+  } catch {
+    return false; // vanished between existsSync and readFile — nothing to do
+  }
+
+  let stale = false;
+  try {
+    const data = JSON.parse(firstRaw);
+    const age = Date.now() - (data.startedAt || 0);
+    if (age > LOCK_STALE_MS) {
+      stale = true;
+    } else if (typeof data.pid === 'number' && !isPidAlive(data.pid)) {
+      stale = true;
+    }
+  } catch {
+    stale = true; // unparseable lock = stale, same rule acquireFileLock() uses
+  }
+  if (!stale) return false;
+
+  // Test-only seam: lets a battle test simulate another process racing in
+  // and rewriting the lock file at exactly this point, to prove the recheck
+  // below actually catches it. A no-op whenever the caller doesn't pass it
+  // (every production call site).
+  if (typeof opts.__onBeforeRecheck === 'function') {
+    await opts.__onBeforeRecheck();
+  }
+
+  // The TOCTOU guard itself: re-read right before acting, and refuse to
+  // touch the file if its content is no longer what we inspected above.
+  let secondRaw;
+  try {
+    secondRaw = await readFile(lockFile, 'utf8');
+  } catch {
+    return false; // already gone — someone else's release()/cleanup won the race
+  }
+  if (secondRaw !== firstRaw) {
+    // Changed underneath us — quite possibly a brand-new FRESH lock. Never
+    // touch it; a future pass will correctly judge IT on its own merits.
+    return false;
+  }
+
+  try {
+    await unlink(lockFile);
+    return true;
+  } catch {
+    // Race: another process already removed/replaced it in the gap between
+    // our recheck read and this unlink. Never treat this as an error —
+    // best-effort cleanup only.
+    return false;
+  }
+}
+
 // ── Test helpers (internal — not part of public API) ──────────────────
 
 export const __testing = {

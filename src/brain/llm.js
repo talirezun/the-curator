@@ -112,6 +112,14 @@ const MODEL_PRICES_USD_PER_MTOK = {
   'claude-3-5-sonnet-latest':  { input: 3.00, output: 15.00 },
 };
 
+// Frozen at definition: this table is exported through `__testing` for the
+// offline price-coverage invariant, and a test that mutated it would corrupt
+// every later cost comparison in the same process. Entries are frozen too, so
+// `MODEL_PRICES_USD_PER_MTOK['x'].input = 0` is a no-op rather than a silent
+// cross-test leak.
+for (const price of Object.values(MODEL_PRICES_USD_PER_MTOK)) Object.freeze(price);
+Object.freeze(MODEL_PRICES_USD_PER_MTOK);
+
 /**
  * Published price for an exact model id, or null if we don't ship it.
  * @returns {null | {input: number, output: number}}
@@ -276,7 +284,10 @@ function sleep(ms) {
  * @param {number} maxTokens
  * @param {'text'|'json'} responseFormat  - 'json' enables native JSON mode (Gemini only)
  * @param {function|null} onWait          - optional callback(message) called before each retry wait
- * @returns {Promise<string>}
+ * @param {object} opts                   - {provider, onUsage, cachePrefixChars} — all optional
+ * @returns {Promise<string>}  the model's text. The RETURN TYPE IS A BARE STRING
+ *   and must stay that way: ~18 call sites across src/ and mcp/ depend on it.
+ *   Token usage is delivered out-of-band via opts.onUsage instead.
  */
 export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {}) {
   const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
@@ -284,6 +295,19 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   // unless it names a provider with a usable key (getProviderInfo enforces this).
   const providerOverride = (opts && (opts.provider === 'gemini' || opts.provider === 'anthropic'))
     ? opts.provider : null;
+
+  // v3.0.16: observability + cost controls, both additive and both optional.
+  //   onUsage          — real token counts, once per completed provider call
+  //                      (retries and fallback rungs included, so the callback
+  //                      sees TOTAL spend, not just the successful attempt).
+  //   cachePrefixChars — caller-declared stable-prefix length for Anthropic
+  //                      prompt caching. The caller owns the "is this prefix
+  //                      reused enough to beat the 1.25x write premium?"
+  //                      decision; llm.js only enforces the size floor.
+  const callOpts = {
+    onUsage: typeof opts?.onUsage === 'function' ? opts.onUsage : null,
+    cachePrefixChars: Number.isInteger(opts?.cachePrefixChars) ? opts.cachePrefixChars : 0,
+  };
 
   // Resolve provider name once for consistent error messaging. If this fails
   // (e.g. no key configured), let the underlying call throw the original
@@ -296,7 +320,7 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride);
+      return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride, callOpts);
     } catch (err) {
       const retryable = is429(err) || is503(err);
       if (!retryable || attempt === MAX_RETRIES) {
@@ -363,6 +387,119 @@ function isModelNotFound(err) {
 }
 
 /**
+ * Minimum length, in CHARACTERS, of a stable prompt prefix before it is worth
+ * marking with an Anthropic `cache_control` breakpoint.
+ *
+ * Anthropic's minimum cacheable prefix is model-dependent and NOT monotonic
+ * across generations: it is 4096 tokens on claude-haiku-4-5 — the Curator's
+ * Anthropic default — and 2048 on the claude-3-5-haiku fallback rungs. A prefix
+ * below the model's minimum is silently NOT cached (no error, no write charge,
+ * `cache_creation_input_tokens: 0`), so a too-short breakpoint is harmless but
+ * pointless. 16,000 chars is ~4,000 tokens at the ~4 chars/token typical of
+ * English prose, i.e. the floor at which the default model can cache at all.
+ * Being wrong in either direction is cheap: too low → a no-op marker, too high
+ * → we skip a cache we could have had.
+ *
+ * The COSTLY mistake is caching a prefix that is used exactly once — a cache
+ * write is billed at 1.25x the base input rate (5-minute TTL), so a single-use
+ * breakpoint makes the call 25% MORE expensive. That decision (is this prefix
+ * reused?) belongs to the caller, which is why llm.js only enforces the size
+ * floor and never sets a breakpoint on its own. Break-even is two calls:
+ * 1.25x + 0.1x = 1.35x versus 2.0x uncached.
+ */
+export const ANTHROPIC_CACHE_MIN_PREFIX_CHARS = 16_000;
+
+/**
+ * Build the Anthropic user-message content for a prompt, optionally splitting it
+ * into [stable prefix | volatile suffix] with a cache breakpoint on the prefix.
+ *
+ * Returns the plain string (i.e. today's exact payload) unless ALL hold:
+ *   • cachePrefixChars is a positive integer strictly inside the prompt, and
+ *   • the prefix is at least ANTHROPIC_CACHE_MIN_PREFIX_CHARS long.
+ * Concatenating the two blocks reproduces the original prompt byte for byte.
+ *
+ * Exported for offline testing.
+ */
+export function buildAnthropicUserContent(userPrompt, cachePrefixChars) {
+  const text = typeof userPrompt === 'string' ? userPrompt : '';
+  const n = Number.isInteger(cachePrefixChars) ? cachePrefixChars : 0;
+  if (n < ANTHROPIC_CACHE_MIN_PREFIX_CHARS) return text;
+  if (n >= text.length) return text;             // nothing volatile left to vary
+  return [
+    { type: 'text', text: text.slice(0, n), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: text.slice(n) },
+  ];
+}
+
+/**
+ * THE CURATOR'S USAGE CONVENTION (both providers, no exceptions):
+ *
+ *   inputTokens       tokens processed at FULL price — CACHED TOKENS EXCLUDED
+ *   cachedReadTokens  tokens served from cache (~0.1x on Anthropic)
+ *   cacheWriteTokens  tokens written to cache (1.25x on Anthropic)
+ *
+ *   total prompt size = inputTokens + cachedReadTokens + cacheWriteTokens
+ *
+ * The two providers disagree on the wire and a consumer must never have to know
+ * that: Gemini's `promptTokenCount` INCLUDES `cachedContentTokenCount`, while
+ * Anthropic's `input_tokens` EXCLUDES its cached counterpart. We normalise to
+ * the EXCLUSIVE (Anthropic) convention, so `inputTokens` means one thing
+ * everywhere and a cost calculation never has to branch on provider. Keeping
+ * both wire conventions would have made `inputTokens + cachedReadTokens * 0.1`
+ * double-count on Gemini — silently, in whatever meters this first.
+ *
+ * Normalise Gemini's `usageMetadata` into that shape. Every field is optional on
+ * the wire (older responses, partial candidates), so anything missing degrades
+ * to 0 rather than throwing.
+ */
+export function normalizeGeminiUsage(md) {
+  const u = md && typeof md === 'object' ? md : {};
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const cached = num(u.cachedContentTokenCount);
+  return {
+    // Subtract the cached portion so this field carries the same meaning as
+    // Anthropic's input_tokens. Clamped at 0 — a provider that ever reports
+    // cached > prompt must not produce a negative that corrupts a running total.
+    inputTokens:      Math.max(0, num(u.promptTokenCount) - cached),
+    outputTokens:     num(u.candidatesTokenCount),
+    cachedReadTokens: cached,
+    // Gemini 2.5 implicit caching has no separate write charge, and the explicit
+    // context-cache API (which does) is deliberately not used here.
+    cacheWriteTokens: 0,
+  };
+}
+
+/**
+ * Normalise Anthropic's `usage` block into the same shape. Anthropic already
+ * uses the exclusive convention documented on normalizeGeminiUsage —
+ * `input_tokens` counts only what was billed at full price — so this is a
+ * straight field rename.
+ */
+export function normalizeAnthropicUsage(usage) {
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    inputTokens:      num(u.input_tokens),
+    outputTokens:     num(u.output_tokens),
+    cachedReadTokens: num(u.cache_read_input_tokens),
+    cacheWriteTokens: num(u.cache_creation_input_tokens),
+  };
+}
+
+/**
+ * Invoke an optional usage callback. Contract (mirrors the v3.0.4 adapter
+ * `onWarn` rule): a throwing callback must NEVER break the LLM call — usage
+ * reporting is observability, not correctness. Diagnostics go to stderr because
+ * this module is imported by the MCP child process, which reserves stdout for
+ * JSON-RPC frames (v2.5.2).
+ */
+function reportUsage(onUsage, payload) {
+  if (typeof onUsage !== 'function') return;
+  try { onUsage(payload); }
+  catch (err) { console.error(`[llm] onUsage callback threw (ignored): ${err && err.message}`); }
+}
+
+/**
  * Handle an output-token-limit (MAX_TOKENS) truncation, uniformly across
  * providers and response formats. Exported for offline unit testing.
  *
@@ -410,8 +547,19 @@ export function handleOutputTokenLimit(providerName, maxTokens, responseFormat, 
 /**
  * Invoke a specific provider+model. No retry/fallback here — pure dispatch.
  * Called by `callLLM` which handles fallback, and by the retry loop in `generateText`.
+ *
+ * @param {{onUsage?: function, cachePrefixChars?: number}} [opts]
+ *   onUsage          — invoked once per COMPLETED provider call with normalised
+ *                      token counts (see reportUsage). Fired before the
+ *                      truncation check, because a truncated response is a call
+ *                      that ran and was billed.
+ *   cachePrefixChars — Anthropic only. Length of the stable leading portion of
+ *                      userPrompt; a `cache_control` breakpoint is placed there
+ *                      when it clears ANTHROPIC_CACHE_MIN_PREFIX_CHARS. Gemini
+ *                      ignores it (2.5-family models do implicit prefix caching
+ *                      with no API change).
  */
-async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens, responseFormat) {
+async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens, responseFormat, opts = {}) {
   // ── Google Gemini ────────────────────────────────────────────────────────
   if (provider === 'gemini') {
     const genAI = new GoogleGenerativeAI(getEffectiveKey('gemini'));
@@ -440,6 +588,10 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
     // (so ingest/compile fallbacks recover), but TEXT mode (chat, query) now
     // returns the partial answer with a note instead of hard-failing on a
     // misleading ingest-specific error.
+    reportUsage(opts.onUsage, {
+      provider: 'gemini', model,
+      ...normalizeGeminiUsage(result?.response?.usageMetadata),
+    });
     const finishReason = result?.response?.candidates?.[0]?.finishReason;
     if (finishReason === 'MAX_TOKENS') {
       let partial = '';
@@ -472,8 +624,16 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
     model,
     max_tokens: effectiveMaxTokens,
     system: systemPrompt,
-    messages: [{ role: 'user', content: userPrompt }],
+    // Either the plain prompt string (unchanged payload) or a two-block split
+    // with a cache breakpoint on the stable prefix — see buildAnthropicUserContent.
+    messages: [{ role: 'user', content: buildAnthropicUserContent(userPrompt, opts.cachePrefixChars) }],
   }).finalMessage();
+  // `.finalMessage()` assembles the streamed events into the same Message object
+  // a non-streaming call returns, including the accumulated `usage` block.
+  reportUsage(opts.onUsage, {
+    provider: 'anthropic', model,
+    ...normalizeAnthropicUsage(message?.usage),
+  });
   // v3.0.1-beta.8: detect Anthropic output-budget truncation. When the model
   // hits `max_tokens` mid-response, Anthropic returns
   // `stop_reason: "max_tokens"` and the `text` field contains the partial
@@ -518,7 +678,7 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
  * (auth, rate-limit, network, 5xx) is re-thrown immediately so the outer
  * retry loop or caller can handle it appropriately.
  */
-async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride = null) {
+async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride = null, opts = {}) {
   const { provider, model } = getProviderInfo(providerOverride);
   const chain = [model, ...(FALLBACK_CHAINS[provider] || [])];
   let lastErr = null;
@@ -526,7 +686,7 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
   for (let i = 0; i < chain.length; i++) {
     const candidate = chain[i];
     try {
-      const result = await callProvider(provider, candidate, systemPrompt, userPrompt, maxTokens, responseFormat);
+      const result = await callProvider(provider, candidate, systemPrompt, userPrompt, maxTokens, responseFormat, opts);
 
       if (i === 0) {
         // Primary succeeded — clear any previous fallback state for this provider.
@@ -570,4 +730,4 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
  * fallback rung without its price fails the suite instead of silently
  * downgrading the user's cost warning to 'unknown'.
  */
-export const __testing = { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK };
+export const __testing = { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK, reportUsage };

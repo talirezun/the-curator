@@ -804,7 +804,35 @@ function injectFrontmatter(content, relativePath, today) {
 // entity files on disk for the same person (v3.0.1-beta.2 fix).
 const TITLE_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor|the)\.?-/;
 
+/**
+ * True when a page path can never be a legitimate wiki page: a NUL byte, a
+ * Windows separator, an absolute path, or any `..` segment. Applied to both the
+ * raw LLM-supplied path and the normalised one (v3.0.16).
+ */
+function isUnsafePagePath(p) {
+  if (typeof p !== 'string') return true;
+  return p.includes('\0') || p.includes('\\') || path.isAbsolute(p) || p.split('/').includes('..');
+}
+
 export async function writePage(domain, relativePath, content, opts = {}) {
+  // opts.onWarn (v3.0.16): optional callback(message) so a REFUSED or
+  // auto-corrected page becomes visible to the user instead of dying in a
+  // console line nobody reads. Contract mirrors the v3.0.4 adapter onWarn
+  // rule — a throwing callback must never break the write. Diagnostics go to
+  // stderr because this module is imported by the MCP child process (v2.5.2).
+  const warn = (msg) => {
+    console.warn(`[writePage] ${msg}`);
+    if (typeof opts.onWarn === 'function') {
+      try { opts.onWarn(msg); } catch { /* observability must not break a write */ }
+    }
+  };
+
+  // Defensive: callers rely on writePage returning null for unusable input.
+  if (typeof relativePath !== 'string' || !relativePath.trim()) {
+    warn('Refused a page with a missing or non-string path — nothing was written.');
+    return null;
+  }
+
   // opts.replace (v3.0.3+): skip the union merge with the existing file —
   // the incoming content IS the page (replace semantics). Used by Shared
   // Brain mirror pulls so facts deleted from the collective (conflict
@@ -817,7 +845,31 @@ export async function writePage(domain, relativePath, content, opts = {}) {
   // 1. Redirect mis-filed paths to canonical folders
   let canonPath = normalizePath(relativePath);
 
-  // 1a. Normalise underscores → hyphens in the filename portion.
+  // 1a. Containment guard. This MUST run before ANY basename rewriting.
+  //     Pre-v3.0.16 the blanket "basename must end in .md" rule was doing
+  //     double duty as an accidental traversal defence — "../../etc/passwd"
+  //     has no .md basename, so it was refused. Appending .md without an
+  //     explicit check would have converted that accident into a real escape
+  //     (`entities/../../etc/passwd.md` resolves outside the wiki folder).
+  //
+  //     Checked on BOTH the raw input and the normalised path: normalizePath
+  //     rewrites an absolute path into `entities/<rest>` (contained, but a
+  //     silent relocation of something that is unambiguously malformed), so an
+  //     `isAbsolute` test on canonPath alone would never fire.
+  if (isUnsafePagePath(relativePath) || isUnsafePagePath(canonPath)) {
+    warn(`Refused an unsafe page path "${relativePath}" — it is not a valid wiki page path. Nothing was written.`);
+    return null;
+  }
+
+  // 1b. A path that names a folder but no file (e.g. "entities/") is
+  //     unusable — writing it would either crash with EISDIR or, once the
+  //     extension is appended below, create a bogus "entities.md" at the root.
+  if (canonPath.endsWith('/')) {
+    warn(`Refused page path "${relativePath}" — it names a folder, not a page. Its content was not written; re-ingest to recover it.`);
+    return null;
+  }
+
+  // 1c. Normalise underscores → hyphens in the filename portion.
   //     The LLM sometimes mirrors the original PDF filename (e.g. two_worlds_of_code.pdf
   //     → two_worlds_of_code.md). Wiki convention is lowercase-hyphenated slugs.
   {
@@ -826,11 +878,64 @@ export async function writePage(domain, relativePath, content, opts = {}) {
     canonPath = dir === '.' ? base : `${dir}/${base}`;
   }
 
-  // 2. Guard: skip paths with no valid .md filename (prevents EISDIR crash
-  //    when the LLM returns just a folder name like "entities/")
+  // 2. Missing (or wrong-cased) .md extension → APPEND it and write the page.
+  //     v3.0.16: the model occasionally returns "concepts/concurrency-control"
+  //     with no extension. That page was planned, its content was generated
+  //     and paid for, and writePage then discarded it with a console line and
+  //     nothing in warnings[] — the user had no way to know. This is the same
+  //     class of normalisation normalizePath already performs for underscores
+  //     and non-canonical folders, so it belongs here rather than in a caller.
+  {
+    const dir = path.dirname(canonPath);
+    let base = path.basename(canonPath);
+    if (!/\.md$/i.test(base)) {
+      base += '.md';
+      warn(`Page path "${relativePath}" was missing the .md extension — wrote it as "${dir === '.' ? base : `${dir}/${base}`}".`);
+    } else if (!base.endsWith('.md')) {
+      base = base.slice(0, -3) + '.md';       // ".MD" → ".md"
+    }
+    canonPath = dir === '.' ? base : `${dir}/${base}`;
+  }
+
+  // 2a. FLATTEN nested paths to the wiki's one-folder-deep invariant.
+  //
+  //     The whole app assumes exactly `<canonical-folder>/<slug>.md`. EVERY
+  //     consumer is non-recursive: ingest's existing-files scan and all three
+  //     of health.js's scans use a flat `readdir` filtered on `.md`. So a page
+  //     written at `entities/companies/openai.md` is real on disk and gets an
+  //     index row, but is invisible to the existing-files inventory (the model
+  //     re-invents it on the next ingest), invisible to the Health scanner, and
+  //     every inbound [[openai]] link is reported BROKEN even though the file
+  //     exists — while Obsidian, which resolves by basename, shows it as fine.
+  //     The app and the vault end up disagreeing about reality.
+  //
+  //     FLATTEN rather than refuse, for three reasons: (1) it preserves content
+  //     the user paid for, which is the whole point of the v3.0.16 writePage
+  //     work — refusing would reintroduce the silent-discard failure mode at a
+  //     different address; (2) `<folder>/<basename>` is exactly where the page
+  //     belongs, so it becomes visible to every consumer; (3) it is the same
+  //     move normalizePath already makes for invented folders (`people/` →
+  //     `entities/`), so this is one rule applied consistently rather than a new
+  //     policy. A collision with an existing page merges via mergeWikiPage,
+  //     which is the desired outcome, not a duplicate.
+  //
+  //     Partly pre-existing — `entities/companies/openai.md` was already
+  //     accepted — but 2 above widened it to the extension-less form, so it is
+  //     fixed here rather than left for the next reader to trip over.
+  {
+    const segments = canonPath.split('/');
+    if (segments.length > 2) {
+      const flattened = `${segments[0]}/${segments[segments.length - 1]}`;
+      warn(`Page path "${relativePath}" was nested more than one folder deep — wrote it as "${flattened}". The wiki is flat: pages live directly in entities/, concepts/ or summaries/.`);
+      canonPath = flattened;
+    }
+  }
+
+  // 2b. Final guard: a leading dot means a hidden file, not a page — covers a
+  //     bare ".md" and the "..md" that a path of "." would otherwise produce.
   const basename = path.basename(canonPath);
-  if (!basename || !basename.endsWith('.md')) {
-    console.warn(`[writePage] Skipping invalid path (no filename): "${relativePath}"`);
+  if (!basename || basename.startsWith('.')) {
+    warn(`Refused page path "${relativePath}" — it has no usable filename. Its content was not written; re-ingest to recover it.`);
     return null;
   }
 

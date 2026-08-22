@@ -150,7 +150,7 @@ The **Compile to Wiki** button on any chat conversation extracts what was learne
 | Trigger | Drop a file in the Ingest tab | "Compile to Wiki" button in the Chat tab |
 | What gets written | Summary + entities + concepts | Same — uses the same write pipeline |
 | Re-running | Re-ingests merge new info into existing pages | Refused if the conversation hasn't changed (prevents bullet inflation) |
-| Cost | One LLM call per ingest | One LLM call per compile |
+| Cost | 1 LLM call for a short source (single-pass); 1 planning call + N batch calls for a long one (multi-phase, ~4 pages/call) | 1 LLM call normally; up to 3 if the AI's response is too large and the app retries with a more concise extraction |
 
 ### Tip
 

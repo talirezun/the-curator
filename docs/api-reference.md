@@ -215,7 +215,7 @@ curl -X POST http://localhost:3333/api/ingest \
 | Status | Condition |
 |--------|-----------|
 | `400` | Missing `domain` or `file`; unknown domain; unsupported file type |
-| `500` | Claude API error; PDF parsing failure; filesystem write error |
+| `500` | LLM provider error; PDF parsing failure; filesystem write error |
 
 ```json
 { "error": "Unsupported file type: .docx. Allowed: .txt, .md, .pdf" }
@@ -275,7 +275,7 @@ If the wiki is empty:
 | Status | Condition |
 |--------|-----------|
 | `400` | Missing `domain` or `question`; unknown domain |
-| `500` | Claude API error |
+| `500` | LLM provider error |
 
 ---
 
@@ -985,5 +985,5 @@ The server also serves the web UI from `src/public/` at the root path.
 ## Notes
 
 - The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF defense); requests with no `Origin` (curl, scripts) and all GETs pass through. Additionally (v3.0.2+), a Host-header guard rejects any request whose `Host` is not a loopback form (`localhost:PORT` / `127.0.0.1:PORT` / `[::1]:PORT`) with 403 — this closes DNS-rebinding read access, where a rebound hostname made same-origin GETs readable by an attacker page. There is no per-request authentication — it remains a single-user local app.
-- The ingest endpoint blocks until Claude returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to Claude).
-- The query endpoint sends up to 90,000 characters of wiki content to Claude in a single call. Very large wikis (150+ pages) may hit the context limit. In that case, consider splitting the domain or removing less useful pages.
+- The ingest endpoint blocks until the configured LLM provider (Gemini by default; Anthropic Claude if the user configured it in Settings) returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to the model).
+- `POST /api/query` (above) is a simple, single-shot Q&A endpoint — separate from the Chat tab's `POST /api/chat/:domain` — and it still sends up to 90,000 characters of concatenated wiki content to the LLM in one call, in arbitrary file order (`src/brain/query.js`). On a wiki bigger than ~90 KB of raw page content, later pages are silently left out of that request. **The Curator's own web UI never calls this endpoint** — there is no reference to it anywhere in `src/public/`, so the only way to reach it is a direct HTTP call to the loopback server (curl, a script, another tool). The Chat tab does **not** have this limitation: since v3.0.1-beta.11 it uses query-driven page selection (score pages by relevance to the question, load up to ~60 KB of full content plus a ~12 KB slug catalogue — see [docs/ingestion-pipeline.md §10b](ingestion-pipeline.md#10b-the-chat-read-side-v301-beta11-refined-in-v301-beta13)), so it scales to much larger wikis. If you're calling `/api/query` directly against a large wiki (150+ pages), prefer `/api/chat/:domain` instead, or expect its answers to reflect only whatever page content the alphabetical/readdir order happened to include.

@@ -30,6 +30,7 @@ Compared to alternatives:
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
 | Write locks (`.write-lock`) | No | Machine-local state, not knowledge. Syncing one meant a crash on machine A could block writes on machine B for up to 30 minutes (fixed in v3.0.15) |
+| Finder metadata (`.DS_Store`) | No | macOS drops these into any folder Finder browses. They carry zero wiki content but, if already committed from before this rule existed, would re-sync to every machine on every push/pull and inflate the "pending changes" badge for nothing (fixed in v3.0.16) |
 
 ---
 
@@ -261,6 +262,10 @@ This is uncommon but can happen. To fix it:
 5. Run the command shown to complete the merge
 
 If this feels complicated, the easiest recovery is to decide which machine has the "correct" version, and overwrite the other machine by using **Pull only** (in the Advanced section) after discarding local changes.
+
+### Stale `.write-lock` or `.DS_Store` files showing up in your changes
+
+`.write-lock` and `.DS_Store` are machine-local bookkeeping files, not knowledge, and are excluded from sync (see the table above). If either was already committed before those exclusion rules existed, it would otherwise keep re-appearing in every sync forever. Since v3.0.16, both **Push only/Sync now** and **Pull only** automatically clean these up before doing anything else: any already-committed `.write-lock` or `.DS_Store` is untracked from git (removed from what's synced, left alone on your own disk), and any `.write-lock` file on your own machine that's genuinely dead (older than 30 minutes, or left behind by a process that's no longer running) is deleted outright. This is automatic — you don't need to do anything. If you notice one of these files disappear from your "pending changes" count after an update, that's this cleanup running, not something going wrong.
 
 ---
 

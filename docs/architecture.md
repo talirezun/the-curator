@@ -183,13 +183,13 @@ The app auto-detects which LLM provider to use based on which key is available. 
 
 ```
 GEMINI_API_KEY set      →  Google Gemini  (default model: gemini-2.5-flash-lite)
-ANTHROPIC_API_KEY set   →  Anthropic Claude (default model: claude-sonnet-4-6)
+ANTHROPIC_API_KEY set   →  Anthropic Claude (default model: claude-haiku-4-5)
 Neither set             →  Error on startup (onboarding wizard prompts for key)
 ```
 
 The optional `LLM_MODEL` env var overrides the default model for whichever provider is active.
 
-`generateText(systemPrompt, userPrompt, maxTokens, responseFormat)` is the single function both `ingest.js` and `query.js` call. It handles the provider-specific API differences internally.
+`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` (v3.0.16) carries two additive, optional fields: `onUsage(payload)` — fired once per completed provider call with normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, so a caller can track real spend without changing the function's bare-string return type — and `cachePrefixChars` — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
 
 For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's native `responseMimeType: 'application/json'` — this forces the model to produce structurally valid JSON even when the content contains markdown characters (backticks, quotes, backslashes) that would otherwise break parsing.
 
@@ -221,26 +221,62 @@ src/brain/ingest.js
       │     If fullText.length > 80,000: truncate + push warning into the
       │     result.warnings array + emit a progress message + log it (v3.0.1+).
       ├─ 3. Load domains/<domain>/CLAUDE.md  (system prompt)
-      ├─ 4. Load domains/<domain>/wiki/index.md  (current wiki state)
+      ├─ 4. Load domains/<domain>/wiki/index.md. Sent to the LLM on the
+      │     planning step (step 5, below) exactly as before v3.0.16 — an
+      │     earlier draft of the v3.0.16 work removed it from those prompts,
+      │     but that was reverted before release (see
+      │     docs/ingestion-pipeline.md §1b for why). Also still read
+      │     separately for the programmatic index merge at step 8.
+      │     Also read the existing entity/concept filenames, sent to the LLM
+      │     in FULL — capExistingFilesForPrompt (v3.0.16) is an inert safety
+      │     valve, not a cost cap: it does not fire on any real domain
+      │     measured so far. If a domain ever gets pathologically large, it
+      │     drops the zero-overlap tail (by token-overlap with the source)
+      │     and pushes a warning into result.warnings — never silent.
       ├─ 5. Call LLM via llm.js  (JSON mode, 65,536 max output tokens;
       │     Anthropic clamps to 64,000 + streams — see model-lifecycle.md)
-      │     System:  domain CLAUDE.md schema
-      │     User:    date + index + source text (≤80,000 chars) + REQUIRED
-      │              COVERAGE checklist (v3.0.1+): forced summary path,
-      │              originator entity rule, every-name-mentioned rule,
-      │              every-key-concept rule, parent-over-children consolidation.
-      │     Returns: { title, pages: [{path, content, summary?}] }
-      │              (no `index` field — app maintains the index itself, v3.0.1+)
+      │     Two paths, each with its own prompt shape — see
+      │     docs/ingestion-pipeline.md §1b for the full breakdown:
       │
-      │     Two paths converge here:
       │     ── Single-pass (input ≤ 15,000 chars) ──
-      │        One LLM call returns both pages and content.
+      │        ONE call, buildPrompt(). System: domain CLAUDE.md schema.
+      │        User: date + current index.md + source text (≤80,000 chars) +
+      │        the existing entity+concept filename lists (full, unless the
+      │        rare safety valve above fires) + REQUIRED COVERAGE checklist
+      │        (v3.0.1+): forced summary path, originator entity rule,
+      │        every-name-mentioned rule, every-key-concept rule,
+      │        parent-over-children consolidation, explicit "DO NOT touch
+      │        index.md". Returns: { title, pages: [{path, content, summary?}] }
+      │        — no `index` field; the app maintains index.md itself (v3.0.1+).
+      │        reconcileGeneratedPages() (v3.0.16) runs on the response
+      │        first (folds any stray summary path into the canonical one),
+      │        THEN validateOutline() (step 5a) runs on the result.
+      │        No Anthropic cache breakpoint — one call has nothing to
+      │        amortise a cache write against.
+      │
       │     ── Multi-phase (input > 15,000 chars OR single-pass parse fails) ──
-      │        Phase 1 outline → validated → Phase 2 batched content (BATCH=4).
+      │        Phase 1 outline — ONE call, buildOutlinePrompt(). Same inputs
+      │        as single-pass (source, current index.md, filename lists,
+      │        REQUIRED COVERAGE checklist) but returns PATHS + one-line
+      │        summaries only, no page content: { title, pages: [{path,
+      │        summary}] } → validated (step 5a below).
+      │        Phase 2 batched content — N calls, buildBatchPromptParts(),
+      │        BATCH_SIZE=4 pages/call. Each call additionally carries the
+      │        outline's own full page-path list ("pages being created in
+      │        this ingest" — not capped) so a batch can wikilink to a page a
+      │        sibling batch will write. Split into a stable {prefix} (date,
+      │        source, filename lists, outline list, instructions — identical
+      │        across every batch) and a volatile {suffix} (just this call's
+      │        page paths) so the prefix can be cached (v3.0.16): Anthropic
+      │        gets an explicit cache_control breakpoint on {prefix} when
+      │        totalBatches >= 2; Gemini caches the stable prefix implicitly.
       │        No Phase 3 — index merge moved out of the LLM (v3.0.1+).
-      │        On batch parse failure: page-by-page retry; absolute last
-      │        resort writes a clearly-marked Stub page that surfaces in
-      │        Health and in the warnings panel.
+      │        On batch parse/token-limit failure: page-by-page retry;
+      │        absolute last resort writes a clearly-marked Stub page that
+      │        surfaces in Health and in the warnings panel. After all
+      │        batches finish, reconcileGeneratedPages() (v3.0.16) folds any
+      │        stray summary path the model invented into the canonical one
+      │        and flags any page that wasn't on the Phase 1 plan.
       │
       ├─ 5a. validateOutline() — programmatic safety net                       (v3.0.1+)
       │      Runs on BOTH single-pass and multi-phase results.
@@ -611,7 +647,7 @@ Persistent app configuration stored in `.curator-config.json` at the project roo
 | Export | Description |
 |--------|-------------|
 | `getProviderInfo()` | Returns `{ provider, model }` based on effective keys (via `config.js`) |
-| `generateText(system, user, maxTokens, responseFormat)` | Single LLM call; handles Gemini and Claude API differences |
+| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles Gemini and Claude API differences, retry/fallback, and (v3.0.16) `opts.onUsage`/`opts.cachePrefixChars` |
 
 ### `src/brain/files.js`
 

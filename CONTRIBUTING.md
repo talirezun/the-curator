@@ -35,8 +35,9 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (32 suites, hundreds of
-assertions). One command runs them all and prints a single pass/fail report:
+The Curator has an extensive battle-test suite (48 suites total — 31 OFFLINE
++ 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
+all and prints a single pass/fail report:
 
 ```bash
 npm test            # OFFLINE suites only — fast (~1.3s), free, no network,
@@ -60,6 +61,15 @@ You can still run a single suite directly while iterating:
 ```bash
 node scripts/test-beta8-stress.js
 ```
+
+**Two new OFFLINE suites landed with v3.0.16** (the ingest prompt-slimming +
+sync/lock hygiene release): `test-ingest-prompt-slimming.js` (204 assertions
+covering the index-removal, the existing-page-inventory safety valve, the
+cache-ordered batch prompt, `opts.onUsage`, and the Phase-2 result-reconciliation
+fixes in `src/brain/ingest.js` — see [docs/ingestion-pipeline.md §1b](docs/ingestion-pipeline.md)
+for the behaviour they cover) and `test-sync-hygiene.js` (100 assertions
+covering `.DS_Store` untracking, stale-lock self-heal on `pull()`, and the
+non-ASCII-domain NUL-delimited `git ls-files` fix in `src/brain/sync.js`).
 
 ---
 
@@ -247,7 +257,12 @@ local stylesheet `index.html` links, extracts every `--name: value;`
 definition (wherever it appears — `:root`, a media query, a `[data-theme]`
 block) and every `var(--name)`/`var(--name, fallback)` reference (including
 nested ones inside a fallback), and fails if a referenced name has no
-definition anywhere. If you add a new theme token, define it in `:root` (or
+definition anywhere. It also scans `src/public/app.js` for `var(--name)`
+references embedded in JS string/template literals (e.g. an inline
+`style="color:var(--x)"` snippet built at runtime for a status banner) and
+checks those against the same set of stylesheet-defined tokens — a CSS-in-JS
+reference is just as capable of going stale as one written directly in a
+`.css` file, and it isn't visible to a plain stylesheet scan. If you add a new theme token, define it in `:root` (or
 wherever appropriate) before referencing it — the test catches the typo
 class of bug (`--font-mono` vs. the real `--mono`), not just missing new
 tokens: `var(--font-mono)` and `var(--text-1)` were exactly that typo, and
@@ -270,7 +285,7 @@ The Curator releases by pushing to `main`; the in-app auto-updater pulls it via
 1. Make the change on a branch (or `main` for the maintainer's own flow).
 2. `npm test` green. For anything touching the LLM/sync/GitHub paths, also run
    `npm run test:live` with keys present.
-3. Bump `version` in [package.json](package.json) (e.g. `3.0.1-beta.N`).
+3. Bump `version` in [package.json](package.json). Plain semver, PATCH for a normal release (e.g. `3.0.15` → `3.0.16`), MINOR for a feature milestone — no `-beta` pre-release suffixes (see CLAUDE.md's "Versioning policy" note).
 4. Add a release entry to the history table in [CLAUDE.md](CLAUDE.md) and update
    the `**Version:**` line at the bottom. Keep the entry specific — what
    changed, why, the blast radius, and how it was verified.
