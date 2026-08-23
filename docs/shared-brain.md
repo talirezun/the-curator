@@ -13,7 +13,7 @@ You keep your private brain private. You only share what you choose. The collect
 
 **Why an LLM is required, and where it runs.** Mechanical file merge produces a bigger wiki. LLM synthesis produces a *better* wiki — resolving conflicting formulations, eliminating broken cross-fellow wikilinks, enriching sparse pages, attributing provenance. The LLM runs **locally on each contributor's machine** (using the Gemini Flash Lite key they already have configured for ingest), pre-processing their changed pages into compact `DeltaSummary` objects before pushing. The collective brain receives structured knowledge summaries — not raw wiki files.
 
-**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta on the current v3.0.x line). Storage backend is GitHub-only in v3.0; Cloudflare R2 lands in v3.1 (see [Roadmap](#7--roadmap)).
+**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta as of v3.1.0). Storage backend is GitHub-only today; a Cloudflare R2 backend is planned for a future release (see [Roadmap](#7--roadmap)). Note: v3.1.0 itself shipped as unrelated infrastructure work (see [Roadmap](#7--roadmap)), so the Shared Brain milestones below have shifted to later, not-yet-numbered releases.
 
 ---
 
@@ -72,7 +72,7 @@ flowchart TB
 
 **Layer 1 — Individual Curator instances** (local, sovereign). Each contributor's `personal/` and other private domains stay on their own machine. Only opted-in domains push to shared storage. The synthesised collective wiki comes back as a separate read-only mirror domain.
 
-**Layer 2 — Shared Brain Storage** (pluggable adapter). An abstract `SharedBrainStorageAdapter` interface with concrete implementations. v3.0 ships `GitHubStorageAdapter`; v3.1 adds `CloudflareR2Adapter`. Layer 3 modules (push, pull, synthesize, revoke) talk only to the abstract interface — backend-agnostic.
+**Layer 2 — Shared Brain Storage** (pluggable adapter). An abstract `SharedBrainStorageAdapter` interface with concrete implementations. v3.0 ships `GitHubStorageAdapter`; a future release adds `CloudflareR2Adapter`. Layer 3 modules (push, pull, synthesize, revoke) talk only to the abstract interface — backend-agnostic.
 
 **Layer 3 — Storage backends** (the actual durable storage).
 
@@ -180,7 +180,7 @@ These decisions were settled in Phase 1 of the Shared Brain rollout (2026-05-14)
 
 Per-fellow fine-grained PATs give the one critical security property — *per-fellow revocation* — without any new infrastructure. Compromise of one PAT lets that attacker corrupt the collective repo, but: (a) the org can revoke that single PAT independently, (b) git history is fully preserved for rollback, (c) this matches the realistic non-adversarial threat model (carelessness, not targeted attack).
 
-**Branch protection mode + GitHub App mode are explicitly deferred** to v3.1 (high-security mode) and v3.2 (enterprise) respectively.
+**Branch protection mode + GitHub App mode are explicitly deferred** to future releases — high-security mode first, enterprise mode after.
 
 **Read-only membership (v3.0.4):** a PAT created with **Contents: Read** only is a first-class tier. The wizard's yellow verdict allows Continue; the saved connection carries `read_only: true` (validated boolean), may have zero `local_domains`, renders with a "read-only member" pill and no Push button, and the push + synthesize routes refuse it with 400. Useful as the free/sample tier in monetised brains — see [`shared-brain-monetization.md`](shared-brain-monetization.md).
 
@@ -240,7 +240,7 @@ Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP librari
 
 The user-visible cost is real but bounded: Obsidian shows two disconnected sub-graphs (personal vs. collective). The MCP `search_cross_domain` tool already provides the cross-graph reasoning surface from Claude — this *is* the right answer for cross-domain questions.
 
-Cross-domain link syntax (`[[shared:work-ai:openai]]`) is a v3.1+ roadmap item if user demand emerges.
+Cross-domain link syntax (`[[shared:work-ai:openai]]`) is a future roadmap item if user demand emerges.
 
 ### Decision 6 — GDPR / Data handling
 
@@ -271,7 +271,7 @@ The wizard's consent checkbox text is rewritten accordingly. Locked once the adm
 #### 6d. EU data residency
 
 Two adapter paths, two different stories:
-- **Cloudflare R2** (v3.1+): supports per-bucket jurisdiction tagging — `jurisdiction = "eu"` in Wrangler config.
+- **Cloudflare R2** (future release): supports per-bucket jurisdiction tagging — `jurisdiction = "eu"` in Wrangler config.
 - **GitHub** (v3.0): data location is determined by the org's plan. Free / Pro / Team store data in the US. **GitHub Enterprise Cloud with EU data residency** required for EU compliance.
 
 ### Decision 7 — MCP write-tool guard on shared-* domains
@@ -290,9 +290,9 @@ The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read
 
 | Topic | Resolution |
 |---|---|
-| Deletion propagation | **Resolved for mirrors in v3.0.3** — Pull is now replace-semantics + prunes pages deleted from the collective, so revocations and conflict resolutions propagate to every contributor's mirror on their next pull. Deletion propagation for *contributions* (a fellow deleting a page in their personal domain removing it from the collective) remains deferred to v3.1. |
+| Deletion propagation | **Resolved for mirrors in v3.0.3** — Pull is now replace-semantics + prunes pages deleted from the collective, so revocations and conflict resolutions propagate to every contributor's mirror on their next pull. Deletion propagation for *contributions* (a fellow deleting a page in their personal domain removing it from the collective) remains deferred to a future release. |
 | Corpus scale ceiling | **Partially addressed in v3.0.3.** GitHub tree-truncation (~100k files) is now REFUSED loudly instead of silently missing files; synthesis warns when a page exceeds 500 accumulated facts (approaching the 1 MB file cap). Contribution pruning/archival (the long-term fix — contributions accumulate forever because revoke rebuilds from them) is deferred until digests are wired as the per-fellow rebuild source. |
-| Worker vs Node code sharing | **Defer to v3.1.** When the Cloudflare R2 adapter ships, synthesis pipeline will be written in dependency-free JS that bundles cleanly for both targets. |
+| Worker vs Node code sharing | **Deferred.** When the Cloudflare R2 adapter ships, synthesis pipeline will be written in dependency-free JS that bundles cleanly for both targets. |
 | Digests (`digests/<fellow>/latest.json`) | **Deferred, documented (v3.0.3 evaluation):** the digest adapter methods exist but nothing writes or reads digests today — revoke's digest-delete step is a no-op on every real deployment. Wiring them up (per-fellow accumulated state) is the prerequisite for contribution pruning and cheaper revoke rebuilds. |
 
 ---
@@ -372,13 +372,15 @@ Irreversible. Documented prominently in admin guide and compliance reference.
 - v3.0.4: UI/UX upgrade — wizard fixes, per-connection in-flight registry, invisible state surfaced (pending pages, last synthesis, skipped-pages retry, conflict pages, rate-limit warnings), first-class **read-only membership**, wizard accessibility
 - v3.0.5: admin features — **admin-token provisioning** (shown once at brain setup; rotate from the card), **member directory** (`GET /:id/members`), **Revoke UI** on the connection card (member picker + typed confirmation + SSE progress), invite-token re-display, synthesis confirm step
 
-### v3.1.0 — Shared Brain GA (planned)
+### Shared Brain GA (planned; version number TBD)
+
+> **Note:** this milestone was originally planned for v3.1.0. That version number has since shipped as unrelated infrastructure work (Track 1 Foundation — see the CLAUDE.md changelog), so Shared Brain GA and everything below it will land in a later, not-yet-numbered release.
 
 - Production test program complete (revoke E2E on real GitHub, real-LLM delta/conflict prompts, concurrent-writer races, CI wiring, Playwright wizard test)
 - Structured beta pilot with a real cohort
 - More worked examples in the user guide
 
-### v3.1 — Cloudflare R2-backed Shared Brains
+### Cloudflare R2-backed Shared Brains (planned, after GA)
 
 Adds a second storage backend designed for organisations that want EU data residency, custom domain endpoints, or zero-egress-cost reads.
 
@@ -394,7 +396,7 @@ flowchart TB
 
 Compared with GitHub mode:
 
-| | GitHub (v3.0) | Cloudflare R2 (v3.1) |
+| | GitHub (v3.0) | Cloudflare R2 (future release) |
 |---|---|---|
 | Storage backend | GitHub repo | R2 bucket |
 | Authentication | Fine-grained PAT per contributor | Per-fellow token issued by the Worker |
@@ -405,9 +407,9 @@ Compared with GitHub mode:
 
 The Cloudflare R2 path requires deploying a small Cloudflare Worker (we'll ship the Wrangler config and Worker source code). Once deployed, contributors paste the Worker's URL + their fellow_token instead of a GitHub repo + PAT. Otherwise the wizard is identical.
 
-Also in v3.1: deletion propagation (currently a known limitation) and `[[shared:work-ai:openai]]` cross-domain link syntax if user demand emerges.
+Also planned for a future release: deletion propagation (currently a known limitation) and `[[shared:work-ai:openai]]` cross-domain link syntax if user demand emerges.
 
-### v3.2 — Enterprise mode (further out)
+### Enterprise mode (further out; version number TBD)
 
 - GitHub App installations instead of per-fellow PATs (eliminates per-user PAT creation)
 - Path-level permissions (contributors can only write to their assigned sub-folders)
@@ -416,7 +418,7 @@ Also in v3.1: deletion propagation (currently a known limitation) and `[[shared:
 
 This requires either a hosted GitHub App or organisation-managed installations. Best fit for compliance-heavy enterprise deployments.
 
-### Beyond v3.2
+### Beyond that
 
 - **Branch-per-cohort mode** — single repo serving multiple parallel cohorts (course sections, research subgroups) with branch-protected writes.
 - **Diff history UI** — visualise what changed in the collective wiki between synthesis runs.

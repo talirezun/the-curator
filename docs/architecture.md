@@ -92,7 +92,7 @@ When the `sharedBrainEnabled` feature flag is on, an additional layer becomes ac
         ▼                  ▼                   ▼
  ┌────────────┐    ┌─────────────────┐  ┌──────────────────┐
  │ Local      │    │ GitHub          │  │ Cloudflare R2    │
- │ Folder     │    │ Storage         │  │ (Phase v3.1 ⏳)  │
+ │ Folder     │    │ Storage         │  │ (planned ⏳)     │
  │ Adapter    │    │ Adapter (v3.0)  │  │                  │
  │            │    │ REST + PAT      │  │ Worker + R2      │
  │ (battle    │    │ + SHA           │  │ (jurisdiction:eu)│

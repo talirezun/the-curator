@@ -101,21 +101,27 @@ This is the shift from a file cabinet to a neural network.
   as ingest, no parallel write surface. Compiling the same conversation twice is a safe no-op.
   After every compile (and every ingest) you see exactly which pages were created and which
   were updated, with byte counts and per-section bullet deltas.
+- **Ingest progress you can trust, and a real cost readout** — a live elapsed-time indicator
+  keeps counting through retries instead of appearing to freeze, and amber states make clear
+  when the AI is retrying rather than stuck. Every ingest ends with a token/cost footer
+  (provider, model, calls, input/output tokens, and any prompt-cache savings) so you know
+  exactly what it cost — no guessing. Repeated warnings of the same kind are automatically
+  collapsed into one line instead of flooding the result panel. Ingest also uses prompt
+  caching on multi-batch documents to cut input-token cost automatically — no setup required.
 - Visual knowledge graph via [Obsidian](https://obsidian.md) (free app, reads the same files)
 - **Personal Sync** — one-time 3-minute setup, then a single **Sync now** button (with optional Push-only / Pull-only advanced controls) backs up your full wiki across any number of YOUR own computers via a private GitHub repository
-- **Shared Brain (v3.0.0-beta+, opt-in)** — contribute to a **collective wiki** shared with your cohort, team, or research group. Each contributor keeps a private Curator; only opted-in domains push LLM-synthesised Delta summaries to a shared private GitHub repo; the synthesised collective wiki pulls back as a separate read-only `shared-<slug>/` mirror domain. Two-primitives security model (invite token = metadata only, PAT = per-contributor identity), GDPR Article 17 right-to-erasure built in, two IP modes (`contributor_retains` for cohorts / `organisational` for enterprise). v3.1 will add Cloudflare R2 storage for EU data residency. See [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)
+- **Shared Brain (v3.0.0-beta+, opt-in)** — contribute to a **collective wiki** shared with your cohort, team, or research group. Each contributor keeps a private Curator; only opted-in domains push LLM-synthesised Delta summaries to a shared private GitHub repo; the synthesised collective wiki pulls back as a separate read-only `shared-<slug>/` mirror domain. Two-primitives security model (invite token = metadata only, PAT = per-contributor identity), GDPR Article 17 right-to-erasure built in, two IP modes (`contributor_retains` for cohorts / `organisational` for enterprise). A Cloudflare R2 storage backend for EU data residency is planned for a future release. See [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)
 - **Domain management** — create, rename, and delete domains from the UI; four AI-tuned templates
   auto-generate the right schema
 - **Settings tab** — manage API keys, view version info, and check for updates from within the app
 - **System Check (Settings)** — one click confirms the app itself is set up correctly: API key configured, knowledge folder writable, credential files locked down (`0600`), and sync status. A free, instant, local-only check that never touches your wiki content — plus an optional, cost-confirmed **"Verify AI connection"** test (~$0.0001) that makes one tiny request to your provider so you can tell at a glance whether a failure is your key or a provider outage. (Distinct from the **Health** tab, which cleans up your wiki *content*.) See [docs/system-check.md](docs/system-check.md)
 - **Wiki Health tab** — one-click scan for broken links, orphans, duplicate entities, folder-prefix violations, and missing backlinks. Auto-fix categories rewrite in place; broken links with a suggested target get an **Apply** button (and a bulk **Apply all suggestions** action); genuine ambiguities stay review-only. Review-only rows also get a ✨ **Ask AI** button that uses your configured LLM: for **broken links** it proposes a target; for **orphans** it proposes up to 5 existing pages that should link to the orphan — each with an AI-written bullet description. An opt-in **Scan for semantic duplicates** feature finds pages that describe the same concept under different slugs (e.g. `[[email]]` + `[[e-mail]]`, `[[rag]]` + `[[retrieval-augmented-generation]]`) — with cost preview, user-configurable ceiling, and a mandatory Preview-diff safety gate before any merge. **Decisions persist**: dismiss any review-only issue or semantic-duplicate pair once and it stops surfacing on future scans — and because dismissals live inside the wiki folder, they sync to your other computers automatically. See [docs/ai-health.md](docs/ai-health.md).
-- **First-run onboarding wizard** — guided 3-step setup (API keys, create a domain, sync) on first launch
+- **First-run onboarding wizard** — guided setup on first launch: API keys, create a domain, sync, and an optional (skippable) Claude Desktop connection
 - **Live UI updates** — domain stats, wiki pages, and page counts refresh automatically after ingest and sync — no manual browser reload needed
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
-- Three built-in domains: AI/Tech · Business/Finance · Personal Growth
-- Add unlimited custom domains — no terminal or file editing required
+- Four AI-tuned domain templates to start from — Tech/AI, Business/Finance, Personal Growth, Generic — plus unlimited custom domains, no terminal or file editing required
 - Mac Dock app — double-click to launch, no terminal needed
 
 ---
@@ -231,7 +237,7 @@ Pricing comparables:
 | Substack newsletter | €5-15/mo | Single-read content |
 | Stratechery (Ben Thompson) | €15/mo | One expert's recurring analysis |
 | Patreon tiers | €3-50/mo | Audience access |
-| **Shared Brain subscription** | **€10-30/mo** | **Compounding queryable knowledge graph + recurring synthesis + Claude integration** |
+| **Shared Brain subscription** | **€5-30/mo** | **Compounding queryable knowledge graph + recurring synthesis + Claude integration** |
 
 ### The "gates" — where access is controlled
 
@@ -314,7 +320,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 
 | Feature | Uses tokens? | Why |
 |---|---|---|
-| **Ingest** (drop in a PDF / article / note) | ✅ Yes | The LLM reads the source and writes the wiki pages. This is by far the largest consumer of tokens. |
+| **Ingest** (drop in a PDF / article / note) | ✅ Yes | The LLM reads the source and writes the wiki pages. This is by far the largest consumer of tokens. Multi-batch documents benefit from automatic prompt caching (explicit on Anthropic, implicit on Gemini), which cuts repeated-context input cost — the exact token/cache split for that ingest is shown in the result panel afterward. |
 | **Chat** (built-in tab) | ✅ Yes | Each message + reply is one LLM call. Cheap — typically a few cents per long conversation. |
 | **Wiki Health — ✨ Ask AI on broken links** (Phase 1) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
 | **Wiki Health — ✨ Ask AI on orphan pages** (Phase 2) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
@@ -506,7 +512,7 @@ Alice's Mac     Bob's PC       Carlos's laptop
 
 **Shared Brain is opt-in.** Open **Settings → Shared Brain (beta)** and click **Enable Shared Brain (beta)** (on versions before v3.0.2 the button was at the bottom of the Sync tab). Then open the Sync tab and pick a card: **📨 I have an invite token → Join** if your cohort admin sent you a token, or **⚙ I'm starting a new Shared Brain → Set up** if you're spinning one up for your team. The 5-step wizard (Token → Access → PAT → Domains → Save) walks through it.
 
-Future generations: v3.1 adds Cloudflare R2 as a second storage backend for EU data residency and custom-domain endpoints. v3.2 adds GitHub App mode and SSO for enterprise. See the [roadmap](docs/shared-brain.md#7--roadmap).
+Future generations: a Cloudflare R2 storage backend is planned for EU data residency and custom-domain endpoints, followed by GitHub App mode and SSO for enterprise. See the [roadmap](docs/shared-brain.md#7--roadmap).
 
 → **[Shared Brain User Guide](docs/shared-brain-user-guide.md)** (step-by-step) · [Architecture](docs/shared-brain.md) (concept + decisions) · [Admin Operations](docs/shared-brain-admin.md) · [Compliance reference (GDPR / IP / EU residency)](docs/shared-brain-compliance.md)
 

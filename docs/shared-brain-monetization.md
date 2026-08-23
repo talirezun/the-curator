@@ -326,7 +326,7 @@ Read the [compliance reference](shared-brain-compliance.md) carefully. Key conce
 
 - **Don't put PII in the brain** unless you have a lawful basis to process it
 - **Handle revocation requests** (GDPR Article 17) — buyers in the EU can ask you to delete their data
-- **EU data residency** — if your buyers are in the EU, GitHub Free/Pro stores data in the US. For full compliance you need GitHub Enterprise Cloud with EU residency, OR wait for the v3.1 Cloudflare R2 backend
+- **EU data residency** — if your buyers are in the EU, GitHub Free/Pro stores data in the US. For full compliance you need GitHub Enterprise Cloud with EU residency, OR wait for the planned Cloudflare R2 backend (see [Shared Brain roadmap](shared-brain.md#7--roadmap))
 
 ### Tax / VAT
 
@@ -365,7 +365,7 @@ Technically: no. Once they Pull, the markdown is on their machine — they could
 
 **What about read-only access without GitHub at all?**
 
-Not directly possible in v3.0.0-beta.1 — the Curator app requires a GitHub PAT for Shared Brain access. If you want a no-GitHub-required option, that's a v3.1+ feature (Cloudflare R2 backend would enable it). For now, every buyer needs a free GitHub account.
+Not directly possible today — the Curator app requires a GitHub PAT for Shared Brain access. If you want a no-GitHub-required option, that's a planned future feature (the Cloudflare R2 backend would enable it). For now, every buyer needs a free GitHub account.
 
 **Can I have a "trial" tier?**
 
