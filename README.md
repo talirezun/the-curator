@@ -1,7 +1,10 @@
 # The Curator
 
 <p align="center">
-  <img src="images/icon-192.png" alt="The Curator" width="96" height="96" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="images/mark-on-dark.svg" />
+    <img src="images/mark-on-light.svg" alt="The Curator" width="96" height="96" />
+  </picture>
 </p>
 
 <p align="center">
