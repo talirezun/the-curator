@@ -17,7 +17,31 @@ const router = Router();
 
 const upload = multer({
   dest: tmpdir(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  // fieldNestingDepth is NOT redundant tidiness — do not delete it. multer
+  // 2.2.0 patched GHSA-72gw-mp4g-v24j (DoS via deeply nested field names: a
+  // crafted body like `a[b][c][d]...` forces append-field to allocate an
+  // arbitrarily deep object), but the patch only ships the MECHANISM. The
+  // check in multer/lib/make-middleware.js is gated behind
+  // `hasOwnProperty(limits, 'fieldNestingDepth')` and the documented default
+  // is Infinity — so upgrading ALONE silences `npm audit` while leaving the
+  // DoS completely open. The advisory itself says to upgrade AND configure
+  // this limit; the version bump on its own is a green scorecard over an
+  // unchanged attack surface.
+  //
+  // Value: every submitter of this route sends FLAT field names. app.js's
+  // ingest handler (the only caller in the app) appends `domain`, `file` and
+  // `overwrite`; the documented contract in docs/api-reference.md is `domain`
+  // + `file`. `file` is handled by busboy's file event and is never
+  // depth-checked, so the measured requirement is depth 0 — 1 is a single
+  // level of headroom, and depth 1 allocates exactly one nested object, which
+  // cannot produce the unbounded growth the advisory describes. If a future
+  // field needs nesting, add it FLAT rather than raising this; raising it is
+  // what reopens the hole. Exceeding it raises a MulterError with code
+  // LIMIT_FIELD_NESTING, which the error middleware below returns as a 400.
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB
+    fieldNestingDepth: 1,
+  },
   fileFilter(req, file, cb) {
     const allowed = ['.txt', '.md', '.pdf'];
     const ext = path.extname(file.originalname).toLowerCase();

@@ -1,6 +1,6 @@
 {
   "name": "the-curator",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "A local, AI-powered knowledge curation system. Drop in a document — the AI atomizes it into an interlinked wiki of entities, concepts, and summaries. Chat with your knowledge. Explore it visually in Obsidian.",
   "homepage": "https://github.com/talirezun/the-curator",
   "license": "MIT AND LicenseRef-Curator-Enterprise",
@@ -20,7 +20,10 @@
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "jsonrepair": "^3.13.3",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "pdf-parse": "^1.1.1"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.6"
   }
 }
