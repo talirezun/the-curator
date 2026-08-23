@@ -23,6 +23,205 @@
 <link rel="stylesheet" href="tokens/fonts-local.css">
 
 <link rel="stylesheet" href="shell.css">
+
+<!-- One CSS file per view (views/README.md) — linked here so the views/
+     directory never has to touch this file to add view-specific styling.
+     All seven exist even where a view currently has no rules of its own,
+     so agents building different views in parallel never collide here. -->
+<link rel="stylesheet" href="views/chat.css">
+<link rel="stylesheet" href="views/domains.css">
+<link rel="stylesheet" href="views/shared.css">
+<link rel="stylesheet" href="views/memory.css">
+<link rel="stylesheet" href="views/ingest.css">
+<link rel="stylesheet" href="views/sync.css">
+<link rel="stylesheet" href="views/settings.css">
+
+<!--
+  Boot guard (M2 fix) — ported from src/public/index.html; read that file's
+  version for the full rationale, reproduced only in summary here.
+
+  Why inline, in <head>, rather than inside app.js: app.js is a single ES
+  module whose view files (views/*.js, imported at its own top level for
+  their registerView() side effect — see app.js's "View registration"
+  comment) all have to evaluate cleanly for the shell to boot. A syntax
+  error anywhere in that import cycle throws during module evaluation,
+  before a single rail/sidebar/main element is painted — reproduced by
+  appending a syntax error to views/settings.js and serving it: every one
+  of #rail/#sidebar/#view-root came back at 0 bytes, with no visible text
+  and no recovery UI. A handler registered inside app.js cannot catch app.js
+  failing to evaluate, so this has to live outside it and run first.
+
+  Fatal vs. ordinary: app.js sets window.__curatorBooted = true only after
+  boot() actually runs (see its own "Boot sentinel" comment) — a load-
+  completion signal, not merely "the file downloaded". Module scripts are
+  deferred and always finish running before DOMContentLoaded fires, so
+  "not booted by DOMContentLoaded" is a precise signal, not a timing guess.
+  Errors arriving AFTER boot (a background fetch rejecting, say) are logged
+  and ignored — the shell already has its OWN per-navigation recovery for a
+  throwing view (see app.js navigate()'s mountFailed handling); a full-page
+  panel would be the wrong response to a contained failure.
+
+  Self-contained by necessity: shell.css or a token file may itself be the
+  thing that failed to load, so every style here is inline with hand-picked
+  colors matching tokens/color.css's dark palette (this panel cannot
+  reference var(--...) — there's no guarantee any stylesheet loaded). Error
+  text is inserted with textContent only — never interpolated into HTML.
+-->
+<script>
+(function () {
+  'use strict';
+  window.__curatorBooted = false;
+  var shown = false;
+
+  function showFatalPanel(detail) {
+    if (shown) return;
+    shown = true;
+    try {
+      var host = document.body || document.documentElement;
+      var shell = document.getElementById('app-shell');
+      if (shell) shell.style.display = 'none';
+
+      var box = document.createElement('div');
+      box.setAttribute('role', 'alert');
+      box.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:2147483647',
+        'display:flex', 'align-items:center', 'justify-content:center',
+        'padding:24px', 'box-sizing:border-box',
+        'background:#08080E', 'overflow:auto',
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+        'color:#EDEDF4', 'line-height:1.6', 'font-size:14px'
+      ].join(';');
+
+      var card = document.createElement('div');
+      card.style.cssText = [
+        'max-width:620px', 'width:100%',
+        'background:#0C0C14', 'border:1px solid #33334A', 'border-radius:10px',
+        'padding:28px 30px', 'box-sizing:border-box'
+      ].join(';');
+
+      var h = document.createElement('h1');
+      h.textContent = 'The Curator (preview) could not finish loading';
+      h.style.cssText = 'margin:0 0 14px;font-size:19px;font-weight:600;color:#EDBB63;';
+      card.appendChild(h);
+
+      var p1 = document.createElement('p');
+      p1.textContent = 'This preview shell hit an error while starting up, so the page stayed blank. This is a bug in the /next shell itself, not something you did.';
+      p1.style.cssText = 'margin:0 0 14px;';
+      card.appendChild(p1);
+
+      var p2 = document.createElement('p');
+      p2.style.cssText = 'margin:0 0 14px;';
+      var safe = document.createElement('strong');
+      safe.textContent = 'Your knowledge is safe.';
+      safe.style.color = '#4FD3A4';
+      p2.appendChild(safe);
+      p2.appendChild(document.createTextNode(' Every wiki page is a plain markdown file on your disk. This shell shares no write path with them at all — this failure is a display problem only.'));
+      card.appendChild(p2);
+
+      var h2 = document.createElement('h2');
+      h2.textContent = 'What to do';
+      h2.style.cssText = 'margin:22px 0 8px;font-size:14px;font-weight:600;color:#EDEDF4;';
+      card.appendChild(h2);
+
+      var ol = document.createElement('ol');
+      ol.style.cssText = 'margin:0 0 18px;padding-left:22px;';
+      [
+        'Reload this page — a partly-downloaded file usually fixes itself.',
+        'If that keeps happening, go back to the shipping app at / and report the error below.'
+      ].forEach(function (t) {
+        var li = document.createElement('li');
+        li.textContent = t;
+        li.style.marginBottom = '6px';
+        ol.appendChild(li);
+      });
+      card.appendChild(ol);
+
+      var btn = document.createElement('button');
+      btn.textContent = 'Reload the page';
+      btn.style.cssText = [
+        'appearance:none', 'border:0', 'cursor:pointer',
+        'background:#7C5AF5', 'color:#FFFFFF', 'font-weight:600', 'font-size:14px',
+        'padding:9px 18px', 'border-radius:6px', 'font-family:inherit'
+      ].join(';');
+      btn.onclick = function () { window.location.reload(); };
+      card.appendChild(btn);
+
+      var lbl = document.createElement('div');
+      lbl.textContent = 'Technical detail (include this in a report):';
+      lbl.style.cssText = 'margin:22px 0 6px;font-size:12px;color:#A8A8BC;';
+      card.appendChild(lbl);
+
+      var pre = document.createElement('pre');
+      // textContent ONLY — the message can contain arbitrary text.
+      pre.textContent = String(detail || 'Unknown startup error.');
+      pre.style.cssText = [
+        'margin:0', 'padding:10px 12px', 'background:#05050A', 'border:1px solid #33334A',
+        'border-radius:6px', 'font-size:12px', 'color:#F87F8D',
+        'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
+        'white-space:pre-wrap', 'word-break:break-word', 'max-height:180px', 'overflow:auto'
+      ].join(';');
+      card.appendChild(pre);
+
+      box.appendChild(card);
+      host.appendChild(box);
+    } catch (e) {
+      try { document.documentElement.textContent =
+        'The Curator (preview) could not finish loading. Your markdown files on disk are safe. Reload, or go back to the shipping app at /.'; } catch (e2) {}
+    }
+  }
+
+  function describe(err, ev) {
+    if (err && err.stack) return String(err.stack).split('\n').slice(0, 4).join('\n');
+    if (err && err.message) return String(err.message);
+    if (ev && ev.message) {
+      return String(ev.message) + (ev.filename ? '\n  at ' + ev.filename + ':' + ev.lineno + ':' + ev.colno : '');
+    }
+    return err ? String(err) : 'Unknown startup error.';
+  }
+
+  // Pre-boot errors are RECORDED, not acted on — the verdict is deferred to
+  // the DOMContentLoaded check below, the only thing that actually knows
+  // whether app.js's boot() ran (see markBooted() in app.js).
+  var preBootError = null;
+  function recordPreBoot(detail) { if (!preBootError) preBootError = detail; }
+
+  // capture:true is required — a <script>/<link> that fails to DOWNLOAD
+  // fires a non-bubbling error event on the element, only observable at
+  // the window during the capture phase.
+  window.addEventListener('error', function (ev) {
+    var t = ev && ev.target;
+    if (t && t !== window && t.tagName) {
+      var url = String(t.src || t.href || '');
+      if (/\/app\.js(\?|$)/.test(url)) {
+        recordPreBoot('Failed to download ' + url + '\nThe shell’s main script could not be loaded.');
+      }
+      return;
+    }
+    if (window.__curatorBooted) { console.error('[next] runtime error after boot:', ev && ev.error); return; }
+    recordPreBoot(describe(ev && ev.error, ev));
+  }, true);
+
+  window.addEventListener('unhandledrejection', function (ev) {
+    if (window.__curatorBooted) { console.error('[next] unhandled rejection after boot:', ev && ev.reason); return; }
+    recordPreBoot(describe(ev && ev.reason, null));
+  });
+
+  document.addEventListener('DOMContentLoaded', function () {
+    // Deferred module scripts have all evaluated by now, so this is the
+    // authoritative check: if boot() had finished, the sentinel would be
+    // set. setTimeout(0) yields once so a same-task error is recorded
+    // first (its message is far more useful than the generic fallback).
+    setTimeout(function () {
+      if (window.__curatorBooted) {
+        if (preBootError) console.error('[next] non-fatal error during startup:\n' + preBootError);
+        return;
+      }
+      showFatalPanel(preBootError ||
+        'app.js did not finish loading (no boot signal). The module threw while starting up or never ran.');
+    }, 0);
+  });
+})();
+</script>
 </head>
 <body>
 <div id="app-shell">
@@ -33,6 +232,6 @@
     <div id="reader-root"></div>
   </main>
 </div>
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

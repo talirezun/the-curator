@@ -1,0 +1,212 @@
+/* View: Sync — owned by views/sync.js. */
+
+/* ── Small utilities also used in settings.css ──────────────────────────
+   Duplicated on purpose rather than shared: both files are owned by this
+   same view-pair, but each view's CSS should stand on its own (README:
+   "put every rule specific to your view's markup" in its own file) so a
+   future edit to settings.css can never silently break sync.js. */
+
+.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+
+.theme-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 7px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.theme-seg-btn {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: var(--weight-medium);
+  background: transparent;
+  color: var(--text-3);
+  transition: background var(--t-state), color var(--t-state);
+}
+.theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+}
+.status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
+
+.settings-hint-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 66ch;
+}
+
+.settings-inline-error {
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}
+
+/* ── Sidebar: per-domain list ─────────────────────────────────────────── */
+
+.sync-domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sync-domain-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+}
+.sync-domain-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-faint);
+}
+.sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sync-domain-state { font-size: var(--text-2xs); color: var(--text-faint); cursor: help; }
+.sync-domain-footnote {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  line-height: var(--leading-normal);
+  padding: 6px 4px 0;
+}
+
+/* ── Setup (unconfigured) card ───────────────────────────────────────── */
+
+.sync-setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  max-width: 520px;
+}
+.sync-setup-title { font: var(--type-h3); color: var(--text); }
+.sync-setup-field { display: flex; flex-direction: column; gap: 7px; }
+.sync-setup-label { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-2); }
+.sync-setup-input {
+  height: var(--control-md);
+  padding: 0 11px;
+  border-radius: 6px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.sync-setup-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+/* ── Status card (configured) ───────────────────────────────────────── */
+
+.sync-status-card {
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 22px;
+}
+.sync-status-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.sync-repo { flex: 1; min-width: 220px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.sync-last { font-size: var(--text-2xs); color: var(--text-3); flex: none; }
+
+.sync-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.sync-pending-note { margin-left: auto; font-size: var(--text-xs); color: var(--attention-text); }
+.sync-action-note {
+  margin-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+/* ── Shared Brain reporting row ─────────────────────────────────────── */
+
+.sync-sb-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 26px;
+  flex-wrap: wrap;
+}
+.sync-sb-row > svg { flex: none; color: var(--accent-text); }
+.sync-sb-text { flex: 1; min-width: 240px; font-size: var(--text-sm); color: var(--text-2); }
+.sync-sb-text strong { color: var(--text); font-weight: var(--weight-medium); }
+.sync-sb-meta { font-size: var(--text-2xs); color: var(--text-3); }
+
+/* ── History — honest empty state ───────────────────────────────────── */
+
+.sync-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  margin-bottom: 22px;
+}
+.sync-history-empty .empty-title { font: var(--type-h3); color: var(--text); }
+.sync-history-empty .empty-body { font: var(--type-body-sm); color: var(--text-3); max-width: 62ch; }
+
+/* ── Disconnect ──────────────────────────────────────────────────────── */
+
+.sync-disconnect-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+}
+.sync-disconnect-link:hover { color: var(--danger-text); }
+
+.sync-disconnect-confirm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  flex-wrap: wrap;
+}
+.sync-disconnect-actions { display: flex; gap: 7px; margin-left: auto; }

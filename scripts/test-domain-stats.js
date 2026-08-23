@@ -16,8 +16,8 @@
  *   1. getDomainStats returns pageCounts.{entities,concepts,summaries} that
  *      match a known on-disk layout exactly.
  *   2. index.md / log.md are not counted as pages — verified against the
- *      EXISTING convention (pageCount's recursive scan explicitly excludes
- *      those two filenames; pageCounts.* naturally excludes them because
+ *      EXISTING convention (the traversal excludes those two filenames at
+ *      any depth; pageCounts.* also excludes them because
  *      both files live directly under wiki/, never inside entities/,
  *      concepts/, or summaries/).
  *   3. Empty domain → all counts zero, no throw.
@@ -25,15 +25,25 @@
  *      to a safe default.
  *   5. Domain with only some of the three canonical folders present → no
  *      throw; existing folders count correctly, missing ones read as 0.
- *   6. A pre-existing behavioural quirk of pageCount (recursive over the
- *      whole wiki/ tree) vs pageCounts.* (shallow, three folders only) is
- *      demonstrated and reported, not silently "fixed" — see Test 2b.
+ *   6. pageCount and pageCounts.* cannot contradict each other (audit M6),
+ *      AND pageCount still counts every .md on disk (audit L1) — the two
+ *      requirements are reconciled by `other`, not by narrowing the total.
+ *      The total is what the shipping delete confirmation renders as "this
+ *      will permanently delete N wiki pages", so it is checked against an
+ *      independent on-disk count — see Test 2c.
  *   7. The new bulk GET /stats route (invoked directly against the real
  *      Express Router — no server, no open port) returns per-domain stats
  *      for every domain in one call and correctly reports readonlyDomains
  *      for a Shared Brain mirror.
  *   8. Existing callers of getDomainStats (routes/domains.js's
  *      GET /:domain/stats) still receive every field they read today.
+ *   9. displayName derivation (extractDomainDisplayName) is robust across
+ *      every CLAUDE.md shape this codebase actually produces — a normal
+ *      "# Domain: X" file (generateClaudemd), a Shared Brain mirror's
+ *      frontmatter-first file (ensureSharedDomainExists — the exact bug this
+ *      suite was extended to catch: every mirror displayed as "---"), a
+ *      hand-written file with neither shape, and an empty file. Includes a
+ *      revert-and-fail check proving the test actually catches the bug.
  *
  * All fully offline — no network, no LLM, no live filesystem mutation
  * outside an isolated tempdir; the real domains folder is never touched
@@ -44,10 +54,11 @@
  *   node scripts/test-domain-stats.js
  */
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, symlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 
@@ -120,6 +131,37 @@ function writeStubPages(dir, count) {
   }
 }
 
+/**
+ * Count the wiki's pages using a completely different tool: `find(1)`.
+ *
+ * The first version of this oracle was a JS recursive readdir that
+ * re-implemented countWikiPages()'s rule line for line while calling itself
+ * "independent of files.js" (audit finding L3). A mirror cannot disagree with
+ * what it mirrors, so it could never have caught the case-sensitivity
+ * asymmetry that shipped alongside it — /\.md$/i for the extension, `===` for
+ * the index.md/log.md exclusion, so `INDEX.MD` counted as a user page.
+ *
+ * `find` is a different implementation, a different traversal and a different
+ * language, and it encodes the SPECIFICATION directly rather than the code:
+ *
+ *   every file-or-symlink named *.md (case-sensitive, as everywhere else in
+ *   this app), at any depth under wiki/, except index.md and log.md
+ *
+ * `\( -type f -o -type l \)` is load-bearing twice: it excludes a DIRECTORY
+ * named `not-a-file.md`, and it includes symlinks, which are real entries.
+ *
+ * Resolved via PATH rather than hardcoded to /usr/bin/find, so this works
+ * on any POSIX host rather than only the two CI images we happen to use.
+ */
+function countMdOnDisk(wikiDir) {
+  if (!existsSync(wikiDir)) return 0;
+  const out = execFileSync('find', [
+    wikiDir, '(', '-type', 'f', '-o', '-type', 'l', ')',
+    '-name', '*.md', '!', '-name', 'index.md', '!', '-name', 'log.md',
+  ], { encoding: 'utf8' });
+  return out.split('\n').filter(l => l.trim()).length;
+}
+
 // Locate a registered GET route's handler on the real domains router and
 // invoke it directly — no app.listen(), no open port, no network. This
 // exercises the actual production route code (src/routes/domains.js),
@@ -178,36 +220,78 @@ async function main() {
     const stats = await getDomainStats('knowncounts');
     const sumOfTypes = stats.pageCounts.entities + stats.pageCounts.concepts + stats.pageCounts.summaries;
     eq(sumOfTypes, stats.pageCount, 'Test 2a: pageCounts breakdown sums to pageCount when wiki/ has no stray root-level files');
+    eq(stats.pageCounts.other, 0, 'Test 2b: `other` is 0 on a clean domain, so the two totals coincide here');
   }
 
-  // ── Test 2b — a real, pre-existing behavioural quirk (reported, not fixed) ──
-  console.log('\n[2b] KNOWN QUIRK — pageCount (recursive) vs pageCounts.* (shallow, 3 folders) can diverge');
+  // ── Test 2c — M6 + L1: the four numbers reconcile, and the TOTAL is the
+  //             number a destructive confirm can safely be built on ────────
+  console.log('\n[2c] M6 + L1 — entities + concepts + summaries + other === pageCount === every .md on disk');
   {
-    // pageCount's countMd() recurses over the ENTIRE wiki/ tree and excludes
-    // only files literally named index.md or log.md, wherever they appear.
-    // pageCounts.entities/concepts/summaries only ever readdir their own
-    // canonical folder. A stray .md file dropped anywhere else under wiki/
-    // (wiki/ root itself, or a non-canonical subfolder a user created by
-    // hand outside the app) is counted by pageCount but NOT by pageCounts.*.
-    // This is pre-existing pageCount behaviour, unmodified by this task —
-    // flagging it here rather than silently changing pageCount's semantics,
-    // per the task's instruction to report inconsistencies rather than fix
-    // them silently.
+    // BEFORE v3.2.0 these were two different computations with two different
+    // rules: pageCount recursed over the whole wiki/ tree (excluding only
+    // index.md/log.md by name), while pageCounts.* were three shallow
+    // readdirs with no isFile() check. Anything they disagreed about showed
+    // up in the Domains card as a self-contradicting sentence — "A
+    // compounding wiki of 7 pages — 2 entities, 1 concept, 1 summary".
+    //
+    // The trigger is not exotic: Obsidian creates an "Untitled.md" at the
+    // vault root by default, and the setup docs tell users to point the
+    // vault root AT the wiki dir. Now all four numbers come from ONE
+    // traversal, so `other` names the difference instead of hiding it.
     await createDomain('strayfile', 'Stray File Domain', 'desc', 'tech');
     const base = path.join(tempRoot, 'strayfile', 'wiki');
     writeStubPages(path.join(base, 'entities'), 1);
-    // A stray .md file sitting directly in wiki/ (not index.md/log.md, not
-    // inside any canonical folder) — e.g. a manually-dropped note.
-    writeFileSync(path.join(base, 'stray-note.md'), '# Stray\n', 'utf8');
+    // (a) A stray .md sitting directly in wiki/ — the Obsidian case.
+    writeFileSync(path.join(base, 'Untitled.md'), '# Untitled\n', 'utf8');
+    // (b) A hand-nested page — writePage FLATTENS these, so it can only
+    //     arrive by hand or through sync; health.js can't resolve links to
+    //     it either (see test-wiki-page.js's M4 section).
+    mkdirSync(path.join(base, 'entities', 'companies'), { recursive: true });
+    writeFileSync(path.join(base, 'entities', 'companies', 'nested.md'), '# Nested\n', 'utf8');
+    // (c) A DIRECTORY whose name ends in .md — a shallow readdir name filter
+    //     counted this as a page.
+    mkdirSync(path.join(base, 'concepts', 'not-a-file.md'), { recursive: true });
+    // (d) A SYMLINKED page. `rm -r` on the domain unlinks it like any other
+    //     directory entry, so a delete confirmation must count it — even
+    //     though health.js and wiki-read.js both refuse to treat it as a page.
+    symlinkSync(path.join(tempRoot, 'symlink-target.md'), path.join(base, 'entities', 'linked.md'));
+    writeFileSync(path.join(tempRoot, 'symlink-target.md'), '# Outside\n', 'utf8');
+    // (e) UPPERCASE extensions, and an uppercase index.md. No fixture had
+    //     these, which is why the case-sensitivity asymmetry (audit L1's tail)
+    //     was invisible: the extension test was /\.md$/i while the
+    //     index.md/log.md exclusion was `===`, so `INDEX.MD` counted as a user
+    //     page and `Upper.MD` was reported as an entity that health.js and
+    //     chat both ignore. Everything in the app matches endsWith('.md').
+    writeFileSync(path.join(base, 'entities', 'Upper.MD'), '# Upper\n', 'utf8');
+    writeFileSync(path.join(base, 'INDEX.MD'), '# Shouty index\n', 'utf8');
 
     const stats = await getDomainStats('strayfile');
-    eq(stats.pageCounts.entities, 1, 'Test 2b-i: pageCounts.entities ignores the stray root-level file');
-    eq(stats.pageCounts.concepts, 0, 'Test 2b-ii: pageCounts.concepts is 0 (folder empty)');
-    eq(stats.pageCounts.summaries, 0, 'Test 2b-iii: pageCounts.summaries is 0 (folder empty)');
-    eq(stats.pageCount, 2, 'Test 2b-iv: pageCount DOES count the stray file (1 entity + 1 stray = 2)');
-    const sumOfTypes = stats.pageCounts.entities + stats.pageCounts.concepts + stats.pageCounts.summaries;
-    truthy(sumOfTypes !== stats.pageCount,
-      'Test 2b-v: confirms the divergence exists (sum of pageCounts.* !== pageCount) — documented quirk, not a bug introduced here');
+    eq(stats.pageCounts.entities, 1, 'Test 2c-i: pageCounts.entities counts only the real depth-1 entity page');
+    eq(stats.pageCounts.concepts, 0, 'Test 2c-ii: a DIRECTORY named "not-a-file.md" is not counted as a page');
+    eq(stats.pageCounts.summaries, 0, 'Test 2c-iii: pageCounts.summaries is 0 (folder empty)');
+    eq(stats.pageCounts.other, 3, 'Test 2c-iv: `other` reports the stray root note + the nested file + the symlink');
+
+    // ── L1 — THE REGRESSION THIS TEST EXISTS FOR ────────────────────────
+    // pageCount was briefly narrowed to entities+concepts+summaries. The
+    // delete confirmation in src/public/app.js — untouched shipping code —
+    // renders it as "This will permanently delete N wiki pages", so on this
+    // exact fixture it promised 1 and then deleted 4. Under-reporting a
+    // destructive confirm is worse than the breakdown gap the narrowing was
+    // fixing, and the gap is fixed by `other` existing, not by shrinking the
+    // total.
+    const onDisk = countMdOnDisk(base);           // independent of files.js
+    eq(stats.pageCount, onDisk,
+      'Test 2c-v: L1 — pageCount === every .md page on disk, per an independent find(1) count');
+    eq(stats.pageCounts.entities, 1,
+      'Test 2c-v-b: L1 tail — "Upper.MD" is NOT counted as an entity (the app matches .md case-sensitively everywhere)');
+    eq(stats.pageCount, 4, 'Test 2c-vi: L1 — concretely 4 on this fixture, not 1');
+
+    const sumOfAll = stats.pageCounts.entities + stats.pageCounts.concepts
+      + stats.pageCounts.summaries + stats.pageCounts.other;
+    eq(sumOfAll, stats.pageCount,
+      'Test 2c-vii: THE INVARIANT — entities + concepts + summaries + other === pageCount, so the breakdown and the total reconcile exactly');
+    truthy(stats.pageCounts.other > 0,
+      'Test 2c-viii: the remainder is named rather than hidden — a renderer showing only 3 of the 4 numbers is the bug now, and a visible one');
   }
 
   // ── Test 3 — empty domain: everything zero, no throw ───────────────────
@@ -346,8 +430,205 @@ async function main() {
     truthy(!!known && known.pageCount === 9, 'Test 8e: a healthy domain in the same response is unaffected by the broken one');
   }
 
+  // ── Test 9 — displayName is robust across every real CLAUDE.md shape ──
+  console.log('\n[9] displayName derivation — every real CLAUDE.md shape');
+  {
+    const { extractDomainDisplayName } = await import('../src/brain/files.js');
+
+    // 9a. The bug this suite was extended to catch: a Shared Brain mirror's
+    // CLAUDE.md, copied verbatim from what ensureSharedDomainExists() in
+    // src/brain/sharedbrain.js actually writes — YAML frontmatter (carrying
+    // `readonly: true`, load-bearing for the MCP write-refusal) followed by
+    // a "# Shared Brain Mirror: <label>" heading. Pre-fix, the naive
+    // "first line" heuristic read the literal string "---" as the display
+    // name (truthy, so the `|| slug` fallback never fired) — every mirror
+    // showed up as "---" in the Domains tab.
+    const mirrorClaudeMd = [
+      '---',
+      'readonly: true',
+      'source: shared-brain',
+      'shared_brain_slug: cohort-abc123',
+      'shared_domain: articles',
+      '---',
+      '',
+      '# Shared Brain Mirror: Research Cohort',
+      '',
+      'This domain is the local read-only mirror of a Shared Brain.',
+      '',
+    ].join('\n');
+    const mirrorName = extractDomainDisplayName(mirrorClaudeMd, 'shared-cohort');
+    truthy(mirrorName !== '---', 'Test 9a-i: mirror CLAUDE.md never yields the broken "---" name');
+    truthy(mirrorName !== 'shared-cohort', 'Test 9a-ii: mirror CLAUDE.md yields a real name, not just the slug fallback');
+    eq(mirrorName, 'Research Cohort', 'Test 9a-iii: mirror CLAUDE.md yields the sensible label ("Research Cohort"), not a raw heading dump');
+
+    // 9b. THE REGRESSION THAT MATTERS: a normal app-created domain
+    // ("# Domain: X", no frontmatter — exactly what generateClaudemd()
+    // writes) must still resolve to "X".
+    eq(extractDomainDisplayName('# Domain: Articles\n\nSome scope text.\n', 'articles'), 'Articles',
+      'Test 9b: normal "# Domain: Articles" CLAUDE.md still yields "Articles" (no regression)');
+
+    // 9c. A hand-written CLAUDE.md matching neither convention (users create
+    // domains by hand, not only through the app) — plain prose, no heading
+    // at all — falls back to the slug rather than showing the first line of
+    // prose as if it were a title.
+    eq(extractDomainDisplayName('This domain tracks my personal reading notes.\n', 'reading-notes'), 'reading-notes',
+      'Test 9c: CLAUDE.md with no "#" heading at all falls back to the slug');
+
+    // 9d. Empty CLAUDE.md (0 bytes, or whitespace-only) falls back to the slug.
+    eq(extractDomainDisplayName('', 'blank-domain'), 'blank-domain',
+      'Test 9d-i: empty CLAUDE.md falls back to the slug');
+    eq(extractDomainDisplayName('   \n\n  \n', 'blank-domain'), 'blank-domain',
+      'Test 9d-ii: whitespace-only CLAUDE.md falls back to the slug');
+
+    // 9e. Frontmatter present but never closed — nothing reliable follows it,
+    // so this must degrade to the slug rather than misreading the dangling
+    // YAML body as a title.
+    eq(extractDomainDisplayName('---\nreadonly: true\nno closing delimiter at all\n', 'unterminated'), 'unterminated',
+      'Test 9e: unterminated frontmatter falls back to the slug rather than guessing');
+
+    // 9f. A heading that is neither known prefix is shown as-is (still a
+    // real, sensible name — just not one of the two conventions this
+    // codebase happens to write).
+    eq(extractDomainDisplayName('# My Custom Domain Title\n', 'custom'), 'My Custom Domain Title',
+      'Test 9f: an arbitrary "# ..." heading (neither known prefix) is used as-is');
+
+    // 9g. End-to-end through the real getDomainStats() + real filesystem —
+    // not just the unit-level helper — using a domain directory shaped
+    // exactly like a real Shared Brain mirror (frontmatter CLAUDE.md, no
+    // wiki content yet, as ensureSharedDomainExists() leaves it immediately
+    // after creation).
+    const mirrorBase = path.join(tempRoot, 'shared-mirrortest');
+    mkdirSync(path.join(mirrorBase, 'wiki', 'entities'), { recursive: true });
+    mkdirSync(path.join(mirrorBase, 'wiki', 'concepts'), { recursive: true });
+    mkdirSync(path.join(mirrorBase, 'wiki', 'summaries'), { recursive: true });
+    mkdirSync(path.join(mirrorBase, 'conversations'), { recursive: true });
+    writeFileSync(path.join(mirrorBase, 'CLAUDE.md'), mirrorClaudeMd, 'utf8');
+
+    const mirrorStats = await getDomainStats('shared-mirrortest');
+    truthy(mirrorStats.displayName !== '---', 'Test 9g-i: getDomainStats on a real mirror directory never returns "---"');
+    eq(mirrorStats.displayName, 'Research Cohort', 'Test 9g-ii: getDomainStats on a real mirror directory returns the sensible label');
+  }
+
+  // ── Test 10 — L1: GET /:domain/stats must not read outside the domains dir ──
+  console.log('\n[10] L1 — GET /api/domains/:domain/stats is allow-listed');
+  {
+    // Express URL-decodes route params, so `GET /api/domains/%2e%2e/stats`
+    // arrives here as the literal string "..". Pre-fix, getDomainStats
+    // joined that straight onto the domains dir and returned 200 with the
+    // first heading of a CLAUDE.md OUTSIDE the domains folder as
+    // displayName. The bulk /stats route above never had this problem (it
+    // only ever passes listDomains() output), which made this one the
+    // outlier.
+    //
+    // Plant a CLAUDE.md in the PARENT of the isolated domains dir so a
+    // successful traversal would be unmistakable in the response.
+    const probeClaude = path.join(path.dirname(tempRoot), 'CLAUDE.md');
+    const probeExisted = existsSync(probeClaude);
+    if (!probeExisted) {
+      writeFileSync(probeClaude, '# Domain: LEAKED_FROM_OUTSIDE_THE_DOMAINS_DIR\n', 'utf8');
+    }
+    try {
+      const { status, body } = await callRoute(domainsRouter, '/:domain/stats', { domain: '..' });
+      eq(status, 404, 'Test 10a: a ".." domain param is refused with 404, not served with 200');
+      truthy(!body || !body.displayName || !String(body.displayName).includes('LEAKED'),
+        'Test 10b: nothing from outside the domains dir appears in the response');
+
+      // Same for a nested traversal and an absolute-ish shape.
+      const deep = await callRoute(domainsRouter, '/:domain/stats', { domain: '../..' });
+      eq(deep.status, 404, 'Test 10c: a multi-segment traversal is also refused');
+
+      // A REAL domain still works — the allow-list must not be a blanket ban.
+      const good = await callRoute(domainsRouter, '/:domain/stats', { domain: 'knowncounts' });
+      eq(good.status, 200, 'Test 10d: a genuine domain is unaffected by the allow-list');
+      eq(good.body.slug, 'knowncounts', 'Test 10e: ...and returns its own stats');
+
+      // Defense in depth: getDomainStats itself refuses the same input even
+      // if a future caller forgets the allow-list.
+      let threw = false;
+      try { await getDomainStats('..'); } catch { threw = true; }
+      truthy(threw, 'Test 10f: getDomainStats independently refuses a traversal slug (defense in depth)');
+    } finally {
+      if (!probeExisted) { try { rmSync(probeClaude, { force: true }); } catch {} }
+    }
+  }
+
+  // ── Test 11 — L3: display-name hygiene ────────────────────────────────
+  console.log('\n[11] L3 — extractDomainDisplayName renders a name, not raw markdown');
+  {
+    const { extractDomainDisplayName } = await import('../src/brain/files.js');
+
+    eq(extractDomainDisplayName('# **Domain:** Articles\n', 'articles'), 'Articles',
+      'Test 11a: emphasis around the prefix (`# **Domain:** X`) is stripped, not shown literally');
+    eq(extractDomainDisplayName('# *Domain*: Articles\n', 'articles'), 'Articles',
+      'Test 11b: single-asterisk emphasis around the prefix is stripped');
+    eq(extractDomainDisplayName('# **Domain: Articles**\n', 'articles'), 'Articles',
+      'Test 11c: emphasis wrapping the WHOLE heading is stripped from both ends');
+    eq(extractDomainDisplayName('# Domain: Articles ###\n', 'articles'), 'Articles',
+      'Test 11d: closing ATX hashes are dropped (they are syntax, not name)');
+    eq(extractDomainDisplayName('---\nreadonly: true\n---\n# **Shared Brain Mirror:** Cohort\n', 'shared-c'), 'Cohort',
+      'Test 11e: the mirror prefix strips through emphasis too');
+
+    // A name that legitimately contains an underscore/asterisk mid-string
+    // must be left alone — the fix targets the prefix, not every marker.
+    eq(extractDomainDisplayName('# Domain: My_Reading_Notes\n', 'n'), 'My_Reading_Notes',
+      'Test 11f: underscores inside a real name are preserved');
+
+    // Length bound — this string lands in a fixed-width card and a delete
+    // confirmation dialog; nothing upstream constrains heading length.
+    const long = extractDomainDisplayName('# Domain: ' + 'A'.repeat(5000) + '\n', 'long');
+    truthy(long.length <= 120, `Test 11g: an absurdly long heading is bounded (got ${long.length} chars)`);
+    truthy(long.endsWith('…'), 'Test 11h: ...and is visibly truncated rather than silently cut');
+
+    // No regression on the two shapes that actually ship.
+    eq(extractDomainDisplayName('# Domain: Articles\n', 'articles'), 'Articles',
+      'Test 11i: the plain generateClaudemd shape is unchanged');
+    eq(extractDomainDisplayName('# My Custom Domain Title\n', 'custom'), 'My Custom Domain Title',
+      'Test 11j: an arbitrary heading with no known prefix is still used as-is');
+  }
+
+  // ── Test 12 — REPORTED, NOT FIXED: renameDomain no-ops on a mirror ────
+  console.log('\n[12] REPORTED FINDING — renameDomain silently no-ops on a Shared Brain mirror');
+  {
+    // renameDomain (src/brain/files.js) rewrites the display name with
+    // `content.replace(/^# Domain: .+$/m, ...)`. A Shared Brain mirror's
+    // CLAUDE.md, written by ensureSharedDomainExists(), starts with YAML
+    // frontmatter and uses `# Shared Brain Mirror: <label>` — which that
+    // regex cannot match. The rename reports success and the display name
+    // never changes.
+    //
+    // This assertion DOCUMENTS current behaviour rather than asserting a
+    // fix: renameDomain is outside the scope this change owns (it was
+    // verified and reported, not fixed). If renameDomain is ever taught the
+    // mirror heading, flip this assertion — it is here so the next person
+    // finds the finding instead of rediscovering it.
+    //
+    // Worth noting alongside it: renaming a mirror to a name that does not
+    // start with "shared-" would also move the folder out of the reserved
+    // `shared-*` namespace, and the next Pull would recreate the original —
+    // i.e. renaming a mirror is arguably something the UI should refuse
+    // outright rather than something renameDomain should be taught.
+    const { renameDomain } = await import('../src/brain/files.js');
+    const mirrorDir = path.join(tempRoot, 'shared-renametest');
+    mkdirSync(path.join(mirrorDir, 'wiki'), { recursive: true });
+    writeFileSync(path.join(mirrorDir, 'CLAUDE.md'),
+      '---\nreadonly: true\n---\n# Shared Brain Mirror: Research Cohort\n', 'utf8');
+
+    await renameDomain('shared-renametest', 'shared-renametest', 'Renamed Cohort');
+    const after = await getDomainStats('shared-renametest');
+    eq(after.displayName, 'Research Cohort',
+      'Test 12a: KNOWN — a mirror rename leaves the CLAUDE.md heading untouched (reported, deliberately not fixed here)');
+
+    // The same rename on a NORMAL domain does work — confirming the cause is
+    // the heading shape, not the rename path being broken generally.
+    await createDomain('renamenormal', 'Before Rename', 'desc', 'tech');
+    await renameDomain('renamenormal', 'renamenormal', 'After Rename');
+    const normal = await getDomainStats('renamenormal');
+    eq(normal.displayName, 'After Rename',
+      'Test 12b: a normal "# Domain: X" domain renames correctly — isolating the cause to the mirror heading shape');
+  }
+
   // ── Real credential-file isolation guard ──────────────────────────────
-  console.log('\n[9] Real credential-file isolation guard');
+  console.log('\n[13] Real credential-file isolation guard');
   assertRealFilesUntouched();
 
   // ── Summary ─────────────────────────────────────────────────────────

@@ -1,0 +1,393 @@
+/* View: Settings — owned by views/settings.js.
+   Five sections, each a landable destination — sidebar sub-nav on the
+   left, one section's real content in the main column. */
+
+/* ── Sidebar sub-navigation ─────────────────────────────────────────── */
+
+.settings-sidebar-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  gap: 12px;
+}
+
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-row {
+  position: relative;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--t-state);
+}
+.settings-nav-row:hover { background: var(--surface-hover); }
+.settings-nav-row.active { background: var(--surface-active); }
+.settings-nav-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.settings-nav-row .row-label {
+  font: var(--type-label);
+  color: var(--text-2);
+}
+.settings-nav-row.active .row-label { color: var(--text); }
+.settings-nav-row .row-hint {
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+
+.settings-sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.settings-version {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.settings-restart-flag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  border: 1px solid var(--accent-border);
+  font-size: 9px;
+}
+
+/* ── Section content shell ───────────────────────────────────────────── */
+
+.settings-section { display: flex; flex-direction: column; gap: 22px; }
+
+.settings-field-block {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.settings-field-label {
+  font: var(--type-label);
+  color: var(--text-2);
+}
+.settings-hint-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 66ch;
+}
+
+.settings-btn-row {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.settings-inline-error {
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}
+
+.settings-note-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: var(--leading-relaxed);
+  margin-top: 22px;
+}
+.settings-note-row svg { flex: none; color: var(--text-3); }
+
+.settings-saving-note, .settings-saved-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.settings-saved-note { color: var(--success-text); }
+
+/* ── Buttons — small variant used throughout Settings rows ─────────── */
+.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+
+/* The one "spends tokens" action in this view (mirrors the sparkles
+   convention from the Health panel spec — accent-tinted, never plain). */
+.btn-ai-cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-md);
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  font: var(--weight-medium) var(--text-md)/1 var(--font-sans);
+  cursor: pointer;
+}
+.btn-ai-cost:hover { background: var(--accent-tint-strong); }
+
+/* ── General: appearance segmented control ──────────────────────────── */
+
+.theme-segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 7px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.theme-seg-btn {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: var(--weight-medium);
+  background: transparent;
+  color: var(--text-3);
+  transition: background var(--t-state), color var(--t-state);
+}
+.theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
+
+/* ── System check results (shared by quick check + live check) ─────── */
+
+.settings-check-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.check-summary-line { color: var(--text-3); font-size: var(--text-xs); margin-bottom: 4px; }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+.check-glyph { flex: none; display: flex; }
+.check-label { flex: none; width: 160px; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text); }
+.check-detail { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--text-3); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.check-ok .check-glyph { color: var(--success-text); }
+.check-warn .check-glyph { color: var(--attention-text); }
+.check-fail .check-glyph { color: var(--danger-text); }
+.check-info .check-glyph { color: var(--text-faint); }
+
+/* ── Cost confirmation panel (the hard rule: cost before action) ────── */
+
+.cost-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  margin-top: 10px;
+}
+.cost-confirm svg { flex: none; margin-top: 2px; }
+.cost-confirm-text { flex: 1; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--text-2); }
+.cost-confirm-text strong { color: var(--accent-text); }
+.cost-confirm-actions { display: flex; gap: 7px; flex: none; }
+
+/* ── Providers & keys ────────────────────────────────────────────────── */
+
+.provider-row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.provider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.provider-row-unavailable { opacity: 0.55; }
+.provider-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.provider-name-block {
+  width: 140px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.provider-name { font-size: 13.5px; font-weight: var(--weight-medium); color: var(--text); }
+.provider-model { font-size: var(--text-2xs); color: var(--text-3); }
+.provider-key-field {
+  flex: 1;
+  min-width: 150px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-key-empty { color: var(--text-faint); }
+.provider-state { width: 92px; text-align: right; flex: none; font-size: var(--text-xs); }
+.provider-state-active { color: var(--success-text); }
+.provider-state-muted { color: var(--text-3); }
+.provider-row-actions { display: flex; gap: 6px; flex: none; }
+
+.provider-replace-row {
+  flex: 1;
+  min-width: 260px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.provider-replace-input {
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-focus);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.provider-replace-input:focus { outline: none; box-shadow: var(--ring-focus); }
+
+/* ── MCP bridge ──────────────────────────────────────────────────────── */
+
+.settings-status-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+}
+.status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
+.status-pill-muted { background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-3); }
+.mcp-path-line { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.mcp-config-snippet {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.settings-select {
+  height: var(--control-md);
+  padding: 0 11px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--text-md);
+  align-self: flex-start;
+  max-width: 280px;
+}
+
+/* ── Health & scan limits ────────────────────────────────────────────── */
+
+.settings-input-suffix {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--control-md);
+  max-width: 300px;
+  padding: 0 11px;
+  border-radius: 6px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.settings-number-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-family: var(--font-mono);
+}
+.settings-input-suffix .suffix { color: var(--text-3); font-size: var(--text-xs); }
+
+/* ── Knowledge base ──────────────────────────────────────────────────── */
+
+.storage-path-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+.storage-path {
+  flex: 1;
+  min-width: 240px;
+  padding: 9px 12px;
+  border-radius: 7px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}

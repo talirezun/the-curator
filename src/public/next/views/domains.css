@@ -1,0 +1,459 @@
+/* View: Domains — owned by views/domains.js.
+   Design spec: screens 2 (Domains) + 3 (Health panel, inside the domain).
+   Everything not specific to this view (buttons, empty-card, eyebrows,
+   sidebar shell) reuses shell.css classes untouched. */
+
+/* ── Sidebar domain list ─────────────────────────────────────────────── */
+
+.dm-new-btn { width: 100%; }
+
+.dm-row-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dm-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--t-state), color var(--t-state);
+}
+.dm-row:hover { background: var(--surface-hover); }
+.dm-row.active { background: var(--surface-active); color: var(--text); }
+.dm-row.active .dm-row-name { font-weight: var(--weight-medium); }
+
+.dm-row-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dm-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.dm-row-name {
+  font-size: var(--text-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dm-row-meta {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+
+.dm-row-mirror {
+  flex: none;
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 1px 4px;
+}
+
+.dm-row-attn {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--attention);
+}
+
+/* ── Main header ──────────────────────────────────────────────────────── */
+
+.dm-path-eyebrow {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+
+.dm-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.dm-title-row .dm-title { margin: 0; }
+.dm-ask-btn { margin-left: auto; }
+
+.dm-mirror-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  padding: 3px 9px;
+}
+
+.dm-scope-desc { margin-bottom: 24px; }
+
+/* ── Stat cards ───────────────────────────────────────────────────────── */
+
+.dm-stats-grid {
+  display: grid;
+  /* MEDIUM-2 fix: was a fixed repeat(4, 1fr) — the fifth "OTHER" card
+     (rendered only when a domain has stray, non-canonical pages) needs a
+     grid that can gracefully hold either 4 or 5 equal-width cards without
+     a second, conditional CSS rule. auto-fit with this minmax renders
+     identically to the old fixed 4-column layout whenever there are
+     exactly 4 cards (this container is comfortably wider than 4 * 110px),
+     and simply adds a 5th column when OTHER is present. */
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+.dm-stat-card {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.dm-stat-value {
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  margin-top: 4px;
+}
+.dm-stat-entity  { color: var(--type-entity); }
+.dm-stat-concept { color: var(--type-concept); }
+.dm-stat-summary { color: var(--type-summary); }
+.dm-stat-other   { color: var(--text-3); }
+
+/* ── Health card ──────────────────────────────────────────────────────── */
+
+.dm-health-card {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 24px;
+}
+
+.dm-health-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.dm-health-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 240px;
+  color: var(--attention);
+}
+.dm-health-title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+
+.dm-health-body {
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  max-width: 66ch;
+  margin-bottom: 8px;
+}
+.dm-error-text { color: var(--danger-text); }
+
+.dm-health-meta {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin-bottom: 12px;
+}
+
+/* ── Category chips ───────────────────────────────────────────────────── */
+
+.dm-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.dm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 25px;
+  padding: 0 10px;
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  border: 1px solid transparent;
+}
+.dm-chip-count { opacity: 0.75; }
+.dm-chip-zero {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-3);
+}
+.dm-chip-amber {
+  background: var(--attention-tint);
+  color: var(--attention-text);
+}
+.dm-chip-violet {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+/* ── Result / status banner ──────────────────────────────────────────── */
+
+.dm-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  margin-bottom: 14px;
+}
+.dm-banner span { line-height: var(--leading-normal); }
+.dm-banner-success { background: var(--success-tint); color: var(--success-text); }
+.dm-banner-error    { background: var(--danger-tint);  color: var(--danger-text); }
+.dm-banner-info     { background: var(--info-tint);    color: var(--accent-text); }
+
+/* ── Read-only mirror note ────────────────────────────────────────────── */
+
+.dm-mirror-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  margin-bottom: 14px;
+}
+.dm-mirror-note svg { flex: none; margin-top: 2px; color: var(--text-3); }
+
+/* ── Quick maintenance block ──────────────────────────────────────────── */
+
+.dm-quick {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+  margin-bottom: 16px;
+}
+.dm-quick-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.dm-quick-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  margin-bottom: 10px;
+}
+.dm-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dm-quick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background var(--t-state);
+}
+.dm-quick-btn:hover:not(:disabled) { background: var(--surface-hover); }
+.dm-quick-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.dm-quick-btn-ai { color: var(--accent-text); }
+.dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.dm-quick-cost { font-size: var(--text-2xs); color: var(--text-3); }
+.dm-quick-note {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  margin-top: 10px;
+}
+/* MEDIUM-5 fix: distinguishes "an earlier fix on this domain is still
+   running" (a real backend write in flight, buttons genuinely disabled)
+   from the routine cost-disclosure note above — same amber token the
+   chip row already uses for attention-worthy, non-error state. */
+.dm-quick-note-busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--attention-text);
+}
+.dm-quick-settings-btn { flex: none; }
+
+/* ── Confirm card (inline, generic) ──────────────────────────────────── */
+
+.dm-confirm-card,
+.dm-plan-card {
+  padding: 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  margin-bottom: 16px;
+}
+.dm-confirm-title,
+.dm-plan-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.dm-confirm-body {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  margin-bottom: 12px;
+}
+.dm-confirm-actions,
+.dm-plan-actions {
+  display: flex;
+  gap: 8px;
+}
+.dm-plan-summary {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.dm-plan-detail {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin: 8px 0 6px;
+}
+.dm-plan-actions { margin-top: 10px; }
+
+/* ── Issue groups ─────────────────────────────────────────────────────── */
+
+.dm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dm-group { border-top: 1px solid var(--border-subtle); }
+.dm-group:first-child { border-top: none; }
+
+.dm-group-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.dm-group-summary::-webkit-details-marker { display: none; }
+.dm-group-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.dm-group[open] > .dm-group-summary svg { transform: rotate(90deg); }
+
+.dm-group-label {
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.dm-group-dismissed .dm-dismissed-label { color: var(--text-3); }
+
+.dm-group-pill {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+.dm-group-fixall-btn {
+  margin-left: auto;
+  height: 26px;
+  padding: 0 9px;
+  font-size: var(--text-xs);
+}
+
+.dm-group-body {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 10px 21px;
+}
+
+.dm-issue-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.dm-issue-row:last-child { border-bottom: none; }
+.dm-issue-main {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.dm-issue-meta {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.dm-issue-more {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  padding-top: 4px;
+}
+.dm-dismiss-btn,
+.dm-restore-btn {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--text-2xs);
+}
+
+/* ── Recently written ─────────────────────────────────────────────────── */
+
+.dm-recent-eyebrow { margin-top: 4px; margin-bottom: 8px; }
+.dm-recent-note {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  max-width: 66ch;
+  line-height: var(--leading-relaxed);
+}

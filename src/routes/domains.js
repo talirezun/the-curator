@@ -52,9 +52,25 @@ router.get('/stats', async (req, res) => {
 });
 
 // GET /api/domains/:domain/stats — domain stats (MUST be before /:domain handlers)
+//
+// The `domain` param is checked against listDomains() before it reaches the
+// filesystem (v3.2.0 audit finding L1). Express URL-decodes route params, so
+// `GET /api/domains/%2e%2e/stats` arrived here as the literal string ".."
+// and getDomainStats happily read `<domainsDir>/../CLAUDE.md` — returning
+// 200 and leaking the first heading of a CLAUDE.md outside the domains
+// folder as `displayName`. Every other route on this router already gates
+// on a real domain (the bulk /stats route above only ever passes
+// listDomains() output); this one was the outlier. An allow-list is used
+// rather than a character blacklist because the set of valid values is
+// small, known, and already computed.
 router.get('/:domain/stats', async (req, res) => {
   try {
-    const stats = await getDomainStats(req.params.domain);
+    const { domain } = req.params;
+    const domains = await listDomains();
+    if (!domains.includes(domain)) {
+      return res.status(404).json({ error: `Unknown domain: ${domain}` });
+    }
+    const stats = await getDomainStats(domain);
     res.json(stats);
   } catch (err) {
     const status = err.message.includes('not found') ? 404 : 500;

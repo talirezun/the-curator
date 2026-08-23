@@ -1546,49 +1546,214 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
   } catch {}
 }
 
-// Shallow .md count in one directory — mirrors health.js's `listMd` exactly
-// (readdir + filter on '.md' suffix, no recursion, no isFile() check) so the
-// per-type counts returned by getDomainStats mean the SAME THING as the
-// entities/concepts/summaries counts scanWiki() computes. Deliberately does
-// NOT read file contents — a readdir per folder, nothing more, so this stays
-// as cheap as the rest of getDomainStats (unlike scanWiki, which is a full
-// content scan and must never be called from this hot, polled path).
-async function countMdShallow(dir) {
-  try {
-    return (await readdir(dir)).filter(f => f.endsWith('.md')).length;
-  } catch {
-    return 0;
+const CANONICAL_PAGE_FOLDERS = ['entities', 'concepts', 'summaries'];
+
+/**
+ * Count the pages under a domain's wiki/, broken down by canonical folder.
+ *
+ * Returns `{entities, concepts, summaries, other}` where a PAGE is a real
+ * file at `<entities|concepts|summaries>/<name>.md` — exactly one level
+ * deep, which is the only shape writePage can produce (it FLATTENS nested
+ * paths, v3.0.16) and the only shape health.js can resolve a link to (its
+ * slug sets come from a shallow readdir). `other` is every remaining .md
+ * file anywhere under wiki/: a stray note at the wiki root, a nested file,
+ * a symlink. index.md and log.md are excluded by name at any depth — they
+ * are app-managed, not pages.
+ *
+ * Why one walk instead of "recursive total + three shallow readdirs"
+ * (v3.2.0 audit finding M6): the two were computed by different code with
+ * different rules, so the Domains card could contradict itself in a single
+ * sentence — "A compounding wiki of 7 pages — 2 entities, 1 concept, 1
+ * summary". `pageCount` recursed over the whole tree; the per-type counts
+ * were three shallow readdirs with no isFile() check. Anything the two
+ * disagreed about (a nested file, a directory literally named `x.md`, or —
+ * the common one — the `Untitled.md` Obsidian drops at the vault root,
+ * which the setup docs tell users to point AT the wiki dir) showed up as an
+ * unexplained gap. Deriving all four numbers from ONE traversal with ONE
+ * rule makes disagreement impossible by construction, and `other` keeps the
+ * remainder visible instead of hiding it:
+ *
+ *     entities + concepts + summaries + other === pageCount
+ *                                            === every `.md` file on disk
+ *                                                under wiki/, except
+ *                                                index.md and log.md.
+ *
+ * `.md` is matched case-sensitively here, exactly as health.js's `listMd` /
+ * `walkMdFiles` and chat's `collectMarkdown` match it, so a `.MD` file is not
+ * a page for the counter either. Aligning that was audit finding L1's tail:
+ * a case-insensitive extension test paired with a case-sensitive
+ * index.md/log.md exclusion made `INDEX.MD` count as a user page.
+ *
+ * `other` is the remainder, not a discard pile — see the invariant comment in
+ * getDomainStats for why pageCount keeps counting it (audit finding L1: the
+ * delete confirmation is built on that total, and a total that omits `other`
+ * under-reports what the delete removes).
+ *
+ * Deliberately does NOT read file contents — readdir + dirent types only,
+ * so this stays as cheap as the rest of getDomainStats (unlike scanWiki,
+ * which is a full content scan and must never be called from this hot,
+ * polled path). It is now cheaper than the code it replaces: one traversal
+ * instead of a traversal plus three readdirs.
+ *
+ * Two deliberate divergences from health.js's `listMd`, both erring toward
+ * "a page is a real file":
+ *
+ *   • `listMd` filters readdir NAMES, so it would count a *directory* named
+ *     `foo.md` as a page. This uses dirent types and does not. (The
+ *     extension test itself is identical — see above.)
+ *
+ *   • A SYMLINKED `.md` is counted here, but always as `other`, never as a
+ *     typed page — even when it points back INSIDE the wiki, which health.js
+ *     does accept as a real entity. So a domain with an in-wiki alias reports
+ *     it under `other` while the Health tab treats it as a page. That is a
+ *     known, narrow disagreement, called out because an earlier version of
+ *     this comment justified only the ESCAPING case and left a reader to
+ *     assume the in-wiki case matched. The stated invariant is unaffected
+ *     (`entities + concepts + summaries + other === pageCount` holds
+ *     exactly), and the direction is the safe one for the delete
+ *     confirmation: the link is a real directory entry that `rm -r` removes,
+ *     so counting it keeps the total honest.
+ */
+async function countWikiPages(wikiDir) {
+  const counts = { entities: 0, concepts: 0, summaries: 0, other: 0 };
+  async function walk(dir, relPrefix) {
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const e of entries) {
+      const rel = relPrefix ? `${relPrefix}/${e.name}` : e.name;
+      if (e.isDirectory()) { await walk(path.join(dir, e.name), rel); continue; }
+      // Case-SENSITIVE, deliberately, and symmetric with the exclusion below.
+      // An earlier draft matched /\.md$/i while still excluding index.md/log.md
+      // with ===, which counted `INDEX.MD` as a user page and reported a
+      // `.MD` file as an entity that health.js (listMd, walkMdFiles) and chat
+      // (collectMarkdown) both ignore — every one of them uses
+      // endsWith('.md'). A page is what the rest of the app calls a page.
+      if (!e.name.endsWith('.md')) continue;
+      if (e.name === 'index.md' || e.name === 'log.md') continue;
+      const parts = rel.split('/');
+      if (e.isFile() && parts.length === 2 && CANONICAL_PAGE_FOLDERS.includes(parts[0])) {
+        counts[parts[0]] += 1;
+      } else {
+        counts.other += 1;
+      }
+    }
   }
+  await walk(wikiDir, '');
+  return counts;
+}
+
+const MAX_DISPLAY_NAME_LENGTH = 120;
+
+// Derive a domain's display name from its CLAUDE.md, tolerant of every shape
+// a CLAUDE.md actually takes in this codebase — not just the one
+// generateClaudemd() writes.
+//
+// Pre-v3.1.4 this was `content.split('\n')[0].replace(/^# Domain:\s*/, '')
+// .trim() || slug` — a bare first-line heuristic that assumed every CLAUDE.md
+// opens with "# Domain: X". That's true for domains created through the app
+// (generateClaudemd(), below), but ensureSharedDomainExists() in
+// sharedbrain.js (Decision 7) writes a Shared Brain mirror's CLAUDE.md
+// starting with a YAML frontmatter block (`---\nreadonly: true\n...\n---`)
+// so the MCP write tools can detect and refuse direct writes to it. For a
+// mirror, "the first line" is the literal string "---", the regex doesn't
+// match it, and '---'.trim() is TRUTHY — so the `|| slug` fallback never
+// fires. Every Shared Brain mirror displayed as "---" in the Domains tab.
+// A hand-written CLAUDE.md (users create domains by hand too) can look like
+// neither shape at all.
+//
+// Fix: look past any leading frontmatter block for the first real heading,
+// strip whichever conventional prefix this codebase actually writes
+// ("Domain:" from generateClaudemd, "Shared Brain Mirror:" from
+// ensureSharedDomainExists), and fall back to the slug whenever nothing
+// sensible is found — rather than trusting "the first line, whatever it is".
+export function extractDomainDisplayName(content, slug) {
+  if (typeof content !== 'string' || content.trim() === '') return slug;
+
+  const lines = content.split(/\r\n|\r|\n/);
+  let i = 0;
+
+  // Skip a leading YAML frontmatter block if present. Bounded to an actual
+  // closing "---" line further down the file — an unterminated one (or a
+  // lone "---" used as a hand-written horizontal rule with no matching
+  // close) has nothing reliable to read past it, so fall back to the slug
+  // rather than guess.
+  if (lines[0] !== undefined && lines[0].trim() === '---') {
+    let closeIdx = -1;
+    for (let j = 1; j < lines.length; j++) {
+      if (lines[j].trim() === '---') { closeIdx = j; break; }
+    }
+    if (closeIdx === -1) return slug;
+    i = closeIdx + 1;
+  }
+
+  // First non-blank line after any frontmatter is, by convention, a "# ..."
+  // heading. If it isn't — a hand-written CLAUDE.md with plain prose, or
+  // nothing at all after the frontmatter — there's nothing sensible to show.
+  while (i < lines.length && lines[i].trim() === '') i++;
+  const heading = i < lines.length ? lines[i].trim() : '';
+
+  const m = heading.match(/^#\s+(.*)$/);
+  if (!m) return slug;
+
+  let name = m[1].trim();
+
+  // Closing ATX hashes: `# Domain: Articles ###` is the same heading as
+  // `# Domain: Articles` in every markdown renderer, but the raw text was
+  // being shown verbatim in the Domains tab (v3.2.0 audit finding L3).
+  name = name.replace(/\s+#+\s*$/, '');
+
+  // Emphasis around the conventional prefix. `# **Domain:** Articles` is a
+  // shape people genuinely write (and one an LLM-written CLAUDE.md
+  // produces), and it used to render as the literal string
+  // "**Domain:** Articles" because the prefix regexes required the bare
+  // word. The backreference keeps the opening and closing markers matched,
+  // so `**Domain:**`, `*Domain*:` and plain `Domain:` all strip while a
+  // name that merely CONTAINS an asterisk or underscore is left alone.
+  name = name.replace(
+    /^([*_]{1,3})?\s*(?:Domain|Shared Brain Mirror)\s*(?:\1)?\s*:\s*(?:\1)?\s*/i,
+    ''
+  );
+  // Whatever emphasis run is left dangling at the end after the opener was
+  // consumed (`# **Domain: Articles**` → "Articles**").
+  name = name.replace(/[*_]{1,3}$/, '');
+  name = name.trim();
+
+  // Length bound. Nothing upstream constrains a heading's length, and this
+  // string lands in a fixed-width card and a delete-confirmation dialog; a
+  // 5,000-character "name" is a layout bug at best. 120 characters is far
+  // past any real domain name.
+  if (name.length > MAX_DISPLAY_NAME_LENGTH) {
+    name = name.slice(0, MAX_DISPLAY_NAME_LENGTH - 1).trimEnd() + '…';
+  }
+
+  return name || slug;
 }
 
 export async function getDomainStats(slug) {
+  // Defense in depth (v3.2.0 audit finding L1). Every HTTP caller now gates
+  // on listDomains() first, but this function takes a raw slug and joins it
+  // straight onto the domains dir, so a caller that forgets — as
+  // GET /api/domains/:domain/stats did, where Express hands ".." through
+  // from a %2e%2e URL — could read a CLAUDE.md outside the domains folder.
+  // Same guard shape deleteDomain/renameDomain have used for releases.
+  if (!slug || typeof slug !== 'string' || slug.includes('..') || slug.includes('/')
+      || slug.includes('\\') || slug.startsWith('.')) {
+    throw new Error('Invalid domain name');
+  }
+
   const base = domainPath(slug);
 
-  const [displayName, pageCount, conversationCount, lastIngestDate, entityCount, conceptCount, summaryCount] = await Promise.all([
-    // Display name from CLAUDE.md first line
+  const [displayName, pageCounts, conversationCount, lastIngestDate] = await Promise.all([
+    // Display name from CLAUDE.md — see extractDomainDisplayName() above.
     readFile(path.join(base, 'CLAUDE.md'), 'utf8')
-      .then(content => {
-        const firstLine = content.split('\n')[0];
-        return firstLine.replace(/^# Domain:\s*/, '').trim() || slug;
-      })
+      .then(content => extractDomainDisplayName(content, slug))
       .catch(() => slug),
 
-    // Page count: recursive .md files in wiki/ excluding index.md and log.md
-    (async () => {
-      let count = 0;
-      async function countMd(dir) {
-        try {
-          const entries = await readdir(dir, { withFileTypes: true });
-          for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) await countMd(full);
-            else if (e.name.endsWith('.md') && e.name !== 'index.md' && e.name !== 'log.md') count++;
-          }
-        } catch {}
-      }
-      await countMd(path.join(base, 'wiki'));
-      return count;
-    })(),
+    // All four page numbers from ONE traversal — see countWikiPages() above
+    // for why pageCount is no longer computed separately from the per-type
+    // breakdown (they could disagree, and the Domains card showed both).
+    countWikiPages(path.join(base, 'wiki')),
 
     // Conversation count
     readdir(path.join(base, 'conversations'))
@@ -1620,18 +1785,36 @@ export async function getDomainStats(slug) {
         return max;
       })
       .catch(() => null),
-
-    // Per-type page counts (additive, v3.1.x): entities / concepts / summaries,
-    // each a shallow readdir of its canonical folder — same meaning as
-    // scanWiki()'s entityFiles/conceptFiles/summaryFiles counts, but without
-    // scanWiki's full-content read (this function must stay cheap; it's
-    // polled by the UI). index.md and log.md live directly under wiki/, not
-    // inside these three folders, so no filename exclusion is needed here
-    // (consistent with how pageCount above excludes them by name only).
-    countMdShallow(path.join(base, 'wiki', 'entities')),
-    countMdShallow(path.join(base, 'wiki', 'concepts')),
-    countMdShallow(path.join(base, 'wiki', 'summaries')),
   ]);
+
+  // INVARIANT (v3.2.0): pageCount === entities + concepts + summaries + other,
+  // always, on every wiki — because all five numbers come from the same
+  // traversal. pageCount is EVERY `.md` file under wiki/ at any depth except
+  // the two app-managed ones (index.md, log.md) — byte-for-byte the set the
+  // pre-v3.2.0 recursive count produced, and the set the rest of the app
+  // treats as pages. (Deleting the domain also removes non-`.md` files and
+  // raw sources; the dialog counts PAGES, which is what it says.)
+  //
+  // It was briefly narrowed to entities + concepts + summaries, and that was
+  // wrong (v3.2.0 audit finding L1). `pageCount` is a published field with
+  // consumers that were not — and deliberately are not — being edited in this
+  // release, and the highest-stakes of them is the delete confirmation in
+  // src/public/app.js: on a wiki with a stray `Untitled.md`, a nested page and
+  // a symlinked page it promised to delete 4 pages and then deleted 7.
+  // Under-reporting how much a destructive confirm will destroy is a worse
+  // failure than the inconsistency the narrowing set out to fix.
+  //
+  // The thing the narrowing was actually fixing — the Domains card saying
+  // "7 pages — 2 entities, 1 concept, 1 summary" with an unexplained gap — is
+  // fixed by the BREAKDOWN carrying `other`, not by shrinking the total. With
+  // `other` present the four numbers reconcile exactly, so a renderer that
+  // shows the breakdown alongside the total can no longer produce a gap; one
+  // that shows only three of the four is now the bug, and a visible one.
+  //
+  // Callers wanting "real, resolvable, one-level-deep pages" have that: it is
+  // pageCounts.entities + .concepts + .summaries, named and separate.
+  const pageCount = pageCounts.entities + pageCounts.concepts
+    + pageCounts.summaries + pageCounts.other;
 
   return {
     slug,
@@ -1640,12 +1823,8 @@ export async function getDomainStats(slug) {
     conversationCount,
     lastIngestDate,
     // Additive (v3.1.x): per-type breakdown for the redesigned Domains view.
-    // pageCounts.entities + .concepts + .summaries should equal pageCount on
-    // any wiki that only ever used the three canonical folders (normalizePath
-    // enforces this at write time); they can legitimately diverge if a user
-    // manually dropped a stray .md file elsewhere under wiki/, since pageCount
-    // is recursive over the whole tree and these three are not.
-    pageCounts: { entities: entityCount, concepts: conceptCount, summaries: summaryCount },
+    // `other` is additive in v3.2.0 — see the invariant above.
+    pageCounts,
   };
 }
 

@@ -1,0 +1,483 @@
+/* View: Chat — owned by views/chat.js.
+   Everything here is scoped under chat-* class names (never a bare
+   element selector) so nothing here can leak onto another view's markup
+   — all view CSS files load globally regardless of which view is
+   currently mounted (see views/README.md). Shared shell classes reused
+   as-is: .btn/.btn-primary, .mono, .sidebar-title, .sidebar-hint,
+   .view-title/.view-body, .reader-body (content only — see chat.js's
+   "SHELL GAP #2" comment for why this view writes into that element). */
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+
+.chat-new-btn { width: 100%; }
+
+.chat-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-3);
+  display: flex;
+}
+.chat-search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px 0 30px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: var(--type-body-sm);
+}
+.chat-search-input::placeholder { color: var(--text-3); }
+.chat-search-input:focus-visible { box-shadow: var(--ring-focus); }
+
+.chat-conv-list { display: flex; flex-direction: column; gap: 1px; }
+.chat-sidebar-error {
+  font: var(--type-body-sm);
+  color: var(--danger-text);
+}
+
+.chat-conv-group-label {
+  font: var(--weight-medium) var(--text-xs)/1.6 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  margin: 10px 0 2px;
+}
+.chat-conv-group-label:first-child { margin-top: 2px; }
+
+.chat-conv-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-md);
+  padding-right: 4px;
+  transition: background var(--t-state);
+}
+.chat-conv-row:hover { background: var(--surface-hover); }
+.chat-conv-row.active { background: var(--surface-active); }
+.chat-conv-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.chat-conv-row-main {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.chat-conv-row.active .chat-conv-title { font-weight: var(--weight-medium); color: var(--text); }
+.chat-conv-title {
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-conv-meta {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin-top: 1px;
+}
+.chat-conv-delete {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  background: transparent;
+}
+.chat-conv-row:hover .chat-conv-delete { display: inline-flex; }
+.chat-conv-delete:hover { background: var(--surface-active); color: var(--danger-text); }
+
+.chat-drop-zone {
+  margin-top: 6px;
+  padding: 10px 11px;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-inset);
+  color: var(--text-3);
+  opacity: 0.7; /* inert in this shell — see the note below and chat.js's honest-disable comment */
+}
+.chat-drop-title {
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  margin-top: 6px;
+}
+.chat-drop-sub { font-size: var(--text-2xs); margin-top: 2px; }
+.chat-drop-inert { color: var(--text-faint); }
+.chat-drop-link {
+  color: var(--text-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Main: scope bar ─────────────────────────────────────────────────── */
+
+.chat-view {
+  /* Cancels .main-inner's own max-width/margin so the scope bar + composer
+     can span the full padded main column, while the thread's own message
+     column is narrower (chat-msg max-width below) — matches the spec's
+     "780px inner column, wider chrome" shape closely enough without
+     fighting the shared .main-inner rule. */
+  margin: -30px -28px -64px;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: column;
+  /* #main (the shared scroll container) is exactly one viewport tall
+     (see shell.css's #app-shell grid); with the negative margins above
+     cancelling .main-inner's own padding, this makes .chat-view fill it
+     too — so a short/empty thread still pushes the composer (margin-top:
+     auto on .chat-composer-wrap) to the bottom instead of leaving it
+     floating mid-page. */
+  min-height: 100vh;
+}
+
+.chat-scopebar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+  margin: 0 -28px;
+  padding-left: 28px;
+  padding-right: 28px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--canvas);
+  overflow-x: auto;
+}
+.chat-scope-eyebrow {
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  flex: none;
+}
+.chat-scope-pills { display: flex; gap: 6px; flex: none; }
+.chat-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font: var(--type-body-sm);
+  white-space: nowrap;
+  transition: background var(--t-state), color var(--t-state), border-color var(--t-state);
+}
+.chat-scope-pill:hover { background: var(--surface-hover); }
+.chat-scope-pill.active {
+  background: var(--accent-tint);
+  color: var(--accent-text);
+  border-color: var(--accent-border);
+}
+.chat-scope-spacer { flex: 1; }
+.chat-scope-count {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* ── Thread ───────────────────────────────────────────────────────────── */
+
+.chat-thread {
+  flex: 1;
+  padding: 24px 0 8px;
+}
+
+.chat-empty {
+  max-width: 60ch;
+  margin: 48px auto 0;
+  text-align: center;
+}
+.chat-empty-title {
+  font: var(--type-h2);
+  letter-spacing: var(--track-title);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.chat-empty-body {
+  font: var(--type-body);
+  color: var(--text-2);
+}
+
+.chat-msg {
+  max-width: 780px;
+  margin: 0 auto 24px;
+}
+.chat-msg-eyebrow {
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  margin-bottom: 6px;
+}
+.chat-msg-user { display: flex; flex-direction: column; align-items: flex-end; }
+.chat-bubble {
+  max-width: 80%;
+  padding: 12px 15px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.chat-msg-assistant { color: var(--text-2); }
+.chat-answer {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.chat-msg-error .chat-answer { color: var(--danger-text); }
+.chat-answer p { margin: 0 0 12px; }
+.chat-answer p:last-child { margin-bottom: 0; }
+.chat-answer ul, .chat-answer ol { margin: 0 0 12px; padding-left: 22px; }
+.chat-answer li { margin-bottom: 4px; }
+.chat-answer pre {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+.chat-answer code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--surface-raised);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+}
+.chat-answer pre code { background: none; padding: 0; }
+.chat-md-h {
+  font: var(--weight-semibold) var(--text-lg)/1.3 var(--font-sans);
+  color: var(--text);
+  margin: 4px 0 10px;
+}
+.chat-wikilink {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+}
+.chat-citation-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  color: var(--text-3);
+  cursor: pointer;
+  border-bottom: 1px dotted var(--border-strong);
+}
+.chat-citation-tag:hover { color: var(--text-2); }
+
+.chat-cite-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+.chat-cite-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  border: none;
+  cursor: pointer;
+}
+.chat-chip-entity  { background: var(--type-entity-tint);  color: var(--type-entity); }
+.chat-chip-concept { background: var(--type-concept-tint); color: var(--type-concept); }
+.chat-chip-summary { background: var(--type-summary-tint); color: var(--type-summary); }
+.chat-chip-plain   { background: var(--surface-raised); color: var(--text-2); cursor: default; }
+
+.chat-type-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+.chat-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font: var(--type-body-sm);
+}
+
+.chat-spinner {
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  display: inline-block;
+  animation: chat-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-spinner { animation: none; }
+}
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+
+/* ── Composer ─────────────────────────────────────────────────────────── */
+
+.chat-composer-wrap {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--canvas);
+  padding: 10px 0 20px;
+  margin-top: auto;
+}
+.chat-composer {
+  max-width: 780px;
+  margin: 0 auto;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  padding: 12px 12px 10px;
+  transition: border-color var(--t-state);
+}
+.chat-composer:focus-within { border-color: var(--accent-border); }
+
+.chat-input {
+  width: 100%;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.55;
+  font-family: var(--font-sans);
+  max-height: 220px;
+}
+.chat-input:focus { outline: none; }
+.chat-input::placeholder { color: var(--text-3); }
+.chat-input[disabled] { opacity: 0.6; }
+
+.chat-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.chat-composer-spacer { flex: 1; }
+.chat-cost-hint { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+
+.chat-ctrl-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  transition: background var(--t-state), color var(--t-state);
+}
+.chat-ctrl-btn:hover { background: var(--surface-hover); }
+.chat-ctrl-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.chat-send-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  transition: background var(--t-state), transform var(--dur-instant) var(--ease-out);
+}
+.chat-send-btn:hover { background: var(--accent-hover); }
+.chat-send-btn:active { transform: translateY(0.5px); }
+.chat-send-btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+.chat-foot-hint {
+  text-align: center;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* Dropdowns (model / length pickers) — open UPWARD from the composer,
+   matching the shipping app's chat composer precedent. */
+.chat-dd { position: relative; }
+.chat-dd-btn {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.chat-dd-btn:hover { background: var(--surface-hover); }
+.chat-dd-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+.chat-dd-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  min-width: 220px;
+  padding: 5px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-overlay);
+  box-shadow: 0 12px 32px -12px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  /* The base rule's `display: flex` has equal specificity to the UA's
+     `[hidden] { display: none }` and is declared later in the cascade, so
+     it silently wins and the `hidden` attribute this view toggles in JS
+     does nothing without this override (caught by browser testing — both
+     dropdowns rendered permanently open). */
+  gap: 1px;
+  z-index: 5;
+}
+.chat-dd-menu[hidden] { display: none; }
+.chat-dd-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--text);
+}
+.chat-dd-opt:hover { background: var(--surface-hover); }
+.chat-dd-opt.is-active { background: var(--accent-tint); }
+.chat-dd-opt.is-active .chat-dd-opt-title { color: var(--accent-text); }
+.chat-dd-opt-title { font-size: 13px; }
+.chat-dd-opt-desc { font-size: 10px; color: var(--text-3); }
+
+/* ── Reader body content ──────────────────────────────────────────────
+   The reader overlay itself (loading/error/tags/backlinks markup) is now
+   rendered by the shell (see app.js's openReader() content contract and
+   shell.css's `.reader-*` rules) — this view just hands over data, it no
+   longer writes into `.reader-body` directly. The one rule that stays
+   here: `.chat-md-h` is a class THIS view's own renderMarkdown() emits
+   into the `bodyHtml` it hands to openReader(), so the shell's generic
+   `.reader-body-text` wrapper doesn't know its name — this supplemental
+   margin tweak (only when a heading lands inside the reader, not inside a
+   message bubble) stays local to the file that owns `.chat-md-h`. */
+.reader-body-text .chat-md-h { margin-top: 18px; }

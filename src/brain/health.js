@@ -20,6 +20,10 @@ import path from 'path';
 import { wikiPath, injectSingleBacklink, injectRelatedLink } from './files.js';
 import { loadDismissed, filterDismissed } from './health-dismissed.js';
 import { writeFileAtomic } from './atomic-write.js';
+// Path chokepoint — see the comment above the fix handlers below. Imported,
+// not re-implemented: this module and wiki-read.js each had their own copy,
+// and only one of them ever got hardened (v3.2.0 audit finding H1).
+import { resolveInsideWiki } from './wiki-read.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 // Honorific prefixes — same set writePage's Pass A and the ingest validator
@@ -30,26 +34,127 @@ const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 const HONORIFIC_PREFIX_RE = /^(dr|mr|ms|mrs|prof|professor)\.?-/;
 
 /**
- * Resolve a relative wiki path against `wikiDir` and refuse anything that
- * escapes that root. Returns the absolute resolved path on success, or null
- * if the result lives outside `wikiDir` or contains an absolute / empty
- * component.
+ * `resolveInsideWiki(wikiDir, candidate)` — resolve a relative wiki path
+ * against `wikiDir` and refuse anything that escapes that root, returning
+ * the absolute path or null. It now lives in ./wiki-read.js and is IMPORTED
+ * above; the implementation and its full rationale are documented there.
  *
- * Hardening (v2.5.2+): the in-app Health UI feeds fixIssue with scan-derived
- * paths (always relative, always inside wiki/), but the new MCP fix_wiki_issue
- * tool accepts an LLM-crafted issue object — a confused or hostile model
- * could pass `{keep: "...", remove: "../../../tmp/victim"}` and the rm() call
- * inside fixCrossFolderDupe would run anywhere on disk where the file exists.
- * Every fix handler now routes its issue paths through this gate before
- * touching the filesystem.
+ * Why it moved (v3.2.0): this module and wiki-read.js each carried an
+ * identical, purely LEXICAL copy — `path.resolve` + `path.relative`, no
+ * `realpath`, no `lstat`. Both refused a path whose STRING escaped; neither
+ * checked what the path POINTED AT. That was reproduced as a read leak in
+ * wiki-read.js, but the consequence HERE is strictly worse, because these
+ * handlers are destructive: `fixCrossFolderDupe` calls `rm()` on
+ * `issue.remove` and `fixHyphenVariant` calls `rm()` on each duplicate.
+ * `rm` on a symlinked FILE only unlinks the link, but a symlinked
+ * DIRECTORY inside wiki/ (e.g. wiki/concepts → /elsewhere) makes
+ * `concepts/victim.md` resolve lexically in-bounds while the syscall lands
+ * on a real outside file — deletion, not just disclosure. The same applies
+ * to the `writeFileAtomic` calls: atomic-write.js lstats only the FINAL
+ * component, so it refuses a symlinked target file but cannot see a
+ * symlinked ancestor directory. Both shapes are now refused before any
+ * handler touches the filesystem.
+ *
+ * Hardening context this replaces (v2.5.2+): the in-app Health UI feeds
+ * fixIssue with scan-derived paths (always relative, always inside wiki/),
+ * but the MCP fix_wiki_issue tool accepts an LLM-crafted issue object — a
+ * confused or hostile model can pass `{keep: "...", remove:
+ * "../../../tmp/victim"}`. Routing every issue path through this gate before
+ * touching the filesystem is the requirement; only the implementation is now
+ * shared instead of duplicated.
+ *
+ * ── WHY `wikiFile()` BELOW EXISTS, AND WHY YOU MUST USE IT ────────────────
+ *
+ * The sentence above used to read "Every fix handler routes its issue paths
+ * through this gate". It was false when it was written, and it had been
+ * false since v2.5.2. THREE destructive handlers built their paths with a
+ * bare `path.join(wikiDir, folder, slug + '.md')` and never called the gate
+ * at all — `fixSemanticDuplicate` (which `rm()`s a file), `fixOrphanLink`
+ * and `applyOrphanRescue` (which both write into one). A fourth,
+ * `previewSemanticDuplicateMerge`, took `keepFolder` straight from the
+ * request body with no validation whatsoever, so a plain `"../../.."`
+ * returned the contents of an arbitrary file to the caller — no symlink
+ * required. All four were reproduced end-to-end before this fix.
+ *
+ * That is the lesson, not the four bugs: a rule enforced by "every handler
+ * remembers to call the gate" decays silently, and a docblock asserting the
+ * rule holds is what stops the next reviewer from checking. So the rule is
+ * now structural instead of remembered:
+ *
+ *   `wikiFile(wikiDir, ...segments)` is the ONLY way this module turns a
+ *   wiki-relative path into an absolute one. There is no remaining
+ *   `path.join(wikiDir, …)` in this file.
+ *
+ * WHAT THE GUARD ENFORCES, AND WHAT IT DOES NOT
+ *
+ * Read the second list as carefully as the first. Two earlier drafts of this
+ * comment overclaimed and were both falsified within a day: "every fix
+ * handler routes its issue paths through this gate" (false for four years,
+ * three handlers), then "a handler cannot now forget the gate" (defeated by
+ * `const base = wikiDir;` + concatenation, and again by a bare reassignment
+ * `if (!full) full = issue.sourceFile;`). A confident sentence here is what
+ * stops the next reviewer from checking, which is the whole failure mode this
+ * module's history is made of. So: limits are stated, not implied.
+ *
+ * ENFORCED — `scripts/test-wiki-page.js` §8c fails the build when health.js:
+ *   • calls `resolveInsideWiki` anywhere but inside `wikiFile`;
+ *   • gains a second `path.join`, or builds a path with `path.resolve`;
+ *   • passes an inline expression to a filesystem call instead of a name;
+ *   • BINDS a name that reaches a filesystem call to anything other than a
+ *     complete `wikiFile()` / `wikiPath()` call — checked across every
+ *     binding form: declaration, bare reassignment, compound assignment
+ *     (`+=`, `||=`, `??=`), destructuring (declared or assigned), `for…of`,
+ *     `catch` parameter and function parameter. A prefix is not enough:
+ *     `wikiFile(…) || issue.path` and `cond ? wikiFile(…) : issue.path` are
+ *     both rejected, because every branch must be a producer;
+ *   • uses a binding shape the checker does not recognise — unknown shapes
+ *     fail rather than being silently permitted, which is the property the
+ *     two earlier drafts lacked;
+ *   • binds a filesystem primitive to another name, or uses `import()`;
+ *   • adds an export, or an AUTO_FIXABLE type, with no escape test.
+ *
+ * NOT ENFORCED — known, accepted limits:
+ *   • It is NAME-SCOPED, not scope-aware: there is no JS parser in this
+ *     repo's dependencies. It cannot distinguish a path named `x` from an
+ *     unrelated local named `x` in another function. It is sound only because
+ *     it refuses names that are bound to both — so the residual cost is a
+ *     FALSE POSITIVE (a correctly-gated new handler that reuses an existing
+ *     name fails the build and must rename), never a false negative. That is
+ *     why the helper in `fixOrphanLink` binds `abs` and not `p`.
+ *   • It is SYNTACTIC and covers ONE file. It cannot prove containment in
+ *     general, and it says nothing about what another module does with a path
+ *     it is handed — which is why calls into `files.js` (`injectRelatedLink`,
+ *     `injectSingleBacklink`) are in the checked set: their ARGUMENT is
+ *     verified here, their behaviour is not.
+ *   • It cannot see through indirection it has not been told about. The
+ *     allow-list permits exactly one helper (`at()`), whose body is pinned by
+ *     a separate assertion so it cannot be widened by redefinition.
+ *
+ * Twenty-six bypass shapes were written against it and all twenty-six fail
+ * the suite; the last two found (`|| fallback` and a ternary) came from
+ * attacking the fix rather than re-running the one shape that was reported,
+ * and one negative result should never be read as "the guard is tight".
+ *
+ * The independent proof is §8b, which is behavioural rather than syntactic:
+ * real symlinks, real syscalls, and a byte-level snapshot of every file
+ * outside the wiki across every export. §8b and §8c fail for entirely
+ * different reasons, which is the property that actually matters.
  */
-function resolveInsideWiki(wikiDir, candidate) {
-  if (typeof candidate !== 'string' || !candidate) return null;
-  if (path.isAbsolute(candidate)) return null;
-  const resolved = path.resolve(wikiDir, candidate);
-  const rel = path.relative(wikiDir, resolved);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  return resolved;
+
+/**
+ * Resolve `segments` (a wiki-relative path, one segment per argument)
+ * against `wikiDir`, or return null if the result is not provably inside
+ * the wiki — lexically OR physically. The single path constructor for this
+ * module; see the block comment above.
+ *
+ * Returns null (never throws) so callers keep the "silent no-op on invalid
+ * input" behaviour every fix handler already had.
+ */
+function wikiFile(wikiDir, ...segments) {
+  for (const s of segments) {
+    if (typeof s !== 'string' || s === '') return null;
+  }
+  return resolveInsideWiki(wikiDir, segments.join('/'));
 }
 
 // ── Shared helpers (mirror those in files.js / repair-wiki.js) ──────────────
@@ -119,9 +224,40 @@ function mergeBulletSections(canonicalContent, duplicateContent) {
   return merged;
 }
 
-async function listMd(dir) {
+/**
+ * The `.md` filenames directly inside `wiki/<folder>` — the scan's page
+ * inventory for one canonical folder.
+ *
+ * Takes `(wikiDir, folder)` rather than a pre-joined directory so the only
+ * path construction happens through `wikiFile` (see the block comment
+ * above). If the folder itself is a symlink pointing outside the wiki, this
+ * returns [] instead of listing whatever is over there.
+ *
+ * That last point is v3.2.0 audit finding M4, and it is why the app used to
+ * contradict itself: with `wiki/summaries` symlinked out, `scanWiki` listed
+ * the outside pages and reported issues about them, while `getWikiPage`
+ * refused to open them and every Health fix silently no-opped
+ * (`{fixed: 0, total: 0}`) because the fix handlers that DID call the gate
+ * got null. The scan and the reader now agree on the same rule: a path that
+ * is not provably inside the wiki is not a page of this wiki.
+ *
+ * An individual symlinked FILE is filtered the same way — allowed when it
+ * points back inside the wiki (a legitimate in-wiki alias), refused when it
+ * escapes or dangles.
+ */
+async function listMd(wikiDir, folder) {
+  const dir = wikiFile(wikiDir, folder);
+  if (!dir) return [];
   try {
-    return (await readdir(dir)).filter(f => f.endsWith('.md'));
+    const entries = await readdir(dir, { withFileTypes: true });
+    const out = [];
+    for (const e of entries) {
+      if (!e.name.endsWith('.md')) continue;
+      if (e.isDirectory()) continue;                  // a *directory* named x.md is not a page
+      if (e.isSymbolicLink() && !wikiFile(wikiDir, folder, e.name)) continue;
+      out.push(e.name);
+    }
+    return out;
   } catch { return []; }
 }
 
@@ -133,14 +269,45 @@ function normKey(slug) {
     .toLowerCase();
 }
 
+/**
+ * Every `.md` file under `rootDir`, recursively — the working set for the
+ * domain-wide link rewrites (`fixSemanticDuplicate`, `applyBrokenLinkFixes`)
+ * and for the read-only counters.
+ *
+ * Two containment properties, both load-bearing because callers WRITE to
+ * and DELETE the paths this returns:
+ *
+ *   • Directories are descended only when the dirent is a real directory.
+ *     A symlinked directory is never followed, so every directory reached
+ *     is physically inside `rootDir` and cycles are impossible. (This was
+ *     already true — `Dirent.isDirectory()` is false for a symlink — but it
+ *     was incidental; it is now the stated contract.)
+ *
+ *   • Because of that, the only entry that can escape is a symlinked LEAF,
+ *     so only symlinked leaves pay for a containment check. A symlink
+ *     resolving back inside the wiki is kept; one escaping or dangling is
+ *     dropped, matching `listMd` and `getWikiPage`.
+ *
+ * `path.join(dir, e.name)` here is NOT a gate bypass: `dir` is already a
+ * verified-contained absolute path (it came from `rootDir` or from a real
+ * subdirectory of one), and the escaping shape — the symlinked leaf — is
+ * the one explicitly checked.
+ */
 async function walkMdFiles(rootDir) {
   const out = [];
   async function walk(dir) {
-    const entries = await readdir(dir, { withFileTypes: true });
+    let entries;
+    try { entries = await readdir(dir, { withFileTypes: true }); }
+    catch { return; }
     for (const e of entries) {
       const full = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(full);
-      else if (e.name.endsWith('.md')) out.push(full);
+      if (e.isDirectory()) { await walk(full); continue; }
+      if (!e.name.endsWith('.md')) continue;
+      if (e.isSymbolicLink()) {
+        const rel = path.relative(rootDir, full);
+        if (!wikiFile(rootDir, ...rel.split(path.sep))) continue;
+      }
+      out.push(full);
     }
   }
   if (existsSync(rootDir)) await walk(rootDir);
@@ -159,13 +326,9 @@ export async function scanWiki(domain) {
     throw new Error(`No wiki found for domain: ${domain}`);
   }
 
-  const entitiesDir  = path.join(wikiDir, 'entities');
-  const conceptsDir  = path.join(wikiDir, 'concepts');
-  const summariesDir = path.join(wikiDir, 'summaries');
-
-  const entityFiles  = await listMd(entitiesDir);
-  const conceptFiles = await listMd(conceptsDir);
-  const summaryFiles = await listMd(summariesDir);
+  const entityFiles  = await listMd(wikiDir, 'entities');
+  const conceptFiles = await listMd(wikiDir, 'concepts');
+  const summaryFiles = await listMd(wikiDir, 'summaries');
 
   // Slug sets (bare filename without .md)
   const entitySlugs  = new Set(entityFiles.map(f => f.slice(0, -3)));
@@ -302,7 +465,9 @@ export async function scanWiki(domain) {
   const missingBacklinks = [];
   for (const sf of summaryFiles) {
     const summarySlug = sf.slice(0, -3);
-    const summaryContent = await readFile(path.join(summariesDir, sf), 'utf8');
+    const summaryAbs = wikiFile(wikiDir, 'summaries', sf);
+    if (!summaryAbs) continue;
+    const summaryContent = await readFile(summaryAbs, 'utf8');
     const entityBullets = extractBulletsFromSection(summaryContent, 'Entities Mentioned');
     for (const bullet of entityBullets) {
       const m = bullet.match(/\[\[([^\]]+)\]\]/);
@@ -327,7 +492,9 @@ export async function scanWiki(domain) {
       }
       if (!targetRel) continue; // broken link — handled separately
 
-      const targetContent = await readFile(path.join(wikiDir, targetRel), 'utf8');
+      const targetAbs = wikiFile(wikiDir, targetRel);
+      if (!targetAbs) continue;
+      const targetContent = await readFile(targetAbs, 'utf8');
       const related = extractBulletsFromSection(targetContent, 'Related');
       const hasBacklink = related.some(b => {
         const lm = b.match(/\[\[([^\]]+)\]\]/);
@@ -405,7 +572,7 @@ export const AUTO_FIXABLE = new Set([
 
 async function fixBrokenLink(wikiDir, issue) {
   if (!issue.suggestedTarget) return false;
-  const full = resolveInsideWiki(wikiDir, issue.sourceFile);
+  const full = wikiFile(wikiDir, issue.sourceFile);
   if (!full || !existsSync(full)) return false;
   const before = await readFile(full, 'utf8');
   const esc = issue.linkText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -419,7 +586,7 @@ async function fixBrokenLink(wikiDir, issue) {
 }
 
 async function fixFolderPrefixLink(wikiDir, issue) {
-  const full = resolveInsideWiki(wikiDir, issue.sourceFile);
+  const full = wikiFile(wikiDir, issue.sourceFile);
   if (!full || !existsSync(full)) return false;
   let content = await readFile(full, 'utf8');
   const before = content;
@@ -430,8 +597,8 @@ async function fixFolderPrefixLink(wikiDir, issue) {
 }
 
 async function fixCrossFolderDupe(wikiDir, issue) {
-  const keepPath = resolveInsideWiki(wikiDir, issue.keep);
-  const removePath = resolveInsideWiki(wikiDir, issue.remove);
+  const keepPath = wikiFile(wikiDir, issue.keep);
+  const removePath = wikiFile(wikiDir, issue.remove);
   if (!keepPath || !removePath) return false;
   if (!existsSync(keepPath) || !existsSync(removePath)) return false;
 
@@ -467,17 +634,16 @@ async function fixHyphenVariant(wikiDir, issue) {
     !s.includes('\\') &&
     SLUG_RE.test(s);
 
-  const entitiesDir = path.join(wikiDir, 'entities');
   const canonical = issue.suggestedSlug;
   if (!isSafeSlug(canonical)) return false;
-  const canonPath = resolveInsideWiki(wikiDir, `entities/${canonical}.md`);
+  const canonPath = wikiFile(wikiDir, 'entities', `${canonical}.md`);
   if (!canonPath || !existsSync(canonPath)) return false;
 
   let canonContent = await readFile(canonPath, 'utf8');
   for (const slug of (issue.files || [])) {
     if (slug === canonical) continue;
     if (!isSafeSlug(slug)) continue;
-    const dupPath = resolveInsideWiki(wikiDir, `entities/${slug}.md`);
+    const dupPath = wikiFile(wikiDir, 'entities', `${slug}.md`);
     if (!dupPath || !existsSync(dupPath)) continue;
     const dupContent = await readFile(dupPath, 'utf8');
     canonContent = mergeBulletSections(canonContent, dupContent);
@@ -496,7 +662,9 @@ async function fixHyphenVariant(wikiDir, issue) {
  * into the target's Related section via `injectRelatedLink`.
  *
  * Defense in depth:
- *   1. `targetPath` must resolve inside wikiDir (no path traversal).
+ *   1. `targetPath` must resolve inside wikiDir (no path traversal, and no
+ *      symlink escape — the docblock claimed this before v3.2.0 while the
+ *      code built the path with a bare `path.join`; see `wikiFile` above).
  *   2. The orphan slug must actually exist on disk in entities/ or concepts/.
  *   3. Target must be an entities/ or concepts/ file — never a summary
  *      (summaries are not valid orphan-rescue targets; see docs/ai-health.md).
@@ -508,22 +676,24 @@ async function fixOrphanLink(wikiDir, issue) {
   const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
   if (!SLUG_RE.test(orphanSlug) || !SLUG_RE.test(targetSlug)) return false;
 
-  const entitiesDir = path.join(wikiDir, 'entities');
-  const conceptsDir = path.join(wikiDir, 'concepts');
+  // `abs`, not `p`: a name that reaches a syscall must be single-purpose in
+  // this module. The §8c provenance guard is name-scoped, not scope-aware —
+  // it cannot tell this `p` from the `p` used for a plan entry in
+  // applyOrphanRescue or the `.map(p => …)` callback in
+  // findSemanticCandidatePairs. Rather than teach the guard scoping (which
+  // needs a parser this repo does not have), the ambiguity is removed here,
+  // and §8c enforces that: any binding of a path-carrying name to a
+  // non-path fails the build.
+  const at = (folder, slug) => {
+    const abs = wikiFile(wikiDir, folder, slug + '.md');
+    return abs && existsSync(abs) ? abs : null;
+  };
 
   // Defence 1: orphan must exist on disk (entity or concept)
-  const orphanExists =
-    existsSync(path.join(entitiesDir, orphanSlug + '.md')) ||
-    existsSync(path.join(conceptsDir, orphanSlug + '.md'));
-  if (!orphanExists) return false;
+  if (!at('entities', orphanSlug) && !at('concepts', orphanSlug)) return false;
 
   // Defence 2: target must exist and be an entity or concept (never a summary)
-  let targetPath = null;
-  if (existsSync(path.join(entitiesDir, targetSlug + '.md'))) {
-    targetPath = path.join(entitiesDir, targetSlug + '.md');
-  } else if (existsSync(path.join(conceptsDir, targetSlug + '.md'))) {
-    targetPath = path.join(conceptsDir, targetSlug + '.md');
-  }
+  const targetPath = at('entities', targetSlug) || at('concepts', targetSlug);
   if (!targetPath) return false;
 
   // Defence 3: don't link a page to itself
@@ -538,8 +708,8 @@ async function fixMissingBacklink(wikiDir, issue) {
   // bullet in the summary's "Entities Mentioned" section and can land the
   // backlink in a hyphen-variant file (e.g. e-mail.md when the scan pointed
   // at email.md), leaving the flagged file unchanged and the issue unfixed.
-  const entityPath = resolveInsideWiki(wikiDir, issue.entity);
-  const summaryPath = resolveInsideWiki(wikiDir, issue.summary);
+  const entityPath = wikiFile(wikiDir, issue.entity);
+  const summaryPath = wikiFile(wikiDir, issue.summary);
   if (!entityPath || !summaryPath) return false;
   if (!existsSync(entityPath) || !existsSync(summaryPath)) return false;
 
@@ -710,8 +880,8 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
-  const entityFiles  = await listMd(path.join(wikiDir, 'entities'));
-  const conceptFiles = await listMd(path.join(wikiDir, 'concepts'));
+  const entityFiles  = await listMd(wikiDir, 'entities');
+  const conceptFiles = await listMd(wikiDir, 'concepts');
 
   const pageCount = entityFiles.length + conceptFiles.length;
   if (pageCount > SEMANTIC_DUPE_MAX_DOMAIN_PAGES) {
@@ -817,6 +987,45 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
  * `[[folder/removeSlug]]` — used for the merge preview-diff ("14 links will
  * be rewritten"). Does not modify anything.
  */
+/**
+ * Validate a semanticDupe issue and resolve both pages to absolute paths, or
+ * return null. Shared by `previewSemanticDuplicateMerge` and
+ * `fixSemanticDuplicate`.
+ *
+ * It is shared BECAUSE it drifted (v3.2.0 audit): the two functions carried
+ * two different ideas of what a valid pair was. `fixSemanticDuplicate` had
+ * the slug regex and the entities/concepts folder allow-list;
+ * `previewSemanticDuplicateMerge` had NEITHER — it checked only that the
+ * four fields were truthy and then joined them straight onto wikiDir. Its
+ * `issue` comes verbatim from the POST body of
+ * `/api/health/:domain/semantic-dupes/preview`, so `keepFolder: "../../.."`
+ * read an arbitrary file on disk and returned 4 KB of it to the caller as
+ * `mergedPreview`. Reproduced before the fix; no symlink needed.
+ *
+ * Preview and apply must agree on what they are willing to touch, so there
+ * is now exactly one definition of that.
+ */
+function resolveSemanticDupePair(wikiDir, issue) {
+  if (!issue || typeof issue !== 'object') return null;
+  const { keepSlug, keepFolder, removeSlug, removeFolder } = issue;
+
+  // Periods are allowed inside a slug ("dr.-tali-rezun"); a leading one is
+  // not, so ".." can never satisfy this.
+  const SLUG_RE = /^[a-z0-9][a-z0-9.-]*$/i;
+  if (typeof keepSlug !== 'string' || typeof removeSlug !== 'string') return null;
+  if (!SLUG_RE.test(keepSlug) || !SLUG_RE.test(removeSlug)) return null;
+  if (keepSlug.includes('/') || removeSlug.includes('/')) return null;
+  if (!['entities', 'concepts'].includes(keepFolder)) return null;   // never summaries
+  if (!['entities', 'concepts'].includes(removeFolder)) return null;
+  if (keepSlug === removeSlug && keepFolder === removeFolder) return null;
+
+  const keepPath = wikiFile(wikiDir, keepFolder, keepSlug + '.md');
+  const removePath = wikiFile(wikiDir, removeFolder, removeSlug + '.md');
+  if (!keepPath || !removePath) return null;
+
+  return { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath };
+}
+
 export async function countLinksToSlug(domain, slug) {
   const wikiDir = wikiPath(domain);
   const allFiles = await walkMdFiles(wikiDir);
@@ -845,13 +1054,20 @@ export async function countLinksToSlug(domain, slug) {
  * Runs no writes. Returns a structured object the UI renders.
  */
 export async function previewSemanticDuplicateMerge(domain, issue) {
-  const { keepSlug, keepFolder, removeSlug, removeFolder } = issue || {};
-  if (!keepSlug || !keepFolder || !removeSlug || !removeFolder) {
-    throw new Error('Invalid semanticDupe issue: keep/remove slug+folder are required');
-  }
   const wikiDir = wikiPath(domain);
-  const keepPath = path.join(wikiDir, keepFolder, keepSlug + '.md');
-  const removePath = path.join(wikiDir, removeFolder, removeSlug + '.md');
+  const resolved = resolveSemanticDupePair(wikiDir, issue);
+  if (!resolved) {
+    throw new Error(
+      'Invalid semanticDupe issue: keep/remove must each name an entities/ or ' +
+      'concepts/ page by slug, inside this domain\'s wiki folder.'
+    );
+  }
+  // Destructure EVERY field the body below uses. `removeSlug` drives the
+  // link-rewrite count further down; omitting it made this function throw
+  // ReferenceError on every VALID pair, while all five tests passed invalid
+  // input and asserted a throw — which a ReferenceError satisfies. The
+  // positive-path assertions in test-wiki-page.js §8d exist because of that.
+  const { keepPath, removePath, removeSlug } = resolved;
   if (!existsSync(keepPath) || !existsSync(removePath)) {
     throw new Error('Both pages must exist to preview a merge');
   }
@@ -906,17 +1122,9 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
  * matches the pattern used by fixOrphanLink).
  */
 async function fixSemanticDuplicate(wikiDir, issue) {
-  if (!issue) return false;
-  const { keepSlug, keepFolder, removeSlug, removeFolder } = issue;
-  const SLUG_RE = /^[a-z0-9][a-z0-9.-]*$/i;
-  if (!SLUG_RE.test(keepSlug) || !SLUG_RE.test(removeSlug)) return false;
-  if (keepSlug === removeSlug && keepFolder === removeFolder) return false;
-  if (keepFolder === 'summaries' || removeFolder === 'summaries') return false;
-  if (!['entities', 'concepts'].includes(keepFolder)) return false;
-  if (!['entities', 'concepts'].includes(removeFolder)) return false;
-
-  const keepPath = path.join(wikiDir, keepFolder, keepSlug + '.md');
-  const removePath = path.join(wikiDir, removeFolder, removeSlug + '.md');
+  const resolved = resolveSemanticDupePair(wikiDir, issue);
+  if (!resolved) return false;
+  const { keepSlug, keepFolder, keepPath, removeSlug, removePath } = resolved;
   if (!existsSync(keepPath) || !existsSync(removePath)) return false;
 
   // Step 2: merge bodies
@@ -1046,10 +1254,9 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
-  const listSlugs = async (d) => {
-    try { return (await readdir(path.join(wikiDir, d))).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)); }
-    catch { return []; }
-  };
+  // Reuses the gated `listMd` rather than its own readdir: the two used to be
+  // written out separately, and only one of them was containment-checked.
+  const listSlugs = async (d) => (await listMd(wikiDir, d)).map(f => f.slice(0, -3));
   const [ents, cons, sums] = await Promise.all([listSlugs('entities'), listSlugs('concepts'), listSlugs('summaries')]);
   const valid = new Set([...ents, ...cons, ...sums.map(s => `summaries/${s}`)]);
 
@@ -1119,10 +1326,9 @@ export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
-  const listSlugs = async (d) => {
-    try { return (await readdir(path.join(wikiDir, d))).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)); }
-    catch { return []; }
-  };
+  // Reuses the gated `listMd` rather than its own readdir: the two used to be
+  // written out separately, and only one of them was containment-checked.
+  const listSlugs = async (d) => (await listMd(wikiDir, d)).map(f => f.slice(0, -3));
   const [ents, cons] = await Promise.all([listSlugs('entities'), listSlugs('concepts')]);
   const validEnt = new Set(ents), validCon = new Set(cons);
 
@@ -1155,12 +1361,14 @@ export async function applyOrphanRescue(domain, plan, onProgress = () => {}) {
     ) {
       seen.add(dedupKey);
       const folder = validEnt.has(target) ? 'entities' : 'concepts';
-      const targetPath = path.join(wikiDir, folder, target + '.md');
+      const targetPath = wikiFile(wikiDir, folder, target + '.md');
       // Sanitise the description: collapse whitespace and remove `[[`/`]]` so it
       // can never fabricate a wikilink inside the injected bullet.
       const desc = String((p && p.description) || '').replace(/\[\[|\]\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 140);
-      try { ok = await injectRelatedLink(targetPath, orphanSlug, desc); }
-      catch { ok = false; }
+      if (targetPath) {
+        try { ok = await injectRelatedLink(targetPath, orphanSlug, desc); }
+        catch { ok = false; }
+      }
     }
     if (ok) rescued++; else skipped++;
     if (processed % 25 === 0) { try { onProgress({ done: processed, total }); } catch { /* */ } }

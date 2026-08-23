@@ -2,6 +2,12 @@
    Everything here is plain CSS built on the token custom properties copied
    into tokens/*.css. Nothing in this file hardcodes a color, size, radius
    or duration that a token already names.
+
+   This file holds ONLY rules shared across views: rail, contextual
+   sidebar shell, main column grid, the reader overlay, and generic UI
+   atoms (buttons, utilities). Anything that styles markup only one
+   view's stub renders lives in that view's own views/<name>.css instead
+   — see views/README.md before adding a new shared rule here.
    ────────────────────────────────────────────────────────────────────── */
 
 /* README specifies --sidebar-w: 248px in tokens/space.css, but every actual
@@ -156,20 +162,8 @@ body {
   color: var(--text-3);
 }
 
-.sidebar-section-list {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.sidebar-section-row {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 8px 11px;
-  border-radius: var(--radius-md);
-}
-.sidebar-section-row .row-label { font: var(--type-label); color: var(--text); }
-.sidebar-section-row .row-hint { font: var(--type-mono); font-size: var(--text-2xs); color: var(--text-3); }
+/* .sidebar-section-list / .sidebar-section-row moved to
+   views/settings.css — Settings is the only view that renders them. */
 
 /* ── Main column ─────────────────────────────────────────────────────── */
 
@@ -225,12 +219,46 @@ body {
 }
 .empty-card .empty-action { margin-top: 6px; }
 
-.demo-row {
+/* Shown by app.js's navigate() in place of a view whose onEnter threw
+   (M3 fix) — shell-owned rather than a views/*.css rule because it can
+   render for ANY view, including ones whose own stylesheet may not be
+   what's broken. */
+.mount-error-card {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 14px;
+  padding: 22px 24px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--danger);
+  background: var(--danger-tint);
 }
+.mount-error-card .mount-error-title {
+  font: var(--type-h3);
+  color: var(--danger-text);
+}
+.mount-error-card .mount-error-body {
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  max-width: 60ch;
+}
+.mount-error-card .mount-error-detail {
+  width: 100%;
+  max-width: 68ch;
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font: var(--type-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* .demo-row moved to views/chat.css — only the Chat stub renders it. */
 
 /* ── Buttons (subset of the Button component's variants) ──────────────── */
 
@@ -273,32 +301,38 @@ body {
 }
 .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
 
-/* ── Settings section list (stub) ──────────────────────────────────────── */
-
-.settings-section-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.settings-section-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 4px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.settings-section-item:last-child { border-bottom: none; }
-.settings-section-item .s-name { font: var(--type-label); color: var(--text); }
-.settings-section-item .s-hint { font: var(--type-body-sm); color: var(--text-3); }
+/* .settings-section-grid / .settings-section-item moved to
+   views/settings.css. */
 
 /* ── Reader overlay ─────────────────────────────────────────────────────
    Covers only the main column (never the rail or sidebar), per spec: "the
-   rail and sidebar stay live and clickable." Mounted inside #main so its
-   `position: absolute; inset: 0` is relative to that column, not the page. */
+   rail and sidebar stay live and clickable."
+
+   DEFECT FIX (was `position: absolute; inset: 0` inside #main): #main is
+   BOTH the containing block for that absolute positioning AND the element
+   every view scrolls (chat.js scrolls it to keep the latest message in
+   view — that's real, needed behaviour, not something to change). Per CSS,
+   an absolutely-positioned box scrolls along with the rest of its
+   containing block's content, so opening the reader while #main was
+   scrolled rendered the panel offset by the scroll amount (reproduced:
+   panel top -64px at scrollTop 64px).
+
+   Fix: position the scrim relative to the VIEWPORT instead (`position:
+   fixed`), clipped to exactly the main column's screen region via the
+   same grid geometry #app-shell already uses (`60px` rail + the sidebar
+   width token) rather than a JS-measured rect — this is pure CSS, doesn't
+   care what #main's scrollTop is, and doesn't require moving which
+   element chat.js (or any other view) scrolls. `.main` has no transform/
+   filter, so `position: fixed` here is genuinely viewport-relative, not
+   re-captured by an ancestor — if `.main` ever gains one, this needs to
+   move to a non-transformed ancestor instead. */
 
 .reader-scrim {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: calc(60px + var(--app-sidebar-w));
+  right: 0;
   z-index: 40;
   background: var(--scrim, rgba(5,5,10,0.68));
   backdrop-filter: blur(6px);
@@ -382,47 +416,85 @@ body {
   color: var(--text);
   margin-bottom: 12px;
 }
-.reader-body .reader-note {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: var(--radius-full);
-  background: var(--accent-tint);
-  color: var(--accent-text);
-  border: 1px solid var(--accent-border);
-  font: var(--weight-medium) var(--text-2xs)/1.6 var(--font-mono);
-  letter-spacing: var(--track-mono);
-  margin-bottom: 16px;
-}
 .reader-body p {
   font: var(--type-body);
   color: var(--text-2);
   margin-bottom: 14px;
 }
 
-/* ── Model picker (demo) ────────────────────────────────────────────── */
+/* ── Reader BODY CONTENT (defect 2 — moved here from views/chat.css,
+   generalised: this is what openReader()'s content contract renders, so it
+   belongs to the shell, not to whichever view happened to write it first).
+   Renamed chat-reader-* / chat-backlink-* -> reader-* / reader-backlink-*.
+   `.chat-md-h` (a heading class chat.js's own markdown renderer emits
+   inside `bodyHtml`) is deliberately NOT referenced here — that class is
+   chat.js's own content detail, not the shell's; chat.css carries the one
+   supplemental rule for it (extra margin when nested in `.reader-body-text`)
+   so this file doesn't need to know chat's heading-class name. ────────── */
 
-.model-picker-demo {
-  margin-top: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  max-width: 360px;
+.reader-loading, .reader-error {
+  font: var(--type-body-sm);
+  color: var(--text-3);
 }
-.model-picker-demo .mp-row {
+.reader-error { color: var(--danger-text); display: flex; align-items: center; gap: 6px; }
+.reader-readonly-note {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: var(--type-body-sm);
+  color: var(--attention-text);
+  background: var(--attention-tint);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  padding: 6px 9px;
+  margin-bottom: 12px;
+}
+.reader-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 18px; }
+.reader-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  border: none;
+  cursor: default;
+}
+.reader-chip-entity  { background: var(--type-entity-tint);  color: var(--type-entity); }
+.reader-chip-concept { background: var(--type-concept-tint); color: var(--type-concept); }
+.reader-chip-summary { background: var(--type-summary-tint); color: var(--type-summary); }
+.reader-chip-plain   { background: var(--surface-raised); color: var(--text-2); }
+.reader-type-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.reader-body-text { font: var(--type-body); color: var(--text-2); }
+.reader-body-text p { margin: 0 0 14px; }
+.reader-body-text ul, .reader-body-text ol { margin: 0 0 14px; padding-left: 22px; }
+.reader-body-text li { margin-bottom: 6px; }
+.reader-backlinks-head {
+  font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  margin: 22px 0 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.reader-empty-note { font: var(--type-body-sm); color: var(--text-3); }
+.reader-backlinks { display: flex; flex-direction: column; gap: 1px; }
+.reader-backlink-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 6px;
-  border-radius: var(--radius-sm);
-  font: var(--type-body-sm);
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
   color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
 }
-.model-picker-demo .mp-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex: none;
-}
+.reader-backlink-row:hover { background: var(--surface-hover); color: var(--text); }
+.reader-backlink-slug { font-size: 12px; }
 
 /* ── Utility ─────────────────────────────────────────────────────────── */
 
