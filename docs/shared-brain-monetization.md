@@ -311,6 +311,23 @@ A SaaS company with deep domain knowledge (e.g. cybersecurity, e-commerce optimi
 
 > ⚠ This section is operational advice, NOT legal advice. Consult a lawyer in your jurisdiction for anything binding.
 
+### Software licensing — yes, you may charge for access
+
+Charging for access to a Shared Brain you run is explicitly permitted, and no licence fee is owed to The Curator for doing it.
+
+The Curator is MIT-licensed with one exception: ten Shared Brain **backend** files are source-available under the [Curator Enterprise License](../LICENSES/LICENSE-ENTERPRISE.txt) (listed by exact path in [`LICENSES/ENTERPRISE-FILES.txt`](../LICENSES/ENTERPRISE-FILES.txt)). Two clauses cover everything on this page:
+
+- **§3.1 — the GitHub-backed Shared Brain is free forever**, for everyone, organizations included. Every pattern in this document runs on the GitHub backend, so every pattern in this document is permanently free to operate — paying subscribers and all.
+- **§3.3 — the grace clause.** Even outside §3.1, organizational production use of *this release* is permitted at no charge, permanently, because Curator Enterprise license keys do not exist and cannot be purchased. That grant does not lapse when keys appear; a later release may drop the clause, but the release you already have keeps it.
+
+Two more clauses matter only if you plan to build *on* the code rather than just run it:
+
+- You may not distribute or sell those ten files as a standalone or competing product (§4.2). Selling **access to a brain** is not that; selling **a rebranded Curator** is. See the branding question in §9.
+- The name and logo are not licensed to you (§8), under either licence.
+
+Each release's enterprise-licensed files convert to the MIT License two years after that release is published (§5), and nothing is ever restricted retroactively — a release you already have keeps the terms it shipped under (§6).
+
+
 ### IP modes
 
 Pick the right `data_handling_terms` at brain setup ([see compliance §3](shared-brain-compliance.md#3--copyright--ip--two-modes)):
@@ -377,7 +394,15 @@ Each contributor needs their own GitHub account and their own PAT. To use the sa
 
 **What if I want to brand the experience more?**
 
-The Curator app is open source — you can fork it and white-label, though for v1 most successful operators just use the official app with clear branding on their landing page ("To access this brain you'll use The Curator, a free open-source app — install it [here]").
+Brand your landing page, your onboarding email, and the brain itself — that is where almost all of the perceived brand lives, and it costs nothing. Most successful operators do exactly this, using the official app with clear branding around it ("To access this brain you'll use The Curator, a free open-source app — install it [here]").
+
+Forking is a separate question, and the answer is more nuanced than "it's MIT":
+
+- Most of the app **is** MIT, so a private fork you run yourself is fine.
+- The ten Shared Brain backend files are under the [Curator Enterprise License](../LICENSES/LICENSE-ENTERPRISE.txt), which prohibits distributing or selling them as a standalone or competing product (§4.2). A white-labelled Curator handed to your buyers as your own product falls on the wrong side of that line.
+- "The Curator" name and logo are not licensed to you under either licence (§8). A distributed fork needs its own name; describing it as "based on The Curator" is fine.
+
+If you have a white-label case that seems reasonable, ask — [open an issue](https://github.com/talirezun/the-curator/issues). The licence exists to stop a competing product, not to stop you working.
 
 ---
 
@@ -401,3 +426,4 @@ The Curator app is open source — you can fork it and white-label, though for v
 - [Admin Operations](shared-brain-admin.md) — synthesis cadence, revocation, contributor management
 - [Compliance Reference](shared-brain-compliance.md) — GDPR, IP, EU residency
 - [Use Cases](use-cases.md) — cohort and team patterns this builds on
+- [Curator Enterprise License](../LICENSES/LICENSE-ENTERPRISE.txt) and [the file list it covers](../LICENSES/ENTERPRISE-FILES.txt) — what you may and may not do with the code itself

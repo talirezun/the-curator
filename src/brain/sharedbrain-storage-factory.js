@@ -1,3 +1,10 @@
+// This file is licensed under the Curator Enterprise License — NOT MIT.
+// Free for personal, educational, evaluation, development and testing use,
+// and for production use of the GitHub-backed Shared Brain (free forever).
+// Other organizational production use will require a license key once keys
+// exist — until then it is free too (grace clause). Each release's version of
+// this file converts to MIT two years after that release was published.
+// See LICENSES/LICENSE-ENTERPRISE.txt and LICENSES/ENTERPRISE-FILES.txt.
 /**
  * Shared Brain — Storage Adapter Factory
  *

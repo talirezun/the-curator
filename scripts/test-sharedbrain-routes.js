@@ -3,8 +3,8 @@
  * Shared Brain — Phase 4A Battle Test (HTTP routes)
  *
  * Spawns the real Curator server on an isolated port (3334, not the
- * default 3333) with DOMAINS_PATH pointed at a /tmp workspace, then
- * exercises every /api/sharedbrain/* endpoint over real HTTP:
+ * default 3333), then exercises every /api/sharedbrain/* endpoint over
+ * real HTTP:
  *
  *   - feature-flag gate (404 when disabled, 200 when enabled)
  *   - list / save / delete connection CRUD
@@ -17,23 +17,46 @@
  *   - validate-pat against live GitHub IF env vars present (else skipped
  *     with note — same gate pattern as test-sharedbrain-github-live.js)
  *
- * Isolation:
- *   - Spawns server with PORT=3334 + DOMAINS_PATH=/tmp/.../ + CURATOR_NO_OPEN=1.
- *     The running production Curator on 3333 is unaffected.
- *   - Backs up + restores .curator-config.json and .sharedbrain-config.json
- *     in the worktree root (the test creates them; we clean up before
- *     exiting so the worktree returns to its initial state).
+ * Isolation (v3.1.0+ — migrated off the old backup/restore workaround):
+ *
+ *   The spawned server is given CURATOR_TEST_USER_DATA_DIR pointed at a
+ *   fresh tempdir. paths.js (src/brain/paths.js) checks that env var BEFORE
+ *   bundle/repo detection and BEFORE config, so the child resolves ALL FOUR
+ *   credential locations — .curator-config.json, .sync-config.json (a live
+ *   GitHub PAT if the maintainer has Personal Sync set up),
+ *   .sharedbrain-config.json, and .knowledge-git — to the tempdir,
+ *   unconditionally, regardless of what the maintainer's real files
+ *   contain. CURATOR_TEST_DOMAINS_DIR additionally pins domains/ to its own
+ *   tempdir as a second, independent seam.
+ *
+ *   Before v3.1.0 this suite isolated ONLY CURATOR_TEST_DOMAINS_DIR (i.e.
+ *   domains/ content) — the spawned server still resolved the maintainer's
+ *   REAL .curator-config.json / .sync-config.json / .sharedbrain-config.json,
+ *   and the suite worked around that by copying those files aside and
+ *   restoring them afterwards. That was a crash-recovery mitigation, not
+ *   isolation: a stray Sync call during a test run could have pushed to the
+ *   maintainer's real GitHub repository. See CONTRIBUTING.md
+ *   "Test seams: domains vs. user data" for the full rationale.
+ *
+ *   Because the child now never touches the real credential files, this
+ *   suite no longer copies/deletes/restores them. Instead it fingerprints
+ *   the four real files (.curator-config.json, .sync-config.json,
+ *   .sharedbrain-config.json, .env) once before the run and once after, and
+ *   asserts byte-identity — see "Real credential-file isolation guard"
+ *   below. That is a permanent regression guard: if isolation is ever
+ *   silently broken, this suite fails loudly instead of quietly touching
+ *   real credentials again.
  *
  * Run with:  node scripts/test-sharedbrain-routes.js
  * Exit code 0 if green, non-zero on failure.
  */
 
 import { spawn } from 'child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, unlinkSync, copyFileSync, chmodSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { LocalFolderStorageAdapter } from '../src/brain/sharedbrain-local-adapter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,77 +91,110 @@ async function request(method, pathOrFull, body) {
   return { status: r.status, body: parsed };
 }
 
-// ── Backup pre-existing config files (we restore at the end) ────────────
+// ── Real credential-file isolation guard ─────────────────────────────────
+//
+// These are the maintainer's REAL files at the repo root — the ones the
+// spawned server must NEVER read or write, now that it's given its own
+// isolated user-data dir. We only ever READ these (to fingerprint), never
+// write/delete/restore them — see the header comment for why that's a
+// deliberate change from the old backup/restore approach.
+const REAL_CREDENTIAL_FILES = [
+  '.curator-config.json',
+  '.sync-config.json',
+  '.sharedbrain-config.json',
+  '.env',
+].map(rel => path.join(PROJECT_ROOT, rel));
 
-// v3.0.6 (plan L21): the backup lives ON DISK, not in process memory. The
-// old in-memory Map meant a crash (SIGKILL, OOM, power loss) between the
-// unlink below and restoreConfigs() permanently wiped the developer's real
-// API keys. Now each config is COPIED to `<file>.pre-test-backup` first;
-// if the process dies mid-run, the backup survives on disk and the next
-// run (or the developer) restores it. Mode preserved at 0600 (credentials).
-const configPaths = [
-  path.join(PROJECT_ROOT, '.curator-config.json'),
-  path.join(PROJECT_ROOT, '.sharedbrain-config.json'),
-];
-const backupPath = (p) => `${p}.pre-test-backup`;
-
-// If a previous run crashed, its on-disk backups are still here — restore
-// them FIRST so this run starts from the developer's true config state.
-for (const p of configPaths) {
-  if (existsSync(backupPath(p))) {
-    copyFileSync(backupPath(p), p);
-    chmodSync(p, 0o600);
-    unlinkSync(backupPath(p));
-    console.log(`  (recovered ${path.basename(p)} from a previous crashed run's backup)`);
-  }
+function fingerprintRealFiles() {
+  return REAL_CREDENTIAL_FILES.map(p => {
+    if (!existsSync(p)) return { path: p, exists: false };
+    const buf = readFileSync(p);
+    const st = statSync(p);
+    return {
+      path: p,
+      exists: true,
+      size: buf.length,
+      mtimeMs: st.mtimeMs,
+      sha256: createHash('sha256').update(buf).digest('hex'),
+    };
+  });
 }
 
-const hadOriginal = new Map();
-for (const p of configPaths) {
-  if (existsSync(p)) {
-    copyFileSync(p, backupPath(p));
-    chmodSync(backupPath(p), 0o600);
-    hadOriginal.set(p, true);
-  } else {
-    hadOriginal.set(p, false);
-  }
+// Deliberately CONTENT-based, not mtime-based. The maintainer runs his real
+// Curator app continuously on :3333, and ordinary use of that app (saving
+// Settings, switching the active provider, connecting/disconnecting an API
+// key, changing the default domain) rewrites .curator-config.json — a
+// same-bytes-or-not rewrite that has nothing to do with THIS suite's
+// isolation. This suite can run for several minutes; if mtime were part of
+// the equality check, the maintainer merely touching Settings mid-run would
+// flip mtimeMs and fail this guard with a false accusation aimed at the
+// wrong subsystem (isolation) for an unrelated, harmless reason (a
+// coincidental live-app write). The property that actually matters is
+// whether the real file's CONTENT changed — sha256 + size (+ existence)
+// prove that directly. mtimeMs is still captured and surfaced in the
+// failure diagnostic (it's genuinely useful context when something DOES
+// fail), it just must never be load-bearing for pass/fail. Do not add it
+// back to this comparison for apparent rigour — see the CLAUDE.md v3.0.16
+// history entry for the shape of bug this exact mistake causes (a flake
+// misattributed twice before the real cause was found).
+function fingerprintsMatch(a, b) {
+  if (a.exists !== b.exists) return false;
+  if (!a.exists) return true;
+  return a.size === b.size && a.sha256 === b.sha256;
 }
 
-function restoreConfigs() {
-  for (const p of configPaths) {
-    if (hadOriginal.get(p)) {
-      if (existsSync(backupPath(p))) {
-        copyFileSync(backupPath(p), p);
-        chmodSync(p, 0o600);
-        unlinkSync(backupPath(p));
-      }
-    } else {
-      if (existsSync(p)) unlinkSync(p);
-      if (existsSync(backupPath(p))) unlinkSync(backupPath(p));
-    }
-  }
-}
+// Recorded BEFORE the child server ever starts.
+const realFilesBefore = fingerprintRealFiles();
 
-// Force a clean initial state so the test doesn't depend on whatever the
-// developer's dev server left behind in .curator-config.json. Safe now —
-// the on-disk backups above outlive any crash.
-for (const p of configPaths) {
-  if (existsSync(p)) unlinkSync(p);
+function assertRealFilesUntouched() {
+  const after = fingerprintRealFiles();
+  for (let i = 0; i < REAL_CREDENTIAL_FILES.length; i++) {
+    const rel = path.relative(PROJECT_ROOT, REAL_CREDENTIAL_FILES[i]);
+    const before = realFilesBefore[i];
+    const now = after[i];
+    assert(
+      fingerprintsMatch(before, now),
+      `real ${rel} content untouched by the isolated test server`,
+      `real ${rel}'s CONTENT changed during the test run. This does NOT by ` +
+      `itself prove isolation is broken — it could also mean an unrelated ` +
+      `process (e.g. the maintainer's own live Curator app on :3333, via ` +
+      `an ordinary Settings save/provider switch/API-key change while this ` +
+      `~multi-minute suite was running) wrote this file for reasons that ` +
+      `have nothing to do with this suite. Investigate before assuming ` +
+      `either cause. before=${JSON.stringify(before)} after=${JSON.stringify(now)} ` +
+      `(mtimeMs is diagnostic only, not part of the equality check — see ` +
+      `the comment above fingerprintsMatch)`
+    );
+  }
 }
 
 // ── Spawn server in an isolated process ─────────────────────────────────
+//
+// Two independent tempdirs: one for ALL user data (config/sync/sharedbrain
+// credentials + .knowledge-git, via CURATOR_TEST_USER_DATA_DIR), one
+// specifically for domains/ (via CURATOR_TEST_DOMAINS_DIR — belt and
+// suspenders on top of the user-data dir's own default domains/ location,
+// and a safety net against an inherited DOMAINS_PATH env var from the
+// calling shell, which would otherwise outrank the user-data-dir default).
 
-const domainsDir = mkdtempSync(path.join(tmpdir(), 'sharedbrain-routes-'));
-console.log(`Phase 4A routes test — server port ${PORT}, domains ${domainsDir}`);
+const userDataDir = mkdtempSync(path.join(tmpdir(), 'sharedbrain-routes-userdata-'));
+const domainsDir = mkdtempSync(path.join(tmpdir(), 'sharedbrain-routes-domains-'));
+console.log(`Phase 4A routes test — server port ${PORT}`);
+console.log(`  user-data dir: ${userDataDir}`);
+console.log(`  domains dir:   ${domainsDir}`);
 
 const child = spawn(process.execPath, [path.join(PROJECT_ROOT, 'src/server.js')], {
   cwd: PROJECT_ROOT,
   env: {
     ...process.env,
     PORT: String(PORT),
-    // CURATOR_TEST_DOMAINS_DIR beats config in the spawned server; plain
-    // DOMAINS_PATH loses to a configured domainsPath, so the child server would
-    // otherwise operate on the real domains/ folder on a configured machine.
+    // Checked before repo/bundle detection and before config; isolates
+    // .curator-config.json, .sync-config.json, .sharedbrain-config.json,
+    // and .knowledge-git unconditionally. See src/brain/paths.js docblock.
+    CURATOR_TEST_USER_DATA_DIR: userDataDir,
+    // Beats config in the spawned server; plain DOMAINS_PATH loses to a
+    // configured domainsPath, so the child server would otherwise operate
+    // on the real domains/ folder on a configured machine.
     CURATOR_TEST_DOMAINS_DIR: domainsDir,
     CURATOR_NO_OPEN: '1',
   },
@@ -156,8 +212,8 @@ child.on('exit', () => { childExited = true; });
 
 function shutdown() {
   try {
-    restoreConfigs();
     try { rmSync(domainsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { rmSync(userDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
     if (!childExited) child.kill('SIGTERM');
   } catch (err) {
     console.error('shutdown error:', err.message);
@@ -184,6 +240,21 @@ try {
     console.error('Server failed to come up within 5s. stderr:');
     console.error(stderrBuf.join(''));
     process.exit(2);
+  }
+
+  // ── 0. Empirical proof the spawned child actually inherited the seam ────
+  //
+  // Not "the code looks like it should isolate" — an actual HTTP round-trip
+  // to the running child, asserting it resolved OUR tempdir, not the real
+  // domains/ folder on this machine.
+
+  section('Isolation proof (empirical — not inferred from reading the code)');
+
+  {
+    const r = await request('GET', `http://localhost:${PORT}/api/config`);
+    assertEq(r.status, 200, 'GET /api/config responds 200');
+    assertEq(r.body.domainsPath, domainsDir,
+      'the running child resolved domainsPath to OUR tempdir, not the real domains/ folder');
   }
 
   // ── 1. Feature flag gate ─────────────────────────────────────────────
@@ -240,6 +311,16 @@ try {
     assert(r.body.connection && r.body.connection.id, 'save returns connection with assigned id');
     assert(r.body.connection.fellow_id, 'save assigns fellow_id automatically');
     savedId = r.body.connection.id;
+
+    // Direct on-disk proof (not just an HTTP response): the connection this
+    // /save call just persisted must land in OUR isolated user-data tempdir,
+    // and must NOT create/touch the real .sharedbrain-config.json at the
+    // repo root.
+    assert(existsSync(path.join(userDataDir, '.sharedbrain-config.json')),
+      '.sharedbrain-config.json was written into the isolated user-data dir');
+    const realSharedBrainExistsNow = existsSync(path.join(PROJECT_ROOT, '.sharedbrain-config.json'));
+    assertEq(realSharedBrainExistsNow, realFilesBefore[2].exists,
+      'the real .sharedbrain-config.json at the repo root was not created as a side effect of this save');
   }
 
   {
@@ -621,6 +702,16 @@ try {
     console.log('  (validate-pat live section not run — set GITHUB_TEST_REPO + GITHUB_TEST_PAT to include it)');
   }
 
+  // ── Final real-credential-file isolation guard ───────────────────────
+  //
+  // Whatever else happened above, the maintainer's real credential files
+  // must be byte-identical to how they were before this suite ever spawned
+  // the child server. This is the permanent regression guard described in
+  // the header comment.
+
+  section('Real credential-file isolation guard');
+  assertRealFilesUntouched();
+
   // ── Summary ──────────────────────────────────────────────────────────
 
   console.log('\n══════════════════════════════════════');
@@ -644,6 +735,19 @@ try {
   process.exit(0);
 } catch (err) {
   console.error('Test harness error:', err);
+  // Even on an unexpected harness error, check whether the real credential
+  // files were touched — this is diagnostic only (doesn't change the exit
+  // code below), but a mid-run crash is exactly when isolation matters most.
+  try {
+    const after = fingerprintRealFiles();
+    const changed = REAL_CREDENTIAL_FILES
+      .map((p, i) => ({ p, ok: fingerprintsMatch(realFilesBefore[i], after[i]) }))
+      .filter(x => !x.ok);
+    if (changed.length > 0) {
+      console.error('WARNING: real credential file(s) changed during a crashed run:',
+        changed.map(x => path.relative(PROJECT_ROOT, x.p)).join(', '));
+    }
+  } catch { /* best-effort diagnostic only */ }
   if (stderrBuf.length > 0) {
     console.log('\nServer stderr:');
     console.log(stderrBuf.join(''));

@@ -238,7 +238,7 @@ Before v3.1.0, `mcp/storage/local.js` re-derived the config file's location inde
 
 As of v3.1.0, `mcp/storage/local.js` imports `getCuratorConfigFile()` and `getDefaultDomainsDir()` directly from `src/brain/paths.js` — the exact functions `config.js` calls. There is now one place that decides "where is `.curator-config.json`," used by both the web app and the MCP child process Claude Desktop spawns. This matters because a silent divergence here is a *silent* failure mode with no error to surface: if the MCP resolved a different absolute path than the UI, Claude Desktop would read and write a wiki the user never sees in the browser — no crash, no warning, just two different "second brains" that happen to share a name. Routing both through one module removes that possibility by construction rather than by convention.
 
-**One divergence remains, deliberately, and is unrelated to this release:** `config.js`'s `getDomainsDir()` ranks `.curator-config.json`'s `domainsPath` **above** the `DOMAINS_PATH` env var (rungs 3 and 4 above), while `mcp/storage/local.js`'s own `resolveDomainsPath()` ranks `DOMAINS_PATH` **above** config (its rungs 3 and 4). Both files' header comments now cross-reference this explicitly so it can't be "fixed" by accident while touching either one — see the comment block at the top of `mcp/storage/local.js`.
+**Update:** for one release after v3.1.0 landed, one divergence remained — `config.js`'s `getDomainsDir()` ranked `.curator-config.json`'s `domainsPath` **above** the `DOMAINS_PATH` env var, while `mcp/storage/local.js`'s own `resolveDomainsPath()` ranked `DOMAINS_PATH` **above** config. It was flagged (not fixed) at the time: both files' header comments cross-referenced it explicitly so it couldn't be "fixed" by accident while touching either one, and CLAUDE.md's v3.1.0 entry called the split out as pre-existing and increasingly urgent. Investigating the git history turned up no functional reason for the MCP's ordering — `config.js`'s config-first precedence has been the app's rule since `getDomainsDir()` was first written (April 2026); `mcp/storage/local.js` was written later, independently, and simply never got reconciled with it. The two resolvers now agree end-to-end: **`--domains-path` CLI arg → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default**, in both the app and the MCP. Config outranks the env var in both places because `.curator-config.json`'s `domainsPath` is what the Settings UI's "change knowledge base location" panel actually writes — a user's explicit, current choice — while `DOMAINS_PATH` is a `.env` fallback documented for developers and non-macOS users who haven't touched Settings. A user who somehow has both set now gets the same folder from Claude Desktop as they see in their own browser. The CLI arg still sits above both — it's supplied explicitly by the generated Claude Desktop config, so it represents even more specific intent than either. Blast radius of the old bug was narrow in practice (the generated config always passes `--domains-path` explicitly, so only a hand-edited config with that flag removed, plus both `DOMAINS_PATH` and a *different* `domainsPath` set, could have hit it) but the fix removes a real, if rare, "the MCP reads a different wiki than the app shows" failure mode. See the header comment at the top of `mcp/storage/local.js` for the full reasoning.
 
 ### Named user-data locations and the credential-file list
 
@@ -642,10 +642,11 @@ to the wiki — the same code path the in-app Compile and Health tabs use.
 Domain-path resolution in `storage/local.js` goes through `src/brain/paths.js`
 as of v3.1.0 — the same module the web app's `config.js` uses — so the MCP
 and the UI can no longer silently disagree about where `.curator-config.json`
-or the default `domains/` folder live. See
+or the default `domains/` folder live. The precedence order is now also
+identical between the two resolvers — see
 [Where user data lives § App ↔ MCP](#where-user-data-lives-srcbrainpathsjs)
-above for the one precedence detail (`DOMAINS_PATH` vs config ordering) that
-still deliberately differs between the two.
+above for the fix that closed the one remaining ordering difference
+(`DOMAINS_PATH` vs config).
 
 ```
 Claude Desktop launches

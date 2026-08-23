@@ -1,0 +1,77 @@
+Files licensed under the Curator Enterprise License
+===================================================
+
+The files listed below -- and ONLY the files listed below -- are licensed under
+the Curator Enterprise License v1.0 (LICENSES/LICENSE-ENTERPRISE.txt), not under
+the MIT License.
+
+EVERY OTHER FILE IN THIS REPOSITORY IS LICENSED UNDER THE MIT LICENSE
+(LICENSE at the repository root, copied to LICENSES/LICENSE-MIT.txt).
+
+Paths are given explicitly rather than as glob patterns, so that the scope of
+each license is unambiguous. A file is enterprise-licensed only if its exact
+path appears in this list.
+
+
+THE LIST (10 files)
+-------------------
+
+src/brain/sharedbrain.js
+src/brain/sharedbrain-config.js
+src/brain/sharedbrain-delta.js
+src/brain/sharedbrain-github-adapter.js
+src/brain/sharedbrain-local-adapter.js
+src/brain/sharedbrain-revoke.js
+src/brain/sharedbrain-storage-factory.js
+src/brain/sharedbrain-storage.js
+src/brain/sharedbrain-synthesis.js
+src/routes/sharedbrain.js
+
+
+DELIBERATELY NOT ON THIS LIST (these are MIT)
+---------------------------------------------
+
+scripts/test-sharedbrain-*.js
+    The Shared Brain test suites stay MIT. They document how the feature
+    behaves, and we want them to remain freely readable, runnable, and
+    contributable.
+
+src/public/app.js, src/public/index.html, src/public/styles.css
+    The Shared Brain user interface. It cannot be meaningfully separated from
+    the rest of the frontend, and it does nothing on its own without the
+    backend modules above.
+
+docs/shared-brain*.md
+    All Shared Brain documentation stays MIT.
+
+mcp/**
+    The My Curator MCP server stays MIT. It only reads local files; it does not
+    contain Shared Brain logic.
+
+everything else in src/, scripts/, docs/, and the repository root
+    MIT.
+
+
+REMINDER OF WHAT THE ENTERPRISE LICENSE ACTUALLY REQUIRES
+---------------------------------------------------------
+
+Read LICENSES/LICENSE-ENTERPRISE.txt for the binding text. In short, as of this
+release:
+
+  * Personal, educational, academic, evaluation, development, testing, and
+    research use of these files is free.
+  * Production use with the GitHub storage backend is free for everyone,
+    permanently, including organizations -- section 3.1. That means public
+    github.com, the only GitHub the shipped adapter can reach; GitHub
+    Enterprise Server and data-residency Enterprise Cloud are outside the
+    permanent grant (but free for this release under the grace clause, like
+    everything else).
+  * All other production use by an organization -- including with any other
+    storage backend -- is ALSO free for THIS release, permanently, because
+    Curator Enterprise license keys do not yet exist and cannot be bought.
+    That grant does not lapse when keys appear; later releases may omit it --
+    section 3.3, the grace clause.
+  * Each release's version of these files converts to the MIT License two years
+    after that release was published -- section 5.
+  * Nothing is ever restricted retroactively: a release you already have keeps
+    the terms it was published under -- section 6.

@@ -16,23 +16,51 @@
  *   node scripts/test-beta10-fixes.js
  */
 
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { createHash } from 'crypto';
+import { fileURLToPath } from 'url';
+import { __setDomainsDirOverride } from '../src/brain/config.js';
 
+// v3.1.0+: domains are redirected via __setDomainsDirOverride() — the
+// in-process test seam from src/brain/config.js, checked BEFORE
+// .curator-config.json's own domainsPath in getDomainsDir()'s precedence
+// chain. This suite used to redirect via `process.env.DOMAINS_PATH` and
+// then DELETE the real .curator-config.json for the run's duration (so a
+// configured domainsPath couldn't win over the env var) — on a configured
+// machine that meant the maintainer's real config (holding API keys) was
+// unlinked and restored on every `npm test`, with no backup if the process
+// crashed in between. __setDomainsDirOverride sits ABOVE config, so it
+// wins unconditionally and the real file is never read, written, or
+// deleted — proved empirically below rather than merely asserted.
 const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-beta10-'));
-process.env.DOMAINS_PATH = tempRoot;
+__setDomainsDirOverride(tempRoot);
 
-// Sideline the real config so the test always uses tempRoot and doesn't
-// accidentally read the user's real API keys.
-const realCfg = path.resolve('.curator-config.json');
-const stash = realCfg + '.beta10-bak';
-let stashed = false;
-if (existsSync(realCfg)) {
-  copyFileSync(realCfg, stash);
-  rmSync(realCfg);
-  stashed = true;
+// ── Real credential-file isolation guard ─────────────────────────────────
+// The maintainer's REAL files at the repo root. Content-only fingerprint
+// (size + sha256 — deliberately NOT mtime: the maintainer's own live
+// Curator app may rewrite .curator-config.json concurrently via ordinary
+// Settings use, and a same-bytes-or-not rewrite from an unrelated process
+// must not fail this guard). See scripts/test-sharedbrain-routes.js for
+// the full rationale behind this exact pattern.
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const REAL_CREDENTIAL_FILES = [
+  '.curator-config.json', '.sync-config.json', '.sharedbrain-config.json', '.env',
+].map(rel => path.join(PROJECT_ROOT, rel));
+function fingerprintRealFiles() {
+  return REAL_CREDENTIAL_FILES.map(p => {
+    if (!existsSync(p)) return { path: p, exists: false };
+    const buf = readFileSync(p);
+    return { path: p, exists: true, size: buf.length, sha256: createHash('sha256').update(buf).digest('hex') };
+  });
 }
+function fingerprintsMatch(a, b) {
+  if (a.exists !== b.exists) return false;
+  if (!a.exists) return true;
+  return a.size === b.size && a.sha256 === b.sha256;
+}
+const realFilesBefore = fingerprintRealFiles();
 
 let passed = 0;
 let failed = 0;
@@ -44,11 +72,21 @@ function eq(actual, expected, label) {
 }
 function truthy(cond, label, detail) { if (cond) return ok(label); return fail(label, detail); }
 
+function assertRealFilesUntouched() {
+  const after = fingerprintRealFiles();
+  for (let i = 0; i < REAL_CREDENTIAL_FILES.length; i++) {
+    const rel = path.relative(PROJECT_ROOT, REAL_CREDENTIAL_FILES[i]);
+    truthy(
+      fingerprintsMatch(realFilesBefore[i], after[i]),
+      `real ${rel} content untouched by this suite`,
+      `real ${rel}'s CONTENT changed during the run — before=${JSON.stringify(realFilesBefore[i])} after=${JSON.stringify(after[i])}`
+    );
+  }
+}
+
 async function cleanup() {
   try { rmSync(tempRoot, { recursive: true, force: true }); } catch {}
-  if (stashed) {
-    try { copyFileSync(stash, realCfg); rmSync(stash); } catch {}
-  }
+  __setDomainsDirOverride(null);
 }
 process.on('SIGINT', async () => { await cleanup(); process.exit(130); });
 
@@ -263,6 +301,10 @@ async function main() {
       'Test 15b: no "undefined" in the message when SHAs are omitted');
   }
 
+  // ── Real credential-file isolation guard ──────────────────────────
+  console.log('\n[16] Real credential-file isolation guard');
+  assertRealFilesUntouched();
+
   // ── Summary ──────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════════════════');
   console.log(`  Result: ${passed} passed, ${failed} failed`);
@@ -274,6 +316,16 @@ async function main() {
 
 main().catch(async err => {
   console.error('FATAL:', err);
+  try {
+    const after = fingerprintRealFiles();
+    const changed = REAL_CREDENTIAL_FILES
+      .map((p, i) => ({ p, ok: fingerprintsMatch(realFilesBefore[i], after[i]) }))
+      .filter(x => !x.ok);
+    if (changed.length > 0) {
+      console.error('WARNING: real credential file(s) changed during a crashed run:',
+        changed.map(x => path.relative(PROJECT_ROOT, x.p)).join(', '));
+    }
+  } catch { /* best-effort diagnostic only */ }
   await cleanup();
   process.exit(2);
 });

@@ -89,7 +89,7 @@ const LIVE_CI = [
   // v3.0.6 Phase 5 (plan 5.6) — the GITHUB_TEST_* workflow secrets are no
   // longer dead config; all three self-skip or self-degrade without them:
   'test-sharedbrain-github-live.js', // self-skips without GITHUB_TEST_*; unique slugs per run; exhaustive cleanup
-  'test-sharedbrain-routes.js',      // spawns a server on 3334; on-disk config backup (L21 fixed); no network unless GITHUB_TEST_* set
+  'test-sharedbrain-routes.js',      // spawns a server on 3334; isolated via CURATOR_TEST_USER_DATA_DIR (all four credential files) + a read-only guard asserting the real ones are untouched; no network unless GITHUB_TEST_* set
   'test-sharedbrain-llm-live.js',    // real delta+conflict prompts on every configured provider; GitHub storage when secrets present, local otherwise
 ];
 

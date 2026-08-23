@@ -1,3 +1,10 @@
+// This file is licensed under the Curator Enterprise License — NOT MIT.
+// Free for personal, educational, evaluation, development and testing use,
+// and for production use of the GitHub-backed Shared Brain (free forever).
+// Other organizational production use will require a license key once keys
+// exist — until then it is free too (grace clause). Each release's version of
+// this file converts to MIT two years after that release was published.
+// See LICENSES/LICENSE-ENTERPRISE.txt and LICENSES/ENTERPRISE-FILES.txt.
 /**
  * Shared Brain — Push / Pull / Synthesis orchestration
  *
@@ -141,57 +148,178 @@ export async function findChangedPages(wikiDir, sinceDate, pendingRetry = {}) {
 }
 
 /**
- * Best-effort: fetch the version of a wiki page as of `sinceDate` from the
- * personal-sync git repo (.knowledge-git). Returns null if:
- *   - .knowledge-git doesn't exist (most users don't have personal sync)
- *   - git command fails for any reason
- *   - the page wasn't tracked at that time
+ * Best-effort: fetch the version of a wiki page as it stood at `sinceDate`,
+ * read out of the Personal Sync git repo (`.knowledge-git`).
  *
- * Returning null means the LLM is told this is a new page — slightly less
- * useful delta (no prior-version comparison), but safe.
+ * When this returns a string, `generateDeltaSummary` builds a PRIOR VERSION /
+ * CURRENT VERSION diff prompt and the model extracts only what actually
+ * changed. When it returns null the page is treated as brand new and its whole
+ * body is contributed. Both outcomes are correct; null is merely redundant.
+ *
+ * Returns null when:
+ *   - `sinceDate` is falsy (first push — everything is new by definition)
+ *   - `.knowledge-git` doesn't exist (Personal Sync is optional; most users
+ *     have never set it up, so null is the COMMON case, not an error case)
+ *   - the page had no commit at or before `sinceDate` (it didn't exist yet)
+ *   - any git invocation fails, for any reason
+ *
+ * ── PATHSPECS ARE WORK-TREE-RELATIVE — DO NOT ADD A `domains/` PREFIX ───────
+ *
+ * This is the bug this function shipped with from v2.7.0 until v3.1.x, during
+ * which it returned null on 100% of calls and every Shared Brain delta was
+ * generated as if the page were brand new.
+ *
+ * Personal Sync's work-tree IS the domains directory — `git()` in sync.js has
+ * passed `--work-tree=getDomainsDir()` since the feature's first commit
+ * (aceae3b, 2026-04-09) and no configuration has ever changed that; a custom
+ * `domainsPath` moves the work-tree, it does not add a parent segment. So a
+ * tracked wiki page is `<domain>/wiki/<folder>/<page>.md`, never
+ * `domains/<domain>/...`. Verified on the maintainer's real repo: 5,249
+ * tracked files, 0 with a `domains/` prefix.
+ *
+ * The regression guard for this lives in scripts/test-sharedbrain-push.js — it
+ * commits a DECOY page under a literal `domains/` directory, so reintroducing
+ * the prefix fails the suite with wrong content rather than a quiet null.
+ *
+ * ── WHY --literal-pathspecs ────────────────────────────────────────────────
+ *
+ * `pagePath` comes from a readdir walk of the user's wiki, so it can contain
+ * any character a filesystem allows. Under git's DEFAULT pathspec parsing, `*`,
+ * `?`, `[` and `]` are glob wildcards and a leading `:` introduces magic, so
+ * the pathspec stops naming one file and starts naming a SET.
+ *
+ * Be precise about what that does and does not cost, because it is easy to
+ * overstate. `git log -1` over a superset can only ever select a commit at or
+ * AFTER the one that last touched the real page, and `git show <sha>:<path>` is
+ * snapshot-based — so for a page that genuinely exists on disk (every page
+ * reaching this function does), the returned CONTENT is provably the same
+ * either way. Measured on git 2.48.1: a real page named `n[ab].md` resolves
+ * correctly with or without the flag.
+ *
+ * What the flag changes is the sha `git log -1` selects: over a SET it can
+ * land on a commit that touched some sibling rather than this page. It also
+ * removes one source of an empty return (a glob-shaped pathspec whose literal
+ * file is absent finds a sha, and `git show <sha>:<glob>` exits 0 with empty
+ * stdout).
+ *
+ * BE PRECISE ABOUT ITS TEST STATUS, because it is easy to over-credit — this
+ * docblock has already claimed too much for it twice. Since the falsy-content
+ * guard below converts that empty stdout to `null` regardless, the flag now
+ * has NO demonstrable effect on this function's return value, and therefore no
+ * behavioural test. Constructing a divergence was attempted and failed: a
+ * globbed `git log -1` only ever selects a commit at or after the one that
+ * last touched the real page, and `git show <sha>:<path>` is snapshot-based,
+ * so the CONTENT comes out identical — verified on git 2.48.1 across the
+ * ordinary case and the delete-and-recreate case where the two shas do differ.
+ *
+ * It is kept as defence-in-depth: it removes an entire parsing mode from a
+ * value that originates outside this module, and it makes the selected sha
+ * actually correspond to this page, which matters for anyone who later reads
+ * or reuses it. It is NOT sufficient on its own to guarantee a non-empty
+ * return — see the next section, which is the guard that is tested.
+ *
+ * The shell-metacharacter rejection sync.js applies (`isSafePathSegment`) is
+ * deliberately NOT replicated here: that guard exists because sync.js builds a
+ * shell string for `exec`. This function uses `execFile` with an argv array, so
+ * no shell ever sees these values, and rejecting `[` would refuse legitimate
+ * filenames that git handles correctly.
+ *
+ * ── EMPTY IS NOT A PRIOR VERSION — `if (!content) return null` ──────────────
+ *
+ * This function's return value is a three-state signal, and `''` is not one of
+ * the three. Two consumers disagree about it:
+ *
+ *   sharedbrain-delta.js:293   isNew = priorContent === null || undefined
+ *   sharedbrain-delta.js:192   priorContent ? PRIOR/CURRENT : CONTENT(new page)
+ *
+ * An identity check and a truthiness check agree on `null` and on any real
+ * body, and disagree on exactly one value. With `''` the model is told
+ * `IS NEW PAGE: false`, shown the `CONTENT (new page):` block with no prior
+ * version anywhere in the prompt, and instructed that `stable_facts` means
+ * "facts UNCHANGED from prior (omit if new page)". Under that contradiction
+ * anything the model routes into `stable_facts` is lost PERMANENTLY, because
+ * synthesis reads `new_facts` and nothing else (`stable_facts` is written at
+ * delta.js:350 and read by nothing).
+ *
+ * The two ways to get `''` are DIFFERENT PATHS:
+ *
+ *   1. glob-shaped pathspec, literal file absent  → also avoided upstream by
+ *                                                   --literal-pathspecs
+ *   2. the page is a genuinely 0-BYTE blob        → ONLY this guard closes it
+ *
+ * (2) contains no glob, so the flag never engages for it. It is also ordinary
+ * input, not a corner case: Obsidian writes a 0-byte `.md` every time someone
+ * makes a new note, and the documented vault root IS `domains/<domain>/wiki/`.
+ * Create a note, let Personal Sync commit it while it is still empty, write the
+ * body afterwards, and that page's entire content could silently never reach
+ * the collective. There are 0-byte `.md` files in the maintainer's own domains
+ * folder today.
+ *
+ * Whitespace-only content is deliberately left alone: it is truthy, so both
+ * consumers already agree on it, and it is a real (if thin) prior version.
+ * Collapsing it would be a behaviour change with no defect behind it.
+ *
+ * ── WATERMARK PRECISION ────────────────────────────────────────────────────
+ *
+ * `sinceDate` is the SHARED BRAIN watermark (`connection.last_push_at`); git
+ * only knows about Personal Sync commit times. `--before` therefore lands on
+ * the last Personal Sync commit at or before that watermark, which may be
+ * older than what was actually contributed (e.g. the user hasn't synced in a
+ * week). The error is always in the safe direction: an older prior yields a
+ * LARGER delta, and the collective's exact-string dedup absorbs the overlap.
+ * It can never yield content newer than the watermark, which would create a
+ * gap.
+ *
+ * ── CONTRACT ───────────────────────────────────────────────────────────────
+ *
+ * Best-effort, never throws. It runs inside pushDomain's per-page loop; a
+ * failure here must degrade to null (page treated as new), never abort a push.
+ * Everything after the `sinceDate` guard is inside the try.
  */
 export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) {
   if (!sinceDate) return null;
   try {
-    // ⚠ THIS FUNCTION IS CURRENTLY DEAD — it returns null on EVERY call, and
-    // the v3.1.0 path change below did NOT revive it.
-    //
-    // The pathspec at the bottom of this function is `domains/<domain>/wiki/...`,
-    // but Personal Sync's work-tree IS the domains dir (see `git()` in sync.js,
-    // which passes --work-tree=getDomainsDir()), so tracked paths carry NO
-    // `domains/` prefix. Verified against the real repo: 0 of 5242 tracked
-    // files match. The sha lookup therefore always comes back empty and every
-    // Shared Brain delta is generated as if the page were brand new — degraded
-    // quality and wasted tokens, but not corruption.
-    //
-    // The fix (drop the `domains/` prefix) is deliberately DEFERRED: it changes
-    // LLM prompt content on the Shared Brain path, which must not ride in a
-    // release whose whole purpose is proving a no-op. Tracked separately.
-    //
-    // v3.1.0+: the git DIR now comes from paths.js — the SAME resolver sync.js
-    // uses. It used to be derived as `<domainsDir>/..`, which silently missed
-    // the real repo for anyone with a custom domainsPath, and would miss it
-    // again in a packaged .app. Because the function is dead either way, this
-    // change is provably a no-op on its output (null before, null after).
+    // The git DIR comes from paths.js — the SAME resolver sync.js uses (v3.1.0).
+    // It used to be derived as `<domainsDir>/..`, which missed the real repo for
+    // anyone with a custom domainsPath, and would miss it again in a packaged
+    // .app.
     const gitDir = getSyncGitDir();
     if (!existsSync(gitDir)) return null;
 
+    // Work-tree-relative. See the docblock before touching this.
+    const pathspec = `${domain}/wiki/${pagePath}`;
     const sinceIso = sinceDate.toISOString();
+
     const { stdout: shaOut } = await execFileAsync(
       'git',
-      [`--git-dir=${gitDir}`, `--work-tree=${domainsDir}`,
-       'log', '--format=%H', `--before=${sinceIso}`, '-1', '--',
-       `domains/${domain}/wiki/${pagePath}`],
+      [`--git-dir=${gitDir}`, `--work-tree=${domainsDir}`, '--literal-pathspecs',
+       'log', '--format=%H', `--before=${sinceIso}`, '-1', '--', pathspec],
       { encoding: 'utf-8' }
     );
     const sha = shaOut.trim();
     if (!sha) return null;
 
+    // `<rev>:<path>` is an object name, not a pathspec, and the flag was
+    // measured to make no difference here — it is kept only so both
+    // invocations are obviously magic-free. If the page was DELETED in `sha`,
+    // this throws and we correctly fall through to null.
     const { stdout: content } = await execFileAsync(
       'git',
-      [`--git-dir=${gitDir}`, 'show', `${sha}:domains/${domain}/wiki/${pagePath}`],
+      [`--git-dir=${gitDir}`, '--literal-pathspecs', 'show', `${sha}:${pathspec}`],
       { encoding: 'utf-8', maxBuffer: 1024 * 1024 * 10 }
     );
+
+    // THE RETURN VALUE IS A THREE-STATE SIGNAL, AND '' IS NOT ONE OF THE
+    // THREE. Only `null` (no prior) or a NON-EMPTY string (a prior) are
+    // coherent downstream — see the "EMPTY IS NOT A PRIOR VERSION" section of
+    // the docblock. `git show` legitimately exits 0 with empty stdout for a
+    // 0-byte blob, which Obsidian creates every time someone makes a new note,
+    // so this is an ordinary input, not an edge case.
+    //
+    // Whitespace-only content is deliberately NOT caught here: it is truthy,
+    // so `isNew` and buildDeltaPrompt's branch already agree on it, and it is a
+    // real (if thin) prior version. Only genuinely falsy content is collapsed.
+    if (!content) return null;
     return content;
   } catch {
     return null;
@@ -283,6 +411,16 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   const pendingRetry = { ...(connection.pending_retry || {}) };
   const permanentSkip = new Set(connection.permanent_skip || []);
 
+  // Pages that are KNOWN never to have reached the collective: anything queued
+  // for retry or permanently skipped as of this push. Read straight off
+  // `connection` and frozen here because both structures above are mutated by
+  // the un-skip loop below, and step 4 needs the PRE-scan membership.
+  // Used only by the prior-content guard — see the comment there.
+  const neverContributedPages = new Set([
+    ...Object.keys(connection.pending_retry || {}),
+    ...(connection.permanent_skip || []),
+  ]);
+
   // v3.0.2: un-skip on edit. The permanent_skip warn message has
   // always told the user "re-edit the page; it will retry on next push" —
   // this is the code that makes that true. A skipped page whose mtime is
@@ -348,12 +486,67 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     try {
       currentContent = await readFile(path.join(wikiDir, pagePath), 'utf-8');
     } catch (err) {
+      // A read failure is an ENVIRONMENT problem, not the page's fault, so it
+      // is queued exactly like a transient LLM error: `|| 0` re-queues WITHOUT
+      // advancing the strike counter, so a bad mount can never push a page to
+      // permanent_skip. Queueing is not optional bookkeeping — step 6 advances
+      // `last_push_at` unconditionally, so a page skipped here and left out of
+      // both sets would be treated as previously-contributed on the next push
+      // and DIFFED. Everything it contains would then arrive as PRIOR VERSION,
+      // route to `stable_facts`, and be dropped (nothing reads stable_facts).
+      newPendingRetry[pagePath] = pendingRetry[pagePath] || 0;
+      // console.error is not a user surface. A push that silently loses a page
+      // while reporting success is exactly what CLAUDE.md forbids.
+      onProgress('warn',
+        `${pagePath}: could not be read (${err.code || err.message}) — skipped, will retry next push. ` +
+        `If this page lives on iCloud Drive, Dropbox or a network mount, make sure it is ` +
+        `downloaded locally rather than stored online-only.`
+      );
       console.error(`[sharedbrain] Skipping ${pagePath} — read failed: ${err.message}`);
       skippedCount++;
       continue;
     }
 
-    const priorContent = await loadPriorContent(domainsDir, domainSlug, pagePath, sinceDate);
+    // Diff against a prior version ONLY for pages we have reason to believe
+    // were successfully contributed before.
+    //
+    // A page that failed a previous push never reached the collective at all.
+    // Diffing it would extract only what changed since that failure — and
+    // synthesis consumes `new_facts` alone (`stable_facts` is written at
+    // delta.js:350 and read by NOTHING), so the body that was never
+    // contributed would arrive as PRIOR VERSION and be dropped on the floor,
+    // silently and permanently. That would make Decision 3's retry path lossy,
+    // which is the opposite of its purpose.
+    //
+    // THERE ARE THREE DOORS INTO "NEVER CONTRIBUTED". All three must leave a
+    // trace in one of the two sets below, or this guard cannot see them:
+    //
+    //   1. LLM/parse failure         → newPendingRetry (strike counter +1)
+    //   2. transient LLM failure     → newPendingRetry (counter unchanged)
+    //   3. readFile failure          → newPendingRetry (counter unchanged)
+    //
+    // Door 3 was missed when this guard was first written: it used to `continue`
+    // without queueing, so the page sat in NEITHER set while step 6 advanced
+    // `last_push_at` anyway, and the next push diffed it. That is precisely the
+    // harm this comment describes, arriving through the one path the
+    // enumeration had left out.
+    //
+    // Also relevant, and deliberately NOT in these sets: the two storage-failure
+    // exits in step 5 do not advance `last_push_at`, so their pages are
+    // re-scanned against the SAME watermark next time and produce an identical
+    // diff. They are safe for that reason, not because they are tracked here.
+    // If you ever make a failure path advance the watermark, it MUST queue.
+    //
+    // The invariant to preserve: every page in `changedPages` ends up in
+    // `deltas`, `newPendingRetry`, or `newPermanentSkip` — pinned by the
+    // total-coverage assertion in scripts/test-sharedbrain-push.js §11c.
+    //
+    // The failure mode of the conservative branch is a redundant full
+    // contribution, which the collective's exact-string dedup absorbs. A gap
+    // is not recoverable. Prefer the redundancy.
+    const priorContent = neverContributedPages.has(pagePath)
+      ? null
+      : await loadPriorContent(domainsDir, domainSlug, pagePath, sinceDate);
 
     const result = await generateDeltaSummary({
       pagePath, currentContent, priorContent,

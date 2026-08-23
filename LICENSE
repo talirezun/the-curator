@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 talirezun
+Copyright (c) 2026 Tali Rezun
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,28 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+NOTE: A SMALL NUMBER OF FILES ARE UNDER A DIFFERENT LICENSE
+-------------------------------------------------------------------------------
+
+The MIT License above covers this repository, with one exception.
+
+Ten files that implement the Shared Brain backend are licensed under the
+Curator Enterprise License v1.0 instead. They are listed explicitly, by path,
+in LICENSES/ENTERPRISE-FILES.txt, and the license text is in
+LICENSES/LICENSE-ENTERPRISE.txt.
+
+If a file's exact path is not in LICENSES/ENTERPRISE-FILES.txt, it is MIT.
+
+The Curator Enterprise License is free for personal, educational, academic,
+evaluation, development, testing, and research use. It also permits production
+use of the free, GitHub-backed Shared Brain at no charge, permanently,
+including by organizations -- "GitHub-backed" meaning public github.com, which
+is the only GitHub the shipped adapter can talk to. Because Curator Enterprise
+license keys do not yet exist, it also permits all other organizational
+production use of THIS release at no charge, permanently. Each release's
+enterprise-licensed files convert to the MIT License two years after that
+release is published. Nothing is restricted retroactively.
+
+See README.md ("Licensing") for a plain-English summary.

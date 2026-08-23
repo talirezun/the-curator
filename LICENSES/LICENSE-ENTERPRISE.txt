@@ -1,0 +1,331 @@
+The Curator Enterprise License
+Version 1.0
+
+Copyright (c) 2026 Tali Rezun. All rights reserved.
+
+This license applies ONLY to the files listed in LICENSES/ENTERPRISE-FILES.txt
+(the "Covered Files"). Every other file in this repository -- including the rest
+of the application, the user interface, the test suites, the documentation, and
+the MCP server -- is licensed under the MIT License, a copy of which is in
+LICENSES/LICENSE-MIT.txt and in the LICENSE file at the root of this repository.
+
+
+-----------------------------------------------------------------------------
+NOTE ON LEGAL REVIEW -- PLEASE READ
+-----------------------------------------------------------------------------
+
+This text was drafted by the copyright holder, modeled on the Mattermost Source
+Available License. IT HAS NOT BEEN REVIEWED BY A LAWYER. It is published in
+good faith as the terms on which the Covered Files are made available. It is
+not legal advice, and it may be replaced by a professionally reviewed version
+in a future release (any such replacement applies only to future releases --
+see section 6).
+
+If you need certainty for your organization, please consult your own counsel.
+If any clause is unclear or appears to conflict with another, the copyright
+holder's intent is that the reading MORE FAVOURABLE TO YOU governs, and you are
+invited to get in touch so the wording can be fixed for everyone.
+
+
+-----------------------------------------------------------------------------
+1. DEFINITIONS
+-----------------------------------------------------------------------------
+
+1.1 "Organization" means any legal entity other than a natural person acting on
+    their own behalf. This includes companies, partnerships, sole traders and
+    freelancers acting in a business capacity, government bodies, educational
+    institutions, and non-profit organizations, together with their affiliates.
+    A natural person using this software for their own purposes is NOT an
+    Organization.
+
+1.2 "Production Use" means using the Covered Files to operate a live service or
+    working process that an Organization relies on in the ordinary course of
+    its activities. Viewing, copying, modifying, evaluating, developing,
+    testing, benchmarking, teaching, studying, and any personal or academic use
+    is NOT Production Use.
+
+1.3 "Release" means a published version of this software, identified by the
+    version field of package.json, together with the date on which that version
+    was published in the project's public repository.
+
+1.4 "Covered Files" means the files listed in LICENSES/ENTERPRISE-FILES.txt, as
+    those files appear in a given Release.
+
+1.5 "License Key" means a Curator Enterprise license key issued by the
+    copyright holder.
+
+1.6 "the GitHub storage backend" means the GitHub storage adapter shipped in a
+    given Release, operating against the public GitHub service at
+    api.github.com. It does not include GitHub Enterprise Server, GitHub
+    Enterprise Cloud with data residency, or any other GitHub deployment
+    reached through a different API host.
+
+
+-----------------------------------------------------------------------------
+2. GRANT
+-----------------------------------------------------------------------------
+
+Subject to the terms of this license, you are granted a worldwide,
+royalty-free, non-exclusive license to view, copy, modify, and use the Covered
+Files, and to distribute them as an integral part of this software, free of
+charge, for personal, educational, academic, evaluation, development, testing,
+and research purposes.
+
+Production Use by or for an Organization is additionally governed by section 3.
+
+
+-----------------------------------------------------------------------------
+3. PRODUCTION USE BY AN ORGANIZATION
+-----------------------------------------------------------------------------
+
+3.1 THE GITHUB-BACKED SHARED BRAIN IS FREE, PERMANENTLY.
+
+    Production Use of the Covered Files with the GitHub storage backend is
+    permitted at no charge, requires no License Key, and requires no agreement
+    beyond this license -- for every user, including Organizations of any size.
+
+    This grant is permanent. It is not withdrawn, reduced, or made conditional
+    by any future version of this license. The free, GitHub-backed Shared Brain
+    remains free for everyone, forever.
+
+    WHAT "THE GITHUB STORAGE BACKEND" MEANS HERE. Section 1.6 defines it: the
+    shipped GitHub adapter, talking to the public GitHub service at
+    api.github.com. That is what every ordinary github.com user is running, and
+    for them the grant above is exactly as absolute as it reads.
+
+    It does NOT cover GitHub Enterprise Server, or GitHub Enterprise Cloud with
+    data residency. This describes the software rather than carving an
+    exception out of it: the shipped adapter has api.github.com written into it
+    and cannot reach those deployments at all, so no working configuration is
+    being withheld from anyone.
+
+    Production Use with any other storage backend -- including those GitHub
+    deployments, should a future Release ever make them reachable -- is
+    governed by sections 3.2 and 3.3. Which means that for THIS Release it is
+    free as well, permanently, under the grace clause in section 3.3.
+
+3.2 OTHER PRODUCTION USE REQUIRES A LICENSE KEY.
+
+    Except as provided in sections 3.1 and 3.3, Production Use of the Covered
+    Files by or for an Organization requires a valid License Key, covering the
+    number of users set out in the applicable order.
+
+3.3 GRACE CLAUSE -- ORGANIZATIONAL PRODUCTION USE OF THIS RELEASE IS FREE.
+
+    Curator Enterprise License Keys are not yet generally available. As of this
+    Release there is no key-issuing mechanism in this software, and no way to
+    purchase a key from the copyright holder. An Organization that WANTED to
+    pay could not do so.
+
+    Accordingly, and notwithstanding section 3.2: PRODUCTION USE OF THE COVERED
+    FILES AS PUBLISHED IN THIS RELEASE, BY OR FOR AN ORGANIZATION, IS HEREBY
+    PERMITTED, AT NO CHARGE, WITH NO LICENSE KEY AND NO FURTHER PERMISSION
+    REQUIRED.
+
+    THIS GRANT IS PERMANENT FOR THIS RELEASE. It does not lapse, expire, or
+    convert into a payment obligation when License Keys later become available.
+    This Release's Covered Files stay free for organizational Production Use
+    for as long as you care to run them.
+
+    "Permanent" here means it does not end when License Keys arrive. Like every
+    grant in this license except sections 3.1 and 5, it can still be terminated
+    if you breach the license -- see section 9.
+
+    This is a present grant of rights. It is not a promise of a future grant,
+    and it is not a mere decision to refrain from enforcement: an Organization
+    has an affirmative right under this license to put this Release's Covered
+    Files into Production Use, and needs nothing else from the copyright holder
+    in order to do so.
+
+    What can change is FUTURE Releases. Once License Keys are generally
+    available, this clause may be omitted from Releases published after that
+    point, and those later Releases would then be governed by section 3.2.
+    License Keys become "generally available" only when the copyright holder
+    both (a) publishes a means by which a License Key can be purchased, and
+    (b) announces that fact in the project's public repository.
+
+    Nothing in this license is ever withdrawn retroactively. Every Release you
+    have already received keeps, permanently, the terms under which it was
+    published -- see section 6.
+
+
+-----------------------------------------------------------------------------
+4. RESTRICTIONS
+-----------------------------------------------------------------------------
+
+4.1 LICENSE-KEY VERIFICATION.
+
+    Where the Covered Files contain license-key verification functionality, you
+    may not remove, disable, circumvent, or interfere with that functionality,
+    and you may not misrepresent your license status to it.
+
+    For the avoidance of doubt: as of this Release the Covered Files contain no
+    such functionality, so there is nothing to remove, disable, or circumvent.
+    This clause binds only if and when such functionality is added in a future
+    Release. It never conflicts with section 3.3: where section 3.3 grants
+    Production Use without a License Key, using the software without a License
+    Key is exercising a granted right, and is not circumvention.
+
+4.2 COMPETING PRODUCTS.
+
+    You may not distribute, sublicense, offer as a service, or sell the Covered
+    Files, or derivative works of them, as a standalone product or as part of a
+    product that competes with this software.
+
+    The following are expressly NOT restricted by this clause:
+
+      (i)   using this software internally, for any purpose;
+      (ii)  distributing it, modified or unmodified, as an integral part of
+            this project;
+      (iii) operating a Shared Brain and charging other people for access to
+            its contents. What this clause restricts is distributing or
+            selling the SOFTWARE as, or as part of, a competing product --
+            not selling access to knowledge you curate with it.
+
+4.3 NOTICES.
+
+    You may not remove or alter this license, the per-file license headers, the
+    copyright notices, or LICENSES/ENTERPRISE-FILES.txt.
+
+
+-----------------------------------------------------------------------------
+5. CONVERSION TO THE MIT LICENSE AFTER TWO YEARS
+-----------------------------------------------------------------------------
+
+5.1 The Covered Files, as published in a given Release, become additionally
+    licensed to you under the MIT License (LICENSES/LICENSE-MIT.txt) on the
+    SECOND ANNIVERSARY of that Release's publication date.
+
+    The two-year clock runs separately for each Release, always from the date
+    that particular Release was published in the project's public repository.
+    It is never reset, paused, restarted, or extended -- not by a later
+    Release, not by a change to this license, and not by any act of the
+    copyright holder.
+
+5.2 From that date onward you may use, copy, modify, and distribute that
+    Release's Covered Files under EITHER this license or the MIT License, at
+    your sole option. Once a Release's Covered Files have converted, the
+    conversion is permanent and unconditional: sections 3 and 4 impose no
+    restriction on that version of those files, and no future version of this
+    license can reverse it.
+
+5.3 Conversion applies to the Covered Files exactly as they stood in the
+    converting Release. It does not convert later versions of the same files,
+    which convert on their own two-year schedule.
+
+5.4 HOW SECTION 5 COMPOSES WITH SECTION 3.
+
+    Sections 3.1, 3.3 and 5 operate independently, and each grants rights on
+    its own. The permanent GitHub grant (3.1) and the grace clause (3.3) apply
+    to a Release from the moment it is published; the
+    conversion to MIT (5.1) applies to that same Release two years later.
+    Where more than one of them applies, whichever gives you the greater
+    freedom governs. None of them limits the others.
+
+
+-----------------------------------------------------------------------------
+6. PER-RELEASE TERMS -- NO RETROACTIVE RESTRICTION
+-----------------------------------------------------------------------------
+
+Each Release of this software is licensed under the version of this license
+that was published with that Release, and stays licensed under it permanently.
+
+The copyright holder may publish a revised version of this license, which will
+apply only to Releases published after it. A later version can never reduce,
+revoke, or add conditions to the rights you already received with a Release you
+already have. If you prefer the terms of a later version, you may adopt them
+for that Release at your option.
+
+
+-----------------------------------------------------------------------------
+7. CONTRIBUTIONS
+-----------------------------------------------------------------------------
+
+Contributions to the Covered Files are accepted under the terms of this
+license. By submitting a contribution to a Covered File you license it to the
+copyright holder and to all recipients of this software under these same terms,
+and you confirm that you have the right to do so.
+
+In addition, and so that this software can continue to be licensed as a whole,
+you grant the copyright holder a perpetual, worldwide, non-exclusive,
+royalty-free, irrevocable license to use, reproduce, modify, distribute,
+sublicense, and RELICENSE your contribution -- including under commercial or
+proprietary terms, and including under a later version of this license -- as
+part of this software or any derivative of it.
+
+You keep the copyright in your contribution. This grant does not take it from
+you, does not stop you using your own work anywhere else, however you like, and
+does not stop your contribution converting to the MIT License under section 5
+along with the rest of the Release it ships in.
+
+Contributions to every OTHER file in this repository -- including the test
+suites, which deliberately remain MIT so that behaviour stays documented and
+contributable -- are accepted under the MIT License.
+
+
+-----------------------------------------------------------------------------
+8. TRADEMARKS
+-----------------------------------------------------------------------------
+
+This license grants no rights in the names, logos, or trademarks of the
+copyright holder. Nominative use -- for example stating that your work is
+"based on The Curator" or "compatible with The Curator" -- is not restricted by
+this license.
+
+The project's trademark policy is in TRADEMARK.md at the root of this
+repository.
+
+
+-----------------------------------------------------------------------------
+9. TERMINATION
+-----------------------------------------------------------------------------
+
+If you breach this license, the rights granted to you in section 2 and in
+sections 3.2 and 3.3 terminate. They are reinstated automatically and
+retroactively if you cure the breach within 30 days of becoming aware of it,
+provided this is the first time the copyright holder has had cause to notify
+you.
+
+Termination under this section does NOT affect:
+
+  (i)   THE PERMANENT GRANT IN SECTION 3.1, together with so much of the
+        section 2 grant as is necessary to exercise it. The free,
+        GitHub-backed Shared Brain survives termination of every other right
+        in this license, for everyone, without exception. There is nothing you
+        can do under this license that causes you to lose it;
+
+  (ii)  any Covered Files that have already converted to the MIT License under
+        section 5;
+
+  (iii) anyone else's rights.
+
+Termination does not excuse a breach. The restrictions in section 4 continue to
+bind you, and the copyright holder's other remedies are unaffected -- what
+sections 3.1 and 5 are protected from is REVOCATION OF THE GRANT, not from the
+ordinary consequences of breaking the terms.
+
+
+-----------------------------------------------------------------------------
+10. DISCLAIMER OF WARRANTY AND LIMITATION OF LIABILITY
+-----------------------------------------------------------------------------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+-----------------------------------------------------------------------------
+11. QUESTIONS
+-----------------------------------------------------------------------------
+
+If anything here is unclear, or if this license would stop you doing something
+reasonable, please open an issue in the project's public repository or contact
+the copyright holder. The intent of this license is to keep The Curator open,
+auditable, and free for individuals and communities, while making it possible
+to sustain the project commercially. If the wording fails that intent, the
+wording is what should change.

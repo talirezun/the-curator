@@ -144,7 +144,7 @@ Open **http://localhost:3333** in your browser. The onboarding wizard will guide
 **Linux / Windows specifics**
 
 - Set `CURATOR_NO_OPEN=1` to skip the macOS-only `open` browser-launch on startup (the server still binds to `localhost:3333`; just open it manually).
-- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS.
+- Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS. If you've also set a Knowledge Base Location in the Domains tab, that Settings value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, re-run its setup wizard after changing the Knowledge Base Location so Claude Desktop picks up the new folder too — see [mcp-user-guide.md](mcp-user-guide.md).)
 - Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. The Settings → Check for Updates button is macOS-only because it also rebuilds the `.app` bundle.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="#licensing"><img src="https://img.shields.io/badge/License-MIT%20%2B%20source--available-yellow.svg" alt="License: MIT + source-available"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
   <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Installer-macOS-blue" alt="Installer: macOS"></a>
   <a href="https://github.com/talirezun/the-curator#option-b--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
@@ -22,6 +22,8 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
 > The Curator's job is everything else — summarizing, cross-referencing, filing, and bookkeeping.
+
+**Licensing in one line:** The Curator is MIT-licensed open source; ten Shared Brain backend files are source-available under the [Curator Enterprise License](LICENSES/LICENSE-ENTERPRISE.txt) — and the GitHub-backed Shared Brain stays free for everyone, forever. [Full details ↓](#licensing)
 
 ---
 
@@ -123,6 +125,35 @@ This is the shift from a file cabinet to a neural network.
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
 - Four AI-tuned domain templates to start from — Tech/AI, Business/Finance, Personal Growth, Generic — plus unlimited custom domains, no terminal or file editing required
 - Mac Dock app — double-click to launch, no terminal needed
+
+---
+
+## Licensing
+
+**The Curator is open source under the MIT License** — the app, the interface, the ingest and chat pipeline, Wiki Health, Personal Sync, the My Curator MCP server, every test suite, and all documentation.
+
+**Ten files are not.** We would rather tell you here than have you discover it later. The Shared Brain *backend* modules — listed by exact path in [`LICENSES/ENTERPRISE-FILES.txt`](LICENSES/ENTERPRISE-FILES.txt) — are **source-available** under the [Curator Enterprise License](LICENSES/LICENSE-ENTERPRISE.txt). They stay fully readable, forkable, auditable, and free for personal use; what the license reserves is paid organizational production use with storage backends **other than** the free GitHub one.
+
+What that means in practice:
+
+| What | Terms |
+|---|---|
+| The whole app, minus those 10 files | MIT. Unchanged. |
+| Personal, educational, academic, evaluation, development, testing, research use | Free, always. |
+| **The GitHub-backed Shared Brain — the one that exists today** | **Free for everyone, forever**, organizations included. That is written into the license (§3.1), not merely promised on this page. |
+| All other organizational production use | **Free for this release, permanently.** Curator Enterprise license keys do not exist and cannot be purchased, so the license grants organizational production use of this release at no charge — and that grant does not lapse when keys appear. Later releases may drop the clause (§3.3, the grace clause). |
+| Two years after any release | That release's enterprise-licensed files convert to the MIT License automatically (§5). |
+| Anything you already have | Keeps the terms it shipped under, permanently (§6). |
+
+**What "GitHub-backed" means:** ordinary github.com. The shipped app has `api.github.com` written into it with no configurable endpoint, so as distributed it cannot reach GitHub Enterprise Server or EU-residency Enterprise Cloud — those sit outside the forever-free grant, though they are still free on this release like everything else. If a future release ever reaches them, that changes things for that release only.
+
+**Nothing is being taken away from anyone.** Every release already installed stays under the license it was published under; this change applies going forward only. It exists so that a future paid enterprise tier — Shared Brain running on storage the organization controls itself, for data sovereignty — can help sustain the project, without ever moving the free version behind a gate.
+
+The test suites deliberately stay MIT: they document how Shared Brain actually behaves, and we want them readable, runnable, and contributable.
+
+Neither licence grants rights in the name or the logo — see [TRADEMARK.md](TRADEMARK.md), which also spells out the nominative uses ("based on The Curator", "compatible with The Curator") that need no permission at all.
+
+The license text has not been reviewed by a lawyer, and says so at the top. If a clause blocks something reasonable, [open an issue](https://github.com/talirezun/the-curator/issues) — the wording is what should change.
 
 ---
 
@@ -645,4 +676,4 @@ the-curator/
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE) — with one documented exception: ten Shared Brain backend files are source-available under the [Curator Enterprise License](LICENSES/LICENSE-ENTERPRISE.txt), listed by exact path in [`LICENSES/ENTERPRISE-FILES.txt`](LICENSES/ENTERPRISE-FILES.txt). The GitHub-backed Shared Brain is free for everyone, forever, and nothing is restricted retroactively. See [Licensing](#licensing) above for the plain-English summary.

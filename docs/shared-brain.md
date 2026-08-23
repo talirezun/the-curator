@@ -310,7 +310,8 @@ sequenceDiagram
 
   U->>L: Click "Push contributions"
   L->>L: Find changed pages since last_push_at<br/>(union with pending_retry)
-  L->>LLM: For each page, generate DeltaSummary
+  L->>L: loadPriorContent() — page as of last_push_at<br/>(from Personal Sync git, best-effort)
+  L->>LLM: For each page, generate DeltaSummary<br/>(PRIOR vs CURRENT when a prior exists)
   LLM-->>L: {new_facts, removed_links, ...}
   L->>S: Upload contributions/{fellow}/{sub}.json
   S-->>L: 200 OK with new SHAs
@@ -319,6 +320,44 @@ sequenceDiagram
 ```
 
 Per Decision 3, partial pushes succeed: failed pages enter `pending_retry` and retry next cycle.
+
+#### Deltas are true diffs when a prior version is available
+
+`loadPriorContent(domainsDir, domain, pagePath, sinceDate)` reads the page as it
+stood at `last_push_at` out of the **Personal Sync** git repo (`.knowledge-git`).
+When it finds one, `buildDeltaPrompt` switches from the "brand new page" framing
+to a `PRIOR VERSION` / `CURRENT VERSION` diff, and the model extracts only what
+actually changed. This matters because synthesis consumes `new_facts` and
+nothing else — `stable_facts` is generated and stored but never read — so
+without a prior version every push re-submits the whole page as new facts, which
+the collective then has to dedup on every synthesis cycle.
+
+Four things worth knowing about the behaviour:
+
+- **Personal Sync is optional, and so is this.** A contributor who has never set
+  up Personal Sync has no `.knowledge-git`, so there is no prior version to read
+  and every page is contributed in full. That is correct, just more verbose.
+- **The watermark is approximate, in the safe direction.** `last_push_at` is the
+  *Shared Brain* watermark; git only knows *Personal Sync* commit times. If a
+  contributor has not synced in a week, the prior version is a week old and the
+  delta is correspondingly larger. It can never be *newer* than the watermark,
+  so the diff can overlap but never leave a gap, and the collective's
+  exact-string dedup absorbs any overlap.
+- **Retried pages are never diffed.** A page in `pending_retry` or
+  `permanent_skip` failed its previous push, so none of its body ever reached the
+  collective. Diffing it would contribute only the change since that failed push
+  and silently drop everything else. Those pages are deliberately treated as new.
+- **It costs more input tokens per push.** The prompt grows by exactly the byte
+  length of the prior version — measured at **+69.5%** across a 25-page sample of
+  real changed pages (+29% to +92% per page). The return is a smaller, less
+  redundant contribution and less downstream synthesis work, not a cheaper push.
+
+> **Implementation note.** The git pathspec is **work-tree-relative** —
+> `<domain>/wiki/<folder>/<page>.md`, with **no** `domains/` prefix — because
+> Personal Sync runs git with `--work-tree=<domains dir>`. This function shipped
+> with a `domains/` prefix from v2.7.0 and therefore returned `null` on every
+> call, so every delta up to that point was generated as if the page were brand
+> new. The regression guard is in `scripts/test-sharedbrain-push.js` §11.
 
 ### Pull (every contributor)
 

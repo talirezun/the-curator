@@ -4,13 +4,13 @@
  * Phase 1 — reads markdown files directly from the user's domains/ folder.
  * Phase 3 will add an r2.js adapter with the same interface.
  *
- * Domains path resolution order (do not reorder rungs 2-5 without checking
- * src/brain/config.js's getDomainsDir, which deliberately ranks config ABOVE
- * DOMAINS_PATH; see the note on that divergence below):
+ * Domains path resolution order — MUST stay in lockstep with
+ * src/brain/config.js's getDomainsDir(); see the "why config outranks env"
+ * note below before reordering anything:
  *   1. CURATOR_TEST_DOMAINS_DIR env var  (TEST-ONLY; never set in production)
  *   2. --domains-path CLI arg (passed from the generated Claude Desktop config)
- *   3. DOMAINS_PATH env var
- *   4. .curator-config.json in the Curator user-data dir
+ *   3. .curator-config.json in the Curator user-data dir
+ *   4. DOMAINS_PATH env var
  *   5. <user-data dir>/domains
  *
  * Rung 1 exists so a spawned MCP child can be isolated onto a throwaway
@@ -21,13 +21,47 @@
  * set in production — Claude Desktop is launched by launchd and does not
  * inherit a developer's shell environment.
  *
- * v3.1.0+: steps 3 and 4 resolve through src/brain/paths.js — the SAME module
+ * Why rung 3 (config) outranks rung 4 (DOMAINS_PATH): this MCP adapter and
+ * src/brain/config.js's getDomainsDir() are two independent readers of the
+ * SAME "where is my wiki" setting. .curator-config.json's domainsPath is what
+ * the Settings UI's "change knowledge base location" panel actually writes —
+ * it is the user's explicit, current choice. DOMAINS_PATH is a `.env` fallback
+ * documented for developers/non-macOS users who haven't touched Settings. If a
+ * user has BOTH (e.g. an old DOMAINS_PATH left over in .env from before they
+ * used the folder picker), the config value is the one that matches what the
+ * app UI shows them — so it must win, in both readers, or the MCP would read a
+ * folder the user does not see in their own browser. v3.1.0 introduced this as
+ * "one divergence remains, deliberately, and is unrelated to this release"
+ * (docs/architecture.md) while flagging it as increasingly urgent; this rung
+ * swap is that follow-up, closing the gap rather than opening it further. Do
+ * not re-invert this ordering without re-reading that history —
+ * the two prior states of this comment (env-above-config, then a "do not
+ * reorder" freeze) were each independent development, not a reasoned design
+ * for env-over-config; there was never a functional need for the MCP to differ
+ * from the app here.
+ *
+ * v3.1.0+: rungs 3 and 5 resolve through src/brain/paths.js — the SAME module
  * the app itself uses. This file used to re-derive the config path from its own
  * location. If that derivation ever disagreed with the app's, the MCP server
  * would read a different domains folder than the UI and the user's Claude
  * Desktop would silently see a stale or empty wiki. paths.js imports only Node
  * builtins and logs nothing, so it is safe for this stdio child process (stdout
  * is reserved for JSON-RPC frames).
+ *
+ * SCOPE — this resolver governs READS ONLY. Every MCP read tool (list_domains,
+ * search_wiki, get_node, etc.) goes through createStorageAdapter() here, so it
+ * honours the --domains-path CLI arg above. MCP WRITE tools (compile_to_wiki
+ * and the health-fix tools in mcp/tools/compile.js and mcp/tools/health.js) do
+ * NOT go through this adapter — they import writePage/scanWiki/fixIssue etc.
+ * directly from src/brain/files.js and src/brain/health.js, which resolve the
+ * domains dir via src/brain/config.js's getDomainsDir() and so never see the
+ * CLI arg at all. In one process, reads and writes can therefore target
+ * DIFFERENT folders whenever a --domains-path was passed and it doesn't match
+ * whatever getDomainsDir() resolves to on its own (config/env/default) — e.g.
+ * a --domains-path pointing at an old location while Settings has since moved
+ * to a new one. This is a real, demonstrated gap, not merely theoretical.
+ * Unifying the two paths is a separate change with its own blast radius and is
+ * deliberately out of scope here.
  */
 
 import fs from 'node:fs/promises';
@@ -42,7 +76,6 @@ export function createStorageAdapter({ domainsPath } = {}) {
       return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
     }
     if (domainsPath) return path.resolve(domainsPath);
-    if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
     const configPath = getCuratorConfigFile();
     if (existsSync(configPath)) {
       try {
@@ -50,6 +83,7 @@ export function createStorageAdapter({ domainsPath } = {}) {
         if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
       } catch { /* fall through */ }
     }
+    if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
     return getDefaultDomainsDir();
   };
 

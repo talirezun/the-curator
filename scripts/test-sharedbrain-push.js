@@ -32,7 +32,7 @@
  * and an in-memory patch function for connection state.
  */
 
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, utimesSync } from 'fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, utimesSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -45,7 +45,10 @@ import {
 } from '../src/brain/sharedbrain-delta.js';
 import {
   pushDomain, findChangedPages, getAllPagePaths, MAX_RETRY_ATTEMPTS,
+  loadPriorContent,
 } from '../src/brain/sharedbrain.js';
+import { __setUserDataDirOverride } from '../src/brain/paths.js';
+import { execFileSync } from 'child_process';
 
 // ── Test harness (same shape as Phase 2A) ──────────────────────────────────
 
@@ -597,9 +600,493 @@ assertEq(aPush2.pushed, 1, 'Fellow A second push pushed exactly 1 page (the new 
 const fourContribs = await adapter.listContributionsSince(null);
 assertEq(fourContribs.length, 4, 'shared storage now has 4 contributions');
 
+// ── 11. loadPriorContent against a REAL git repo ─────────────────────────
+//
+// This section builds a throwaway git repo laid out exactly the way Personal
+// Sync lays out the real one (git dir = <userData>/.knowledge-git, work-tree =
+// the domains folder, so tracked paths are `<domain>/wiki/...` with NO
+// `domains/` prefix) and drives the real function against it.
+//
+// It asserts BEHAVIOUR — returned content — never source text. Three of these
+// assertions fail if the historical `domains/` prefix or git's default
+// glob-y pathspec parsing is reintroduced.
+//
+// It never touches the user's real .knowledge-git: __setUserDataDirOverride
+// redirects getSyncGitDir() at a tempdir for the duration of this section.
+
+section('11. loadPriorContent — real git repo (prior-version diff)');
+
+const gitRoot     = path.join(workspaceRoot, 'gitfellow');       // stands in for userDataDir
+const gitDir      = path.join(gitRoot, '.knowledge-git');
+const gitDomains  = path.join(gitRoot, 'domains');               // the work-tree
+const gitWikiDir  = path.join(gitDomains, 'notes', 'wiki', 'entities');
+// A DECOY domain literally named "domains". If someone reintroduces the
+// `domains/<domain>/wiki/...` pathspec, the lookup resolves HERE and the
+// content assertions below fail loudly with the wrong body — rather than
+// quietly returning null, which is how the original bug hid for four releases.
+const decoyDir    = path.join(gitDomains, 'domains', 'notes', 'wiki', 'entities');
+
+mkdirSync(gitWikiDir, { recursive: true });
+mkdirSync(decoyDir,   { recursive: true });
+
+// `-c` overrides rather than GIT_CONFIG_GLOBAL so this works on any git that
+// ships with macOS or an Actions runner, and so a developer's global
+// commit.gpgsign / core.hooksPath can't break the fixture.
+const GIT_ISOLATION = [
+  '-c', 'init.defaultBranch=main',
+  '-c', 'commit.gpgsign=false',
+  '-c', 'core.hooksPath=/dev/null',
+];
+const GIT_IDENTITY = {
+  GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.invalid',
+  GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.invalid',
+};
+
+let gitAvailable = true;
+function g(args, extraEnv = {}) {
+  return execFileSync(
+    'git',
+    [...GIT_ISOLATION, `--git-dir=${gitDir}`, `--work-tree=${gitDomains}`, ...args],
+    {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],   // swallow git's hints/warnings
+      env: { ...process.env, ...GIT_IDENTITY, ...extraEnv },
+    }
+  );
+}
+function commitAt(iso, message) {
+  g(['--literal-pathspecs', 'add', '-A']);
+  g(['commit', '-q', '-m', message], { GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso });
+}
+
+try {
+  // Exactly how sync.js bootstraps the real repo: git dir and work-tree given
+  // explicitly, so tracked paths are relative to the DOMAINS folder.
+  g(['init', '-q']);
+} catch (err) {
+  gitAvailable = false;
+  fail('git is available to build the loadPriorContent fixture', err);
+}
+
+if (gitAvailable) {
+  __setUserDataDirOverride(gitRoot);   // points getSyncGitDir() at our tempdir
+
+  const pageRel   = 'entities/openai.md';
+  const pageAbs   = path.join(gitWikiDir, 'openai.md');
+  const decoyAbs  = path.join(decoyDir, 'openai.md');
+  // Glob-magic probe: an ordinary page whose NAME contains a character class,
+  // plus a sibling that the class would match.
+  const bracketRel = 'entities/n[ab].md';
+  const bracketAbs = path.join(gitWikiDir, 'n[ab].md');
+  const siblingAbs = path.join(gitWikiDir, 'na.md');
+  // A genuinely 0-BYTE page. Obsidian writes one of these every time someone
+  // makes a new note, and the documented vault root IS domains/<d>/wiki/.
+  const emptyRel = 'entities/blank.md';
+  const emptyAbs = path.join(gitWikiDir, 'blank.md');
+  // Whitespace-only — truthy, so both delta.js consumers already agree on it.
+  // Present to prove the guard collapses ONLY falsy content.
+  const wsRel  = 'entities/whitespace.md';
+  const wsAbs  = path.join(gitWikiDir, 'whitespace.md');
+
+  const T1 = '2020-01-01T00:00:00Z';
+  const T2 = '2020-01-03T00:00:00Z';
+  const T3 = '2020-01-05T00:00:00Z';
+
+  // Commit 1 — original bodies.
+  writeFileSync(pageAbs,    '# OpenAI\n\nVERSION-ONE body.\n');
+  writeFileSync(decoyAbs,   '# DECOY — the domains/ prefix is back\n');
+  writeFileSync(bracketAbs, 'BRACKET-ONE\n');
+  writeFileSync(siblingAbs, 'SIBLING-ONE\n');
+  writeFileSync(emptyAbs, '');          // committed EMPTY, body written later
+  writeFileSync(wsAbs, '\n\n  \n');
+  commitAt(T1, 'c1');
+
+  // Commit 2 — touches ONLY the sibling. If the pathspec is glob-parsed,
+  // `n[ab].md` matches `na.md`, so the sha lookup lands on THIS commit and the
+  // bracket page is read at the wrong point in history.
+  writeFileSync(siblingAbs, 'SIBLING-TWO\n');
+  commitAt(T2, 'c2 — sibling only');
+
+  // Commit 3 — the real pages change.
+  writeFileSync(pageAbs,    '# OpenAI\n\nVERSION-TWO body.\n');
+  writeFileSync(bracketAbs, 'BRACKET-TWO\n');
+  commitAt(T3, 'c3');
+
+  const domainsDirArg = gitDomains;
+
+  // (a) A watermark BETWEEN c1 and c3 must return the c1 body — the version as
+  //     it stood at the watermark, not HEAD.
+  const priorMid = await loadPriorContent(domainsDirArg, 'notes', pageRel, new Date('2020-01-02T00:00:00Z'));
+  assert(typeof priorMid === 'string' && priorMid.includes('VERSION-ONE'),
+    'loadPriorContent returns the content as of the watermark (VERSION-ONE)',
+    `got: ${JSON.stringify(priorMid)}`);
+  assert(typeof priorMid === 'string' && !priorMid.includes('DECOY'),
+    'loadPriorContent does NOT resolve through a literal domains/ directory (prefix regression guard)',
+    `got: ${JSON.stringify(priorMid)}`);
+
+  // (b) A watermark after c3 must return the c3 body.
+  const priorLate = await loadPriorContent(domainsDirArg, 'notes', pageRel, new Date('2020-02-01T00:00:00Z'));
+  assert(typeof priorLate === 'string' && priorLate.includes('VERSION-TWO'),
+    'loadPriorContent advances with the watermark (VERSION-TWO after the later commit)',
+    `got: ${JSON.stringify(priorLate)}`);
+
+  // (c) A page whose FILENAME contains glob characters resolves to its own
+  //     history. NOTE, honestly: this passes with or without
+  //     --literal-pathspecs on git 2.48.1 — a globbed `git log -1` can only
+  //     select a commit at or after the one that last touched the real page,
+  //     and `git show <sha>:<path>` is snapshot-based, so the content comes
+  //     out the same. It is pinned as a property, NOT as the flag's guard.
+  //     The assertion that actually fails without the flag is (h).
+  const priorBracket = await loadPriorContent(domainsDirArg, 'notes', bracketRel, new Date('2020-02-01T00:00:00Z'));
+  assert(priorBracket === 'BRACKET-TWO\n',
+    'loadPriorContent resolves a page whose filename contains [] to its own history',
+    `got: ${JSON.stringify(priorBracket)}`);
+
+  // (d) A watermark BEFORE the page's first commit → the page did not exist.
+  const priorTooEarly = await loadPriorContent(domainsDirArg, 'notes', pageRel, new Date('2019-01-01T00:00:00Z'));
+  assertEq(priorTooEarly, null, 'loadPriorContent returns null for a watermark before the page existed');
+
+  // (e) Page that was never tracked at all.
+  const priorMissing = await loadPriorContent(domainsDirArg, 'notes', 'entities/never-existed.md', new Date('2020-02-01T00:00:00Z'));
+  assertEq(priorMissing, null, 'loadPriorContent returns null for a page that does not exist');
+
+  // (f) Unknown domain.
+  const priorBadDomain = await loadPriorContent(domainsDirArg, 'no-such-domain', pageRel, new Date('2020-02-01T00:00:00Z'));
+  assertEq(priorBadDomain, null, 'loadPriorContent returns null for an unknown domain');
+
+  // (g) Falsy sinceDate → null without touching git (first push).
+  assertEq(await loadPriorContent(domainsDirArg, 'notes', pageRel, null), null,
+    'loadPriorContent returns null when sinceDate is null');
+  assertEq(await loadPriorContent(domainsDirArg, 'notes', pageRel, undefined), null,
+    'loadPriorContent returns null when sinceDate is undefined');
+
+  // (h) A glob-shaped path whose literal file does not exist returns null.
+  //
+  //     HONEST SCOPE NOTE: this does NOT pin --literal-pathspecs. Without the
+  //     flag `git log` matches the sibling .md files, `git show <sha>:*.md`
+  //     exits 0 with empty stdout, and the function would return `''` — but
+  //     the (h2) falsy-content guard now converts that to null anyway, so this
+  //     assertion passes either way. I searched for a case where literal vs
+  //     glob parsing still changes the RETURN VALUE and could not construct
+  //     one: a globbed `git log -1` only ever selects a commit at or after the
+  //     one that last touched the real page, and `git show <sha>:<path>` is
+  //     snapshot-based, so the content is identical (verified on git 2.48.1,
+  //     including the delete-and-recreate shape where the two shas genuinely
+  //     differ). The flag is defence-in-depth on the sha lookup and has no
+  //     behavioural test. Do not relabel this as its guard.
+  const priorGlob = await loadPriorContent(domainsDirArg, 'notes', 'entities/*.md', new Date('2020-02-01T00:00:00Z'));
+  assertEq(priorGlob, null,
+    'loadPriorContent returns null (never an empty string) for a glob-shaped path');
+
+  // (h2) THE 0-BYTE GUARD — a DIFFERENT path to the same bad return value.
+  //      There is no glob here, so --literal-pathspecs never engages: `git log`
+  //      finds a real sha and `git show` legitimately exits 0 with empty stdout
+  //      for an empty blob. Only `if (!content) return null` closes this.
+  //
+  //      Asserted with `=== null` on purpose. `''` is falsy, so a
+  //      truthiness-based assertion would pass against the bug — and `''` vs
+  //      `null` IS the entire bug, because delta.js's two consumers use an
+  //      identity check and a truthiness check respectively.
+  const priorEmpty = await loadPriorContent(domainsDirArg, 'notes', emptyRel, new Date('2020-02-01T00:00:00Z'));
+  assert(priorEmpty === null,
+    'loadPriorContent returns strictly null (not "") for a 0-byte prior version — falsy-content guard',
+    `got ${JSON.stringify(priorEmpty)} (typeof ${typeof priorEmpty})`);
+
+  // (h3) The 0-byte page IS reachable — prove the guard is doing the work and
+  //      the null did not come from an earlier short-circuit (missing sha,
+  //      missing repo). If git could not resolve this page at all, (h2) would
+  //      pass for the wrong reason and measure nothing.
+  const emptySha = g(['--literal-pathspecs', 'log', '--format=%H', '-1', '--',
+                      `notes/wiki/${emptyRel}`]).trim();
+  assert(emptySha.length === 40,
+    'the 0-byte page really is tracked and resolvable — (h2) is not passing via an early return',
+    `sha was ${JSON.stringify(emptySha)}`);
+
+  // (h4) THE CONTRACT THAT ACTUALLY MATTERS. Checking the return value alone
+  //      would not catch this bug's harm. Feed each possible prior straight
+  //      into the REAL buildDeltaPrompt and require that `isNew` (delta.js:293,
+  //      an identity check) and the block actually rendered (delta.js:192, a
+  //      truthiness check) agree. They disagree on exactly one value: ''.
+  const coherence = (prior) => {
+    const isNew = prior === null || prior === undefined;       // delta.js:293
+    const { user } = buildDeltaPrompt('entities/x.md', 'entity', '# Cur\n\nBody.\n', prior, isNew);
+    const showsPrior = user.includes('PRIOR VERSION:');
+    return { isNew, showsPrior, agree: isNew === !showsPrior };
+  };
+  assert(coherence(priorEmpty).agree,
+    'a 0-byte prior produces an internally consistent delta prompt (isNew matches the block shown)');
+  assert(coherence(priorEmpty).isNew === true,
+    'a 0-byte prior is framed to the model as a NEW page, so its whole body is contributed');
+  assert(coherence('').agree === false,
+    "control: '' really would be incoherent — this is the value the guard exists to eliminate");
+  assert(coherence(null).agree && coherence('# Old\n').agree && coherence('\n\n  \n').agree,
+    'null, a real prior, and a whitespace-only prior are all coherent (whitespace-only is left alone by design)');
+
+  // (h5) Whitespace-only is NOT collapsed — verified against the real function,
+  //      not assumed. It is truthy, both consumers agree on it, and it is a
+  //      real if thin prior version.
+  const priorWs = await loadPriorContent(domainsDirArg, 'notes', wsRel, new Date('2020-02-01T00:00:00Z'));
+  assertEq(priorWs, '\n\n  \n',
+    'loadPriorContent preserves a whitespace-only prior version (the guard collapses only falsy content)');
+
+  // (i) Never-throws / never-escapes contract on hostile input.
+  let hostileBad = null;
+  const hostile = [
+    ['../../etc', 'passwd'],
+    ['notes', '../../../../etc/passwd'],
+    [':!notes', pageRel],
+    ['notes', 'entities/openai.md\nrm -rf /'],
+    ['notes', 'entities/openai.md; echo pwned'],
+  ];
+  for (const [d, p] of hostile) {
+    try {
+      const r = await loadPriorContent(domainsDirArg, d, p, new Date('2020-02-01T00:00:00Z'));
+      if (r !== null) hostileBad = `${d} | ${p} → ${JSON.stringify(String(r).slice(0, 60))}`;
+    } catch (err) {
+      hostileBad = `${d} | ${p} threw ${err.message}`;
+    }
+  }
+  assert(hostileBad === null,
+    'loadPriorContent never throws and never escapes the repo on hostile domain/pagePath input',
+    hostileBad);
+
+  // (j) A non-repo at the git-dir path must degrade to null, not throw.
+  __setUserDataDirOverride(path.join(workspaceRoot, 'bogus-userdata'));
+  mkdirSync(path.join(workspaceRoot, 'bogus-userdata', '.knowledge-git'), { recursive: true });
+  let brokenRepoResult = 'unset';
+  try {
+    brokenRepoResult = await loadPriorContent(domainsDirArg, 'notes', pageRel, new Date('2020-02-01T00:00:00Z'));
+  } catch { brokenRepoResult = 'threw'; }
+  assertEq(brokenRepoResult, null, 'loadPriorContent returns null (does not throw) when .knowledge-git is not a repo');
+
+  // (k) No .knowledge-git at all — the common case for users without Personal Sync.
+  __setUserDataDirOverride(path.join(workspaceRoot, 'no-sync-userdata'));
+  assertEq(await loadPriorContent(domainsDirArg, 'notes', pageRel, new Date('2020-02-01T00:00:00Z')), null,
+    'loadPriorContent returns null when Personal Sync was never set up');
+
+  // ── 11b. pushDomain wires prior content through to the delta prompt ──────
+  //
+  // Behavioural check on the CALL SITE: a page that changed since the last
+  // push must be diffed, while a page queued in pending_retry (never
+  // successfully contributed) must be treated as new so its whole body is
+  // still sent.
+  section('11b. pushDomain — prior-content wiring + never-contributed guard');
+
+  __setUserDataDirOverride(gitRoot);
+
+  const seenPrompts = {};
+  const spyLLM = async (system, user) => {
+    const m = /^PAGE PATH: (.+)$/m.exec(user);
+    seenPrompts[m ? m[1] : '?'] = user;
+    return JSON.stringify({
+      title: 'X', new_facts: ['f'], stable_facts: [], new_links: [],
+      removed_links: [], key_entities: [],
+    });
+  };
+
+  // Make both pages look edited since the watermark.
+  const future = new Date(Date.now() + 1000);
+  writeFileSync(pageAbs,    '# OpenAI\n\nVERSION-THREE body.\n');
+  writeFileSync(bracketAbs, 'BRACKET-THREE\n');
+  utimesSync(pageAbs, future, future);
+  utimesSync(bracketAbs, future, future);
+
+  const gitStorageRoot = path.join(workspaceRoot, 'git-shared-storage');
+  mkdirSync(gitStorageRoot, { recursive: true });
+  const gitConn = {
+    id: randomUUID(),
+    label: 'Git Fellow',
+    enabled: true,
+    storage_type: 'local',
+    local_storage_path: gitStorageRoot,
+    shared_domain: 'notes',
+    shared_brain_slug: 'git-cohort',
+    local_domains: ['notes'],
+    fellow_id: randomUUID(),
+    fellow_display_name: 'Git Fellow',
+    last_push_at: '2020-01-04T00:00:00.000Z',   // between c2 and c3
+    pending_retry: { [bracketRel]: 1 },          // never successfully contributed
+    permanent_skip: [],
+  };
+
+  const gitPush = await pushDomain(gitConn, 'notes', {
+    llmFn: spyLLM,
+    domainsDir: gitDomains,
+    patchFn: () => {},
+  });
+
+  assert(gitPush.ok, 'pushDomain succeeded against the git-backed fellow', gitPush.error);
+
+  const openaiPrompt = seenPrompts[pageRel];
+  assert(typeof openaiPrompt === 'string' && openaiPrompt.includes('PRIOR VERSION:'),
+    'pushDomain builds a PRIOR VERSION / CURRENT VERSION prompt for a previously-contributed page');
+  assert(typeof openaiPrompt === 'string' && openaiPrompt.includes('VERSION-ONE'),
+    'the prior version handed to the LLM is the watermark-era body, not HEAD');
+  assert(typeof openaiPrompt === 'string' && openaiPrompt.includes('VERSION-THREE'),
+    'the current version handed to the LLM is the on-disk body');
+  assert(typeof openaiPrompt === 'string' && openaiPrompt.includes('IS NEW PAGE: false'),
+    'a previously-contributed page is no longer flagged as new');
+
+  const bracketPrompt = seenPrompts[bracketRel];
+  assert(typeof bracketPrompt === 'string' && bracketPrompt.includes('CONTENT (new page):'),
+    'a pending_retry page is treated as NEW — its full body is still contributed');
+  assert(typeof bracketPrompt === 'string' && !bracketPrompt.includes('PRIOR VERSION:'),
+    'a pending_retry page is NOT diffed (synthesis reads new_facts only, so a diff would drop its body)');
+
+  // ── 11c. A page whose readFile FAILED must not be diffed next push ───────
+  //
+  // This is the third door into "never contributed", and the one the guard
+  // originally missed. Step 6 advances last_push_at unconditionally, so a page
+  // skipped on a read error and left out of both tracking sets looks
+  // previously-contributed on the next push and gets DIFFED — its whole body
+  // then arrives as PRIOR VERSION, routes to stable_facts, and is dropped,
+  // because nothing reads stable_facts.
+  //
+  // Realistic trigger: domains/ on iCloud Drive / Dropbox / a network mount
+  // with the page evicted to online-only (EIO/ENOENT), or an Obsidian rename
+  // landing between readdir and readFile.
+  section('11c. push — read failure queues, warns, and is treated as new next push');
+
+  const rfRel = 'entities/unreadable.md';
+  const rfAbs = path.join(gitWikiDir, 'unreadable.md');
+  writeFileSync(rfAbs, '# Unreadable\n\nALPHA fact.\n');
+  commitAt('2020-01-06T00:00:00Z', 'c4 — page that will fail to read');
+
+  // Make it unreadable, then run a push whose watermark predates the content.
+  chmodSync(rfAbs, 0o000);
+  let readBlocked = true;
+  try { await (await import('fs/promises')).readFile(rfAbs, 'utf-8'); readBlocked = false; }
+  catch { /* expected — chmod 000 took effect */ }
+
+  if (!readBlocked) {
+    console.log('  (skipped — this filesystem/user ignores chmod 000, cannot simulate a read failure)');
+  } else {
+    const patched = {};
+    const rfConn = {
+      ...gitConn,
+      id: randomUUID(),
+      last_push_at: '2020-01-05T12:00:00Z',
+      pending_retry: {},
+      permanent_skip: [],
+    };
+    const push1Prompts = {};
+    const spy1 = async (system, user) => {
+      push1Prompts[/^PAGE PATH: (.+)$/m.exec(user)[1]] = user;
+      return JSON.stringify({ title: 'X', new_facts: ['f'], stable_facts: [], new_links: [], removed_links: [], key_entities: [] });
+    };
+    const rfWarnings = [];
+    const push1 = await pushDomain(rfConn, 'notes', {
+      llmFn: spy1, domainsDir: gitDomains,
+      patchFn: (id, patch) => Object.assign(patched, patch),
+      onProgress: (stage, msg) => { if (stage === 'warn') rfWarnings.push(msg); },
+    });
+
+    assert(push1.ok, 'push succeeds overall even though one page could not be read');
+    assert(!(rfRel in push1Prompts), 'the unreadable page never reached the LLM on push 1');
+
+    // (1) QUEUED — the mechanism.
+    assert(Object.prototype.hasOwnProperty.call(patched.pending_retry || {}, rfRel),
+      'a page whose readFile failed is QUEUED into pending_retry (not silently dropped)',
+      `pending_retry was ${JSON.stringify(patched.pending_retry)}`);
+    assertEq((patched.pending_retry || {})[rfRel], 0,
+      'a read failure does NOT advance the permanent-skip strike counter');
+    assert(!(patched.permanent_skip || []).includes(rfRel),
+      'a read failure never marks a page permanent_skip');
+
+    // (2) WARNED — console.error is not a user surface.
+    assert(rfWarnings.some(m => m.includes(rfRel)),
+      'the skipped page is surfaced to the user via onProgress("warn"), not just console.error',
+      `warnings seen: ${JSON.stringify(rfWarnings)}`);
+
+    // (3) THE HARM — the next push must frame it as NEW, not diff it.
+    chmodSync(rfAbs, 0o644);
+    const push2Prompts = {};
+    const spy2 = async (system, user) => {
+      push2Prompts[/^PAGE PATH: (.+)$/m.exec(user)[1]] = user;
+      return JSON.stringify({ title: 'X', new_facts: ['f'], stable_facts: [], new_links: [], removed_links: [], key_entities: [] });
+    };
+    const rfConn2 = { ...rfConn, last_push_at: patched.last_push_at, pending_retry: patched.pending_retry, permanent_skip: patched.permanent_skip };
+    await pushDomain(rfConn2, 'notes', { llmFn: spy2, domainsDir: gitDomains, patchFn: () => {} });
+
+    const p2 = push2Prompts[rfRel];
+    assert(typeof p2 === 'string', 'the previously-unreadable page IS reprocessed on the next push');
+    assert(typeof p2 === 'string' && p2.includes('CONTENT (new page):'),
+      'a page that failed to read gets NEW-page framing on the next push, so its whole body is contributed');
+    assert(typeof p2 === 'string' && !p2.includes('PRIOR VERSION:'),
+      'a page that failed to read is NOT diffed on the next push (its body would route to the unread stable_facts)');
+    assert(typeof p2 === 'string' && p2.includes('ALPHA fact.'),
+      'the body that was never contributed appears in the CURRENT content, not stranded as PRIOR');
+  }
+
+  // ── 11d. TOTAL COVERAGE — the invariant, not the individual door ─────────
+  //
+  // The bug above was not a missing branch, it was an INCOMPLETE ENUMERATION.
+  // Testing one more door would leave the next one open. This pins the actual
+  // invariant instead: every page in changedPages must end up accounted for in
+  // deltas ∪ pending_retry ∪ permanent_skip. Any future exit path that skips a
+  // page without queueing it fails here regardless of which branch it is.
+  section('11d. push — every changed page is accounted for (total-coverage invariant)');
+
+  const covDir = path.join(gitDomains, 'coverage', 'wiki', 'entities');
+  mkdirSync(covDir, { recursive: true });
+  writeFileSync(path.join(covDir, 'good.md'),      '# Good\n\nfine\n');
+  writeFileSync(path.join(covDir, 'llmfail.md'),   '# LlmFail\n\nbad\n');
+  writeFileSync(path.join(covDir, 'transient.md'), '# Transient\n\nbad\n');
+  const covUnreadable = path.join(covDir, 'noread.md');
+  writeFileSync(covUnreadable, '# NoRead\n\nbad\n');
+  chmodSync(covUnreadable, 0o000);
+
+  const mixedLLM = async (system, user) => {
+    const p = /^PAGE PATH: (.+)$/m.exec(user)[1];
+    if (p.includes('llmfail'))   return 'not json at all';
+    if (p.includes('transient')) throw new Error('503 Service Unavailable — temporarily overloaded');
+    return JSON.stringify({ title: 'X', new_facts: ['f'], stable_facts: [], new_links: [], removed_links: [], key_entities: [] });
+  };
+
+  const covPatched = {};
+  const covConn = {
+    ...gitConn, id: randomUUID(), local_domains: ['coverage'],
+    last_push_at: null, pending_retry: {}, permanent_skip: [],
+  };
+  const covPush = await pushDomain(covConn, 'coverage', {
+    llmFn: mixedLLM, domainsDir: gitDomains,
+    patchFn: (id, patch) => Object.assign(covPatched, patch),
+  });
+
+  const covChanged = await getAllPagePaths(path.join(gitDomains, 'coverage', 'wiki'));
+
+  // Ground truth for "contributed" is the stored contribution itself, not the
+  // returned count — a count cannot tell you WHICH page went missing.
+  const covAdapter = new LocalFolderStorageAdapter({ storage_root: gitStorageRoot });
+  const covContribs = await covAdapter.listContributionsSince(null);
+  // Only THIS push's submission — the shared storage root also holds §11b's.
+  const contributed = new Set(
+    covContribs
+      .filter(c => c.submissionId === covPush.submission_id)
+      .flatMap(c => (c.payload.deltas || []).map(d => d.path))
+  );
+  const queued = new Set([
+    ...Object.keys(covPatched.pending_retry || {}),
+    ...(covPatched.permanent_skip || []),
+  ]);
+
+  const untracked = covChanged.filter(p => !contributed.has(p) && !queued.has(p));
+  assertEq(untracked, [],
+    'TOTAL COVERAGE: no changed page is left untracked — every one is contributed, queued, or skipped');
+  assertEq(new Set([...contributed, ...queued]).size, covChanged.length,
+    'contributed ∪ queued exactly covers the changed-page set (no page counted twice, none missing)');
+  assert(contributed.size >= 1, 'the healthy page really was contributed');
+  assert(queued.size === 3,
+    'all three failure doors (LLM-parse, transient-LLM, read-failure) landed in the tracking sets',
+    `queued=${JSON.stringify([...queued])}`);
+
+  chmodSync(covUnreadable, 0o644);   // so rmSync can clean up
+}
+
 // ── Cleanup ──────────────────────────────────────────────────────────────
 
 console.log('\nCleaning up...');
+__setUserDataDirOverride(null);
 rmSync(workspaceRoot, { recursive: true, force: true });
 console.log(`Removed ${workspaceRoot}`);
 

@@ -182,9 +182,16 @@ also includes the three Shared Brain integration suites, so the
   every run uses fresh slugs and cleans up exhaustively.
 - `test-sharedbrain-routes` — spawns the real server on port 3334 and drives
   every `/api/sharedbrain/*` endpoint over HTTP, including the revoke
-  success path. Its config handling backs up `.curator-config.json` /
-  `.sharedbrain-config.json` **on disk** (`<file>.pre-test-backup`) and
-  recovers them automatically even after a crash mid-run.
+  success path. Isolated via `CURATOR_TEST_USER_DATA_DIR` (v3.1.0+) — the
+  child never reads or writes the maintainer's real `.curator-config.json`,
+  `.sync-config.json`, or `.sharedbrain-config.json` at all, so there's
+  nothing left to back up and restore. Instead the suite fingerprints
+  (size + sha256 — deliberately NOT mtime, since the maintainer's own live
+  app on :3333 legitimately rewrites `.curator-config.json` during ordinary
+  use and a same-bytes rewrite must not fail the guard) those three files
+  plus `.env` once before spawning the child and once after the run, and
+  asserts content-identity as a permanent regression guard — see the header
+  comment in the suite and the table below.
 - `test-sharedbrain-llm-live` — the delta-generation and conflict-resolution
   prompts against every configured REAL provider (Gemini + Anthropic),
   through the GitHub adapter when the secrets are present (local adapter
@@ -279,6 +286,24 @@ directly) on that server would have pushed to the maintainer's real GitHub
 repository. Use `CURATOR_TEST_DOMAINS_DIR` alone only for in-process,
 no-server tests that exclusively touch `domains/` content and never construct
 a `sync`/`sharedbrain` code path.
+
+**Worked example:** `scripts/test-sharedbrain-routes.js` is the reference
+implementation — it spawns `src/server.js` on port 3334 with BOTH
+`CURATOR_TEST_USER_DATA_DIR` (a fresh tempdir, isolating the credential
+files + `.knowledge-git`) and `CURATOR_TEST_DOMAINS_DIR` (a second, separate
+tempdir) set on the child's env, then proves the isolation two ways rather
+than trusting the code: (1) an HTTP round-trip — `GET /api/config` on the
+running child must report `domainsPath` as the tempdir, not the real
+`domains/` folder; (2) a filesystem check — after the child persists a
+Shared Brain connection, `.sharedbrain-config.json` must exist inside the
+tempdir. It also fingerprints (size + sha256 — deliberately NOT mtime, for
+the same live-app-rewrite reason above) the maintainer's real
+`.curator-config.json` / `.sync-config.json` / `.sharedbrain-config.json` /
+`.env` before spawning the child and again after the run, and fails loudly
+if any of their CONTENT changed — a permanent regression guard in case isolation is
+ever silently broken later (e.g. a future module re-deriving a config path
+without going through `paths.js`). Copy this shape for any new test that
+spawns a server.
 
 Both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` beat
 `.curator-config.json`'s `domainsPath`/config values respectively (that's the

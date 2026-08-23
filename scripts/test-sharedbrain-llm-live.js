@@ -16,6 +16,14 @@
  *        (keep_a / keep_b / both / merge), the result must parse, the page
  *        must be written, and no fact may be silently lost UNLESS the
  *        model explicitly resolved it.
+ *   5.4  Prior-content diff path: loadPriorContent() (revived this release —
+ *        its git pathspec used to carry a spurious `domains/` prefix and
+ *        always returned null) is exercised against a REAL throwaway git
+ *        repo laid out exactly like Personal Sync's, then a REAL model is
+ *        handed the resulting PRIOR VERSION / CURRENT VERSION diff prompt.
+ *        Asserts the model reports only the genuinely new fact and does
+ *        NOT re-submit the unchanged ones — the actual point of reviving
+ *        the diff path, which no offline spy-llmFn test can prove.
  *
  * Storage: the REAL GitHubStorageAdapter when GITHUB_TEST_REPO +
  * GITHUB_TEST_PAT are set (full 5.2 as planned); otherwise the local
@@ -37,6 +45,7 @@ import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
+import { execFileSync } from 'child_process';
 import dotenv from 'dotenv';
 dotenv.config(); // standalone script — .env keys aren't loaded via server.js here
 
@@ -45,6 +54,8 @@ import { runLocalSynthesis } from '../src/brain/sharedbrain-synthesis.js';
 import { LocalFolderStorageAdapter } from '../src/brain/sharedbrain-local-adapter.js';
 import { GitHubStorageAdapter } from '../src/brain/sharedbrain-github-adapter.js';
 import { getEffectiveKey } from '../src/brain/config.js';
+import { getProviderInfo } from '../src/brain/llm.js';
+import { __setUserDataDirOverride } from '../src/brain/paths.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_FILE = path.join(ROOT, '.curator-config.json');
@@ -112,6 +123,11 @@ function restoreConfig() {
 }
 process.on('exit', restoreConfig);
 process.on('SIGINT', () => { restoreConfig(); process.exit(130); });
+// SIGTERM (an ordinary `kill`) must restore/clean up too — only the exit
+// handler ran before, so a plain kill (not just SIGINT) left the real
+// .curator-config.json swapped for the backup. SIGKILL is uncatchable;
+// nothing can be done for that case.
+process.on('SIGTERM', () => { restoreConfig(); process.exit(143); });
 
 function forceProvider(provider) {
   const cfg = existsSync(CONFIG_FILE) ? JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) : {};
@@ -317,6 +333,174 @@ async function runProvider(provider) {
     }
   } catch (err) {
     fail(`[${provider}] conflict-resolution scenario`, err);
+  }
+
+  // ── 5.4 — prior-content diff path meets a real model ──────────────────
+  //
+  // loadPriorContent() was 100% dead for the whole life of Shared Brain:
+  // its git pathspec carried a spurious `domains/` prefix, but Personal
+  // Sync's work-tree IS the domains dir, so real tracked paths look like
+  // `research/wiki/concepts/x.md` — never `domains/research/...`. Dead, it
+  // always returned null, so generateDeltaSummary always took the "brand
+  // new page" branch and every push re-submitted a page's ENTIRE body as
+  // new facts, even on the second, third, fourth push of the same page.
+  //
+  // test-sharedbrain-push.js §11/§11b prove the mechanism offline with a
+  // spy llmFn. That is not the same claim as "a real model behaves like a
+  // diff when handed the prompt" — this section is the missing half: build
+  // a real throwaway git repo, commit a v1 page, edit it to v2 (exactly one
+  // new fact, everything else byte-identical), push through the REAL
+  // provider, and assert the stored contribution's new_facts contains the
+  // new fact and does NOT contain the unchanged ones. If loadPriorContent
+  // were still dead, the model would see the "new page" framing and report
+  // all four facts — which would fail the assertion below.
+  try {
+    const priorRoot = path.join(workspace, `priorcontent-${provider}`);
+    const priorGitDir = path.join(priorRoot, '.knowledge-git');
+    const priorDomainsDir = path.join(priorRoot, 'domains');
+    const priorWikiDir = path.join(priorDomainsDir, 'research', 'wiki', 'concepts');
+    mkdirSync(priorWikiDir, { recursive: true });
+
+    const PAGE_REL = 'concepts/vector-databases.md';
+    const pageAbs = path.join(priorDomainsDir, 'research', 'wiki', PAGE_REL);
+
+    // V2 adds exactly ONE new fact; everything else is byte-identical, so
+    // any OTHER fact showing up in the model's output proves it was NOT
+    // handed the prior version (the bug is back).
+    const V1 =
+      `# Vector Databases\n\n` +
+      `## Definition\n` +
+      `A vector database stores high-dimensional embeddings and retrieves them by similarity.\n\n` +
+      `## Key Facts\n` +
+      `- Pinecone is a managed vector database service.\n` +
+      `- FAISS is Meta's open-source similarity search library.\n` +
+      `- Cosine similarity is the most common distance metric.\n`;
+    const V2 = V1 + `- Qdrant is written in Rust and supports on-premise deployment.\n`;
+
+    // Real git repo, bootstrapped exactly the way sync.js lays out Personal
+    // Sync's: git dir + work-tree given explicitly so tracked paths are
+    // relative to the DOMAINS folder, never carrying a `domains/` prefix.
+    const GIT_ISOLATION = ['-c', 'init.defaultBranch=main', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null'];
+    const GIT_IDENTITY = {
+      GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.invalid',
+      GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.invalid',
+    };
+    const g = (args, extraEnv = {}) => execFileSync('git',
+      [...GIT_ISOLATION, `--git-dir=${priorGitDir}`, `--work-tree=${priorDomainsDir}`, ...args],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...GIT_IDENTITY, ...extraEnv } });
+
+    g(['init', '-q']);
+    writeFileSync(pageAbs, V1);
+    const T1 = '2020-01-01T00:00:00Z';
+    g(['--literal-pathspecs', 'add', '-A']);
+    g(['commit', '-q', '-m', 'v1'], { GIT_AUTHOR_DATE: T1, GIT_COMMITTER_DATE: T1 });
+
+    const tracked = g(['ls-files']).trim();
+    assert(tracked.includes(`research/wiki/${PAGE_REL}`) && !/(^|\n)domains\//.test(tracked),
+      `[${provider}] tracked path carries no domains/ prefix`,
+      `tracked: "${tracked.replace(/\n/g, ' | ')}"`);
+
+    // The user edits the page AFTER that commit — uncommitted, exactly the
+    // state between two Personal Sync pushes.
+    writeFileSync(pageAbs, V2);
+
+    // Seed an ISOLATED config in the tempdir before redirecting there. paths.js
+    // resolves ALL user-data files (not just .knowledge-git) off the same
+    // override, so .curator-config.json disappears the moment the override is
+    // set unless we put one here. Without this, getEffectiveKey(provider) finds
+    // no key for THIS provider and getProviderInfo silently falls through to
+    // whichever provider still has one on this machine — a HIGH-severity class
+    // of failure where both providers "pass" while actually running the same
+    // model.
+    //
+    // Only the PROVIDER-UNDER-TEST's key is copied in — not both. Nothing else
+    // runs while the override is active besides pushDomain, whose default
+    // llmFn calls generateText() with no provider override, so it only ever
+    // needs this one key. This is strictly better than seeding both: with the
+    // other key absent, a resolution bug can no longer silently fall through
+    // to a different provider — getProviderInfo() has nothing left to fall
+    // back to and throws instead. The failure becomes structurally
+    // impossible rather than merely detected by the assertion below.
+    // (Also halves how many real credentials ever touch this tempdir file.)
+    const realCfgNow = existsSync(CONFIG_FILE) ? JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) : {};
+    const keyField = `${provider}ApiKey`; // 'geminiApiKey' | 'anthropicApiKey'
+    writeFileSync(path.join(priorRoot, '.curator-config.json'), JSON.stringify({
+      [keyField]: realCfgNow[keyField] || null,
+      activeProvider: provider,
+    }), { mode: 0o600 });
+
+    __setUserDataDirOverride(priorRoot); // points getSyncGitDir() (and the config file above) at THIS tempdir only
+
+    // Prove the redirect didn't silently swap providers. sharedbrain-delta.js's
+    // default llmFn calls generateText() with no explicit provider, which
+    // resolves through this exact function — so if this doesn't match, the
+    // rest of the section would silently be testing the wrong model. A
+    // mismatch here must fail LOUDLY; this class of bug is invisible by
+    // construction otherwise (see the docblock above).
+    const resolvedProviderInfo = getProviderInfo();
+    assert(resolvedProviderInfo.provider === provider,
+      `[${provider}] §5.4 resolves to the provider under test, not a silent fallback`,
+      `getProviderInfo() under the override resolved to ${JSON.stringify(resolvedProviderInfo)} — ` +
+      `check that ${provider}ApiKey is present in the real .curator-config.json`);
+    console.log(`    [prior-diff:${provider}] resolved provider/model under override: ${resolvedProviderInfo.provider} / ${resolvedProviderInfo.model}`);
+
+    const priorConn = {
+      ...pushConn,
+      id: randomUUID(),
+      fellow_id: randomUUID(),
+      shared_domain: `llm-live-prior-${provider}-${runId}`,
+      shared_brain_slug: `llmlive-prior-${provider}`,
+      last_push_at: '2020-06-01T00:00:00Z', // after the v1 commit, well before "now"
+      pending_retry: {},
+      permanent_skip: [],
+    };
+    connections[priorConn.id] = priorConn;
+    if (useGitHub) ghCleanupPrefixes.push(`contributions/${priorConn.fellow_id}/`);
+
+    const priorSubmissionId = randomUUID();
+    let priorPushRes = null;
+    try {
+      priorPushRes = await pushDomain(priorConn, 'research', {
+        domainsDir: priorDomainsDir, patchFn, submissionId: priorSubmissionId,
+        onProgress: (level, msg) => console.log(`    [prior-push:${level}] ${msg}`),
+      });
+    } catch (err) {
+      fail(`[${provider}] prior-diff pushDomain threw`, err);
+    }
+
+    if (priorPushRes) {
+      assert(priorPushRes.ok === true, `[${provider}] prior-diff push ok (error: ${priorPushRes.error || 'none'})`);
+      assert(priorPushRes.pushed === 1, `[${provider}] prior-diff page pushed (pushed=${priorPushRes.pushed}, skipped=${priorPushRes.skipped})`);
+    }
+
+    if (priorPushRes && priorPushRes.ok && priorPushRes.pushed === 1) {
+      let mine = null;
+      for (let i = 0; i < 8 && !mine; i++) {
+        if (i > 0) await new Promise(r => setTimeout(r, 1500));
+        const listed = await storage.adapter.listContributionsSince(null);
+        mine = listed.find(c => c.submissionId === priorSubmissionId) || null;
+      }
+      assert(!!mine, `[${provider}] prior-diff contribution retrievable`);
+      const delta = mine && Array.isArray(mine.payload.deltas) ? mine.payload.deltas[0] : null;
+      assert(!!delta, `[${provider}] prior-diff payload carries a delta`);
+      if (delta) {
+        const facts = Array.isArray(delta.new_facts) ? delta.new_facts : [];
+        console.log(`    [prior-diff:${provider}] new_facts: ${JSON.stringify(facts, null, 2)}`);
+        const joined = facts.join(' | ').toLowerCase();
+        assert(joined.includes('qdrant'),
+          `[${provider}] the genuinely new fact (Qdrant) is captured`,
+          `facts: ${JSON.stringify(facts)}`);
+        const oldTerms = ['pinecone', 'faiss', 'cosine'];
+        const leaked = oldTerms.filter(t => joined.includes(t));
+        assert(leaked.length === 0,
+          `[${provider}] unchanged facts (pinecone/faiss/cosine) were NOT re-submitted — proves the model was handed and used the prior version`,
+          `leaked: ${leaked.join(',') || 'none'}; facts: ${JSON.stringify(facts)}`);
+      }
+    }
+  } catch (err) {
+    fail(`[${provider}] prior-content diff scenario`, err);
+  } finally {
+    __setUserDataDirOverride(null); // never leave the override pointed at a tempdir
   }
 }
 

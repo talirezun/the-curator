@@ -703,6 +703,88 @@ eq(stFile.state, 'blocked', "a regular FILE at the data path → 'blocked', not 
 ok(stFile.exists === false,
   'userDataDirExists() is FALSE for a regular file (every later write would fail ENOTDIR)');
 
+// ═══════════════════════════════════════════════════════════════════════════
+section('§9  MCP domains-path precedence now matches the app (config outranks DOMAINS_PATH)');
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Prior bug: mcp/storage/local.js ranked DOMAINS_PATH ABOVE .curator-config.json,
+// while src/brain/config.js's getDomainsDir() ranked config ABOVE DOMAINS_PATH —
+// so a user with both set got Claude Desktop reading a different wiki than the
+// app showed. This section drives the REAL createStorageAdapter() (not a source
+// regex) with a real temp config file and real env vars, and separately proves
+// config.js's real getDomainsDir() resolves the SAME folder on the same inputs —
+// the actual guarantee this fix exists to provide.
+const p9Base = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-mcp-precedence-'));
+const p9ConfigDomains = path.join(p9Base, 'from-config');
+const p9EnvDomains = path.join(p9Base, 'from-env');
+const p9CliDomains = path.join(p9Base, 'from-cli-arg');
+const p9TestSeamDomains = path.join(p9Base, 'from-test-seam');
+
+const savedEnvP9DomainsPath = process.env.DOMAINS_PATH;
+const savedEnvP9TestSeam = process.env.CURATOR_TEST_DOMAINS_DIR;
+try {
+  delete process.env.DOMAINS_PATH;
+  delete process.env.CURATOR_TEST_DOMAINS_DIR;
+  paths.__setUserDataDirOverride(p9Base);
+  cfgModule.__setDomainsDirOverride(null); // config.js has its OWN override; keep it null so it falls through to the real config-file/env logic below
+
+  // (a) Nothing configured at all → falls through to the default.
+  eq(path.resolve(createStorageAdapter({}).getBase()), path.resolve(path.join(p9Base, 'domains')),
+    '(a) nothing set → default, <user-data dir>/domains');
+  eq(cfgModule.getDomainsDir(), path.resolve(path.join(p9Base, 'domains')),
+    '(a) config.js agrees: default when nothing is set');
+
+  // (b) DOMAINS_PATH alone (no config file, no CLI arg) → the env var still works.
+  process.env.DOMAINS_PATH = p9EnvDomains;
+  eq(path.resolve(createStorageAdapter({}).getBase()), path.resolve(p9EnvDomains),
+    '(b) DOMAINS_PATH alone (no config domainsPath) resolves the domains folder');
+  eq(cfgModule.getDomainsDir(), path.resolve(p9EnvDomains),
+    '(b) config.js agrees: DOMAINS_PATH alone still works');
+
+  // (c) THE FIX: config AND DOMAINS_PATH both set, no CLI arg → config MUST win.
+  // This is the exact case that silently disagreed before this change — verified
+  // by hand to FAIL against the pre-fix ordering (see the session report).
+  fs.writeFileSync(path.join(p9Base, '.curator-config.json'),
+    JSON.stringify({ domainsPath: p9ConfigDomains }));
+  eq(path.resolve(createStorageAdapter({}).getBase()), path.resolve(p9ConfigDomains),
+    '(c) config.domainsPath wins over DOMAINS_PATH in the MCP adapter');
+  eq(cfgModule.getDomainsDir(), path.resolve(p9ConfigDomains),
+    '(c) config.js\'s getDomainsDir() resolves the SAME folder — this is the app/MCP agreement the fix restores');
+
+  // (d) Same config + same DOMAINS_PATH, but the CLI arg is supplied (exactly as
+  // the generated Claude Desktop config always does) → the CLI arg wins over both.
+  eq(path.resolve(createStorageAdapter({ domainsPath: p9CliDomains }).getBase()), path.resolve(p9CliDomains),
+    '(d) --domains-path CLI arg wins over config AND DOMAINS_PATH');
+
+  // (e) The test seam still outranks the CLI arg — this ordering is UNCHANGED by
+  // this fix and must not regress alongside it.
+  process.env.CURATOR_TEST_DOMAINS_DIR = p9TestSeamDomains;
+  eq(path.resolve(createStorageAdapter({ domainsPath: p9CliDomains }).getBase()), path.resolve(p9TestSeamDomains),
+    '(e) CURATOR_TEST_DOMAINS_DIR still outranks the CLI arg (unchanged by this fix)');
+  delete process.env.CURATOR_TEST_DOMAINS_DIR;
+} finally {
+  paths.__setUserDataDirOverride(null);
+  if (savedEnvP9DomainsPath === undefined) delete process.env.DOMAINS_PATH;
+  else process.env.DOMAINS_PATH = savedEnvP9DomainsPath;
+  if (savedEnvP9TestSeam === undefined) delete process.env.CURATOR_TEST_DOMAINS_DIR;
+  else process.env.CURATOR_TEST_DOMAINS_DIR = savedEnvP9TestSeam;
+  try { fs.rmSync(p9Base, { recursive: true, force: true }); } catch { /* best-effort */ }
+}
+
+// Light source-order guard, supplementary to the behavioural assertions above
+// (mirrors the convention already used for config.js in §4). The behavioural
+// cases (a)-(e) are the ones that actually catch a regression; this just keeps
+// the two files' comments/rung lists honest at a glance.
+const mcpLocalSrcP9 = read('mcp/storage/local.js');
+const mIdxCli    = mcpLocalSrcP9.indexOf('if (domainsPath) return path.resolve(domainsPath);');
+const mIdxConfig = mcpLocalSrcP9.indexOf('if (cfg.domainsPath) return path.resolve(cfg.domainsPath);');
+const mIdxEnv    = mcpLocalSrcP9.indexOf("if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);");
+const mIdxDefault = mcpLocalSrcP9.indexOf('return getDefaultDomainsDir();');
+ok(mIdxCli > -1 && mIdxConfig > -1 && mIdxEnv > -1 && mIdxDefault > -1,
+  'mcp/storage/local.js still contains all four non-test-seam rungs');
+ok(mIdxCli < mIdxConfig && mIdxConfig < mIdxEnv && mIdxEnv < mIdxDefault,
+  'mcp/storage/local.js source order is CLI arg > config > DOMAINS_PATH > default — matches config.js');
+
 // Cleanup
 try { fs.rmSync(tmpBase, { recursive: true, force: true }); } catch { /* best-effort */ }
 
