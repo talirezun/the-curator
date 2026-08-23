@@ -1,0 +1,18 @@
+/* Local font fallback — replaces tokens/fonts.css for this shell.
+   tokens/fonts.css @imports Instrument Sans + IBM Plex Mono from Google Fonts.
+   The Curator is local-first and privacy-positioned; a page that phones
+   Google on every load contradicts that, and the design bundle's own
+   CONTENTS.md says to self-host before shipping anyway. Until real
+   self-hosted woff2 files are added, --font-sans / --font-mono are
+   redefined here to a system stack that keeps the same two-family
+   sans/mono split the design system's typography.css assumes.
+
+   tokens/fonts.css itself is still copied into this directory (unlinked)
+   so nothing from the original bundle is lost — swap this file for a
+   self-hosted @font-face block before cutover, and nothing else in the
+   shell needs to change (typography.css only ever reads the two
+   custom properties below). */
+:root {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', ui-sans-serif, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
+}

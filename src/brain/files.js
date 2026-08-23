@@ -1546,10 +1546,25 @@ export async function renameDomain(oldSlug, newSlug, newDisplayName) {
   } catch {}
 }
 
+// Shallow .md count in one directory — mirrors health.js's `listMd` exactly
+// (readdir + filter on '.md' suffix, no recursion, no isFile() check) so the
+// per-type counts returned by getDomainStats mean the SAME THING as the
+// entities/concepts/summaries counts scanWiki() computes. Deliberately does
+// NOT read file contents — a readdir per folder, nothing more, so this stays
+// as cheap as the rest of getDomainStats (unlike scanWiki, which is a full
+// content scan and must never be called from this hot, polled path).
+async function countMdShallow(dir) {
+  try {
+    return (await readdir(dir)).filter(f => f.endsWith('.md')).length;
+  } catch {
+    return 0;
+  }
+}
+
 export async function getDomainStats(slug) {
   const base = domainPath(slug);
 
-  const [displayName, pageCount, conversationCount, lastIngestDate] = await Promise.all([
+  const [displayName, pageCount, conversationCount, lastIngestDate, entityCount, conceptCount, summaryCount] = await Promise.all([
     // Display name from CLAUDE.md first line
     readFile(path.join(base, 'CLAUDE.md'), 'utf8')
       .then(content => {
@@ -1605,9 +1620,33 @@ export async function getDomainStats(slug) {
         return max;
       })
       .catch(() => null),
+
+    // Per-type page counts (additive, v3.1.x): entities / concepts / summaries,
+    // each a shallow readdir of its canonical folder — same meaning as
+    // scanWiki()'s entityFiles/conceptFiles/summaryFiles counts, but without
+    // scanWiki's full-content read (this function must stay cheap; it's
+    // polled by the UI). index.md and log.md live directly under wiki/, not
+    // inside these three folders, so no filename exclusion is needed here
+    // (consistent with how pageCount above excludes them by name only).
+    countMdShallow(path.join(base, 'wiki', 'entities')),
+    countMdShallow(path.join(base, 'wiki', 'concepts')),
+    countMdShallow(path.join(base, 'wiki', 'summaries')),
   ]);
 
-  return { slug, displayName, pageCount, conversationCount, lastIngestDate };
+  return {
+    slug,
+    displayName,
+    pageCount,
+    conversationCount,
+    lastIngestDate,
+    // Additive (v3.1.x): per-type breakdown for the redesigned Domains view.
+    // pageCounts.entities + .concepts + .summaries should equal pageCount on
+    // any wiki that only ever used the three canonical folders (normalizePath
+    // enforces this at write time); they can legitimately diverge if a user
+    // manually dropped a stray .md file elsewhere under wiki/, since pageCount
+    // is recursive over the whole tree and these three are not.
+    pageCounts: { entities: entityCount, concepts: conceptCount, summaries: summaryCount },
+  };
 }
 
 export { generateUniqueSlug };

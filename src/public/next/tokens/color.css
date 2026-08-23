@@ -1,0 +1,189 @@
+/* ── Color ───────────────────────────────────────────────────────────────
+   Dark is the primary theme. Light is full parity: every semantic alias below
+   is redefined under [data-theme="light"], so components never branch on theme.
+
+   Three color families, three jobs — never mixed:
+   1. BRAND VIOLET  identity + primary action. Ties The Curator to the
+      Obsidian ecosystem. Never used to mean a data type.
+   2. TYPE TRIAD    cyan / green / amber = entity / concept / summary.
+      Retuned from the old blue/green/purple so summary no longer collides
+      with brand violet. Appears only as data markers: graph nodes, 8px type
+      dots, type chips. Never as an action color.
+   3. STATUS        teal / amber / red = success / attention / danger.
+      Amber is deliberately shared with summary: in both cases it means
+      "human attention required". Status color always ships with an icon or
+      label, never as color alone.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Neutral ramp — cool near-black, violet-leaning at the dark end */
+  --ink-1000: #05050A;
+  --ink-950:  #08080E;
+  --ink-900:  #0C0C14;
+  --ink-850:  #10101A;
+  --ink-800:  #15151F;
+  --ink-750:  #1B1B27;
+  --ink-700:  #22222F;
+  --ink-650:  #2B2B3A;
+  --ink-600:  #363648;
+  --ink-500:  #4A4A5E;
+  --ink-400:  #63637A;
+  --ink-300:  #83839A;
+  --ink-200:  #A8A8BC;
+  --ink-100:  #C9C9D8;
+  --ink-50:   #E6E6EE;
+  --ink-25:   #F3F3F7;
+  --ink-0:    #FFFFFF;
+
+  /* Brand violet */
+  --violet-100: #EDE7FF;
+  --violet-200: #D8CBFF;
+  --violet-300: #BCA6FF;
+  --violet-400: #9D80F8;
+  --violet-500: #7C5AF5;
+  --violet-600: #6538E0;
+  --violet-700: #5127B4;
+  --violet-800: #3A1B82;
+  --violet-900: #241050;
+  --violet-950: #150A31;
+
+  /* Type triad */
+  --entity-400:  #6BD6EA;
+  --entity-500:  #3FBFD8;
+  --entity-600:  #2596AE;
+  --concept-400: #98D96F;
+  --concept-500: #79C752;
+  --concept-600: #5AA038;
+  --summary-400: #EDBB63;
+  --summary-500: #E0A33A;
+  --summary-600: #B57C21;
+
+  /* Status */
+  --teal-500:  #2FB88A;
+  --teal-400:  #4FD3A4;
+  --teal-600:  #1E8F69;
+  --red-500:   #EF5568;
+  --red-400:   #F87F8D;
+  --red-600:   #C33345;
+
+  /* ── Semantic aliases — DARK (default) ───────────────────────────────── */
+
+  /* Surfaces: depth comes from 1px borders, not shadow */
+  --canvas:          var(--ink-950);
+  --surface:         var(--ink-900);
+  --surface-raised:  var(--ink-850);
+  --surface-sunken:  var(--ink-1000);
+  --surface-overlay: var(--ink-850);
+  --surface-hover:   var(--ink-800);
+  --surface-active:  var(--ink-750);
+  --surface-inset:   #0A0A11;
+
+  /* Borders */
+  --border:        #22222F;
+  --border-subtle: #17171F;
+  --border-strong: #33334A;
+  --border-focus:  var(--violet-500);
+  --hairline:      rgba(255,255,255,0.06);
+
+  /* Text */
+  --text:        #EDEDF4;
+  --text-2:      #A8A8BC;
+  --text-3:      #74748A;
+  --text-faint:  #4A4A5E;
+  --text-on-accent: #FFFFFF;
+  --text-link:      var(--violet-300);
+  --text-link-hover:var(--violet-200);
+
+  /* Accent */
+  --accent:          var(--violet-500);
+  --accent-hover:    var(--violet-400);
+  --accent-active:   var(--violet-600);
+  --accent-text:     var(--violet-300);
+  --accent-tint:     rgba(124,90,245,0.14);
+  --accent-tint-strong: rgba(124,90,245,0.24);
+  --accent-border:   rgba(124,90,245,0.42);
+  --accent-glow:     rgba(124,90,245,0.30);
+
+  /* Data types */
+  --type-entity:       var(--entity-500);
+  --type-entity-tint:  rgba(63,191,216,0.13);
+  --type-concept:      var(--concept-500);
+  --type-concept-tint: rgba(121,199,82,0.13);
+  --type-summary:      var(--summary-500);
+  --type-summary-tint: rgba(224,163,58,0.13);
+
+  /* Status */
+  --success:      var(--teal-500);
+  --success-text: var(--teal-400);
+  --success-tint: rgba(47,184,138,0.13);
+  --attention:      var(--summary-500);
+  --attention-text: var(--summary-400);
+  --attention-tint: rgba(224,163,58,0.13);
+  --danger:      var(--red-500);
+  --danger-text: var(--red-400);
+  --danger-tint: rgba(239,85,104,0.13);
+  --info-tint:   var(--accent-tint);
+
+  /* Charts / graph */
+  --graph-edge:      rgba(168,168,188,0.22);
+  --graph-edge-live: rgba(124,90,245,0.55);
+  --grid-line:       rgba(255,255,255,0.045);
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --canvas:          #FBFBFD;
+  --surface:         #FFFFFF;
+  --surface-raised:  #FFFFFF;
+  --surface-sunken:  #F3F3F7;
+  --surface-overlay: #FFFFFF;
+  --surface-hover:   #F5F5F9;
+  --surface-active:  #ECECF2;
+  --surface-inset:   #F7F7FA;
+
+  --border:        #E2E2EA;
+  --border-subtle: #EDEDF2;
+  --border-strong: #C9C9D8;
+  --hairline:      rgba(16,16,26,0.07);
+
+  --text:       #14141F;
+  --text-2:     #55556A;
+  --text-3:     #7B7B90;
+  --text-faint: #A8A8BC;
+  --text-on-accent: #FFFFFF;
+  --text-link:      var(--violet-600);
+  --text-link-hover:var(--violet-700);
+
+  --accent:        var(--violet-600);
+  --accent-hover:  var(--violet-500);
+  --accent-active: var(--violet-700);
+  --accent-text:   var(--violet-700);
+  --accent-tint:   rgba(101,56,224,0.08);
+  --accent-tint-strong: rgba(101,56,224,0.14);
+  --accent-border: rgba(101,56,224,0.28);
+  --accent-glow:   rgba(101,56,224,0.18);
+
+  --type-entity:       var(--entity-600);
+  --type-entity-tint:  rgba(37,150,174,0.10);
+  --type-concept:      var(--concept-600);
+  --type-concept-tint: rgba(90,160,56,0.10);
+  --type-summary:      var(--summary-600);
+  --type-summary-tint: rgba(181,124,33,0.10);
+
+  --success:      var(--teal-600);
+  --success-text: var(--teal-600);
+  --success-tint: rgba(30,143,105,0.10);
+  --attention:      var(--summary-600);
+  --attention-text: var(--summary-600);
+  --attention-tint: rgba(181,124,33,0.10);
+  --danger:      var(--red-600);
+  --danger-text: var(--red-600);
+  --danger-tint: rgba(195,51,69,0.09);
+
+  --graph-edge:      rgba(20,20,31,0.18);
+  --graph-edge-live: rgba(101,56,224,0.45);
+  --grid-line:       rgba(16,16,26,0.05);
+
+  color-scheme: light;
+}

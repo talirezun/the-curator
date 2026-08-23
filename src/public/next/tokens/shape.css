@@ -1,0 +1,34 @@
+/* ── Shape & elevation ───────────────────────────────────────────────────
+   Radii are small and deliberate. The old build leaned on 999px pills for
+   every button; here pill is reserved for tags, chips and counters — a
+   button is 6px, a card is 10px. Depth is a 1px border plus, at most, one
+   soft shadow; on dark, a 1px inset top highlight does the work instead. */
+:root {
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius-md:   6px;
+  --radius-lg:   10px;
+  --radius-xl:   14px;
+  --radius-2xl:  20px;
+  --radius-full: 999px;
+
+  --border-w:        1px;
+  --border-w-strong: 1.5px;
+
+  --shadow-none: none;
+  --shadow-sm:   0 1px 2px rgba(0,0,0,0.30);
+  --shadow-md:   0 4px 16px -4px rgba(0,0,0,0.45);
+  --shadow-lg:   0 16px 48px -12px rgba(0,0,0,0.60);
+  --shadow-pop:  0 12px 32px -8px rgba(0,0,0,0.55), 0 0 0 1px var(--border);
+  --inset-hi:    inset 0 1px 0 rgba(255,255,255,0.05);
+  --ring-focus:  0 0 0 3px var(--accent-tint-strong);
+  --glow-accent: 0 0 0 1px var(--accent-border), 0 6px 24px -6px var(--accent-glow);
+}
+
+[data-theme="light"] {
+  --shadow-sm:  0 1px 2px rgba(16,16,26,0.06);
+  --shadow-md:  0 4px 16px -4px rgba(16,16,26,0.10);
+  --shadow-lg:  0 16px 48px -12px rgba(16,16,26,0.16);
+  --shadow-pop: 0 12px 32px -8px rgba(16,16,26,0.14), 0 0 0 1px var(--border);
+  --inset-hi:   inset 0 1px 0 rgba(255,255,255,0.9);
+}

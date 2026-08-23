@@ -1,0 +1,40 @@
+/* ── Space ───────────────────────────────────────────────────────────────
+   4px base. Component padding lives in 6-20; layout rhythm in 24-96.
+   Dense-but-breathing: an app row is 12/16, a marketing section is 96/128. */
+:root {
+  --space-0:   0px;
+  --space-px:  1px;
+  --space-1:   2px;
+  --space-2:   4px;
+  --space-3:   6px;
+  --space-4:   8px;
+  --space-5:   10px;
+  --space-6:   12px;
+  --space-7:   14px;
+  --space-8:   16px;
+  --space-10:  20px;
+  --space-12:  24px;
+  --space-14:  28px;
+  --space-16:  32px;
+  --space-20:  40px;
+  --space-24:  48px;
+  --space-32:  64px;
+  --space-40:  80px;
+  --space-48:  96px;
+  --space-64:  128px;
+
+  /* Layout */
+  --page-max:      1200px;
+  --page-max-wide: 1400px;
+  --prose-max:     68ch;
+  --gutter:        var(--space-12);
+  --gutter-lg:     var(--space-20);
+
+  /* Control heights — 28/32/36, never taller in-app */
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 36px;
+  --control-xl: 44px; /* marketing + touch only */
+  --header-h:   52px;
+  --sidebar-w:  248px;
+}

@@ -1,0 +1,40 @@
+/* Minimal resets + primitives that every surface assumes. */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text);
+  font: var(--type-body);
+  letter-spacing: var(--track-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,h2,h3,h4 { margin: 0; letter-spacing: var(--track-title); }
+p { margin: 0; text-wrap: pretty; }
+
+a { color: var(--text-link); text-decoration: none; transition: color var(--t-state); }
+a:hover { color: var(--text-link-hover); text-decoration: underline; text-underline-offset: 2px; }
+
+code, kbd, samp, pre { font-family: var(--font-mono); font-size: 0.92em; letter-spacing: var(--track-mono); }
+
+::selection { background: var(--accent-tint-strong); color: var(--text); }
+
+:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
+
+/* Monospace eyebrow — the recurring metadata label of the system */
+.cur-eyebrow {
+  font: var(--type-eyebrow);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Hairline grid backdrop — the one texture the brand uses */
+.cur-grid {
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

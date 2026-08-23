@@ -195,6 +195,23 @@ app.post('/api/restart', (_req, res) => {
   }, 200);
 });
 
+// ── /next — Phase 1 UI redesign shell (parallel; does not touch the shipping
+// app in any way). Static assets under it (tokens/, assets/, app.js, ...)
+// are already served by the express.static() mount above, since
+// src/public/next/** lives inside src/public/. A request for the bare
+// "/next" path (no trailing slash) is actually caught by that same
+// express.static() mount first: it recognizes "next" as a directory and
+// issues its own 301 to "/next/" before this route ever runs (harmless —
+// every browser follows it transparently). This route's real job is
+// "/next/": it resolves to THIS shell's index.html instead of falling
+// through to the SPA catch-all below, which would otherwise serve the
+// shipping app's index.html at that path. The bare "/next" is kept in the
+// list too as a direct fallback, in case that static-redirect behavior
+// ever changes.
+app.get(['/next', '/next/'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'next', 'index.html'));
+});
+
 // Catch-all: serve index.html for SPA
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

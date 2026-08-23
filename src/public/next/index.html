@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Curator — Next (preview)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="assets/mark-small-on-dark.svg">
+
+<!-- Design tokens — copied byte-identical from the design system bundle.
+     Order matters: typography.css defines --font-sans/--font-mono at :root,
+     and fonts-local.css (below) intentionally redefines those two names at
+     the same specificity, so it must load AFTER typography.css to win. -->
+<link rel="stylesheet" href="tokens/base.css">
+<link rel="stylesheet" href="tokens/color.css">
+<link rel="stylesheet" href="tokens/space.css">
+<link rel="stylesheet" href="tokens/shape.css">
+<link rel="stylesheet" href="tokens/motion.css">
+<link rel="stylesheet" href="tokens/typography.css">
+<!-- tokens/fonts.css is deliberately NOT linked here — it @imports Google
+     Fonts, which this local-first app does not phone home to. It's still
+     copied into tokens/ so nothing from the design bundle is lost; see
+     fonts-local.css for why and what replaces it. -->
+<link rel="stylesheet" href="tokens/fonts-local.css">
+
+<link rel="stylesheet" href="shell.css">
+</head>
+<body>
+<div id="app-shell">
+  <nav class="rail" id="rail" aria-label="Primary navigation"></nav>
+  <aside class="sidebar" id="sidebar" aria-label="Contextual panel"></aside>
+  <main class="main" id="main" aria-label="Main content">
+    <div id="view-root"></div>
+    <div id="reader-root"></div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+/* ── Typography ──────────────────────────────────────────────────────────
+   Two families, two jobs.
+   Instrument Sans  — everything a human reads as prose or a label.
+   IBM Plex Mono    — everything the machine owns: paths, slugs, wiki-links,
+                      counts, versions, tokens, timestamps, eyebrow labels.
+   The mono/sans split IS the brand voice. Do not use mono for body copy,
+   and never set a file path or a [[wiki-link]] in sans.
+   ────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --font-sans: 'Instrument Sans', ui-sans-serif, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Size ramp — 1.20 at text sizes, widening to 1.25 for display */
+  --text-2xs: 10px;
+  --text-xs:  11px;
+  --text-sm:  12px;
+  --text-md:  13px;
+  --text-base:14px;
+  --text-lg:  16px;
+  --text-xl:  18px;
+  --text-2xl: 22px;
+  --text-3xl: 27px;
+  --text-4xl: 34px;
+  --text-5xl: 44px;
+  --text-6xl: 56px;
+  --text-7xl: 72px;
+
+  --leading-tight:   1.1;
+  --leading-snug:    1.25;
+  --leading-normal:  1.45;
+  --leading-relaxed: 1.6;
+
+  /* Optical tracking: negative as size grows, positive for mono eyebrows */
+  --track-display: -0.022em;
+  --track-title:   -0.014em;
+  --track-body:    -0.006em;
+  --track-mono:     0.01em;
+  --track-eyebrow:  0.09em;
+
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* Composed roles */
+  --type-display:  var(--weight-semibold) var(--text-5xl)/var(--leading-tight) var(--font-sans);
+  --type-h1:       var(--weight-semibold) var(--text-3xl)/var(--leading-snug) var(--font-sans);
+  --type-h2:       var(--weight-semibold) var(--text-2xl)/var(--leading-snug) var(--font-sans);
+  --type-h3:       var(--weight-semibold) var(--text-lg)/var(--leading-snug) var(--font-sans);
+  --type-body:     var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  --type-body-sm:  var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+  --type-label:    var(--weight-medium) var(--text-md)/var(--leading-snug) var(--font-sans);
+  --type-mono:     var(--weight-regular) var(--text-sm)/var(--leading-normal) var(--font-mono);
+  --type-eyebrow:  var(--weight-medium) var(--text-xs)/1 var(--font-mono);
+}

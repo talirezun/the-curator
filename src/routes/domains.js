@@ -22,6 +22,35 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/domains/stats — bulk stats for every domain in one call
+// (additive, v3.1.x). Powers a sidebar/list view without one HTTP round
+// trip per domain. MUST be registered before '/:domain/stats' would ever
+// matter for a route with a matching segment count — it doesn't here
+// ('/stats' is one segment, '/:domain/stats' is two) but the two are kept
+// adjacent for readability. Stays cheap like getDomainStats itself: no
+// file-content reads, no LLM, no network — just readdir calls. Each
+// domain's stats are individually try/caught so one domain with a
+// missing/partial wiki/ folder can never take down the whole response;
+// getDomainStats already degrades every sub-read to a safe default
+// (0 / null), so this is a defensive second layer, not the only one.
+// readonlyDomains is included so read-only Shared Brain mirrors stay
+// distinguishable here exactly as they are on GET /api/domains.
+router.get('/stats', async (req, res) => {
+  try {
+    const domains = await listDomains();
+    const [statsList, readonlyFlags] = await Promise.all([
+      Promise.all(domains.map(d =>
+        getDomainStats(d).catch(err => ({ slug: d, error: err.message }))
+      )),
+      Promise.all(domains.map(d => isDomainReadonly(d))),
+    ]);
+    const readonlyDomains = domains.filter((d, i) => readonlyFlags[i]);
+    res.json({ domains: statsList, readonlyDomains });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/domains/:domain/stats — domain stats (MUST be before /:domain handlers)
 router.get('/:domain/stats', async (req, res) => {
   try {

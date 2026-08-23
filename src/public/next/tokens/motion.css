@@ -1,0 +1,34 @@
+/* ── Motion ──────────────────────────────────────────────────────────────
+   Fast, flat, no bounce. Everything decelerates on the same curve. State
+   changes are 120ms; things that enter or leave are 180ms; layout and
+   progress are 240ms. Nothing in this system springs, and nothing loops
+   except the ingest progress bar and the sync spinner. */
+:root {
+  --ease-out:    cubic-bezier(0.20, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.15, 1);
+  --ease-linear: linear;
+
+  --dur-instant: 80ms;
+  --dur-fast:    120ms;
+  --dur-mid:     180ms;
+  --dur-slow:    240ms;
+  --dur-slower:  400ms;
+
+  --t-state:  var(--dur-fast) var(--ease-out);
+  --t-enter:  var(--dur-mid) var(--ease-out);
+  --t-layout: var(--dur-slow) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-instant:0ms; --dur-fast:0ms; --dur-mid:0ms; --dur-slow:0ms; --dur-slower:0ms; }
+}
+
+@keyframes curator-spin { to { transform: rotate(360deg); } }
+@keyframes curator-shimmer {
+  0%   { background-position: -140% 0; }
+  100% { background-position: 240% 0; }
+}
+@keyframes curator-pulse-dot {
+  0%,100% { opacity: 1; }
+  50%     { opacity: 0.35; }
+}

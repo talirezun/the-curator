@@ -65,6 +65,8 @@ const OFFLINE = [
   'test-chat-model.js',            // per-chat model (provider) selector + getDefaultModel exposure
   'test-chat-compile-card.js',     // compile result renders inline in the thread (no fixed panel)
   'test-css-tokens.js',            // every var(--x) CSS custom property is defined somewhere (the v3.0.12 --text-dim bug class)
+  'test-domain-stats.js',           // getDomainStats per-type page counts + bulk GET /api/domains/stats
+  'test-wiki-page.js',              // GET /api/wiki/:domain/page — single-page read + backlinks (health.js link-resolution parity, path-traversal defenses)
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
