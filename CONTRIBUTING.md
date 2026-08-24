@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (54 suites total — 37 OFFLINE
+The Curator has an extensive battle-test suite (55 suites total — 38 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report:
 
@@ -172,6 +172,35 @@ and — the other half of the concurrency story — that the single-file
 **Ingest** button is disabled for a domain a batch is actively running
 against, and NOT for any other domain, with a RED-confirmed check proving
 the guard being bypassed really does leave the button clickable.
+
+**A new OFFLINE suite, `test-ingest-abort.js` (84 offline assertions),
+responds to live-production feedback that Cancel didn't actually stop
+anything — it only stopped the *next* file, so a large batch kept spending
+on paid LLM calls for minutes after the click.** The fix threads a real
+`AbortSignal` from the queue's per-item `AbortController`, through
+`ingestFile()`, into `generateText()`, and from there into both provider
+SDKs — see
+[docs/ingestion-pipeline.md §10g.1c](docs/ingestion-pipeline.md#10g1c--real-mid-item-cancellation-cancel-aborts-pause-does-not)
+for the full design (including why Pause deliberately does NOT get the same
+treatment). The suite's own load-bearing section (2) drives a scripted
+multi-phase ingest through an abort mid-Phase-2 and asserts ZERO LLM calls
+happen after the abort; section 3 ("THE TRAP") pairs every one of ingest's
+recovery ladders with a control proving it still fires on an ordinary
+failure and a case proving it must NOT fire on a cancellation (recovering
+from a cancel would cost more than doing nothing); section 6 is the
+queue-level integration test asserting the interrupted item settles as the
+new `cancelled` status, not `failed` and not stuck `running`.
+
+**Sections 7 and 7b are worth knowing about on their own: they are the
+FIRST offline suite in this codebase to bind an ephemeral loopback HTTP
+server and point a provider's base URL at it**, so the REAL 429 retry-and-
+backoff ladder inside `generateText()` runs end-to-end against synthetic
+rate-limit responses — no real API key, no paid call, no network beyond
+`127.0.0.1` — while still proving that a cancel arriving mid-backoff (or
+mid-request) interrupts promptly instead of waiting out the delay. If
+you're adding a test that needs to exercise real retry/backoff/timeout
+logic in `llm.js` without hitting a real provider, this is the pattern to
+copy rather than reinventing an HTTP mock.
 
 ---
 

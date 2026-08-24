@@ -1607,7 +1607,7 @@ section('15. Round-3 item 2 — cancelRequested/pauseRequested rendering');
   ok(/>Pause</.test(neither.controlsHtml) && />Cancel</.test(neither.controlsHtml), 'plain "Pause"/"Cancel" labels when nothing is requested');
 
   const cancelling = Q.queueInFlightHtml({ ...running, cancelRequested: true, pauseRequested: false });
-  ok(/Cancelling — finishing the current file first, then stopping\./.test(cancelling.noticeHtml),
+  ok(/Cancelling — stopping the current file now\./.test(cancelling.noticeHtml),
     'FIXED — an unmistakable "Cancelling…" notice, not a UI that looks identical to before the click');
   ok(/id="queue-cancel-btn" disabled/.test(cancelling.controlsHtml), 'the Cancel button is disabled so it cannot be clicked again');
   ok(/>Cancelling…</.test(cancelling.controlsHtml), 'the Cancel button itself is relabelled, not just disabled silently');
@@ -1836,6 +1836,169 @@ section('17. Round-3 item 4 — legible spend label while $0 is in-progress');
     const brokenLabel = QBroken.computeQueueSpentLabel(0, false);
     ok(brokenLabel === '$0.0000 spent',
       `RED CONFIRMED — the pre-round-3 label renders the bare "$0.0000 spent" for an in-progress batch (got: "${brokenLabel}"), reading as "nothing is happening" exactly as reported`);
+  }
+}
+
+// ── 18. Round-4 audit item 1: a 'pending' item reads as "Not started" on
+//    a TERMINAL job, and stays "Waiting" on a LIVE one. ─────────────────────
+section("18. Round-4 item 1 — terminal-job 'pending' items read \"Not started\", not \"Waiting\"");
+{
+  // statusPillMeta's own contract, both arities.
+  ok(Q.statusPillMeta('pending').label === 'Waiting', 'statusPillMeta(status) with no second arg — backward compatible, defaults to live-job "Waiting"');
+  ok(Q.statusPillMeta('pending', false).label === 'Waiting', 'isTerminalJob:false — still "Waiting" (the file genuinely is still queued)');
+  const notStarted = Q.statusPillMeta('pending', true);
+  ok(notStarted.label === 'Not started', 'FIXED — isTerminalJob:true relabels a pending item to "Not started"');
+  ok(notStarted.cls === 'queue-pill-notstarted', 'the relabelled pill carries its own CSS class, not a reused one');
+  ok(notStarted.cls !== 'queue-pill-pending', 'specifically NOT the live "Waiting" class — a stylesheet change to one must not silently affect the other');
+
+  // The isTerminalJob flag is scoped to 'pending' ONLY — every other
+  // status renders exactly as before regardless of job terminality.
+  for (const s of ['running', 'done', 'failed', 'skipped']) {
+    const live = Q.statusPillMeta(s, false);
+    const terminal = Q.statusPillMeta(s, true);
+    ok(JSON.stringify(live) === JSON.stringify(terminal), `statusPillMeta('${s}', …) is unaffected by isTerminalJob — only 'pending' is`);
+  }
+
+  // Wired into the actual row builder.
+  const liveRow = Q.queueItemRowHtml({ idx: 0, name: 'a.txt', bytes: 10, status: 'pending' }, { jobTerminal: false });
+  ok(/queue-pill-pending">Waiting</.test(liveRow), 'a pending item on a LIVE job still renders "Waiting" through queueItemRowHtml');
+  const noOptsRow = Q.queueItemRowHtml({ idx: 0, name: 'a.txt', bytes: 10, status: 'pending' });
+  ok(/queue-pill-pending">Waiting</.test(noOptsRow), 'omitting opts entirely (every pre-round-4 call site) still renders "Waiting" — backward compatible');
+  const terminalRow = Q.queueItemRowHtml({ idx: 0, name: 'a.txt', bytes: 10, status: 'pending' }, { jobTerminal: true });
+  ok(/queue-pill-notstarted">Not started</.test(terminalRow),
+    'his exact repro — a pending item on a batch he just cancelled — now renders "Not started" through the real row builder');
+  ok(!/Waiting/.test(terminalRow), 'and does NOT also render the word "Waiting" anywhere on that row');
+
+  // Cross-check: renderQueuePanel is the ONLY caller in the shipped app,
+  // and it must pass isTerminal through — not compute its own separate
+  // notion of "terminal" that could drift from the one queueDoneSummaryHtml/
+  // queueDismissBtnHtml/queueInFlightHtml already use.
+  const panelFn = (app.match(/function renderQueuePanel\(job\) \{[\s\S]*?\n\}/) || [''])[0];
+  ok(panelFn.length > 0, 'renderQueuePanel extracted');
+  ok(/queueItemRowHtml\(item, \{ jobTerminal: isTerminal \}\)/.test(panelFn),
+    'renderQueuePanel threads its OWN single isTerminal computation into queueItemRowHtml — not a second, separately-derived one');
+
+  // Round-4's own hint, followed up: settledCount (the "Item X of Y"
+  // header counter) is a SECOND place that derived meaning from raw item
+  // status without considering the full status set — 'cancelled' items
+  // are settled too.
+  ok(/i\.status === 'skipped' \|\| i\.status === 'cancelled'/.test(panelFn),
+    "settledCount's filter now also counts 'cancelled' as settled, alongside done/failed/skipped");
+
+  // ── MUTATION-PROVE: revert statusPillMeta to its pre-round-4 shape (no
+  //    isTerminalJob handling at all) and confirm his exact repro goes RED. ─
+  {
+    const OLD_BUGGY_FN = `function statusPillMeta(status) {
+  const table = {
+    pending: { label: 'Waiting', cls: 'queue-pill-pending' },
+    running: { label: 'Running', cls: 'queue-pill-running' },
+    done:    { label: 'Done',    cls: 'queue-pill-done' },
+    failed:  { label: 'Failed',  cls: 'queue-pill-failed' },
+    skipped: { label: 'Skipped', cls: 'queue-pill-skipped' },
+  };
+  return table[status] || { label: 'Waiting', cls: 'queue-pill-pending' };
+}`;
+    const currentFn = extractFn(app, 'statusPillMeta');
+    ok(!!currentFn, 'mutation sanity — the current statusPillMeta was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_FN);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const QBroken = buildSandbox(brokenSrc, ['statusPillMeta', 'queueItemRowHtml', 'sanitizeDisplayName', 'formatQueueBytes', 'escHtml']);
+    const brokenRow = QBroken.queueItemRowHtml({ idx: 0, name: 'a.txt', bytes: 10, status: 'pending' }, { jobTerminal: true });
+    ok(/queue-pill-pending">Waiting</.test(brokenRow) && !/Not started/.test(brokenRow),
+      `RED CONFIRMED — the pre-round-4 statusPillMeta renders "Waiting" for a pending item even on a batch that has already ended (got: ${JSON.stringify(brokenRow)}), reading as "still queued, will run" exactly as reported`);
+  }
+}
+
+// ── 19. Round-4 audit item 2: the new 'cancelled' ITEM status (a file
+//    interrupted mid-ingest by a real abort) — distinct terminal state,
+//    partial-state message surfaced, counted as known/accounted-for. ──────
+section("19. Round-4 item 2 — new item status 'cancelled' (\"Stopped\")");
+{
+  // statusPillMeta contract.
+  const stopped = Q.statusPillMeta('cancelled');
+  ok(stopped.label === 'Stopped', 'FIXED — a cancelled ITEM renders the distinct label "Stopped"');
+  ok(stopped.cls === 'queue-pill-cancelled', 'carries its own CSS class');
+  ok(stopped.cls !== Q.statusPillMeta('failed').cls, 'visually distinct from failed (an error) — different class');
+  ok(stopped.cls !== Q.statusPillMeta('skipped').cls, 'visually distinct from skipped (never attempted) — different class');
+  ok(stopped.label !== Q.statusPillMeta('failed').label && stopped.label !== Q.statusPillMeta('skipped').label,
+    'and a different label text from both, not just a different class on the same words');
+
+  // computeQueueStatusCounts: cancelled joins KNOWN, not other — the
+  // audit's explicit instruction ("add to the known set rather than
+  // widening the check").
+  const items = [{ status: 'done' }, { status: 'cancelled' }, { status: 'cancelled' }, { status: 'failed' }, { status: 'pending' }];
+  const counts = Q.computeQueueStatusCounts(items);
+  ok(counts.known.cancelled === 2, 'two cancelled items are counted in the KNOWN bucket');
+  ok(counts.other.cancelled === undefined, 'cancelled never appears in the "other" (unaccounted) bucket at all');
+  ok(!Object.keys(counts.other).includes('cancelled'), 'cross-check: "cancelled" is not among the other-bucket keys');
+  const total = counts.known.done + counts.known.failed + counts.known.skipped + counts.known.cancelled
+    + Object.values(counts.other).reduce((a, b) => a + b, 0);
+  ok(total === items.length, 'the accounted-for invariant (known + other === items.length) still holds with cancelled items present');
+
+  // Wired into the done-summary: a real "N stopped" count, and cancelled
+  // items never trigger the amber unaccounted styling.
+  const cancelledJob = { status: 'cancelled', items, spentUsd: 0.01 };
+  const html = Q.queueDoneSummaryHtml(cancelledJob);
+  ok(/2 stopped/.test(html), 'the summary shows "2 stopped" as a real, always-visible count (same convention as done/failed/skipped)');
+  ok(!/queue-done-unaccounted">2 cancelled/.test(html) && !/queue-done-unaccounted">\d+ cancelled/.test(html),
+    'FIXED — cancelled items never render through the amber "unaccounted" styling — they are a status shipped on purpose, not a surprise');
+  const zeroJob = { status: 'done', items: [{ status: 'done' }], spentUsd: 0.01 };
+  ok(/0 stopped/.test(Q.queueDoneSummaryHtml(zeroJob)), 'a batch with no cancelled items still shows "0 stopped", same legibility convention as "0 failed"');
+
+  // The item row: partial-state message surfaced, same mechanism as a
+  // failed item's error, with a distinguishing modifier class.
+  const withMsg = Q.queueItemRowHtml({
+    idx: 0, name: 'big-doc.txt', bytes: 5000, status: 'cancelled',
+    error: 'Stopped partway through — some pages may already have been written. Re-ingest this file to complete it.',
+  });
+  ok(/queue-pill-cancelled">Stopped</.test(withMsg), 'the row pill reads "Stopped"');
+  ok(withMsg.includes('Stopped partway through — some pages may already have been written. Re-ingest this file to complete it.'),
+    "FIXED — the partial-state message is surfaced on the row, not silently dropped (a user who never sees this has no way to know to re-ingest)");
+  ok(/class="queue-item-error queue-item-stopped-msg"/.test(withMsg),
+    "the message reuses the SAME rendering mechanism a failed item's error uses (queue-item-error), plus a modifier class for the distinct (amber, not red) tone");
+
+  const withoutMsg = Q.queueItemRowHtml({ idx: 1, name: 'small.txt', bytes: 10, status: 'cancelled' });
+  ok(!withoutMsg.includes('queue-item-error'), 'defensive: a cancelled item with no error/message field renders no message line at all (matches the pre-existing failed-item contract)');
+
+  // XSS: the message is server-composed but still escaped like every
+  // other server string this file renders.
+  const xssRow = Q.queueItemRowHtml({ idx: 2, name: 'x.txt', bytes: 1, status: 'cancelled', error: '<script>alert(1)</script>' });
+  ok(!/<script>/i.test(xssRow) && /&lt;script&gt;/.test(xssRow), "a cancelled item's message is HTML-escaped, not injected live");
+
+  // Coded against the contract before the backend field lands: an OLDER
+  // job that never carries a 'cancelled' item status must render exactly
+  // as it always has — nothing here is a new REQUIREMENT on old data.
+  const oldJob = { status: 'done', items: [{ status: 'done' }, { status: 'failed' }, { status: 'skipped' }], spentUsd: 0 };
+  const oldCounts = Q.computeQueueStatusCounts(oldJob.items);
+  ok(oldCounts.known.cancelled === 0 && Object.keys(oldCounts.other).length === 0,
+    'a job with no cancelled items at all (every pre-round-4 job) has known.cancelled sitting at a harmless 0');
+
+  // ── MUTATION-PROVE: revert computeQueueStatusCounts to NOT include
+  //    'cancelled' in the known set (the exact "widen the check instead of
+  //    adding to known" shape the audit said NOT to do) and confirm a
+  //    cancelled item shows up in the amber unaccounted bucket — RED. ─────
+  {
+    const OLD_BUGGY_COUNTS_FN = `function computeQueueStatusCounts(items) {
+  const list = Array.isArray(items) ? items : [];
+  const known = { done: 0, failed: 0, skipped: 0 };
+  const other = {};
+  for (const i of list) {
+    const s = (i && typeof i.status === 'string' && i.status) ? i.status : 'unknown';
+    if (Object.prototype.hasOwnProperty.call(known, s)) known[s]++;
+    else other[s] = (other[s] || 0) + 1;
+  }
+  return { known, other, total: list.length };
+}`;
+    const currentFn = extractFn(app, 'computeQueueStatusCounts');
+    ok(!!currentFn, 'mutation sanity — the current computeQueueStatusCounts was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_COUNTS_FN);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const QBroken = buildSandbox(brokenSrc, ['computeQueueStatusCounts', 'queueDoneSummaryHtml', 'formatHealthCounts', 'escHtml']);
+    const brokenCounts = QBroken.computeQueueStatusCounts(items);
+    ok(brokenCounts.other.cancelled === 2, `RED CONFIRMED — with 'cancelled' excluded from the known set, both cancelled items fall into the "other" (unexpected) bucket (got other.cancelled=${brokenCounts.other.cancelled})`);
+    const brokenHtml = QBroken.queueDoneSummaryHtml(cancelledJob);
+    ok(/queue-done-unaccounted">2 cancelled/.test(brokenHtml),
+      `RED CONFIRMED — a status shipped on purpose renders through the amber "unexpected state" styling (got a fragment matching: ${JSON.stringify((brokenHtml.match(/<span class="queue-done-unaccounted">[^<]*<\/span>/) || [''])[0])})`);
   }
 }
 

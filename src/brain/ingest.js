@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir, readdir, unlink } from 'fs/promises';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
-import { generateText } from './llm.js';
+import { generateText, isAbortError, makeAbortError } from './llm.js';
 import {
   readSchema,
   readIndex,
@@ -1608,6 +1608,33 @@ export function isOutputTokenLimit(err) {
 }
 
 /**
+ * ── CANCELLATION AND THE THREE RECOVERY LADDERS (v3.3.x) ─────────────────────
+ *
+ * This module contains three ladders that deliberately CATCH an LLM error and
+ * degrade instead of failing:
+ *
+ *   1. Phase 1 outline  — retry once with a stricter/shorter-plan prompt
+ *   2. Phase 2          — batch -> page-by-page -> concise retry -> STUB PAGE
+ *   3. single-pass      — fall through to multi-phase
+ *
+ * Every one of them issues MORE LLM calls. So if a user's cancellation were
+ * caught by any of them it would be "recovered": the ingest would keep
+ * spending the user's API budget and would end up writing stub pages — the
+ * exact opposite of cancelling. That is the trap this guard exists for, and it
+ * is the same shape as the v3.0.1-beta.15 audit fix, which had to stop a
+ * genuine 503/auth/network error from silently degrading into stubs.
+ *
+ * RULE: every catch in this file that can see an LLM error re-throws an abort
+ * FIRST, before any recovery logic runs. The `isOutputTokenLimit` gate already
+ * happens to let an abort through (the message shares no substring with it) —
+ * the explicit check is here so the property survives a reworded abort message
+ * or a widened recovery gate, both of which are one edit away.
+ */
+function throwIfCancelled(signal) {
+  if (signal && signal.aborted) throw makeAbortError();
+}
+
+/**
  * Accumulate real token usage across every LLM call an ingest makes.
  *
  * `generateText` returns a bare string (18 call sites depend on that), so spend
@@ -1811,7 +1838,12 @@ Tags: stub, type/${pagePath.startsWith('entities/') ? 'entity' : 'concept'}
  *   This function touches no filesystem, so injecting the LLM makes the whole
  *   multi-phase orchestration testable offline. Production callers pass nothing.
  */
-async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText) {
+async function ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints = [], promptFiles = existingFiles, onUsage = null, llm = generateText, signal = null) {
+  // Cancellation checkpoints are placed immediately BEFORE each LLM call and at
+  // the top of each batch, so a cancel costs at most one in-flight call rather
+  // than the remaining 10-40 of a large multi-phase ingest.
+  throwIfCancelled(signal);
+
   // Phase 1: outline
   // Diagnostics use console.error so this module is safe to import from the
   // MCP child process (which reserves stdout for JSON-RPC) — see v2.5.2.
@@ -1844,9 +1876,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       MULTI_PHASE_OUTLINE_TOKENS,
       'json',
       (msg) => progress(12, msg, 'wait'),
-      { onUsage: outlineProbe.onUsage }
+      { onUsage: outlineProbe.onUsage, signal }
     )).trim();
   } catch (genErr) {
+    if (isAbortError(genErr)) throw genErr;          // cancelled — never recover
     if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
     firstFailedOnTokenLimit = true;
   }
@@ -1884,6 +1917,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
     // (retries and fallback-chain rungs mean "one extra call" is a guess), and if
     // the retry fails we throw, so a warning pushed here would never be seen.
     progress(13, 'Phase 1: retrying…', 'wait');
+    throwIfCancelled(signal);
 
     const strictPrompt = buildOutlinePrompt(today, index, promptFiles, originalName, text, isOverwrite, summaryPath)
       + '\n\nIMPORTANT — STRICT JSON REQUIREMENTS:\n'
@@ -1899,9 +1933,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       outlineRaw2 = (await llm(
         schema, strictPrompt, MULTI_PHASE_OUTLINE_TOKENS, 'json',
         (msg) => progress(13, msg, 'wait'),
-        { onUsage: retryProbe.onUsage }
+        { onUsage: retryProbe.onUsage, signal }
       )).trim();
     } catch (genErr2) {
+      if (isAbortError(genErr2)) throw genErr2;          // cancelled — never recover
       if (!isOutputTokenLimit(genErr2)) throw genErr2;   // fatal — surface it
       // token-limit on the retry too → fall through to the actionable error
     }
@@ -2045,6 +2080,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
   const writtenPages = []; // [{path, content, summary?}]
 
   for (let i = 0; i < allPages.length; i += BATCH_SIZE) {
+    // THE checkpoint that makes cancel feel instant on a real ingest: a large
+    // document is dozens of batches, so at most one is in flight when the user
+    // clicks Cancel.
+    throwIfCancelled(signal);
     const batch = allPages.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
     const batchPct = Math.round(20 + (batchNum / totalBatches) * 58);
@@ -2070,9 +2109,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         MULTI_PHASE_BATCH_TOKENS,
         'json',
         (msg) => progress(batchPct, msg, 'wait'),
-        { onUsage, cachePrefixChars: cacheAcrossBatches ? batchParts.prefix.length : 0 }
+        { onUsage, cachePrefixChars: cacheAcrossBatches ? batchParts.prefix.length : 0, signal }
       )).trim();
     } catch (genErr) {
+      if (isAbortError(genErr)) throw genErr;          // cancelled — never recover
       if (!isOutputTokenLimit(genErr)) throw genErr;   // fatal — surface it
       console.warn(`[ingest] Batch ${batchNum} hit the output token limit — retrying page-by-page...`);
       warnings.push(`Batch ${batchNum} of ${totalBatches} was too large for the AI's output limit — wrote those pages individually instead.`);
@@ -2116,6 +2156,9 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
       // it: either this batch writes >= 2 pages, or other batches follow.
       const cacheSinglePages = cacheAcrossBatches || batch.length >= 2;
       for (const singlePage of batch) {
+        // The fallback is itself one LLM call per page — a cancel must stop it
+        // between pages, not only between batches.
+        throwIfCancelled(signal);
         let singleRaw = null;
         const singleParts = buildBatchPromptParts(today, originalName, text, [singlePage], promptFiles, allPages);
         try {
@@ -2125,9 +2168,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
             MULTI_PHASE_SINGLE_PAGE_TOKENS,
             'json',
             (msg) => progress(batchPct, msg, 'wait'),
-            { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0 }
+            { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0, signal }
           )).trim();
         } catch (singleGenErr) {
+          if (isAbortError(singleGenErr)) throw singleGenErr;         // cancelled — never recover
           if (!isOutputTokenLimit(singleGenErr)) throw singleGenErr;  // fatal — surface it
           // token-limit on a single page → fall through to a stub below
         }
@@ -2143,6 +2187,7 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
         // (so the cache still hits), plus a brevity directive on the suffix.
         if (!singlePages) {
           console.warn(`[ingest]   ↻ ${singlePage.path} — retrying with a brevity directive...`);
+          throwIfCancelled(signal);
           let conciseRaw = null;
           try {
             conciseRaw = (await llm(
@@ -2151,9 +2196,10 @@ async function ingestMultiPhase(schema, today, index, existingFiles, originalNam
               MULTI_PHASE_SINGLE_PAGE_TOKENS,
               'json',
               (msg) => progress(batchPct, msg, 'wait'),
-              { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0 }
+              { onUsage, cachePrefixChars: cacheSinglePages ? singleParts.prefix.length : 0, signal }
             )).trim();
           } catch (conciseErr) {
+            if (isAbortError(conciseErr)) throw conciseErr;         // cancelled — never recover
             if (!isOutputTokenLimit(conciseErr)) throw conciseErr;  // fatal — surface it
             // token-limit again → fall through to a stub below
           }
@@ -2252,8 +2298,27 @@ const SINGLE_PASS_RESPONSE_LIMIT = 8_000;
 // each batch to ~10 pages / ~3 000 chars of JSON, which is far more reliable.
 const MULTI_PHASE_INPUT_THRESHOLD = 15_000;
 
-export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null) {
+/**
+ * @param {{signal?: AbortSignal}} [opts]  v3.3.x — optional cancellation.
+ *   When the batch-ingest queue's per-item AbortController fires, the ingest
+ *   stops at the NEXT LLM call boundary and throws a `curatorAborted` error,
+ *   instead of running the remaining phases of a document that can take
+ *   minutes and dozens of paid calls to finish.
+ *
+ *   DELIBERATELY NOT CANCELLABLE: the post-LLM section (writePage loop,
+ *   syncSummaryEntities, index merge, log). It is local, fast and free, and
+ *   every LLM call is already behind us at that point — stopping there would
+ *   only trade a few milliseconds of work for a wiki left in a genuinely
+ *   half-written state (pages on disk with no index rows or backlinks).
+ *
+ *   With no `opts.signal`, every branch behaves exactly as it did before.
+ */
+export async function ingestFile(domain, filePath, originalName, isOverwrite = false, onProgress = null, opts = {}) {
   const progress = makeProgress(onProgress);
+  const signal = (opts && opts.signal && typeof opts.signal.aborted === 'boolean') ? opts.signal : null;
+  // Cancelled before we started (the user clicked Cancel in the window between
+  // the worker selecting this item and the ingest beginning).
+  throwIfCancelled(signal);
 
   // Warnings accumulated across the pipeline (surfaced to the UI + result panel)
   const warnings = [];
@@ -2381,6 +2446,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   }
 
   if (!singlePassFailed) try {
+    throwIfCancelled(signal);
     progress(15, 'AI is analyzing the document…');
     const raw = (await generateText(
       schema,
@@ -2391,7 +2457,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       // No cache breakpoint here: single-pass is ONE call, and an Anthropic
       // cache write costs 1.25x the base input rate — marking a prefix that is
       // used exactly once would make this call MORE expensive, not less.
-      { onUsage: usage.onUsage }
+      { onUsage: usage.onUsage, signal }
     )).trim();
 
     try {
@@ -2408,6 +2474,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       } else {
         // Short response that failed to parse — retry with maximum brevity
         console.warn(`[ingest] Retrying with strict brevity…`);
+        throwIfCancelled(signal);
         progress(15, 'Retrying with brevity constraints…');
 
         const raw2 = (await generateText(
@@ -2416,7 +2483,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
           65536,
           'json',
           (msg) => progress(15, msg, 'wait'),
-          { onUsage: usage.onUsage }
+          { onUsage: usage.onUsage, signal }
         )).trim();
 
         try {
@@ -2428,6 +2495,11 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
       }
     }
   } catch (err) {
+    // A cancel must NEVER fall through to multi-phase: that ladder is the most
+    // expensive one in the file (an outline call plus one call per batch), so
+    // "recovering" a cancellation here would spend more than doing nothing at
+    // all. Checked first, before the token-limit gate.
+    if (isAbortError(err)) throw err;
     // v3.0.1-beta.15: an output-token-limit error on the single-pass call is
     // recoverable — multi-phase splits the work into small batches that each
     // stay well under the cap. Fall through to it instead of failing the whole
@@ -2448,7 +2520,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     if (!result) {
       progress(10, 'Large document — switching to multi-phase ingest…');
     }
-    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints, promptFiles, usage.onUsage);
+    throwIfCancelled(signal);
+    result = await ingestMultiPhase(schema, today, index, existingFiles, originalName, text, isOverwrite, progress, summaryPath, warnings, originatorHints, promptFiles, usage.onUsage, generateText, signal);
   } else {
     // v3.0.1-beta.1: single-pass also runs through the outline validator so a
     // missing/non-canonical summary page is patched the same way as multi-phase.

@@ -195,7 +195,7 @@ import {
   capExistingFilesForPrompt,
   __testing as ingestTesting,
 } from './ingest.js';
-import { getProviderInfo, getModelPrice } from './llm.js';
+import { getProviderInfo, getModelPrice, isAbortError } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -671,14 +671,20 @@ export function toWire(job) {
     } : null,
     currentIndex: wireNum(job.currentIndex),
     consecutiveFailures: wireNum(job.consecutiveFailures),
-    // A cancel/pause is honoured BETWEEN items — aborting mid-ingestFile would
-    // leave partial wiki state — so a batch legitimately keeps working on the
-    // in-flight file after the click, which on a large multi-phase document is
-    // minutes. Without these two fields the wire snapshot still read
-    // `status: running` with the item running, so the UI had nothing to show
-    // and the maintainer reasonably concluded Cancel was broken. The request
-    // being PENDING is the state the user needs to see; read live, never
-    // persisted (see readControlFlags).
+    // These two fields exist because a request can be PENDING for a short
+    // window before the job settles, and the UI needs to show that.
+    //
+    // HISTORY, because this comment described the opposite behaviour for one
+    // release and that is exactly how a stale docblock misleads the next
+    // reader: cancel used to be honoured only BETWEEN items, so a batch kept
+    // working on the in-flight file after the click — minutes, on a large
+    // multi-phase document. These fields were added so the UI could at least
+    // SAY so. Cancel now genuinely aborts the in-flight file (measured 334 s
+    // -> 63-74 ms; see requestCancel and ingest.js's throwIfCancelled), so the
+    // pending window is milliseconds rather than minutes — but it is still a
+    // real window, a second tab still needs to see it, and pause STILL waits
+    // for the current file by design. Read live, never persisted (see
+    // readControlFlags).
     cancelRequested: liveFlags.cancelRequested,
     pauseRequested: liveFlags.pauseRequested,
     itemCount: allItems.length,
@@ -1404,8 +1410,32 @@ function emit(jobId, event) {
 
 // ── Worker ───────────────────────────────────────────────────────────────────
 
-/** @type {Map<string, {cancelRequested: boolean, pauseRequested: boolean}>} */
+/**
+ * @type {Map<string, {cancelRequested: boolean, pauseRequested: boolean,
+ *                     abort: AbortController|null}>}
+ *
+ * `abort` is the AbortController for the item currently in flight, or null
+ * between items. It is what makes Cancel take effect DURING a file rather than
+ * only between files: a 76 KB source is a multi-phase ingest of dozens of LLM
+ * calls taking minutes, and a cancel that waits it out is not a cancel — the
+ * user watches a "Cancelling…" button while their API budget keeps draining.
+ *
+ * PAUSE DELIBERATELY DOES NOT TOUCH THIS. Pause keeps its documented meaning
+ * (finish the current file, then stop) — that is what makes it the safe,
+ * lossless control. Only Cancel aborts in flight, and Cancel is the one that
+ * warns about partial work.
+ */
 const _controlFlags = new Map();
+
+/** Get-or-create, so a caller never has to know whether the worker ran first. */
+function getFlags(jobId) {
+  let flags = _controlFlags.get(jobId);
+  if (!flags) {
+    flags = { cancelRequested: false, pauseRequested: false, abort: null };
+    _controlFlags.set(jobId, flags);
+  }
+  return flags;
+}
 
 /**
  * The live pause/cancel request state for a job, for `toWire`.
@@ -1434,8 +1464,18 @@ function readControlFlags(jobId) {
   };
 }
 
-/** An item in one of these needs no further work; anything else is unfinished. */
-const ITEM_TERMINAL = new Set(['done', 'failed', 'skipped']);
+/**
+ * An item in one of these needs no further work; anything else is unfinished.
+ *
+ * `cancelled` (v3.3.x) is the status of the item that was in flight when the
+ * user cancelled and was aborted mid-ingest. It MUST be here: `settleJob`
+ * computes `unfinished` from this set, and an item status missing from it
+ * makes the no-item-is-lost tripwire refuse to settle — turning every cancel
+ * into a phantom "paused, 1 file never finished" state. Boot recovery reads
+ * the same set, so an omission would also rewrite a legitimately cancelled
+ * item as `failed` on the next restart.
+ */
+const ITEM_TERMINAL = new Set(['done', 'failed', 'skipped', 'cancelled']);
 
 /**
  * Half one of the no-item-is-lost invariant: an item may not sit in `running`
@@ -1619,6 +1659,18 @@ async function processItem(jobId, itemIdx, ingestFileImpl) {
   }
 }
 
+/**
+ * True when the item's failure is the user's cancellation rather than a fault.
+ * Deliberately accepts EITHER signal: the tagged error from llm.js/ingest.js,
+ * or an already-aborted controller (which covers an SDK that throws some other
+ * shape on abort, and the case where the ingest failed for an unrelated reason
+ * in the same instant).
+ */
+function cancelledDuringItem(err, signal) {
+  if (signal && signal.aborted) return true;
+  return isAbortError(err);
+}
+
 async function processItemInner(jobId, itemIdx, ingestFileImpl) {
   let job = await getJob(jobId);
   if (!job) return {};
@@ -1636,6 +1688,9 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
   const domain = job.domain;
   let releaseRegistry = null;
   let releaseLock = null;
+  // Declared out here so the catch can consult `.signal.aborted` — the catch
+  // runs outside the try where the controller is published.
+  let itemAbort = null;
 
   try {
     releaseRegistry = registerWrite(domain, 'batch-ingest');
@@ -1677,15 +1732,34 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       });
     };
 
+    // ── Real cancellation (v3.3.x) ──────────────────────────────────────
+    // One controller per item, published on the job's control flags so
+    // `requestCancel` can abort the call that is in flight RIGHT NOW.
+    //
+    // The pre-abort below closes the narrow race where the user clicks Cancel
+    // between the worker's between-items check and this line: without it the
+    // flag would be set, nothing would be listening, and the whole file would
+    // still run to completion.
+    const controller = new AbortController();
+    itemAbort = controller;
+    const flags = getFlags(jobId);
+    flags.abort = controller;
+    if (flags.cancelRequested) controller.abort();
+
     // Guarantee 1, at the only place it can actually be guaranteed. See
     // `enterIngest`. The increment/check is synchronous and immediately
     // precedes the await; the decrement is in the matching finally.
     let result;
     enterIngest();
     try {
-      result = await ingestFileImpl(domain, item.stagedPath, item.name, job.overwrite, onProgress);
+      result = await ingestFileImpl(domain, item.stagedPath, item.name, job.overwrite, onProgress, {
+        signal: controller.signal,
+      });
     } finally {
       exitIngest();
+      // Only clear OUR controller: a later item may already have published its
+      // own by the time an error path unwinds through here.
+      if (flags.abort === controller) flags.abort = null;
     }
 
     const j = await getJob(jobId);
@@ -1711,6 +1785,41 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
     emit(jobId, { type: 'job', job: toWire(j) });
     return {};
   } catch (err) {
+    // ── CANCELLED, checked before every other classification ─────────────
+    // An abort is the user's own decision, not a failure of the file and not
+    // a provider problem: it must not count toward the consecutive-failure
+    // breaker, must not pause-and-retry like a 429, and must not be recorded
+    // as `failed` (which would read to the user as "my file was broken").
+    //
+    // `signal.aborted` is checked ALONGSIDE the error tag because an ingest
+    // can fail for an unrelated reason in the same instant the user cancels;
+    // attributing that to the cancel is both true and the kinder report.
+    if (cancelledDuringItem(err, itemAbort && itemAbort.signal)) {
+      const j = await getJob(jobId);
+      const it = j && j.items.find(i => i.idx === itemIdx);
+      if (it) {
+        it.status = 'cancelled';
+        it.finishedAt = new Date().toISOString();
+        // Honest about partial state, and about the recovery — which really is
+        // just "ingest it again". Re-ingest is idempotent by design
+        // (deterministic summary slug + union merge), so re-running completes
+        // the file. NOTHING is deleted or rolled back here: pages written
+        // before the abort may have MERGED into pages that already existed,
+        // and unpicking that is destructive in a way an abandoned page is not.
+        it.error = 'Stopped partway through — some pages may already have been written. ' +
+                   'Re-ingest this file to complete it.';
+        j.currentIndex = null;
+        j.updatedAt = new Date().toISOString();
+        await writeJob(j);
+      }
+      // Settle from INSIDE the item, the same way the transient path pauses
+      // from here: the worker loop's between-items cancel check runs AFTER its
+      // "no pending items left -> finishJobDone" branch, so a cancel on the
+      // LAST item of a batch would otherwise be reported as a completed job.
+      await settleAsCancelled(jobId);
+      return {};
+    }
+
     // `ignore: item.name` — ingest.js quotes the filename back in its own
     // errors, so without this a document literally named after a provider
     // error ("Service Unavailable.pdf") would classify as transient and pause
@@ -1773,7 +1882,7 @@ async function runWorkerLoop(jobId, ingestFileImpl, workerToken) {
       const job = await getJob(jobId);
       if (!job) break;
 
-      const flags = _controlFlags.get(jobId) || { cancelRequested: false, pauseRequested: false };
+      const flags = _controlFlags.get(jobId) || { cancelRequested: false, pauseRequested: false, abort: null };
 
       // No item may be `running` here: this point is only ever reached
       // BETWEEN items, so anything still marked running is stranded (a
@@ -1933,7 +2042,7 @@ export async function startOrResumeJob(jobId, opts = {}) {
     await writeJob(job);
     emit(jobId, { type: 'job', job: toWire(job) });
 
-    _controlFlags.set(jobId, { cancelRequested: false, pauseRequested: false });
+    _controlFlags.set(jobId, { cancelRequested: false, pauseRequested: false, abort: null });
 
     // Runs in the background; the route returns immediately with this
     // now-'running' snapshot. Progress/completion arrive via SSE / polling.
@@ -1972,9 +2081,10 @@ export async function requestPause(jobId) {
   if (TERMINAL_STATUSES.has(job.status)) return job;
 
   if (workerIsExecuting(jobId, job)) {
-    const flags = _controlFlags.get(jobId) || { cancelRequested: false, pauseRequested: false };
-    flags.pauseRequested = true;
-    _controlFlags.set(jobId, flags);
+    // NOTE the asymmetry with requestCancel below: no `.abort()` here. Pause
+    // lets the in-flight file finish, so it can never leave a partially
+    // ingested source behind.
+    getFlags(jobId).pauseRequested = true;
     return job; // flips to 'paused' once the in-flight item finishes
   }
   return (await settleAsPaused(jobId, 'user', 'Paused by user request.')) || job;
@@ -1987,9 +2097,12 @@ export async function requestCancel(jobId) {
   if (TERMINAL_STATUSES.has(job.status)) return job;
 
   if (workerIsExecuting(jobId, job)) {
-    const flags = _controlFlags.get(jobId) || { cancelRequested: false, pauseRequested: false };
+    const flags = getFlags(jobId);
     flags.cancelRequested = true;
-    _controlFlags.set(jobId, flags);
+    // Stop the CURRENT file too, not just the loop. The flag alone only stops
+    // the batch between items, which on a large multi-phase source meant
+    // minutes of further paid LLM calls after the click.
+    if (flags.abort) { try { flags.abort.abort(); } catch { /* already aborted */ } }
     return job;
   }
   return (await settleAsCancelled(jobId)) || job;

@@ -116,9 +116,10 @@ This is the shift from a file cabinet to a neural network.
 - **Batch ingest** — select multiple files at once and The Curator queues them as one durable,
   resumable job: a cost estimate up front that reflects your wiki's actual current size (nothing
   is spent until you confirm), files processed strictly one at a time — even against a double-clicked
-  Resume or two open tabs — so pages always merge correctly, pause/resume/cancel, automatic recovery
-  if the app restarts mid-batch (re-running an interrupted file is safe — ingest is idempotent),
-  an optional spending cap, and a free local Wiki Health scan once the batch finishes.
+  Resume or two open tabs — so pages always merge correctly, Pause (finishes the current file, then
+  stops) vs. Cancel (stops the current file immediately — no more paid AI calls once you click it),
+  automatic recovery if the app restarts mid-batch (re-running an interrupted file is safe — ingest
+  is idempotent), an optional spending cap, and a free local Wiki Health scan once the batch finishes.
 - Visual knowledge graph via [Obsidian](https://obsidian.md) (free app, reads the same files)
 - **Personal Sync** — one-time 3-minute setup, then a single **Sync now** button (with optional Push-only / Pull-only advanced controls) backs up your full wiki across any number of YOUR own computers via a private GitHub repository
 - **Shared Brain (v3.0.0-beta+, opt-in)** — contribute to a **collective wiki** shared with your cohort, team, or research group. Each contributor keeps a private Curator; only opted-in domains push LLM-synthesised Delta summaries to a shared private GitHub repo; the synthesised collective wiki pulls back as a separate read-only `shared-<slug>/` mirror domain. Two-primitives security model (invite token = metadata only, PAT = per-contributor identity), GDPR Article 17 right-to-erasure built in, two IP modes (`contributor_retains` for cohorts / `organisational` for enterprise). A Cloudflare R2 storage backend for EU data residency is planned for a future release. See [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)

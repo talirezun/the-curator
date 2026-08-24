@@ -250,6 +250,8 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
   "estimate": { "usdLow": 2.1, "usdHigh": 4.3, "basis": "..." },
   "currentIndex": 2,
   "consecutiveFailures": 0,
+  "cancelRequested": false,
+  "pauseRequested": false,
   "itemCount": 4,
   "itemsTruncated": false,
   "health": null,
@@ -272,6 +274,8 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
 
 `itemCount` is the true total number of items in the batch; `items` itself is capped (500 entries — never reached by a normal batch, which tops out at 100 files) and `itemsTruncated` is `true` if the cap trimmed anything. `spentUsd` is tracked to 6 decimal places (not 4), so a long run of very small per-file charges can't silently round down to zero.
 
+`cancelRequested`/`pauseRequested` are `true` only in the brief window between a `/pause` or `/cancel` call landing and the job actually settling — they are read live off in-process state at serialisation time, never persisted to the manifest, and always `false` for a job recovered after a restart (a stop request from a previous process run must never silently apply to a later one). A GET or SSE frame taken mid-cancel will show `status: "running"` with `cancelRequested: true` for that brief window; poll again (or just wait for the next SSE frame) and it resolves to `status: "cancelled"`.
+
 **`job.status`** — one of `pending` (created, not yet started) · `running` · `paused` · `done` · `cancelled` · `failed` (a terminal state used only when the domain itself becomes unusable on start/resume — deleted, renamed, or turned into a read-only Shared Brain mirror; see `failReason`). `done` / `cancelled` / `failed` are terminal — none of the control endpoints act on a job in those states.
 
 **`job.pausedReason`** (only meaningful when `status === 'paused'`) — one of:
@@ -286,7 +290,7 @@ Every endpoint below returns (or streams) a **job**. `toWire()` is the single ch
 | `locked` | Another process (update/sync/MCP) holds the domain's write lock. |
 | `user` | A client called `/pause`, or cancelled a not-yet-started job. |
 
-**`item.status`** — one of `pending` · `running` · `done` · `failed` · `skipped` (decided once, at creation — see `POST /` below).
+**`item.status`** — one of `pending` · `running` · `done` · `failed` · `skipped` (decided once, at creation — see `POST /` below) · `cancelled` (terminal — the file that was actively being ingested when a `/cancel` request interrupted it; see `POST /:jobId/cancel` below).
 
 **Every item always ends up in exactly one bucket.** The job is guaranteed to never report `done` while any item is still non-terminal (`pending`/`running`) — if that would ever happen (it shouldn't, but the guarantee is enforced at the one place every exit from `running` passes through, not assumed), the job settles as `paused` instead, with a message naming exactly which file(s) are unaccounted for, rather than silently reporting success over a dropped file.
 
@@ -326,7 +330,7 @@ Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs th
 }
 ```
 
-`usdLow` assumes prompt caching applies (multi-call documents only); `usdHigh` assumes it does not. Both are `null` (with a `warnings[]` entry) if no AI provider is configured, or if the configured model has no published price on file — `files`/token counts are still returned in that case. **`usdHigh` is an estimate, not a ceiling** — it is the no-caching end of a range, and on a real measured live batch (see [docs/ingestion-pipeline.md §10g.8](ingestion-pipeline.md#10g8-how-the-cost-estimate-is-derived)) actual spend came in at 103.1% of `usdHigh`. Do not treat it as a spending guarantee.
+`usdLow` assumes prompt caching applies (multi-call documents only); `usdHigh` assumes it does not. Both are `null` (with a `warnings[]` entry) if no AI provider is configured, or if the configured model has no published price on file — `files`/token counts are still returned in that case. **`usdHigh` is an estimate, not a ceiling** — it is the no-caching end of a range, and on a real measured live batch (see [docs/ingestion-pipeline.md §10g.8](ingestion-pipeline.md#10g8--how-the-cost-estimate-is-derived)) actual spend came in at 103.1% of `usdHigh`. Do not treat it as a spending guarantee.
 
 A file whose size is missing or not a valid non-negative number is placed in `rejected` (not silently priced at $0) with a reason naming the problem.
 
@@ -466,7 +470,11 @@ Requests a pause. If an item is currently mid-ingest, the pause takes effect onc
 
 ### POST /api/ingest-queue/:jobId/cancel
 
-Requests a cancellation. Like pause, takes effect after the current item finishes. Staged files for every item still `pending` at cancel time are deleted; items already `done` stay in the wiki — cancelling never undoes completed work.
+Requests a cancellation. **Unlike pause, cancel also aborts the item currently in flight** — it does not wait for the current file to finish. An `AbortSignal` reaches the running `ingestFile()` call and, through it, the active LLM call and provider SDK request; the ingest is interrupted at the next call boundary rather than allowed to run to completion. Measured on a real multi-phase ingest: **74ms from cancel to fully stopped, zero further LLM calls issued** (a continuation of that same run to completion would otherwise have taken 334 seconds and made 17 more provider calls).
+
+The item that was interrupted is marked `cancelled` (terminal), with `item.error` carrying an honest, deliberately conservative message: *"Stopped partway through — some pages may already have been written. Re-ingest this file to complete it."* In practice a mid-ingest cancel usually interrupts before any page has been written at all — `writePage()` only runs after the AI has finished generating content for that file — but the message doesn't promise that, because it can't guarantee it for every timing. **Nothing is deleted or rolled back.** Because the file is already recorded in `raw/`, completing it requires re-ingesting with `overwrite: true` (the same pre-existing duplicate-file rule that applies to any deliberate re-run — see `POST /` above).
+
+Staged files for every item still `pending` at cancel time are deleted; items already `done` stay in the wiki — cancelling never undoes completed work. `pauseRequested`/`cancelRequested` on the job object (above) reflect the brief in-flight window between the request landing and the job actually settling to `cancelled`.
 
 **Response** `200 OK` — `{ "ok": true, "job": { "...", "status": "cancelled" } }`
 

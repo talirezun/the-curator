@@ -754,13 +754,30 @@ function pausedReasonCopy(reason) {
 }
 
 // Per-item status pill label + CSS class.
-function statusPillMeta(status) {
+// Round-4 audit item 1: a 'pending' item on a LIVE job genuinely IS
+// waiting its turn — but on a TERMINAL job (done/cancelled/failed) that
+// same 'pending' means "the batch ended before this file's turn came up",
+// which "Waiting" misleadingly reads as "still queued, will run". The
+// caller passes whether the JOB is terminal; this function never derives
+// it itself, so there is exactly one isTerminal computation in this file
+// (renderQueuePanel's), not two that could drift apart.
+//
+// Round-4 audit item 2: 'cancelled' is a new ITEM status (distinct from
+// the job-level 'cancelled' status) — the file that was mid-ingest when a
+// cancel was requested, interrupted at the next LLM call boundary rather
+// than left to finish. It is neither a failure (nothing went wrong) nor a
+// skip (it was genuinely in progress) — "Stopped" names that third thing.
+function statusPillMeta(status, isTerminalJob) {
+  if (status === 'pending' && isTerminalJob) {
+    return { label: 'Not started', cls: 'queue-pill-notstarted' };
+  }
   const table = {
-    pending: { label: 'Waiting', cls: 'queue-pill-pending' },
-    running: { label: 'Running', cls: 'queue-pill-running' },
-    done:    { label: 'Done',    cls: 'queue-pill-done' },
-    failed:  { label: 'Failed',  cls: 'queue-pill-failed' },
-    skipped: { label: 'Skipped', cls: 'queue-pill-skipped' },
+    pending:   { label: 'Waiting',   cls: 'queue-pill-pending' },
+    running:   { label: 'Running',   cls: 'queue-pill-running' },
+    done:      { label: 'Done',      cls: 'queue-pill-done' },
+    failed:    { label: 'Failed',    cls: 'queue-pill-failed' },
+    skipped:   { label: 'Skipped',   cls: 'queue-pill-skipped' },
+    cancelled: { label: 'Stopped',   cls: 'queue-pill-cancelled' },
   };
   return table[status] || { label: 'Waiting', cls: 'queue-pill-pending' };
 }
@@ -894,14 +911,34 @@ function queueRejectedItemHtml(entry) {
   return `<li class="queue-file-item queue-file-rejected"><span class="queue-file-name">${name}</span><span class="queue-file-reason">${reason}</span></li>`;
 }
 
-function queueItemRowHtml(item) {
+// `opts.jobTerminal` (round-4 audit item 1) is the ONLY input that decides
+// whether a 'pending' item reads as "Waiting" (still queued on a live job)
+// or "Not started" (the batch ended before this file's turn) — see
+// statusPillMeta. Omitting `opts` (every pre-round-4 call site, and every
+// existing test) renders byte-identical to before this round.
+function queueItemRowHtml(item, opts) {
   const idx = item && Number.isFinite(item.idx) ? item.idx : 0;
   const name = escHtml(sanitizeDisplayName(item && item.name != null ? item.name : ''));
   const size = formatQueueBytes(item && item.bytes);
-  const meta = statusPillMeta(item && item.status);
+  const jobTerminal = !!(opts && opts.jobTerminal);
+  const meta = statusPillMeta(item && item.status, jobTerminal);
   const isRunning = item && item.status === 'running';
-  const errorLine = (item && item.status === 'failed' && item.error)
-    ? `<div class="queue-item-error">${escHtml(item.error)}</div>` : '';
+  const isFailedItem = item && item.status === 'failed';
+  // Round-4 audit item 2: a 'cancelled' ITEM carries an honest partial-
+  // state message (e.g. "Stopped partway through — some pages may
+  // already have been written. Re-ingest this file to complete it.") in
+  // the SAME item.error field a failed item's explanation already uses
+  // (the backend already overloads item.error for skip explanations too —
+  // see the "already ingested" / "duplicate name" messages — so this
+  // follows the established contract rather than inventing a new field).
+  // A user who never sees this message has no way to know the file needs
+  // re-ingesting, so it renders exactly like a failed item's error, with
+  // only a modifier class distinguishing the tone (amber "needs follow-up",
+  // not red "something went wrong" — it wasn't).
+  const isCancelledItem = item && item.status === 'cancelled';
+  const errorLine = ((isFailedItem || isCancelledItem) && item.error)
+    ? `<div class="queue-item-error${isCancelledItem ? ' queue-item-stopped-msg' : ''}">${escHtml(item.error)}</div>`
+    : '';
   const pages = item && item.result && Number.isFinite(item.result.pagesWritten) ? item.result.pagesWritten : null;
   const resultLine = (item && item.status === 'done' && item.result)
     ? `<div class="queue-item-result">${escHtml(sanitizeDisplayName(item.result.title || item.name || ''))} — ${pages == null ? 0 : pages} page${pages === 1 ? '' : 's'}</div>`
@@ -941,9 +978,16 @@ function queuePausedBannerHtml(job) {
 // `known.done + known.failed + known.skipped + sum(other values)` is
 // ALWAYS === items.length, by construction, regardless of what statuses
 // the server ever sends.
+// Round-4 audit item 2: 'cancelled' (the new item status for a file
+// interrupted mid-ingest by a real abort) joins the KNOWN set rather than
+// widening the "is this accounted for" check — it is a status we now ship
+// deliberately, not an unexpected one, so it must never land in the amber
+// .queue-done-unaccounted bucket the way a genuinely surprising status
+// would. known.done + known.failed + known.skipped + known.cancelled +
+// sum(other values) is still ALWAYS === items.length, by construction.
 function computeQueueStatusCounts(items) {
   const list = Array.isArray(items) ? items : [];
-  const known = { done: 0, failed: 0, skipped: 0 };
+  const known = { done: 0, failed: 0, skipped: 0, cancelled: 0 };
   const other = {};
   for (const i of list) {
     const s = (i && typeof i.status === 'string' && i.status) ? i.status : 'unknown';
@@ -959,6 +1003,10 @@ function queueDoneSummaryHtml(job) {
   const doneN = counts.known.done;
   const failedN = counts.known.failed;
   const skippedN = counts.known.skipped;
+  // Round-4 audit item 2: items interrupted mid-ingest by a real abort —
+  // always rendered, same convention as done/failed/skipped (a "0 stopped"
+  // on a normal batch is just as legible as "0 failed").
+  const cancelledN = counts.known.cancelled;
 
   // Round-2 audit item 4a: a CANCELLED batch's untouched items are still
   // sitting at 'pending' on the server (cancel doesn't relabel them), even
@@ -1013,6 +1061,7 @@ function queueDoneSummaryHtml(job) {
       <span>${doneN} done</span>
       <span>${failedN} failed</span>
       <span>${skippedN} skipped</span>
+      <span>${cancelledN} stopped</span>
       ${notStartedSpan}
       ${otherSpans}
       <span>${pages} page${pages === 1 ? '' : 's'} written</span>
@@ -1050,7 +1099,7 @@ function queueInFlightHtml(job) {
   const pauseRequested = job.pauseRequested === true;
   const noticeHtml = (job.status === 'running' && (cancelRequested || pauseRequested))
     ? `<div class="queue-inflight-notice">${cancelRequested
-        ? 'Cancelling — finishing the current file first, then stopping.'
+        ? 'Cancelling — stopping the current file now.'
         : 'Pausing after the current file…'}</div>`
     : '';
   // A cancel in flight makes Pause moot too (disabled, not just relabelled
@@ -1498,7 +1547,14 @@ function renderQueuePanel(job) {
   if (domainSelect) domainSelect.disabled = !isTerminal;
 
   const items = Array.isArray(job.items) ? job.items : [];
-  const settledCount = items.filter(i => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped')).length;
+  // Round-4 audit item 2: 'cancelled' (a file interrupted mid-ingest by a
+  // real abort) is ALSO a settled per-item state — the same class of "a
+  // label derived from raw item status without considering the full set"
+  // gap flagged for statusPillMeta, one layer up. Not reachable today (a
+  // job only shows an item as 'cancelled' once the JOB itself is terminal,
+  // and this line only feeds the non-terminal "Item X of Y" header text)
+  // but kept honest rather than silently under-counting if that ever changes.
+  const settledCount = items.filter(i => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped' || i.status === 'cancelled')).length;
   const spentLabel = computeQueueSpentLabel(job.spentUsd, isTerminal);
 
   const headerHtml = `
@@ -1516,7 +1572,7 @@ function renderQueuePanel(job) {
   const { noticeHtml, controlsHtml } = queueInFlightHtml(job);
   const dismissHtml = queueDismissBtnHtml(isTerminal);
 
-  const listHtml = `<ul class="queue-item-list">${items.map(queueItemRowHtml).join('')}</ul>`;
+  const listHtml = `<ul class="queue-item-list">${items.map(item => queueItemRowHtml(item, { jobTerminal: isTerminal })).join('')}</ul>`;
 
   queuePanelEl.innerHTML = `${headerHtml}${pausedHtml}${noticeHtml}${doneHtml}${dismissHtml}${controlsHtml}${listHtml}`;
 

@@ -69,6 +69,7 @@ const OFFLINE = [
   'test-wiki-page.js',              // GET /api/wiki/:domain/page — single-page read + backlinks (health.js link-resolution parity, path-traversal defenses)
   'test-ingest-queue.js',           // Track 3 batch-ingest queue backend — sequential worker, crash resume, transient-error handling, cost estimate
   'test-ingest-queue-frontend.js',  // Track 3 batch-ingest queue frontend (owned by a parallel agent)
+  'test-ingest-abort.js',           // real mid-file cancellation: AbortSignal threading, recovery-ladder bypass, queue `cancelled` item state
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is

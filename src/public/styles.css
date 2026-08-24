@@ -4057,11 +4057,20 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   border-radius: 999px;
   border: 1px solid var(--border);
 }
-.queue-pill-pending { color: var(--text-muted); border-color: var(--border); }
-.queue-pill-running { color: var(--accent-2); border-color: var(--accent); background: var(--accent-dim); }
-.queue-pill-done    { color: var(--success); border-color: var(--success); background: var(--success-dim); }
-.queue-pill-failed  { color: var(--error); border-color: var(--error); background: var(--error-dim); }
-.queue-pill-skipped { color: var(--text-muted); border-color: var(--border); }
+.queue-pill-pending    { color: var(--text-muted); border-color: var(--border); }
+.queue-pill-running    { color: var(--accent-2); border-color: var(--accent); background: var(--accent-dim); }
+.queue-pill-done       { color: var(--success); border-color: var(--success); background: var(--success-dim); }
+.queue-pill-failed     { color: var(--error); border-color: var(--error); background: var(--error-dim); }
+.queue-pill-skipped    { color: var(--text-muted); border-color: var(--border); }
+/* Round-4 audit item 1: a 'pending' item on a TERMINAL job — same neutral
+   treatment as skipped/pending, deliberately NOT the amber "needs
+   attention" tone, since nothing about it is unexpected. */
+.queue-pill-notstarted { color: var(--text-muted); border-color: var(--border); }
+/* Round-4 audit item 2: an item deliberately interrupted mid-ingest —
+   visually distinct from both failed (red/error) and skipped (neutral
+   gray): amber, the same "needs a follow-up action" tone already used for
+   .queue-inflight-notice/.queue-paused-banner elsewhere in this file. */
+.queue-pill-cancelled  { color: var(--warning); border-color: var(--warning); background: var(--warning-dim); }
 
 .queue-item-progress-track {
   height: 3px;
@@ -4089,6 +4098,11 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   margin-top: 6px;
   line-height: 1.4;
 }
+/* Round-4 audit item 2: a cancelled item's partial-state message reuses
+   .queue-item-error's box/spacing but swaps the tone from error-red to
+   warning-amber — it wasn't a failure, it was a deliberate interruption
+   the user needs to act on (re-ingest to complete it). */
+.queue-item-stopped-msg { color: var(--warning); }
 .queue-item-result {
   font-size: 12px;
   color: var(--text-muted);

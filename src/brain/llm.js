@@ -269,8 +269,81 @@ function is503(err) {
   return msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('high demand') || msg.includes('overloaded');
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+/**
+ * ── Cancellation (v3.3.x, batch-ingest queue) ────────────────────────────────
+ *
+ * `opts.signal` threads an AbortSignal from the caller (the ingest queue's
+ * per-item AbortController) down to the provider SDKs, so a user's Cancel
+ * stops at the NEXT LLM call boundary — seconds — instead of after the current
+ * FILE finishes, which on a large multi-phase ingest is minutes of API spend
+ * the user has already asked us to stop.
+ *
+ * Everything cancellation-related is tagged with `curatorAborted === true` so
+ * callers can tell "the user stopped this" apart from every other failure.
+ * That distinction is load-bearing in ingest.js: its three recovery ladders
+ * (Phase 1 stricter retry, Phase 2 page-by-page, single-pass -> multi-phase)
+ * all exist to DEGRADE rather than fail, and a cancel that got "recovered"
+ * would keep spending and write stub pages — the exact opposite of a cancel.
+ *
+ * NOTE (honest scope): an AbortSignal is client-side. It stops us WAITING for
+ * an in-flight response and, far more importantly, stops every SUBSEQUENT call
+ * — which is where the money is on a 10-40 call multi-phase ingest. The single
+ * in-flight request may still be billed by the provider.
+ */
+export const ABORT_MESSAGE = '⚠ Cancelled — the operation was stopped before the AI call finished.';
+
+/**
+ * The canonical cancellation error. The message deliberately contains none of
+ * the substrings any other classifier keys on — not "output token limit"
+ * (isOutputTokenLimit), not 429/503/"overloaded" (is429/is503 and the queue's
+ * TRANSIENT_PATTERNS), not "not found"/"model" (isModelNotFound) — so a cancel
+ * can never be mistaken for a recoverable condition and retried.
+ */
+export function makeAbortError() {
+  const e = new Error(ABORT_MESSAGE);
+  e.curatorAborted = true;
+  e.name = 'AbortError';
+  return e;
+}
+
+/**
+ * True for our own tagged cancellation AND for a raw `AbortError` thrown by a
+ * provider SDK / undici before we get a chance to translate it. Deliberately
+ * wide in the SAFE direction: a false positive propagates a fatal error the
+ * user sees, while a false negative would let a cancel fall into a recovery
+ * ladder and silently produce stub pages.
+ */
+export function isAbortError(err) {
+  if (!err) return false;
+  if (err.curatorAborted === true) return true;
+  return err.name === 'AbortError';
+}
+
+/** Duck-typed so a test double works without constructing a real AbortSignal. */
+function normalizeSignal(signal) {
+  return (signal && typeof signal.aborted === 'boolean'
+    && typeof signal.addEventListener === 'function') ? signal : null;
+}
+
+function throwIfAborted(signal) {
+  if (signal && signal.aborted) throw makeAbortError();
+}
+
+/**
+ * `signal` is optional and, when present, makes the wait itself cancellable.
+ * That matters: the 429/503 ladder below waits up to ~40s across its retries,
+ * and a cancel that had to sit out a 27-second backoff would look exactly like
+ * the "Cancelling…" hang this whole change exists to remove.
+ */
+function sleep(ms, signal = null) {
+  if (!signal) return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(makeAbortError()); return; }
+    let timer = null;
+    const onAbort = () => { if (timer) clearTimeout(timer); reject(makeAbortError()); };
+    timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /**
@@ -307,7 +380,11 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   const callOpts = {
     onUsage: typeof opts?.onUsage === 'function' ? opts.onUsage : null,
     cachePrefixChars: Number.isInteger(opts?.cachePrefixChars) ? opts.cachePrefixChars : 0,
+    // v3.3.x: optional AbortSignal. null when absent, so every branch below
+    // behaves exactly as it did before for callers that pass no signal.
+    signal: normalizeSignal(opts?.signal),
   };
+  const signal = callOpts.signal;
 
   // Resolve provider name once for consistent error messaging. If this fails
   // (e.g. no key configured), let the underlying call throw the original
@@ -318,10 +395,19 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
     providerName = info.provider === 'gemini' ? 'Gemini' : info.provider === 'anthropic' ? 'Claude' : 'AI provider';
   } catch { /* surface real error from callLLM below */ }
 
+  // Already cancelled before we even dispatch: never spend on a call the user
+  // has already asked us to stop.
+  throwIfAborted(signal);
+
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       return await callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride, callOpts);
     } catch (err) {
+      // ABORT WINS OVER EVERYTHING, and must be checked BEFORE is429/is503:
+      // an aborted fetch can surface with a message we would otherwise
+      // classify as retryable, and retrying is precisely what a cancel must
+      // not do. Normalised to our tagged error so callers get one shape.
+      if (isAbortError(err) || (signal && signal.aborted)) throw makeAbortError();
       const retryable = is429(err) || is503(err);
       if (!retryable || attempt === MAX_RETRIES) {
         // Out of retries or non-retryable error — surface a clean message that
@@ -371,7 +457,9 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
         `[llm] ${reason} (attempt ${attempt}/${MAX_RETRIES}). Waiting ${delaySec}s...`
       );
       onWait?.(`${reason} — retrying in ${delaySec}s… (attempt ${attempt}/${MAX_RETRIES - 1})`);
-      await sleep(delayMs);
+      // Abortable: rejects immediately on cancel instead of serving out a
+      // backoff of up to 60s.
+      await sleep(delayMs, signal);
     }
   }
 }
@@ -572,6 +660,11 @@ export function handleOutputTokenLimit(providerName, maxTokens, responseFormat, 
  *                      with no API change).
  */
 async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens, responseFormat, opts = {}) {
+  // v3.3.x: null unless the caller threaded one through generateText.
+  const signal = opts.signal || null;
+  // Cheapest possible cancellation point — before the client is even built.
+  throwIfAborted(signal);
+
   // ── Google Gemini ────────────────────────────────────────────────────────
   if (provider === 'gemini') {
     const genAI = new GoogleGenerativeAI(getEffectiveKey('gemini'));
@@ -585,10 +678,16 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
       // unescaped markdown characters (backticks, quotes) from breaking parsing.
       generationConfig.responseMimeType = 'application/json';
     }
-    const result = await geminiModel.generateContent({
+    // The two-branch call (rather than passing `{signal: undefined}`) keeps the
+    // no-signal path byte-identical to the pre-cancellation code: the SDK sees
+    // exactly the same one-argument invocation it always did.
+    const geminiRequest = {
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig,
-    });
+    };
+    const result = signal
+      ? await geminiModel.generateContent(geminiRequest, { signal })
+      : await geminiModel.generateContent(geminiRequest);
     // v3.0.1-beta.8: detect output-budget truncation. Gemini returns
     // `finishReason: "MAX_TOKENS"` on the first candidate when its response
     // exceeded `maxOutputTokens`. Pre-fix this surfaced as the
@@ -632,14 +731,21 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // identical Message object, so the stop_reason / content checks below are
   // unchanged. (Compile + single-pass ingest both request 65536 → both hit this
   // on Anthropic before this fix.)
-  const message = await client.messages.stream({
+  const anthropicBody = {
     model,
     max_tokens: effectiveMaxTokens,
     system: systemPrompt,
     // Either the plain prompt string (unchanged payload) or a two-block split
     // with a cache breakpoint on the stable prefix — see buildAnthropicUserContent.
     messages: [{ role: 'user', content: buildAnthropicUserContent(userPrompt, opts.cachePrefixChars) }],
-  }).finalMessage();
+  };
+  // Same two-branch shape as the Gemini call above, and for the same reason:
+  // with no signal the SDK is invoked exactly as before. `RequestOptions.signal`
+  // is honoured by messages.stream() (SDK 0.39) and aborts the HTTP request.
+  const message = await (signal
+    ? client.messages.stream(anthropicBody, { signal })
+    : client.messages.stream(anthropicBody)
+  ).finalMessage();
   // `.finalMessage()` assembles the streamed events into the same Message object
   // a non-streaming call returns, including the accumulated `usage` block.
   reportUsage(opts.onUsage, {
@@ -723,6 +829,10 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
       }
       return result;
     } catch (err) {
+      // Checked BEFORE isModelNotFound: walking the fallback chain on a cancel
+      // would issue MORE provider calls (up to 5 more rungs) after the user
+      // asked us to stop — the single worst thing this code could do here.
+      if (isAbortError(err) || (opts.signal && opts.signal.aborted)) throw makeAbortError();
       if (isModelNotFound(err) && i < chain.length - 1) {
         console.warn(`[llm] Model "${candidate}" returned "not found"; trying fallback "${chain[i + 1]}"...`);
         lastErr = err;
