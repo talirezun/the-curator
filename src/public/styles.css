@@ -3902,7 +3902,7 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 }
 .queue-file-item {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 12px;
   padding: 7px 12px;
   border-bottom: 1px solid var(--border-subtle);
@@ -3913,6 +3913,10 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   color: var(--text-2);
   overflow-wrap: anywhere;
   min-width: 0;
+  /* flex:1 (not justify-content:space-between on the parent) so a 3rd
+     child — the round-3 per-file remove button — sits snugly next to
+     .queue-file-size instead of being spaced awkwardly across the row. */
+  flex: 1;
 }
 .queue-file-size {
   color: var(--text-muted);
@@ -3923,6 +3927,24 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .queue-file-rejected .queue-file-name { color: var(--text-muted); text-decoration: line-through; }
 .queue-file-reason { color: var(--error); font-size: 11.5px; flex-shrink: 0; }
 .queue-rejected { margin-bottom: 4px; }
+/* Round-3 audit item 1: per-file remove control in the batch confirm gate. */
+.queue-file-remove {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.queue-file-remove:hover { color: var(--error); background: var(--error-dim); }
 
 .queue-estimate {
   margin-top: 16px;
@@ -3974,6 +3996,26 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   align-items: center;
   margin-top: 18px;
   flex-wrap: wrap;
+}
+
+/* Round-3 audit item 2: cancelRequested/pauseRequested — same visual
+   language as .queue-paused-banner (a transitional, not-stuck state). */
+.queue-inflight-notice {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: var(--warning-dim);
+  border: 1px solid rgba(249,226,175,0.3);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--warning);
+  line-height: 1.5;
+}
+
+/* Round-3 audit item 3: Dismiss on a terminal batch panel. */
+.queue-panel-terminal-actions {
+  display: flex;
+  margin-top: 14px;
 }
 
 .queue-panel-head { margin-bottom: 4px; }

@@ -105,12 +105,16 @@ const PURE_FN_NAMES = [
   'resolveEstimateFileList',
   'extractConflictJobId',
   'formatHealthCounts',
+  'dedupeQueueFiles',
   'queueFileListItemHtml',
   'queueRejectedItemHtml',
   'queueItemRowHtml',
   'queuePausedBannerHtml',
   'computeQueueStatusCounts',
   'queueDoneSummaryHtml',
+  'computeQueueSpentLabel',
+  'queueInFlightHtml',
+  'queueDismissBtnHtml',
   'sanitizeDisplayName',
   'escHtml',
 ];
@@ -128,16 +132,23 @@ section('1. Single-file ingest still uses the existing, untouched path');
     'submitIngest still POSTs to /api/ingest (not /api/ingest-queue)');
   ok(!/ingest-queue/.test(submitFn), 'submitIngest never references the queue API');
 
-  // The 1-vs-2+ branch: handleSelectedFiles is the ONLY thing the file-input/
-  // drop-zone listeners now call, and it must route 1 file to setFile().
+  // Round 3 rewrote the 1-vs-2+ branch into an accumulating one (audit
+  // item 1: picking/dropping files across multiple events must ADD to the
+  // pending batch, not replace it). handleSelectedFiles is still the ONLY
+  // thing the file-input/drop-zone listeners call; it still routes a
+  // completely fresh single file to setFile() — that guarantee is
+  // unchanged — but everything past that first pick now goes through the
+  // accumulate helpers instead of a flat 2+-branch. See section 14 for the
+  // behavioural (not just source-shape) tests of the new contract.
   const handlerFn = (app.match(/function handleSelectedFiles\(files\) \{[\s\S]*?\n\}/) || [''])[0];
   ok(handlerFn.length > 0, 'handleSelectedFiles(files) exists');
-  ok(/list\.length === 1/.test(handlerFn), 'handleSelectedFiles branches on exactly 1 file');
-  ok(/setFile\(list\[0\]\)/.test(handlerFn), 'the 1-file branch calls setFile(list[0]) — the original single-file function, untouched');
-  ok(/resetQueueSelection\(\)/.test(handlerFn), 'the 1-file branch clears any stale queue state first');
-  ok(/startQueueSelection\(list\)/.test(handlerFn), 'the else (2+) branch routes to the queue');
-  ok(/selectedFile = null;[\s\S]{0,80}ingestBtn\.disabled = true;/.test(handlerFn),
-    '2+-file branch explicitly nulls selectedFile and disables ingestBtn, so submitIngest() cannot fire for a batch selection');
+  ok(/incoming\.length === 1 && !selectedFile/.test(handlerFn),
+    'a fresh single file (nothing selected yet) is the ONLY thing that still special-cases to exactly 1');
+  ok(/setFile\(incoming\[0\]\)/.test(handlerFn), 'that fresh-single-file case calls setFile(incoming[0]) — the original single-file function, untouched');
+  ok(!/resetQueueSelection\(\)/.test(handlerFn),
+    'handleSelectedFiles no longer resets queue state on every fresh single pick — round 3 made batch mode sticky, and resetQueueSelection() is now reserved for the explicit Clear action');
+  ok(/enterQueueMode\(combined\)/.test(handlerFn), 'the 2+-at-once (or 2nd-file-on-top-of-1) case enters batch mode carrying BOTH the prior single file and the new one(s)');
+  ok(/addFilesToQueueSelection\(incoming\)/.test(handlerFn), 'once already in batch mode, every further selection event accumulates rather than replaces');
 
   ok(/dropZone\?\.addEventListener\('drop', e => \{[\s\S]{0,150}handleSelectedFiles\(e\.dataTransfer\.files\)/.test(app),
     'drop handler routes through handleSelectedFiles');
@@ -233,7 +244,7 @@ section('3. Pure helper functions — extracted and executed');
       'budget: {'
     );
     ok(brokenFn !== currentFn, '4b mutation sanity — the service_unavailable table entry was actually removed');
-    const brokenSrc = app.replace(currentFn, brokenFn);
+    const brokenSrc = app.replace(currentFn, () => brokenFn);
     const QBroken = buildSandbox(brokenSrc, ['pausedReasonCopy']);
     const brokenCopy = QBroken.pausedReasonCopy('service_unavailable');
     ok(brokenCopy.title === 'Paused',
@@ -644,7 +655,7 @@ section('9. H2 fix — busy-gate ENTER/EXIT key pairing across the real orchestr
 }`;
     const currentFn = extractFn(app, 'applyQueueBusyForStatus');
     ok(!!currentFn, '9b: sanity — the current applyQueueBusyForStatus was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, OLD_BUGGY_FN);
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_FN);
     ok(brokenSrc !== app, '9b: sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
 
     const S = buildLiveGateSandbox(brokenSrc);
@@ -704,7 +715,7 @@ section('9. H2 fix — busy-gate ENTER/EXIT key pairing across the real orchestr
 }`;
     const currentFn = extractFn(app, 'applyQueueJobSnapshot');
     ok(!!currentFn, '9d: sanity — the current applyQueueJobSnapshot was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, OLD_BUGGY_SNAPSHOT_FN);
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_SNAPSHOT_FN);
     ok(brokenSrc !== app, '9d: sanity — the mutation actually changed the in-memory source text');
 
     const S = buildLiveGateSandbox(brokenSrc);
@@ -854,7 +865,7 @@ section('9. H2 fix — busy-gate ENTER/EXIT key pairing across the real orchestr
 }`;
     const currentFn = extractAsyncFn(app, 'resumeQueueJob');
     ok(!!currentFn, '9h: sanity — the current resumeQueueJob was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, OLD_BUGGY_RESUME_FN);
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_RESUME_FN);
     ok(brokenSrc !== app, '9h: sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
 
     const S = buildLiveGateSandbox(brokenSrc);
@@ -952,7 +963,7 @@ section('10. H1 fix — queueDoneSummaryHtml never under-reports an item');
 }`;
     const currentFn = extractFn(app, 'queueDoneSummaryHtml');
     ok(!!currentFn, 'sanity — the current queueDoneSummaryHtml was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, OLD_BUGGY_SUMMARY_FN);
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_SUMMARY_FN);
     ok(brokenSrc !== app, 'sanity — the mutation actually changed the in-memory source text');
     const QBroken = buildSandbox(brokenSrc, ['formatHealthCounts', 'queueDoneSummaryHtml', 'escHtml']);
     const brokenHtml = QBroken.queueDoneSummaryHtml({ items: stuckItems, spentUsd: 0.01 });
@@ -1042,7 +1053,7 @@ section('10b. Round-2 item 1 — a job-level failure reason renders');
 }`;
     const currentFn = extractFn(app, 'queueDoneSummaryHtml');
     ok(!!currentFn, '10b mutation sanity — the current queueDoneSummaryHtml was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, ROUND1_SUMMARY_FN);
+    const brokenSrc = app.replace(currentFn, () => ROUND1_SUMMARY_FN);
     ok(brokenSrc !== app, '10b mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
     const QBroken = buildSandbox(brokenSrc, ['computeQueueStatusCounts', 'formatHealthCounts', 'queueDoneSummaryHtml', 'escHtml']);
     const brokenHtml = QBroken.queueDoneSummaryHtml(failedJob);
@@ -1094,7 +1105,7 @@ section("10c. Round-2 item 4a — cancelled batches don't alarm about their own 
     ok(currentFn.includes(isCancelledLine), '10c mutation sanity — the exact isCancelled line was found in the current function text');
     const brokenFn = currentFn.replace(isCancelledLine, 'const isCancelled = false; // DELIBERATE BREAK — should never ship');
     ok(brokenFn !== currentFn, '10c mutation sanity — the mutation actually changed the extracted function text');
-    const brokenSrc = app.replace(currentFn, brokenFn);
+    const brokenSrc = app.replace(currentFn, () => brokenFn);
     ok(brokenSrc !== app, '10c mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
     const QBroken = buildSandbox(brokenSrc, ['computeQueueStatusCounts', 'formatHealthCounts', 'queueDoneSummaryHtml', 'escHtml']);
     const brokenHtml = QBroken.queueDoneSummaryHtml(cancelledJob);
@@ -1319,7 +1330,7 @@ section('13. Round-2 item 2 — same-domain collision guard on the single-file I
 }`;
     const currentFn = extractFn(app, 'refreshIngestBtnAvailability');
     ok(!!currentFn, 'mutation sanity — the current refreshIngestBtnAvailability was extractable from app.js');
-    const brokenSrc = app.replace(currentFn, OLD_BUGGY_REFRESH_FN);
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_REFRESH_FN);
     ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
 
     const S = buildIngestGateSandbox(brokenSrc);
@@ -1332,7 +1343,503 @@ section('13. Round-2 item 2 — same-domain collision guard on the single-file I
   }
 }
 
-console.log(`\n${'─'.repeat(60)}`);
+// ── 14. Round-3 audit item 1: the batch is now ACCUMULATING, from both the
+//    picker and drag-and-drop, and stays sticky once entered. This drives
+//    the REAL, extracted handleSelectedFiles/enterQueueMode/
+//    addFilesToQueueSelection/removeQueueFile/resetQueueSelection/setFile
+//    against a DOM-free stub — the same pattern as section 13's
+//    buildIngestGateSandbox, extended with the accumulate surface. ────────
+section('14. Round-3 item 1 — accumulating multi-file selection (picker + drop), dedupe, remove, clear');
+{
+  function buildAccumulateSandbox(src) {
+    const varsBlock = [
+      "let selectedFile = null;",
+      "let selectedFiles = [];",
+      "let queueModeActive = false;",
+      "let queueEstimate = null;",
+      "let queueJobId = null;",
+      "let queueStreamAbort = null;",
+      "let _queueLastStatus = null;",
+      "const _activeIngests = new Map();",
+    ].join('\n');
+    const fnSrc = {
+      dedupeQueueFiles: extractFn(src, 'dedupeQueueFiles'),
+      isDomainWriteBusy: extractFn(src, 'isDomainWriteBusy'),
+      refreshIngestBtnAvailability: extractFn(src, 'refreshIngestBtnAvailability'),
+      setFile: extractFn(src, 'setFile'),
+      handleSelectedFiles: extractFn(src, 'handleSelectedFiles'),
+      enterQueueMode: extractFn(src, 'enterQueueMode'),
+      addFilesToQueueSelection: extractFn(src, 'addFilesToQueueSelection'),
+      removeQueueFile: extractFn(src, 'removeQueueFile'),
+      resetQueueSelection: extractFn(src, 'resetQueueSelection'),
+    };
+    const missing = Object.entries(fnSrc).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) throw new Error(`buildAccumulateSandbox: could not extract ${missing.join(', ')}`);
+
+    const preamble = `
+      let __domainSelectValue = '';
+      let __startQueueSelectionCalls = 0;
+      function startQueueSelection(filesArg) { __startQueueSelectionCalls++; if (filesArg) selectedFiles = filesArg; }
+      const ingestBtn = { disabled: true, title: '', removeAttribute(name) { this[name] = ''; } };
+      const fileNameEl = { textContent: '' };
+      const fileInput = { value: 'C:\\\\fakepath\\\\x' };
+      const ingestStatus = {};
+      const ingestResult = {};
+      const queueStatusEl = {};
+      const queueConfirmEl = { innerHTML: '' };
+      const queuePanelEl = { innerHTML: '' };
+      function showStatus() {}
+      function hideEl() {}
+      function showEl() {}
+      function hideDuplicateBanner() {}
+      const document = {
+        getElementById(id) {
+          if (id === 'ingest-domain') return { value: __domainSelectValue };
+          return { value: '' };
+        },
+      };
+    `;
+    const combined = preamble + '\n' + varsBlock + '\n\n' + Object.values(fnSrc).join('\n\n') + '\n\n' + `
+      return {
+        setDomainSelectValue: (v) => { __domainSelectValue = v; },
+        handleSelectedFiles, removeQueueFile, resetQueueSelection,
+        getSelectedFiles: () => selectedFiles.map(f => ({ name: f.name, size: f.size })),
+        getSelectedFile: () => (selectedFile ? { name: selectedFile.name, size: selectedFile.size } : null),
+        getQueueModeActive: () => queueModeActive,
+        getStartCalls: () => __startQueueSelectionCalls,
+        getIngestBtnDisabled: () => ingestBtn.disabled,
+      };
+    `;
+    return new Function(combined)();
+  }
+
+  // ── 14a. dedupeQueueFiles: name+size identity, pure. ─────────────────────
+  {
+    const a = { name: 'x.txt', size: 100 };
+    const b = { name: 'x.txt', size: 100 }; // same name+size, different object — the exact "re-pick a folder" shape
+    const c = { name: 'x.txt', size: 200 }; // same name, different size — NOT a duplicate
+    const d = { name: 'y.txt', size: 100 }; // same size, different name — NOT a duplicate
+    const out = Q.dedupeQueueFiles([a, b, c, d]);
+    ok(out.length === 3, `dedupeQueueFiles drops the exact name+size duplicate only (got ${out.length})`);
+    ok(out[0] === a, 'the FIRST occurrence is kept (insertion order preserved)');
+    ok(out.includes(c) && out.includes(d), 'a same-name-different-size and a same-size-different-name file both survive — dedupe is name+size, not name-only or size-only');
+    ok(Q.dedupeQueueFiles([]).length === 0, 'empty input: empty output');
+    ok(Q.dedupeQueueFiles(null).length === 0, 'defensive against a null files array');
+    ok(Q.dedupeQueueFiles([null, undefined, { name: 'z.txt', size: 5 }]).length === 1, 'null/undefined entries in the list are skipped, not thrown on');
+  }
+
+  // ── 14b. THE headline repro: pick 2 files from folder A, then 2 more
+  //    from folder B — all 4 must end up queued (not the first 2 lost). ──
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'a1.txt', size: 10 }, { name: 'a2.txt', size: 20 }]); // folder A
+    ok(S.getQueueModeActive() === true, '14b: 2 files at once enters batch mode');
+    ok(S.getSelectedFiles().length === 2, '14b: both folder-A files queued');
+    S.handleSelectedFiles([{ name: 'b1.txt', size: 30 }, { name: 'b2.txt', size: 40 }]); // folder B
+    const names = S.getSelectedFiles().map(f => f.name).sort();
+    ok(JSON.stringify(names) === JSON.stringify(['a1.txt', 'a2.txt', 'b1.txt', 'b2.txt']),
+      `14b: FIXED — all 4 files from BOTH folders are queued together (got ${JSON.stringify(names)}), not just the most recent 2`);
+  }
+
+  // ── 14c. The drag-and-drop repro: drop one file, then drop two more —
+  //    all three queued, not just the last drop. handleSelectedFiles is
+  //    the SAME function the drop handler calls, so this is the identical
+  //    code path, driven with drop-shaped (1-then-N) calls. ──────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'drop1.txt', size: 10 }]); // first drop: 1 file → single-file path
+    ok(S.getSelectedFile() && S.getSelectedFile().name === 'drop1.txt', '14c: first single-file drop uses the single-file path');
+    ok(S.getQueueModeActive() === false, '14c: still NOT in batch mode after just one drop');
+    S.handleSelectedFiles([{ name: 'drop2.txt', size: 20 }, { name: 'drop3.txt', size: 30 }]); // second drop: 2 more
+    ok(S.getQueueModeActive() === true, '14c: the second drop transitions into batch mode');
+    const names = S.getSelectedFiles().map(f => f.name).sort();
+    ok(JSON.stringify(names) === JSON.stringify(['drop1.txt', 'drop2.txt', 'drop3.txt']),
+      `14c: FIXED — the FIRST dropped file is preserved alongside the later drops (got ${JSON.stringify(names)}), not replaced`);
+    ok(S.getSelectedFile() === null, '14c: the absorbed single-file selection is cleared once merged into the batch');
+  }
+
+  // ── 14d. Picking the SAME file twice (a real, reported accidental case
+  //    — re-browsing a folder already added) must not double-queue it. ───
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'a.txt', size: 111 }, { name: 'b.txt', size: 222 }]);
+    S.handleSelectedFiles([{ name: 'a.txt', size: 111 }]); // re-picked by accident
+    const files = S.getSelectedFiles();
+    ok(files.length === 2, `14d: FIXED — the re-picked duplicate is not queued twice (got ${files.length} files)`);
+    ok(files.filter(f => f.name === 'a.txt').length === 1, '14d: exactly one a.txt in the list');
+  }
+
+  // ── 14e. 1 file total, picked once, stays on the ORIGINAL single-file
+  //    path — the non-negotiable guarantee. ────────────────────────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'only.txt', size: 50 }]);
+    ok(S.getQueueModeActive() === false, '14e: a single fresh pick never enters batch mode');
+    ok(S.getSelectedFile() && S.getSelectedFile().name === 'only.txt', '14e: setFile() is what handled it (selectedFile is set)');
+    ok(S.getSelectedFiles().length === 0, '14e: selectedFiles (the batch list) stays empty — this never touched the queue path');
+    ok(S.getStartCalls() === 0, '14e: startQueueSelection (the batch estimate call) is never invoked for a plain single file');
+  }
+
+  // ── 14f. Sticky batch mode: removing down to 1 file does NOT fall back
+  //    to the single-file path — only an explicit Clear does. ─────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'p.txt', size: 1 }, { name: 'q.txt', size: 2 }]);
+    S.removeQueueFile('p.txt', '1');
+    ok(S.getSelectedFiles().length === 1, '14f: down to 1 file after removal');
+    ok(S.getQueueModeActive() === true, '14f: FIXED — batch mode stays STICKY at 1 file, does not bounce back to the single-file path');
+    ok(S.getSelectedFile() === null, '14f: selectedFile (the single-file path state) is never populated while sticky');
+  }
+
+  // ── 14g. Removing the LAST file collapses to the same reset Clear uses —
+  //    a 0-file confirm gate would have nothing to confirm. ────────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'only2.txt', size: 9 }, { name: 'only3.txt', size: 8 }]);
+    S.removeQueueFile('only2.txt', '9');
+    S.removeQueueFile('only3.txt', '8');
+    ok(S.getSelectedFiles().length === 0, '14g: both removed, list empty');
+    ok(S.getQueueModeActive() === false, '14g: removing the last file exits batch mode (implicit Clear)');
+  }
+
+  // ── 14h. Explicit Clear resets fully, so the VERY NEXT pick — even a
+  //    single file — goes through the single-file path again. ────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'r.txt', size: 1 }, { name: 's.txt', size: 2 }]);
+    ok(S.getQueueModeActive() === true, '14h: in batch mode');
+    S.resetQueueSelection();
+    ok(S.getQueueModeActive() === false, '14h: Clear turns batch mode off');
+    ok(S.getSelectedFiles().length === 0, '14h: Clear empties the pending list');
+    S.handleSelectedFiles([{ name: 'fresh.txt', size: 5 }]);
+    ok(S.getQueueModeActive() === false && S.getSelectedFile() && S.getSelectedFile().name === 'fresh.txt',
+      '14h: after Clear, a single file goes back through the single-file path, not batch mode');
+  }
+
+  // ── 14i. Re-estimate fires on every add AND every remove. ────────────────
+  {
+    const S = buildAccumulateSandbox(app);
+    S.handleSelectedFiles([{ name: 'm.txt', size: 1 }, { name: 'n.txt', size: 2 }]);
+    const afterEnter = S.getStartCalls();
+    ok(afterEnter >= 1, '14i: entering batch mode re-estimates');
+    S.handleSelectedFiles([{ name: 'o.txt', size: 3 }]);
+    ok(S.getStartCalls() > afterEnter, '14i: adding a file re-estimates again');
+    const afterAdd = S.getStartCalls();
+    S.removeQueueFile('o.txt', '3');
+    ok(S.getStartCalls() > afterAdd, '14i: removing a file (staying above 0) re-estimates again');
+  }
+
+  // ── 14j. Never once a job exists: removal is refused after a batch has
+  //    actually started (queueJobId set) — the confirm gate is gone by
+  //    then; nothing to remove FROM. ────────────────────────────────────
+  {
+    const src2 = app; // reuse app; drive queueJobId via a second extraction with the var exposed
+    const varsBlock = [
+      "let selectedFile = null;", "let selectedFiles = [{ name: 'live.txt', size: 1 }];",
+      "let queueModeActive = true;", "let queueEstimate = null;",
+      "let queueJobId = 'job-123';", "let queueStreamAbort = null;", "let _queueLastStatus = 'running';",
+    ].join('\n');
+    const removeFn = extractFn(src2, 'removeQueueFile');
+    const combined = `
+      let __startCalls = 0;
+      function startQueueSelection() { __startCalls++; }
+      function resetQueueSelection() { throw new Error('resetQueueSelection must never fire once a job exists'); }
+      ${varsBlock}
+      ${removeFn}
+      return { removeQueueFile, getSelectedFiles: () => selectedFiles.slice(), getStartCalls: () => __startCalls };
+    `;
+    const S2 = new Function(combined)();
+    S2.removeQueueFile('live.txt', '1');
+    ok(S2.getSelectedFiles().length === 1, '14j: removal is a no-op once queueJobId is set — the file list is untouched');
+    ok(S2.getStartCalls() === 0, '14j: no re-estimate fires either, since nothing changed');
+  }
+
+  // ── MUTATION-PROVE: revert handleSelectedFiles to the pre-round-3 shape
+  //    (every selection REPLACES the batch) and confirm the headline repro
+  //    (14b) goes RED. ─────────────────────────────────────────────────────
+  {
+    const OLD_BUGGY_HANDLER = `function handleSelectedFiles(files) {
+  const list = Array.from(files || []);
+  if (list.length === 0) return;
+  if (list.length === 1) {
+    resetQueueSelection();
+    setFile(list[0]);
+    return;
+  }
+  selectedFile = null;
+  fileNameEl.textContent = '';
+  ingestBtn.disabled = true;
+  hideEl(ingestStatus);
+  hideEl(ingestResult);
+  hideDuplicateBanner();
+  startQueueSelection(list);
+}`;
+    const currentFn = extractFn(app, 'handleSelectedFiles');
+    ok(!!currentFn, 'mutation sanity — the current handleSelectedFiles was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_HANDLER);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+
+    // OLD_BUGGY_HANDLER calls startQueueSelection(list) directly (positional
+    // arg, the pre-round-3 signature) rather than the no-arg current one —
+    // reflect that in the stub so the mutation runs at all instead of just
+    // throwing on an unrelated signature mismatch.
+    const S = buildAccumulateSandbox(brokenSrc);
+    S.handleSelectedFiles([{ name: 'a1.txt', size: 10 }, { name: 'a2.txt', size: 20 }]);
+    S.handleSelectedFiles([{ name: 'b1.txt', size: 30 }, { name: 'b2.txt', size: 40 }]);
+    const names = S.getSelectedFiles().map(f => f.name).sort();
+    ok(JSON.stringify(names) === JSON.stringify(['b1.txt', 'b2.txt']),
+      `RED CONFIRMED — the pre-round-3 handler REPLACES instead of accumulating: folder A's files are gone after picking folder B (got ${JSON.stringify(names)})`);
+  }
+}
+
+// ── 15. Round-3 audit item 2: cancelRequested/pauseRequested render an
+//    unmistakable in-progress state, driven purely by the job SNAPSHOT. ────
+section('15. Round-3 item 2 — cancelRequested/pauseRequested rendering');
+{
+  const running = { status: 'running', jobId: 'j1' };
+
+  const neither = Q.queueInFlightHtml({ ...running, cancelRequested: false, pauseRequested: false });
+  ok(neither.noticeHtml === '', 'no notice when neither flag is set');
+  ok(/id="queue-pause-btn"(?![^>]*disabled)/.test(neither.controlsHtml) === false || !/disabled/.test(neither.controlsHtml.match(/<button class="btn" id="queue-pause-btn"[^>]*>/)[0]),
+    'Pause is NOT disabled when nothing is requested');
+  ok(!/disabled/.test(neither.controlsHtml.match(/<button class="btn" id="queue-cancel-btn"[^>]*>/)[0]),
+    'Cancel is NOT disabled when nothing is requested');
+  ok(/>Pause</.test(neither.controlsHtml) && />Cancel</.test(neither.controlsHtml), 'plain "Pause"/"Cancel" labels when nothing is requested');
+
+  const cancelling = Q.queueInFlightHtml({ ...running, cancelRequested: true, pauseRequested: false });
+  ok(/Cancelling — finishing the current file first, then stopping\./.test(cancelling.noticeHtml),
+    'FIXED — an unmistakable "Cancelling…" notice, not a UI that looks identical to before the click');
+  ok(/id="queue-cancel-btn" disabled/.test(cancelling.controlsHtml), 'the Cancel button is disabled so it cannot be clicked again');
+  ok(/>Cancelling…</.test(cancelling.controlsHtml), 'the Cancel button itself is relabelled, not just disabled silently');
+  ok(/id="queue-pause-btn" disabled/.test(cancelling.controlsHtml), 'Pause is also disabled while a cancel is in flight (racing a pause against an imminent cancel would be confusing)');
+
+  const pausing = Q.queueInFlightHtml({ ...running, cancelRequested: false, pauseRequested: true });
+  ok(/Pausing after the current file…/.test(pausing.noticeHtml), 'FIXED — "Pausing…" gets the same treatment as cancelling');
+  ok(/id="queue-pause-btn" disabled/.test(pausing.controlsHtml), 'Pause is disabled while a pause is already in flight');
+  ok(/>Pausing…</.test(pausing.controlsHtml), 'the Pause button is relabelled too');
+  ok(!/id="queue-cancel-btn" disabled/.test(pausing.controlsHtml),
+    'Cancel stays ENABLED while only a pause is in flight — the user can still escalate straight to cancel');
+
+  // Missing fields (backend not yet returning them, or a stale snapshot)
+  // must be treated as false, never as truthy/undefined.
+  const missing = Q.queueInFlightHtml({ status: 'running', jobId: 'j1' });
+  ok(missing.noticeHtml === '', 'a job snapshot with NO cancelRequested/pauseRequested fields at all renders no notice (treated as false, not undefined-is-truthy)');
+
+  // Terminal jobs never show the notice or the live controls at all —
+  // isTerminal is the same gate queueDoneSummaryHtml/queueDismissBtnHtml use.
+  const terminal = Q.queueInFlightHtml({ status: 'cancelled', jobId: 'j1', cancelRequested: true });
+  ok(terminal.noticeHtml === '' && terminal.controlsHtml === '',
+    'once the job actually reaches a terminal status, no notice and no live controls — cancelRequested lingering true on a cancelled snapshot must not render as still-cancelling');
+
+  // ── 15b. Cross-agent seam, called out explicitly by the coordinator:
+  //    settleAsCancelled() emits its snapshot at the `break`, and
+  //    _controlFlags.delete(jobId) only runs later in the loop's `finally`
+  //    (ingest-queue.js:1848) — so a REAL wire frame can carry
+  //    `status: 'cancelled', cancelRequested: true` simultaneously, and if
+  //    that is the LAST frame before the stream closes (exactly when it
+  //    can be — the job has just gone terminal), a renderer keyed purely
+  //    on cancelRequested would show "Cancelling…" PERMANENTLY on a
+  //    finished batch. This is the literal frame, tested as its own named
+  //    scenario (not folded into the general "terminal" case above) with
+  //    BOTH halves of what the coordinator asked for: no "Cancelling…"
+  //    text, AND a working Dismiss alongside it. ─────────────────────────
+  section('15b. Cross-agent seam — the settleAsCancelled transient frame {status:\'cancelled\', cancelRequested:true}');
+  {
+    const transientFrame = { status: 'cancelled', jobId: 'seam-1', cancelRequested: true, pauseRequested: false };
+    const inFlight = Q.queueInFlightHtml(transientFrame);
+    ok(inFlight.noticeHtml === '', 'the transient cancelled+cancelRequested:true frame shows NO "Cancelling…" notice');
+    ok(!/Cancelling/.test(inFlight.controlsHtml), 'no "Cancelling…" text anywhere in the controls either (there ARE no live controls once terminal)');
+    ok(inFlight.controlsHtml === '', 'no live Pause/Resume/Cancel controls at all — the job is done, not "cancelling"');
+    // "a working Dismiss" — queueDismissBtnHtml is a SEPARATE function
+    // driven only by isTerminal, so it is unaffected by the stale flag by
+    // construction; assert it explicitly anyway, exactly as asked.
+    const isTerminalForFrame = transientFrame.status === 'done' || transientFrame.status === 'cancelled' || transientFrame.status === 'failed';
+    const dismiss = Q.queueDismissBtnHtml(isTerminalForFrame);
+    ok(dismiss.includes('id="queue-dismiss-btn"'), 'Dismiss IS offered for this exact transient frame — the terminal status, not the stale flag, decides');
+
+    // ── MUTATION-PROVE: this implementation carries TWO independent
+    //    guards against this exact hazard — the early `if (isTerminal)
+    //    return` AND the notice's own `job.status === 'running'` check.
+    //    Defeating only one leaves the other standing (by design — this
+    //    is real defense in depth, not dead redundancy), so the mutation
+    //    below removes BOTH at once to prove the invariant is genuinely
+    //    enforced and not vacuously true. ─────────────────────────────────
+    const currentFn = extractFn(app, 'queueInFlightHtml');
+    ok(!!currentFn, '15b mutation sanity — the current queueInFlightHtml was extractable from app.js');
+    ok(currentFn.includes('if (isTerminal) return { noticeHtml:'), '15b mutation sanity — the early terminal short-circuit line was found verbatim');
+    ok(currentFn.includes("job.status === 'running' && (cancelRequested"), '15b mutation sanity — the notice\'s own running-only guard was found verbatim');
+    let brokenFn = currentFn.replace(
+      'if (isTerminal) return { noticeHtml: \'\', controlsHtml: \'\' };',
+      '// DELIBERATE BREAK — should never ship: terminal short-circuit removed'
+    );
+    brokenFn = brokenFn.replace(
+      "job.status === 'running' && (cancelRequested || pauseRequested)",
+      '/* DELIBERATE BREAK — should never ship: running-only guard removed */ (cancelRequested || pauseRequested)'
+    );
+    ok(brokenFn !== currentFn, '15b mutation sanity — both guards were actually removed from the extracted function text');
+    const brokenSrc = app.replace(currentFn, () => brokenFn);
+    ok(brokenSrc !== app, '15b mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const QBroken = buildSandbox(brokenSrc, ['queueInFlightHtml']);
+    const brokenResult = QBroken.queueInFlightHtml(transientFrame);
+    ok(/Cancelling/.test(brokenResult.noticeHtml),
+      `15b: RED CONFIRMED — with both guards defeated, the exact settleAsCancelled transient frame {status:'cancelled', cancelRequested:true} renders "Cancelling…" PERMANENTLY on a finished batch (got: ${JSON.stringify(brokenResult)}) — this is the cross-agent seam bug named explicitly; the shipped code (both guards intact) does not have it`);
+  }
+
+  // A paused (not running) job with a stray pauseRequested must not show
+  // the notice — the request has already been fulfilled by definition.
+  const paused = Q.queueInFlightHtml({ status: 'paused', jobId: 'j1', pauseRequested: true });
+  ok(paused.noticeHtml === '', 'a PAUSED (not running) snapshot never shows the "pausing" notice, even with a stray true flag');
+
+  // A second "tab" — a completely independent call with the same snapshot
+  // — renders identically. There is no local click-state anywhere in this
+  // function's inputs, so this is true by construction; assert it anyway.
+  const again = Q.queueInFlightHtml({ ...running, cancelRequested: true, pauseRequested: false });
+  ok(JSON.stringify(again) === JSON.stringify(cancelling), 'calling with an identical snapshot twice (simulating two tabs) renders byte-identical output — no hidden local state');
+
+  ok(JSON.stringify(Q.queueInFlightHtml(null)) === JSON.stringify({ noticeHtml: '', controlsHtml: '' }), 'defensive against a null job');
+
+  // ── MUTATION-PROVE: revert queueInFlightHtml to the pre-round-3 shape
+  //    (no cancelRequested/pauseRequested handling at all) and confirm the
+  //    "Cancelling…" repro goes RED. ───────────────────────────────────────
+  {
+    const OLD_BUGGY_FN = `function queueInFlightHtml(job) {
+  if (!job) return { noticeHtml: '', controlsHtml: '' };
+  const isTerminal = job.status === 'done' || job.status === 'cancelled' || job.status === 'failed';
+  if (isTerminal) return { noticeHtml: '', controlsHtml: '' };
+  const controlsHtml = \`
+    <div class="queue-panel-controls">
+      \${job.status === 'running'
+        ? \`<button class="btn" id="queue-pause-btn">Pause</button>\`
+        : \`<button class="btn primary" id="queue-resume-btn">\${job.status === 'pending' ? 'Start' : 'Resume'}</button>\`}
+      <button class="btn" id="queue-cancel-btn">Cancel</button>
+    </div>
+  \`;
+  return { noticeHtml: '', controlsHtml };
+}`;
+    const currentFn = extractFn(app, 'queueInFlightHtml');
+    ok(!!currentFn, 'mutation sanity — the current queueInFlightHtml was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_FN);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text');
+    const QBroken = buildSandbox(brokenSrc, ['queueInFlightHtml']);
+    const brokenResult = QBroken.queueInFlightHtml({ ...running, cancelRequested: true, pauseRequested: false });
+    ok(brokenResult.noticeHtml === '' && !/disabled/.test(brokenResult.controlsHtml),
+      `RED CONFIRMED — the pre-round-3 shape shows NO notice and a fully-clickable Cancel button even while cancelRequested is true (got: ${JSON.stringify(brokenResult)}); this is the exact "UI looks identical to before" defect reported`);
+  }
+}
+
+// ── 16. Round-3 audit item 3: Dismiss is structurally impossible while a
+//    batch is live, and a proper UI-only clear otherwise. ──────────────────
+section('16. Round-3 item 3 — Dismiss guard on terminal batches only');
+{
+  ok(Q.queueDismissBtnHtml(true).includes('id="queue-dismiss-btn"'), 'a terminal batch renders the Dismiss button');
+  ok(Q.queueDismissBtnHtml(false) === '', 'a non-terminal (live) batch renders NOTHING for Dismiss — not even a disabled one');
+  ok(Q.queueDismissBtnHtml(undefined) === '' && Q.queueDismissBtnHtml(null) === '' && Q.queueDismissBtnHtml(0) === '',
+    'any falsy input (including a missing/undefined isTerminal) renders nothing — fails CLOSED, never open');
+
+  // Structural cross-check: for every one of the three terminal statuses,
+  // queueDismissBtnHtml's own isTerminal gate agrees with the SAME
+  // isTerminal computation renderQueuePanel uses (done/cancelled/failed),
+  // and disagrees with every non-terminal status.
+  const TERMINAL = ['done', 'cancelled', 'failed'];
+  const NON_TERMINAL = ['pending', 'running', 'paused'];
+  for (const s of TERMINAL) {
+    const isTerminal = s === 'done' || s === 'cancelled' || s === 'failed';
+    ok(Q.queueDismissBtnHtml(isTerminal).includes('queue-dismiss-btn'), `status '${s}' renders Dismiss`);
+  }
+  for (const s of NON_TERMINAL) {
+    const isTerminal = s === 'done' || s === 'cancelled' || s === 'failed';
+    ok(Q.queueDismissBtnHtml(isTerminal) === '', `status '${s}' renders NO Dismiss button`);
+  }
+
+  // dismissQueuePanel() itself: UI-only clear, driven against a DOM-free
+  // stub. Must null out queueJobId/_queueLastStatus and empty the panel —
+  // and must NEVER be reachable from a live job in practice (enforced by
+  // the isTerminal gate above; this section proves the function's own
+  // behaviour once invoked).
+  {
+    const detachFn = extractFn(app, 'detachQueueStream');
+    const dismissFn = extractFn(app, 'dismissQueuePanel');
+    ok(!!detachFn && !!dismissFn, 'sanity — detachQueueStream and dismissQueuePanel were both extractable');
+    const combined = `
+      let queueJobId = 'terminal-job-1';
+      let _queueLastStatus = 'done';
+      let queueStreamAbort = null;
+      const queuePanelEl = { innerHTML: '<div>stale terminal report</div>' };
+      let __hideCalls = 0;
+      function hideEl(el) { __hideCalls++; }
+      ${detachFn}
+      ${dismissFn}
+      return {
+        dismissQueuePanel,
+        getState: () => ({ queueJobId, _queueLastStatus, panelHtml: queuePanelEl.innerHTML, hideCalls: __hideCalls }),
+      };
+    `;
+    const S = new Function(combined)();
+    S.dismissQueuePanel();
+    const st = S.getState();
+    ok(st.queueJobId === null, 'dismissQueuePanel clears queueJobId — GET /active (which excludes terminal jobs) can never resurrect it, and neither can anything keyed on the old id');
+    ok(st._queueLastStatus === null, 'dismissQueuePanel resets the busy-gate status bookkeeping to idle');
+    ok(st.panelHtml === '', 'dismissQueuePanel empties the panel — no stale terminal report left in the DOM');
+    ok(st.hideCalls === 1, 'dismissQueuePanel hides the (now-empty) panel element');
+  }
+
+  // ── MUTATION-PROVE: break queueDismissBtnHtml's gate so it renders
+  //    Dismiss unconditionally (the exact "offered while running" defect
+  //    the audit named as a hard requirement never to reach) — RED. ───────
+  {
+    const currentFn = extractFn(app, 'queueDismissBtnHtml');
+    ok(!!currentFn, 'mutation sanity — the current queueDismissBtnHtml was extractable from app.js');
+    const brokenFn = currentFn.replace(
+      'function queueDismissBtnHtml(isTerminal) {',
+      "function queueDismissBtnHtml(isTerminal) { isTerminal = true; // DELIBERATE BREAK — should never ship"
+    );
+    ok(brokenFn !== currentFn, 'mutation sanity — the mutation actually changed the extracted function text');
+    const brokenSrc = app.replace(currentFn, () => brokenFn);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const QBroken = buildSandbox(brokenSrc, ['queueDismissBtnHtml']);
+    const brokenHtml = QBroken.queueDismissBtnHtml(false); // a LIVE (non-terminal) batch
+    ok(brokenHtml.includes('queue-dismiss-btn'),
+      `RED CONFIRMED — with the gate broken, Dismiss renders even for isTerminal=false (a live batch), which is exactly what the audit said must never be offered (got: ${JSON.stringify(brokenHtml)})`);
+  }
+}
+
+// ── 17. Round-3 audit item 4: an in-progress $0.0000 no longer reads as
+//    "nothing is happening". ────────────────────────────────────────────────
+section('17. Round-3 item 4 — legible spend label while $0 is in-progress');
+{
+  ok(Q.computeQueueSpentLabel(0, false) === 'spend so far: pending first file',
+    "FIXED — his exact screenshot shape (in-progress, $0) no longer renders a bare, alarming '$0.0000 spent'");
+  ok(Q.computeQueueSpentLabel(undefined, false) === 'spend so far: pending first file', 'a missing spentUsd while in-progress gets the same honest label, not "$NaN spent"');
+  ok(Q.computeQueueSpentLabel(0, true) === '$0.0000 spent', 'a TERMINAL $0 is a real, legible final tally — it keeps the plain dollar figure');
+  ok(Q.computeQueueSpentLabel(0.0092, false) === '$0.0092 spent', 'any non-zero spend, in-progress or not, always shows the real figure');
+  ok(Q.computeQueueSpentLabel(0.0092, true) === '$0.0092 spent', 'any non-zero spend, terminal, shows the real figure too');
+  ok(Q.computeQueueSpentLabel(NaN, false) === 'spend so far: pending first file', 'NaN input is treated as 0, never rendered literally');
+  ok(!/NaN/.test(Q.computeQueueSpentLabel(NaN, true)), 'never renders the literal text "NaN" in either terminal or in-progress form');
+
+  // Wired into the actual panel header, not just the standalone helper.
+  const headerFn = (app.match(/function renderQueuePanel\(job\) \{[\s\S]*?\n\}/) || [''])[0];
+  ok(/computeQueueSpentLabel\(job\.spentUsd, isTerminal\)/.test(headerFn), 'renderQueuePanel derives its header line through computeQueueSpentLabel, not a raw toFixed(4)');
+  ok(!/\$\$\{spent\.toFixed\(4\)\}/.test(headerFn), 'the old unconditional "$X.XXXX spent" template literal is gone from renderQueuePanel');
+
+  // ── MUTATION-PROVE: revert to the old unconditional $X.XXXX label and
+  //    confirm the exact reported shape (in-progress, $0) goes RED. ───────
+  {
+    const OLD_BUGGY_FN = `function computeQueueSpentLabel(spentUsd, isTerminal) {
+  const spent = Number.isFinite(spentUsd) ? spentUsd : 0;
+  return \`$\${spent.toFixed(4)} spent\`;
+}`;
+    const currentFn = extractFn(app, 'computeQueueSpentLabel');
+    ok(!!currentFn, 'mutation sanity — the current computeQueueSpentLabel was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => OLD_BUGGY_FN);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text');
+    const QBroken = buildSandbox(brokenSrc, ['computeQueueSpentLabel']);
+    const brokenLabel = QBroken.computeQueueSpentLabel(0, false);
+    ok(brokenLabel === '$0.0000 spent',
+      `RED CONFIRMED — the pre-round-3 label renders the bare "$0.0000 spent" for an in-progress batch (got: "${brokenLabel}"), reading as "nothing is happening" exactly as reported`);
+  }
+}
+
+console.log(`\\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }
 console.log('✅ All batch-ingest-queue frontend offline assertions green');

@@ -1271,6 +1271,143 @@ async function testWireRepresentation() {
   }
 }
 
+// ── 11b. A pending pause/cancel is VISIBLE on the wire ─────────────────────
+
+/**
+ * v3.3.0 field report: "Cancel doesn't work." It did work — the worker honours
+ * the request between items, which is correct, because aborting mid-ingestFile
+ * would leave partial wiki state. But a cancel of a 76 KB multi-phase document
+ * takes minutes to take effect, and `toWire`'s allow-list did not expose the
+ * request, so every snapshot the UI applied still read `status: running` with
+ * the item running. The user had no way to tell the click had registered and
+ * reasonably concluded the button was broken.
+ *
+ * The flags are IN-PROCESS (`_controlFlags`) while the job lives on disk, so
+ * these assertions pin three things a naive implementation gets wrong:
+ * they must be read LIVE at serialisation time (so a second polling tab sees
+ * what the clicking tab sees), they must be strict `false` rather than
+ * `undefined` for a job with no flags entry, and they must never be persisted.
+ */
+async function testPendingRequestIsVisible() {
+  const { userDataDir } = await freshEnv();
+  const domain = await makeDomain();
+
+  for (const [action, request, field, endState] of [['cancel', requestCancel, 'cancelRequested', 'cancelled'],
+                                                   ['pause', requestPause, 'pauseRequested', 'paused']]) {
+    const files = [
+      await makeUpload(`${action}0.md`, 3000, userDataDir),
+      await makeUpload(`${action}1.md`, 2000, userDataDir),
+    ];
+    let release;
+    const held = new Promise(r => { release = r; });
+    const slowFake = async (dom, fp, name) => {
+      await mkdir(rawPath(dom), { recursive: true });
+      await writeFile(path.join(rawPath(dom), name), 'x');
+      await held;   // stands in for a multi-phase ingest still running
+      return { title: name, pagesWritten: [], changes: [], warnings: [], tokenUsage: null };
+    };
+
+    const job = await createJob({ domain, uploadedFiles: files });
+    const frames = [];
+    const unsub = subscribeToJob(job.jobId, ev => frames.push(ev));
+    await startOrResumeJob(job.jobId, { ingestFile: slowFake });
+    // Wait for an ITEM to be in flight, not merely for the job to say
+    // `running` — `startOrResumeJob` writes that status before the worker
+    // picks anything up, which is a beat too early to reproduce the reported
+    // moment (a file genuinely mid-ingest when the user clicks).
+    await waitFor(async () => {
+      const j = await getJob(job.jobId);
+      return j && j.items.some(i => i.status === 'running') ? j : null;
+    });
+
+    // Before the click: nothing pending.
+    const before = toWire(await getJob(job.jobId));
+    assertEq(before[field], false, `${field} is false before the user clicks ${action}`);
+
+    await request(job.jobId);
+
+    // THE ASSERTION THE FIELD REPORT IS ABOUT: the request is visible while the
+    // job is still running and the in-flight item has not finished.
+    const during = toWire(await getJob(job.jobId));
+    assertEq(during.status, 'running', `the job is still running right after ${action} (the in-flight item finishes first)`);
+    assertEq(during[field], true, `${field} is TRUE on the wire immediately after ${action}, before the job settles`);
+    assertEq(during.items[0].status, 'running', 'and the in-flight item is genuinely still running — this is the exact moment the UI looked broken');
+
+    // A SECOND consumer polling GET /:jobId must see the same thing — this is
+    // what "read live, do not snapshot" buys.
+    const secondTab = toWire(await getJob(job.jobId));
+    assertEq(secondTab[field], true, `a second tab polling the job sees the same pending ${action}`);
+
+    // And it reaches SSE, not just REST — the frontend renders from whichever
+    // arrives first.
+    frames.length = 0;
+    release();
+    const settled = await waitStatus(job.jobId, endState);
+    unsub();
+    const jobFrames = frames.filter(f => f.type === 'job' || f.type === 'done');
+    assert(jobFrames.length > 0, `SSE job frames were emitted around the ${action}`);
+    assert(jobFrames.every(f => typeof f.job[field] === 'boolean'),
+      `every SSE job frame carries ${field} as a real boolean`);
+    assertEq(settled.status, endState, `the ${action} took effect once the in-flight item finished`);
+    await waitWorkerIdle();
+  }
+}
+
+/**
+ * A job recovered after a restart has NO `_controlFlags` entry. Both fields
+ * must serialise as `false` — `undefined` would read to the frontend as "this
+ * server does not report the field" rather than "no request is pending", and
+ * would also vanish from the JSON entirely.
+ */
+async function testFlagsDefaultFalseAndAreNotPersisted() {
+  const { userDataDir } = await freshEnv();
+  const domain = await makeDomain();
+  const files = [await makeUpload('pf0.md', 2000, userDataDir), await makeUpload('pf1.md', 1000, userDataDir)];
+  const job = await createJob({ domain, uploadedFiles: files });
+
+  // Fresh job, no flags entry at all — the post-restart shape.
+  __testing.__resetInMemoryState();
+  const wire = toWire(await getJob(job.jobId));
+  assertEq(wire.cancelRequested, false, 'a job with no in-process flags serialises cancelRequested as false');
+  assertEq(wire.pauseRequested, false, 'a job with no in-process flags serialises pauseRequested as false');
+  assert(Object.hasOwn(wire, 'cancelRequested') && Object.hasOwn(wire, 'pauseRequested'),
+    'the fields are always PRESENT, never omitted — the UI can rely on them existing');
+  assert(typeof wire.cancelRequested === 'boolean' && typeof wire.pauseRequested === 'boolean',
+    'and they are strict booleans, never undefined');
+
+  // They must never reach the manifest: a cancel requested before a restart
+  // must not silently stop a job the user later chooses to resume.
+  let release;
+  const held = new Promise(r => { release = r; });
+  const slowFake = async (dom, fp, name) => {
+    await mkdir(rawPath(dom), { recursive: true });
+    await writeFile(path.join(rawPath(dom), name), 'x');
+    await held;
+    return { title: name, pagesWritten: [], changes: [], warnings: [], tokenUsage: null };
+  };
+  await startOrResumeJob(job.jobId, { ingestFile: slowFake });
+  await waitStatus(job.jobId, 'running');
+  await requestCancel(job.jobId);
+  assertEq(toWire(await getJob(job.jobId)).cancelRequested, true, 'sanity: the request is live on the wire');
+
+  const rawManifest = await readFile(path.join(getIngestQueueDir(), job.jobId, 'manifest.json'), 'utf8');
+  assert(!/cancelRequested/.test(rawManifest), 'cancelRequested is NOT written to the on-disk manifest');
+  assert(!/pauseRequested/.test(rawManifest), 'pauseRequested is NOT written to the on-disk manifest');
+  const parsed = JSON.parse(rawManifest);
+  assert(!Object.hasOwn(parsed, 'cancelRequested') && !Object.hasOwn(parsed, 'pauseRequested'),
+    'and toWire did not mutate the job object on its way through');
+
+  release();
+  await waitTerminal(job.jobId);
+  await waitWorkerIdle();
+
+  // After a simulated restart the recovered job carries no pending request.
+  __testing.__resetInMemoryState();
+  const afterRestart = toWire(await getJob(job.jobId));
+  assertEq(afterRestart.cancelRequested, false, 'after a restart the stale cancel request is gone, not resurrected');
+  assertEq(afterRestart.pauseRequested, false, 'same for pauseRequested');
+}
+
 // ── 12. Gitignore invariants ─────────────────────────────────────────────────
 
 async function testGitignoreInvariants() {
@@ -1849,6 +1986,8 @@ async function testAccountingUnderRandomSequences() {
   await section('9. Pause / cancel / delete state machine', testStateMachine);
   await section('10. Manifest resilience; a corrupt manifest is still deletable (M3)', testManifestResilience);
   await section('11. The wire representation: allow-list, scrubbed, bounded (H2/M2)', testWireRepresentation);
+  await section('11b. A pending pause/cancel is visible on the wire (v3.3.0 field report)', testPendingRequestIsVisible);
+  await section('11c. Control flags default to false and are never persisted', testFlagsDefaultFalseAndAreNotPersisted);
   await section('12. .ingest-queue/ is excluded from sync in every relevant place', testGitignoreInvariants);
   await section('13. Path-traversal defenses and staged-name hygiene (L2)', testPathTraversal);
   await section('14. estimateIngestQueueCost — caching-savings interpolation', testEstimateShape);

@@ -640,6 +640,7 @@ function wireItem(item) {
 export function toWire(job) {
   if (!job || typeof job !== 'object') return job;
   const allItems = Array.isArray(job.items) ? job.items : [];
+  const liveFlags = readControlFlags(job.jobId);
   const shown = allItems.slice(0, MAX_WIRE_ITEMS).map(wireItem).filter(Boolean);
   const est = job.estimate && typeof job.estimate === 'object' ? job.estimate : null;
   const health = job.health && typeof job.health === 'object' ? job.health : null;
@@ -670,6 +671,16 @@ export function toWire(job) {
     } : null,
     currentIndex: wireNum(job.currentIndex),
     consecutiveFailures: wireNum(job.consecutiveFailures),
+    // A cancel/pause is honoured BETWEEN items — aborting mid-ingestFile would
+    // leave partial wiki state — so a batch legitimately keeps working on the
+    // in-flight file after the click, which on a large multi-phase document is
+    // minutes. Without these two fields the wire snapshot still read
+    // `status: running` with the item running, so the UI had nothing to show
+    // and the maintainer reasonably concluded Cancel was broken. The request
+    // being PENDING is the state the user needs to see; read live, never
+    // persisted (see readControlFlags).
+    cancelRequested: liveFlags.cancelRequested,
+    pauseRequested: liveFlags.pauseRequested,
     itemCount: allItems.length,
     itemsTruncated: allItems.length > shown.length,
     items: shown,
@@ -1395,6 +1406,33 @@ function emit(jobId, event) {
 
 /** @type {Map<string, {cancelRequested: boolean, pauseRequested: boolean}>} */
 const _controlFlags = new Map();
+
+/**
+ * The live pause/cancel request state for a job, for `toWire`.
+ *
+ * These flags are IN-PROCESS ONLY and are deliberately never written to the
+ * manifest. Persisting them would turn a cancel that was requested before a
+ * restart into a booby trap on a job the user later chooses to resume — the
+ * worker would honour a request the user made about a different session and
+ * stop the batch for no visible reason. The Map is the whole truth, and it is
+ * correctly empty for any job recovered after a restart.
+ *
+ * Because of that, `toWire` must read this at SERIALISATION time rather than
+ * snapshotting it onto the job object. That is also what makes a second tab
+ * polling `GET /:jobId` see the same pending-cancel state as the tab that
+ * clicked the button — both serialise from the same live Map.
+ *
+ * Returns strict booleans, never `undefined`: the frontend renders a badge off
+ * these, and `undefined` would read as "no such field" rather than "no request
+ * pending".
+ */
+function readControlFlags(jobId) {
+  const flags = _controlFlags.get(jobId);
+  return {
+    cancelRequested: flags ? flags.cancelRequested === true : false,
+    pauseRequested: flags ? flags.pauseRequested === true : false,
+  };
+}
 
 /** An item in one of these needs no further work; anything else is unfinished. */
 const ITEM_TERMINAL = new Set(['done', 'failed', 'skipped']);

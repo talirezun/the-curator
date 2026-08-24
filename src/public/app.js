@@ -643,6 +643,14 @@ const queueConfirmEl = document.getElementById('queue-confirm');
 const queuePanelEl   = document.getElementById('queue-panel');
 
 let selectedFiles     = [];   // File[] currently chosen for the batch path
+// Round-3 audit item 1: once true, EVERY subsequent file selection (picker
+// OR drop) ACCUMULATES onto selectedFiles instead of replacing it, and
+// stays true even if removal takes the list back down to 1 file — only an
+// explicit Clear (resetQueueSelection) turns it back off. This is the
+// single flag that decides whether handleSelectedFiles() is looking at
+// "pick a fresh single file" (queueModeActive === false, selectedFiles
+// empty) or "add to the batch I'm already building".
+let queueModeActive   = false;
 let queueEstimate     = null; // last /estimate response (pre-job)
 let queueJobId        = null; // the job this tab is currently attached to
 let queueStreamAbort  = null; // AbortController for the live SSE fetch
@@ -790,6 +798,28 @@ function resolveEstimateFileList(estimate, localFiles) {
   return local.map(f => ({ name: f && f.name, bytes: f && f.size, ordered: false }));
 }
 
+// Round-3 audit item 1: "same name AND same size is the same file" — the
+// exact rule specified. Re-picking a folder the user already added files
+// from (a real reported scenario) must not queue every file twice. Keeps
+// FIRST occurrence order stable (matters for the "largest first" display,
+// which is server-derived anyway, but also for any caller that cares about
+// insertion order). Pure — takes/returns plain {name,size}-shaped objects
+// (real File objects satisfy this without any special-casing), so it's
+// directly unit-testable via `new Function`.
+function dedupeQueueFiles(files) {
+  const list = Array.isArray(files) ? files : [];
+  const seen = new Set();
+  const out = [];
+  for (const f of list) {
+    if (!f || typeof f.name !== 'string') continue;
+    const key = `${f.name}\u0000${f.size}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+  return out;
+}
+
 // 409 "a batch is already running" responses "name the active jobId" per the
 // contract, without pinning the exact field name — defensively check the
 // shapes a Node/Express JSON body would plausibly use.
@@ -839,10 +869,23 @@ function sanitizeDisplayName(str) {
 //    included in the test's combined eval scope so these resolve exactly as
 //    they do in the app) ─────────────────────────────────────────────────
 
-function queueFileListItemHtml(entry) {
+// `opts.removable` (round-3 audit item 1) adds a per-row remove control,
+// keyed on name+size (the same identity dedupeQueueFiles uses) via data
+// attributes the click-delegation handler in renderQueueConfirm reads back
+// — an index into the display list would be wrong, since that list is
+// server-ordered (largest-first) and does not match selectedFiles' order.
+// Omitting `opts` (every pre-existing call site) renders byte-identical to
+// before this round.
+function queueFileListItemHtml(entry, opts) {
   const name = escHtml(sanitizeDisplayName(entry && entry.name != null ? entry.name : ''));
   const size = formatQueueBytes(entry && entry.bytes);
-  return `<li class="queue-file-item"><span class="queue-file-name">${name}</span><span class="queue-file-size">${size}</span></li>`;
+  const removable = !!(opts && opts.removable);
+  const rawName = entry && entry.name != null ? String(entry.name) : '';
+  const rawBytes = entry && Number.isFinite(entry.bytes) ? String(entry.bytes) : '';
+  const removeBtn = removable
+    ? `<button type="button" class="queue-file-remove" data-name="${escHtml(rawName)}" data-bytes="${escHtml(rawBytes)}" title="Remove this file" aria-label="Remove ${name}">&times;</button>`
+    : '';
+  return `<li class="queue-file-item"><span class="queue-file-name">${name}</span><span class="queue-file-size">${size}</span>${removeBtn}</li>`;
 }
 
 function queueRejectedItemHtml(entry) {
@@ -980,38 +1023,158 @@ function queueDoneSummaryHtml(job) {
   </div>`;
 }
 
+// Round-3 audit item 4: a genuine $0.0000 read as "nothing is happening"
+// while an item was actively mid-flight (his exact screenshot: "Item 1 of
+// 3 · $0.0000 spent"). A TERMINAL $0 is a real, legible final tally
+// (everything was skipped/cancelled before any spend) — only the
+// IN-PROGRESS zero needed a different label, so isTerminal is part of the
+// contract, not just spentUsd.
+function computeQueueSpentLabel(spentUsd, isTerminal) {
+  const spent = Number.isFinite(spentUsd) ? spentUsd : 0;
+  if (spent > 0) return `$${spent.toFixed(4)} spent`;
+  return isTerminal ? '$0.0000 spent' : 'spend so far: pending first file';
+}
+
+// Round-3 audit item 2: cancelRequested/pauseRequested are read straight
+// off the job SNAPSHOT (never local click-state), so a second tab sees
+// the identical "Cancelling…"/"Pausing…" treatment — see the section
+// header's "client never derives or caches job state" rule. Missing
+// fields (backend not yet updated, or an older cached snapshot) are
+// treated as false, never as truthy/undefined — a batch must never render
+// as "cancelling" just because the field hasn't arrived yet.
+function queueInFlightHtml(job) {
+  if (!job) return { noticeHtml: '', controlsHtml: '' };
+  const isTerminal = job.status === 'done' || job.status === 'cancelled' || job.status === 'failed';
+  if (isTerminal) return { noticeHtml: '', controlsHtml: '' };
+  const cancelRequested = job.cancelRequested === true;
+  const pauseRequested = job.pauseRequested === true;
+  const noticeHtml = (job.status === 'running' && (cancelRequested || pauseRequested))
+    ? `<div class="queue-inflight-notice">${cancelRequested
+        ? 'Cancelling — finishing the current file first, then stopping.'
+        : 'Pausing after the current file…'}</div>`
+    : '';
+  // A cancel in flight makes Pause moot too (disabled, not just relabelled
+  // — clicking it while the server is already tearing the job down would
+  // just race a pause request against a cancel that's about to win).
+  // Cancel itself only disables on cancelRequested — pauseRequested alone
+  // must NOT block escalating straight to Cancel.
+  const pauseDisabled = pauseRequested || cancelRequested;
+  const controlsHtml = `
+    <div class="queue-panel-controls">
+      ${job.status === 'running'
+        ? `<button class="btn" id="queue-pause-btn"${pauseDisabled ? ' disabled' : ''}>${pauseRequested ? 'Pausing…' : 'Pause'}</button>`
+        : `<button class="btn primary" id="queue-resume-btn">${job.status === 'pending' ? 'Start' : 'Resume'}</button>`}
+      <button class="btn" id="queue-cancel-btn"${cancelRequested ? ' disabled' : ''}>${cancelRequested ? 'Cancelling…' : 'Cancel'}</button>
+    </div>
+  `;
+  return { noticeHtml, controlsHtml };
+}
+
+// Round-3 audit item 3: a Dismiss control on a TERMINAL batch only — the
+// `isTerminal` gate is the ONLY input, so it is structurally impossible
+// for this to render alongside the live (Pause/Resume/Cancel) controls
+// block above, which is gated on the same isTerminal check but generates
+// its markup independently. Two separately-computed booleans agreeing by
+// construction (both derived from job.status the same way) is weaker than
+// one shared gate — see the mutation-prove in the test suite, which drives
+// this exact concern.
+function queueDismissBtnHtml(isTerminal) {
+  return isTerminal
+    ? `<div class="queue-panel-terminal-actions"><button class="btn" id="queue-dismiss-btn">Dismiss</button></div>`
+    : '';
+}
+
 // ── DOM-coupled render + control functions (browser-verified; not unit-
 //    tested directly — the pure builders above carry the tested logic) ────
 
+// Round-3 audit item 1: EVERY selection event (file picker OR drop) used
+// to be treated as the WHOLE batch — pick 3 from one folder, then 2 from
+// another, and the first 3 vanished; drop one file, drop another, and the
+// second replaced the first. Real users assemble a batch incrementally;
+// this now accumulates instead of replacing, from both routes, and the
+// 1-file-total guarantee is preserved exactly: it only ever reaches
+// setFile() (the untouched single-file path) when this is the very FIRST
+// selection ever made AND it is exactly one file.
 function handleSelectedFiles(files) {
-  const list = Array.from(files || []);
-  if (list.length === 0) return;
-  if (list.length === 1) {
-    // Single file: the existing, unchanged flow. Clear any queue state so a
-    // stale confirm gate from a previous multi-select can't linger.
-    resetQueueSelection();
-    setFile(list[0]);
+  const incoming = Array.from(files || []);
+  if (incoming.length === 0) return;
+
+  if (!queueModeActive) {
+    if (incoming.length === 1 && !selectedFile) {
+      // The one case that must behave exactly as before this track: a
+      // completely fresh single-file pick.
+      setFile(incoming[0]);
+      return;
+    }
+    // Either 2+ arrived in one event, or a 2nd file is arriving on top of
+    // an already-selected single file (picker OR drop — same code path
+    // for both, which is also what fixes "drop replaces the previous
+    // file"). Absorb the existing single-file selection into the batch
+    // rather than discarding it.
+    const combined = selectedFile ? [selectedFile, ...incoming] : incoming;
+    enterQueueMode(combined);
     return;
   }
-  // 2+ files: the batch queue path. `selectedFile`/`ingestBtn` are left
-  // alone in their "nothing chosen" state — ingestBtn stays disabled and
-  // selectedFile stays null — so submitIngest() (the single-file path)
-  // cannot fire for a multi-file selection.
+  // Already accumulating: add to the existing pending list. Per the
+  // design, batch mode is sticky — even if this brings the total to 1
+  // (via removal elsewhere), we do NOT fall back to the single-file path;
+  // only an explicit Clear does that (resetQueueSelection).
+  addFilesToQueueSelection(incoming);
+}
+
+// Transitions OUT of the single-file world and into the accumulating
+// batch confirm gate, carrying `files` (already merged with any prior
+// single-file selection by the caller).
+function enterQueueMode(files) {
+  queueModeActive = true;
   selectedFile = null;
   fileNameEl.textContent = '';
   ingestBtn.disabled = true;
+  ingestBtn.removeAttribute('title');
   hideEl(ingestStatus);
   hideEl(ingestResult);
   hideDuplicateBanner();
-  startQueueSelection(list);
+  selectedFiles = dedupeQueueFiles(files);
+  startQueueSelection();
+}
+
+// The accumulate step itself: merge new files onto the pending list,
+// deduplicate (name+size — the exact rule specified, since re-picking a
+// folder already added from is a real, reported way to hit this), and
+// re-estimate so the cost shown always matches the current list.
+function addFilesToQueueSelection(incoming) {
+  selectedFiles = dedupeQueueFiles([...selectedFiles, ...incoming]);
+  startQueueSelection();
+}
+
+// Per-file remove (round-3 audit item 1) — keyed on name+size, not array
+// index, because the rendered list order is server-derived (largest-
+// first) and does not match selectedFiles' insertion order. Never once a
+// job exists (the confirm gate is gone by then). Removing the LAST file
+// is treated as an implicit Clear — a 0-file "batch" has nothing to
+// confirm or re-estimate, so this collapses to the same reset path Clear
+// uses rather than leaving a stuck, empty confirm gate on screen.
+function removeQueueFile(name, bytesStr) {
+  if (queueJobId) return;
+  const hasBytes = bytesStr !== '' && bytesStr != null && Number.isFinite(Number(bytesStr));
+  const bytes = hasBytes ? Number(bytesStr) : null;
+  selectedFiles = selectedFiles.filter(f => {
+    if (!f || f.name !== name) return true;
+    if (bytes == null) return false; // no reliable size to disambiguate — match by name alone
+    return f.size !== bytes;
+  });
+  if (selectedFiles.length === 0) { resetQueueSelection(); return; }
+  startQueueSelection();
 }
 
 function resetQueueSelection() {
+  queueModeActive = false;
   selectedFiles = [];
   queueEstimate = null;
   hideEl(queueStatusEl);
   hideEl(queueConfirmEl);
   if (queueConfirmEl) queueConfirmEl.innerHTML = '';
+  if (fileInput) fileInput.value = '';
   // Clear a FINISHED batch's report so it doesn't linger next to an
   // unrelated single-file selection — but never hide a batch that's still
   // actually live (running/paused): its panel keeps rendering regardless
@@ -1030,12 +1193,15 @@ function resetQueueSelection() {
   }
 }
 
-async function startQueueSelection(files) {
-  selectedFiles = files;
+// Re-estimates against whatever selectedFiles CURRENTLY holds — every
+// add/remove call site above updates selectedFiles first, then calls this
+// with no argument, so the estimate shown always matches the live list.
+async function startQueueSelection() {
+  const files = selectedFiles;
   queueEstimate = null;
   hideEl(queueConfirmEl);
   hideEl(queuePanelEl);
-  showStatus(queueStatusEl, 'loading', `Estimating cost for ${files.length} files…`);
+  showStatus(queueStatusEl, 'loading', `Estimating cost for ${files.length} file${files.length === 1 ? '' : 's'}…`);
   const domain = document.getElementById('ingest-domain')?.value;
   try {
     const body = { domain, files: files.map(f => ({ name: f.name, size: f.size })) };
@@ -1058,11 +1224,13 @@ async function startQueueSelection(files) {
 // Re-estimate if the user changes domain while still at the confirm gate
 // (a different domain means a different index size and a different cost).
 // Never fires once a job exists — the domain is fixed at that point.
-// Also re-evaluates the single-file Ingest button (round-2 audit item 2):
-// switching TO a domain with a live batch must disable it; switching AWAY
-// from one must re-enable it if a file is already selected.
+// Gated on queueModeActive (not "length > 1" — round 3 made a 1-file batch
+// a legitimate, stable state that should still re-estimate on domain
+// change). Also re-evaluates the single-file Ingest button (round-2 audit
+// item 2): switching TO a domain with a live batch must disable it;
+// switching AWAY from one must re-enable it if a file is already selected.
 document.getElementById('ingest-domain')?.addEventListener('change', () => {
-  if (selectedFiles.length > 1 && !queueJobId) startQueueSelection(selectedFiles);
+  if (queueModeActive && !queueJobId) startQueueSelection();
   refreshIngestBtnAvailability();
 });
 
@@ -1094,7 +1262,7 @@ function renderQueueConfirm() {
       </div>` : ''}
     <div class="queue-file-section">
       <div class="queue-section-label">Will be ingested (largest first)</div>
-      <ul class="queue-file-list">${fileList.map(queueFileListItemHtml).join('')}</ul>
+      <ul class="queue-file-list" id="queue-file-list">${fileList.map(f => queueFileListItemHtml(f, { removable: true })).join('')}</ul>
     </div>
     <div class="queue-estimate">
       <div class="queue-estimate-row"><span>Estimated cost</span><strong>${escHtml(costRange)}</strong></div>
@@ -1109,14 +1277,27 @@ function renderQueueConfirm() {
     <label class="queue-overwrite-row"><input type="checkbox" id="queue-overwrite-input" /> Overwrite existing pages for files already ingested</label>
     <div class="queue-confirm-actions">
       <button class="btn primary pill" id="queue-start-btn">Start batch</button>
-      <button class="btn" id="queue-cancel-select-btn">Cancel</button>
+      <button class="btn" id="queue-add-more-btn">Add more files</button>
+      <button class="btn" id="queue-cancel-select-btn">Clear all</button>
     </div>
   `;
   showEl(queueConfirmEl);
   hideEl(queuePanelEl);
 
   document.getElementById('queue-start-btn')?.addEventListener('click', beginQueueJob);
+  // Round-3 audit item 1: reopens the SAME file input the drop zone/browse
+  // link already use — handleSelectedFiles() routes it through the
+  // accumulate path above since queueModeActive is already true, so no
+  // separate "add" logic is needed at the input level.
+  document.getElementById('queue-add-more-btn')?.addEventListener('click', () => fileInput?.click());
   document.getElementById('queue-cancel-select-btn')?.addEventListener('click', resetQueueSelection);
+  // One delegated listener for every per-row remove button, rather than
+  // one per row — the list is rebuilt wholesale on every render anyway.
+  document.getElementById('queue-file-list')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.queue-file-remove');
+    if (!btn) return;
+    removeQueueFile(btn.dataset.name || '', btn.dataset.bytes || '');
+  });
 }
 
 async function beginQueueJob() {
@@ -1151,9 +1332,13 @@ async function beginQueueJob() {
     if (!startRes.ok || !startData.ok) throw new Error(startData.error || `Could not start the batch (HTTP ${startRes.status})`);
 
     // Uploaded + started — the confirm gate's job is done; everything from
-    // here is driven by job snapshots.
+    // here is driven by job snapshots. queueModeActive resets too: the
+    // files that were pending are now the job's problem, so the NEXT
+    // selection (picker or drop) is a fresh decision, not still glued to
+    // this batch.
     hideEl(queueConfirmEl);
     if (queueConfirmEl) queueConfirmEl.innerHTML = '';
+    queueModeActive = false;
     selectedFiles = [];
     if (fileInput) fileInput.value = '';
     showEl(queuePanelEl);
@@ -1314,34 +1499,34 @@ function renderQueuePanel(job) {
 
   const items = Array.isArray(job.items) ? job.items : [];
   const settledCount = items.filter(i => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped')).length;
-  const spent = Number.isFinite(job.spentUsd) ? job.spentUsd : 0;
+  const spentLabel = computeQueueSpentLabel(job.spentUsd, isTerminal);
 
   const headerHtml = `
     <div class="queue-panel-head">
       <div class="queue-panel-title">Batch ingest — ${escHtml(job.domain || '')}</div>
-      <div class="queue-panel-sub">${isTerminal ? 'Finished' : `Item ${Math.min(settledCount + 1, items.length)} of ${items.length}`} · $${spent.toFixed(4)} spent</div>
+      <div class="queue-panel-sub">${isTerminal ? 'Finished' : `Item ${Math.min(settledCount + 1, items.length)} of ${items.length}`} · ${escHtml(spentLabel)}</div>
     </div>
   `;
 
   const pausedHtml = job.status === 'paused' ? queuePausedBannerHtml(job) : '';
   const doneHtml = isTerminal ? queueDoneSummaryHtml(job) : '';
-
-  const controlsHtml = isTerminal ? '' : `
-    <div class="queue-panel-controls">
-      ${job.status === 'running'
-        ? `<button class="btn" id="queue-pause-btn">Pause</button>`
-        : `<button class="btn primary" id="queue-resume-btn">${job.status === 'pending' ? 'Start' : 'Resume'}</button>`}
-      <button class="btn" id="queue-cancel-btn">Cancel</button>
-    </div>
-  `;
+  // Round-3 audit item 2 (cancelRequested/pauseRequested) and item 3
+  // (Dismiss) both come from pure builders driven ONLY by the snapshot —
+  // no local "I clicked cancel" state — so a second tab renders identically.
+  const { noticeHtml, controlsHtml } = queueInFlightHtml(job);
+  const dismissHtml = queueDismissBtnHtml(isTerminal);
 
   const listHtml = `<ul class="queue-item-list">${items.map(queueItemRowHtml).join('')}</ul>`;
 
-  queuePanelEl.innerHTML = `${headerHtml}${pausedHtml}${doneHtml}${controlsHtml}${listHtml}`;
+  queuePanelEl.innerHTML = `${headerHtml}${pausedHtml}${noticeHtml}${doneHtml}${dismissHtml}${controlsHtml}${listHtml}`;
 
   document.getElementById('queue-pause-btn')?.addEventListener('click', () => pauseQueueJob(job.jobId));
   document.getElementById('queue-resume-btn')?.addEventListener('click', () => resumeQueueJob(job.jobId));
   document.getElementById('queue-cancel-btn')?.addEventListener('click', () => confirmCancelQueueJob(job.jobId));
+  // Round-3 audit item 3: only ever rendered when isTerminal (see
+  // queueDismissBtnHtml) — structurally cannot appear next to the live
+  // Pause/Resume/Cancel controls above.
+  document.getElementById('queue-dismiss-btn')?.addEventListener('click', dismissQueuePanel);
 
   if (isTerminal) {
     // A finished batch just wrote/changed pages across (possibly) many
@@ -1349,6 +1534,28 @@ function renderQueuePanel(job) {
     loadDomainList().catch(() => {});
     refreshSyncPendingBadge();
   }
+}
+
+// Round-3 audit item 3: clears a TERMINAL batch's panel — UI-only, never
+// touches the job server-side (no DELETE call; the job stays exactly as
+// it finished, on disk, for anyone who wants to look it up directly).
+// Safe against ever firing on a live job because its only call site is
+// #queue-dismiss-btn, which queueDismissBtnHtml only ever renders when
+// isTerminal is true (see that function).
+//
+// Survives a tab switch within the session without any separate
+// "dismissed" flag: GET /active (what checkActiveQueueJob polls on every
+// Ingest-tab entry) excludes terminal jobs by construction, so once this
+// clears queueJobId + the panel's own markup, nothing re-populates either
+// until a NEW batch starts. It does not survive a full page reload — the
+// job is still real and still terminal, so `curl .../active` naturally
+// won't resurrect it there either; only the in-memory client state resets.
+function dismissQueuePanel() {
+  detachQueueStream(); // defensive — a terminal job should already hold no live stream
+  queueJobId = null;
+  _queueLastStatus = null;
+  if (queuePanelEl) queuePanelEl.innerHTML = '';
+  hideEl(queuePanelEl);
 }
 
 async function pauseQueueJob(jobId) {

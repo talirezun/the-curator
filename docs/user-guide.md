@@ -284,7 +284,11 @@ You'll see the The Curator interface with six tabs at the top: **Ingest**, **Cha
 
 ### Batch ingest — queue many files at once
 
-If you select **two or more files** at once (drag them all onto the drop zone, or select multiple in the file picker), The Curator switches from the single-file flow above into a **batch queue**: one durable, resumable job that ingests every file, one at a time, and survives you closing the browser tab or even restarting the app. Selecting a single file still uses the plain flow described above — nothing about it changes.
+If you select **two or more files**, The Curator switches from the single-file flow above into a **batch queue**: one durable, resumable job that ingests every file, one at a time, and survives you closing the browser tab or even restarting the app. Selecting a single file still uses the plain flow described above — nothing about it changes.
+
+**You don't have to choose them all at once.** Selections *add up*, so you can build a batch from as many folders and as many drops as you like: pick a few files, then pick a few more from somewhere else, or drop one file and then drop three more — they all join the same queue rather than replacing what you already chose. The confirm screen lists everything currently queued, with an **× on each file** to drop it, **Add more files** to keep going, and **Clear all** to start over. Adding the same file twice does nothing — files are matched on name and size, so re-picking a folder won't queue anything twice. The cost estimate recalculates every time the list changes.
+
+Once you're in batch mode you stay there, even if you remove files until only one is left — a one-file batch is perfectly valid. Only **Clear all** takes you back to the plain single-file flow.
 
 **1. You see a cost estimate first — nothing is spent yet.** As soon as you pick your files, The Curator shows a confirm screen: every file that will be included (largest first — see below), any files it won't accept (wrong file type, over 50MB), and an estimated cost range in dollars and tokens. **No file is uploaded and no AI call is made until you click Start batch.** You're free to cancel at this screen at no cost.
 
@@ -303,6 +307,10 @@ If you select **two or more files** at once (drag them all onto the drop zone, o
 - **Pause** stops the batch once the file currently ingesting finishes (never mid-file). Resume it whenever you like.
 - **Cancel** stops the batch and discards any files that hadn't started yet. Anything already ingested stays in your wiki — cancelling never undoes completed work.
 - **Resume** continues exactly where the batch left off.
+
+**Pause and Cancel both take effect *after* the file that's currently ingesting finishes — they never interrupt it mid-file.** That's deliberate: stopping an ingest halfway through would leave a half-written set of pages behind. On a large document that wait can be a minute or more, so the panel tells you the request landed — it shows **"Cancelling — finishing the current file first, then stopping"** (or *"Pausing after the current file…"*) and the button changes to match. If you see that message, it's working; the remaining files won't be started.
+
+**Dismissing a finished batch.** Once a batch has finished, been cancelled, or failed, a **Dismiss** button clears the panel and returns the Ingest tab to normal. Dismiss only tidies your screen — it doesn't delete anything or undo any work, and it's deliberately unavailable while a batch is still live so you can't accidentally hide something that's still running.
 
 **5. The batch can pause itself — here's what each reason means and what to do:**
 
