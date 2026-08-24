@@ -103,12 +103,19 @@ const LIVE_CI = [
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
 //   - test-beta13-chat-live: reads the dev machine's real 1000-page `articles`
 //     domain and judges LLM answer quality (no data on CI; non-deterministic).
-//   - test-ingest-real-llm: tied to a SPECIFIC personal article (asserts the
-//     author "Dr. Tali Rezun") read from a hardcoded local path — not in the repo.
+//   - test-ingest-real-llm (v3.5.1: de-personalised): needs a local source
+//     document the runner supplies via CURATOR_LIVE_SCHEMA (a domain CLAUDE.md)
+//     + CURATOR_LIVE_ARTICLE (an .md/.txt/.pdf to ingest) — self-skips (exit 0)
+//     when either is unset, same contract as a missing API key. No longer tied
+//     to one machine's filesystem or one specific author; the author-entity
+//     assertions are derived from whatever byline the supplied article itself
+//     carries (extractAuthorHints/slugifyName), or skip gracefully if it has
+//     none. Stays local-only because CI has no article to point it at, not
+//     because of anything personal in the test itself anymore.
 //   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
 const LIVE_LOCAL = [
   'test-beta13-chat-live.js',
-  'test-ingest-real-llm.js',     // tied to a specific personal article (author assertions) on a hardcoded local path
+  'test-ingest-real-llm.js',     // needs CURATOR_LIVE_SCHEMA + CURATOR_LIVE_ARTICLE supplied locally; self-skips otherwise
   'test-ingest-deep.js',
 ];
 

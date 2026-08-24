@@ -1,37 +1,53 @@
 #!/usr/bin/env node
 /**
  * v3.0.1-beta.1 — Real-LLM end-to-end ingest validation.
+ * v3.5.1 — de-personalised: the source schema + article are now supplied by
+ *   the person running the suite, via env vars, instead of being hardcoded
+ *   to one machine's filesystem. See "Requirements" below.
  *
- * Uses the actual Gemini Flash API to ingest a real article into an isolated
- * tempdir domain. Verifies the five bugs the community reported are actually
- * fixed by the v3.0.1 changes, AND that re-ingest is idempotent.
+ * Uses a real Gemini/Anthropic API call to ingest a source document into an
+ * isolated tempdir domain. Verifies the five bugs the v3.0.1 community report
+ * fixed are actually fixed, AND that re-ingest is idempotent.
  *
  * Isolation:
- *   - DOMAINS_PATH points to a fresh tempdir (no contact with the user's
- *     production wiki at /Users/talirezun/second-brain/domains/)
+ *   - CURATOR_TEST_DOMAINS_DIR points at a fresh tempdir (no contact with any
+ *     production wiki)
  *   - Cleanup at end (tempdir removed even on failure)
  *
- * Requirements:
- *   GEMINI_API_KEY env var set (or .env in cwd loaded). User authorised real
- *   LLM calls.
+ * Requirements (all four must be present, or the suite self-skips):
+ *   GEMINI_API_KEY or ANTHROPIC_API_KEY  — a real, working key
+ *   CURATOR_LIVE_SCHEMA   — path to a domain CLAUDE.md schema file to seed
+ *                            the test domain with (any real or synthetic
+ *                            schema works; it's read verbatim)
+ *   CURATOR_LIVE_ARTICLE  — path to a source document (.md/.txt/.pdf) to
+ *                            ingest. Any article works — the assertions below
+ *                            are structural, not tied to any specific
+ *                            content or author.
+ *
+ * This suite needs a document you supply locally (not shipped in the public
+ * repo), so it stays in the LIVE_LOCAL manifest in scripts/run-tests.js
+ * rather than running in CI — see the comment there for why.
  *
  * Test plan:
- *   STAGE 1: First ingest of an MD article
+ *   STAGE 1: First ingest of the supplied article
  *     ✓ Result has no validator-warning about missing summary
  *     ✓ summaries/<deterministic-slug>.md exists on disk
  *     ✓ Summary contains "Entities Mentioned" section populated by syncSummaryEntities
- *     ✓ At least 1 entity page exists for the author (Dr Tali Rezun)
+ *     ✓ If the source's own frontmatter/byline names an author, an entity
+ *       page for them was created (derived from the SOURCE, never hardcoded)
+ *     ✓ At least 3 entity pages exist
  *     ✓ At least 3 concept pages exist
  *     ✓ index.md contains rows for newly created pages
  *     ✓ log.md has an ingest entry
  *
  *   STAGE 2: Re-ingest the same file (isOverwrite=true)
  *     ✓ Still exactly ONE summary file (no duplicate)
- *     ✓ Same author entity file still exists (no -2 suffix or hyphen variant)
+ *     ✓ Same author entity file still exists, if one was found in stage 1
+ *       (no -2 suffix or hyphen variant)
  *     ✓ Entity page Related section has merged bullets (not doubled)
  *     ✓ index.md has no duplicate rows
  *
- * Exit code 0 on green; non-zero on any failure.
+ * Exit code 0 on green (including a clean self-skip); non-zero on failure.
  */
 
 import { mkdtempSync, rmSync, mkdirSync, copyFileSync, readFileSync, existsSync, readdirSync, writeFileSync } from 'fs';
@@ -62,6 +78,28 @@ function assertEq(actual, expected, label) {
   fail(label, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
+// ── Self-skip: this suite needs a locally-supplied schema + article ─────────
+// Same contract every other LIVE suite uses for a missing API key — checked
+// FIRST, before any tempdir/filesystem work, so a bare `node
+// scripts/test-ingest-real-llm.js` with nothing configured is a clean no-op.
+const SCHEMA_PATH = process.env.CURATOR_LIVE_SCHEMA;
+const ARTICLE_PATH = process.env.CURATOR_LIVE_ARTICLE;
+if (!SCHEMA_PATH || !ARTICLE_PATH) {
+  console.log('SKIP: this suite needs a local source document to ingest.');
+  console.log('  Set CURATOR_LIVE_SCHEMA (path to a domain CLAUDE.md schema file) and');
+  console.log('  CURATOR_LIVE_ARTICLE (path to an .md/.txt/.pdf article to ingest) to run it.');
+  console.log('  Self-skipping (live-suite convention) — this is not a failure.');
+  process.exit(0);
+}
+if (!existsSync(SCHEMA_PATH)) {
+  console.error(`FATAL: CURATOR_LIVE_SCHEMA points at a file that doesn't exist: ${SCHEMA_PATH}`);
+  process.exit(1);
+}
+if (!existsSync(ARTICLE_PATH)) {
+  console.error(`FATAL: CURATOR_LIVE_ARTICLE points at a file that doesn't exist: ${ARTICLE_PATH}`);
+  process.exit(1);
+}
+
 // ── Setup: isolated tempdir ──────────────────────────────────────────────────
 const testRoot = mkdtempSync(path.join(tmpdir(), 'curator-ingest-real-'));
 const domainsPath = path.join(testRoot, 'domains');
@@ -78,33 +116,23 @@ mkdirSync(path.join(wikiDir, 'concepts'), { recursive: true });
 mkdirSync(path.join(wikiDir, 'summaries'), { recursive: true });
 mkdirSync(rawDir, { recursive: true });
 
-// Copy the real domain's CLAUDE.md schema to make the test realistic
-const realSchema = '/Users/talirezun/second-brain/domains/articles/CLAUDE.md';
+// Copy the supplied CLAUDE.md schema so the test domain has a realistic one.
 const testSchema = path.join(domainDir, 'CLAUDE.md');
-if (existsSync(realSchema)) {
-  copyFileSync(realSchema, testSchema);
-} else {
-  writeFileSync(testSchema, '# Articles domain\n\nIngest articles and extract entities, concepts, and a summary.\n');
-}
+copyFileSync(SCHEMA_PATH, testSchema);
 
 // Empty index + log
 writeFileSync(path.join(wikiDir, 'index.md'), '# Index\n\n| Page | Type | Summary |\n|---|---|---|\n');
 writeFileSync(path.join(wikiDir, 'log.md'), '# Log\n\n');
 
-// Copy a real article into raw/
-const SOURCE_ARTICLE_NAME = 'lumina-v1-48-hours.md';
-const realArticlePath = '/Users/talirezun/second-brain/domains/articles/raw/From Google AI Studio to Production_ Building Lumina v1 in 48 Hours.md';
-if (!existsSync(realArticlePath)) {
-  console.error(`Source article not found: ${realArticlePath}`);
-  rmSync(testRoot, { recursive: true, force: true });
-  process.exit(1);
-}
+// Copy the supplied article into raw/, keeping its own basename so
+// SOURCE_ARTICLE_NAME reflects whatever the runner pointed us at.
+const SOURCE_ARTICLE_NAME = path.basename(ARTICLE_PATH);
 const articleInRaw = path.join(rawDir, SOURCE_ARTICLE_NAME);
-copyFileSync(realArticlePath, articleInRaw);
+copyFileSync(ARTICLE_PATH, articleInRaw);
 console.log(`Source article: ${SOURCE_ARTICLE_NAME} (${(readFileSync(articleInRaw, 'utf8').length / 1024).toFixed(1)} KB)\n`);
 
 // Pin the domains dir to our tempdir so the real config.js doesn't redirect us
-// at the user's production wiki. CURATOR_TEST_DOMAINS_DIR beats config; plain
+// at any production wiki. CURATOR_TEST_DOMAINS_DIR beats config; plain
 // DOMAINS_PATH does NOT (it loses to a configured domainsPath), so the old line
 // silently wrote into the real domains/ on a configured machine.
 process.env.CURATOR_TEST_DOMAINS_DIR = domainsPath;
@@ -126,12 +154,25 @@ process.on('exit', cleanup);
   console.log(`Using ${process.env.GEMINI_API_KEY ? 'Gemini' : 'Anthropic'} for this test.\n`);
 
   // ── Import after env is set so config.js reads the right paths ───────────
-  const { ingestFile, computeSummarySlugFromSource } = await import('../src/brain/ingest.js');
+  const { ingestFile, computeSummarySlugFromSource, extractAuthorHints, slugifyName } = await import('../src/brain/ingest.js');
 
   // Expected canonical summary slug + path
   const expectedSlug = computeSummarySlugFromSource(SOURCE_ARTICLE_NAME);
   const expectedSummaryPath = `summaries/${expectedSlug}.md`;
   console.log(`Expected summary slug: ${expectedSlug}\n`);
+
+  // Derive an expected author slug from the SOURCE ITSELF (frontmatter
+  // `author:` field or a "By X" / "Author: X" byline) — never hardcoded, so
+  // this assertion is meaningful for whatever article CURATOR_LIVE_ARTICLE
+  // points at. Some articles carry no discoverable author hint at all; that
+  // is a legitimate outcome, not a bug, and the affected assertions below
+  // are skipped gracefully rather than failed.
+  const sourceText = readFileSync(articleInRaw, 'utf8');
+  const authorHints = extractAuthorHints(sourceText);
+  const expectedAuthorSlug = authorHints.length > 0 ? slugifyName(authorHints[0]) : null;
+  console.log(expectedAuthorSlug
+    ? `Author hint found in source: "${authorHints[0]}" → expected slug "${expectedAuthorSlug}"\n`
+    : `No author hint found in source — the author-entity assertions below will be skipped (not failed).\n`);
 
   // ── STAGE 1: First ingest ────────────────────────────────────────────────
   console.log('═══ STAGE 1: First ingest ═══\n');
@@ -188,22 +229,30 @@ process.on('exit', cleanup);
     const summaryContent = readFileSync(summaryFile, 'utf8');
     assertTrue(/^##\s+Entities Mentioned/m.test(summaryContent),
       'summary has "Entities Mentioned" section (syncSummaryEntities ran)');
-    // Count linked entities — should be > 5 (the article mentions many)
+    // Count linked entities — should be > 5 (a real article usually mentions many)
     const linkedCount = (summaryContent.match(/\[\[[^\]]+\]\]/g) || []).length;
     assertTrue(linkedCount >= 5,
       `summary references >= 5 wikilinks (got ${linkedCount})`,
       `low link count suggests under-reporting bug`);
   }
 
-  // 4. At least one author entity — the article is by Dr Tali Rezun
-  const authorCandidates = stage1Entities.filter(p =>
-    /tali|rezun/i.test(p)
-  );
-  assertTrue(authorCandidates.length >= 1,
-    'author entity created (page slug contains "tali" or "rezun")',
-    authorCandidates.length === 0 ? `no entities mentioning author. Entities: ${stage1Entities.join(', ')}` : null);
+  // 4. If the source names an author, an entity page for them was created.
+  //    Skipped (not failed) when the source carries no discoverable author
+  //    hint — that's a property of the article, not of the pipeline.
+  let authorCandidates = [];
+  if (expectedAuthorSlug) {
+    authorCandidates = stage1Entities.filter(p => {
+      const base = p.replace(/^entities\//, '').replace(/\.md$/, '');
+      return base === expectedAuthorSlug || base.includes(expectedAuthorSlug) || expectedAuthorSlug.includes(base);
+    });
+    assertTrue(authorCandidates.length >= 1,
+      `author entity created for the source's own byline (expected slug "${expectedAuthorSlug}")`,
+      authorCandidates.length === 0 ? `no matching entity. Entities: ${stage1Entities.join(', ')}` : null);
+  } else {
+    console.log('  (skipped: no author hint in source — see note above)');
+  }
 
-  // 5. Reasonable entity coverage — at least 3 (this article mentions many: Google, Gemini, Lumina, …)
+  // 5. Reasonable entity coverage — at least 3 (a real article usually names several)
   assertTrue(stage1Entities.length >= 3,
     `at least 3 entity pages created (got ${stage1Entities.length})`,
     'under-coverage suggests prompt rules not landing');
@@ -272,11 +321,18 @@ process.on('exit', cleanup);
     're-ingest summary path identical to first ingest');
 
   // 12. Entity files on disk: count should grow only by genuinely new entities,
-  //     and known author files should NOT have hyphen-variant duplicates.
+  //     and the author file (if one was found) should NOT have hyphen-variant
+  //     duplicates.
   const entitiesOnDisk = readdirSync(path.join(wikiDir, 'entities')).filter(f => f.endsWith('.md'));
-  const authorFilesOnDisk = entitiesOnDisk.filter(f => /tali|rezun/i.test(f));
-  assertEq(authorFilesOnDisk.length, 1,
-    'exactly one author entity file on disk (no hyphen variants)');
+  let authorFilesOnDisk = [];
+  if (expectedAuthorSlug) {
+    authorFilesOnDisk = entitiesOnDisk.filter(f => {
+      const base = f.replace(/\.md$/, '');
+      return base === expectedAuthorSlug || base.includes(expectedAuthorSlug) || expectedAuthorSlug.includes(base);
+    });
+    assertEq(authorFilesOnDisk.length, 1,
+      'exactly one author entity file on disk (no hyphen variants)');
+  }
 
   // 13. index.md has no duplicate rows for the summary
   const indexAfter = readFileSync(path.join(wikiDir, 'index.md'), 'utf8');

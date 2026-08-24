@@ -4683,9 +4683,45 @@ function renderWikiSidebar(pages) {
   if (first) first.click();
 }
 
+// Strips a LEADING YAML frontmatter block (--- ... ---) from wiki page
+// content before rendering. WIKI TAB render path only — public/markdown.js
+// (the chat renderer) is a completely separate file and is untouched by
+// this function or anything that calls it.
+//
+// Anchored strictly to line 0: only the very FIRST line of the document is
+// ever considered a candidate opening delimiter, so a `---` used anywhere
+// else as a horizontal rule can never be mistaken for one — this function
+// never even looks at later lines until it has already committed to line 0
+// being exactly `---`. A document with no frontmatter (line 0 isn't `---`)
+// returns byte-identical to its input, before anything else runs. An
+// UNTERMINATED opening `---` (no closing `---`-only line found anywhere
+// after it) also returns the content completely unchanged — rendering one
+// stray `---` as an hr is far safer than silently swallowing the entire
+// page while hunting for a delimiter that never arrives.
+//
+// Pure — no DOM, no fetch — extracted and unit-tested standalone via
+// `new Function` in scripts/test-raw-source-ui.js, same pattern as
+// describeRawSource/renderWikiSourceHtml above. Keep it that way.
+function stripFrontmatter(content) {
+  if (typeof content !== 'string') return content;
+  const lines = content.split('\n');
+  if (lines.length === 0 || lines[0].trim() !== '---') return content;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      // Everything after the closing delimiter is the real body, rejoined
+      // exactly as it appeared in the source (only the blank line(s) the
+      // frontmatter block itself leaves immediately behind are dropped).
+      return lines.slice(i + 1).join('\n').replace(/^\n+/, '');
+    }
+  }
+  // No closing delimiter anywhere in the document — do not strip.
+  return content;
+}
+
 function renderMarkdown(md) {
   // Lightweight markdown renderer (no external deps)
-  let html = escHtml(md)
+  const body = stripFrontmatter(md);
+  let html = escHtml(body)
     // headings
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
@@ -4789,8 +4825,21 @@ function renderWikiSourceHtml(info) {
   if (!info) return '';
 
   if (info.state === 'found') {
+    // Maintainer correction: label it "RAW" — the actual folder name
+    // (raw/) the docs and codebase already use for this concept, not an
+    // invented synonym like "Original source" that would leave the UI and
+    // the documentation disagreeing about what to call the same thing.
+    // Styled to match the existing uppercase DOMAIN/FILE labels on the
+    // Ingest tab (see the bare `label` selector in styles.css) — this is
+    // the SAME visual language, not a new one. The acceptance bar is
+    // narrow: a reader must be able to tell this bar apart from the wiki
+    // page they're looking at even when raw/ and the page share a
+    // filename (the reported case: a markdown source and its summary both
+    // named from-lab-to-life-growth-strategy.md) — "RAW" in front of the
+    // filename is what actually does that, not the specific word chosen.
     return (
       `<span class="wiki-source-icon">📄</span>` +
+      `<span class="wiki-source-label">RAW</span>` +
       `<span class="wiki-source-name">${escHtml(info.filename)}</span>` +
       (info.sizeText ? `<span class="wiki-source-size">${escHtml(info.sizeText)}</span>` : '') +
       `<button type="button" class="wiki-source-reveal-btn" id="wiki-source-reveal-btn">Reveal in Finder</button>` +

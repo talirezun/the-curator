@@ -54,12 +54,12 @@ function extractFunction(src, name) {
   return src.slice(start, i);
 }
 
-const fnNames = ['formatSourceBytes', 'describeRawSource', 'renderWikiSourceHtml', 'escHtml'];
+const fnNames = ['formatSourceBytes', 'describeRawSource', 'renderWikiSourceHtml', 'stripFrontmatter', 'escHtml'];
 const fnSrcs = fnNames.map(n => extractFunction(app, n));
 const sandbox = new Function(
-  `${fnSrcs.join('\n\n')}\nreturn { formatSourceBytes, describeRawSource, renderWikiSourceHtml, escHtml };`
+  `${fnSrcs.join('\n\n')}\nreturn { formatSourceBytes, describeRawSource, renderWikiSourceHtml, stripFrontmatter, escHtml };`
 )();
-const { describeRawSource, renderWikiSourceHtml } = sandbox;
+const { describeRawSource, renderWikiSourceHtml, stripFrontmatter } = sandbox;
 
 // ── 1. describeRawSource — every reason, including unknown/absent ──────────
 section('1. describeRawSource() maps every backend reason correctly');
@@ -206,6 +206,152 @@ section('6. Frontend wiring');
   // returns one (absPath is stripped server-side); the frontend must not
   // try to reconstruct or display one either.
   ok(!/absPath/.test(app), 'app.js never references absPath (the API never sends one)');
+}
+
+// ── 7. stripFrontmatter() — the Wiki tab's leading-YAML-block strip ────────
+section('7. stripFrontmatter() strips ONLY a leading frontmatter block');
+{
+  // No frontmatter at all: byte-identical to input.
+  const plain = '# Hello\n\nJust a normal page with no frontmatter.\n\n---\n\nAnd a horizontal rule later on.';
+  ok(stripFrontmatter(plain) === plain, 'a page with no frontmatter renders byte-identically — even one that itself contains a later --- hr');
+  ok(stripFrontmatter('') === '', 'empty string input: returns empty string, not an error');
+  ok(stripFrontmatter(null) === null && stripFrontmatter(undefined) === undefined, 'non-string input (null/undefined) is returned as-is, not thrown on');
+
+  // The real shape: injectFrontmatter's actual output.
+  const withFm = '---\ntype: summary\nsource: from-lab-to-life-growth-strategy.md\ndate: 2026-06-14\ntags: [growth-strategy, monetization]\n---\n# From Lab To Life\n\nBody content starts here.';
+  const stripped = stripFrontmatter(withFm);
+  ok(stripped === '# From Lab To Life\n\nBody content starts here.', `FIXED — the frontmatter block is gone and the real body starts cleanly (got: ${JSON.stringify(stripped)})`);
+  ok(!/^type:/.test(stripped) && !/source:/.test(stripped), 'no frontmatter keys (type:, source:, etc) leak into the stripped body');
+
+  // Mid-document --- used as a horizontal rule: frontmatter present AND a
+  // LATER --- in the body — only the leading block goes, the hr survives.
+  const withHr = '---\ntype: concept\n---\n# Section One\n\nSome content.\n\n---\n\n# Section Two\n\nMore content.';
+  const strippedHr = stripFrontmatter(withHr);
+  ok(strippedHr === '# Section One\n\nSome content.\n\n---\n\n# Section Two\n\nMore content.',
+    `FIXED — the leading frontmatter is stripped but the mid-document --- horizontal rule is NOT eaten (got: ${JSON.stringify(strippedHr)})`);
+  ok((strippedHr.match(/^---$/gm) || []).length === 1, 'exactly one --- line survives in the stripped output — the hr, not a second copy of a frontmatter delimiter');
+
+  // Unterminated opening --- (no closing delimiter anywhere): must NOT
+  // swallow the whole page. Returns completely unchanged.
+  const unterminated = '---\ntype: summary\nthis document never closes its frontmatter block\n# Heading\n\nBody text that would be lost if the whole thing were swallowed.';
+  ok(stripFrontmatter(unterminated) === unterminated,
+    'an unterminated opening --- returns the ENTIRE document unchanged — nothing is silently swallowed hunting for a delimiter that never arrives');
+
+  const justOpener = '---';
+  ok(stripFrontmatter(justOpener) === justOpener, 'a document that is ONLY "---" (no second line at all) is left unchanged, not treated as an empty strip');
+
+  // --- inside a fenced code block, AFTER real frontmatter — the code
+  // fence's --- must survive untouched (the search already stopped at the
+  // first real closing delimiter, well before the fence is ever reached).
+  const withFence = '---\ntype: entity\n---\nSome text before the example.\n\n```\nexample:\n---\ninside fence\n```\n\nMore text after.';
+  const strippedFence = stripFrontmatter(withFence);
+  ok(strippedFence === 'Some text before the example.\n\n```\nexample:\n---\ninside fence\n```\n\nMore text after.',
+    `FIXED — frontmatter stripped cleanly, and the --- living INSIDE a later fenced code block is completely untouched (got: ${JSON.stringify(strippedFence)})`);
+  ok(strippedFence.includes('```\nexample:\n---\ninside fence\n```'), 'the fenced code block content is preserved verbatim, --- and all');
+
+  // Empty frontmatter: opening immediately followed by closing.
+  const emptyFm = '---\n---\n# Heading\nBody.';
+  ok(stripFrontmatter(emptyFm) === '# Heading\nBody.', 'empty frontmatter (opening immediately followed by closing) strips to just the body');
+
+  // Frontmatter with nothing after the closing delimiter at all.
+  const fmOnly = '---\ntype: summary\n---\n';
+  ok(stripFrontmatter(fmOnly) === '', 'a document that is ONLY frontmatter (nothing after the closing ---) strips to an empty string, not an error');
+
+  // Whitespace-only variants of the delimiter line (trailing spaces) are
+  // still recognised — real editors/sources sometimes leave trailing
+  // whitespace on a line that is otherwise exactly "---".
+  const trailingSpace = '---  \ntype: summary\n---\t\nBody after whitespace-padded delimiters.';
+  ok(stripFrontmatter(trailingSpace) === 'Body after whitespace-padded delimiters.',
+    'delimiter lines with trailing whitespace are still recognised (trimmed before comparison)');
+
+  // Wired into the actual renderer, not just the standalone helper.
+  const rendererFn = extractFunction(app, 'renderMarkdown');
+  ok(/stripFrontmatter\(md\)/.test(rendererFn), 'renderMarkdown() calls stripFrontmatter(md) before building HTML');
+  ok(/escHtml\(body\)/.test(rendererFn), 'renderMarkdown() escapes the STRIPPED body, not the raw md with frontmatter still attached');
+
+  // ── MUTATION-PROVE: revert stripFrontmatter to a no-op (its pre-fix
+  //    shape — the frontmatter block was never stripped anywhere) and
+  //    confirm his exact repro goes RED. ─────────────────────────────────
+  {
+    const NOOP_FN = 'function stripFrontmatter(content) { return content; }';
+    const currentFn = extractFunction(app, 'stripFrontmatter');
+    ok(!!currentFn && currentFn.length > 0, 'mutation sanity — the current stripFrontmatter was extractable from app.js');
+    const brokenSrc = app.replace(currentFn, () => NOOP_FN);
+    ok(brokenSrc !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const brokenFn = extractFunction(brokenSrc, 'stripFrontmatter');
+    const brokenSandbox = new Function(`${brokenFn}\nreturn { stripFrontmatter };`)();
+    const brokenResult = brokenSandbox.stripFrontmatter(withFm);
+    ok(brokenResult.startsWith('---\ntype: summary'),
+      `RED CONFIRMED — with stripFrontmatter reverted to a no-op, the raw frontmatter block ("---" + "type: summary...") renders as the start of body content, exactly the leaked-YAML defect reported — top of his content pane rendering "type: summary source: ..." as a paragraph (got: ${JSON.stringify(brokenResult.slice(0, 40))})`);
+  }
+}
+
+// ── 8. The source bar's found state — RAW label, and still escapes ─────────
+section('8. Round — the source bar labels itself "RAW", distinct from the page being viewed');
+{
+  const evilName = '<img src=x onerror=alert(1)>.pdf';
+  const html2 = renderWikiSourceHtml({ state: 'found', filename: evilName, sizeText: '1.0 KB' });
+  ok(/wiki-source-label">RAW</.test(html2), 'FIXED — the found state carries an explicit "RAW" label');
+  ok(!/<img/i.test(html2), 'the malicious filename next to the new label is still fully escaped — no live <img> tag');
+  ok(html2.includes('&lt;img src=x onerror=alert(1)&gt;.pdf'), 'the malicious filename renders as inert escaped text');
+
+  // The exact reported collision: a summary page and its raw/ source share
+  // an identical filename because the source was itself markdown. The RAW
+  // label is what has to survive this test — a reader must be able to
+  // tell the two apart even though the filename alone cannot.
+  const collisionName = 'from-lab-to-life-growth-strategy.md';
+  const collisionHtml = renderWikiSourceHtml({ state: 'found', filename: collisionName, sizeText: '22.2 KB' });
+  ok(collisionHtml.includes('RAW') && collisionHtml.includes(collisionName),
+    'his exact repro — a raw/ file sharing its filename with the summary page — now carries the RAW label alongside the (identical) filename');
+  ok(/wiki-source-label">RAW<\/span><span class="wiki-source-name">from-lab-to-life-growth-strategy\.md/.test(collisionHtml),
+    'the label sits immediately before the filename in the actual markup, not just present somewhere in the string');
+
+  // Not fabricating a path: the label is the word RAW (a concept/folder
+  // name), never an absolute filesystem path — same invariant as before,
+  // re-asserted now that the found-state markup has changed shape.
+  ok(!/\/Users\//.test(html2) && !/^\//.test(html2), 'no absolute filesystem path is present in the found-state markup');
+  ok(!/absPath/.test(app), 'app.js still never references absPath anywhere (unchanged invariant)');
+
+  // CSS: the new label uses real theme tokens, not an invented one.
+  const labelRule = (css.match(/\.wiki-source-label \{[^}]*\}/) || [''])[0];
+  ok(labelRule.length > 0, '.wiki-source-label rule exists in styles.css');
+  ok(/var\(--text-muted\)/.test(labelRule), 'uses the real --text-muted token, matching the existing DOMAIN/FILE label convention');
+  ok(!/--text-dim/.test(labelRule), 'does not reference the nonexistent --text-dim token');
+
+  // ── MUTATION-PROVE: strip the RAW label back out of the found-state
+  //    markup (its pre-fix shape) and confirm the collision case goes RED. ─
+  {
+    const currentFoundBlock = (app.match(/if \(info\.state === 'found'\) \{[\s\S]*?\n  \}/) || [''])[0];
+    ok(currentFoundBlock.length > 0, 'mutation sanity — the found-state block was extractable from app.js');
+    ok(currentFoundBlock.includes('wiki-source-label'),
+      'mutation sanity — the found-state block does currently include the label span (so removing it is a real mutation)');
+    const brokenFoundBlock = currentFoundBlock.replace('`<span class="wiki-source-label">RAW</span>` +\n      ', '');
+    ok(brokenFoundBlock !== currentFoundBlock, 'mutation sanity — the label span was actually removed from the extracted block');
+    const brokenSrc2 = app.replace(currentFoundBlock, () => brokenFoundBlock);
+    ok(brokenSrc2 !== app, 'mutation sanity — the mutation actually changed the in-memory source text (real file on disk untouched)');
+    const fnNames2 = ['formatSourceBytes', 'describeRawSource', 'renderWikiSourceHtml', 'escHtml'];
+    const fnSrcs2 = fnNames2.map(n => extractFunction(brokenSrc2, n));
+    const brokenSandbox2 = new Function(`${fnSrcs2.join('\n\n')}\nreturn { renderWikiSourceHtml };`)();
+    const brokenCollisionHtml = brokenSandbox2.renderWikiSourceHtml({ state: 'found', filename: collisionName, sizeText: '22.2 KB' });
+    ok(!/RAW/.test(brokenCollisionHtml),
+      `RED CONFIRMED — with the label removed, a raw/ file sharing its filename with the summary page renders completely indistinguishably from the page itself (got: ${JSON.stringify(brokenCollisionHtml)})`);
+  }
+}
+
+// ── 9. The chat renderer (public/markdown.js) is a different path and is
+//    untouched by any of this. ─────────────────────────────────────────────
+section('9. public/markdown.js (chat) is unaffected by the Wiki tab frontmatter strip');
+{
+  const mdJsPath = path.join(ROOT, 'src/public/markdown.js');
+  const mdJs = readFileSync(mdJsPath, 'utf8');
+  ok(!/stripFrontmatter/.test(mdJs), 'markdown.js does not reference stripFrontmatter — the chat render path was not touched');
+  ok(!/wiki-source-label/.test(mdJs), 'markdown.js has no knowledge of the Wiki tab source bar either — fully separate concern');
+  // renderChatMarkdown is markdown.js's real entry point (see
+  // test-chat-markdown.js) — confirm it is untouched by re-extracting it
+  // with the SAME brace-matching extractor used above and checking it
+  // still starts a fresh HTML-escape pass over its own input, with no
+  // frontmatter-stripping call inserted ahead of it.
+  ok(/function renderChatMarkdown\(/.test(mdJs), 'renderChatMarkdown() still exists in markdown.js, unrenamed and unremoved');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

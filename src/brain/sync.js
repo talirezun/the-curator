@@ -185,6 +185,38 @@ const DOMAINS_GITIGNORE_RULES = [
   // files (which can be large, and are mid-batch operational state, not wiki
   // content) must not get swept into a sync commit.
   '.ingest-queue/',
+  // v3.5.1: Obsidian's workspace state — rewritten on essentially every pane
+  // move/resize/tab switch, so tracking it produces a pending change on
+  // almost every Obsidian interaction (same class of noise as .DS_Store).
+  // Scope is DELIBERATELY narrow to this ONE file: whether
+  // appearance/graph/plugin settings (the rest of .obsidian/) sync across
+  // machines is a user preference, not ours to impose — confirmed decision,
+  // do not widen this to '.obsidian/' wholesale.
+  //
+  // MUST keep the leading '**/': per gitignore(5), a pattern containing a
+  // slash ANYWHERE other than a single trailing one is anchored to the
+  // directory holding the .gitignore file (unlike the slash-free '.DS_Store'
+  // rule above, which matches at any depth for free). Without '**/' this
+  // rule would only ever match domains/.obsidian/workspace.json — never the
+  // documented vault roots one or two levels down
+  // (domains/<domain>/.obsidian/… or domains/<domain>/wiki/.obsidian/…),
+  // which is where a real Obsidian vault actually puts it. Caught live: the
+  // untrack ran fine (git ls-files pathspec matching is unaffected — it
+  // isn't gitignore-based), but the very next `git add -A` inside the same
+  // push()/pull() cycle silently RE-STAGED the file because gitignore never
+  // actually excluded that nested path, undoing the untrack in the same
+  // commit. `**/foo` is exactly what gitignore(5) documents for "match in
+  // all directories".
+  '**/.obsidian/workspace.json',
+  // Obsidian leftover files — created when the vault root is pointed at the
+  // wrong folder, or a wikilink resolves to nothing and Obsidian auto-
+  // creates an empty stub note. These three entries MIRROR the app repo's
+  // own .gitignore "Obsidian leftover files" block (see the root .gitignore)
+  // — not new patterns, the same ones already proven necessary there,
+  // applied to the knowledge repo too.
+  '*.base',
+  'Untitled.md',
+  'Untitled 1.md',
 ];
 
 async function ensureDomainsGitignore() {
@@ -306,6 +338,44 @@ function isSafeTrackedPath(p, finalName, exactDepth) {
   return dirParts.every(isSafePathSegment);
 }
 
+/**
+ * Same contract as isSafeTrackedPath, but the final segment only needs to
+ * END WITH `suffix` rather than equal a fixed constant — for `*.base`,
+ * where the basename varies (Untitled.base, "Untitled 1.base", …). Because
+ * the final segment is therefore NOT a known-safe constant the way
+ * '.write-lock'/'.DS_Store' are in isSafeTrackedPath, it is ALSO run
+ * through isSafePathSegment here (isSafeTrackedPath deliberately skips that
+ * for its own final segment, since callers there always pass a fixed name).
+ */
+function isSafeTrackedPathSuffix(p, suffix, exactDepth) {
+  if (typeof p !== 'string' || !p) return false;
+  const parts = p.split('/');
+  const last = parts[parts.length - 1];
+  if (!last.endsWith(suffix)) return false;
+  const dirParts = parts.slice(0, -1);
+  if (exactDepth !== null && dirParts.length !== exactDepth) return false;
+  return parts.every(isSafePathSegment);
+}
+
+/**
+ * Same contract again, for a fixed multi-segment TAIL rather than a single
+ * final segment — `.obsidian/workspace.json`. The vault root is user-
+ * configurable (domains/, domains/<domain>/, or domains/<domain>/wiki/ —
+ * see CLAUDE.md's Obsidian Graph Setup section), so this file can
+ * legitimately appear at any depth; every leading segment (including both
+ * tail segments) is validated with isSafePathSegment.
+ */
+function isSafeTrackedTailPath(p, tailSegments) {
+  if (typeof p !== 'string' || !p) return false;
+  const parts = p.split('/');
+  if (parts.length < tailSegments.length) return false;
+  const tail = parts.slice(-tailSegments.length);
+  for (let i = 0; i < tailSegments.length; i++) {
+    if (tail[i] !== tailSegments[i]) return false;
+  }
+  return parts.every(isSafePathSegment);
+}
+
 async function untrackStaleWriteLocks() {
   const candidates = await listTrackedGlob('*/.write-lock');
   const untracked = [];
@@ -335,6 +405,58 @@ async function untrackStaleDSStore() {
       await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
       untracked.push(p);
     } catch { /* best-effort */ }
+  }
+  return untracked;
+}
+
+/**
+ * Same pattern again, for `.obsidian/workspace.json` — rewritten on
+ * essentially every pane move/resize/tab switch, so once one is committed
+ * (e.g. from before this rule existed) it produces a pending change on
+ * almost every Obsidian interaction. Deliberately narrow: only this ONE
+ * file under .obsidian/, never the directory wholesale — see the
+ * DOMAINS_GITIGNORE_RULES comment for why.
+ */
+async function untrackStaleObsidianWorkspace() {
+  const candidates = await listTrackedGlob('*.obsidian/workspace.json');
+  const untracked = [];
+  for (const p of candidates) {
+    if (!isSafeTrackedTailPath(p, ['.obsidian', 'workspace.json'])) continue;
+    try {
+      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      untracked.push(p);
+    } catch { /* best-effort */ }
+  }
+  return untracked;
+}
+
+/**
+ * Same pattern again, for the Obsidian leftover files mirrored from the app
+ * repo's own .gitignore (see DOMAINS_GITIGNORE_RULES) — `*.base` files
+ * (Untitled.base, "Untitled 1.base", …) and the fixed stub names
+ * Untitled.md / "Untitled 1.md". Three glob passes, one per pattern, same
+ * granularity as untrackStaleWriteLocks/untrackStaleDSStore above rather
+ * than one pass trying to do all three at once.
+ */
+async function untrackStaleObsidianLeftovers() {
+  const untracked = [];
+  const baseCandidates = await listTrackedGlob('*.base');
+  for (const p of baseCandidates) {
+    if (!isSafeTrackedPathSuffix(p, '.base', null)) continue;
+    try {
+      await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+      untracked.push(p);
+    } catch { /* best-effort */ }
+  }
+  for (const finalName of ['Untitled.md', 'Untitled 1.md']) {
+    const candidates = await listTrackedGlob(`*${finalName}`);
+    for (const p of candidates) {
+      if (!isSafeTrackedPath(p, finalName, null)) continue;
+      try {
+        await git(`--literal-pathspecs rm --cached --ignore-unmatch -- "${p}"`);
+        untracked.push(p);
+      } catch { /* best-effort */ }
+    }
   }
   return untracked;
 }
@@ -475,6 +597,8 @@ export async function push() {
   // in pull() rather than by reordering here.
   await untrackStaleWriteLocks();
   await untrackStaleDSStore();
+  await untrackStaleObsidianWorkspace();
+  await untrackStaleObsidianLeftovers();
 
   // Self-heal part 3: local-only hygiene, no git involved — clear any
   // `.write-lock` FILE on disk that write-registry.js's own staleness rule
@@ -659,9 +783,14 @@ export async function pull() {
   // NOW it's safe: whatever origin had for these paths has already been
   // merged in (or the recovery above resolved the one conflict shape our
   // own hygiene files can cause), so `git rm --cached` here can no longer
-  // collide with a still-pending merge write.
+  // collide with a still-pending merge write. v3.5.1's two additions
+  // (.obsidian/workspace.json + the *.base/Untitled leftovers) follow the
+  // EXACT same after-merge placement, for the exact same reason — see the
+  // ordering writeup above this try/catch.
   await untrackStaleWriteLocks();
   await untrackStaleDSStore();
+  await untrackStaleObsidianWorkspace();
+  await untrackStaleObsidianLeftovers();
   await cleanupStaleLocalLocks();
 
   // If the post-merge untrack staged anything, commit it now so pull() still
@@ -764,8 +893,19 @@ async function recoverHygieneMergeConflict(err) {
   return '(merge completed — auto-resolved a conflict on hygiene-only files: .write-lock/.DS_Store)';
 }
 
+// v3.5.1: extended to the two new hygiene-junk classes, PRECISELY — each
+// new disjunct reuses the same validator its own untrack function uses, so
+// this gate can never recognise a path its own untrack pass wouldn't have
+// untracked. A widened version of this gate would let recoverHygieneMergeConflict
+// silently auto-resolve a conflict on something that ISN'T disposable junk —
+// see this function's callers' docblock for why that must never happen.
 function isHygieneJunkPath(p) {
-  return isSafeTrackedPath(p, '.write-lock', 1) || isSafeTrackedPath(p, '.DS_Store', null);
+  return isSafeTrackedPath(p, '.write-lock', 1)
+    || isSafeTrackedPath(p, '.DS_Store', null)
+    || isSafeTrackedTailPath(p, ['.obsidian', 'workspace.json'])
+    || isSafeTrackedPathSuffix(p, '.base', null)
+    || isSafeTrackedPath(p, 'Untitled.md', null)
+    || isSafeTrackedPath(p, 'Untitled 1.md', null);
 }
 
 /**
@@ -853,9 +993,13 @@ export { friendlyError };
 export const __testing = {
   isSafePathSegment,
   isSafeTrackedPath,
+  isSafeTrackedPathSuffix,
+  isSafeTrackedTailPath,
   listTrackedGlob,
   untrackStaleWriteLocks,
   untrackStaleDSStore,
+  untrackStaleObsidianWorkspace,
+  untrackStaleObsidianLeftovers,
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,

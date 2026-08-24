@@ -61,6 +61,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(__dirname, '..');
 
 import {
   __setSyncTestOverrides,
@@ -81,8 +85,12 @@ import {
 const {
   isSafePathSegment,
   isSafeTrackedPath,
+  isSafeTrackedPathSuffix,
+  isSafeTrackedTailPath,
   untrackStaleWriteLocks,
   untrackStaleDSStore,
+  untrackStaleObsidianWorkspace,
+  untrackStaleObsidianLeftovers,
   cleanupStaleLocalLocks,
   ensureDomainsGitignore,
   DOMAINS_GITIGNORE_RULES,
@@ -1111,6 +1119,368 @@ try {
     const statusAfter = execSync(`git -c core.quotePath=false --git-dir="${gitDirB}" --work-tree="${domainsB}" status --porcelain`).toString('utf8');
     assertTrue(/^DU articles\/real-page\.md$/m.test(statusAfter),
       'git status --porcelain on B shows the real page as an unresolved "DU" (deleted-by-us) conflict — exactly what Shape B\'s recovery logic scans for and correctly refuses to touch');
+  }
+
+  // ── 15b. Unit tests — isSafeTrackedPathSuffix / isSafeTrackedTailPath ─────
+  console.log('\n15b. Path-safety validators for the v3.5.1 additions (isSafeTrackedPathSuffix / isSafeTrackedTailPath)\n');
+  {
+    assertTrue(isSafeTrackedPathSuffix('Untitled.base', '.base', null), 'bare "Untitled.base" at depth 0 matches the .base suffix');
+    assertTrue(isSafeTrackedPathSuffix('articles/Untitled 1.base', '.base', null), 'a space-containing basename ("Untitled 1.base") is still recognised');
+    assertTrue(isSafeTrackedPathSuffix('articles/wiki/Untitled 2.base', '.base', null), 'two-level-deep .base file recognised');
+    assertTrue(!isSafeTrackedPathSuffix('articles/real-page.md', '.base', null), 'a real .md page never matches the .base suffix');
+    assertTrue(!isSafeTrackedPathSuffix('articles/Untitled.base; rm -rf /', '.base', null), 'a shell-metacharacter-laced basename is rejected even though it ends with .base');
+    assertTrue(!isSafeTrackedPathSuffix(null, '.base', null), 'null input rejected, not thrown on');
+    assertTrue(!isSafeTrackedPathSuffix('', '.base', null), 'empty string input rejected');
+
+    assertTrue(isSafeTrackedTailPath('.obsidian/workspace.json', ['.obsidian', 'workspace.json']), 'root-level (vault root = domains/) .obsidian/workspace.json matches');
+    assertTrue(isSafeTrackedTailPath('articles/.obsidian/workspace.json', ['.obsidian', 'workspace.json']), 'one-level (vault root = domains/<domain>/) matches');
+    assertTrue(isSafeTrackedTailPath('articles/wiki/.obsidian/workspace.json', ['.obsidian', 'workspace.json']), 'two-level (vault root = domains/<domain>/wiki/, the documented default) matches');
+    assertTrue(!isSafeTrackedTailPath('articles/.obsidian/workspace.json.bak', ['.obsidian', 'workspace.json']), 'a similarly-named but different file (workspace.json.bak) does NOT match');
+    assertTrue(!isSafeTrackedTailPath('articles/.obsidian/appearance.json', ['.obsidian', 'workspace.json']), 'a DIFFERENT file inside .obsidian/ (appearance.json) does NOT match — the scope is workspace.json only, never the directory wholesale');
+    assertTrue(!isSafeTrackedTailPath('articles/real-page.md', ['.obsidian', 'workspace.json']), 'an unrelated real path never matches');
+    assertTrue(!isSafeTrackedTailPath(null, ['.obsidian', 'workspace.json']), 'null input rejected, not thrown on');
+  }
+
+  // ── 15c. DOMAINS_GITIGNORE_RULES — the four new v3.5.1 entries ────────────
+  console.log('\n15c. DOMAINS_GITIGNORE_RULES carries the four new v3.5.1 entries\n');
+  {
+    // MUST carry the '**/' prefix, not a bare '.obsidian/workspace.json' —
+    // caught live (section 15g/15h below): a pattern with a slash anywhere
+    // other than a single trailing one is anchored to the .gitignore's own
+    // directory per gitignore(5), so the bare form only ever matched
+    // domains/.obsidian/workspace.json, never the real vault-root depths one
+    // or two levels down. The untrack itself (git ls-files pathspec
+    // matching) worked fine either way; it was the FOLLOWING `git add -A` in
+    // the same push()/pull() cycle that silently re-staged the file because
+    // gitignore never actually excluded the nested path — undoing the
+    // untrack inside its own commit.
+    assertTrue(DOMAINS_GITIGNORE_RULES.includes('**/.obsidian/workspace.json'), 'rule: **/.obsidian/workspace.json is present, anchored to match at ANY depth');
+    assertTrue(!DOMAINS_GITIGNORE_RULES.includes('.obsidian/workspace.json'), 'rule: the un-prefixed, root-anchored-only form is NOT present — the regression this guards against');
+    assertTrue(!DOMAINS_GITIGNORE_RULES.includes('.obsidian/'), 'rule: the directory is NOT ignored wholesale — appearance/graph/plugin settings still sync unless the user opts out some other way');
+    assertTrue(DOMAINS_GITIGNORE_RULES.includes('*.base'), 'rule: *.base is present (mirrors the app repo .gitignore)');
+    assertTrue(DOMAINS_GITIGNORE_RULES.includes('Untitled.md'), 'rule: Untitled.md is present (mirrors the app repo .gitignore)');
+    assertTrue(DOMAINS_GITIGNORE_RULES.includes('Untitled 1.md'), 'rule: "Untitled 1.md" is present (mirrors the app repo .gitignore)');
+    // Do-not-invent-patterns guard: only the entries the coordinator named
+    // as "the relevant entries" from the app repo's own Obsidian-leftover
+    // block — not the whole block (no .canvas, no behind-the_curtain.md).
+    assertTrue(!DOMAINS_GITIGNORE_RULES.includes('*.canvas'), 'no invented pattern: *.canvas was NOT part of the instructed scope');
+    assertTrue(!DOMAINS_GITIGNORE_RULES.some(r => r.includes('behind-the_curtain')), 'no invented pattern: behind-the_curtain.md was NOT part of the instructed scope');
+  }
+
+  // ── 15d. untrackStaleObsidianWorkspace() — root / one-level / two-level ───
+  console.log('\n15d. untrackStaleObsidianWorkspace() — root / one-level / two-level committed workspace.json\n');
+  {
+    const gitDir = await mktempTracked('sh-gitdir-15d-');
+    const domainsDir = await mktempTracked('sh-domains-15d-');
+    const remoteDir = await mktempTracked('sh-remote-15d-');
+    await initRepo(gitDir, domainsDir, remoteDir);
+    await seedDomain(domainsDir, 'articles');
+    // Three plausible vault-root depths (see CLAUDE.md's Obsidian Graph
+    // Setup section: root can point at domains/, domains/<domain>/, or
+    // domains/<domain>/wiki/).
+    await mkdir(path.join(domainsDir, '.obsidian'), { recursive: true });
+    await writeFile(path.join(domainsDir, '.obsidian', 'workspace.json'), '{}');
+    await mkdir(path.join(domainsDir, 'articles', '.obsidian'), { recursive: true });
+    await writeFile(path.join(domainsDir, 'articles', '.obsidian', 'workspace.json'), '{}');
+    await mkdir(path.join(domainsDir, 'articles', 'wiki', '.obsidian'), { recursive: true });
+    await writeFile(path.join(domainsDir, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{}');
+    // A DIFFERENT file in the same directory must survive — scope is
+    // workspace.json only.
+    await writeFile(path.join(domainsDir, 'articles', 'wiki', '.obsidian', 'appearance.json'), '{}');
+    sh(gitDir, domainsDir, 'add -A');
+    sh(gitDir, domainsDir, '-c user.email=t@t -c user.name=t commit -q -m seed');
+
+    const before = trackedFiles(gitDir, domainsDir);
+    assertTrue(before.includes('.obsidian/workspace.json') && before.includes('articles/.obsidian/workspace.json') && before.includes('articles/wiki/.obsidian/workspace.json'),
+      'precondition: all three depths of workspace.json are tracked before untrack runs');
+    assertTrue(before.includes('articles/wiki/.obsidian/appearance.json'), 'precondition: appearance.json (a different file) is also tracked');
+
+    __setSyncTestOverrides({ gitDir, configFile: path.join(domainsDir, '..', 'unused-config.json') });
+    __setDomainsDirOverride(domainsDir);
+    const untracked = await untrackStaleObsidianWorkspace();
+    assertEq(untracked.length, 3, 'untrackStaleObsidianWorkspace() untracks all three depths in one pass');
+
+    const after = trackedFiles(gitDir, domainsDir);
+    assertTrue(!after.includes('.obsidian/workspace.json'), 'root-level workspace.json is no longer tracked');
+    assertTrue(!after.includes('articles/.obsidian/workspace.json'), 'one-level workspace.json is no longer tracked');
+    assertTrue(!after.includes('articles/wiki/.obsidian/workspace.json'), 'two-level workspace.json is no longer tracked');
+    assertTrue(after.includes('articles/wiki/.obsidian/appearance.json'), 'appearance.json (NOT workspace.json) is STILL tracked — the scope really is one file, not the directory');
+    assertTrue(after.includes('articles/CLAUDE.md'), 'real domain content is untouched');
+
+    // Untrack means `git rm --cached`, never deleting from disk — the
+    // maintainer's Obsidian settings must keep working locally.
+    assertTrue(existsSync(path.join(domainsDir, '.obsidian', 'workspace.json')), 'root-level workspace.json still EXISTS ON DISK after being untracked');
+    assertTrue(existsSync(path.join(domainsDir, 'articles', '.obsidian', 'workspace.json')), 'one-level workspace.json still exists on disk');
+    assertTrue(existsSync(path.join(domainsDir, 'articles', 'wiki', '.obsidian', 'workspace.json')), 'two-level workspace.json still exists on disk');
+  }
+
+  // ── 15e. untrackStaleObsidianLeftovers() — *.base / Untitled.md / "Untitled 1.md" ──
+  console.log('\n15e. untrackStaleObsidianLeftovers() — *.base (incl. a space in the name), Untitled.md, "Untitled 1.md"\n');
+  {
+    const gitDir = await mktempTracked('sh-gitdir-15e-');
+    const domainsDir = await mktempTracked('sh-domains-15e-');
+    const remoteDir = await mktempTracked('sh-remote-15e-');
+    await initRepo(gitDir, domainsDir, remoteDir);
+    await seedDomain(domainsDir, 'articles');
+    // The exact three names the maintainer reported: Untitled.base,
+    // "Untitled 1.base", "Untitled 2.base" — all match *.base.
+    await writeFile(path.join(domainsDir, 'Untitled.base'), 'x');
+    await writeFile(path.join(domainsDir, 'articles', 'Untitled 1.base'), 'x');
+    await writeFile(path.join(domainsDir, 'articles', 'wiki', 'Untitled 2.base'), 'x');
+    await writeFile(path.join(domainsDir, 'Untitled.md'), 'x');
+    await writeFile(path.join(domainsDir, 'articles', 'Untitled 1.md'), 'x');
+    // A REAL page whose name merely CONTAINS "Untitled" as a substring must
+    // survive — the match is on the exact final segment, never a substring.
+    await writeFile(path.join(domainsDir, 'articles', 'Untitled Notes About Growth.md'), 'real content, do not touch\n');
+    sh(gitDir, domainsDir, 'add -A');
+    sh(gitDir, domainsDir, '-c user.email=t@t -c user.name=t commit -q -m seed');
+
+    const before = trackedFiles(gitDir, domainsDir);
+    assertTrue(before.includes('Untitled.base') && before.includes('articles/Untitled 1.base') && before.includes('articles/wiki/Untitled 2.base'),
+      'precondition: all three .base depths/names are tracked');
+    assertTrue(before.includes('Untitled.md') && before.includes('articles/Untitled 1.md'), 'precondition: both stub names are tracked');
+    assertTrue(before.includes('articles/Untitled Notes About Growth.md'), 'precondition: the real look-alike page is also tracked');
+
+    __setSyncTestOverrides({ gitDir, configFile: path.join(domainsDir, '..', 'unused-config.json') });
+    __setDomainsDirOverride(domainsDir);
+    const untracked = await untrackStaleObsidianLeftovers();
+    assertEq(untracked.length, 5, 'untrackStaleObsidianLeftovers() untracks all 3 .base files + both stub names in one pass');
+
+    const after = trackedFiles(gitDir, domainsDir);
+    assertTrue(!after.includes('Untitled.base') && !after.includes('articles/Untitled 1.base') && !after.includes('articles/wiki/Untitled 2.base'),
+      'none of the three .base files remain tracked');
+    assertTrue(!after.includes('Untitled.md') && !after.includes('articles/Untitled 1.md'), 'neither stub name remains tracked');
+    assertTrue(after.includes('articles/Untitled Notes About Growth.md'),
+      'FIXED (precision): a real page that merely starts with "Untitled" but is NOT an exact "Untitled.md"/"Untitled 1.md" match is left tracked — the rule is an exact-name/suffix match, not a substring guess');
+    assertTrue(after.includes('articles/CLAUDE.md'), 'real domain content is untouched');
+
+    // Untrack means `git rm --cached`, never deleting from disk.
+    assertTrue(existsSync(path.join(domainsDir, 'Untitled.base')), 'Untitled.base still exists on disk after untrack');
+    assertTrue(existsSync(path.join(domainsDir, 'articles', 'Untitled 1.base')), '"Untitled 1.base" still exists on disk after untrack');
+    assertTrue(existsSync(path.join(domainsDir, 'Untitled.md')), 'Untitled.md still exists on disk after untrack');
+    assertTrue(existsSync(path.join(domainsDir, 'articles', 'Untitled 1.md')), '"Untitled 1.md" still exists on disk after untrack');
+  }
+
+  // ── 15f. isHygieneJunkPath — precise recognition, no widened gate ─────────
+  console.log('\n15f. isHygieneJunkPath() recognises exactly the new junk shapes, nothing more\n');
+  {
+    assertTrue(isHygieneJunkPath('.obsidian/workspace.json'), 'root-level workspace.json recognised');
+    assertTrue(isHygieneJunkPath('articles/wiki/.obsidian/workspace.json'), 'nested workspace.json recognised');
+    assertTrue(!isHygieneJunkPath('articles/wiki/.obsidian/appearance.json'), 'a different .obsidian/ file is NOT recognised — narrow scope holds at the recovery gate too');
+    assertTrue(isHygieneJunkPath('Untitled.base'), 'Untitled.base recognised');
+    assertTrue(isHygieneJunkPath('articles/Untitled 1.base'), '"Untitled 1.base" recognised');
+    assertTrue(isHygieneJunkPath('Untitled.md'), 'Untitled.md recognised');
+    assertTrue(isHygieneJunkPath('articles/Untitled 1.md'), '"Untitled 1.md" recognised');
+    // Still correctly rejects everything it always rejected.
+    assertTrue(!isHygieneJunkPath('articles/real-page.md'), 'a real wiki page is still correctly rejected');
+    assertTrue(!isHygieneJunkPath('articles/Untitled Notes About Growth.md'), 'a real page merely starting with "Untitled" is rejected — substring, not exact match');
+    assertTrue(isHygieneJunkPath('articles/.write-lock'), '.write-lock is still recognised (pre-existing, unaffected by this extension)');
+    assertTrue(isHygieneJunkPath('.DS_Store'), '.DS_Store is still recognised (pre-existing, unaffected by this extension)');
+  }
+
+  // ── 15g. push() end-to-end includes the new untracks ──────────────────────
+  console.log('\n15g. push() end-to-end untracks + commits the new Obsidian junk classes\n');
+  {
+    const gitDir = await mktempTracked('sh-gitdir-15g-');
+    const domainsDir = await mktempTracked('sh-domains-15g-');
+    const remoteDir = await makeBareRemote();
+    const configPath = path.join(await mktempTracked('sh-cfg-15g-'), 'sync-config.json');
+    await initRepo(gitDir, domainsDir, remoteDir);
+    await seedDomain(domainsDir, 'articles');
+    await mkdir(path.join(domainsDir, 'articles', 'wiki', '.obsidian'), { recursive: true });
+    await writeFile(path.join(domainsDir, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{}');
+    await writeFile(path.join(domainsDir, 'Untitled.base'), 'x');
+    sh(gitDir, domainsDir, 'add -A');
+    sh(gitDir, domainsDir, '-c user.email=t@t -c user.name=t commit -q -m seed');
+    sh(gitDir, domainsDir, 'push -u origin main -q');
+    assertTrue(trackedFiles(gitDir, domainsDir).includes('articles/wiki/.obsidian/workspace.json'), 'precondition: workspace.json tracked before push()');
+    assertTrue(trackedFiles(gitDir, domainsDir).includes('Untitled.base'), 'precondition: Untitled.base tracked before push()');
+
+    await writeConfig(configPath, remoteDir);
+    __setSyncTestOverrides({ gitDir, configFile: configPath });
+    __setDomainsDirOverride(domainsDir);
+
+    let threw = null;
+    try { await withGitLockRetry(() => push()); } catch (e) { threw = e; }
+    assertTrue(threw === null, 'push() does not throw while self-healing the new junk classes', threw && threw.message);
+
+    const after = trackedFiles(gitDir, domainsDir);
+    assertTrue(!after.includes('articles/wiki/.obsidian/workspace.json'), 'push() untracked workspace.json');
+    assertTrue(!after.includes('Untitled.base'), 'push() untracked Untitled.base');
+    assertTrue(existsSync(path.join(domainsDir, 'articles', 'wiki', '.obsidian', 'workspace.json')), 'workspace.json still exists on disk after push()');
+    assertTrue(existsSync(path.join(domainsDir, 'Untitled.base')), 'Untitled.base still exists on disk after push()');
+
+    // .gitignore itself now carries the new rules (ensureDomainsGitignore
+    // self-heal, exercised via push()).
+    const gitignoreContent = await readFile(path.join(domainsDir, '.gitignore'), 'utf8');
+    assertTrue(gitignoreContent.includes('.obsidian/workspace.json'), 'push() self-healed .gitignore to include the new workspace.json rule');
+    assertTrue(gitignoreContent.includes('*.base'), 'push() self-healed .gitignore to include the new *.base rule');
+  }
+
+  // ── 15h. pull() merge-safety ordering for the NEW junk classes — real
+  //    two-machine reproduction, mirroring section 12's .DS_Store proof ────
+  console.log('\n15h. pull() merge-safety ordering — real two-machine reproduction for .obsidian/workspace.json\n');
+  {
+    const remoteDir = await makeBareRemote();
+
+    const gitDirA = await mktempTracked('sh-gitdir-15ha-');
+    const domainsA = await mktempTracked('sh-domains-15ha-');
+    await initRepo(gitDirA, domainsA, remoteDir);
+    await mkdir(path.join(domainsA, 'articles', 'wiki', '.obsidian'), { recursive: true });
+    await writeFile(path.join(domainsA, 'articles', 'CLAUDE.md'), '# schema\n');
+    await writeFile(path.join(domainsA, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{"pane":"v1"}');
+    sh(gitDirA, domainsA, 'add -A');
+    sh(gitDirA, domainsA, '-c user.email=a@a -c user.name=a commit -q -m base');
+    sh(gitDirA, domainsA, 'push -u origin main -q');
+
+    const gitDirB = await mktempTracked('sh-gitdir-15hb-');
+    const domainsB = await mktempTracked('sh-domains-15hb-');
+    const configB = path.join(await mktempTracked('sh-cfg-15hb-'), 'sync-config.json');
+    await mkdir(domainsB, { recursive: true });
+    sh(gitDirB, domainsB, 'init -q -b main');
+    configureRepoIdentity(gitDirB, domainsB, { email: 'b@b', name: 'b' });
+    sh(gitDirB, domainsB, `remote add origin "${remoteDir}"`);
+    sh(gitDirB, domainsB, 'fetch origin -q');
+    sh(gitDirB, domainsB, 'checkout -q -b main origin/main');
+    await writeConfig(configB, remoteDir);
+    assertTrue(trackedFiles(gitDirB, domainsB).includes('articles/wiki/.obsidian/workspace.json'), 'precondition: B\'s workspace.json is tracked, matching A\'s pushed state');
+
+    // Machine A moves a pane (rewrites workspace.json) and pushes again —
+    // exactly the "rewritten on essentially every Obsidian interaction"
+    // scenario from the report.
+    await writeFile(path.join(domainsA, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{"pane":"v2-moved"}');
+    sh(gitDirA, domainsA, 'add -A');
+    sh(gitDirA, domainsA, '-c user.email=a@a -c user.name=a commit -q -m "moved a pane"');
+    sh(gitDirA, domainsA, 'push origin main -q');
+
+    __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
+    __setDomainsDirOverride(domainsB);
+
+    let threw = null;
+    let result;
+    try {
+      result = await withGitLockRetry(() => pull());
+    } catch (e) {
+      threw = e;
+    }
+    assertTrue(threw === null, 'pull() does NOT throw on a Finder/Obsidian-touched workspace.json (the CORRECT after-merge ordering)', threw && threw.message);
+    assertTrue(result && result.pulled === true, 'pull() reports success');
+    assertTrue((await readFile(path.join(domainsB, 'articles', 'wiki', '.obsidian', 'workspace.json'), 'utf8')).includes('v2-moved'),
+      'the merge genuinely happened — B has A\'s moved-pane content, not a stale/skipped version');
+    assertTrue(!trackedFiles(gitDirB, domainsB).includes('articles/wiki/.obsidian/workspace.json'),
+      'workspace.json ends up untracked on B afterward (the post-merge cleanup still ran)');
+    assertTrue(existsSync(path.join(domainsB, 'articles', 'wiki', '.obsidian', 'workspace.json')),
+      'the actual file is left alone on disk (untracked, not deleted) — Obsidian keeps working locally');
+
+
+    // ── MUTATION-PROVE: reproduce, against REAL git, exactly what happens if
+    //    a future edit calls the new untrack functions BEFORE the merge
+    //    instead of after — the same class of bug this ordering fix (and the
+    //    pre-existing .write-lock/.DS_Store guard above it) exists to
+    //    prevent. Rather than re-importing a hand-mutated copy of sync.js
+    //    (risky: it has real relative imports to config.js/atomic-write.js/
+    //    write-registry.js/paths.js that only resolve from its real
+    //    location), this drives the REAL exported untrack functions
+    //    (untrackStaleObsidianWorkspace/untrackStaleObsidianLeftovers) by
+    //    hand, in the WRONG position, then issues the exact same git command
+    //    pull() itself uses — proving the mechanism directly against real
+    //    git, the same style test-raw-store.js §2b uses for its own
+    //    mutation proofs ("mutate the layer, not the source text"). ────────
+    {
+      // Static half of the proof: confirm the REAL pull() source places the
+      // merge command textually BEFORE the two new untrack calls (i.e. the
+      // fix is actually shipped in the position this whole section assumes).
+      const syncSrc = await readFile(path.join(ROOT, 'src/brain/sync.js'), 'utf8');
+      const pullFnMatch = syncSrc.match(/export async function pull\(\)[\s\S]*?\n}\n/);
+      assertTrue(!!pullFnMatch, 'mutation sanity — pull() was extractable from the real source file');
+      const pullFnSrc = pullFnMatch[0];
+      const mergeIdx = pullFnSrc.indexOf("git('pull --no-rebase -X theirs origin main'");
+      const workspaceUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianWorkspace();');
+      const leftoversUntrackIdx = pullFnSrc.indexOf('await untrackStaleObsidianLeftovers();');
+      assertTrue(mergeIdx > -1 && workspaceUntrackIdx > -1 && leftoversUntrackIdx > -1,
+        'mutation sanity — all three anchors (merge command, the two new untrack calls) were found in pull()');
+      assertTrue(mergeIdx < workspaceUntrackIdx && mergeIdx < leftoversUntrackIdx,
+        'STATIC CHECK — in the shipped source, the merge command runs textually BEFORE untrackStaleObsidianWorkspace()/untrackStaleObsidianLeftovers(), matching the documented after-merge ordering');
+
+      // Dynamic half of the proof: build a real two-machine divergence, then
+      // call the REAL exported untrack functions in the WRONG position (i.e.
+      // exactly what a regression would do) and confirm the same preflight
+      // abort pull()'s docblock describes actually reproduces.
+      const remoteDirE = await makeBareRemote();
+
+      const gitDirE = await mktempTracked('sh-gitdir-15he-');
+      const domainsE = await mktempTracked('sh-domains-15he-');
+      await initRepo(gitDirE, domainsE, remoteDirE);
+      await mkdir(path.join(domainsE, 'articles', 'wiki', '.obsidian'), { recursive: true });
+      await writeFile(path.join(domainsE, 'articles', 'CLAUDE.md'), '# schema\n');
+      await writeFile(path.join(domainsE, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{"pane":"e-base"}');
+      sh(gitDirE, domainsE, 'add -A');
+      sh(gitDirE, domainsE, '-c user.email=e@e -c user.name=e commit -q -m base');
+      sh(gitDirE, domainsE, 'push -u origin main -q');
+
+      const gitDirF = await mktempTracked('sh-gitdir-15hf-');
+      const domainsF = await mktempTracked('sh-domains-15hf-');
+      const configF = path.join(await mktempTracked('sh-cfg-15hf-'), 'sync-config.json');
+      await mkdir(domainsF, { recursive: true });
+      sh(gitDirF, domainsF, 'init -q -b main');
+      configureRepoIdentity(gitDirF, domainsF, { email: 'f@f', name: 'f' });
+      sh(gitDirF, domainsF, `remote add origin "${remoteDirE}"`);
+      sh(gitDirF, domainsF, 'fetch origin -q');
+      sh(gitDirF, domainsF, 'checkout -q -b main origin/main');
+      await writeConfig(configF, remoteDirE);
+      assertTrue(trackedFiles(gitDirF, domainsF).includes('articles/wiki/.obsidian/workspace.json'),
+        'precondition: F starts in sync with E — workspace.json is tracked on both');
+
+      // E moves a pane again and pushes — the trigger condition (origin
+      // still/again carries the path as TRACKED).
+      await writeFile(path.join(domainsE, 'articles', 'wiki', '.obsidian', 'workspace.json'), '{"pane":"e-moved-again"}');
+      sh(gitDirE, domainsE, 'add -A');
+      sh(gitDirE, domainsE, '-c user.email=e@e -c user.name=e commit -q -m "E moves a pane"');
+      sh(gitDirE, domainsE, 'push origin main -q');
+
+      // Reproduce the WRONG order by hand: call the REAL exported untrack
+      // functions on F BEFORE fetching/merging E's new push — this is
+      // exactly what a future regression that moved these two calls back
+      // above the merge would do on F's next pull().
+      __setSyncTestOverrides({ gitDir: gitDirF, configFile: configF });
+      __setDomainsDirOverride(domainsF);
+      const preUntracked = [
+        ...(await untrackStaleObsidianWorkspace()),
+        ...(await untrackStaleObsidianLeftovers()),
+      ];
+      assertTrue(preUntracked.includes('articles/wiki/.obsidian/workspace.json'),
+        'the real untrackStaleObsidianWorkspace() ran (out of order, on purpose) and untracked F\'s workspace.json');
+      assertTrue(!trackedFiles(gitDirF, domainsF).includes('articles/wiki/.obsidian/workspace.json'),
+        'F\'s workspace.json is now untracked but still physically present — the exact precondition the docblock names');
+      assertTrue(existsSync(path.join(domainsF, 'articles', 'wiki', '.obsidian', 'workspace.json')),
+        'the file itself is untouched on disk (untrack never deletes)');
+
+      // Commit the untrack (mirrors what a real cycle would do — pull()
+      // itself commits any staged untrack) so the working tree is clean
+      // going into the merge attempt below, isolating the untracked-FILE
+      // preflight check from an unrelated "uncommitted changes" complaint.
+      sh(gitDirF, domainsF, '-c user.email=f@f -c user.name=f commit -q -m "F: out-of-order untrack (reproducing a regression)"');
+
+      // Now issue the EXACT same merge command pull() uses. Because the
+      // untrack ran first, origin's incoming tree still carries this path
+      // as TRACKED at the same location — the documented collision.
+      let mergeThrew = null;
+      try {
+        sh(gitDirF, domainsF, 'fetch origin main -q');
+        sh(gitDirF, domainsF, 'pull --no-rebase -X theirs origin main');
+      } catch (e) {
+        mergeThrew = e;
+      }
+      const mergeDetail = mergeThrew ? `${mergeThrew.message || ''} ${mergeThrew.stderr ? mergeThrew.stderr.toString('utf8') : ''}` : '';
+      assertTrue(mergeThrew !== null && /untracked working tree files would be overwritten/.test(mergeDetail),
+        `RED CONFIRMED — calling the real untrackStaleObsidianWorkspace()/untrackStaleObsidianLeftovers() BEFORE the merge (the pre-fix/regressed ordering) reproduces the exact documented preflight abort ("untracked working tree files would be overwritten by merge... Aborting") against real git (got: ${JSON.stringify(mergeDetail.slice(0, 200))})`);
+
+      // Restore: leave the module-level overrides pointed at a scenario
+      // later sections don't depend on (they each set their own before use);
+      // nothing on disk outside the tempdirs was ever touched, and F's own
+      // tempdir is abandoned (cleaned up in the top-level finally) rather
+      // than repaired, since the whole point was to break it on purpose.
+    }
   }
 
 } finally {
