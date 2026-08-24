@@ -1806,6 +1806,7 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 
 /* ── WIKI BROWSER ── */
 .wiki-browser { display: grid; grid-template-columns: 210px 1fr; gap: 16px; margin-top: 20px; }
+.wiki-main { display: flex; flex-direction: column; min-width: 0; }
 #wiki-sidebar {
   background: var(--bg-alt); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg); padding: 10px; max-height: 70vh; overflow-y: auto;
@@ -1847,6 +1848,36 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 #wiki-content table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 13px; }
 #wiki-content th, #wiki-content td { border: 1px solid var(--border-subtle); padding: 7px 12px; text-align: left; }
 #wiki-content th { background: var(--accent-dim); font-weight: 600; color: var(--text-2); }
+
+/* ── Wiki source affordance (Track 7 Part II) ──
+   Unobtrusive line under the title naming the original file a summary was
+   built from, and whether it's still on this machine. Hidden entirely when
+   the open page has nothing to say (not a summary, or no source recorded). */
+.wiki-source-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px 14px; margin-bottom: 10px;
+  background: var(--bg-alt); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius); font-size: 12px; color: var(--text-2);
+}
+.wiki-source-icon { font-size: 13px; line-height: 1; flex-shrink: 0; opacity: 0.8; }
+.wiki-source-name { color: var(--text); font-weight: 600; }
+.wiki-source-size { color: var(--text-muted); }
+.wiki-source-text { color: var(--text-2); }
+/* Deliberately never an <a> — see raw-store.js's looksLikeExternalSource:
+   this string is LLM-authored and arrives over sync, so it is displayed as
+   inert text, never linked, never fetched. */
+.wiki-source-url {
+  color: var(--text-muted); font-family: var(--mono); font-size: 11px;
+  word-break: break-all;
+}
+.wiki-source-reveal-btn {
+  margin-left: auto; padding: 4px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-2); font-size: 12px; cursor: pointer;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.wiki-source-reveal-btn:hover { background: var(--accent-dim); color: var(--accent-2); border-color: var(--accent); }
+.wiki-source-reveal-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* ── Domains Tab ── */
 .domains-header {

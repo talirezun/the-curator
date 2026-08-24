@@ -601,6 +601,84 @@ Pages are returned in filesystem traversal order (depth-first). The `path` field
 
 ---
 
+## GET /api/wiki/:domain/source
+
+Track 7 Part II. "Which original document was this summary built from, and is it still on this machine?" Every resolution goes through `resolveRawSource()` in `src/brain/raw-store.js` — the single chokepoint for turning an untrusted `source:` frontmatter value into a path on disk; see [docs/ingestion-pipeline.md](ingestion-pipeline.md) for the full security design.
+
+**Query parameters**
+
+| Parameter | Required | Description |
+|-----------|----------|--------------|
+| `path` | Yes | Summary page path, e.g. `summaries/attention-paper.md`. |
+| `hash` | No | `1` or `true` to also compute and return a `sha256` of the file (streamed; can take seconds on a very large PDF). Omit for a fast response — hashing never runs by default. |
+
+**`found: true` response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "found": true,
+  "page": "summaries/attention-paper.md",
+  "filename": "attention-is-all-you-need.pdf",
+  "bytes": 2411520,
+  "mtime": "2026-03-12T09:14:02.000Z",
+  "sha256": null
+}
+```
+
+**`found: false` response** `200 OK` — this is the NORMAL response on any machine that only pulled the wiki via sync, and is not an error. `raw/` is gitignored and never syncs, so most summaries on a second machine report `reason: "missing"`.
+
+```json
+{ "ok": true, "found": false, "page": "summaries/attention-paper.md", "reason": "missing", "declaredSource": "attention-is-all-you-need.pdf", "manifest": { "filename": "attention-is-all-you-need.pdf", "bytes": 2411520, "sha256": "...", "ingestedAt": "2026-03-12T09:14:02.000Z" }, "message": "..." }
+```
+
+`reason` is one of:
+
+| `reason` | Meaning |
+|---|---|
+| `missing` | Recorded, but the file isn't in this domain's `raw/` folder on this machine. `manifest` is populated when a synced `.raw-manifest.jsonl` record exists for it (filename, size, sha256, ingest date) — `null` otherwise. |
+| `external-source` | The summary's `source:` names a web page (e.g. `medium.com/@author`), not a local file. `url`/`declaredSource` carry the value verbatim. **Never fetched** — see the security note below. |
+| `unsafe` | The recorded value isn't resolvable to a real file The Curator will open — an untrusted or malformed name, or a path that resolves outside `raw/` (a symlink escape, most likely from a synced or restored wiki). |
+| `not-a-file` | The name exists in `raw/` but isn't a regular file — a directory, or (deliberately, even if it resolves back inside `raw/`) any symlink. |
+| `not-a-summary` | The requested page is an entity or concept, not a summary — those are synthesised from many sources and never have a single original. |
+| `no-source-recorded` | A summary with no `source:` field — written before the field existed, or compiled from a chat conversation rather than ingested from a file. |
+
+**Never returns an absolute filesystem path** — only a filename, byte count, and timestamp. The response never contains anything the client could use to reconstruct a path on the server.
+
+**Security note on `external-source`:** the value is classified, never fetched. `source:` is LLM-written, lives in a file the user can hand-edit, and arrives over Personal Sync and Shared Brain mirror pulls — from other machines and other people. Turning that string into an outbound HTTP request would make it an SSRF primitive. Neither this route nor `raw-store.js` imports any HTTP client.
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain, or (propagated from the page reader) an unknown page path. |
+| `400` | Malformed `path`. |
+
+---
+
+## POST /api/wiki/:domain/source/reveal
+
+Track 7 Part II. Opens the original document's location in Finder (`open -R`, revealing and highlighting the file). **macOS only.**
+
+**Request body**
+
+```json
+{ "path": "summaries/attention-paper.md" }
+```
+
+**Success response** `200 OK` — `{ "ok": true, "filename": "attention-is-all-you-need.pdf" }`
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain; or the source could not be found/resolved (body carries `{ ok: false, reason, error }` using the same `reason` values as `GET .../source` above). |
+| `501` | Not macOS. `error` explains that revealing in a file manager is macOS-only and suggests opening the domain's `raw/` folder manually. |
+
+Why `POST`, not `GET`: this endpoint has a side effect on the user's desktop (it opens Finder), so it must be behind the app's cross-origin guard — a `<img src>` or bare link on a malicious page cannot trigger a `GET`-only side effect, and this route deliberately isn't one. The server resolves the path itself via `resolveRawSource()`, then hands it to `execFile('open', ['-R', absPath])` — never a shell — so no filename, however unusual, can be word-split or reinterpreted. If containment can't be proven, the route refuses outright; it never falls back to opening a parent directory.
+
+---
+
 ## GET /api/health
 
 Server ping. Used by the UI to detect whether the server is running.

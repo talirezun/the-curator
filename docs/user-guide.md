@@ -745,6 +745,18 @@ The **Wiki** tab is a simple built-in reader for your wiki pages.
 
 This is useful for a quick check. For a much richer experience — including the interactive knowledge graph — use Obsidian (see the next section).
 
+### Finding the original document behind a summary
+
+Every summary page is a lossy rendering — the AI kept what it judged important and left the rest behind. Open any **summary** page and, if The Curator recorded where it came from, a small bar appears just above the page content showing the original filename, its size, and a **Reveal in Finder** button that opens your file browser with the file selected and highlighted. This only appears on summary pages — entity and concept pages are synthesised from many sources and have no single original to point at.
+
+**Seeing "the original file isn't on this machine" is normal, not a problem.** Raw source files (the PDFs, `.txt`, and `.md` files you originally dropped in) are deliberately never synced — only your wiki pages are. So on any machine other than the one you ingested a document on — including right after a Personal Sync pull, or on a Shared Brain mirror — this is the expected state, not a sign anything is broken or lost: your wiki page and everything it says are completely unaffected. The Curator still tells you what it knows — the filename, size, and when it was ingested — so you can go find the file again if you need it, even though it can't open it from here.
+
+A few other things you might see instead of the file:
+
+- **"Built from a web page, not a local file"** — some summaries came from a web article rather than an uploaded document; the source is shown as plain text (never a clickable link — The Curator never fetches or previews it).
+- **"The recorded source can't be opened"** — rare. Covers a couple of edge cases (the recorded filename isn't a real file anymore, or points somewhere The Curator won't follow) where there's nothing useful to open.
+- **Nothing at all** — most summaries you compiled from a chat conversation, or ingested before this feature existed, simply don't record a source and show no bar. That's expected too.
+
 ---
 
 ## 12. See your knowledge graph in Obsidian
@@ -896,7 +908,8 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from the **Settings** tab), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
-- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search (10 read tools, 3 graph-native).
+- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search (11 read tools, 3 graph-native).
+- **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
 - **Write to your wiki** (v2.5.2+) — say *"save what we discussed to my second brain"* and Claude calls `compile_to_wiki` to commit the conversation as a summary page plus any new entity/concept pages. Same merge pipeline as the in-app Compile button.
 - **Heal your wiki** (v2.5.2+) — say *"check my wiki for problems"* and Claude scans, auto-fixes the safe ones, asks before destructive merges, and respects your persistent dismissals.
 

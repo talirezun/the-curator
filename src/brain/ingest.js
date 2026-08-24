@@ -22,6 +22,10 @@ import { mergeIntoIndex } from './compile.js';
 // it undefined at module-evaluation time on some load orders.
 import { tokenize } from './sharedbrain-delta.js';
 import { writeFileAtomic } from './atomic-write.js';
+// Track 7 Part II. raw-store imports extractText from THIS module, but does so
+// with a lazy dynamic import inside readRawSourceText, so there is no static
+// import cycle here.
+import { appendManifestRecord, hashRawSource } from './raw-store.js';
 
 /**
  * v3.0.1-beta.1 — deterministic summary slug computed from the source filename.
@@ -250,7 +254,16 @@ export function capExistingFilesForPrompt(existingFiles, sourceText, budgetChars
   return { files, warnings };
 }
 
-async function extractText(filePath) {
+/**
+ * Exported (Track 7 Part II) so raw-source retrieval reads an original
+ * document through the SAME extractor the wiki was built from — one
+ * implementation, so what a reader sees can never disagree with what the
+ * LLM saw at ingest time. Callers outside ingest must cap and binary-check
+ * the result themselves (see readRawSourceText in raw-store.js): this
+ * function falls through to a utf8 read for any non-PDF, and Node's utf8
+ * decoder substitutes U+FFFD rather than failing on binary input.
+ */
+export async function extractText(filePath) {
   if (filePath.endsWith('.pdf')) {
     const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
     const buffer = await readFile(filePath);
@@ -2339,6 +2352,30 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
   // half-saved PDF in raw/ that the duplicate-check (routes/ingest.js)
   // then blocks future retries on.
   await writeFileAtomic(destPath, buffer);
+
+  // Track 7 Part II: index this ingest in the raw manifest.
+  //
+  // BEST-EFFORT, and that contract is load-bearing — same rule as the MCP
+  // audit log and the `onWarn` channel. An ingest whose pages are on disk
+  // must NEVER be reported as failed because a bookkeeping line did not
+  // append; appendManifestRecord swallows its own errors and returns false.
+  // Deliberately fire-and-forget on the hash too: hashing a 126 MB PDF is
+  // not worth delaying the user's ingest for, so the record carries the
+  // bytes/mtime immediately and the sha256 when it lands.
+  //
+  // The manifest lives inside wiki/ and therefore SYNCS, while the blob in
+  // raw/ stays local (gitignored). That is the point: a second machine can
+  // then say "this summary came from report.pdf, 2.4 MB, ingested 12 March
+  // — not on this machine" instead of having no idea it ever existed.
+  hashRawSource(destPath)
+    .then(sha256 => appendManifestRecord(domain, {
+      filename: originalName,
+      sha256,
+      bytes: buffer.length,
+      ingestedAt: new Date().toISOString(),
+      summaryPath,
+    }))
+    .catch(() => { /* best-effort: never surfaces to the user */ });
 
   // v3.0.1-beta.8: extract text inside a try/catch so a corrupt / encrypted /
   // image-only PDF doesn't (a) crash the pipeline with an unhandled

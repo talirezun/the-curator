@@ -4610,14 +4610,25 @@ const wikiBrowser = document.getElementById('wiki-browser');
 const wikiSidebar = document.getElementById('wiki-sidebar');
 const wikiContent = document.getElementById('wiki-content');
 const wikiEmpty = document.getElementById('wiki-empty');
+const wikiSourceBar = document.getElementById('wiki-source-bar');
+
+// Track 7 Part II — which domain/page is currently open, for the source bar's
+// Reveal-in-Finder button (it needs both to call the reveal endpoint).
+let currentWikiDomain = null;
+let currentWikiPagePath = null;
+// Bumped on every source lookup so a fast page-to-page click can't let a slow
+// earlier response paint over the page the user is now looking at.
+let wikiSourceRequestSeq = 0;
 
 wikiLoadBtn?.addEventListener('click', loadWiki);
 
 async function loadWiki() {
   const domain = document.getElementById('wiki-domain').value;
+  currentWikiDomain = domain;
   wikiLoadBtn.disabled = true;
   hideEl(wikiBrowser);
   hideEl(wikiEmpty);
+  hideWikiSourceBar();
 
   try {
     const res = await fetch(`/api/wiki/${domain}`);
@@ -4660,7 +4671,10 @@ function renderWikiSidebar(pages) {
       wikiSidebar.querySelectorAll('.wiki-page-link').forEach(l => l.classList.remove('active'));
       link.classList.add('active');
       const page = pages.find(p => p.path === link.dataset.path);
-      if (page) renderMarkdown(page.content);
+      if (page) {
+        renderMarkdown(page.content);
+        loadWikiSourceInfo(currentWikiDomain, page.path);
+      }
     });
   });
 
@@ -4700,6 +4714,172 @@ function renderMarkdown(md) {
   html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
 
   wikiContent.innerHTML = `<p>${html}</p>`;
+}
+
+// ── Wiki source affordance (Track 7 Part II) ────────────────────────────────
+// Which original file a SUMMARY page was built from, and whether it's still
+// on this machine. raw/ is gitignored and never synced, so "missing" is the
+// normal state after a Sync pull, not an error — see src/brain/raw-store.js
+// for the reason taxonomy this maps. Most pages (every entity/concept, and
+// summaries with no recorded source) show nothing at all.
+//
+// describeRawSource() and renderWikiSourceHtml() are deliberately PURE — no
+// DOM, no fetch — so they're extracted and unit-tested standalone via
+// `new Function` in scripts/test-raw-source-ui.js. Keep them that way.
+
+function formatSourceBytes(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Maps a GET /api/wiki/:domain/source response to a small render-ready
+// description, or null to render nothing. Anything not explicitly
+// recognised — including 'not-a-summary' / 'no-source-recorded', and any
+// future reason this build doesn't know about — degrades to null. A
+// confidently-wrong bar is worse than no bar (the same principle
+// raw-store.js applies server-side).
+function describeRawSource(result) {
+  if (!result || typeof result !== 'object') return null;
+
+  if (result.found === true) {
+    return {
+      state: 'found',
+      filename: typeof result.filename === 'string' ? result.filename : '',
+      sizeText: formatSourceBytes(result.bytes),
+    };
+  }
+
+  const reason = result.reason;
+
+  if (reason === 'external-source') {
+    const url = typeof result.url === 'string' && result.url
+      ? result.url
+      : (typeof result.declaredSource === 'string' ? result.declaredSource : '');
+    if (!url) return null;
+    return { state: 'external', url };
+  }
+
+  if (reason === 'missing') {
+    const name = typeof result.declaredSource === 'string' ? result.declaredSource : '';
+    return {
+      state: 'missing',
+      text: name
+        ? `"${name}" isn't on this machine — raw source files aren't synced.`
+        : `The original file isn't on this machine — raw source files aren't synced.`,
+    };
+  }
+
+  if (reason === 'unsafe' || reason === 'not-a-file') {
+    return { state: 'unsafe', text: `The recorded source can't be opened.` };
+  }
+
+  // 'not-a-summary', 'no-source-recorded', or an unrecognised reason.
+  return null;
+}
+
+// Pure HTML-string builder — no DOM access. `info` is describeRawSource()'s
+// output (or null). Every user-controlled string (filename, url) is
+// escHtml-escaped; the external-source URL is rendered as a plain <span>,
+// NEVER an <a> — that value is LLM-authored and arrives over sync, so making
+// it clickable (or fetching it to preview) would turn it into an SSRF
+// primitive. See raw-store.js's looksLikeExternalSource docblock.
+function renderWikiSourceHtml(info) {
+  if (!info) return '';
+
+  if (info.state === 'found') {
+    return (
+      `<span class="wiki-source-icon">📄</span>` +
+      `<span class="wiki-source-name">${escHtml(info.filename)}</span>` +
+      (info.sizeText ? `<span class="wiki-source-size">${escHtml(info.sizeText)}</span>` : '') +
+      `<button type="button" class="wiki-source-reveal-btn" id="wiki-source-reveal-btn">Reveal in Finder</button>` +
+      `<span id="wiki-source-reveal-status"></span>`
+    );
+  }
+
+  if (info.state === 'external') {
+    return (
+      `<span class="wiki-source-icon">🔗</span>` +
+      `<span class="wiki-source-text">Built from a web page, not a local file:</span>` +
+      `<span class="wiki-source-url">${escHtml(info.url)}</span>`
+    );
+  }
+
+  // 'missing' / 'unsafe'
+  return (
+    `<span class="wiki-source-icon">📄</span>` +
+    `<span class="wiki-source-text">${escHtml(info.text)}</span>`
+  );
+}
+
+function hideWikiSourceBar() {
+  if (!wikiSourceBar) return;
+  wikiSourceBar.innerHTML = '';
+  hideEl(wikiSourceBar);
+}
+
+function renderWikiSourceBar(result) {
+  if (!wikiSourceBar) return;
+  const html = renderWikiSourceHtml(describeRawSource(result));
+  if (!html) { hideWikiSourceBar(); return; }
+
+  wikiSourceBar.innerHTML = html;
+  showEl(wikiSourceBar);
+
+  const revealBtn = document.getElementById('wiki-source-reveal-btn');
+  revealBtn?.addEventListener('click', () => revealWikiSource(currentWikiDomain, currentWikiPagePath, revealBtn));
+}
+
+async function loadWikiSourceInfo(domain, pagePath) {
+  currentWikiPagePath = pagePath;
+  hideWikiSourceBar();
+  // Most pages aren't summaries and can never have a source — skip the
+  // request rather than round-trip to be told 'not-a-summary' on every
+  // entity/concept page open.
+  if (!domain || typeof pagePath !== 'string' || !pagePath.startsWith('summaries/')) return;
+
+  const seq = ++wikiSourceRequestSeq;
+  try {
+    const res = await fetch(`/api/wiki/${encodeURIComponent(domain)}/source?path=${encodeURIComponent(pagePath)}`);
+    const data = await res.json().catch(() => null);
+    if (seq !== wikiSourceRequestSeq) return; // superseded by a later page click
+    if (!res.ok || !data || data.ok === false) return;
+    renderWikiSourceBar(data);
+  } catch {
+    // The source bar is a nice-to-have on top of an already-rendered page —
+    // a network hiccup here should not surface as an error banner.
+  }
+}
+
+async function revealWikiSource(domain, pagePath, btnEl) {
+  if (!domain || !pagePath) return;
+  const statusEl = document.getElementById('wiki-source-reveal-status');
+  if (btnEl) btnEl.disabled = true;
+  if (statusEl) { statusEl.className = ''; statusEl.textContent = ''; }
+
+  try {
+    const res = await fetch(`/api/wiki/${encodeURIComponent(domain)}/source/reveal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: pagePath }),
+    });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.status === 501) {
+      if (statusEl) { statusEl.className = 'status-inline error'; statusEl.textContent = data.error || 'macOS only'; }
+      return;
+    }
+    if (!res.ok || !data.ok) {
+      if (statusEl) { statusEl.className = 'status-inline error'; statusEl.textContent = data.error || 'Could not reveal the file'; }
+      return;
+    }
+    if (statusEl) { statusEl.className = 'status-inline ok'; statusEl.textContent = 'Revealed in Finder'; }
+  } catch {
+    if (statusEl) { statusEl.className = 'status-inline error'; statusEl.textContent = 'Could not reach the server'; }
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
 }
 
 // ── Custom Select ─────────────────────────────────────────────────────────────

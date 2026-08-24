@@ -70,6 +70,8 @@ const OFFLINE = [
   'test-ingest-queue.js',           // Track 3 batch-ingest queue backend — sequential worker, crash resume, transient-error handling, cost estimate
   'test-ingest-queue-frontend.js',  // Track 3 batch-ingest queue frontend (owned by a parallel agent)
   'test-ingest-abort.js',           // real mid-file cancellation: AbortSignal threading, recovery-ladder bypass, queue `cancelled` item state
+  'test-raw-store.js',              // Track 7 Part II raw-source retrieval — traversal corpus, REAL symlink escapes (v3.2.0 CRITICAL class), manifest tolerance, MCP never emits binary
+  'test-raw-source-ui.js',           // Track 7 Part II frontend affordance — Wiki tab source bar, reason→copy mapping, external-source no-link/no-fetch invariant
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is

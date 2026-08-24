@@ -16,6 +16,7 @@ import { searchCrossDefinition,    searchCrossHandler }    from './cross.js';
 import { getGraphOverviewDefinition, getGraphOverviewHandler } from './overview.js';
 import { getTagsDefinition,        getTagsHandler }        from './tags.js';
 import { getBacklinksDefinition,   getBacklinksHandler }   from './backlinks.js';
+import { getRawSourceDefinition,   getRawSourceHandler }   from './raw-source.js';
 
 // Write tools (v2.5.2+) — turn the MCP into a full read+write client.
 import { compileToWikiDefinition,            compileToWikiHandler }            from './compile.js';
@@ -38,6 +39,8 @@ export const tools = [
   { definition: getConnectedDefinition,     handler: getConnectedHandler },
   { definition: getBacklinksDefinition,     handler: getBacklinksHandler },
   { definition: getSummaryDefinition,       handler: getSummaryHandler },
+  // Track 7 Part II — the original document behind a summary. Read-only.
+  { definition: getRawSourceDefinition,     handler: getRawSourceHandler },
   // ── Write tools (v2.5.2+) ───────────────────────────────────────────────────
   { definition: compileToWikiDefinition,          handler: compileToWikiHandler },
   { definition: scanWikiHealthDefinition,         handler: scanWikiHealthHandler },

@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (55 suites total — 38 OFFLINE
+The Curator has an extensive battle-test suite (57 suites total — 40 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report:
 
@@ -201,6 +201,48 @@ mid-request) interrupts promptly instead of waiting out the delay. If
 you're adding a test that needs to exercise real retry/backoff/timeout
 logic in `llm.js` without hitting a real provider, this is the pattern to
 copy rather than reinventing an HTTP mock.
+
+**Two new OFFLINE suites cover raw-source retrieval** (Track 7 Part II —
+`src/brain/raw-store.js`, the module that gets from a wiki summary back to
+the original document it was built from; see
+[docs/ingestion-pipeline.md §10h](docs/ingestion-pipeline.md#10h-raw-source-retrieval-track-7-part-ii)
+for the full design). `test-raw-store.js` (**191 offline assertions**) is
+almost entirely a security suite, because the feature reduces to "open the
+file this untrusted string names." Its most important lesson is
+methodological, not just a list of cases: §2 exercises real symlinks on disk
+(a symlinked file, a symlinked directory, a dangling symlink, an in-bounds
+symlink) against `resolveRawSource()` and all were correctly refused — but
+disabling the physical (`realpath`) containment check left every one of
+those assertions green anyway, because earlier layers (the sanitiser's
+separator refusal, then `lstat().isFile()` on the symlink leaf) fire first.
+That is the v3.2.0 failure mode — a check that LOOKS like it's testing
+containment while passing for unrelated reasons — reproduced inside the
+test meant to catch it. §2b was rebuilt to mutate and probe each layer
+independently (verified by literally swapping in the pre-v3.2.0
+lexical-only implementation and confirming it lets all three real symlink
+escapes through, canary file included), and only then did the mutations
+go red. If you're writing a security regression test for a layered guard,
+this is the shape to copy: prove each layer's necessity by disabling it
+alone, not just that the whole stack together happens to refuse your
+fixture. The suite also covers the sanitiser/traversal corpus, benign
+real-world filenames (spaces, parentheses, multiple dots), `sourceForSummary`
+across every reason shape, the manifest's append/tolerant-read/best-effort
+contract, the MCP tool's binary refusal against a real binary fixture,
+`hashRawSource` streaming instead of buffering, and that neither
+`raw-store.js` nor the MCP tool imports any HTTP client (the `external-source`
+case is classified, never fetched — fetching an LLM-authored, sync-delivered
+string would be an SSRF primitive).
+
+`test-raw-source-ui.js` (**59 offline assertions**) covers the pure
+`describeRawSource()`/`renderWikiSourceHtml()` functions in `src/public/app.js`
+extracted via the same `new Function` pattern as `test-chat-compile-card.js`
+and the batch-queue frontend suites — every backend `reason` maps to the
+right UI state, an unrecognised reason degrades to rendering nothing rather
+than something confidently wrong, the `external-source` URL renders as inert
+escaped text (never a link, never fetched, and the request is gated to
+`summaries/` paths so it never fires on every entity/concept page open), and
+`app.js` never references `absPath` — the server never sends one for the
+client to leak.
 
 ---
 
