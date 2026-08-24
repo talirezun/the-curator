@@ -16,9 +16,11 @@ import mcpRouter    from './routes/mcp.js';
 import compileRouter from './routes/compile.js';
 import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
+import ingestQueueRouter from './routes/ingest-queue.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
+import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
@@ -45,6 +47,20 @@ for (const { abs } of getCredentialFiles()) {
     if (existsSync(abs)) chmodSync(abs, 0o600);
   } catch { /* best-effort */ }
 }
+
+// ── Batch-ingest queue boot recovery (Track 3) ─────────────────────────────────
+// Any job left `running` on disk was interrupted by a crash or this very
+// restart. Reset it to `paused`/`interrupted` for the user to review — this
+// NEVER auto-resumes a worker (spending the user's API budget on its own on
+// launch is unacceptable); it only makes the on-disk state consistent so the
+// UI can offer a Resume button. Best-effort: must never block or fail startup.
+recoverIngestQueueOnBoot()
+  .then(({ recovered }) => {
+    if (recovered > 0) {
+      console.error(`[ingest-queue] Recovered ${recovered} interrupted batch job(s) on boot — paused for review.`);
+    }
+  })
+  .catch(err => console.error(`[ingest-queue] Boot recovery failed (non-fatal): ${err && err.message}`));
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -123,6 +139,7 @@ app.use('/api/mcp',     mcpRouter);
 app.use('/api/compile', compileRouter);
 app.use('/api/sharedbrain', sharedbrainRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
+app.use('/api/ingest-queue', ingestQueueRouter);
 
 // Version endpoint — used by the UI to display the current app version.
 // Also reports on-disk version (from package.json) so the UI can detect

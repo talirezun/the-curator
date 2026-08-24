@@ -290,7 +290,8 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   transition: border-color 0.15s, box-shadow 0.15s;
   line-height: 1.4;
 }
-.cs-btn:hover { border-color: var(--accent); }
+.cs-btn:hover:not(:disabled) { border-color: var(--accent); }
+.cs-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .cs-wrap.open .cs-btn {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-dim);
@@ -3860,3 +3861,250 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
 .diag-body { min-width: 0; }
 .diag-label { font-weight: 600; font-size: 13px; color: var(--text); }
 .diag-detail { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }
+
+/* ── Batch ingest queue (Track 3) ─────────────────────────────────────────── */
+.queue-confirm, .queue-panel {
+  margin-top: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.queue-confirm-head h3, .queue-panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+.queue-confirm-sub, .queue-panel-sub {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+.queue-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 16px 0 6px;
+}
+.queue-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+.queue-file-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px;
+}
+.queue-file-item:last-child { border-bottom: none; }
+.queue-file-name {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.queue-file-size {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+.queue-file-rejected .queue-file-name { color: var(--text-muted); text-decoration: line-through; }
+.queue-file-reason { color: var(--error); font-size: 11.5px; flex-shrink: 0; }
+.queue-rejected { margin-bottom: 4px; }
+
+.queue-estimate {
+  margin-top: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.queue-estimate-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.queue-estimate-basis {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.queue-warnings {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--warning);
+  line-height: 1.5;
+}
+
+.queue-budget-row { margin-top: 16px; margin-bottom: 0; }
+.queue-budget-row label { margin-bottom: 0; white-space: nowrap; }
+.queue-budget-row input { max-width: 140px; }
+.queue-overwrite-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-transform: none;
+  font-weight: 400;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+.queue-overwrite-row input { width: auto; }
+
+.queue-confirm-actions, .queue-panel-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.queue-panel-head { margin-bottom: 4px; }
+.queue-item-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.queue-item-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.queue-item-row:last-child { border-bottom: none; }
+.queue-item-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.queue-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.queue-item-size {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+.queue-item-pill {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.queue-pill-pending { color: var(--text-muted); border-color: var(--border); }
+.queue-pill-running { color: var(--accent-2); border-color: var(--accent); background: var(--accent-dim); }
+.queue-pill-done    { color: var(--success); border-color: var(--success); background: var(--success-dim); }
+.queue-pill-failed  { color: var(--error); border-color: var(--error); background: var(--error-dim); }
+.queue-pill-skipped { color: var(--text-muted); border-color: var(--border); }
+
+.queue-item-progress-track {
+  height: 3px;
+  background: var(--bg-alt);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.queue-item-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 99px;
+  transition: width 0.35s ease;
+}
+.queue-item-progress-msg {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.queue-item-progress-msg:empty { margin-top: 0; }
+.queue-item-error {
+  font-size: 12px;
+  color: var(--error);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.queue-item-result {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.queue-paused-banner {
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: var(--warning-dim);
+  border: 1px solid rgba(249,226,175,0.3);
+  border-radius: var(--radius);
+}
+.queue-paused-title { font-weight: 600; color: var(--warning); font-size: 13.5px; }
+.queue-paused-body, .queue-paused-detail {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.queue-done-summary {
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+/* Job-level failure reason (round-2 audit item 1) — a batch that stopped
+   entirely (domain deleted/renamed/turned read-only mid-batch) must not
+   render as a silent "Finished" panel. */
+.queue-done-fail-reason {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: var(--error-dim);
+  border: 1px solid rgba(243,139,168,0.3);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: var(--error);
+  line-height: 1.5;
+}
+.queue-done-totals {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.queue-done-health {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+/* An item outside the three known terminal statuses (H1 fix) — flagged
+   instead of silently missing from the summary's counts. */
+.queue-done-unaccounted {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.queue-stream-error { margin-bottom: 14px; }

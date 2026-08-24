@@ -35,6 +35,12 @@ tabBtns.forEach(btn => {
     // Re-evaluate the chat model selector so a key added/removed in Settings
     // this session is reflected without a page reload (init is idempotent).
     if (target === 'chat') { try { initChatModelSelector(); } catch { /* ignore */ } }
+    // Batch ingest queue (Track 3): disconnect the live SSE stream when
+    // leaving the Ingest tab (this also releases the busy gate, via
+    // attachQueueStream's own finally block) and re-check for / reattach to
+    // an active batch on the way back in — the "resume on return" contract.
+    if (target !== 'ingest') { try { detachQueueStream(); } catch { /* ignore */ } }
+    if (target === 'ingest') { checkActiveQueueJob().catch(() => {}); }
   });
 });
 
@@ -82,7 +88,10 @@ function setFile(file) {
   }
   selectedFile = file;
   fileNameEl.textContent = file.name;
-  ingestBtn.disabled = false;
+  // Round-2 audit item 2: don't just enable — refuse if a batch (or any
+  // other registered write) is already running against THIS domain. See
+  // refreshIngestBtnAvailability() for why.
+  refreshIngestBtnAvailability();
   hideEl(ingestStatus);
   hideEl(ingestResult);
 }
@@ -92,7 +101,7 @@ dropZone?.addEventListener('dragleave', () => dropZone.classList.remove('dragove
 dropZone?.addEventListener('drop', e => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
-  setFile(e.dataTransfer.files[0]);
+  handleSelectedFiles(e.dataTransfer.files);
 });
 // Open file picker when clicking anywhere on the drop zone,
 // but skip if the click came from the <label> inside — that
@@ -102,7 +111,12 @@ dropZone?.addEventListener('click', (e) => {
   if (e.target.closest('label')) return;
   fileInput?.click();
 });
-fileInput?.addEventListener('change', () => setFile(fileInput.files[0]));
+// Track 3 (batch ingest queue): 1 file selected always routes to setFile()
+// below — the existing, unchanged single-file flow. 2+ files routes to the
+// batch queue instead. handleSelectedFiles() is defined in the "BATCH
+// INGEST QUEUE" section further down; it is the ONLY thing this listener's
+// behaviour changes versus before.
+fileInput?.addEventListener('change', () => handleSelectedFiles(fileInput.files));
 
 ingestBtn?.addEventListener('click', () => submitIngest(false));
 
@@ -311,7 +325,7 @@ function showDuplicateBanner(filename, domain) {
   });
   banner.querySelector('.dup-cancel').addEventListener('click', () => {
     hideDuplicateBanner();
-    ingestBtn.disabled = false;
+    refreshIngestBtnAvailability();
   });
 }
 
@@ -464,7 +478,13 @@ function classifyIngestEntry(w) {
   return { kind: 'info', icon: 'ℹ', color: '#58a6ff', label: 'Info' };
 }
 
-function renderIngestWarnings(data) {
+// v3.x (Track 3): `container` is a new trailing parameter defaulting to the
+// original global `ingestResult` — the single-file call site below
+// (`renderIngestWarnings(data)`) passes no second argument, so it resolves
+// to the same default and is behaviourally IDENTICAL to before. The batch
+// ingest queue's per-item detail view passes its own container so warnings
+// for one item don't get inserted into the single-file panel.
+function renderIngestWarnings(data, container = ingestResult) {
   const warnings = Array.isArray(data.warnings) ? data.warnings : [];
   if (!warnings.length) return;
 
@@ -505,7 +525,7 @@ function renderIngestWarnings(data) {
     `<strong>Ingest finished — ${warnings.length} note${warnings.length === 1 ? '' : 's'}</strong>` +
     (summaryLine ? `<div style="font-size:12px;margin-top:2px">${summaryLine}</div>` : '') +
     `<ul style="margin:8px 0 0 0;padding:0;list-style:none">${items}</ul>`;
-  ingestResult.insertBefore(banner, ingestResult.firstChild);
+  container.insertBefore(banner, container.firstChild);
 }
 
 // ── Shared change-records renderer (v2.5.0) ───────────────────────────────────
@@ -594,6 +614,841 @@ function renderChangeRecords(container, { title, changes }) {
   }
 
   showEl(container);
+}
+
+// ── BATCH INGEST QUEUE (Track 3) ────────────────────────────────────────────
+//
+// 1 file selected → the flow above (setFile/submitIngest), completely
+// unchanged. 2+ files selected → this section.
+//
+// Core design rule: the client NEVER derives or caches job state. Every
+// render call takes a FULL job snapshot from the server (an SSE 'job'/'done'
+// event, or a plain GET) and rebuilds the panel from it — no incremental
+// patching, no client-side "which item is running" bookkeeping. The one
+// narrow, explicitly-scoped exception is updateQueueItemProgress(), which
+// handles the item-progress SSE event — that event carries only
+// {idx, pct, message}, not a full job, exactly like the single-file
+// progress bar's own 'progress' event above.
+//
+// applyQueueJobSnapshot() is the single chokepoint every job object flows
+// through (SSE events, POST start/pause/cancel responses, GET refreshes).
+// It is the only place that touches the shared busy gate
+// (window.__curatorIngestStart/__curatorIngestEnd) and the only place that
+// calls renderQueuePanel — so a busy-gate leak or a stale render can't be
+// introduced by adding a new call site elsewhere.
+
+const QUEUE_API = '/api/ingest-queue';
+const queueStatusEl  = document.getElementById('queue-status');
+const queueConfirmEl = document.getElementById('queue-confirm');
+const queuePanelEl   = document.getElementById('queue-panel');
+
+let selectedFiles     = [];   // File[] currently chosen for the batch path
+let queueEstimate     = null; // last /estimate response (pre-job)
+let queueJobId        = null; // the job this tab is currently attached to
+let queueStreamAbort  = null; // AbortController for the live SSE fetch
+let _queueLastStatus  = null; // last status the busy gate was told about
+// The domain key actually used the last time the busy gate was ENTERED.
+// This — never a value re-read from the #ingest-domain dropdown — is what
+// gets handed to __curatorIngestEnd. The H2 leak was exactly this: enter
+// keyed on job.domain, exit keyed on whatever the dropdown happened to
+// hold at that later moment (often '' on a page-reload resume, since
+// loadDomains() and checkActiveQueueJob() both fire un-awaited and the
+// select can still be empty when the exit fires). Storing the entry key
+// and always releasing with THAT key makes the mismatch structurally
+// impossible rather than a convention every call site must remember.
+let _queueBusyDomain  = null;
+
+// ── Pure helpers (extracted + unit-tested via new Function in
+//    scripts/test-ingest-queue-frontend.js — keep them free of DOM/fetch
+//    calls so they stay testable in a plain Node sandbox) ──────────────────
+
+// Should the shared busy gate be entered or exited when the queue's last-
+// known job status moves from `prev` to `next`? 'running' is the only
+// status where the batch is actually writing to the wiki — every other
+// status (pending/paused/done/cancelled/failed, and the synthetic `null`
+// meaning "not attached") is not-busy. Returns 'enter' | 'exit' | null.
+function queueBusyTransition(prevStatus, nextStatus) {
+  const wasBusy = prevStatus === 'running';
+  const isBusy = nextStatus === 'running';
+  if (!wasBusy && isBusy) return 'enter';
+  if (wasBusy && !isBusy) return 'exit';
+  return null;
+}
+
+// Byte formatter for batch totals, which can run into the hundreds of MB
+// (unlike the KB-scale formatBytes() above, used for single pages). Never
+// renders NaN/undefined text — a non-finite input renders as an em dash.
+function formatQueueBytes(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return '—';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let val = n / 1024;
+  let i = 0;
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return `${val.toFixed(1)} ${units[i]}`;
+}
+
+// Pre-spend USD range formatter. Renders a real range, a single value when
+// low === high, or an explicit "unknown" string — NEVER a fabricated
+// number, NaN, or the literal text "undefined"/"null".
+function formatUsdRange(low, high) {
+  const isNum = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  if (!isNum(low) || !isNum(high)) return 'cost unknown for this model';
+  const fmt = v => `$${v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`;
+  if (Math.abs(high - low) < 0.0001) return fmt(low);
+  return `${fmt(low)} – ${fmt(high)}`;
+}
+
+// Same contract as formatUsdRange but for a token count range.
+function formatTokenRange(low, high) {
+  const isNum = v => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  if (!isNum(low) || !isNum(high)) return 'unknown';
+  const fmt = v => Math.round(v).toLocaleString();
+  if (low === high) return fmt(low);
+  return `${fmt(low)}–${fmt(high)}`;
+}
+
+// Copy table for the paused banner, keyed off job.pausedReason. Every key
+// in the frozen contract is covered; an unrecognised/null reason falls back
+// to a generic message rather than rendering nothing.
+function pausedReasonCopy(reason) {
+  const table = {
+    rate_limit: {
+      title: 'Paused — the AI provider rate-limited us',
+      body: 'The app already retried with backoff. Nothing was lost. Wait a few minutes, then resume.',
+    },
+    service_unavailable: {
+      title: 'Paused — the AI provider is temporarily unavailable',
+      body: 'The app already retried with backoff. Nothing was lost. This is on the provider\'s side, not yours — wait a few minutes, then resume.',
+    },
+    budget: {
+      title: 'Paused — budget cap reached',
+      body: 'Raise the cap or resume without one to keep going.',
+    },
+    consecutive_failures: {
+      title: 'Paused — 3 files failed in a row',
+      body: 'Something may be systemic (a bad file type, a domain issue). Check the errors below before resuming.',
+    },
+    interrupted: {
+      title: 'Paused — the app restarted mid-batch',
+      body: 'The interrupted file will be re-run from the start. Re-ingesting is safe and idempotent — resume when ready.',
+    },
+    locked: {
+      title: 'Paused — this domain is locked',
+      body: 'Another process is writing to this domain right now. Resume once it finishes.',
+    },
+    user: {
+      title: 'Paused',
+      body: "Resume whenever you're ready.",
+    },
+  };
+  return table[reason] || { title: 'Paused', body: "Resume whenever you're ready." };
+}
+
+// Per-item status pill label + CSS class.
+function statusPillMeta(status) {
+  const table = {
+    pending: { label: 'Waiting', cls: 'queue-pill-pending' },
+    running: { label: 'Running', cls: 'queue-pill-running' },
+    done:    { label: 'Done',    cls: 'queue-pill-done' },
+    failed:  { label: 'Failed',  cls: 'queue-pill-failed' },
+    skipped: { label: 'Skipped', cls: 'queue-pill-skipped' },
+  };
+  return table[status] || { label: 'Waiting', cls: 'queue-pill-pending' };
+}
+
+// Resolve the ordered "files that will actually be ingested" list for the
+// confirm-gate preview from the /estimate response. The frozen contract only
+// pins files.rejected's shape ({name,reason}[]); files.accepted's shape is
+// not further specified, so this defensively accepts an array of strings, an
+// array of {name, size|bytes} objects, or — if the field is absent/not an
+// array — falls back to the browser's own selection order. That fallback is
+// explicitly marked `ordered:false`: it is NOT guaranteed to match the
+// backend's largest-first execution order, so callers must not present it as
+// authoritative.
+function resolveEstimateFileList(estimate, localFiles) {
+  const accepted = estimate && estimate.files && estimate.files.accepted;
+  const local = Array.isArray(localFiles) ? localFiles : [];
+  const sizeByName = new Map(local.map(f => [f && f.name, f && f.size]));
+
+  if (Array.isArray(accepted)) {
+    return accepted.map(entry => {
+      if (typeof entry === 'string') {
+        return { name: entry, bytes: sizeByName.has(entry) ? sizeByName.get(entry) : null, ordered: true };
+      }
+      if (entry && typeof entry === 'object') {
+        const name = typeof entry.name === 'string' ? entry.name : '';
+        const bytes = typeof entry.size === 'number' ? entry.size
+                    : typeof entry.bytes === 'number' ? entry.bytes
+                    : (sizeByName.has(name) ? sizeByName.get(name) : null);
+        return { name, bytes, ordered: true };
+      }
+      return { name: String(entry), bytes: null, ordered: true };
+    });
+  }
+
+  return local.map(f => ({ name: f && f.name, bytes: f && f.size, ordered: false }));
+}
+
+// 409 "a batch is already running" responses "name the active jobId" per the
+// contract, without pinning the exact field name — defensively check the
+// shapes a Node/Express JSON body would plausibly use.
+function extractConflictJobId(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (typeof data.jobId === 'string' && data.jobId) return data.jobId;
+  if (typeof data.activeJobId === 'string' && data.activeJobId) return data.activeJobId;
+  if (data.job && typeof data.job.jobId === 'string' && data.job.jobId) return data.job.jobId;
+  return null;
+}
+
+// Summarise a job's Health scan counts (job.health.counts) into a short,
+// human-readable line. Unknown/absent keys are silently skipped rather than
+// dumped as raw JSON — this mirrors the labels already used elsewhere for
+// the same counts shape (see renderHealthReport).
+function formatHealthCounts(counts) {
+  if (!counts || typeof counts !== 'object') return '';
+  const labels = {
+    brokenLinks: 'broken links', orphans: 'orphans',
+    folderPrefixLinks: 'folder-prefix links', crossFolderDupes: 'cross-folder duplicates',
+    hyphenVariants: 'hyphen variants', missingBacklinks: 'missing backlinks',
+  };
+  const parts = [];
+  for (const key of Object.keys(labels)) {
+    const v = counts[key];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) parts.push(`${v} ${labels[key]}`);
+  }
+  return parts.join(', ');
+}
+
+// Neutralises Unicode bidi-control codepoints (RLO/LRO/RLE/LRE/PDF/
+// RLI/LRI/FSI/PDI/RLM/LRM) in a user-controlled filename before display.
+// Filenames here are 100% attacker-controlled and never sanitised
+// server-side; a bidi-override character can visually reorder the
+// rendered text (e.g. making "evil<RLO>fdp.exe" DISPLAY as
+// "evilexe.pdf") without being any kind of markup — escHtml (which only
+// handles &/</>/") would pass it straight through unchanged. This is a
+// display-integrity fix, not an XSS one: no auditor found an injection
+// vector here, and every user-controlled string in this file's HTML
+// builders already goes through escHtml.
+const BIDI_CONTROL_RE = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+function sanitizeDisplayName(str) {
+  return String(str == null ? '' : str).replace(BIDI_CONTROL_RE, '\uFFFD');
+}
+
+// ── Pure HTML-string builders (also extracted + unit-tested; escHtml is
+//    included in the test's combined eval scope so these resolve exactly as
+//    they do in the app) ─────────────────────────────────────────────────
+
+function queueFileListItemHtml(entry) {
+  const name = escHtml(sanitizeDisplayName(entry && entry.name != null ? entry.name : ''));
+  const size = formatQueueBytes(entry && entry.bytes);
+  return `<li class="queue-file-item"><span class="queue-file-name">${name}</span><span class="queue-file-size">${size}</span></li>`;
+}
+
+function queueRejectedItemHtml(entry) {
+  const name = escHtml(sanitizeDisplayName(entry && entry.name != null ? entry.name : ''));
+  const reason = escHtml(entry && entry.reason != null ? entry.reason : 'not supported');
+  return `<li class="queue-file-item queue-file-rejected"><span class="queue-file-name">${name}</span><span class="queue-file-reason">${reason}</span></li>`;
+}
+
+function queueItemRowHtml(item) {
+  const idx = item && Number.isFinite(item.idx) ? item.idx : 0;
+  const name = escHtml(sanitizeDisplayName(item && item.name != null ? item.name : ''));
+  const size = formatQueueBytes(item && item.bytes);
+  const meta = statusPillMeta(item && item.status);
+  const isRunning = item && item.status === 'running';
+  const errorLine = (item && item.status === 'failed' && item.error)
+    ? `<div class="queue-item-error">${escHtml(item.error)}</div>` : '';
+  const pages = item && item.result && Number.isFinite(item.result.pagesWritten) ? item.result.pagesWritten : null;
+  const resultLine = (item && item.status === 'done' && item.result)
+    ? `<div class="queue-item-result">${escHtml(sanitizeDisplayName(item.result.title || item.name || ''))} — ${pages == null ? 0 : pages} page${pages === 1 ? '' : 's'}</div>`
+    : '';
+  return `<li class="queue-item-row" data-queue-idx="${idx}">
+    <div class="queue-item-head">
+      <span class="queue-item-name">${name}</span>
+      <span class="queue-item-size">${size}</span>
+      <span class="queue-item-pill ${meta.cls}">${meta.label}</span>
+    </div>
+    <div class="queue-item-progress-track${isRunning ? '' : ' hidden'}"><div class="queue-item-progress-fill" style="width:0%"></div></div>
+    <div class="queue-item-progress-msg"></div>
+    ${errorLine}
+    ${resultLine}
+  </li>`;
+}
+
+function queuePausedBannerHtml(job) {
+  const copy = pausedReasonCopy(job && job.pausedReason);
+  const detail = (job && typeof job.pausedMessage === 'string' && job.pausedMessage)
+    ? `<div class="queue-paused-detail">${escHtml(job.pausedMessage)}</div>` : '';
+  return `<div class="queue-paused-banner">
+    <div class="queue-paused-title">${escHtml(copy.title)}</div>
+    <div class="queue-paused-body">${escHtml(copy.body)}</div>
+    ${detail}
+  </div>`;
+}
+
+// Buckets every item into exactly one status count. This is deliberately
+// NOT "count done + count failed + count skipped" — that shape lets an
+// item in ANY other state (still 'running' on a batch the server reports
+// terminal, a future status, a malformed item) vanish from the summary
+// with no trace: the done-summary would read "2 done, 0 failed, 0
+// skipped" for a 3-item batch and the missing item would simply never be
+// mentioned (H1). Because every item is placed in exactly one bucket here
+// — the three known ones, or `other` keyed by its literal status string —
+// `known.done + known.failed + known.skipped + sum(other values)` is
+// ALWAYS === items.length, by construction, regardless of what statuses
+// the server ever sends.
+function computeQueueStatusCounts(items) {
+  const list = Array.isArray(items) ? items : [];
+  const known = { done: 0, failed: 0, skipped: 0 };
+  const other = {};
+  for (const i of list) {
+    const s = (i && typeof i.status === 'string' && i.status) ? i.status : 'unknown';
+    if (Object.prototype.hasOwnProperty.call(known, s)) known[s]++;
+    else other[s] = (other[s] || 0) + 1;
+  }
+  return { known, other, total: list.length };
+}
+
+function queueDoneSummaryHtml(job) {
+  const items = Array.isArray(job && job.items) ? job.items : [];
+  const counts = computeQueueStatusCounts(items);
+  const doneN = counts.known.done;
+  const failedN = counts.known.failed;
+  const skippedN = counts.known.skipped;
+
+  // Round-2 audit item 4a: a CANCELLED batch's untouched items are still
+  // sitting at 'pending' on the server (cancel doesn't relabel them), even
+  // though the cancel confirm told the user "anything not started yet is
+  // skipped". That is the batch behaving exactly as asked, not an
+  // anomaly, so it must not render through the amber unaccounted styling —
+  // the whole point of that styling is to flag states the user did NOT
+  // expect. A FAILED job's leftover pending items (e.g. the domain became
+  // unusable before any item ran) are genuinely unexpected and keep the
+  // amber treatment; only 'cancelled' gets this carve-out.
+  const isCancelled = job && job.status === 'cancelled';
+  const notStartedN = isCancelled ? (counts.other.pending || 0) : 0;
+  // Anything else outside the three known buckets still renders as its own
+  // labelled, visibly-flagged span instead of being silently dropped from
+  // the total — this is the mechanism that caught the real H1 bug; only
+  // the cancelled+pending combination above is special-cased out of it.
+  const otherSpans = Object.keys(counts.other)
+    .filter(k => !(isCancelled && k === 'pending'))
+    .sort()
+    .map(k => `<span class="queue-done-unaccounted">${counts.other[k]} ${escHtml(k)}</span>`)
+    .join('');
+  const notStartedSpan = notStartedN > 0
+    ? `<span>${notStartedN} not started</span>` : '';
+
+  const pages = items.reduce((sum, i) => {
+    const p = i && i.result && Number.isFinite(i.result.pagesWritten) ? i.result.pagesWritten : 0;
+    return sum + p;
+  }, 0);
+  const warningsN = items.reduce((sum, i) => {
+    const w = i && i.result && Number.isFinite(i.result.warningCount) ? i.result.warningCount : 0;
+    return sum + w;
+  }, 0);
+  const spent = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd))
+    ? `$${job.spentUsd.toFixed(4)}` : '—';
+  const healthStr = formatHealthCounts(job && job.health && job.health.counts);
+  const healthLine = (job && job.health)
+    ? `<div class="queue-done-health">Health scan: ${healthStr ? escHtml(healthStr) : 'no issues found'} — see the <strong>Health</strong> tab.</div>`
+    : '';
+  // Round-2 audit item 1 (MUST FIX): a job-level failure (domain deleted,
+  // renamed, or converted to a read-only Shared Brain mirror while the
+  // batch sat paused) sets job.failReason server-side and the whole batch
+  // stops — but nothing rendered it, so a 30-file batch could do nothing
+  // and say nothing under a panel headed "Finished". job.failReason is a
+  // server-composed string (see assertDomainUsable / the settleJob call in
+  // ingest-queue.js) — escaped like every other server string here.
+  const failReasonLine = (job && job.status === 'failed' && typeof job.failReason === 'string' && job.failReason)
+    ? `<div class="queue-done-fail-reason"><strong>Batch failed:</strong> ${escHtml(job.failReason)}</div>`
+    : '';
+  return `<div class="queue-done-summary">
+    ${failReasonLine}
+    <div class="queue-done-totals">
+      <span>${doneN} done</span>
+      <span>${failedN} failed</span>
+      <span>${skippedN} skipped</span>
+      ${notStartedSpan}
+      ${otherSpans}
+      <span>${pages} page${pages === 1 ? '' : 's'} written</span>
+      <span>${warningsN} warning${warningsN === 1 ? '' : 's'}</span>
+      <span>${spent} spent</span>
+    </div>
+    ${healthLine}
+  </div>`;
+}
+
+// ── DOM-coupled render + control functions (browser-verified; not unit-
+//    tested directly — the pure builders above carry the tested logic) ────
+
+function handleSelectedFiles(files) {
+  const list = Array.from(files || []);
+  if (list.length === 0) return;
+  if (list.length === 1) {
+    // Single file: the existing, unchanged flow. Clear any queue state so a
+    // stale confirm gate from a previous multi-select can't linger.
+    resetQueueSelection();
+    setFile(list[0]);
+    return;
+  }
+  // 2+ files: the batch queue path. `selectedFile`/`ingestBtn` are left
+  // alone in their "nothing chosen" state — ingestBtn stays disabled and
+  // selectedFile stays null — so submitIngest() (the single-file path)
+  // cannot fire for a multi-file selection.
+  selectedFile = null;
+  fileNameEl.textContent = '';
+  ingestBtn.disabled = true;
+  hideEl(ingestStatus);
+  hideEl(ingestResult);
+  hideDuplicateBanner();
+  startQueueSelection(list);
+}
+
+function resetQueueSelection() {
+  selectedFiles = [];
+  queueEstimate = null;
+  hideEl(queueStatusEl);
+  hideEl(queueConfirmEl);
+  if (queueConfirmEl) queueConfirmEl.innerHTML = '';
+  // Clear a FINISHED batch's report so it doesn't linger next to an
+  // unrelated single-file selection — but never hide a batch that's still
+  // actually live (running/paused): its panel keeps rendering regardless
+  // of whatever the user does in the file picker meanwhile. Round-2 audit
+  // item 2 corrected the OLD version of this comment, which claimed the
+  // user could freely ingest a different file "in parallel" — true only
+  // for a DIFFERENT domain. Looking at (or even choosing) a file here is
+  // always fine; refreshIngestBtnAvailability() is what actually refuses
+  // the submit if the selected domain matches the live batch's domain.
+  const isLiveJob = queueJobId && _queueLastStatus
+    && _queueLastStatus !== 'done' && _queueLastStatus !== 'cancelled' && _queueLastStatus !== 'failed';
+  if (!isLiveJob) {
+    hideEl(queuePanelEl);
+    if (queuePanelEl) queuePanelEl.innerHTML = '';
+    queueJobId = null;
+  }
+}
+
+async function startQueueSelection(files) {
+  selectedFiles = files;
+  queueEstimate = null;
+  hideEl(queueConfirmEl);
+  hideEl(queuePanelEl);
+  showStatus(queueStatusEl, 'loading', `Estimating cost for ${files.length} files…`);
+  const domain = document.getElementById('ingest-domain')?.value;
+  try {
+    const body = { domain, files: files.map(f => ({ name: f.name, size: f.size })) };
+    const res = await fetch(`${QUEUE_API}/estimate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || `Could not estimate cost (HTTP ${res.status})`);
+    queueEstimate = data;
+    hideEl(queueStatusEl);
+    renderQueueConfirm();
+  } catch (err) {
+    hideEl(queueConfirmEl);
+    showStatus(queueStatusEl, 'error', err.message);
+  }
+}
+
+// Re-estimate if the user changes domain while still at the confirm gate
+// (a different domain means a different index size and a different cost).
+// Never fires once a job exists — the domain is fixed at that point.
+// Also re-evaluates the single-file Ingest button (round-2 audit item 2):
+// switching TO a domain with a live batch must disable it; switching AWAY
+// from one must re-enable it if a file is already selected.
+document.getElementById('ingest-domain')?.addEventListener('change', () => {
+  if (selectedFiles.length > 1 && !queueJobId) startQueueSelection(selectedFiles);
+  refreshIngestBtnAvailability();
+});
+
+function renderQueueConfirm() {
+  if (!queueConfirmEl || !queueEstimate) return;
+  const est = queueEstimate;
+  const fileList = resolveEstimateFileList(est, selectedFiles);
+  const rejected = Array.isArray(est.files && est.files.rejected) ? est.files.rejected : [];
+  const count = (est.files && Number.isFinite(est.files.count)) ? est.files.count : fileList.length;
+  const totalBytes = est.files && est.files.totalBytes;
+  const provider = escHtml(est.provider || 'unknown provider');
+  const model = escHtml(est.model || 'unknown model');
+  const est2 = est.estimate || {};
+  const costRange = formatUsdRange(est2.usdLow, est2.usdHigh);
+  const tokIn = formatTokenRange(est2.inputTokensLow, est2.inputTokensHigh);
+  const tokOut = formatTokenRange(est2.outputTokensLow, est2.outputTokensHigh);
+  const basis = escHtml(est2.basis || '');
+  const warnings = Array.isArray(est.warnings) ? est.warnings : [];
+
+  queueConfirmEl.innerHTML = `
+    <div class="queue-confirm-head">
+      <h3>Batch ingest — ${count} file${count === 1 ? '' : 's'}</h3>
+      <div class="queue-confirm-sub">${formatQueueBytes(totalBytes)} total · ${provider} · ${model}</div>
+    </div>
+    ${rejected.length ? `
+      <div class="queue-rejected">
+        <div class="queue-section-label">Won't be included</div>
+        <ul class="queue-file-list">${rejected.map(queueRejectedItemHtml).join('')}</ul>
+      </div>` : ''}
+    <div class="queue-file-section">
+      <div class="queue-section-label">Will be ingested (largest first)</div>
+      <ul class="queue-file-list">${fileList.map(queueFileListItemHtml).join('')}</ul>
+    </div>
+    <div class="queue-estimate">
+      <div class="queue-estimate-row"><span>Estimated cost</span><strong>${escHtml(costRange)}</strong></div>
+      <div class="queue-estimate-row"><span>Estimated tokens</span><span>${escHtml(tokIn)} in / ${escHtml(tokOut)} out</span></div>
+      ${basis ? `<div class="queue-estimate-basis">${basis}</div>` : ''}
+    </div>
+    ${warnings.length ? `<div class="queue-warnings">${warnings.map(w => `<div>${escHtml(String(w))}</div>`).join('')}</div>` : ''}
+    <div class="form-group inline queue-budget-row">
+      <label for="queue-budget-input">Budget cap (optional)</label>
+      <input type="number" id="queue-budget-input" min="0" step="0.01" placeholder="No cap" />
+    </div>
+    <label class="queue-overwrite-row"><input type="checkbox" id="queue-overwrite-input" /> Overwrite existing pages for files already ingested</label>
+    <div class="queue-confirm-actions">
+      <button class="btn primary pill" id="queue-start-btn">Start batch</button>
+      <button class="btn" id="queue-cancel-select-btn">Cancel</button>
+    </div>
+  `;
+  showEl(queueConfirmEl);
+  hideEl(queuePanelEl);
+
+  document.getElementById('queue-start-btn')?.addEventListener('click', beginQueueJob);
+  document.getElementById('queue-cancel-select-btn')?.addEventListener('click', resetQueueSelection);
+}
+
+async function beginQueueJob() {
+  if (!selectedFiles.length) return;
+  const startBtn = document.getElementById('queue-start-btn');
+  if (startBtn) { startBtn.disabled = true; startBtn.textContent = 'Uploading…'; }
+  const domain = document.getElementById('ingest-domain')?.value;
+  const overwrite = !!document.getElementById('queue-overwrite-input')?.checked;
+  const budgetRaw = document.getElementById('queue-budget-input')?.value;
+  const budgetUsd = (budgetRaw !== '' && budgetRaw != null && Number.isFinite(Number(budgetRaw)))
+    ? Number(budgetRaw) : null;
+
+  const formData = new FormData();
+  formData.append('domain', domain);
+  if (overwrite) formData.append('overwrite', 'true');
+  if (budgetUsd != null) formData.append('budgetUsd', String(budgetUsd));
+  for (const f of selectedFiles) formData.append('files', f);
+
+  try {
+    const res = await fetch(QUEUE_API, { method: 'POST', body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 409) {
+      const activeId = extractConflictJobId(data);
+      throw new Error(activeId
+        ? `A batch is already running (job ${activeId}). Wait for it to finish, or check the panel below.`
+        : (data.error || 'A batch is already running on this domain.'));
+    }
+    if (!res.ok || !data.ok || !data.jobId) throw new Error(data.error || `Could not start the batch (HTTP ${res.status})`);
+
+    const startRes = await fetch(`${QUEUE_API}/${encodeURIComponent(data.jobId)}/start`, { method: 'POST' });
+    const startData = await startRes.json().catch(() => ({}));
+    if (!startRes.ok || !startData.ok) throw new Error(startData.error || `Could not start the batch (HTTP ${startRes.status})`);
+
+    // Uploaded + started — the confirm gate's job is done; everything from
+    // here is driven by job snapshots.
+    hideEl(queueConfirmEl);
+    if (queueConfirmEl) queueConfirmEl.innerHTML = '';
+    selectedFiles = [];
+    if (fileInput) fileInput.value = '';
+    showEl(queuePanelEl);
+    attachQueueStream(data.jobId);
+  } catch (err) {
+    showStatus(queueStatusEl, 'error', err.message);
+    if (startBtn) { startBtn.disabled = false; startBtn.textContent = 'Start batch'; }
+  }
+}
+
+function detachQueueStream() {
+  if (queueStreamAbort) {
+    queueStreamAbort.abort();
+    queueStreamAbort = null;
+  }
+}
+
+// `domain` is only ever consulted on ENTER. On EXIT the key that was
+// actually stored at entry time (_queueBusyDomain) is used instead —
+// whatever `domain` this call was passed is ignored, so a caller cannot
+// accidentally release the wrong slot no matter what it reads from the
+// dropdown at that moment. This is the fix for H2.
+function applyQueueBusyForStatus(nextStatus, domain) {
+  const decision = queueBusyTransition(_queueLastStatus, nextStatus);
+  if (decision === 'enter') {
+    // Defensive: a slot should never already be held here (the prevStatus
+    // latch above only fires 'enter' from a non-busy state), but if it
+    // somehow were, releasing it before overwriting the key prevents that
+    // slot from being orphaned rather than silently leaking it.
+    if (_queueBusyDomain !== null && typeof window.__curatorIngestEnd === 'function') {
+      window.__curatorIngestEnd(_queueBusyDomain);
+    }
+    _queueBusyDomain = domain;
+    if (typeof window.__curatorIngestStart === 'function') window.__curatorIngestStart(domain);
+  } else if (decision === 'exit') {
+    const key = _queueBusyDomain;
+    _queueBusyDomain = null;
+    if (key !== null && typeof window.__curatorIngestEnd === 'function') window.__curatorIngestEnd(key);
+  }
+  _queueLastStatus = nextStatus;
+}
+
+// THE single chokepoint every job snapshot flows through — SSE 'job'/'done'
+// events, POST start/pause/cancel responses, and GET refreshes all end up
+// here. Updates the busy gate, then rebuilds the whole panel from the
+// snapshot. No other function in this file calls renderQueuePanel or the
+// busy-gate helpers directly.
+function applyQueueJobSnapshot(job) {
+  if (!job) return;
+  queueJobId = job.jobId || queueJobId;
+  const domain = job.domain || document.getElementById('ingest-domain')?.value;
+  applyQueueBusyForStatus(job.status, domain);
+  renderQueuePanel(job);
+  // Structural guarantee for the "entering with a dead stream" defect: the
+  // busy gate is only ever RELEASED inside attachQueueStream's `finally`
+  // (see the comment on that function). A snapshot can report 'running'
+  // from a source that never attaches a stream in THIS tab — a GET refresh
+  // (refreshQueueJob, e.g. the cancel-confirm's "Never mind"), a pause/
+  // resume POST response, or a second browser tab that only ever polls.
+  // Any of those would enter the gate above with no path that will ever
+  // exit it. So: whenever a snapshot says the job is running and this tab
+  // has no live stream attached, attach one now — guaranteeing every
+  // 'enter' this tab performs is paired with a stream whose `finally` will
+  // eventually release it, regardless of which call site produced the
+  // snapshot.
+  if (job.status === 'running' && !queueStreamAbort && job.jobId) {
+    attachQueueStream(job.jobId);
+  }
+}
+
+async function attachQueueStream(jobId) {
+  detachQueueStream(); // tear down any prior connection first (also releases its busy state via its own finally)
+  queueJobId = jobId;
+  const controller = new AbortController();
+  queueStreamAbort = controller;
+  const domain = document.getElementById('ingest-domain')?.value;
+  try {
+    const res = await fetch(`${QUEUE_API}/${encodeURIComponent(jobId)}/stream`, { signal: controller.signal });
+    if (!res.body) throw new Error('Stream unavailable for this job');
+
+    // Same reader-loop shape as submitIngest() above: split on '\n', read
+    // 'data: ' lines. Deliberately NOT the '\n\n'-chunk parser used by the
+    // semantic-dupe batch merge elsewhere in this file.
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+        if (ev.type === 'job' && ev.job) {
+          applyQueueJobSnapshot(ev.job);
+        } else if (ev.type === 'item-progress') {
+          updateQueueItemProgress(ev.idx, ev.pct, ev.message);
+        } else if (ev.type === 'done' && ev.job) {
+          applyQueueJobSnapshot(ev.job);
+          break outer;
+        }
+      }
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return; // detached on purpose (nav-away / re-attach)
+    renderQueueStreamError(err && err.message ? err.message : 'Lost connection to the batch.');
+  } finally {
+    // Always release the busy gate here, exactly once, regardless of how the
+    // stream ended (done event, thrown error, or abort) — mirrors
+    // submitIngest()'s own finally block above. `domain` (read from the
+    // dropdown when this attach began) is passed only as a same-tick
+    // fallback for the "somehow never entered" edge case; the real release
+    // key is whatever applyQueueBusyForStatus recorded at ENTER time
+    // (_queueBusyDomain), which it uses instead — see that function.
+    applyQueueBusyForStatus(null, domain);
+    if (queueStreamAbort === controller) queueStreamAbort = null;
+  }
+}
+
+function renderQueueStreamError(msg) {
+  if (!queuePanelEl) return;
+  let banner = queuePanelEl.querySelector('.queue-stream-error');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'queue-stream-error status error';
+    queuePanelEl.insertBefore(banner, queuePanelEl.firstChild);
+  }
+  banner.textContent = msg;
+}
+
+// Item-progress SSE event: {idx, pct, message} only, no full job — the one
+// documented exception to "render from a snapshot" (see the section header
+// comment). Targeted update of a single row; every other part of the panel
+// is still rebuilt wholesale by renderQueuePanel.
+function updateQueueItemProgress(idx, pct, message) {
+  if (!queuePanelEl || !Number.isFinite(idx)) return;
+  const row = queuePanelEl.querySelector(`[data-queue-idx="${idx}"]`);
+  if (!row) return;
+  const track = row.querySelector('.queue-item-progress-track');
+  const fill = row.querySelector('.queue-item-progress-fill');
+  const msgEl = row.querySelector('.queue-item-progress-msg');
+  if (track) track.classList.remove('hidden');
+  if (fill && Number.isFinite(pct)) fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  if (msgEl) msgEl.textContent = typeof message === 'string' ? message : '';
+}
+
+function renderQueuePanel(job) {
+  if (!queuePanelEl || !job) return;
+  hideEl(queueConfirmEl);
+  showEl(queuePanelEl);
+
+  const domainSelect = document.getElementById('ingest-domain');
+  const isTerminal = job.status === 'done' || job.status === 'cancelled' || job.status === 'failed';
+  if (domainSelect) domainSelect.disabled = !isTerminal;
+
+  const items = Array.isArray(job.items) ? job.items : [];
+  const settledCount = items.filter(i => i && (i.status === 'done' || i.status === 'failed' || i.status === 'skipped')).length;
+  const spent = Number.isFinite(job.spentUsd) ? job.spentUsd : 0;
+
+  const headerHtml = `
+    <div class="queue-panel-head">
+      <div class="queue-panel-title">Batch ingest — ${escHtml(job.domain || '')}</div>
+      <div class="queue-panel-sub">${isTerminal ? 'Finished' : `Item ${Math.min(settledCount + 1, items.length)} of ${items.length}`} · $${spent.toFixed(4)} spent</div>
+    </div>
+  `;
+
+  const pausedHtml = job.status === 'paused' ? queuePausedBannerHtml(job) : '';
+  const doneHtml = isTerminal ? queueDoneSummaryHtml(job) : '';
+
+  const controlsHtml = isTerminal ? '' : `
+    <div class="queue-panel-controls">
+      ${job.status === 'running'
+        ? `<button class="btn" id="queue-pause-btn">Pause</button>`
+        : `<button class="btn primary" id="queue-resume-btn">${job.status === 'pending' ? 'Start' : 'Resume'}</button>`}
+      <button class="btn" id="queue-cancel-btn">Cancel</button>
+    </div>
+  `;
+
+  const listHtml = `<ul class="queue-item-list">${items.map(queueItemRowHtml).join('')}</ul>`;
+
+  queuePanelEl.innerHTML = `${headerHtml}${pausedHtml}${doneHtml}${controlsHtml}${listHtml}`;
+
+  document.getElementById('queue-pause-btn')?.addEventListener('click', () => pauseQueueJob(job.jobId));
+  document.getElementById('queue-resume-btn')?.addEventListener('click', () => resumeQueueJob(job.jobId));
+  document.getElementById('queue-cancel-btn')?.addEventListener('click', () => confirmCancelQueueJob(job.jobId));
+
+  if (isTerminal) {
+    // A finished batch just wrote/changed pages across (possibly) many
+    // files — refresh the same signals a single ingest refreshes.
+    loadDomainList().catch(() => {});
+    refreshSyncPendingBadge();
+  }
+}
+
+async function pauseQueueJob(jobId) {
+  const btn = document.getElementById('queue-pause-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Pausing…'; }
+  try {
+    const res = await fetch(`${QUEUE_API}/${encodeURIComponent(jobId)}/pause`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || `Could not pause (HTTP ${res.status})`);
+    if (data.job) applyQueueJobSnapshot(data.job);
+  } catch (err) {
+    renderQueueStreamError(err.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Pause'; }
+  }
+}
+
+async function resumeQueueJob(jobId) {
+  const btn = document.getElementById('queue-resume-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  try {
+    const res = await fetch(`${QUEUE_API}/${encodeURIComponent(jobId)}/start`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || `Could not resume (HTTP ${res.status})`);
+    if (data.job) applyQueueJobSnapshot(data.job);
+    // Round-2 audit item 3 (regression this track introduced): if the
+    // snapshot above already reported 'running', applyQueueJobSnapshot's
+    // own auto-attach (added for the H2 fix) has ALREADY called
+    // attachQueueStream and — synchronously, before any `await` inside it
+    // — set queueStreamAbort. Attaching again here unconditionally opened
+    // a SECOND stream, whose detachQueueStream() aborted the first one
+    // mid-flight and briefly (self-healing within one localhost RTT, but
+    // still a real gap) fired the busy gate's exit while the batch was
+    // still running. Only attach here if nothing is attached yet — the
+    // case this line exists for is data.job NOT yet reporting 'running'
+    // (e.g. still 'pending' the instant after /start), where the
+    // auto-attach never fired.
+    if (!queueStreamAbort) attachQueueStream(jobId);
+  } catch (err) {
+    renderQueueStreamError(err.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Resume'; }
+  }
+}
+
+// Inline confirm (no window.confirm/alert anywhere in this codebase — see
+// the Shared Brain disconnect/synthesize confirms for the same pattern).
+function confirmCancelQueueJob(jobId) {
+  const controls = queuePanelEl?.querySelector('.queue-panel-controls');
+  if (!controls) return;
+  controls.innerHTML = '';
+  const text = document.createElement('span');
+  text.textContent = 'Cancel this batch? Items already ingested stay in the wiki; anything not started yet is skipped. ';
+  const yes = document.createElement('button');
+  yes.className = 'btn';
+  yes.textContent = 'Yes, cancel';
+  const no = document.createElement('button');
+  no.className = 'btn';
+  no.textContent = 'Never mind';
+  controls.append(text, yes, document.createTextNode(' '), no);
+  no.addEventListener('click', () => refreshQueueJob(jobId));
+  yes.addEventListener('click', async () => {
+    yes.disabled = true; no.disabled = true;
+    try {
+      const res = await fetch(`${QUEUE_API}/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `Could not cancel (HTTP ${res.status})`);
+      if (data.job) applyQueueJobSnapshot(data.job);
+    } catch (err) {
+      renderQueueStreamError(err.message);
+    }
+  });
+}
+
+async function refreshQueueJob(jobId) {
+  try {
+    const res = await fetch(`${QUEUE_API}/${encodeURIComponent(jobId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok && data.job) applyQueueJobSnapshot(data.job);
+  } catch { /* leave the current panel as-is */ }
+}
+
+// Resume-on-return (spec §5): called on app load and on every Ingest-tab
+// entry. If an active (non-terminal) job exists, render it immediately from
+// the GET snapshot, then reattach the live SSE stream only if it's actually
+// running — a paused/pending job is rendered statically with its own
+// Resume/Start button, which reattaches the stream when clicked.
+async function checkActiveQueueJob() {
+  try {
+    const res = await fetch(`${QUEUE_API}/active`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok || !data.job) return;
+    const job = data.job;
+    showEl(queuePanelEl);
+    renderQueuePanel(job);
+    queueJobId = job.jobId;
+    if (job.status === 'running') {
+      attachQueueStream(job.jobId);
+    } else {
+      _queueLastStatus = job.status; // keep the busy-gate bookkeeping honest with no live stream attached
+    }
+  } catch { /* non-critical — the Ingest tab just won't show a resumed batch */ }
 }
 
 // ── CHAT TAB ──────────────────────────────────────────────────────────────────
@@ -1296,8 +2151,55 @@ function _ingestActive() {
   for (const n of _activeIngests.values()) if (n > 0) return true;
   return false;
 }
+// Round-2 audit item 2: is `domain` currently registered as having ANY
+// active write (a running batch, a single ingest already in flight, a
+// Shared Brain pull — anything that has called window.__curatorIngestStart
+// for this domain and not yet matched it with __curatorIngestEnd)? The
+// per-domain Map already tracks exactly this; a batch on "articles" reads
+// as false for "projects".
+//
+// Why this matters: write-registry.js's acquireFileLock is an
+// existsSync-then-writeFileAtomic check with no O_EXCL, so it does NOT
+// exclude two truly concurrent in-process callers (double-granted in an
+// audited repro, 5 rounds out of 5) — and routes/ingest.js never even
+// calls it. The batch feature's own in-flight counter can't see a
+// concurrently-started single-file ingest either. So the ONLY thing
+// stopping "batch running on domain X" + "user starts a single ingest
+// into domain X" from producing duplicate wiki pages is the UI never
+// offering that combination in the first place. This function is that
+// refusal; the underlying lock bug is out of scope for this file.
+function isDomainWriteBusy(domain) {
+  return !!domain && (_activeIngests.get(domain) || 0) > 0;
+}
+// Single source of truth for #ingest-btn's disabled state and title,
+// callable from anywhere the two inputs it depends on can change: a file
+// being selected/cleared (setFile), the domain dropdown changing, or the
+// busy-gate Map changing (_applyIngestBusyState, called at the end of
+// this function's own trigger paths — see ingestStart/ingestEnd below).
+function refreshIngestBtnAvailability() {
+  if (!ingestBtn) return;
+  if (!selectedFile) {
+    ingestBtn.disabled = true;
+    ingestBtn.removeAttribute('title');
+    return;
+  }
+  const domain = document.getElementById('ingest-domain')?.value;
+  if (isDomainWriteBusy(domain)) {
+    ingestBtn.disabled = true;
+    ingestBtn.title = 'A batch (or another write) is already running for this domain — wait for it to finish, or switch to a different domain.';
+  } else {
+    ingestBtn.disabled = false;
+    ingestBtn.removeAttribute('title');
+  }
+}
 function _applyIngestBusyState() {
   const busy = _ingestActive();
+  // Re-evaluate the single-file Ingest button every time this Map changes
+  // (a batch starting/ending, a Shared Brain op starting/ending, this same
+  // single-file path's own start/end) — it depends on the SAME per-domain
+  // state, just scoped to whichever domain is currently selected rather
+  // than "is anything anywhere busy".
+  refreshIngestBtnAvailability();
   // List of selectors → human-friendly title for the tooltip.
   const targets = [
     { sel: '#settings-update-btn',    label: 'Check for Updates' },
@@ -3570,7 +4472,11 @@ class CustomSelect {
     this.dropdown.className = 'cs-dropdown';
     this.wrap.appendChild(this.dropdown);
 
-    this.btn.addEventListener('click', e => { e.stopPropagation(); this.toggle(); });
+    this.btn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (this.native.disabled) return; // mirror a real <select disabled>
+      this.toggle();
+    });
     document.addEventListener('click', () => this.close());
 
     this.refresh();
@@ -3579,6 +4485,17 @@ class CustomSelect {
   refresh() {
     const opts    = Array.from(this.native.options);
     const selOpt  = opts[this.native.selectedIndex] || opts[0];
+
+    // Keep the VISIBLE control in lockstep with the native element's
+    // disabled state. The native <select> is `display: none` (styles.css
+    // `select.cs-native`) — this button is the only thing the user can
+    // actually see or click, so a caller setting `nativeSelect.disabled =
+    // true` (e.g. renderQueuePanel locking the domain picker mid-batch)
+    // was previously a complete no-op: the button stayed fully clickable
+    // and openable. M4 fix.
+    this.btn.disabled = this.native.disabled;
+    this.btn.setAttribute('aria-disabled', this.native.disabled ? 'true' : 'false');
+    if (this.native.disabled) this.close();
 
     this.btn.innerHTML = `
       <span class="cs-value">${selOpt ? escHtml(selOpt.text) : '—'}</span>
@@ -3607,9 +4524,10 @@ class CustomSelect {
     });
   }
 
-  toggle() { this.isOpen ? this.close() : this.open(); }
+  toggle() { if (this.native.disabled) return; this.isOpen ? this.close() : this.open(); }
 
   open() {
+    if (this.native.disabled) return; // defense in depth alongside the click guard + disabled btn
     document.querySelectorAll('.cs-wrap.open').forEach(w => {
       if (w !== this.wrap) w.classList.remove('open');
     });
@@ -3623,8 +4541,15 @@ class CustomSelect {
   }
 
   _observe() {
+    // attributes+attributeFilter:['disabled'] is what makes the M4 fix
+    // actually fire: `nativeSelect.disabled = true/false` is a reflected
+    // IDL property (per the HTML spec it sets/removes the `disabled`
+    // content attribute), so this observer sees every caller's disable/
+    // enable toggle — including ones that predate this fix and set the
+    // property with no knowledge that CustomSelect exists — without any
+    // call site needing to know to notify us.
     new MutationObserver(() => this.refresh())
-      .observe(this.native, { childList: true, subtree: true });
+      .observe(this.native, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
   }
 }
 
@@ -3659,6 +4584,10 @@ document.querySelectorAll('select').forEach(sel => new CustomSelect(sel));
 
 loadDomains();
 loadChatDomains();
+// Batch ingest queue (Track 3): non-critical background check for a batch
+// left running/paused from a previous session, regardless of which tab is
+// active on load (mirrors the version-badge fetch at the top of this file).
+checkActiveQueueJob().catch(() => {});
 
 // ── DOMAINS TAB ───────────────────────────────────────────────────────────────
 

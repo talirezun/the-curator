@@ -400,6 +400,24 @@ export function getDefaultDomainsDir() {
 }
 
 /**
+ * Batch-ingest queue directory (Track 3). Deliberately NOT inside
+ * getDomainsDir() — that directory is Personal Sync's git work-tree
+ * (`sync.js` passes `--work-tree=getDomainsDir()`), so a queue living there
+ * would commit and push staged source files (PDFs etc., possibly mid-batch,
+ * possibly large) to the user's GitHub repo. This project has shipped that
+ * exact class of bug twice already (`.DS_Store` in v3.0.16, `.write-lock` in
+ * v3.0.15) — machine-local operational state landing in the domains tree.
+ *
+ * A user CAN point `domainsPath` at the app root (or anywhere), which would
+ * make getDomainsDir() and getUserDataDir() coincide — belt-and-braces
+ * defenses against that pathological case live in src/brain/sync.js
+ * (DOMAINS_GITIGNORE_RULES) and .gitignore, not here.
+ */
+export function getIngestQueueDir() {
+  return userDataPath('.ingest-queue');
+}
+
+/**
  * Files that must be owner-only (0600), as {rel, abs} pairs.
  *
  * Single source of truth for BOTH the startup chmod sweep in server.js and the

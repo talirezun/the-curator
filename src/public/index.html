@@ -254,7 +254,7 @@
     <!-- INGEST TAB -->
     <section id="tab-ingest" class="tab hidden">
       <h2>Ingest a Source</h2>
-      <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. The Curator will read it and update the wiki automatically.</p>
+      <p class="hint">Upload a <code>.txt</code>, <code>.md</code>, or <code>.pdf</code> file. The Curator will read it and update the wiki automatically. Select 2 or more files to queue a batch — you'll see the cost before anything uploads.</p>
       <div class="form-group">
         <label for="ingest-domain">Domain</label>
         <select id="ingest-domain"></select>
@@ -262,8 +262,8 @@
       <div class="form-group">
         <label for="ingest-file">File</label>
         <div class="drop-zone" id="drop-zone">
-          <span id="drop-label">Drop file here or <label for="ingest-file" class="link">browse</label></span>
-          <input type="file" id="ingest-file" accept=".txt,.md,.pdf" hidden />
+          <span id="drop-label">Drop file(s) here or <label for="ingest-file" class="link">browse</label></span>
+          <input type="file" id="ingest-file" accept=".txt,.md,.pdf" hidden multiple />
         </div>
         <span id="file-name" class="file-name"></span>
       </div>
@@ -291,6 +291,15 @@
       </div>
       <div id="ingest-status" class="status hidden"></div>
       <div id="ingest-result" class="result hidden"></div>
+
+      <!-- Batch ingest queue (2+ files). A single file always uses the
+           #ingest-progress / #ingest-status / #ingest-result flow above,
+           completely unchanged — these three containers are built entirely
+           from JS (see the "BATCH INGEST QUEUE" section of app.js) and stay
+           empty/hidden for a single-file ingest. -->
+      <div id="queue-status" class="status hidden"></div>
+      <div id="queue-confirm" class="queue-confirm hidden"></div>
+      <div id="queue-panel" class="queue-panel hidden"></div>
     </section>
 
     <!-- CHAT TAB -->

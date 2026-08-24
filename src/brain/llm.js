@@ -329,21 +329,33 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
         // AI provider, and what the user should do next (v3.0.1-beta.4).
         if (is429(err)) {
           const delaySec = Math.ceil(parseRetryDelay(err) / 1000);
-          throw new Error(
+          // v3.2.x (batch-ingest queue): tag the error so a caller that only
+          // sees the final thrown Error (not the raw provider error) can
+          // still tell "retries exhausted, upstream limit" apart from any
+          // other failure — e.g. the queue worker pauses the whole batch on
+          // a rate limit instead of failing just the one item. Message text
+          // is UNCHANGED (existing tests assert on it); this only adds
+          // properties.
+          const e = new Error(
             `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
             `not an issue with The Curator. Free tiers cap at ~15 requests/min and ~20–50 requests/day; ` +
             `paid plans have much higher limits but can still be reached during bulk operations. ` +
             `Please wait ${delaySec} seconds and try again. If you are on the free tier, consider upgrading at https://ai.google.dev/pricing.`
           );
+          e.curatorTransient = 'rate_limit';
+          e.curatorRetryAfterMs = parseRetryDelay(err);
+          throw e;
         }
         if (is503(err)) {
-          throw new Error(
+          const e = new Error(
             `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
             `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
             `problem with The Curator or your API key. The Curator already retried 4 times with backoff over ` +
             `~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, check ` +
             `https://status.cloud.google.com or temporarily switch to a different provider in Settings.`
           );
+          e.curatorTransient = 'service_unavailable';
+          throw e;
         }
         throw err;
       }

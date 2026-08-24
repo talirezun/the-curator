@@ -176,6 +176,15 @@ const DOMAINS_GITIGNORE_RULES = [
   // Every Finder touch on a synced folder produces a meaningless pending
   // change and inflates the navbar sync badge for no reason.
   '.DS_Store',
+  // Batch-ingest queue (Track 3, src/brain/ingest-queue.js). Purely defensive:
+  // getIngestQueueDir() (src/brain/paths.js) resolves OUTSIDE getDomainsDir()
+  // by construction, so this rule should never need to match anything on a
+  // normal install. It exists only for the pathological case of a user
+  // pointing domainsPath at the same directory as their user-data dir (e.g.
+  // the app root in repo mode) — in which case the queue's staged source
+  // files (which can be large, and are mid-batch operational state, not wiki
+  // content) must not get swept into a sync commit.
+  '.ingest-queue/',
 ];
 
 async function ensureDomainsGitignore() {

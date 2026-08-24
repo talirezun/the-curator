@@ -223,6 +223,271 @@ curl -X POST http://localhost:3333/api/ingest \
 
 ---
 
+## Batch ingest queue (`/api/ingest-queue`, Track 3)
+
+A server-owned, disk-persisted, strictly sequential job for ingesting many files into one domain as a single resumable operation. See [docs/ingestion-pipeline.md](ingestion-pipeline.md) for the full design rationale (why sequential, why duplicates are decided at creation, why a crash never auto-resumes spend). All endpoints are mounted under `/api/ingest-queue`.
+
+### The job object
+
+Every endpoint below returns (or streams) a **job**. `toWire()` is the single chokepoint every job passes through before it can reach HTTP — it is an explicit allow-list of named fields, not a generic spread, so a future internal field never leaks by accident. Two things every string field goes through: **path-scrubbing** and **length-capping**. `stagedPath` (an absolute server-side path to each item's staged upload) is dropped entirely — there is no way to obtain it from this API. Any *other* string that could carry an absolute filesystem path — `item.error`, `job.pausedMessage`, `job.failReason` — has that path reduced to its basename (e.g. a raw `ENOENT: ... open '/Users/alice/Google Drive/domains/ai-tech/wiki/log.md'` becomes `ENOENT: ... open '.../log.md'`) before it ever reaches the response, so a bug report a user pastes in doesn't hand out their home directory or cloud-storage folder layout. Every string is also length-capped (long ones truncate with `… (truncated)`).
+
+```json
+{
+  "jobId": "b6b5a1b0-2f3e-4b1a-9c3d-1a2b3c4d5e6f",
+  "version": 1,
+  "domain": "ai-tech",
+  "createdAt": "2026-08-23T10:00:00.000Z",
+  "updatedAt": "2026-08-23T10:04:12.000Z",
+  "status": "running",
+  "pausedReason": null,
+  "pausedMessage": null,
+  "failReason": null,
+  "overwrite": false,
+  "budgetUsd": 5,
+  "spentUsd": 1.234567,
+  "spendIsEstimated": false,
+  "order": "largest-first",
+  "estimate": { "usdLow": 2.1, "usdHigh": 4.3, "basis": "..." },
+  "currentIndex": 2,
+  "consecutiveFailures": 0,
+  "itemCount": 4,
+  "itemsTruncated": false,
+  "health": null,
+  "items": [
+    {
+      "idx": 0,
+      "name": "big-report.pdf",
+      "bytes": 812345,
+      "status": "done",
+      "startedAt": "2026-08-23T10:00:01.000Z",
+      "finishedAt": "2026-08-23T10:01:40.000Z",
+      "attempts": 1,
+      "error": null,
+      "result": { "title": "...", "pagesWritten": 6, "warningCount": 0, "changeCounts": { "created": 4, "updated": 2, "unchanged": 0 } },
+      "tokenUsage": { "provider": "gemini", "model": "gemini-2.5-flash-lite", "inputTokens": 180000, "outputTokens": 9000 }
+    }
+  ]
+}
+```
+
+`itemCount` is the true total number of items in the batch; `items` itself is capped (500 entries — never reached by a normal batch, which tops out at 100 files) and `itemsTruncated` is `true` if the cap trimmed anything. `spentUsd` is tracked to 6 decimal places (not 4), so a long run of very small per-file charges can't silently round down to zero.
+
+**`job.status`** — one of `pending` (created, not yet started) · `running` · `paused` · `done` · `cancelled` · `failed` (a terminal state used only when the domain itself becomes unusable on start/resume — deleted, renamed, or turned into a read-only Shared Brain mirror; see `failReason`). `done` / `cancelled` / `failed` are terminal — none of the control endpoints act on a job in those states.
+
+**`job.pausedReason`** (only meaningful when `status === 'paused'`) — one of:
+
+| Value | Meaning |
+|---|---|
+| `rate_limit` | The AI provider rate-limited a request; already retried with backoff. |
+| `service_unavailable` | The AI provider was temporarily unavailable; already retried with backoff. |
+| `budget` | `job.spentUsd` reached `job.budgetUsd`. |
+| `consecutive_failures` | 3 items in a row failed (any reason). |
+| `interrupted` | The app restarted mid-batch; recovered on boot. |
+| `locked` | Another process (update/sync/MCP) holds the domain's write lock. |
+| `user` | A client called `/pause`, or cancelled a not-yet-started job. |
+
+**`item.status`** — one of `pending` · `running` · `done` · `failed` · `skipped` (decided once, at creation — see `POST /` below).
+
+**Every item always ends up in exactly one bucket.** The job is guaranteed to never report `done` while any item is still non-terminal (`pending`/`running`) — if that would ever happen (it shouldn't, but the guarantee is enforced at the one place every exit from `running` passes through, not assumed), the job settles as `paused` instead, with a message naming exactly which file(s) are unaccounted for, rather than silently reporting success over a dropped file.
+
+---
+
+### POST /api/ingest-queue/estimate
+
+Free. Reads no file bytes — `files` is metadata only (`{name, size}`). Runs the real prompt-assembly functions against the domain's actual current entity/concept inventory and index, so the estimate reflects the domain's real current size, not a flat per-file rate. It also runs the same files through the same estimator against a *simulated empty* domain, purely in memory (no extra I/O), and uses the two numbers to compute a `sizeMultiplier` — how much more this specific batch costs against this domain than it would against a fresh one. That ratio is folded into `estimate.basis` as prose; it is **not** a fixed number. It depends heavily on document size relative to the fixed per-call overhead (the existing page inventory, re-sent on every call) — small documents are affected far more than large ones. Do not assume any single multiplier (e.g. "2x") generalizes across batches.
+
+**Request body**
+
+```json
+{ "domain": "ai-tech", "files": [{ "name": "report.pdf", "size": 812345 }] }
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "provider": "gemini",
+  "model": "gemini-2.5-flash-lite",
+  "files": {
+    "count": 1,
+    "totalBytes": 812345,
+    "accepted": ["report.pdf"],
+    "rejected": [{ "name": "notes.docx", "reason": "Unsupported file type: .docx — The Curator can ingest .txt, .md and .pdf files." }]
+  },
+  "estimate": {
+    "inputTokensLow": 180000, "inputTokensHigh": 180000,
+    "outputTokensLow": 9000, "outputTokensHigh": 9000,
+    "usdLow": 1.9, "usdHigh": 2.4,
+    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" against the \"ai-tech\" domain, currently 40 entities, 90 concepts, 12 KB index. Cost depends heavily on how large this wiki ALREADY is, not just on the files being ingested: every AI call re-sends the existing page list so the model can link to (not duplicate) what is already there. For THIS batch, that existing content works out to about 3.1x the input tokens the same files would cost against an empty domain. ... Both ends are estimates rather than limits — actual spend can land above the range, and on a measured real batch it did."
+  },
+  "domainContext": { "pageCount": 140, "indexBytes": 12288 },
+  "warnings": []
+}
+```
+
+`usdLow` assumes prompt caching applies (multi-call documents only); `usdHigh` assumes it does not. Both are `null` (with a `warnings[]` entry) if no AI provider is configured, or if the configured model has no published price on file — `files`/token counts are still returned in that case. **`usdHigh` is an estimate, not a ceiling** — it is the no-caching end of a range, and on a real measured live batch (see [docs/ingestion-pipeline.md §10g.8](ingestion-pipeline.md#10g8-how-the-cost-estimate-is-derived)) actual spend came in at 103.1% of `usdHigh`. Do not treat it as a spending guarantee.
+
+A file whose size is missing or not a valid non-negative number is placed in `rejected` (not silently priced at $0) with a reason naming the problem.
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `domain`; unknown domain; `files` not an array; more than 100 files in one estimate request (split it and estimate each part). |
+
+---
+
+### POST /api/ingest-queue
+
+Creates a batch job from a `multipart/form-data` upload. Files are staged into the queue's own durable storage (outside the domains folder — see ingestion-pipeline.md) before this call returns.
+
+**Request fields**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `domain` | string | Yes | Domain slug. |
+| `files` | file[] | Yes | 1–100 files, `.txt`/`.md`/`.pdf`, 50MB each, 2GB total per batch. |
+| `overwrite` | `'true'`/`'false'` | No | Re-ingest files already present in `raw/` instead of skipping them. Default `false`. |
+| `budgetUsd` | number | No | Optional spend cap for the whole batch. Default no cap. |
+
+Files are reordered **largest-first** internally regardless of upload order; `job.items[]`'s array order *is* the processing order.
+
+At creation, any file whose name already exists in the domain's `raw/` folder is immediately marked `skipped` (with an explanatory `item.error`) and never staged or uploaded to the LLM — this decision is made exactly once, at creation, against the pre-batch `raw/` state; it is never re-checked at run time (re-checking at run time would misclassify a crash-interrupted item as a duplicate — see ingestion-pipeline.md).
+
+**Two files in the same batch sharing a name** (a case the `raw/`-based check above cannot catch, since neither exists in `raw/` yet) is handled separately: the first is staged normally; the second is marked `skipped` with an explanatory `item.error`, regardless of `overwrite`. Both would deterministically land on the same summary slug and silently merge into one page, so only the first is ingested.
+
+A file that fails to stage for a reason specific to that one file (an OS-rejected filename, a read error) is marked `failed` and does **not** abort the rest of the batch — every other file in the request is still created, staged, and queued normally.
+
+Creating a job also prunes old finished batches: only the most recent 20 terminal (`done`/`cancelled`/`failed`) job directories — and their staged files — are kept on disk; older ones are deleted automatically. `GET /` (below) is separately capped at showing 20.
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "jobId": "b6b5a1b0-...", "job": { "...": "the job object above, status: pending" } }
+```
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `domain`; no files; unknown domain. |
+| `400` | Read-only Shared Brain mirror domain — same refusal text as `POST /api/ingest`. |
+| `400` | A `budgetUsd` was supplied but the active AI provider/model has no published price on file, so the cap could not be enforced (it would run the whole batch while reporting $0.00 spent). Retry the same request without `budgetUsd`, or switch to a priced model in Settings first. |
+| `409` | Another batch is already active (any non-terminal status) in this process. Body includes `activeJobId`. |
+| `409` | Another `POST /` is already being processed (create requests are serialised). Retry. |
+| `413` | One file over 50MB; more than 100 files; or the batch's total size exceeds 2GB. |
+
+A batch job created but never started (`status: pending`) does not spend anything and does not count toward the "only one batch at a time" limit being exceeded by itself — but it IS the active job, so a second `POST /` while it exists still 409s.
+
+---
+
+### GET /api/ingest-queue
+
+Lists recent jobs (most recently updated first, capped at 20). Finished (terminal) job directories beyond the most recent 20 are actually deleted from disk automatically (see `POST /` above), so this list rarely needs to truncate in practice.
+
+**Response** `200 OK`
+
+```json
+{ "ok": true, "jobs": [ "...job objects..." ] }
+```
+
+---
+
+### GET /api/ingest-queue/active
+
+Returns the one job that is not in a terminal state (`pending`/`running`/`paused`), if any — `null` otherwise. Cheap; safe to poll on app load or Ingest-tab entry to resume showing an in-progress batch.
+
+**Response** `200 OK`
+
+```json
+{ "ok": true, "job": null }
+```
+
+---
+
+### GET /api/ingest-queue/:jobId
+
+**Response** `200 OK` — `{ "ok": true, "job": { "..." } }`
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `jobId` is not a valid UUID. |
+| `404` | Job not found. |
+
+---
+
+### GET /api/ingest-queue/:jobId/stream
+
+Server-Sent Events. Supports multiple concurrent listeners on the same job. On connect, sends one full job snapshot immediately, then streams events as they happen. The client is expected to always render from the latest full snapshot rather than deriving state incrementally.
+
+Each event is a line `data: <json>\n\n` where the JSON has a `type`:
+
+| `type` | Shape | Meaning |
+|---|---|---|
+| `job` | `{ type: 'job', job }` | A full job snapshot — sent after every state transition. |
+| `item-progress` | `{ type: 'item-progress', idx, pct, message }` | Fine-grained progress for the currently-running item only (mirrors the single-file ingest's own progress event). Not a full job snapshot. |
+| `done` | `{ type: 'done', job }` | The job reached a terminal state (`done`/`cancelled`/`failed`) or settled into `paused`. The stream ends after this event. |
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `jobId` is not a valid UUID. |
+| `404` | Job not found. |
+
+---
+
+### POST /api/ingest-queue/:jobId/start
+
+Starts a `pending` job or resumes a `paused` one. Idempotent — calling it again while the same job is already running just returns the current state, including when several `/start` requests for the **same** job land at once (a double-clicked Resume, two open tabs, a reload mid-request): exactly one worker loop is ever running for a given job, guaranteed by a synchronous claim taken before anything else happens, not by a check-then-act sequence that a second near-simultaneous request could slip through. Re-validates the domain (unknown/deleted/renamed/now-read-only) on every call, not only at creation; a domain that has become unusable while the job sat paused moves the job to `failed` with `failReason` set, rather than starting.
+
+**Response** `200 OK` — `{ "ok": true, "job": { "...", "status": "running" } }`
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid `jobId`. |
+| `404` | Job not found. |
+| `409` | A *different* job is currently running in this process. |
+
+---
+
+### POST /api/ingest-queue/:jobId/pause
+
+Requests a pause. If an item is currently mid-ingest, the pause takes effect once that item finishes (never mid-item); a `pending`/never-started job pauses immediately. No-op (returns the job as-is) if already in a terminal state.
+
+**Response** `200 OK` — `{ "ok": true, "job": { "..." } }`
+
+---
+
+### POST /api/ingest-queue/:jobId/cancel
+
+Requests a cancellation. Like pause, takes effect after the current item finishes. Staged files for every item still `pending` at cancel time are deleted; items already `done` stay in the wiki — cancelling never undoes completed work.
+
+**Response** `200 OK` — `{ "ok": true, "job": { "...", "status": "cancelled" } }`
+
+---
+
+### DELETE /api/ingest-queue/:jobId
+
+Deletes a job's on-disk record and any remaining staged files entirely. Works by validated job-directory path rather than by first parsing the manifest, so a job whose `manifest.json` has somehow become corrupt (and is therefore invisible to `GET /` and `GET /active`, which both skip unreadable manifests) can still be deleted and its disk space reclaimed — that is precisely the case where deleting matters most.
+
+**Response** `200 OK` — `{ "ok": true }`
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Invalid `jobId`. |
+| `404` | Job not found. |
+| `409` | The job is currently `running` — pause or cancel it first. |
+
+---
+
 ## POST /api/query
 
 Ask a question against a domain's wiki.
@@ -987,3 +1252,5 @@ The server also serves the web UI from `src/public/` at the root path.
 - The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF defense); requests with no `Origin` (curl, scripts) and all GETs pass through. Additionally (v3.0.2+), a Host-header guard rejects any request whose `Host` is not a loopback form (`localhost:PORT` / `127.0.0.1:PORT` / `[::1]:PORT`) with 403 — this closes DNS-rebinding read access, where a rebound hostname made same-origin GETs readable by an attacker page. There is no per-request authentication — it remains a single-user local app.
 - The ingest endpoint blocks until the configured LLM provider (Gemini by default; Anthropic Claude if the user configured it in Settings) returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to the model).
 - `POST /api/query` (above) is a simple, single-shot Q&A endpoint — separate from the Chat tab's `POST /api/chat/:domain` — and it still sends up to 90,000 characters of concatenated wiki content to the LLM in one call, in arbitrary file order (`src/brain/query.js`). On a wiki bigger than ~90 KB of raw page content, later pages are silently left out of that request. **The Curator's own web UI never calls this endpoint** — there is no reference to it anywhere in `src/public/`, so the only way to reach it is a direct HTTP call to the loopback server (curl, a script, another tool). The Chat tab does **not** have this limitation: since v3.0.1-beta.11 it uses query-driven page selection (score pages by relevance to the question, load up to ~60 KB of full content plus a ~12 KB slug catalogue — see [docs/ingestion-pipeline.md §10b](ingestion-pipeline.md#10b-the-chat-read-side-v301-beta11-refined-in-v301-beta13)), so it scales to much larger wikis. If you're calling `/api/query` directly against a large wiki (150+ pages), prefer `/api/chat/:domain` instead, or expect its answers to reflect only whatever page content the alphabetical/readdir order happened to include.
+- **Known limitation — `POST /api/ingest-queue` and a filename containing a raw double-quote character.** The multipart parser (upstream of the batch-ingest queue's own code, in `busboy`) mis-parses a `Content-Disposition` header whose filename contains an unescaped `"`: the request still returns `200`/`ok: true`, but that one file is silently absent from `items` — no `rejected` entry, no warning of any kind. A NUL byte in a filename fails the parse outright instead, and is reported as a plain `400`. Neither is reachable from a browser — the WHATWG form-serialisation spec escapes `"` to `%22` before the request is ever built, and NUL is not a legal filename byte on any mainstream filesystem — but a hand-built multipart request from a script or another tool can trigger the quote case silently. If you are integrating against this endpoint programmatically, avoid unescaped `"` in filenames sent this way.
+- **Known limitation — a domain missing `wiki/log.md` fails a completed ingest at the very last step.** This affects both `POST /api/ingest` and `POST /api/ingest-queue` identically (both funnel through the same `appendLog` in `src/brain/files.js`, which has no existence check on `log.md`, unlike the equivalent `readIndex` two lines below it). If it's missing, the ingest still runs to completion — pages are written to disk, real AI spend has happened — and only the final logging step throws `ENOENT`, which surfaces as a `failed` item with a cryptic error. Not reachable through any documented path (`createDomain()` always writes `log.md`, and [docs/domains.md](domains.md) tells manual-setup users to create it too), so it takes a hand-built domain folder to hit. Recovery: the pages are correct and unaffected — create an empty `wiki/log.md` and re-ingest the same source (safe; see the idempotency notes above).

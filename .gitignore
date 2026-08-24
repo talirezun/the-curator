@@ -43,3 +43,14 @@ curator-memory-layer-research-proposal.md
 domains/*
 !domains/.gitkeep
 .playwright-mcp/
+
+# ── Private maintainer notes (never published) ────────────────────────────────
+# Personal enrolment / account guidance for the maintainer. Contains process
+# notes tied to one individual's legal + payment details, not product docs.
+docs/apple-developer-enrolment.md
+
+# ── Batch-ingest queue (Track 3 — local, disk-persisted job state) ────────────
+# Lives outside domains/ by construction (src/brain/paths.js's
+# getIngestQueueDir()); this line is only a fallback for a repo-mode install
+# where the user-data dir happens to be this repo root.
+.ingest-queue/

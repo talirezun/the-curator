@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (50 suites total — 33 OFFLINE
+The Curator has an extensive battle-test suite (54 suites total — 37 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report:
 
@@ -112,6 +112,66 @@ every top-level-equivalent `getElementById`/`querySelector` dereference in
 `app.js` is `?.`-guarded or provably narrowed; see
 [§ Writing a good test](#writing-a-good-test) below for the design lesson it
 exists to demonstrate.
+
+**Two OFFLINE suites cover the batch-ingest queue** (Track 3 —
+`src/brain/ingest-queue.js` + `src/routes/ingest-queue.js`, the durable
+multi-file ingest job described in
+[docs/ingestion-pipeline.md §10g](docs/ingestion-pipeline.md#10g-batch-ingest-queue-track-3)).
+Both grew substantially across two adversarial audit rounds that each found
+and closed a real bug before either shipped: a CRITICAL where concurrent
+`/start` requests (a double-clicked Resume, two open tabs) could spawn more
+than one worker loop for the same job — reproduced at 3 items ingesting
+simultaneously, one document written to `log.md` three times — fixed by
+taking the sequentiality claim in one synchronous turn instead of a
+check-then-act sequence with `await`s in between (see §10g.1); and an H1
+where a job could report `done` while an item was still silently `running`,
+in none of the done/failed/skipped buckets (see §10g.1b).
+
+`test-ingest-queue.js` (**317 offline assertions**) drives the real worker
+end-to-end against a fake `ingestFile` via the module's own
+`opts.ingestFile` test seam (the same pattern `compile.js` and
+`ingestMultiPhase` established with `opts.generateText` / a trailing `llm`
+param). Beyond the original coverage — sequential execution, largest-first
+ordering, crash resume (including the specific regression where a per-item
+duplicate check at run time would misclassify a crash-interrupted item as
+already-ingested), transient-vs-permanent error classification (pinning that
+ingest.js's genuine, unrelated `"…yielded only 429 characters of text"`
+error is never misread as an HTTP 429 rate limit), the consecutive-failure
+circuit breaker, the budget cap under both real and estimate-fallback
+charging, the full pause/cancel/delete state machine, atomic-manifest
+resilience to a corrupt sibling job, `toWire()`'s allow-list rewrite (it no
+longer merely deletes `stagedPath` from a spread — it names every field
+explicitly, scrubs absolute paths out of every string, and bounds the items
+array), the `.gitignore`/`DOMAINS_GITIGNORE_RULES`/directory-nesting
+invariants that keep the queue directory out of Personal Sync's work-tree,
+and path-traversal defenses on job ids and staged filenames — it now issues
+four `startOrResumeJob` calls in the SAME synchronous turn against one job
+and asserts peak concurrent `ingestFile` calls is exactly 1 (via both the
+fake's own tracker and the module's internal `getMaxIngestInFlight()`), and
+runs a seeded pseudo-random sequence of start/pause/cancel/simulated-crash
+across six batches whose items randomly succeed, fail, or rate-limit,
+asserting that every file always lands in exactly one terminal bucket no
+matter what sequence of control actions hit it.
+
+`test-ingest-queue-frontend.js` (**225 offline assertions**) covers the
+`src/public/app.js` side — extracted via the same `new Function` pattern as
+`test-chat-compile-card.js`. Beyond the original coverage — the single-file
+flow is provably byte-unchanged when only one file is selected,
+cost/estimate formatting never fabricates a number, the shared ingest
+busy-gate refcount balances across every status-transition sequence, there
+is no `alert()`/`confirm()` anywhere in the new UI, every rendered filename
+is HTML-escaped — it now covers the H1 done-summary accounting (every item
+lands in a labelled bucket, so an unrecognised status can never silently
+vanish from the totals), `job.failReason` rendering when a batch fails, the
+H2 busy-gate domain-key pairing fix (the domain key recorded when the busy
+gate was *entered* is what releases it, never a value re-read from the
+dropdown later — closing a real leak where a resumed batch across a page
+reload could hold the gate open forever), the visible custom `<select>`
+control actually honouring its underlying native element's `disabled` state,
+and — the other half of the concurrency story — that the single-file
+**Ingest** button is disabled for a domain a batch is actively running
+against, and NOT for any other domain, with a RED-confirmed check proving
+the guard being bypassed really does leave the button clickable.
 
 ---
 
