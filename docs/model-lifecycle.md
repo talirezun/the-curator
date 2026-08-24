@@ -39,11 +39,9 @@ const FALLBACK_CHAINS = {
     'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
   anthropic: [
-    'claude-3-5-haiku-latest',      // previous Haiku gen — actually CHEAPER ($0.80/$4), SDK-typed
-    'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
-    'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
-    'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
-    'claude-3-5-sonnet-latest',     // deep fallback — broadly-available Sonnet
+    'claude-sonnet-5',              // $2/$10 — cheapest live non-Haiku AND the newest
+    'claude-sonnet-4-6',            // $3/$15 — ties 4.5 on price, newer, 128k output ceiling
+    'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output ceiling
   ],
 };
 ```
@@ -88,7 +86,7 @@ Why it matters: without it, a retirement silently multiplies the user's per-inge
 
 The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering only the ~10 ids we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung), with published per-1M-token prices. The values are used **only for ordering** and are never shown to the user, so a stale absolute price is harmless as long as the order is right. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
 
-> **Why not infer the tier from the model family?** That was the first implementation and it was structurally wrong. The family word (`flash-lite`, `haiku`) is stable *across generations* while the price is not: it scored `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite` as "same tier" when that successor is **2.5× input / 3.75× output** — staying silent on the rung the chain reaches **first**, which defeated the entire feature. Only an exact-id table can see a within-family price change. The same table also correctly stays quiet on `claude-haiku-4-5` → `claude-3-5-haiku-latest`, which is genuinely *cheaper* ($0.80/$4 vs $1/$5).
+> **Why not infer the tier from the model family?** That was the first implementation and it was structurally wrong. The family word (`flash-lite`, `haiku`) is stable *across generations* while the price is not: it scored `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite` as "same tier" when that successor is **2.5× input / 3.75× output** — staying silent on the rung the chain reaches **first**, which defeated the entire feature. Only an exact-id table can see a within-family price change. The same table also correctly sees a within-family price *drop*: `claude-sonnet-5` is **cheaper** ($2/$10) than both `claude-sonnet-4-6` and `claude-sonnet-4-5` ($3/$15), so the newest Sonnet is also the cheapest — which no family-name heuristic could ever tell you.
 
 **Never imply parity when we don't know.** An id missing from the table yields `unknown`, not `similar`. Any fallback means the user is off the model they configured, so the honest line is "pricing may differ" — silence would be a claim we can't support.
 
@@ -101,8 +99,9 @@ Prices verified 2026-08-22 against [ai.google.dev/gemini-api/docs/pricing](https
 | `gemini-3.5-flash-lite` | $0.30 | $2.50 | 3× / 6.25× |
 | `gemini-2.5-flash` | $0.30 | $2.50 | 3× / 6.25× |
 | `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
-| `claude-3-5-haiku-*` | $0.80 | $4.00 | cheaper |
-| `claude-sonnet-4-5`, `claude-3-*-sonnet-latest` | $3.00 | $15.00 | 3× / 3× |
+| `claude-sonnet-5` | $2.00 | $10.00 | 2× / 2× |
+| `claude-sonnet-4-6` | $3.00 | $15.00 | 3× / 3× |
+| `claude-sonnet-4-5` | $3.00 | $15.00 | 3× / 3× |
 
 What to do:
 1. Click **Check for Updates** in Settings → **App**.
@@ -162,7 +161,7 @@ The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, c
 
 1. **No native JSON response mode.** Gemini supports `responseMimeType: 'application/json'`, which forces structurally-valid JSON output. Anthropic does not expose an equivalent, so JSON-producing code paths (primarily `src/brain/ingest.js`) rely on the system prompt instruction *"Return ONLY valid JSON"* combined with the `jsonrepair`-based fallback parser. Empirically this works, but expect slightly more retries on large ingests than Gemini produces.
 
-2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` / `claude-3-5-haiku-latest` in its TypeScript types; newer model IDs like `claude-haiku-4-5` and `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain walks same-tier Haiku variants first, then escalates to Sonnet (higher cost but always available).
+2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` / `claude-3-5-haiku-latest` in its TypeScript types; newer model IDs like `claude-haiku-4-5` and `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain escalates straight to Sonnet — as of the 2026-08-24 live probe there is **no live Haiku other than the default**, so there is no same-tier rung to walk. The first rung (`claude-sonnet-5`) is both the newest and the cheapest of the three.
 
 3. **Output-token cap + streaming transport (v3.0.1-beta.14).** Ingest single-pass and conversation compile request a `65536`-token output budget — correct for Gemini 2.5 Flash, but two limits make it invalid on Anthropic, so the Anthropic branch of `callProvider` (in `src/brain/llm.js`) handles both:
    - **Hard output cap.** Claude Haiku 4.5 caps output at **64,000** tokens; the API rejects `max_tokens: 65536` outright as `max_tokens: 65536 > 64000`. The Anthropic branch clamps the budget to `ANTHROPIC_MAX_OUTPUT_TOKENS` (64000) via `Math.min`. Gemini keeps the full 65,536 — it is not clamped.
@@ -197,3 +196,45 @@ Then trigger any LLM call (chat, ingest a tiny file, etc.). The server log shoul
 ```
 
 And the Settings provider area will show the amber banner. Remove the env override and restart — banner clears on the next successful call.
+
+---
+
+## Verify a chain against the live API, not against memory
+
+**This failure has now happened twice.** In v3.0.15 a live probe found **two of three** Gemini rungs already returned `404` — they had been assumed alive and never tested. On 2026-08-24 a probe of the Anthropic chain found **four of five rungs dead**: `claude-3-5-haiku-latest`, `claude-3-5-haiku-20241022`, `claude-3-7-sonnet-latest` and `claude-3-5-sonnet-latest` are all gone from the direct API.
+
+Both times the chain still "worked" — `isModelNotFound()` skips a 404 rung — so nothing was visibly broken. What was broken is the chain's actual promise: *reach the cheapest still-working model*. With four rungs dead it silently landed on Sonnet 4.5, **3× the price of Haiku**, and no error was ever surfaced.
+
+A chain is a safety net that is only exercised on the day a provider retires your default. That is the worst possible day to discover it rotted. **Probe every rung with the app's real call shape** — JSON mode for Gemini, `messages.stream(...).finalMessage()` for Anthropic — because a name appearing in a models listing is not evidence it works here.
+
+## When a price decides chain ORDER, verify it against the live provider page
+
+Chain order is cheapest-first, so a wrong price silently reorders the chain.
+
+While adding `claude-sonnet-5`, a cached pricing table stated its $2/$10 rate was **introductory and expiring within days**. The live provider page showed the rise had been cancelled and $2/$10 made permanent. Had the cached figure been trusted, the chain's cost ordering would have inverted about a week after shipping — with nothing failing and no error to notice.
+
+**Rule: a price that determines ordering is verified against the live provider page, never a cached table.**
+
+## Output caps are per-model, and not monotonic with recency
+
+`ANTHROPIC_MAX_OUTPUT_TOKENS` (64,000) is no longer a flat clamp for every Anthropic call. It is now the **conservative default for an unrecognised model id**; real caps come from `anthropicMaxOutputTokens(model)`:
+
+| Model | Max output tokens |
+|---|---|
+| `claude-haiku-4-5` | 64,000 |
+| `claude-sonnet-4-5` | 64,000 |
+| `claude-sonnet-4-6` | **128,000** |
+| `claude-sonnet-5` | **128,000** |
+| *anything unrecognised* | 64,000 |
+
+Note the caps are **not monotonic with recency** — Sonnet 4.5 is 64k while the newer 4.6 is 128k — so a cap can never be inferred from a version number.
+
+An unknown id resolves to the **conservative** value on purpose: guessing high produces a hard API rejection, while guessing low merely truncates, and chat degrades gracefully on truncation (v3.0.7).
+
+**Release-checklist addition:** when adding a rung, record its **output cap** as well as its price. A test now fails on a shipped id with no cap entry, mirroring the existing price invariant.
+
+## Gemini reasoning tokens draw from the same output budget
+
+`gemini-2.5-flash` — currently the last Gemini rung — spends hidden reasoning tokens from the **same** budget as visible output. A probed request with a 30-token budget returned `finishReason: MAX_TOKENS` after **zero visible tokens**, with 26 consumed by `thoughtsTokenCount`. The flash-lite models showed 0–2.
+
+Nothing in the code compensates for this, deliberately. It is recorded so that a truncated answer on that rung is recognised for what it is rather than investigated as a bug.

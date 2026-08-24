@@ -136,6 +136,59 @@ export function classifyNpmError(rawMessage, beforeSha = '', afterSha = '') {
 
 const router = Router();
 
+/**
+ * Refuse a config mutation while any wiki write is in flight.
+ *
+ * ── Why these routes need it ─────────────────────────────────────────────
+ *
+ * Two config values are read FRESH on every use, by deliberate design, so a
+ * mutation lands instantly on an operation that is already half-finished:
+ *
+ *   • `getDomainsDir()` re-reads .curator-config.json on EVERY call (the
+ *     v3.1.0 per-call-resolution invariant, enforced by a source guard), and
+ *     `wikiPath()`/`rawPath()` in files.js call it once per page write. Change
+ *     the folder mid-ingest and the REMAINING pages of that document are
+ *     written under the new root — one source's pages split across two
+ *     locations, with an index and log that each describe only half of it.
+ *     Nothing is deleted, but recovery is manual and the cause is invisible.
+ *
+ *   • `getProviderInfo()` runs per LLM call inside `callProvider`, so changing
+ *     or clearing the active key mid-run either fails the ingest partway
+ *     through or silently finishes it on a DIFFERENT model. Note this includes
+ *     plain saves: v3.0.2's last-saved-wins means saving a key also switches
+ *     the active provider.
+ *
+ * A multi-phase ingest takes minutes, and the shipping frontend's busy gate
+ * disables only Update / the four sync buttons / delete-domain — the folder
+ * picker and the key controls are NOT in that list, so a user wandering into
+ * Settings mid-ingest reaches all of this. The 409 is the canonical safety
+ * net, exactly as it is for `POST /update` below.
+ *
+ * Deliberately NOT guarded: `POST /default-domain`. It only selects which
+ * domain MCP write tools assume when the user doesn't name one; an in-flight
+ * ingest already has an explicit domain, so changing it cannot affect a write
+ * that is already running.
+ *
+ * Predicate is process-wide (`hasActiveWrites`) rather than per-domain, and
+ * that is the correct scope, not an over-broad one: none of these routes take
+ * a domain, and both mutations are themselves process-global — a new domains
+ * root moves EVERY domain, and a provider switch changes EVERY subsequent LLM
+ * call. `isDomainActive` would be a category error here.
+ *
+ * Same middleware shape as sync.js's `guardConcurrent`, and the response is
+ * built by the shared `conflictResponse()` so the status, body shape and
+ * message style are identical to every other refusal in the app.
+ */
+function guardConcurrent(action) {
+  return (req, res, next) => {
+    if (hasActiveWrites()) {
+      const { status, body } = conflictResponse(action);
+      return res.status(status).json(body);
+    }
+    next();
+  };
+}
+
 /** GET /api/config — returns current app configuration */
 router.get('/', (_req, res) => {
   res.json({ ...getConfig(), defaultDomain: getDefaultDomain() });
@@ -180,7 +233,7 @@ router.post('/default-domain', async (req, res) => {
 });
 
 /** POST /api/config/domains-path — set a new domains folder path */
-router.post('/domains-path', (req, res) => {
+router.post('/domains-path', guardConcurrent('change the knowledge folder'), (req, res) => {
   const { path: newPath } = req.body;
   if (!newPath || typeof newPath !== 'string' || !newPath.trim()) {
     return res.status(400).json({ error: 'path is required' });
@@ -197,8 +250,12 @@ router.post('/domains-path', (req, res) => {
   }
 });
 
-/** POST /api/config/pick-folder — opens native macOS folder picker via osascript */
-router.post('/pick-folder', async (_req, res) => {
+/** POST /api/config/pick-folder — opens native macOS folder picker via osascript.
+ *  Guarded because this route does NOT merely return a path for the client to
+ *  submit to /domains-path — it calls setDomainsDir() itself (below), so it is
+ *  a mutation in its own right and needs the same protection.
+ */
+router.post('/pick-folder', guardConcurrent('change the knowledge folder'), async (_req, res) => {
   try {
     const { stdout } = await execAsync(
       `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
@@ -208,6 +265,17 @@ router.post('/pick-folder', async (_req, res) => {
     if (picked) {
       if (!existsSync(picked)) {
         return res.status(400).json({ error: `Folder does not exist: ${picked}` });
+      }
+      // Re-check immediately before the mutation. The middleware above only
+      // proves the state at the moment the dialog OPENED, and this dialog
+      // blocks for up to 60 s — long enough for the batch-ingest queue to pick
+      // up its next item, or for a second tab to start an ingest, while the
+      // user is still browsing for a folder. Deliberately NOT merged into the
+      // `cancelled` branch: the shipping frontend checks `data.cancelled`
+      // BEFORE `res.ok`, so a refusal must never carry that field.
+      if (hasActiveWrites()) {
+        const { status, body } = conflictResponse('change the knowledge folder');
+        return res.status(status).json(body);
       }
       setDomainsDir(picked);
       res.json({ ok: true, path: picked });
@@ -268,7 +336,7 @@ router.get('/api-keys', (_req, res) => {
  *  Saving a non-empty key for a provider also marks it as the active provider
  *  ("last-saved-wins" — see setApiKeys in brain/config.js).
  */
-router.post('/api-keys', (req, res) => {
+router.post('/api-keys', guardConcurrent('save API keys'), (req, res) => {
   const { geminiApiKey, anthropicApiKey } = req.body;
 
   const update = {};
@@ -294,7 +362,7 @@ router.post('/api-keys', (req, res) => {
  *  If the disconnected key was active, active switches to the other provider
  *  (if it still has a key), or to null.
  */
-router.post('/api-keys/disconnect', (req, res) => {
+router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (req, res) => {
   const { provider } = req.body || {};
   if (provider !== 'gemini' && provider !== 'anthropic') {
     return res.status(400).json({ error: 'provider must be "gemini" or "anthropic"' });
@@ -317,7 +385,7 @@ router.post('/api-keys/disconnect', (req, res) => {
  *  re-saving its key. Body: { provider: 'gemini' | 'anthropic' }
  *  Refuses (400) if the requested provider has no stored key.
  */
-router.post('/api-keys/active', (req, res) => {
+router.post('/api-keys/active', guardConcurrent('switch the AI provider'), (req, res) => {
   const { provider } = req.body || {};
   if (provider !== 'gemini' && provider !== 'anthropic') {
     return res.status(400).json({ error: 'provider must be "gemini" or "anthropic"' });

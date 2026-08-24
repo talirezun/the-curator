@@ -35,9 +35,14 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (57 suites total — 40 OFFLINE
+The Curator has an extensive battle-test suite (58 suites total — 41 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
-all and prints a single pass/fail report:
+all and prints a single pass/fail report. **This count drifts every time a
+suite is added or removed and has gone stale in this file more than once —
+the authoritative source is the `OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the
+top of [scripts/run-tests.js](scripts/run-tests.js) themselves. If you need
+the current number, count those arrays (or run `npm test` — it prints
+`Suites: N` for the offline count) rather than trusting the prose here.**
 
 ```bash
 npm test            # OFFLINE suites only — fast (a few seconds), free, no
@@ -244,6 +249,29 @@ escaped text (never a link, never fetched, and the request is gated to
 `app.js` never references `absPath` — the server never sends one for the
 client to leak.
 
+**A new OFFLINE suite is deliberately temporary and must be deleted, not
+adapted, once its reason for existing is gone.** `src/public/next/**` is a
+parallel redesign frontend served at `/next` (see
+[docs/architecture.md § The `/next` redesign shell](docs/architecture.md#the-next-redesign-shell-parallel-frontend-not-user-facing)
+for what it is and why it exists) that will eventually replace
+`src/public/app.js` outright. In the meantime,
+`src/public/next/shared/ingest-queue-logic.js` holds 13 pure batch-ingest
+helper functions copied byte-identically from `app.js`, because a batch-queue
+bug fixed only in the shipping app would otherwise silently re-ship to
+`/next` at cutover. `test-next-ingest-logic-drift.js` (**OFFLINE**) enforces
+that byte-identity: it does not run or evaluate the functions, it extracts
+each one's source text from both files with a plain regex and string-compares
+it — a behavioral test can pass while two copies diverge in a way that only
+matters for an untested input; a source comparison cannot miss any textual
+difference. It also independently scans `ingest-queue-logic.js`'s own
+top-level declarations and checks the set matches a hardcoded name list
+exactly, so a 14th helper added without updating that list also fails.
+**When `/next` becomes `/` and `app.js` is deleted at cutover, this test's
+own header instructs deleting the file and its `OFFLINE` entry in
+[scripts/run-tests.js](scripts/run-tests.js) — never repointing it at some
+other pair of files or turning it into a coverage test for the survivor.**
+The comparison it performs is meaningless once there is only one copy left.
+
 ---
 
 ## How tests are classified
@@ -401,8 +429,8 @@ the mistake this section exists to prevent.
 
 | Seam | Isolates | Does NOT isolate |
 |---|---|---|
-| `CURATOR_TEST_DOMAINS_DIR` (env) / `__setDomainsDirOverride()` (`config.js`, in-process) | `domains/` only | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/` |
-| `CURATOR_TEST_USER_DATA_DIR` (env) / `__setUserDataDirOverride()` (`src/brain/paths.js`, in-process) | All of the above, unconditionally — **plus** `domains/`, unless something higher in `getDomainsDir()`'s own precedence chain overrides it (a `DOMAINS_PATH` env var, or `--domains-path` for the MCP) | Nothing, when used alone and nothing else is set |
+| `CURATOR_TEST_DOMAINS_DIR` (env) / `__setDomainsDirOverride()` (`config.js`, in-process) | `domains/` only | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/`, `.env` |
+| `CURATOR_TEST_USER_DATA_DIR` (env) / `__setUserDataDirOverride()` (`src/brain/paths.js`, in-process) | `.curator-config.json`, `.sync-config.json` (your real GitHub PAT), `.sharedbrain-config.json`, `.knowledge-git/` — unconditionally — **plus** `domains/`, unless something higher in `getDomainsDir()`'s own precedence chain overrides it (a `DOMAINS_PATH` env var, or `--domains-path` for the MCP) | **`.env`** — see below. This is a real, verified gap, not a hypothetical one. |
 
 **The safety rule, stated plainly: if your test starts a server (spawns
 `src/server.js`, or `mcp/server.js`), set `CURATOR_TEST_USER_DATA_DIR`, not
@@ -417,6 +445,25 @@ directly) on that server would have pushed to the maintainer's real GitHub
 repository. Use `CURATOR_TEST_DOMAINS_DIR` alone only for in-process,
 no-server tests that exclusively touch `domains/` content and never construct
 a `sync`/`sharedbrain` code path.
+
+**`CURATOR_TEST_USER_DATA_DIR` isolates the dangerous credential file — it
+does not make a test server free to run.** `.env` is deliberately excluded:
+`src/brain/paths.js`'s `getCredentialFiles()` anchors it to `appPath('.env')`
+(`APP_ROOT`, the real checkout) rather than `getUserDataDir()`, because it is
+"a developer-only fallback that lives with the SOURCE" (its own docblock's
+words) — dotenv reads it relative to `cwd` at process start
+(`src/server.js`'s `import 'dotenv/config'`), regardless of which override is
+set. And `getEffectiveKey()`/`getApiKeys()` in `src/brain/config.js` fall
+through to `process.env.GEMINI_API_KEY`/`ANTHROPIC_API_KEY` whenever the
+(isolated, empty) config file has no key of its own. The practical
+consequence, verified directly rather than inferred: **a test server started
+with `CURATOR_TEST_USER_DATA_DIR` set can still resolve the maintainer's real
+API keys from the repo's `.env` and make real, billed LLM calls** — isolation
+covers the credential *files* (crucially including the GitHub PAT that could
+push to the maintainer's real repository, which is what the seam exists to
+protect), not API spend. If a test must guarantee it spends no money, it has
+to avoid exercising any LLM-calling code path — `CURATOR_TEST_USER_DATA_DIR`
+alone does not guarantee that, and no env var currently does.
 
 **Worked example:** `scripts/test-sharedbrain-routes.js` is the reference
 implementation — it spawns `src/server.js` on port 3334 with BOTH

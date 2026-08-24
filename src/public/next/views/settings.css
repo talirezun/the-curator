@@ -116,6 +116,25 @@
   font-size: var(--text-sm);
 }
 
+/* Cross-view write-gate notice (Providers & keys / Knowledge base) — same
+   visual pattern as sync.css's .sync-sidebar-busy / ingest.css's
+   .ing-sidebar-busy, deliberately re-declared here rather than shared (see
+   the views/README's "own your own CSS file" rule). */
+.settings-write-busy-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin-bottom: 14px;
+}
+.settings-write-busy-note svg { flex: none; margin-top: 1px; }
+
 .settings-note-row {
   display: flex;
   align-items: center;

@@ -111,18 +111,57 @@ router.get('/:domain', async (req, res) => {
   }
 });
 
+// Fix ONE issue -- or, when `issue` is omitted, every issue of `type`.
+//
+// Guarded exactly like /:domain/fix-all below, because it can do exactly the
+// same work. fixIssue() branches on its third argument (health.js:740): a
+// truthy `issue` fixes that one issue, a falsy one runs the FULL bulk path --
+// scanWiki() plus a fix for every issue of that type. This route passes
+// `issue || null`, so a caller that POSTs {type} with no `issue` executes the
+// identical bulk operation as /fix-all.
+//
+// The v3.0.1-beta.8 comment on /fix-all said this endpoint was "sub-second and
+// intentionally NOT registered". That was true of the shape the UI sends and
+// false of the shape the route accepts -- and it is not even reliably true of
+// the single-issue path: fixSemanticDuplicate walks EVERY file in the domain
+// (health.js:1152) to rewrite links before deleting the duplicate.
+//
+// Unreachable from the shipping UI in its bulk form, but reachable from a
+// second tab, curl, or any non-UI caller -- and the MCP's own fix_wiki_issue
+// already takes the file lock around the very same fixIssue() call
+// (mcp/tools/health.js:217), so before this the cross-process caller was more
+// careful than the app's own route.
 router.post('/:domain/fix', async (req, res) => {
+  const { domain } = req.params;
+  const { type, issue } = req.body || {};
+  if (!type)                   return res.status(400).json({ error: 'Missing type' });
+  if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
+  // Validate the domain BEFORE acquiring the lock / mkdir (audit H1) so a bogus
+  // domain never manufactures a ghost directory + .write-lock on disk.
+  try { await assertWritableDomain(domain); }
+  catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+  if (isUpdateInProgress()) {
+    const { status, body } = conflictResponse(`fix an issue in domain "${domain}"`);
+    return res.status(status).json(body);
+  }
+  const releaseRegistry = registerWrite(domain, 'health-fix');
+  const releaseFileLock = await acquireFileLock(domainPath(domain), { op: 'health-fix' });
+  if (!releaseFileLock) {
+    releaseRegistry();
+    return res.status(409).json({
+      error: `Another process is already writing to "${domain}" (file lock held).`,
+      conflict: 'file_lock',
+    });
+  }
   try {
-    const { domain } = req.params;
-    const { type, issue } = req.body || {};
-    if (!type)                 return res.status(400).json({ error: 'Missing type' });
-    if (!AUTO_FIXABLE.has(type)) return res.status(400).json({ error: `Type "${type}" is review-only.` });
-    await assertWritableDomain(domain);
     const result = await fixIssue(domain, type, issue || null);
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[health fix]', err);
     res.status(err.status || 500).json({ error: err.message });
+  } finally {
+    try { await releaseFileLock(); } catch { /* best-effort */ }
+    releaseRegistry();
   }
 });
 
@@ -503,9 +542,13 @@ router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
 
 router.post('/:domain/fix-all', async (req, res) => {
   // v3.0.1-beta.8: register fix-all as a write op so concurrent
-  // sync/update/delete can refuse with 409. Single-fix endpoint
-  // (POST /:domain/fix) is sub-second and intentionally NOT registered —
-  // adding noise to fast paths doesn't help anyone.
+  // sync/update/delete can refuse with 409.
+  //
+  // This comment used to add that the single-fix endpoint (POST /:domain/fix)
+  // was "sub-second and intentionally NOT registered". That was wrong on both
+  // counts and has been corrected: /fix accepts an omitted `issue` and then runs
+  // this exact bulk path, and even its single-issue path can walk the whole
+  // domain (fixSemanticDuplicate). /fix now carries the same three guards.
   const { domain } = req.params;
   // Validate domain + body BEFORE acquiring the lock / mkdir (audit H1) so a
   // bogus domain or malformed body never manufactures a ghost directory.

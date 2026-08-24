@@ -17,7 +17,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
-         isCostlierModel, __testing as llmTesting } from '../src/brain/llm.js';
+         isCostlierModel, anthropicMaxOutputTokens, ANTHROPIC_MAX_OUTPUT_TOKENS,
+         __testing as llmTesting } from '../src/brain/llm.js';
 import { getApiKeys, getActiveProvider } from '../src/brain/config.js';
 import { __testing } from '../src/brain/chat.js';
 
@@ -184,19 +185,19 @@ section('5. Model price map — every shipped model id is priced');
 section('6. compareModelCost — every rung of every shipped chain');
 {
   const { DEFAULTS, FALLBACK_CHAINS } = llmTesting;
-  // Verified 2026-08-22 against the providers' published pricing pages.
+  // Verified 2026-08-24 against the providers' published pricing pages.
   const expected = {
     // Gemini: EVERY rung is costlier than the default — the exact case the old
     // family heuristic got wrong on the first two.
     'gemini-3.1-flash-lite':     'costlier',   // $0.25/$1.50 vs $0.10/$0.40
     'gemini-3.5-flash-lite':     'costlier',   // $0.30/$2.50
     'gemini-2.5-flash':          'costlier',   // $0.30/$2.50
-    // Anthropic: Haiku 3.5 is genuinely CHEAPER than Haiku 4.5 — must not warn.
-    'claude-3-5-haiku-latest':   'similar',    // $0.80/$4 vs $1/$5
-    'claude-3-5-haiku-20241022': 'similar',
+    // Anthropic: the entire Haiku 3.5 family is retired (404), so every live
+    // rung is now Sonnet and all three are costlier than the Haiku 4.5 default.
+    // Honest, and the reason getFallbackStatus surfaces a costTier at all.
+    'claude-sonnet-5':           'costlier',   // $2/$10 vs $1/$5
+    'claude-sonnet-4-6':         'costlier',   // $3/$15
     'claude-sonnet-4-5':         'costlier',   // $3/$15
-    'claude-3-7-sonnet-latest':  'costlier',
-    'claude-3-5-sonnet-latest':  'costlier',
   };
   for (const provider of ['gemini', 'anthropic']) {
     for (const rung of FALLBACK_CHAINS[provider]) {
@@ -256,6 +257,108 @@ section('8. Source guards — cost warning + boot guard wiring');
     'app.js still guards renderChatMarkdown — the reason markdown.js is not fatal');
   ok(/window\.__curatorBooted = true;\s*$/.test(appSrc.trimEnd() + '\n'),
     'the boot sentinel is the last statement in app.js');
+}
+
+// ── 9. Fallback chain health — no dead rungs, cheapest-first ────────────────
+// The chain's PROMISE is "when the pinned default is retired, land on the
+// cheapest model that still works". Two ways that promise silently rots, both of
+// which have now happened once each in this repo:
+//   • a rung 404s (Gemini v3.0.15: 2 of 3 dead; Anthropic v3.5.x: 4 of 5 dead)
+//   • a rung is priced but ordered wrong, so we land on a costlier live model
+// Liveness needs the network and lives in the live suite; ORDERING is pure data
+// and is pinned here, where it runs on every `npm test`.
+section('9. Fallback chains — priced, ordered cheapest-first, no retired ids');
+{
+  const { DEFAULTS, FALLBACK_CHAINS } = llmTesting;
+  for (const provider of ['gemini', 'anthropic']) {
+    const chain = FALLBACK_CHAINS[provider];
+    ok(chain.length > 0, `${provider}: chain is non-empty (a default with no net is not a net)`);
+    ok(new Set(chain).size === chain.length, `${provider}: no duplicate rungs`);
+    ok(!chain.includes(DEFAULTS[provider]),
+      `${provider}: the default is not repeated as its own fallback`);
+
+    // Cheapest-first, comparing on the same basis compareModelCost uses. A tie
+    // is fine (Sonnet 4.6 / 4.5); a strict decrease is not.
+    for (let i = 1; i < chain.length; i++) {
+      const prev = getModelPrice(chain[i - 1]);
+      const cur = getModelPrice(chain[i]);
+      const bothPriced = Boolean(prev && cur);
+      ok(bothPriced, `${provider}: rungs ${i - 1} and ${i} are both priced`);
+      // Guarded, not dereferenced optimistically: an unpriced rung must produce a
+      // clean FAIL here, not a TypeError that aborts the file and hides every
+      // assertion after it. (Caught by mutation-testing this very guard.)
+      ok(bothPriced && cur.input >= prev.input && cur.output >= prev.output,
+        `${provider}: rung ${i} (${chain[i]}) is not cheaper than rung ${i - 1} (${chain[i - 1]}) — chain stays cheapest-first`);
+    }
+  }
+  // Regression guard: these four Anthropic ids were probed 404 on 2026-08-24 and
+  // must never reappear. Re-adding one would restore a chain that "works" in
+  // every offline test while doing nothing at all in production.
+  const RETIRED = ['claude-3-5-haiku-latest', 'claude-3-5-haiku-20241022',
+                   'claude-3-7-sonnet-latest', 'claude-3-5-sonnet-latest',
+                   'gemini-1.5-flash', 'gemini-1.5-flash-latest'];
+  const shippedIds = [...Object.values(DEFAULTS), ...Object.values(FALLBACK_CHAINS).flat()];
+  for (const dead of RETIRED) {
+    ok(!shippedIds.includes(dead), `retired id "${dead}" is not shipped`);
+    eq(getModelPrice(dead), null, `retired id "${dead}" carries no dead-weight price entry`);
+  }
+}
+
+// ── 10. Per-model Anthropic output caps ─────────────────────────────────────
+// The cap map replaced a flat 64000 constant that silently halved the 128,000
+// ceiling of the Sonnet fallback rungs. The load-bearing property is the
+// DIRECTION of the unknown-id fallback: guessing HIGH is a hard 400 that fails
+// the call, guessing LOW only truncates — and truncation already degrades
+// gracefully (v3.0.7). An unknown id must therefore resolve CONSERVATIVELY.
+section('10. anthropicMaxOutputTokens — per-model caps, conservative on unknown');
+{
+  const { DEFAULTS, FALLBACK_CHAINS, ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS } = llmTesting;
+
+  eq(ANTHROPIC_MAX_OUTPUT_TOKENS, 64000,
+    'the legacy constant keeps its value (existing consumers unaffected)');
+
+  // Verified 2026-08-24 against the live API: GET /v1/models/{id}.max_tokens AND
+  // the validation error text ("max_tokens: 999999 > N") agreed for all four.
+  eq(anthropicMaxOutputTokens('claude-haiku-4-5'), 64000, 'haiku-4-5 → 64000');
+  eq(anthropicMaxOutputTokens('claude-sonnet-5'), 128000, 'sonnet-5 → 128000');
+  eq(anthropicMaxOutputTokens('claude-sonnet-4-6'), 128000, 'sonnet-4-6 → 128000');
+  eq(anthropicMaxOutputTokens('claude-sonnet-4-5'), 64000,
+    'sonnet-4-5 → 64000 (NOT 128000 — the cap does not track the family word)');
+  eq(anthropicMaxOutputTokens('claude-haiku-4-5-20251001'), 64000, 'dated haiku snapshot → 64000');
+  eq(anthropicMaxOutputTokens('claude-sonnet-4-5-20250929'), 64000, 'dated sonnet-4.5 snapshot → 64000');
+
+  // THE load-bearing assertion. Mutating the resolver to return the permissive
+  // value for an unknown id must turn these red.
+  for (const unknown of ['claude-opus-9', 'claude-sonnet-6', 'totally-made-up', '']) {
+    eq(anthropicMaxOutputTokens(unknown), ANTHROPIC_MAX_OUTPUT_TOKENS,
+      `unknown id ${JSON.stringify(unknown)} → CONSERVATIVE ${ANTHROPIC_MAX_OUTPUT_TOKENS}, never 128000`);
+  }
+  for (const bad of [null, undefined, 123, {}, []]) {
+    eq(anthropicMaxOutputTokens(bad), ANTHROPIC_MAX_OUTPUT_TOKENS,
+      `non-string ${JSON.stringify(bad) ?? String(bad)} → conservative default`);
+  }
+  // Prototype keys must not resolve through the plain object (v3.0.9 bug shape).
+  for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+    eq(anthropicMaxOutputTokens(k), ANTHROPIC_MAX_OUTPUT_TOKENS,
+      `prototype key ${JSON.stringify(k)} → conservative default`);
+  }
+  // No unknown id may ever exceed the conservative default, whatever the map says.
+  ok(Object.values(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS).every(v => Number.isInteger(v) && v > 0),
+    'every mapped cap is a positive integer');
+  ok(Object.isFrozen(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS), 'the cap map is frozen');
+
+  // Every Anthropic model the app can select must have an explicit cap — the
+  // same standing invariant the price table carries, for the same reason.
+  const anthropicShipped = [DEFAULTS.anthropic, ...FALLBACK_CHAINS.anthropic];
+  const uncapped = anthropicShipped.filter(id => !Object.hasOwn(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, id));
+  ok(uncapped.length === 0,
+    `every shipped Anthropic id has an explicit cap${uncapped.length ? ` (missing: ${uncapped.join(', ')})` : ''}`);
+
+  // The clamp must never widen what a call site asked for.
+  for (const id of anthropicShipped) {
+    ok(Math.min(65536, anthropicMaxOutputTokens(id)) <= 65536,
+      `${id}: clamping 65536 never increases the request`);
+  }
 }
 
 console.log(`\n${'─'.repeat(60)}`);

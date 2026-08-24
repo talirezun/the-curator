@@ -93,8 +93,15 @@ section('OFFLINE 4 — source-level guards on the Anthropic branch only');
 const src = readFileSync(path.join(ROOT, 'src/brain/llm.js'), 'utf8');
 ok(/export const ANTHROPIC_MAX_OUTPUT_TOKENS\s*=\s*64000/.test(src),
   'constant declared as 64000');
-ok(/Math\.min\(maxTokens,\s*ANTHROPIC_MAX_OUTPUT_TOKENS\)/.test(src),
-  'Anthropic branch clamps via Math.min(maxTokens, ANTHROPIC_MAX_OUTPUT_TOKENS)');
+// v3.5.x: the clamp became PER-MODEL (Sonnet 5 / 4.6 allow 128k; a flat 64000
+// silently halved them). The constant survives unchanged as the CONSERVATIVE
+// default for an unrecognised id, which is what the assertions above pin.
+// Asserted behaviourally via the exported resolver rather than by matching the
+// old literal expression — a source regex proves a line exists, not what it does.
+ok(/Math\.min\(maxTokens,\s*anthropicMaxOutputTokens\(model\)\)/.test(src),
+  'Anthropic branch clamps via Math.min(maxTokens, anthropicMaxOutputTokens(model))');
+ok(!/Math\.min\(maxTokens,\s*ANTHROPIC_MAX_OUTPUT_TOKENS\)/.test(src),
+  'the flat cross-model clamp is gone (it halved the Sonnet rungs\' real ceiling)');
 ok(/client\.messages\.stream\(/.test(src) && /\.finalMessage\(\)/.test(src),
   'Anthropic branch uses messages.stream().finalMessage()');
 ok(!/client\.messages\.create\(/.test(src),

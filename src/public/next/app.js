@@ -157,10 +157,78 @@
 //   escapeHtml(s)
 //     HTML-escapes a string. Use before interpolating any data/user text
 //     into html you pass to setSidebar/setMain/openReader.
+//   beginDomainWrite(domain, opLabel?)
+//     Registers one destructive write as in-flight against `domain` and
+//     returns a RELEASE FUNCTION — call it exactly when the write finishes
+//     (success or failure). There is no separate "end" call that takes a
+//     domain string back; the returned function has already closed over
+//     the right one, which is what makes the shipping app's H2 leak (see
+//     the "Cross-view write gate" comment near the implementation, below
+//     setSidebar/setMain) structurally impossible to reproduce here — a
+//     caller has no second copy of the domain to let drift from the first.
+//     Calling the handle twice is a safe no-op. `opLabel` is a short string
+//     ('ingest', 'push', ...) surfaced by getDomainWriteLabel(); omit it
+//     for a generic 'write'.
+//   isDomainWriteBusy(domain) / isAnyWriteBusy()
+//     THE CONTRACT: `true` iff a write is GENUINELY IN PROGRESS this
+//     instant — not "an operation exists", not "something was started and
+//     might resume later". For a batch ingest job specifically, "in
+//     progress" means status === 'running' (see queueBusyTransition,
+//     imported by both this file and views/ingest.js — ONE definition of
+//     the predicate; a prior version of the shell's own watcher invented
+//     a second, narrower one — "not terminal" — and got it wrong: a
+//     'paused' job holds no backend write-registry entry either — see
+//     src/brain/ingest-queue.js — so treating it as busy made the client
+//     STRICTER than the server it is supposed to mirror). Genuinely
+//     survives navigating away from and back to ANY view, or a hard page
+//     reload — shell state, like the mount token — for every write kind,
+//     including a batch job that outlives the view that started it: see
+//     reportPossibleActiveJob() below.
+//     WHO THIS IS FOR: any view guarding its OWN controls against a write
+//     it cares about — either a write IT started (checking its own
+//     domain, e.g. an intra-view cross-mount case) or, via isAnyWriteBusy,
+//     a write ANY OTHER surface might be making, for a view (Sync,
+//     Domains, Settings are the obvious candidates) that wants to disable
+//     an action the backend's write-registry would otherwise 409. Which
+//     views actually call this today is a fact about the rest of the
+//     codebase on any given day — find out with grep, don't trust this
+//     comment to have kept it current; it is exactly the kind of claim
+//     that goes stale on someone else's unrelated commit.
+//   getDomainWriteLabel(domain)
+//     The opLabel of the oldest still-open write on `domain`, or null.
+//   onWriteGateChange(fn)
+//     Subscribe to any begin/release on the write gate (any domain). Returns
+//     an unsubscribe function — call it from your view's teardown so a
+//     torn-down view doesn't keep reacting to writes after the user has
+//     navigated away. A subscriber re-renders its OWN view's controls
+//     (setSidebar/setMain as usual); this primitive never touches DOM
+//     itself.
+//   reportPossibleActiveJob()
+//     Tells the shell's active-job watcher (see its own comment near the
+//     implementation, below onWriteGateChange) that a batch ingest job
+//     might exist and be worth checking — the watcher re-derives truth
+//     from GET /api/ingest-queue/active itself rather than trusting the
+//     caller (and re-derives "is it BUSY" via queueBusyTransition, not a
+//     bespoke check), so this is a cheap, safe-to-call-liberally signal,
+//     not a data channel. Safe (a correct no-op) to call for a job that
+//     turns out to be paused, pending, or gone. Called by views/ingest.js
+//     (from applyQueueJobSnapshot, the one chokepoint every job snapshot
+//     flows through, and from checkActiveQueueJob on mount) and once,
+//     unconditionally, from boot() below. Never throws, never blocks.
 //
 // A view file must not import another view file, and must not reach into
 // another view's DOM — the rail/sidebar/main/reader are the only shared
 // surfaces, and all of them are reached only through the functions above.
+
+// The shell itself is not a "view", so it is not bound by the rule just
+// above — this import is FROM the shared logic module (never from a
+// views/*.js file) and exists so the active-job watcher (below) answers
+// "is this batch writing" with the exact same predicate views/ingest.js's
+// own gate handling already uses, rather than a second one that can
+// drift from it — see that section's own comment for the regression this
+// closed. ../shared/ingest-queue-logic.js imports nothing itself, so this
+// creates no cycle.
+import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -811,6 +879,339 @@ export function escapeHtml(s) {
   ));
 }
 
+// ── Cross-view write gate ────────────────────────────────────────────────
+//
+// Shell-level replacement for the shipping app's window.__curatorIngestStart
+// / __curatorIngestEnd pair (src/public/app.js, "Ingest-busy state" section)
+// — a real destructive-write-in-progress signal INTENDED for OTHER views
+// (Sync, Domains, Settings are the obvious candidates) to disable
+// Push/Pull/Delete/Update while it's true, per the backend's own
+// write-registry (src/brain/write-registry.js), which already 409s those
+// endpoints mid-write. This section describes the PRIMITIVE and the exact
+// guarantee it makes (see the top-of-file docblock's isDomainWriteBusy
+// entry for the full contract statement) — which views actually consume
+// it is a fact about the rest of the codebase on any given day, not a
+// property of this primitive, and is deliberately NOT enumerated here:
+// an earlier version of this comment named specific caller counts and an
+// independent audit found it had already gone stale once; a docblock
+// that promises to track other files' commits is a docblock that lies
+// again the next time someone edits one of them without reading this one.
+//
+// The shipping app tracks the ingest case with two globals that ~8 call
+// sites each have to remember to pair correctly — and got it wrong once,
+// for real: its own `_queueBusyDomain` comment documents the H2 leak, where
+// "enter" was keyed on job.domain but "exit" re-read whatever the
+// #ingest-domain dropdown happened to hold at a LATER moment (often '' on a
+// page-reload resume, since two un-awaited loads race the select being
+// populated) — decrementing the WRONG domain's count and leaving the RIGHT
+// one's buttons disabled forever. That bug is a direct consequence of the
+// two-call convention: the domain is supplied TWICE, by two different call
+// sites, at two different times, and nothing stops them from disagreeing.
+//
+// This shell's shape makes that specific bug impossible to write, not just
+// easier to avoid: beginDomainWrite() does not hand back a domain string for
+// a caller to re-supply later. It hands back a RELEASE FUNCTION that has
+// already closed over the correct domain — there is no second call site with
+// its own copy of the key to drift from the first. Calling the handle twice
+// is a harmless no-op (guarded by a private `released` flag in the closure),
+// not a double-decrement; losing the handle entirely just leaks that one
+// write as permanently "busy" for its domain, which is loud (a button stays
+// disabled — matches domains.js's inFlightWriteSlugs failure mode, see its
+// MEDIUM-5 comment) rather than silent. An independent adversarial audit
+// attacked this core directly — __proto__ as a domain key, a falsy domain,
+// double/triple release, a throwing subscriber, refcount drift via equal
+// label strings — and could not break it; what it found wrong was the
+// guarantee being claimed elsewhere in this file, not this mechanism.
+//
+// Reference counts are keyed per-domain (a domain slug -> count of open
+// handles), same rationale as the shipping app's Map: two concurrent writes
+// on DIFFERENT domains must not block each other, and two on the SAME
+// domain (a batch queue item + a manually-started single-file ingest, say)
+// must both have to release before the domain reads as free.
+//
+// This state is SHELL state, not view state — declared here, not inside any
+// views/*.js — and survives a view's own onEnter/onExit exactly like
+// `mountToken` and the reader overlay do. A write started from Ingest and
+// still running when the user navigates to Sync and back must still read as
+// busy. HOW that holds differs by write kind, and one of the two ways used
+// to be wrong: for a SINGLE-FILE ingest it falls out for free — the fetch is
+// deliberately never aborted on teardown (views/ingest.js's runIngest has
+// its own comment on why), so only ITS OWN `finally`, once the write
+// genuinely finishes, ever releases the handle; mount state never enters
+// into it. For a BATCH job, teardown deliberately DOES detach the live SSE
+// stream on navigate-away (batch jobs are reattachable, unlike single-file,
+// so this is the correct choice — see views/ingest.js's file-header
+// comment) — and an independent audit found that detach's own `finally`
+// was releasing the ONLY handle the batch write held, so the gate read
+// false the moment the user left Ingest even though the job kept running.
+// Measured live: busy went true -> false -> true across a navigate-away-
+// and-back on a still-running batch. Closed by the ACTIVE BATCH-JOB WATCHER
+// below (see its own comment), which holds an INDEPENDENT handle sourced
+// directly from server truth (GET /api/ingest-queue/active) rather than
+// from any one view's stream — the same cross-VIEW generalisation
+// domains.js's own inFlightWriteSlugs deliberately does NOT attempt (it is
+// module-private to that one file and only guards its own Health writes
+// against ITSELF across re-mounts — it has no way to tell Sync or Settings,
+// or even a torn-down Ingest, anything).
+//
+// `onWriteGateChange(fn)` lets a mounted view re-render its OWN controls
+// when the gate changes — each view re-renders its own DOM via setSidebar/
+// setMain as usual; this primitive never reaches into a view's markup
+// itself, keeping the README's "never reach into another view's DOM" rule
+// intact. A subscribing view must unsubscribe in its teardown (the function
+// its onEnter returns) — same discipline as any other listener a view
+// installs, per registerView's own doc comment above.
+const _domainWrites = new Map(); // domain -> array of open handles' opLabel strings
+const _writeGateSubscribers = new Set(); // Set<() => void>
+
+function _notifyWriteGateSubscribers() {
+  for (const fn of _writeGateSubscribers) {
+    try { fn(); } catch (err) { console.error('[next] write-gate subscriber failed', err); }
+  }
+}
+
+// Registers one open write against `domain` and returns a release function.
+// `opLabel` is a short human string (e.g. 'ingest', 'push') surfaced by
+// getDomainWriteLabel() below for a disabled control's tooltip — purely
+// informational, defaults to 'write' if omitted.
+export function beginDomainWrite(domain, opLabel) {
+  if (!domain) {
+    console.warn('[next] beginDomainWrite() called without a domain — refusing to register a write.');
+    return () => {}; // still returns a callable no-op handle — never a falsy value a caller might skip calling
+  }
+  const label = (typeof opLabel === 'string' && opLabel) ? opLabel : 'write';
+  const list = _domainWrites.get(domain) || [];
+  list.push(label);
+  _domainWrites.set(domain, list);
+  _notifyWriteGateSubscribers();
+
+  let released = false;
+  return function release() {
+    if (released) return; // idempotent — calling an already-released handle again is a no-op, never a double-decrement
+    released = true;
+    const cur = _domainWrites.get(domain);
+    if (cur) {
+      const i = cur.indexOf(label);
+      if (i !== -1) cur.splice(i, 1);
+      if (cur.length === 0) _domainWrites.delete(domain);
+    }
+    _notifyWriteGateSubscribers();
+  };
+}
+
+export function isDomainWriteBusy(domain) {
+  const list = domain && _domainWrites.get(domain);
+  return !!(list && list.length);
+}
+
+export function isAnyWriteBusy() {
+  for (const list of _domainWrites.values()) if (list.length) return true;
+  return false;
+}
+
+// The opLabel of the OLDEST still-open write on `domain`, or null if none —
+// e.g. for a disabled button's title text ("An ingest is in progress…").
+export function getDomainWriteLabel(domain) {
+  const list = domain && _domainWrites.get(domain);
+  return (list && list.length) ? list[0] : null;
+}
+
+// Subscribe to any change in the write gate (a begin or a release, on any
+// domain). Returns an unsubscribe function — call it from your view's
+// teardown. Deliberately fires on EVERY change rather than being scoped to
+// one domain: the set of views that care (Sync/Domains/Settings today) each
+// want to re-evaluate their own controls, which may span multiple domains
+// (e.g. a domain list), so filtering here would just push the same
+// domain-by-domain check back onto every subscriber anyway.
+export function onWriteGateChange(fn) {
+  _writeGateSubscribers.add(fn);
+  return () => { _writeGateSubscribers.delete(fn); };
+}
+
+// ── Active batch-job watcher (HIGH-2 fix, then a regression fix inside it) ─
+//
+// An independent adversarial audit found the gate's own headline guarantee
+// ("survives navigating away from and back to the view that started the
+// write") was FALSE for the one write kind it matters most for: a batch
+// ingest job. views/ingest.js's onEnter teardown calls detachQueueStream(),
+// whose `finally` releases the write-gate handle the moment the user
+// leaves the Ingest view — even though the batch keeps running
+// server-side. Measured live: busy went true -> false -> true across a
+// navigate-away-and-back while the batch was still genuinely running.
+//
+// The root cause was architectural, not a missed release call: a batch
+// job is SERVER-owned and reattachable (GET /api/ingest-queue/active,
+// /:jobId, /:jobId/stream all exist — see views/ingest.js's own
+// checkActiveQueueJob/attachQueueStream, unchanged by this fix) — the
+// server is the authority on whether it's running, not whichever view
+// happens to be mounted. Coupling the gate's truth to view lifecycle was
+// the same convention-not-structure trap beginDomainWrite's OWN shape
+// exists to close, just one level up.
+//
+// Fix: a SHELL-level watcher (here, not in views/ingest.js, for the same
+// reason the gate itself lives here) that holds its own INDEPENDENT
+// write-gate handle sourced directly from server truth, alongside
+// whatever handle views/ingest.js's own view-level code holds while it
+// happens to be mounted. The two handles compose safely — beginDomainWrite
+// is a plain per-domain refcount (see above); this watcher acquiring a
+// SECOND handle for the same domain while Ingest is also holding one is
+// not a conflict, it's exactly what makes the guarantee survive Ingest's
+// own handle releasing on teardown. views/ingest.js's existing gate calls
+// are UNCHANGED by this fix.
+//
+// REGRESSION FOUND INSIDE THIS FIX, by the same audit process, before
+// ship: the first version's "is this job worth holding the gate for?"
+// test was `status !== 'done' && status !== 'cancelled' && status !==
+// 'failed'` — i.e. "not terminal". That is the WRONG question. A 'paused'
+// or 'pending' job is not terminal but is also not WRITING anything —
+// src/brain/ingest-queue.js only calls registerWrite() inside the actual
+// per-item ingest call, so a paused job holds NO backend write-registry
+// entry and the server would refuse nothing. Treating "not terminal" as
+// "busy" made the client STRICTER than the server it exists to mirror,
+// and combined with THREE separate real facts into a standing bug: (1)
+// boot() below calls reportPossibleActiveJob() unconditionally, (2) a
+// crashed job recovers to 'paused', never 'running', by deliberate
+// v3.3.0 design ("never auto-start spend"), and (3) rate-limit pauses and
+// the 3-strike circuit breaker both land on 'paused' too, routinely, not
+// as an edge case. Net effect: pause a batch, or have it auto-pause, or
+// crash-recover into 'paused' — and every subsequent page load acquires
+// the gate and never lets go, because "not terminal" stays true forever
+// for a job nobody is resuming.
+//
+// The fix is to stop inventing a second definition of "busy" and use the
+// ONE that already exists: queueBusyTransition, imported below from
+// ../shared/ingest-queue-logic.js — the same byte-identical-to-app.js
+// module views/ingest.js's own applyQueueBusyForStatus already drives
+// this exact gate from. Its own doc comment states the real predicate:
+// "'running' is the only status where the batch is actually writing to
+// the wiki — every other status (pending/paused/done/cancelled/failed,
+// and the synthetic null meaning 'not attached') is not-busy." Importing
+// it here means there is exactly one place that answers "is this batch
+// writing", not two that can independently drift — which is what
+// happened the first time.
+//
+// Event-driven, NOT perpetual polling — the loop is bounded and turns
+// itself off, and now ALSO does not run at all for a paused/pending job:
+//   - reportPossibleActiveJob() is a cheap, idempotent signal any view can
+//     call when it learns a batch job might exist. views/ingest.js calls
+//     it from applyQueueJobSnapshot (the one chokepoint every job
+//     snapshot already flows through) AND from checkActiveQueueJob (so a
+//     fresh mount that finds a paused job still gets its bookkeeping
+//     synced, even though a paused job never causes an acquire). Calling
+//     it never blocks and never throws.
+//   - Every call does ONE fetch against GET /api/ingest-queue/active — the
+//     same free, cheap, read-only endpoint views/ingest.js's own
+//     checkActiveQueueJob already uses — and feeds the result through
+//     queueBusyTransition against the LAST status this watcher itself
+//     observed. Only an actual transition into/out of 'running' touches
+//     the gate; a job sitting at 'paused' call after call is a no-op both
+//     times, by construction, not because of a special case.
+//   - The interval runs ONLY while the last-observed status is 'running'
+//     — not "not terminal". A job going 'running' -> 'paused' stops the
+//     interval in the SAME tick that releases the handle; there is no
+//     window where the loop spins for a job that isn't writing.
+//   - WHAT RE-ARMS A PAUSED JOB'S GATE ON RESUME: resuming can only
+//     happen through views/ingest.js's resumeQueueJob (POST /:jobId/
+//     start) — there is no other surface that can resume a job today
+//     (see the "three doors" assessment in views/ingest.js's own file
+//     header) — and resumeQueueJob already calls applyQueueJobSnapshot on
+//     its response, which already calls reportPossibleActiveJob(). So the
+//     watcher does not need to keep polling a paused job in the
+//     background "just in case": the one path that can change a paused
+//     job's status already announces the change. This was a deliberate
+//     choice over "poll forever while paused" — polling an indefinitely-
+//     paused job forever is the same class of waste the bounded-loop
+//     design exists to avoid, and does not buy any correctness here.
+//   - A job ID change the poll gap missed (the previous job went terminal
+//     and a new one started 'running' between two ticks, so this watcher
+//     never observed the old job's own exit) is handled by resetting the
+//     transition bookkeeping to a clean slate whenever the observed
+//     jobId changes, before computing the transition — so a missed exit
+//     can never leave a handle open for a domain that is no longer
+//     running anything.
+//   - boot() below also calls reportPossibleActiveJob() once,
+//     unconditionally, so a hard page reload landing mid-batch is covered
+//     too — and, per the regression fix above, a reload landing on a
+//     RECOVERED-PAUSED job now correctly acquires nothing.
+//
+// No server-side (or cross-tab) resource is held by this watcher — the
+// gate, the release handle, and the interval are all plain in-memory JS
+// state scoped to one page's lifetime, exactly like the rest of this
+// module's state (mountToken, the reader, _domainWrites itself). Closing
+// or reloading the tab destroys all of it at once (browsers cancel
+// pending timers and in-flight fetches on unload) — there is nothing here
+// that outlives the page for a closed tab to "leak". The real safety net
+// against a truly abandoned write is unchanged and unaffected by any of
+// this: the backend's own write-registry (src/brain/write-registry.js),
+// which 409s a conflicting request regardless of what any client believes
+// its own UI state is.
+const ACTIVE_JOB_POLL_MS = 4000;
+let _activeJobWatchTimer = null;
+let _activeJobRelease = null;
+let _activeJobId = null;
+let _activeJobLastStatus = null; // feeds queueBusyTransition — the SAME predicate views/ingest.js's applyQueueBusyForStatus uses, not a second one
+let _activeJobCheckInFlight = false; // collapses overlapping calls into one in-flight fetch
+
+async function _checkActiveJobOnce() {
+  if (_activeJobCheckInFlight) return;
+  _activeJobCheckInFlight = true;
+  let job = null;
+  try {
+    const res = await fetch('/api/ingest-queue/active');
+    const data = await res.json();
+    if (res.ok && data && data.ok && data.job) job = data.job;
+  } catch {
+    // Network hiccup — leave whatever the watcher already holds alone; the
+    // next scheduled tick (if the loop is running) or the next
+    // reportPossibleActiveJob() call will retry. Never throws out of here.
+    _activeJobCheckInFlight = false;
+    return;
+  }
+  _activeJobCheckInFlight = false;
+
+  const nextStatus = job ? job.status : null;
+
+  // A job swap this poll gap missed needs the same release-before-acquire
+  // treatment a normal running -> not-running -> running sequence would
+  // get across two separate ticks, collapsed into one: reset to a clean
+  // slate before computing the transition below, so a stale handle can
+  // never survive under a jobId that no longer exists.
+  if (job && job.jobId !== _activeJobId && _activeJobRelease) {
+    _activeJobRelease();
+    _activeJobRelease = null;
+    _activeJobLastStatus = null;
+  }
+
+  // THE fix: queueBusyTransition (imported below), not a hand-rolled
+  // "not terminal" test — see this section's own comment for the
+  // regression this closes. 'running' is the only busy status.
+  const decision = queueBusyTransition(_activeJobLastStatus, nextStatus);
+  if (decision === 'enter') {
+    _activeJobId = job.jobId;
+    _activeJobRelease = beginDomainWrite(job.domain, 'batch ingest');
+  } else if (decision === 'exit') {
+    if (_activeJobRelease) { _activeJobRelease(); _activeJobRelease = null; }
+    _activeJobId = null;
+  }
+  _activeJobLastStatus = nextStatus;
+
+  // Poll ONLY while genuinely running — see "WHAT RE-ARMS A PAUSED JOB'S
+  // GATE ON RESUME" above for why this does not risk leaving the gate
+  // permanently wrong for a job that later resumes.
+  if (nextStatus === 'running') {
+    if (_activeJobWatchTimer == null) {
+      _activeJobWatchTimer = setInterval(_checkActiveJobOnce, ACTIVE_JOB_POLL_MS);
+    }
+  } else if (_activeJobWatchTimer != null) {
+    clearInterval(_activeJobWatchTimer);
+    _activeJobWatchTimer = null;
+  }
+}
+
+export function reportPossibleActiveJob() {
+  _checkActiveJobOnce();
+}
+
 // ── View registration ───────────────────────────────────────────────────
 // Each import below runs a views/*.js file purely for its side effect: it
 // calls registerView() at its own top level. Every one of these files
@@ -857,6 +1258,11 @@ function boot() {
   applyTheme(savedTheme);
   renderRail();
   navigate(savedView);
+
+  // HIGH-2 fix: cover a hard page reload landing mid-batch, not just an
+  // in-app navigate-away-and-back — see the active-job watcher's own
+  // comment above. Fire-and-forget; the function never throws.
+  reportPossibleActiveJob();
 }
 
 if (document.readyState === 'loading') {

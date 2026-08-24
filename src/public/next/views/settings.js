@@ -68,11 +68,60 @@
 // applying one file's rule to the other file is exactly the mistake this
 // migration corrected mid-session — see sync.js's matching comment.)
 //
+// Cross-view write gate (this session's task): unlike sync.js's four
+// actions, NONE of the mutations in this file are guarded by the backend's
+// write-registry (`hasActiveWrites()` / `guardConcurrent()`, src/routes/
+// sync.js + health.js) — grepping src/routes/config.js confirms the only
+// route there wrapped in it is POST /api/config/update (git reset --hard +
+// npm install against the live app, which this shell deliberately never
+// wires — see the honesty note above), not any of api-keys / api-keys/
+// disconnect / api-keys/active / default-domain / pick-folder / ai-settings.
+// So gating here is NOT mirroring an existing backend refusal the way
+// sync.js's gate does — it is the ONLY protection against two real
+// correctness risks, both traced to actual per-call (never cached) reads
+// elsewhere in the backend:
+//   - "Choose folder" (Knowledge base) calls POST /api/config/pick-folder,
+//     which calls setDomainsDir() IMMEDIATELY on selection (src/routes/
+//     config.js). Per CLAUDE.md's paths.js invariant, every write resolves
+//     getDomainsDir() FRESH, per call, specifically so it can never go
+//     stale mid-process — which means changing it while an ingest/health/
+//     sync write is between LLM calls or between page writes sends that
+//     write's REMAINING work to a different folder than where it started,
+//     silently scattering one source's pages across two knowledge bases.
+//   - Provider key actions (Save/Disconnect/Set active — Providers & keys)
+//     mutate .curator-config.json, and getProviderInfo() (src/brain/
+//     llm.js) is called fresh on EVERY LLM call, not cached — confirmed by
+//     reading it directly. Disconnecting the active provider's key, or
+//     switching providers, between two calls of the SAME in-flight
+//     multi-phase ingest can throw an auth error partway through, or
+//     silently finish that ingest's remaining pages on a different model
+//     than it started with.
+// Both are gated on isAnyWriteBusy() (global, not one domain) for the same
+// reason sync.js's gate is: neither action is domain-scoped, so a write on
+// ANY domain is a real conflict. Not gated, and why: "Replace"/"Cancel"
+// (open/close the key-input row — no network call), the default-domain
+// <select> (only changes the MCP server's OWN fallback for FUTURE tool
+// calls missing a domain — never touches an in-flight app-initiated
+// write), AI Health scan-limit Save (changes future scan cost ceilings,
+// not anything currently running), MCP self-test / view-config /
+// copy-snippet (read-only, or a self-contained short-lived test process),
+// "Verify AI connection" / "Run system check" (read-only), "Check for
+// updates" (read-only — see the honesty note above), the theme toggle
+// (pure client-side UI state), and "Copy" path (clipboard only).
+//
+// FAIL-OPEN, not fail-closed: crossWriteBusy() below is wrapped in
+// try/catch so a problem reading gate state leaves every control ENABLED
+// rather than permanently disabled — there is no backend 409 acting as a
+// second safety net here (see above), but a live-but-unprotected control
+// the user can still retry is a far smaller failure than a Settings
+// section that's silently unusable forever with no way out but a reload.
+//
 // Owns views/settings.css.
 
 import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
+  isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
 } from '../app.js';
 
 const SETTINGS_SECTIONS = [
@@ -116,6 +165,30 @@ function freshState() {
     keysError: null,        // the section FAILED TO LOAD — renderProviders shows this INSTEAD of the list (state.keys is also null in this case, so there's nothing to show anyway)
     keysActionError: null,  // a save/disconnect/set-active ACTION failed — rendered INLINE, list stays visible (found live while verifying MEDIUM-1: reusing keysError here hid the entire provider list — including the Cancel button — behind a bare error message the instant a save failed)
     replacing: null,        // provider id currently showing an input row
+    // MEDIUM-2 fix (this session): this field used to be declared and never
+    // read or written — the input row rendered with no `value=` attribute
+    // and nothing wrote keystrokes back into state, so it worked by
+    // accident ONLY as long as nothing else ever re-rendered Settings while
+    // a row was open. Subscribing this view to onWriteGateChange (below)
+    // broke that: any write starting/finishing anywhere in the app now
+    // re-renders Settings, and a bare re-render rebuilds the input from
+    // this (previously always-empty) field — silently wiping a typed-but-
+    // unsaved key. Reproduced live: paste a key mid-batch-ingest, watch it
+    // vanish the instant the batch's gate event fires, cursor still in the
+    // field. Fixed by making the field genuinely state-backed — see the
+    // `input` listener + live `.value` restore in wireProviderListeners()
+    // below, and the `focusReplaceInput`-adjacent restore on every render —
+    // mirroring the pattern views/sync.js already uses for its own PAT
+    // field (state.setupForm.token, never a `value=` HTML attribute).
+    // Holds the value for WHICHEVER provider `state.replacing` currently
+    // names — only one replace row can be open at a time, so one flat
+    // field (not one per provider) is enough; it is reset to '' every time
+    // a replace row opens (for a fresh provider or a re-open of the same
+    // one) and every time it closes (Cancel, or a successful Save), so a
+    // typed-but-unsaved secret never lingers in state longer than the
+    // interaction that produced it, and never leaks a stale value across
+    // providers if the user replaces one key then another. Never persisted
+    // beyond this in-memory field — no localStorage/sessionStorage/URL.
     replaceValue: '',
     keysBusy: null,         // provider id currently mid-request (disables its row)
 
@@ -156,6 +229,12 @@ let state = freshState();
 // function, and threaded through rather than re-derived afterward.
 let myMountToken = 0;
 
+// Unsubscribe function for this mount's write-gate subscription (see
+// onWriteGateChange in app.js) — released in teardown. Same discipline as
+// views/ingest.js and views/sync.js: a torn-down mount must stop reacting
+// to gate changes.
+let unsubscribeWriteGate = null;
+
 registerView('settings', {
   onEnter(mountToken) {
     state = freshState();
@@ -163,8 +242,78 @@ registerView('settings', {
     render(mountToken);
     loadVersion(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));       // cheap, always shown in the sidebar footer
     ensureSectionData('providers', mountToken).catch((err) => reportAsyncMountFailure(mountToken, err)); // default section — prefetch immediately
+
+    // Re-render whenever ANY domain's write-gate state changes — e.g. an
+    // ingest starts/finishes on some domain while the user is sitting on
+    // Settings. This view only READS the gate to decide its own
+    // button/notice state; it never begins a write itself.
+    unsubscribeWriteGate = onWriteGateChange(() => {
+      if (isCurrentMount(mountToken)) render(mountToken);
+    });
+
+    return () => {
+      // MEDIUM-2 fix: don't let a typed-but-unsaved provider key sit in
+      // state after the user leaves this view — same reasoning as sync.js's
+      // L2 fix for its own PAT field's teardown. `onEnter` above already
+      // reassigns `state = freshState()` on the NEXT mount regardless, so
+      // this isn't required for correctness on re-entry — it's the
+      // unconditional backstop that ends the secret's lifetime the moment
+      // the interaction that produced it ends, rather than leaving it
+      // sitting in memory for however long the user is on another view.
+      state.replaceValue = '';
+      if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+    };
   },
 });
+
+// ── Cross-view write gate (see this file's header comment) ────────────────
+
+// FAIL-OPEN: if isAnyWriteBusy() itself throws, every gated control in this
+// view stays enabled rather than becoming permanently stuck disabled.
+function crossWriteBusy() {
+  try {
+    return isAnyWriteBusy();
+  } catch (err) {
+    console.error('[settings] isAnyWriteBusy() failed — failing OPEN (controls stay enabled)', err);
+    return false;
+  }
+}
+
+// Best-effort "what's busy" for a disabled control's tooltip. Unlike
+// sync.js (which always has GET /api/domains loaded), this view only has a
+// domain list once the MCP section has been visited (state.defaultDomainInfo
+// .domains, from GET /api/config/default-domain) — falls back to a generic
+// message when that hasn't happened yet. Either way crossWriteBusy() above
+// is what actually gates the control; this only affects tooltip specificity.
+function activeWriteInfo() {
+  try {
+    const domains = (state.defaultDomainInfo && state.defaultDomainInfo.domains) || [];
+    for (const d of domains) {
+      const label = getDomainWriteLabel(d);
+      if (label) return { domain: d, label };
+    }
+  } catch (err) {
+    console.error('[settings] getDomainWriteLabel() failed while building a tooltip', err);
+  }
+  return null;
+}
+
+// `consequence` names what's specifically at risk for THIS control (folder
+// vs. provider/key) — see the file-header comment for why each is real.
+function crossWriteTitle(consequence) {
+  const info = activeWriteInfo();
+  const who = info
+    ? 'A write (' + info.label + ') is running for domain "' + info.domain + '"'
+    : 'A write is running in another view';
+  return who + ' — ' + consequence;
+}
+
+function renderCrossWriteBanner(consequence) {
+  return crossWriteBusy()
+    ? '<div class="settings-write-busy-note">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml(crossWriteTitle(consequence)) + '</span></div>'
+    : '';
+}
 
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
@@ -455,11 +604,16 @@ function renderProviders() {
     return '<p class="view-body">Loading provider status…</p>';
   }
   const k = state.keys;
-  const rows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k)).join('');
+  // Cross-view write gate (see file-header comment): a write in flight
+  // anywhere depends on getProviderInfo() resolving consistently for the
+  // rest of its run — Save/Disconnect/Set-active can change that mid-write.
+  const crossBusy = crossWriteBusy();
+  const rows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy)).join('');
 
   return (
     '<p class="view-body">At least one key is required. Saving a key makes that provider available in the chat model ' +
     'picker; the active provider is used for ingest and health scans.</p>' +
+    renderCrossWriteBanner('wait for it to finish before changing keys or the active provider — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
     '<div class="provider-row-list">' + rows + '</div>' +
     '<div class="settings-note-row">' +
@@ -470,7 +624,7 @@ function renderProviders() {
   );
 }
 
-function renderProviderRow(p, k) {
+function renderProviderRow(p, k, crossBusy) {
   if (!p.available) {
     return (
       '<div class="provider-row provider-row-unavailable">' +
@@ -496,20 +650,41 @@ function renderProviderRow(p, k) {
   const stateText = isActive ? 'active' : (hasKey ? 'configured' : 'not set');
   const stateClass = isActive ? 'provider-state-active' : 'provider-state-muted';
 
+  // `isBusy` is THIS row's own in-flight request (already disables + shows
+  // its own "Saving…"/etc label — not a conflict with itself). `crossBusy`
+  // is a write happening somewhere ELSE. Only show the cross-write title
+  // when it's the reason a control is disabled, not when the row's own
+  // request already explains itself.
+  const mutateDisabled = isBusy || crossBusy;
+  const crossTitleAttr = (crossBusy && !isBusy)
+    ? ' title="' + escapeHtml(crossWriteTitle('wait for it to finish before changing keys or the active provider — it may be mid-call.')) + '"'
+    : '';
+
   const extraActions = [];
   if (hasKey && !isActive) {
-    extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-set-active="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>Set active</button>');
+    extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-set-active="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>Set active</button>');
   }
   if (hasKey) {
-    extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-disconnect="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>Disconnect</button>');
+    extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-disconnect="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>Disconnect</button>');
   }
 
   let fieldHtml;
   if (isReplacing) {
     fieldHtml = (
       '<div class="provider-replace-row">' +
+        // MEDIUM-2 fix: deliberately NO `value="..."` attribute here — same
+        // reasoning as sync.js's L2 fix for its own PAT field (see that
+        // file's renderUnconfigured() comment): an HTML `value=` attribute
+        // is plain text in the markup/outerHTML regardless of `type`, so a
+        // credential rendered that way is readable in DevTools' Elements
+        // panel or any copied outerHTML — the on-screen dot-masking a
+        // type="password" input gives you does NOT extend to its source.
+        // wireProviderListeners() below sets `.value` as a live DOM
+        // property immediately after this markup lands, restoring
+        // whatever's in state.replaceValue WITHOUT it ever touching HTML.
         '<input type="password" class="provider-replace-input mono" id="replace-input-' + p.id + '" placeholder="Paste your ' + escapeHtml(p.name) + ' API key" autocomplete="off" spellcheck="false">' +
-        '<button type="button" class="btn btn-primary btn-xs" data-save-key="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>' + (isBusy ? 'Saving…' : 'Save') + '</button>' +
+        '<button type="button" class="btn btn-primary btn-xs" data-save-key="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>' + (isBusy ? 'Saving…' : 'Save') + '</button>' +
+        // Cancel never hits the network — always enabled, even mid cross-write, so there is always a way out of the replace row.
         '<button type="button" class="btn btn-ghost btn-xs" data-cancel-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>Cancel</button>' +
       '</div>'
     );
@@ -519,6 +694,7 @@ function renderProviderRow(p, k) {
       '<span class="mono provider-state ' + stateClass + '">' + stateText + '</span>' +
       '<div class="provider-row-actions">' +
         extraActions.join('') +
+        // "Replace" only opens the input row locally — no network call — so it's deliberately NOT gated (see file-header comment).
         '<button type="button" class="btn btn-secondary btn-xs" data-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>Replace</button>' +
       '</div>'
     );
@@ -645,14 +821,24 @@ function renderStorage() {
   if (!state.config) {
     return '<p class="view-body">Loading…</p>';
   }
+  // Cross-view write gate (see file-header comment): changing the folder
+  // mid-write sends that write's REMAINING pages to a different folder,
+  // since every write resolves it fresh, per call, never cached.
+  const crossBusy = crossWriteBusy();
+  const chooseDisabled = state.pickingFolder || crossBusy;
+  const chooseTitle = (crossBusy && !state.pickingFolder)
+    ? ' title="' + escapeHtml(crossWriteTitle('changing the knowledge base folder mid-write can scatter its remaining pages into the new folder instead.')) + '"'
+    : '';
   return (
     '<p class="view-body">Every domain is a folder of plain markdown here. This folder is also your Obsidian vault ' +
     '— open it with <em>Open folder as vault</em>.</p>' +
+    renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.') +
     '<div class="storage-path-row">' +
       '<code class="mono storage-path">' + escapeHtml(state.config.domainsPath) + '</code>' +
-      '<button type="button" class="btn btn-primary" id="btn-choose-folder"' + (state.pickingFolder ? ' disabled' : '') + '>' +
+      '<button type="button" class="btn btn-primary" id="btn-choose-folder"' + (chooseDisabled ? ' disabled' : '') + chooseTitle + '>' +
         (state.pickingFolder ? 'Waiting for Finder…' : 'Choose folder') +
       '</button>' +
+      // "Copy" is a clipboard-only read — deliberately not gated (see file-header comment).
       '<button type="button" class="btn btn-secondary" id="btn-copy-path">Copy' + (state.pathCopyFeedback ? ' — ' + escapeHtml(state.pathCopyFeedback) : '') + '</button>' +
     '</div>' +
     '<div class="settings-note-row">' +
@@ -703,10 +889,23 @@ function wireGeneralListeners() {
 
 function wireProviderListeners() {
   document.querySelectorAll('[data-replace]').forEach((btn) => {
-    btn.addEventListener('click', () => { state.replacing = btn.dataset.replace; render(myMountToken); focusReplaceInput(); });
+    btn.addEventListener('click', () => {
+      state.replacing = btn.dataset.replace;
+      // MEDIUM-2 fix: a fresh row — whether opening a NEW provider's row or
+      // re-opening the SAME one after a Cancel — never inherits whatever
+      // was typed into a previously-open row. See the field's own doc
+      // comment above for why a secret must not linger past its interaction.
+      state.replaceValue = '';
+      render(myMountToken);
+      focusReplaceInput();
+    });
   });
   document.querySelectorAll('[data-cancel-replace]').forEach((btn) => {
-    btn.addEventListener('click', () => { state.replacing = null; render(myMountToken); });
+    btn.addEventListener('click', () => {
+      state.replacing = null;
+      state.replaceValue = ''; // MEDIUM-2 fix: don't let a typed-but-cancelled key linger in state
+      render(myMountToken);
+    });
   });
   document.querySelectorAll('[data-save-key]').forEach((btn) => {
     btn.addEventListener('click', () => onSaveKey(btn.dataset.saveKey, myMountToken));
@@ -717,6 +916,21 @@ function wireProviderListeners() {
   document.querySelectorAll('[data-set-active]').forEach((btn) => {
     btn.addEventListener('click', () => onSetActive(btn.dataset.setActive, myMountToken));
   });
+
+  // MEDIUM-2 fix: restore the live DOM `.value` from state on EVERY render
+  // (mirrors sync.js's tokenInput.value restore in its own wireListeners —
+  // see that file's L2 comment), and keep state in sync on every keystroke
+  // via a plain 'input' listener that only writes to state, never calls
+  // render() itself — a render mid-keystroke would rebuild the input node
+  // and drop focus/caret for no reason, when nothing about what's ON
+  // SCREEN needs to change while the user is still typing.
+  if (state.replacing) {
+    const input = document.getElementById('replace-input-' + state.replacing);
+    if (input) {
+      input.value = state.replaceValue || '';
+      input.addEventListener('input', (e) => { state.replaceValue = e.target.value; });
+    }
+  }
 }
 
 function focusReplaceInput() {
@@ -830,8 +1044,18 @@ async function onVerifyAiConfirm(token) {
 // request is confirmed ok) — the failure path sets the error and renders
 // directly, with no reload to immediately erase it.
 async function onSaveKey(provider, token) {
+  // MEDIUM-2 fix: prefer the LIVE DOM value over state — same reasoning as
+  // sync.js's onConnect (see its L3 comment): a password manager or browser
+  // autofill can assign an input's `.value` directly without dispatching an
+  // `input` event, so state.replaceValue (which only updates via that
+  // event, see wireProviderListeners above) can lag behind what's actually
+  // sitting in the field. Falling back to state covers the input somehow
+  // not being in the DOM. Re-sync state from whichever source won so a
+  // subsequent render (the error path below, or a gate-triggered one that
+  // lands mid-request) reflects reality either way.
   const input = document.getElementById('replace-input-' + provider);
-  const value = input ? input.value.trim() : '';
+  const value = ((input ? input.value : state.replaceValue) || '').trim();
+  state.replaceValue = value;
   if (!value) return;
   state.keysBusy = provider;
   state.keysActionError = null;
@@ -847,6 +1071,7 @@ async function onSaveKey(provider, token) {
     if (!isCurrentMount(token)) return;
     state.keysBusy = null;
     state.replacing = null;
+    state.replaceValue = ''; // MEDIUM-2 fix: never let a saved secret linger in state past a successful save
     await loadKeys(token); // re-fetch to pick up the masked value + new active/model fields
   } catch (err) {
     if (isCurrentMount(token)) {

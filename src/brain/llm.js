@@ -14,6 +14,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getEffectiveKey, getActiveProvider } from './config.js';
 
+// DELIBERATELY UNCHANGED in the 2026-08-24 chain repair. Both ids were probed
+// live that day and both remain the CHEAPEST working model on their provider
+// (gemini-2.5-flash-lite $0.10/$0.40; claude-haiku-4-5 $1/$5 — every live
+// alternative on each provider costs strictly more). Project policy is explicit
+// that the fallback chain is INSURANCE, not a migration: repairing dead rungs
+// must never quietly move users onto a newer or costlier default. Bump these
+// only when the pinned model is actually retired, or on a deliberate, separately
+// justified cost/quality decision.
 const DEFAULTS = {
   gemini:    'gemini-2.5-flash-lite',
   anthropic: 'claude-haiku-4-5',         // Haiku is the low-cost tier, matching the
@@ -21,13 +29,71 @@ const DEFAULTS = {
                                          // See docs/model-lifecycle.md for rationale.
 };
 
-// Claude Haiku 4.5 caps output at 64,000 tokens; requesting more is rejected by
-// the API with "max_tokens: N > 64000". Our ingest/compile call sites request
-// 65536 (correct for Gemini 2.5 Flash, which allows it) — so the Anthropic
-// branch clamps down to this ceiling. Anthropic is the ONLY provider clamped;
-// Gemini keeps the full 65536. Haiku is the only Anthropic model the Curator
-// enables (DEFAULTS.anthropic), so a single constant suffices.
+/**
+ * CONSERVATIVE default output cap for an Anthropic model we do not recognise.
+ *
+ * Our ingest/compile call sites request 65536 (correct for Gemini 2.5 Flash,
+ * which allows it) and the Anthropic API rejects anything above the model's own
+ * ceiling with "max_tokens: N > <cap>" — so the Anthropic branch clamps.
+ * Anthropic is the ONLY provider clamped; Gemini keeps the full 65536.
+ *
+ * The value 64000 is the cap of the Curator's Anthropic default
+ * (claude-haiku-4-5) and is deliberately the FALLBACK for any id absent from
+ * the table below. The asymmetry is the whole point: guessing HIGH produces a
+ * hard 400 that fails the call outright, while guessing LOW merely truncates —
+ * and truncation already degrades gracefully (handleOutputTokenLimit returns a
+ * partial answer in text mode, and ingest/compile have fallback ladders in JSON
+ * mode). An unknown model must therefore resolve to this, never to 128000.
+ *
+ * The symbol keeps its original name, value and meaning so every existing
+ * consumer is unaffected; per-model caps are read via anthropicMaxOutputTokens().
+ */
 export const ANTHROPIC_MAX_OUTPUT_TOKENS = 64000;
+
+/**
+ * Per-model output ceilings, keyed by EXACT model id.
+ *
+ * Scope mirrors MODEL_PRICES_USD_PER_MTOK: DEFAULTS.anthropic plus every rung of
+ * FALLBACK_CHAINS.anthropic, plus the dated snapshot each alias resolves to (a
+ * user can pin one through the LLM_MODEL dev override).
+ *
+ * A flat 64000 constant was correct while Haiku was the only Anthropic model the
+ * app could ever run. It is NOT correct now that the fallback chain lands on
+ * Sonnet: claude-sonnet-5 and claude-sonnet-4-6 both allow 128,000, so a flat
+ * clamp silently halved their real ceiling. Verified 2026-08-24 against the live
+ * API — both `GET /v1/models/{id}`.max_tokens and the API's own validation error
+ * ("max_tokens: 999999 > 128000") agree, and a 128000 request through the app's
+ * exact messages.stream() shape was accepted.
+ *
+ * NOTE the ceiling is NOT monotonic with recency: claude-sonnet-4-5 is newer than
+ * Haiku 3.5 yet caps at 64,000 like Haiku 4.5, while the older-numbered
+ * claude-sonnet-4-6 allows 128,000. Do not infer a cap from a family or version
+ * word — look it up, exactly as the price table exists for the same reason.
+ */
+const ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS = {
+  'claude-haiku-4-5':           64000,   // current default
+  'claude-haiku-4-5-20251001':  64000,   // dated snapshot the alias resolves to
+  'claude-sonnet-5':           128000,   // fallback rung 1
+  'claude-sonnet-4-6':         128000,   // fallback rung 2
+  'claude-sonnet-4-5':          64000,   // fallback rung 3 — NOT 128k, despite being Sonnet
+  'claude-sonnet-4-5-20250929': 64000,   // dated snapshot the alias resolves to
+};
+Object.freeze(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS);
+
+/**
+ * The output ceiling to clamp to for a given Anthropic model id.
+ *
+ * Unknown / non-string / prototype-key input returns ANTHROPIC_MAX_OUTPUT_TOKENS
+ * — the CONSERVATIVE value. `Object.hasOwn` rather than a truthiness check so
+ * `'__proto__'` and `'constructor'` cannot resolve through the plain object and
+ * yield a bogus ceiling (the v3.0.9 normalizeResponseStyle bug shape).
+ */
+export function anthropicMaxOutputTokens(modelId) {
+  if (typeof modelId !== 'string') return ANTHROPIC_MAX_OUTPUT_TOKENS;
+  return Object.hasOwn(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, modelId)
+    ? ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS[modelId]
+    : ANTHROPIC_MAX_OUTPUT_TOKENS;
+}
 
 /**
  * Model-lifecycle safety net.
@@ -59,14 +125,37 @@ const FALLBACK_CHAINS = {
   gemini: [
     'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
     'gemini-3.5-flash-lite',        // next flash-lite generation — 3x in / 6.25x out
+    // ⚠ THINKING TOKENS: gemini-2.5-flash spends hidden reasoning tokens out of
+    // the SAME maxOutputTokens budget, and they are billed as output. Probed
+    // 2026-08-24: at maxOutputTokens 30 it returned finishReason MAX_TOKENS with
+    // ZERO visible tokens and 26 thoughtsTokenCount — the entire budget consumed
+    // before a single character of answer; at 64 it produced 2 visible against 58
+    // thoughts. The flash-lite rungs and the default showed 0-2 thought tokens on
+    // the same prompts, so this rung alone behaves differently. Nothing here
+    // compensates for it (a budget nudge would be guesswork), but a caller
+    // debugging "MAX_TOKENS with an empty response on the last fallback rung"
+    // should know the budget is shared, not reserved for visible output.
     'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
+  // Repaired 2026-08-24. FOUR of the five previous rungs were dead — probed with
+  // the Curator's exact call shape (messages.stream().finalMessage()), all four
+  // returned 404 not_found_error, and none appear in GET /v1/models:
+  //   claude-3-5-haiku-latest · claude-3-5-haiku-20241022
+  //   claude-3-7-sonnet-latest · claude-3-5-sonnet-latest
+  // This is the v3.0.15 Gemini bug repeating on the Anthropic side. It failed
+  // SAFE (404 → skip → land on Sonnet 4.5) but not CHEAP: the chain's documented
+  // promise is the cheapest still-working model, and it was delivering the
+  // priciest of the three live options at 3x the default.
+  //
+  // There is NO cheaper live Haiku — the entire 3.5 family is retired and 4.5 is
+  // the default itself — so the chain must jump straight to Sonnet. Ordered
+  // cheapest-first among models verified alive today; 4.6 and 4.5 tie on price,
+  // and the forward-in-time rule breaks the tie toward 4.6 (which also carries
+  // the larger 128k output ceiling).
   anthropic: [
-    'claude-3-5-haiku-latest',      // previous Haiku gen — actually CHEAPER ($0.80/$4), SDK-typed
-    'claude-3-5-haiku-20241022',    // explicit stable version (last-resort Haiku)
-    'claude-sonnet-4-5',            // upgrade tier if Haiku family is entirely gone
-    'claude-3-7-sonnet-latest',     // rolling alias recognised by SDK types
-    'claude-3-5-sonnet-latest',     // deep fallback — broadly-available Sonnet
+    'claude-sonnet-5',              // $2/$10 — cheapest live non-Haiku AND the newest
+    'claude-sonnet-4-6',            // $3/$15 — tie on price with 4.5, newer, 128k output
+    'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output
   ],
 };
 
@@ -99,17 +188,24 @@ const MODEL_PRICES_USD_PER_MTOK = {
   'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // 2.5x in / 3.75x out vs default
   'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },   // 3x in / 6.25x out vs default
   'gemini-2.5-flash':          { input: 0.30, output: 2.50 },
-  // ── Anthropic ──
+  // ── Anthropic ── (re-verified 2026-08-24; the four retired 3.x rungs and their
+  // prices were removed together with the dead chain entries)
   'claude-haiku-4-5':          { input: 1.00, output: 5.00 },   // current default
-  // Haiku 3.5 is genuinely CHEAPER than Haiku 4.5 — a fallback onto it must not
-  // warn about cost. Exactly the kind of case a family heuristic cannot see.
-  'claude-3-5-haiku-latest':   { input: 0.80, output: 4.00 },
-  'claude-3-5-haiku-20241022': { input: 0.80, output: 4.00 },
+  // ⚠ Sonnet 5 is CHEAPER than both Sonnet 4.6 and Sonnet 4.5 despite being the
+  // newest of the three — a within-family price DROP, the mirror image of the
+  // Gemini flash-lite rise above, and the second independent proof that only an
+  // exact-id table can be trusted here.
+  //
+  // Read the source carefully before touching this number: $2/$10 launched in
+  // June 2026 labelled INTRODUCTORY through 2026-08-31, and a cached copy of the
+  // pricing table still carries that wording. Anthropic announced on 2026-08-10
+  // that it is now the standard price and the scheduled 2026-09-01 rise to
+  // $3/$15 will NOT occur — confirmed against the live pricing page. Had the
+  // introductory framing been current, hard-coding $2/$10 would have inverted
+  // this chain's cost ordering one week later.
+  'claude-sonnet-5':           { input: 2.00, output: 10.00 },
+  'claude-sonnet-4-6':         { input: 3.00, output: 15.00 },
   'claude-sonnet-4-5':         { input: 3.00, output: 15.00 },
-  // 3.7 / 3.5 Sonnet are retired from the published table; these are their last
-  // published rates, kept for ORDERING only (Sonnet > Haiku is not in doubt).
-  'claude-3-7-sonnet-latest':  { input: 3.00, output: 15.00 },
-  'claude-3-5-sonnet-latest':  { input: 3.00, output: 15.00 },
 };
 
 // Frozen at definition: this table is exported through `__testing` for the
@@ -718,9 +814,13 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // plus the jsonrepair fallback in parseJSON (see src/brain/ingest.js).
   const client = new Anthropic({ apiKey: getEffectiveKey('anthropic') });
 
-  // Clamp to Haiku's hard output cap. Call sites pass 65536 (right for Gemini),
-  // which the Anthropic API rejects outright as "max_tokens: 65536 > 64000".
-  const effectiveMaxTokens = Math.min(maxTokens, ANTHROPIC_MAX_OUTPUT_TOKENS);
+  // Clamp to THIS model's hard output cap. Call sites pass 65536 (right for
+  // Gemini), which the Anthropic API rejects outright as "max_tokens: 65536 >
+  // 64000" on Haiku. Per-model since 2026-08-24: a flat 64000 silently halved
+  // the real 128,000 ceiling of the Sonnet 5 / Sonnet 4.6 fallback rungs. An
+  // unrecognised id resolves to the conservative 64000 — see
+  // anthropicMaxOutputTokens.
+  const effectiveMaxTokens = Math.min(maxTokens, anthropicMaxOutputTokens(model));
 
   // Use the streaming transport, NOT messages.create(). The SDK (>=0.39) throws
   // "Streaming is strongly recommended for operations that may take longer than
@@ -852,4 +952,7 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
  * fallback rung without its price fails the suite instead of silently
  * downgrading the user's cost warning to 'unknown'.
  */
-export const __testing = { DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK, reportUsage };
+export const __testing = {
+  DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK, reportUsage,
+  ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS,
+};

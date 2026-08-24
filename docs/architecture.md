@@ -106,6 +106,59 @@ Synthesis (`brain/sharedbrain-synthesis.js`) and revoke (`brain/sharedbrain-revo
 
 ---
 
+## The `/next` redesign shell (parallel frontend, not user-facing)
+
+Since v3.1.3, a second, complete frontend has lived at `src/public/next/**`, served live at `/next`. It shares nothing with the shipping frontend at `src/public/app.js` — no imports, no globals, no shared module state. It is not linked from anywhere in the shipping app and is reachable only by navigating to `/next` directly. **This section exists because the route was previously undocumented anywhere in `docs/`, `CONTRIBUTING.md`, or `README.md` — discoverable only by reading the file tree.** That gap matters in this specific project: the v3.2.0 incident (see that release's CLAUDE.md entry) is a recorded case where an undocumented route contributed to how a destructive bug went unnoticed.
+
+### Why a parallel shell instead of rewriting `app.js` in place
+
+`app.js` is one ~6,800-line ES module the auto-updater ships straight to every user's machine on every check-for-updates. As documented in [§ Frontend binding hardening](#frontend-binding-hardening-srcpublicappjs-v310) above, a single unguarded `null` dereference at module scope there is enough to blank the entire app for everyone. Building the redesign as a second, independent shell means `app.js` gets **zero changes** while the redesign is under construction — it cannot regress from redesign work in progress, and redesign work in progress cannot ship a blank page to a single real user, because nothing points a real user at `/next`. `git diff` on `app.js`/`index.html`/`styles.css` staying empty was verified explicitly at the shell's introduction (v3.1.3) and has stayed a standing invariant since.
+
+The design source is a set of React components (hookless, stateless-beyond-props — see `src/public/next/app.js`'s own docblock), but `/next` itself is vanilla JS ES modules with no build step, matching the rest of this app's "no framework" design decision (see [§ Design decisions](#design-decisions) below). The intent is explicitly to port the shipping app's proven interaction *patterns*, not the framework the design was handed off in.
+
+### How it's served
+
+Static assets under `src/public/next/**` (CSS, JS, SVGs) need no special route — they're served for free by the same `express.static()` mount that serves the shipping app's assets, since `next/` is just a subdirectory of `src/public/`. The one thing that route doesn't handle correctly on its own is the bare `/next` and `/next/` paths: without an explicit handler they'd fall through to the SPA catch-all at the bottom of `src/server.js`, which serves the **shipping** app's `index.html` for any unmatched path. A small route just above that catch-all intercepts `/next` and `/next/` and serves `src/public/next/index.html` instead — see the comment on that route in `src/server.js` for the exact static-mount interaction (a bare `/next` request is actually first caught by `express.static()`'s own 301-to-trailing-slash behavior; the explicit route is a fallback in case that behavior ever changes).
+
+### View registry, `navigate()`, and the mount-token contract
+
+`src/public/next/app.js` is the shell — a hand-rolled router, not a library. Each of the (currently seven) views lives in its own file under `views/`, registering itself via `registerView(name, { onEnter, onExit })` at that file's own top level. `navigate(name)` switches the active view and enforces two hard rules from the design spec **before** any view's `onEnter` runs, so no individual view can opt out of them:
+
+1. The wiki reader overlay must never survive a view change — closed unconditionally on every `navigate()` call.
+2. Rail navigation always clears the reader and closes the chat composer's model/length picker.
+
+`onEnter` receives a `mountToken`. Any async work started inside it (a `fetch`, an SSE stream) must capture that token as a plain local variable at the point it's still known-fresh, then pass it to `setSidebar`/`setMain`/`openReader` (which each independently refuse to touch the DOM for a stale token) or check it via `isCurrentMount(token)` before doing further work. `navigate()` bumps the token on **every** call, including re-entering the same view by name, specifically so a still-pending fetch from an abandoned mount can never paint its result over a newer one.
+
+This was hardened over three internal audit rounds, and the history is worth keeping because it's a real "looked equivalent, wasn't" case: the first two views built with real async work (Chat, Domains) used the token from the start; Settings and Sync, added later, predated the primitive and used a hand-rolled `let mounted = false` module-level boolean instead. A third audit round found this was **not** actually equivalent — a boolean can only answer "is *some* mount of this view still current," not "is *this specific* mount still current," which is the entire distinction the token exists to make — and reproduced the failure live: mount A's abandoned Sync push/pull result surfaced under mount B. Both views were migrated to the same token discipline every other view already used; there is no longer a second mechanism anywhere in the shell.
+
+### The cross-view write gate (`beginDomainWrite` / `isDomainWriteBusy` / `isAnyWriteBusy` / `getDomainWriteLabel` / `onWriteGateChange`)
+
+Destructive operations (ingest, a batch-queue item, a Sync push/pull, a Shared Brain pull) need to be visible to views *other than the one that started them* — Sync, Domains, and Settings all need to disable their own Push/Pull/Delete/Update controls while a write against a domain is in flight, mirroring the backend's own write-registry (`src/brain/write-registry.js`), which already 409s those endpoints mid-write. This is exactly the shipping app's `window.__curatorIngestStart`/`__curatorIngestEnd` pattern, but rebuilt as a **shell primitive** rather than a global pair, specifically to structurally close a real bug in that pattern: `app.js`'s own `_queueBusyDomain` comment documents that its "enter" call was keyed on `job.domain` while its "exit" call re-read whatever the `#ingest-domain` dropdown happened to hold at a *later* moment — often empty on a page-reload resume, since two un-awaited loads can race the dropdown being populated — decrementing the wrong domain's count and leaving the right one's buttons disabled forever.
+
+`beginDomainWrite(domain, opLabel?)` closes over the domain at the call site and returns a **release function**, not a domain string for the caller to re-supply later — there is no second call site holding its own copy of the key to drift from the first. Calling the returned handle twice is a harmless no-op; losing it entirely just leaks that one write as permanently "busy" for its domain (loud — a button stays disabled — rather than silent). Counts are ref-counted per domain (so two writes on different domains never block each other, and two on the same domain both have to release before it reads as free), and the state lives in the shell module, not inside any one view, so it survives navigating away from and back to the view that started the write — the same "shell state, not view state" treatment as `mountToken` and the reader overlay. `onWriteGateChange(fn)` lets any mounted view subscribe to re-render its own controls on any begin/release, anywhere; a subscribing view must unsubscribe in its own teardown.
+
+### The shared batch-ingest logic module and its drift tripwire
+
+`src/public/next/shared/ingest-queue-logic.js` holds 13 pure helper functions (plus one shared regex constant) for the batch-ingest queue UI, copied **byte-identically** from `src/public/app.js`. This isn't a refactor-later shortcut — the maintainer actively uses the shipping app in production and has already found and fixed three real batch-queue defects there. A fix landing only in `app.js` would silently re-ship the same bug to `/next` at cutover, with both frontends' own tests staying green because each only knows about its own copy.
+
+`scripts/test-next-ingest-logic-drift.js` is the guard: it does not evaluate or run the functions — it extracts each one's **source text** from both files with a plain regex and string-compares it, byte for byte, on the reasoning that a behavioral test can pass while two implementations diverge in a way that only matters for an input nobody happened to sample, but a source comparison cannot miss any textual difference. It also independently scans `ingest-queue-logic.js`'s own top-level declarations and asserts the set matches a hardcoded name list exactly, so adding a 14th helper there without updating that list fails loudly too. If a bug is found in one of the 13 shared functions while working on `/next`, the fix goes into `app.js` first (which otherwise stays byte-untouched, but a genuine bug fix is exactly the kind of change that goes through normal review there) and is then copied down verbatim.
+
+**This test is deliberately temporary.** At cutover — when `/next` becomes `/` and `app.js` is deleted outright — the comparison it performs becomes meaningless, because there is no longer a second copy to diverge from. `scripts/test-next-ingest-logic-drift.js`'s own header is explicit: delete the file and its `OFFLINE` entry in `scripts/run-tests.js` at that point; do not repoint it at some other pair of files or repurpose it as a coverage test for the survivor.
+
+### Status: what's real, what's a stub
+
+`/next` is **not user-facing** — nothing links to it, and the app's default route (`/`) is unaffected. Within the shell itself, views are at different levels of completeness and this should not be overstated in either direction:
+
+- **Chat, Domains, Ingest, Settings, Sync** — real, wired to pre-existing backend endpoints (no new server-side capability was added for any of them; each view's own top comment names the exact routes it calls). Ingest includes the full batch-ingest queue, not just the single-file path. Chat's composer model/length pickers and the reader-overlay content are real, not placeholder.
+- **Shared Brain** (`views/shared.js`) — the connected state and the enabled/disabled flag states are real. The five-step setup wizard is **deliberately not built** here; the view's own comment notes that changing which domains contribute requires the access token to be re-entered, which this shell doesn't handle outside a setup wizard yet.
+- **Agent memory** (`views/memory.js`) — a genuine stub. There is no backend for it at all. It renders a "this feature doesn't exist yet" card describing the intended design (read-only Done/Decided/Blocked rollups composed from MCP write scopes) so the rail's shape — your brain → your team's brain → your agents' brain — is honest about what's coming without implying any of it is built.
+
+### At cutover
+
+The plan is a straight swap: `/next` becomes `/`, and `src/public/app.js` (plus its supporting `index.html`/`styles.css`) is deleted outright — not kept around as a fallback. See the drift-tripwire note above for the one piece of test infrastructure that must be deleted, not adapted, at that point.
+
+---
+
 ## Directory structure
 
 ```
@@ -139,7 +192,18 @@ the-curator/
 │   └── public/
 │       ├── index.html          Single-page UI shell
 │       ├── app.js              Vanilla JS frontend (includes Settings tab + onboarding wizard)
-│       └── styles.css          Dark-theme styles
+│       ├── styles.css          Dark-theme styles
+│       └── next/                Parallel redesign shell, served at /next (v3.1.3+; not user-facing — see
+│           │                    "The /next redesign shell" section above). Deleted alongside app.js at cutover.
+│           ├── index.html      Shell HTML (served for the bare /next and /next/ paths)
+│           ├── app.js          Shell: view registry, navigate()/mount-token contract, cross-view write gate
+│           ├── shell.css       Shared layout (rail, sidebar, main grid, reader overlay, tokens wiring)
+│           ├── tokens/         Design-system CSS custom properties (color, space, type, motion, shape, fonts)
+│           ├── shared/         ingest-queue-logic.js — 13 batch-ingest helpers, byte-identical copy of app.js's
+│           │                    own (guarded by scripts/test-next-ingest-logic-drift.js — see above)
+│           └── views/          One file + one same-named CSS file per rail item (chat, domains, ingest,
+│                                settings, shared, sync — real; memory — stub, no backend yet). views/README.md
+│                                documents the contract for adding a new one.
 ├── mcp/                        My Curator MCP — read+write surface to the wiki for Claude Desktop / any MCP client
 │   ├── server.js               stdio entry point (spawned as child process by the MCP client)
 │   ├── graph.js                Wiki parser: frontmatter, [[wikilinks]], backlinks, tag inventory (cached)

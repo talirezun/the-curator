@@ -28,6 +28,7 @@
 import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
+  beginDomainWrite,
 } from '../app.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
@@ -146,6 +147,54 @@ let myMountToken = 0;
 // instead of "one is already running, please wait"). Keyed by domain slug
 // so a write in flight on domain A never disables domain B's own actions.
 const inFlightWriteSlugs = new Set();
+
+// MEDIUM-1 fix (this session): the five destructive write flows below —
+// runFixSafe, fixAllOfType, applyPendingPlan (both broken-links AND
+// orphans), and runMergeSemanticDuplicates — now ALSO register with the
+// shell-wide write gate via beginDomainWrite() (app.js), acquired right
+// after the operation starts and released unconditionally in each
+// function's own `finally`. This is a DIFFERENT mechanism from
+// inFlightWriteSlugs above, and this view needs BOTH — deleting either
+// on the assumption it's now redundant would reopen a real bug:
+//   - inFlightWriteSlugs (this view's own module-level Set) is what keeps
+//     THIS view's own quick-maintenance buttons disabled across a remount
+//     of THIS view (Domains -> another view -> back to Domains, mid-write)
+//     — see the MEDIUM-5 comment above for why a fresh mount's `busyKey`
+//     alone can't do that (busyKey resets on teardown; the real backend
+//     write doesn't stop just because nobody's watching it).
+//   - beginDomainWrite()'s shell-wide gate is what lets OTHER views (Sync,
+//     Settings) know a write is running on THIS domain and disable THEIR
+//     OWN controls accordingly. Before this fix, Sync's Push/Pull/Sync-now/
+//     Disconnect buttons stayed fully enabled for the whole duration of a
+//     Health write, and the user got a raw backend 409 (from routes/
+//     sync.js's guardConcurrent() -> hasActiveWrites()) instead of a
+//     disabled button with an explanation — reproduced live with a hung
+//     fix-all-safe: all four Sync buttons [ENABLED] while the shell gate
+//     reported { any: false }.
+// Domain key: the PLAIN slug string (the `slug` parameter every one of
+// these functions already takes), matching exactly what src/routes/
+// health.js's own registerWrite(domain, ...) calls key on — `domain` is
+// `req.params.domain`, i.e. the same plain slug, at every one of its five
+// call sites (broken-links/apply :300, orphans/apply :378, fix-all-safe
+// :415, semantic-dupes/merge-batch :468, fix-all :521). Never a composite
+// key, so client and server can never disagree about which domain is busy.
+// DISCREPANCY FOUND, flagged rather than silently worked around (out of
+// this view's scope to fix): fixAllOfType below posts to POST
+// /api/health/:domain/fix (singular) for its "Fix all N <category>"
+// button — the body carries {type} with no `issue`, so fixIssue(domain,
+// type, null) behaves identically to what /:domain/fix-all does — but
+// unlike the other four flows, health.js's plain /:domain/fix route has
+// NO registerWrite() of its own (only /:domain/fix-all does, at line 521,
+// and nothing in this file ever calls that route). So this one flow is
+// now gated on the FRONTEND shell but the matching BACKEND route still
+// isn't 409-protected against a concurrent sync/update — the frontend gate
+// closes the UX gap (Sync's buttons correctly show busy either way), but a
+// non-UI client (curl, the MCP, a second browser tab) hitting /:domain/fix
+// directly during a sync is not caught by guardConcurrent() the way the
+// other four routes are. Worth deciding whether /:domain/fix should also
+// call registerWrite(), or whether fixAllOfType should call /:domain/fix-all
+// instead — recorded here rather than changed, since routes/health.js is
+// outside this session's file ownership.
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────
 
@@ -1003,11 +1052,117 @@ function bindHealthListeners(domain, readonly) {
 
 function rescan(slug) { loadHealth(slug, myMountToken).catch(reportAsyncActionFailure); }
 
+// ── AI privacy disclosure (one-time, browser-local) ─────────────────────────
+// Shipping app.js (src/public/app.js) gates its single-row "✨ Ask AI"
+// broken-link/orphan suggestion behind a one-time localStorage-backed
+// disclosure (ensureAiDisclosure(), key 'curator-ai-health-disclosure-seen-
+// v1') before anything is sent to the configured LLM provider. /next has no
+// such per-row action — instead, Quick maintenance's three ✨ buttons below
+// (brokenLinks / orphans / semanticDupes) are /next's equivalent LLM-backed
+// surface. Derived by reading every call in this file that reaches an
+// /api/health/*/plan or */scan endpoint (the only ones that make wiki
+// content leave the machine): runBrokenLinksPlan, runOrphansPlan, and
+// runSemanticScan — reached only via confirmBrokenLinksPlan/
+// confirmOrphansPlan/confirmSemanticScan below. applyPendingPlan and
+// runMergeSemanticDuplicates do NOT call the LLM (they apply a plan an
+// earlier *plan*/*scan* step already computed), same as runFixSafe/
+// fixAllOfType (deterministic, no LLM at all) — none of those four are
+// gated, matching the shipping app's fix-all-safe (never gated either).
+// This gate covers exactly those three plan/scan entry points, the same
+// way ensureAiDisclosure covered exactly its one action.
+//
+// SAME KEY, byte-identical, as the shipping app — deliberately NOT
+// namespaced (contrast views/chat.js's LS_STYLE/LS_PROVIDER, which also now
+// read the shipping keys, and LS_DOMAIN, which has no shipping counterpart
+// and stays namespaced). Reading/writing the same key is what makes a user
+// who already accepted this in the shipping app not see it again the
+// moment /next becomes `/` at cutover — the single most visible "did the
+// update forget me" symptom for a privacy consent. Consent is monotonic
+// (accepting on either surface satisfies both; there is no "un-accept"), so
+// there is no value format to reconcile — both sides only ever write the
+// literal string 'yes'.
+const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';
+
+// Copy is NOT a verbatim port of the shipping modal's. The shipping copy
+// describes ONE action ("a short excerpt (~4 KB) of the wiki page that
+// contains the broken link... a list of your wiki's page names"); /next has
+// no such action, so reusing that exact text in front of a batch action
+// would misdescribe what is actually about to happen — a worse privacy
+// representation, not a more faithful one, and the brief for this change is
+// explicit that phrasing genuinely wrong for /next's IA should be changed
+// rather than forced verbatim. This instead describes what /next's three
+// real actions send, checked against src/brain/health-ai.js: broken-link
+// and orphan fixes send an excerpt of the specific page plus a slug
+// inventory; duplicate-page scanning sends each candidate page's first
+// paragraph. All three already show an exact per-action cost/target confirm
+// right after this one (confirmBrokenLinksPlan etc.) — this disclosure only
+// states the general shape ONCE, it does not repeat those specifics.
+const AI_DISCLOSURE_COPY =
+  'The ✨ AI actions in Quick maintenance — fixing broken links, rescuing orphan pages, and finding duplicate ' +
+  'pages — send excerpts of the relevant wiki pages, and usually a list of your other page names (slugs only, ' +
+  'never full page contents beyond what’s excerpted), to your configured AI provider (Google Gemini or ' +
+  'Anthropic — whichever you set in Settings). The next step always shows exactly what that specific action ' +
+  'sends and its estimated cost before anything runs. The provider’s own privacy policy applies to what it ' +
+  'receives. To turn this off entirely, remove your API key in Settings.';
+
+// Fail CLOSED: for a privacy consent, "can't tell" must mean "ask again",
+// never "assume yes". localStorage can throw (private/incognito mode,
+// storage disabled by policy) — same try/catch idiom as views/chat.js's
+// LS_* helpers, but the DEFAULT on catch is deliberately the opposite of
+// theirs: chat.js defaults an unreadable style/provider choice to a safe
+// in-band value ('balanced', the global provider) because getting a mere
+// preference wrong costs nothing. Getting THIS one wrong the same way —
+// assuming consent that was never durably recorded — would let wiki content
+// reach a third party with no disclosure ever having been shown. So this
+// returns false (not seen) on any error, which shows the modal again rather
+// than silently skipping it.
+function aiDisclosureSeen() {
+  try {
+    return localStorage.getItem(AI_DISCLOSURE_KEY) === 'yes';
+  } catch {
+    return false;
+  }
+}
+
+function markAiDisclosureSeen() {
+  // A write failure here just means the modal shows again next time (the
+  // fail-closed direction) — never a reason to treat consent as recorded.
+  try { localStorage.setItem(AI_DISCLOSURE_KEY, 'yes'); } catch { /* ignore */ }
+}
+
+// Single chokepoint for all three LLM-backed Quick maintenance actions.
+// Reuses the SAME state.confirm / renderConfirmCard() plumbing every other
+// cost-before-action dialog in this view already uses (#dm-confirm-yes /
+// #dm-confirm-no are wired once, unconditionally, in bindHealthListeners) —
+// deliberately not a separate overlay/modal component, so the disclosure
+// reads as one more step in a pattern the user already knows rather than a
+// new kind of UI, per the brief's "make it consistent with [the
+// cost-before-action pattern] nearby in this view". `run` marks the key
+// seen, THEN opens the real per-action confirm (which itself becomes the
+// next state.confirm) — so a first-time AI user sees disclosure -> the
+// action's own cost/target confirm -> (SSE) result, while a returning user
+// (or one who already accepted in the shipping app pre-cutover) goes
+// straight to the per-action confirm. This mirrors the shipping app's
+// ensureAiDisclosure() -> runAiSuggest() two-step exactly.
+function confirmAiAction(slug, action) {
+  const dispatch = () => {
+    if (action === 'brokenLinks') confirmBrokenLinksPlan(slug);
+    else if (action === 'orphans') confirmOrphansPlan(slug);
+    else if (action === 'semanticDupes') confirmSemanticScan(slug);
+  };
+  if (aiDisclosureSeen()) { dispatch(); return; }
+  state.confirm = {
+    title: 'Before you use an AI action',
+    body: AI_DISCLOSURE_COPY,
+    confirmLabel: 'Continue',
+    run: () => { markAiDisclosureSeen(); dispatch(); },
+  };
+  render(myMountToken);
+}
+
 function onQuickAction(slug, action) {
   if (action === 'fixSafe') return confirmFixSafe(slug);
-  if (action === 'brokenLinks') return confirmBrokenLinksPlan(slug);
-  if (action === 'orphans') return confirmOrphansPlan(slug);
-  if (action === 'semanticDupes') return confirmSemanticScan(slug);
+  if (action === 'brokenLinks' || action === 'orphans' || action === 'semanticDupes') return confirmAiAction(slug, action);
 }
 
 // ── fix-all-safe (free, deterministic) ─────────────────────────────────────
@@ -1039,6 +1194,12 @@ async function runFixSafe(slug) {
   const token = myMountToken;
   state.busyKey = 'fixSafe';
   render(token);
+  // MEDIUM-1 fix: acquired right after the operation is committed to (same
+  // spot ingest.js's runIngest acquires its own handle), released
+  // unconditionally in the `finally` below — see the module-level comment
+  // above inFlightWriteSlugs for why this is a SEPARATE mechanism from that
+  // Set, not a replacement for it.
+  const releaseGate = beginDomainWrite(slug, 'health-fix-all-safe');
   try {
     // LOW-4 fix (re-audit, third round): `add()` moved to be the FIRST
     // statement inside the try (was: add(slug) — render(token) — try {}).
@@ -1057,6 +1218,7 @@ async function runFixSafe(slug) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not fix safe issues — ' + err.message };
   } finally {
     inFlightWriteSlugs.delete(slug); // unconditional — the real write actually finished
+    releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as the delete() above
     state.busyKey = null;
   }
   if (!isCurrentMount(token)) return;
@@ -1069,6 +1231,11 @@ async function fixAllOfType(slug, type) {
   const token = myMountToken;
   state.busyKey = 'group:' + type;
   render(token);
+  // MEDIUM-1 fix — see the module-level comment above inFlightWriteSlugs
+  // for the flagged fix-vs-fix-all backend-route discrepancy this label
+  // name is deliberately calling out ('health-fix', not 'health-fix-all' —
+  // this flow really does hit POST /:domain/fix, singular).
+  const releaseGate = beginDomainWrite(slug, 'health-fix');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix', {
@@ -1081,6 +1248,7 @@ async function fixAllOfType(slug, type) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not fix — ' + err.message };
   } finally {
     inFlightWriteSlugs.delete(slug);
+    releaseGate(); // MEDIUM-1 fix
     state.busyKey = null;
   }
   if (!isCurrentMount(token)) return;
@@ -1174,6 +1342,10 @@ async function applyPendingPlan(slug) {
   state.busyKey = kind + 'Apply';
   render(token);
   const url = '/api/health/' + encodeURIComponent(slug) + '/' + (kind === 'brokenLinks' ? 'broken-links' : 'orphans') + '/apply';
+  // MEDIUM-1 fix — label matches src/routes/health.js's own registerWrite()
+  // label for whichever endpoint `url` above actually resolves to
+  // ('broken-links-apply' :300 / 'orphan-rescue-apply' :378).
+  const releaseGate = beginDomainWrite(slug, kind === 'brokenLinks' ? 'broken-links-apply' : 'orphan-rescue-apply');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     let result = null;
@@ -1202,6 +1374,7 @@ async function applyPendingPlan(slug) {
     // mount is responsible for.
     if (isCurrentMount(token)) state.pendingPlan = null;
     inFlightWriteSlugs.delete(slug);
+    releaseGate(); // MEDIUM-1 fix — unconditional, regardless of mount staleness (same as inFlightWriteSlugs.delete above)
     state.busyKey = null;
   }
   if (!isCurrentMount(token)) return;
@@ -1316,6 +1489,9 @@ async function runMergeSemanticDuplicates(slug, pairs) {
   const token = myMountToken;
   state.busyKey = 'semanticMerge';
   render(token);
+  // MEDIUM-1 fix — label matches src/routes/health.js's own
+  // registerWrite(domain, 'semantic-dupes-merge-batch') at line 468.
+  const releaseGate = beginDomainWrite(slug, 'semantic-dupes-merge-batch');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     let result = null;
@@ -1337,6 +1513,7 @@ async function runMergeSemanticDuplicates(slug, pairs) {
     // bricks — H2).
     if (isCurrentMount(token)) state.semanticScan = null;
     inFlightWriteSlugs.delete(slug);
+    releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as inFlightWriteSlugs.delete above
     state.busyKey = null;
   }
   if (!isCurrentMount(token)) return;

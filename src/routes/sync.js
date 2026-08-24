@@ -32,7 +32,13 @@ router.get('/status', async (req, res) => {
   }
 });
 
-router.post('/setup', async (req, res) => {
+// Guarded on the same grounds as its four siblings below: setup() runs
+// `git add -A` + commit + push across the domains work-tree, so running it
+// mid-ingest snapshots a half-written document — "half of a source's pages on
+// one side of the commit, half on the other", exactly as guardConcurrent's
+// docblock above describes. It was the only mutating route in this file
+// without the middleware.
+router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
   try {
     const { repoUrl, token, mode } = req.body;
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl is required' });

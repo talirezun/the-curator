@@ -61,10 +61,34 @@
  * undefined reference (any name not in this exact list) is a hard failure.
  * When one of these three is eventually fixed in styles.css, simply delete
  * its entry here — the suite doesn't require the issue to still exist.
+ *
+ * ── Sections 5-8: the /next redesign shell (src/public/next/**) ────────
+ * The shipping app (sections 1-4 above) is one token universe. `/next` —
+ * the parallel redesign shell introduced in v3.1.3 — is a SEPARATE,
+ * self-contained token universe with its own token files (tokens/*.css)
+ * and its own shell.css / views/*.css. It must not inherit definitions
+ * from the shipping app's styles.css, and the shipping app must not
+ * inherit from it — merging the two would let a genuinely-undefined /next
+ * reference silently resolve via a same-named shipping-app token (or vice
+ * versa), which is exactly the class of bug this whole suite exists to
+ * catch. Sections 5-8 repeat the sections-1-4 method (discover linked
+ * stylesheets from the shell's own index.html → extract defs/refs → scan
+ * JS files for inline CSS-in-JS) entirely independently, using fresh
+ * Sets/Maps that are never unioned with the shipping app's. Section 6b
+ * asserts the separation explicitly using real (not synthetic) token
+ * names found at scan time — see its comment for why a hardcoded name
+ * would be the wrong kind of assertion here.
+ *
+ * One pre-existing, already-in-production `/next` finding, verified before
+ * baselining it (per this suite's own rule — see NEXT_KNOWN_ISSUES in
+ * section 7): `--scrim` (shell.css:337) has a working rgba(...) fallback
+ * and is real dead/orphaned naming, the same shape as the three shipping-
+ * app names above — not a silent no-fallback failure.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -262,6 +286,281 @@ function lineNumberFor(lineStarts, index) {
   return lo + 1;
 }
 
+/** True for an external URL this app doesn't control the token surface of:
+ *  absolute http(s), protocol-relative (`//host/...`), or a data: URI.
+ *  Used identically for <link href> discovery and @import target following —
+ *  a single definition so the two can't silently disagree about what counts
+ *  as "ours to scan".
+ */
+function isExternalUrl(href) {
+  return /^(https?:)?\/\//i.test(href) || /^data:/i.test(href);
+}
+
+/** Tokenizes a single HTML tag's attributes into a Map<lowercase-name,
+ *  value-or-null>, scanning SEQUENTIALLY so a quoted attribute VALUE is
+ *  consumed as one atomic token and can never be re-scanned as if its text
+ *  contained a second, nested attribute.
+ *
+ *  AUDIT-FOUND GAP (L2) this replaces a narrower fix for: the previous
+ *  `extractAttr` matched `attrName\s*=\s*(?:"..."|'...'|...)` directly
+ *  against the WHOLE tag text with only a negative-lookbehind guard against
+ *  a hyphenated NAME PREFIX (so `data-href="x"` could no longer satisfy a
+ *  lookup for `href`). That guard does nothing about an attribute NAME
+ *  appearing, coincidentally, inside another attribute's quoted VALUE:
+ *  `<link rel=stylesheet title="see href=DECOY.css" href="REAL.css">` still
+ *  matched "href=DECOY.css" INSIDE the title value, because a flat regex
+ *  scan has no notion of "already inside a value" — it just finds the next
+ *  place the pattern fits, wherever that is. Sequential tokenization can't
+ *  make that mistake: once the `title="..."` token is consumed, its entire
+ *  quoted span (including any text that looks like `href=...`) is behind
+ *  the tokenizer's cursor and is never re-examined as attribute syntax.
+ *
+ *  The leading `<link` (or whatever the tag name is) and the trailing `>`
+ *  are stripped before tokenizing (self-closing `/>` is also stripped) so
+ *  the tag-name text itself is never treated as a stray leading attribute.
+ *  On a duplicate attribute name (malformed but not impossible HTML), the
+ *  FIRST occurrence wins — matching how browsers resolve duplicate
+ *  attributes.
+ */
+function parseAttrs(tagText) {
+  const inner = tagText.replace(/^<[a-zA-Z][a-zA-Z0-9-]*/, '').replace(/\/?>$/, '');
+  const attrs = new Map();
+  const re = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let m;
+  while ((m = re.exec(inner))) {
+    const name = m[1].toLowerCase();
+    const value = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : (m[4] !== undefined ? m[4] : null));
+    if (!attrs.has(name)) attrs.set(name, value);
+  }
+  return attrs;
+}
+
+/** Extract one HTML attribute's value from a single tag string, agnostic to
+ *  quoting style (double, single, or UNQUOTED — all valid HTML5) and
+ *  case-insensitive on the attribute name (HTML attribute names are
+ *  case-insensitive). Built on parseAttrs' sequential tokenizer (see its
+ *  docblock for why that matters — it closes both the name-prefix collision
+ *  this function used to guard with a lookbehind, e.g. `data-href`, AND the
+ *  value-collision gap the lookbehind alone could not close, e.g. an
+ *  unrelated attribute whose VALUE happens to contain the text "href=...").
+ */
+function extractAttr(tagText, attrName) {
+  const attrs = parseAttrs(tagText);
+  const name = attrName.toLowerCase();
+  return attrs.has(name) ? attrs.get(name) : null;
+}
+
+/** Every <link ...> tag in `html` whose `rel` attribute contains the token
+ *  "stylesheet" (rel can be a space-separated list, e.g. "preload
+ *  stylesheet"), regardless of whether rel/href are quoted or unquoted.
+ *  Returns { styleTags, local, externalCount } — `local` is the list of
+ *  hrefs worth scanning (external ones, e.g. Google Fonts, are counted but
+ *  not returned — we don't control their token surface).
+ *
+ *  Replaces an earlier design where the outer <link> match required
+ *  `rel=["']stylesheet["']` (quotes mandatory) and href extraction used the
+ *  unanchored pattern described in extractAttr's docblock above — both were
+ *  real, audit-found gaps: `<link rel=stylesheet href=x.css>` (unquoted,
+ *  valid HTML5) matched neither the old rel check nor the old href pattern.
+ *
+ *  AUDIT-FOUND GAP (L3), fixed here: the outer tag-boundary regex was
+ *  `/<link\b[^>]*>/gi` — `[^>]*` is not quote-aware, so a `>` character
+ *  appearing literally INSIDE a quoted attribute value (valid HTML5; `>`
+ *  needs no escaping inside an attribute value) terminated the "tag" match
+ *  early: `<link rel="stylesheet" title="a > b" href="REAL.css">` matched
+ *  only up through the `>` inside the title value, silently dropping the
+ *  real `href` attribute (which appears after that point) from the
+ *  truncated match text. The stylesheet then vanished from `local` with NO
+ *  assertion firing — coverage lost silently, worse than a loud failure.
+ *  The fix is the standard quote-aware tag-matching trick: repeat "any char
+ *  that isn't `>`, `"`, or `'`, OR a fully-quoted double-quoted span, OR a
+ *  fully-quoted single-quoted span" up to the real closing `>` — a `>`
+ *  inside either quote style is consumed as part of that quoted span and
+ *  can never end the match early.
+ */
+function discoverStylesheetLinks(html) {
+  const allTags = html.match(/<link\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi) || [];
+  const styleTags = allTags.filter(tag => {
+    const rel = extractAttr(tag, 'rel');
+    if (!rel) return false;
+    return rel.toLowerCase().split(/\s+/).includes('stylesheet');
+  });
+  const local = [];
+  let externalCount = 0;
+  for (const tag of styleTags) {
+    const href = extractAttr(tag, 'href');
+    if (!href) continue;
+    if (isExternalUrl(href)) { externalCount++; continue; }
+    local.push(href);
+  }
+  return { styleTags, local, externalCount };
+}
+
+/** Every `@import` target in a stylesheet's RAW (not yet string-masked) text.
+ *  Must run on comment-stripped-but-NOT-string-masked text — cleanCss()'s
+ *  maskStrings() would blank out exactly the quoted target this needs to
+ *  read, e.g. `@import "foo.css";`. Handles `@import url(...)`, the bare
+ *  `@import "...";` / `@import '...';` forms, an optional trailing media
+ *  query, AND modern `@import layer(...) "...";` / `@import supports(...)
+ *  "...";` cascade-layer / feature-query forms (AUDIT-FOUND GAP L4 — the
+ *  previous regex required `url(...)` or a quoted target to appear
+ *  IMMEDIATELY after `@import\s+`, so any modifier token in front of the
+ *  target, like `layer(base)`, made the whole match fail silently).
+ *
+ *  Two-step approach: capture the whole `@import ... ;` (or `...EOF`)
+ *  statement first, then search WITHIN it for a `url(...)` target (any
+ *  position — modifiers may precede or follow it) and, failing that, the
+ *  first bare quoted string (which is the target in every bare/layer/
+ *  supports form, since those modifiers' own parenthesized contents don't
+ *  ordinarily contain quotes).
+ *
+ *  AUDIT-FOUND GAP (L5), also fixed here: this used to accept an `@import`
+ *  match ANYWHERE in the text, including inside an unrelated CSS string
+ *  literal — e.g. `.x { content: "@import url(GHOST.css)"; }` — which
+ *  queued a phantom target and crashed expandWithImports with an uncaught
+ *  ENOENT (a controlled test failure is fine; an uncaught crash is not). A
+ *  real `@import` at-rule can only appear at statement/declaration-block
+ *  position: immediately after `;`, `{`, `}`, or the start of the file
+ *  (ignoring whitespace) — the same plausibility check extractDefinitions
+ *  above already applies to custom-property definitions. Text inside a
+ *  quoted string value is preceded by that string's own opening quote
+ *  character, which is none of those, so it's correctly rejected.
+ *
+ *  Also fixed: extracted targets are now `.trim()`-med. `url( i.css )`
+ *  (spaces before AND after the bare filename, no quotes) previously
+ *  captured a trailing space into the target string — untrimmed — which
+ *  would fail to resolve to the real file on disk.
+ *
+ *  Returns an array of target strings (both local and external — the caller
+ *  decides via isExternalUrl what to do with each).
+ */
+function findImportTargets(rawText) {
+  const noComments = stripLineComments(stripBlockComments(rawText));
+  const targets = [];
+  const stmtRe = /@import\b([^;]*)(;|$)/g;
+  let m;
+  while ((m = stmtRe.exec(noComments))) {
+    let k = m.index - 1;
+    while (k >= 0 && /\s/.test(noComments[k])) k--;
+    const prevChar = k >= 0 ? noComments[k] : null;
+    const isStatementStart = prevChar === null || prevChar === ';' || prevChar === '{' || prevChar === '}';
+    if (!isStatementStart) continue;
+
+    const stmt = m[1];
+    const urlMatch = stmt.match(/url\(\s*(['"]?)([^'")]*)\1\s*\)/i);
+    let target = null;
+    if (urlMatch) {
+      target = urlMatch[2];
+    } else {
+      const strMatch = stmt.match(/(['"])([^'"]*)\1/);
+      if (strMatch) target = strMatch[2];
+    }
+    if (!target) continue;
+    target = target.trim();
+    if (target) targets.push(target);
+  }
+  return targets;
+}
+
+/** BFS over `@import` chains starting from `initialFiles` (the stylesheets
+ *  actually <link>ed from an index.html), resolving each local import
+ *  relative to the IMPORTING file's own directory, so a genuinely-undefined
+ *  var(--x) that lives only inside an imported file is no longer invisible
+ *  to the scanner (the audit-found gap this closes: /next already ships
+ *  tokens/fonts.css using @import, so this is not a hypothetical shape).
+ *  External import targets (e.g. Google Fonts) are recorded but never
+ *  followed — same reasoning as skipping external <link> hrefs: we don't
+ *  control that token surface. Cycle-safe via a visited-by-absolute-path
+ *  Set, so a (malformed) A-imports-B-imports-A chain terminates instead of
+ *  looping forever.
+ *
+ *  AUDIT-FOUND GAP (L5): every `readFileSync` here used to be unguarded, so
+ *  a typo'd or phantom `@import` target (a path that doesn't exist on disk
+ *  — see findImportTargets' docblock for how a string literal could also
+ *  produce one before that was fixed) threw an uncaught ENOENT and crashed
+ *  the ENTIRE test suite with a raw stack trace, rather than failing this
+ *  one check cleanly. Every read is now wrapped; an unreadable file is
+ *  recorded in the new `unreadableFiles` list (never thrown) and is NOT
+ *  added to `files` — critically, this means the caller's own separate
+ *  `readFileSync` pass over the returned `files` list (sections 2 and 6
+ *  below) can never re-encounter it and crash a second time. Each entry's
+ *  `raw` content, once successfully read, is cached on the queue item so
+ *  it is read from disk exactly once per file, not once here and again per
+ *  caller.
+ *
+ *  Returns { files, skippedExternalImports, unreadableFiles } where `files`
+ *  is initialFiles PLUS every reachable, successfully-read local import,
+ *  each shaped the same way ({relPath, absPath}) so the caller's existing
+ *  per-file scan loop needs no special-casing for "was this file linked
+ *  directly or reached via @import".
+ */
+function expandWithImports(initialFiles) {
+  const visited = new Set();
+  const queue = [];
+  const result = [];
+  const skippedExternalImports = [];
+  const unreadableFiles = [];
+
+  function tryRead(relPath, absPath, from) {
+    try {
+      return { raw: readFileSync(absPath, 'utf8'), ok: true };
+    } catch (err) {
+      unreadableFiles.push({ relPath, absPath, from, error: err && (err.code || err.message) || 'unknown error' });
+      return { ok: false };
+    }
+  }
+
+  for (const f of initialFiles) {
+    if (visited.has(f.absPath)) continue;
+    visited.add(f.absPath);
+    const r = tryRead(f.relPath, f.absPath, null);
+    if (!r.ok) continue; // never added to result — caller's own read pass can't re-crash on it
+    result.push(f);
+    queue.push({ ...f, raw: r.raw });
+  }
+
+  while (queue.length) {
+    const f = queue.shift();
+    const targets = findImportTargets(f.raw);
+    for (const target of targets) {
+      if (isExternalUrl(target)) {
+        skippedExternalImports.push({ from: f.relPath, target });
+        continue;
+      }
+      const importedAbs = path.normalize(path.join(path.dirname(f.absPath), target));
+      if (visited.has(importedAbs)) continue; // already queued/scanned — also breaks import cycles
+      visited.add(importedAbs);
+      const importedRel = path.relative(ROOT, importedAbs).split(path.sep).join('/');
+      const r = tryRead(importedRel, importedAbs, f.relPath);
+      if (!r.ok) continue; // phantom/typo'd import target — recorded, never re-read, never crashes
+      const entry = { relPath: importedRel, absPath: importedAbs };
+      result.push(entry);
+      queue.push({ ...entry, raw: r.raw });
+    }
+  }
+  return { files: result, skippedExternalImports, unreadableFiles };
+}
+
+/** Recursively list every `.js` file under `dir`. Used for the /next CSS-in-
+ *  JS scan (section 8) so a new subdirectory (like next/shared/, added in
+ *  this very release) is covered automatically instead of requiring the
+ *  scanner to know its name in advance — the audit-found gap this closes:
+ *  the previous version enumerated exactly two locations (next/app.js +
+ *  next/views/*.js) and silently never looked at next/shared/**.
+ */
+function walkJsFiles(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...walkJsFiles(abs));
+    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      out.push(abs);
+    }
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 0. Parser self-tests — synthetic CSS with known right/wrong answers.
 //    Without these, this suite could silently rot into a no-op that always
@@ -404,22 +703,13 @@ section('1. Discover local stylesheets loaded by index.html');
 const indexPath = path.join(ROOT, 'src/public/index.html');
 const indexHtml = readFileSync(indexPath, 'utf8');
 
-const linkRe = /<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi;
-const hrefRe = /href=["']([^"']+)["']/i;
-const allLinks = indexHtml.match(linkRe) || [];
-const localCssFiles = [];
-for (const tag of allLinks) {
-  const hrefMatch = tag.match(hrefRe);
-  if (!hrefMatch) continue;
-  const href = hrefMatch[1];
-  if (/^(https?:)?\/\//i.test(href)) continue; // external (e.g. Google Fonts) — not ours to check
-  localCssFiles.push(href);
-}
+const disc1 = discoverStylesheetLinks(indexHtml);
+const localCssFiles = disc1.local;
 
-ok(allLinks.length > 0, 'index.html contains at least one <link rel="stylesheet"> tag');
+ok(disc1.styleTags.length > 0, 'index.html contains at least one <link rel="stylesheet"> tag');
 ok(localCssFiles.includes('styles.css'), 'styles.css is discovered as a local stylesheet');
 console.log(`  → local stylesheets found: ${localCssFiles.join(', ')}`);
-console.log(`  → external stylesheets skipped: ${allLinks.length - localCssFiles.length} (e.g. Google Fonts — not this app's token surface)`);
+console.log(`  → external stylesheets skipped: ${disc1.externalCount} (e.g. Google Fonts — not this app's token surface)`);
 
 // ─────────────────────────────────────────────────────────────────────────
 // 2. Extract definitions + references from every local stylesheet
@@ -427,10 +717,28 @@ console.log(`  → external stylesheets skipped: ${allLinks.length - localCssFil
 section('2. Extract definitions and references from the real app CSS');
 
 const publicDir = path.dirname(indexPath);
-const files = localCssFiles.map(href => ({
+const initialFiles1 = localCssFiles.map(href => ({
   relPath: `src/public/${href}`,
   absPath: path.join(publicDir, href),
 }));
+const expanded1 = expandWithImports(initialFiles1);
+const files = expanded1.files;
+if (expanded1.skippedExternalImports.length) {
+  console.log(`  → external @import target(s) skipped (not this app's token surface): ` +
+    expanded1.skippedExternalImports.map(s => `${s.target} (from ${s.from})`).join(', '));
+}
+const importedOnly1 = files.filter(f => !initialFiles1.some(i => i.absPath === f.absPath));
+if (importedOnly1.length) {
+  console.log(`  → additional local file(s) discovered via @import: ${importedOnly1.map(f => f.relPath).join(', ')}`);
+}
+// A real broken/typo'd @import in shipping CSS is a real bug worth failing
+// loudly on — expandWithImports no longer crashes on one (L5), but silently
+// swallowing it would just trade one failure mode for another.
+ok(expanded1.unreadableFiles.length === 0,
+  expanded1.unreadableFiles.length === 0
+    ? 'no @import target in the shipping app CSS failed to resolve to a readable file'
+    : `${expanded1.unreadableFiles.length} @import target(s) in the shipping app CSS could not be read: ` +
+      expanded1.unreadableFiles.map(u => `${u.relPath} (from ${u.from ?? 'index.html link'}) — ${u.error}`).join(', '));
 
 const globalDefs = new Set();
 const perFileData = [];
@@ -560,6 +868,435 @@ const x = \`<span style="color:var(--template-ref)">\`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// 3d. Self-tests — extractAttr / discoverStylesheetLinks (quote-agnostic,
+//    attribute-boundary-anchored <link> href/rel discovery)
+// ─────────────────────────────────────────────────────────────────────────
+// Audit-found gap: an earlier unanchored `href=["']...["']` pattern matched
+// INSIDE `data-href="..."` (the substring `href="..."` is literally present
+// there), and required quotes around both `rel` and `href` even though
+// unquoted attribute values are valid HTML5. Both are real correctness
+// bugs, not merely theoretical — the FIRST one is nastier: the reported
+// file count went UP while actual coverage went DOWN (a decoy file gets
+// scanned instead of the real one, and the scan still reports "found N
+// stylesheets" as if nothing were wrong).
+section('3d. Self-tests — extractAttr / discoverStylesheetLinks (quote-agnostic, boundary-anchored)');
+
+{
+  ok(extractAttr('<link rel="stylesheet" href="a.css">', 'href') === 'a.css',
+    'extractAttr: double-quoted value');
+  ok(extractAttr(`<link rel='stylesheet' href='a.css'>`, 'href') === 'a.css',
+    'extractAttr: single-quoted value');
+  ok(extractAttr('<link rel="stylesheet" href=a.css>', 'href') === 'a.css',
+    'extractAttr: UNQUOTED value (valid HTML5) is still extracted');
+  ok(extractAttr('<link rel="stylesheet" HREF="a.css">', 'href') === 'a.css',
+    'extractAttr: attribute NAME matching is case-insensitive (HREF)');
+  ok(extractAttr('<link data-href="decoy.css" rel="stylesheet" href="real.css">', 'href') === 'real.css',
+    'extractAttr: "data-href" does NOT satisfy a lookup for "href" — the real href is found instead of the decoy');
+  ok(extractAttr('<link x-href="decoy.css" rel="stylesheet" href="real.css">', 'href') === 'real.css',
+    'extractAttr: "x-href" (any preceding word/hyphen char) also does not satisfy "href"');
+  ok(extractAttr('<link rel="stylesheet">', 'href') === null,
+    'extractAttr: returns null when the attribute is genuinely absent');
+}
+
+{
+  // The exact audit-demonstrated shape: a decoy data-href BEFORE the real
+  // href. The old code picked the decoy (wrong file scanned, no error).
+  const html = `<link data-href="fallback.css" rel="stylesheet" href="probe.css">`;
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 1, 'discoverStylesheetLinks: the <link> tag is recognised as rel=stylesheet');
+  ok(d.local.length === 1 && d.local[0] === 'probe.css',
+    'discoverStylesheetLinks: resolves to the REAL href ("probe.css"), not the decoy "fallback.css"');
+}
+
+{
+  // Fully unquoted tag — both rel and href without quotes.
+  const html = `<link rel=stylesheet href=probe-unquoted.css>`;
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 1, 'discoverStylesheetLinks: an unquoted rel=stylesheet tag is still recognised');
+  ok(d.local.length === 1 && d.local[0] === 'probe-unquoted.css',
+    'discoverStylesheetLinks: an unquoted href is still discovered');
+}
+
+{
+  // rel as a space-separated token list (e.g. a preload+stylesheet combo).
+  const html = `<link rel="preload stylesheet" href="combo.css">`;
+  const d = discoverStylesheetLinks(html);
+  ok(d.local.includes('combo.css'), 'discoverStylesheetLinks: "stylesheet" is recognised as one token of a multi-token rel list');
+}
+
+{
+  // Non-stylesheet <link> tags (icon, preconnect) must not be swept in.
+  const html = `<link rel="icon" href="favicon.svg"><link rel="preconnect" href="https://fonts.gstatic.com">`;
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 0 && d.local.length === 0,
+    'discoverStylesheetLinks: non-stylesheet <link> tags (icon, preconnect) are correctly ignored');
+}
+
+{
+  // External href (absolute, protocol-relative, data:) must be counted but
+  // not returned as something we scan.
+  const html = [
+    `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Foo">`,
+    `<link rel="stylesheet" href="//fonts.googleapis.com/css2?family=Bar">`,
+    `<link rel="stylesheet" href="local.css">`,
+  ].join('\n');
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 3, 'discoverStylesheetLinks: all three <link> tags are recognised as stylesheets');
+  ok(d.local.length === 1 && d.local[0] === 'local.css',
+    'discoverStylesheetLinks: absolute-https and protocol-relative hrefs are excluded from `local`');
+  ok(d.externalCount === 2, 'discoverStylesheetLinks: both external hrefs are counted in externalCount');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3d2. AUDIT ROUND 2 — L2 (value-collision) and L3 (tag-boundary
+//    truncation on a quoted `>`), both closed by the sequential-tokenizer
+//    rewrite of parseAttrs/extractAttr and the quote-aware outer tag regex.
+// ─────────────────────────────────────────────────────────────────────────
+section('3d2. Self-tests — audit round 2: attribute-value collisions and quoted ">" tag truncation');
+
+{
+  // L2: the audit's exact demonstrated shape — the text "href=DECOY.css"
+  // appears INSIDE an unrelated attribute's quoted VALUE (title), not as a
+  // real attribute. The v1 lookbehind fix only guarded against a hyphenated
+  // NAME PREFIX (data-href); it did nothing about a name-shaped substring
+  // sitting inside another attribute's value, because a flat regex scan has
+  // no notion of "I already consumed this text as a value".
+  const tag = '<link rel=stylesheet title="see href=DECOY.css" href="REAL.css">';
+  ok(extractAttr(tag, 'href') === 'REAL.css',
+    'L2: extractAttr is NOT fooled by "href=DECOY.css" appearing inside an unrelated attribute\'s quoted VALUE (title) — finds the real href="REAL.css"');
+  ok(extractAttr(tag, 'title') === 'see href=DECOY.css',
+    'L2: the title attribute\'s own value is still extracted correctly and in full (proves the fix is real tokenization, not just skipping href-shaped text)');
+}
+
+{
+  // L2, single-quoted variant of the same collision.
+  const tag = `<link rel=stylesheet title='see href=DECOY.css' href='REAL.css'>`;
+  ok(extractAttr(tag, 'href') === 'REAL.css',
+    "L2: the same value-collision guard holds for single-quoted attribute values");
+}
+
+{
+  // L3: the audit's exact demonstrated shape — a `>` character appears
+  // LITERALLY inside a quoted attribute value (valid HTML5; no escaping
+  // required). The old outer regex `[^>]*` stopped at that `>`, truncating
+  // the "tag" match before the real href attribute (which appears after
+  // the truncation point) was ever reached — so the stylesheet silently
+  // vanished from `local` with NO assertion firing.
+  const html = '<link rel="stylesheet" title="a > b" href="REAL.css">';
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 1,
+    'L3: a `>` character embedded inside a quoted attribute value does not truncate the <link> tag match early — exactly one tag is found');
+  ok(d.local.length === 1 && d.local[0] === 'REAL.css',
+    'L3: the real href, which appears AFTER the embedded ">" in source order, is correctly discovered (was silently dropped before the fix — coverage lost with no error)');
+}
+
+{
+  // L3, single-quoted variant, and a `>` inside the href's OWN value (not
+  // just an unrelated attribute) to make sure the quote-aware match isn't
+  // accidentally scoped to only non-target attributes.
+  const html = `<link rel='stylesheet' title='x > y' href='a>b.css'>`;
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 1 && d.local.length === 1 && d.local[0] === 'a>b.css',
+    "L3: a `>` inside the href value itself (single-quoted) is preserved intact, not treated as the tag's closing bracket");
+}
+
+{
+  // Combined L2+L3 stress: both collisions in the same tag, at once —
+  // proves the two fixes compose rather than one masking a residual gap in
+  // the other.
+  const html = '<link data-href="early-decoy.css" rel="stylesheet" title="a > b, also href=late-decoy.css" href="REAL-COMBINED.css">';
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 1 && d.local.length === 1 && d.local[0] === 'REAL-COMBINED.css',
+    'L2+L3 combined: a name-prefix decoy, a value-embedded decoy, AND an embedded ">" in the same tag all fail to divert extraction from the real href');
+}
+
+{
+  // NEW bypass attempt (not previously tried by the audit): a genuinely
+  // DUPLICATE `href` attribute on the same tag — malformed HTML, but real
+  // build tooling has been known to emit it. Real browsers resolve
+  // duplicate attributes to the FIRST occurrence; parseAttrs must agree
+  // (its `if (!attrs.has(name))` guard means first-wins), not silently
+  // prefer whichever the regex engine happens to match last.
+  ok(extractAttr('<link rel="stylesheet" href="first.css" href="second-should-be-ignored.css">', 'href') === 'first.css',
+    'NEW: a duplicate href attribute resolves to the FIRST occurrence (matches real browser semantics), not the second');
+}
+
+{
+  // NEW bypass attempt: a tag with NO genuine `rel` attribute at all, but a
+  // decoy string that READS like `rel="stylesheet"` sitting inside an
+  // unrelated attribute's value. Must NOT be classified as a stylesheet
+  // link — the rel check must see there is no real `rel` attribute here.
+  const html = '<link href="x.css" title="rel=&quot;stylesheet&quot; spoofed" data-note="not a real rel">';
+  const d = discoverStylesheetLinks(html);
+  ok(d.styleTags.length === 0 && d.local.length === 0,
+    'NEW: a decoy "rel=stylesheet"-shaped string inside an unrelated attribute value does NOT make a tag with no genuine rel attribute count as a stylesheet link');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3e. Self-tests — findImportTargets / expandWithImports (@import following)
+// ─────────────────────────────────────────────────────────────────────────
+// Audit-found gap: a linked stylesheet's own `@import` was never followed,
+// so an undefined var(--x) living ONLY in the imported file was invisible —
+// not hypothetical: /next already ships tokens/fonts.css using @import
+// (currently unlinked, but the shape is real and in this exact codebase).
+section('3e. Self-tests — findImportTargets / expandWithImports (@import following)');
+
+{
+  ok(findImportTargets(`@import url("foo.css");`).includes('foo.css'),
+    'findImportTargets: @import url("...") double-quoted');
+  ok(findImportTargets(`@import url('foo.css');`).includes('foo.css'),
+    "findImportTargets: @import url('...') single-quoted");
+  ok(findImportTargets(`@import url(foo.css);`).includes('foo.css'),
+    'findImportTargets: @import url(...) unquoted');
+  ok(findImportTargets(`@import "foo.css";`).includes('foo.css'),
+    'findImportTargets: bare @import "...' + '"; (no url())');
+  ok(findImportTargets(`@import 'foo.css';`).includes('foo.css'),
+    "findImportTargets: bare @import '...'; (no url())");
+  ok(findImportTargets(`@import url("foo.css") screen;`).includes('foo.css'),
+    'findImportTargets: a trailing media-query qualifier does not corrupt the extracted target');
+  ok(findImportTargets(`/* @import url("commented.css"); */`).length === 0,
+    'findImportTargets: an @import inside a /* */ comment is not extracted');
+  ok(findImportTargets(`// @import url("commented.css");`).length === 0,
+    'findImportTargets: an @import inside a // comment is not extracted');
+  ok(findImportTargets(`.x { color: red; }`).length === 0,
+    'findImportTargets: ordinary CSS with no @import yields nothing');
+}
+
+{
+  ok(isExternalUrl('https://fonts.googleapis.com/x.css'), 'isExternalUrl: absolute https URL');
+  ok(isExternalUrl('http://example.com/x.css'), 'isExternalUrl: absolute http URL');
+  ok(isExternalUrl('//fonts.googleapis.com/x.css'), 'isExternalUrl: protocol-relative URL');
+  ok(isExternalUrl('data:text/css;base64,Zm9v'), 'isExternalUrl: a data: URI');
+  ok(!isExternalUrl('foo.css'), 'isExternalUrl: a plain relative path is NOT external');
+  ok(!isExternalUrl('../shared/foo.css'), 'isExternalUrl: a relative parent-dir path is NOT external');
+}
+
+{
+  // The exact audit-demonstrated shape, using REAL temp files (outside the
+  // repo) so expandWithImports actually reads from disk, not from strings.
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-selftest-'));
+  try {
+    const entryPath = path.join(dir, 'entry.css');
+    const leafPath = path.join(dir, 'leaf.css');
+    writeFileSync(entryPath, `:root { --known: red; }\n@import url('leaf.css');\n.a { color: var(--known); }\n`);
+    writeFileSync(leafPath, `.b { color: var(--only-in-leaf); }\n`);
+
+    const { files, skippedExternalImports } = expandWithImports([{ relPath: 'entry.css', absPath: entryPath }]);
+    ok(files.length === 2, 'expandWithImports: entry.css + its local @import (leaf.css) are both returned');
+    ok(files.some(f => f.absPath === leafPath), 'expandWithImports: the imported file is present with a real absPath');
+    ok(skippedExternalImports.length === 0, 'expandWithImports: no external imports were skipped (there are none here)');
+
+    // Now prove the def/ref pipeline actually SEES the imported file's
+    // reference — this is the end-to-end version of the audit's bypass.
+    const allRefNames = new Set();
+    for (const f of files) {
+      const raw = readFileSync(f.absPath, 'utf8');
+      for (const r of extractReferences(cleanCss(raw))) allRefNames.add(r.name);
+    }
+    ok(allRefNames.has('only-in-leaf'),
+      'end-to-end: var(--only-in-leaf), defined ONLY inside the imported leaf.css, is now visible to the reference scan (the exact gap the audit found)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // Multi-hop chain (A imports B imports C) — proves the BFS actually
+  // recurses rather than following only the first hop.
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-chain-'));
+  try {
+    const aPath = path.join(dir, 'a.css');
+    const bPath = path.join(dir, 'b.css');
+    const cPath = path.join(dir, 'c.css');
+    writeFileSync(aPath, `@import url('b.css');\n`);
+    writeFileSync(bPath, `@import url('c.css');\n`);
+    writeFileSync(cPath, `.z { color: var(--deep-in-c); }\n`);
+    const { files } = expandWithImports([{ relPath: 'a.css', absPath: aPath }]);
+    ok(files.length === 3, 'expandWithImports: a 2-hop @import chain (A→B→C) is fully followed (3 files total)');
+    ok(files.some(f => f.absPath === cPath), 'expandWithImports: the deepest file in the chain is reached');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // Cycle protection — A imports B, B imports A. Must terminate, not hang,
+  // and must not duplicate A in the result.
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-cycle-'));
+  try {
+    const aPath = path.join(dir, 'a.css');
+    const bPath = path.join(dir, 'b.css');
+    writeFileSync(aPath, `@import url('b.css');\n.a { color: var(--in-a); }\n`);
+    writeFileSync(bPath, `@import url('a.css');\n.b { color: var(--in-b); }\n`);
+    const start = Date.now();
+    const { files } = expandWithImports([{ relPath: 'a.css', absPath: aPath }]);
+    const elapsedMs = Date.now() - start;
+    ok(elapsedMs < 2000, `expandWithImports: an A↔B import cycle terminates promptly (${elapsedMs}ms), does not hang`);
+    ok(files.length === 2, 'expandWithImports: a cycle does not duplicate files in the result (still exactly 2)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // External @import target must be skipped, not followed, not thrown on.
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-external-'));
+  try {
+    const entryPath = path.join(dir, 'entry.css');
+    writeFileSync(entryPath,
+      `@import url('https://fonts.googleapis.com/css2?family=Foo');\n.a { color: red; }\n`);
+    const { files, skippedExternalImports } = expandWithImports([{ relPath: 'entry.css', absPath: entryPath }]);
+    ok(files.length === 1, 'expandWithImports: an external @import target is not added to the followed-files list');
+    ok(skippedExternalImports.length === 1 && skippedExternalImports[0].target.includes('fonts.googleapis.com'),
+      'expandWithImports: the external @import is recorded in skippedExternalImports (not silently dropped)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3e2. AUDIT ROUND 2 — L4 (modern @import forms) and L5 (string-literal
+//    false positive crash + untrimmed target), all in findImportTargets /
+//    expandWithImports.
+// ─────────────────────────────────────────────────────────────────────────
+section('3e2. Self-tests — audit round 2: modern @import forms, string-literal false positives, untrimmed targets, unreadable imports');
+
+{
+  // L4: cascade-layer and feature-query modifiers BEFORE the quoted target,
+  // with no url(...) wrapper — the old regex required url(...) or a bare
+  // quoted string to appear IMMEDIATELY after "@import ", so any modifier
+  // token in front of the target made the whole match silently fail.
+  ok(findImportTargets(`@import layer(base) "e.css";`).includes('e.css'),
+    'L4: @import layer(base) "e.css"; is recognised (modifier before a bare quoted target)');
+  ok(findImportTargets(`@import supports(display:grid) "g.css";`).includes('g.css'),
+    'L4: @import supports(display:grid) "g.css"; is recognised (modifier before a bare quoted target)');
+  ok(findImportTargets(`@import url(f.css) layer(base);`).includes('f.css'),
+    'L4: @import url(f.css) layer(base); still works (modifier AFTER a url() target — was already passing, kept as a non-regression check)');
+  ok(findImportTargets(`@import layer(base) url("h.css") screen;`).includes('h.css'),
+    'L4: a layer(...) modifier before url(...) PLUS a trailing media qualifier all compose correctly');
+}
+
+{
+  // L5a: the audit's exact demonstrated crash trigger — "@import" text
+  // appearing inside an UNRELATED CSS string literal must not be read as a
+  // real at-rule. Before the statement-position guard, this queued a
+  // phantom "GHOST.css" target that crashed expandWithImports with an
+  // uncaught ENOENT.
+  ok(findImportTargets(`.x { content: "@import url(GHOST.css)"; }`).length === 0,
+    'L5a: "@import ..." appearing inside a CSS string literal value (content: "...") is correctly rejected — not a real at-rule (statement-position guard)');
+  ok(findImportTargets(`.y { content: '@import "SNEAKY.css"'; }`).length === 0,
+    'L5a: same rejection for the single-quoted-string variant');
+  // Legitimate @import immediately after a previous statement's ';' or a
+  // block's '}' must still be recognised — the guard must not overreach.
+  ok(findImportTargets(`@import "a.css";\n@import "b.css";`).length === 2,
+    'L5a: the statement-position guard does not reject a legitimate SECOND @import following a ";"');
+  ok(findImportTargets(`.z { color: red; }\n@import url("late.css");`).includes('late.css'),
+    'L5a: an @import immediately after a "}" (closing a preceding rule) is still accepted');
+}
+
+{
+  // L5b: an untrimmed target — extra whitespace between the filename and
+  // the closing ")" in a bare (unquoted) url(...) form previously produced
+  // a target string with a trailing space, which would never resolve to
+  // the real file on disk.
+  ok(findImportTargets(`@import url( i.css );`).includes('i.css'),
+    'L5b: @import url( i.css ); (whitespace padding, no quotes) trims to "i.css", not "i.css " with a trailing space');
+}
+
+{
+  // L5c: expandWithImports must not CRASH on a typo'd/phantom import
+  // target that survives the statement-position guard (i.e. is a
+  // genuinely well-formed but nonexistent @import) — it must record the
+  // failure and continue, never throw.
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-phantom-'));
+  try {
+    const entryPath = path.join(dir, 'entry.css');
+    writeFileSync(entryPath, `:root { --known: red; }\n@import url('does-not-exist.css');\n.a { color: var(--known); }\n`);
+    let threw = false;
+    let result;
+    try {
+      result = expandWithImports([{ relPath: 'entry.css', absPath: entryPath }]);
+    } catch {
+      threw = true;
+    }
+    ok(!threw, 'L5c: a typo\'d/phantom @import target does NOT crash expandWithImports (no uncaught exception)');
+    ok(threw || (result.files.length === 1 && result.files[0].absPath === entryPath),
+      'L5c: the phantom target is excluded from `files` (entry.css itself is still present and correctly the only entry)');
+    ok(threw || (result.unreadableFiles.length === 1
+        && result.unreadableFiles[0].absPath === path.join(dir, 'does-not-exist.css')
+        && result.unreadableFiles[0].from === 'entry.css'),
+      'L5c: the phantom target is recorded in `unreadableFiles` with its source file, not silently dropped');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  // L5c, second variant: the string-literal false-positive AND a phantom
+  // import in the SAME file — proves the crash-prevention and the
+  // statement-position guard compose (the string-literal text is rejected
+  // before it ever reaches the read attempt; only the genuine @import is
+  // attempted, and it is safely recorded as unreadable rather than thrown).
+  const dir = mkdtempSync(path.join(tmpdir(), 'css-import-mixed-'));
+  try {
+    const entryPath = path.join(dir, 'entry.css');
+    writeFileSync(entryPath,
+      `.x { content: "@import url(GHOST.css)"; }\n@import url('also-phantom.css');\n.y { color: var(--known); }\n`);
+    let threw = false;
+    let result;
+    try {
+      result = expandWithImports([{ relPath: 'entry.css', absPath: entryPath }]);
+    } catch {
+      threw = true;
+    }
+    ok(!threw, 'L5c mixed: a string-literal false-positive alongside a real phantom import does not crash');
+    ok(threw || (result.unreadableFiles.length === 1 && result.unreadableFiles[0].absPath === path.join(dir, 'also-phantom.css')),
+      'L5c mixed: only the GENUINE @import target ("also-phantom.css") is recorded as unreadable — the string-literal text ("GHOST.css") never reached a read attempt at all');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 3f. Self-tests — walkJsFiles (recursive /next JS discovery)
+// ─────────────────────────────────────────────────────────────────────────
+// Audit-found gap: the previous /next JS file list was two hardcoded
+// locations (next/app.js + next/views/*.js) and silently never looked
+// inside any other subdirectory — in production, next/shared/ existed and
+// was invisible to this scan. walkJsFiles must recurse into an arbitrary
+// nesting depth, not just one extra level.
+section('3f. Self-tests — walkJsFiles (recursive /next JS discovery)');
+
+{
+  const dir = mkdtempSync(path.join(tmpdir(), 'walkjs-'));
+  try {
+    writeFileSync(path.join(dir, 'app.js'), '// top level\n');
+    writeFileSync(path.join(dir, 'readme.md'), 'not js\n');
+    const viewsDir = path.join(dir, 'views');
+    mkdirSync(viewsDir);
+    writeFileSync(path.join(viewsDir, 'a.js'), '// views/a\n');
+    const sharedDir = path.join(dir, 'shared');
+    mkdirSync(sharedDir);
+    writeFileSync(path.join(sharedDir, 'b.js'), '// shared/b\n');
+    // Two levels deep, to prove recursion isn't just "one extra directory".
+    const nestedDir = path.join(sharedDir, 'nested');
+    mkdirSync(nestedDir);
+    writeFileSync(path.join(nestedDir, 'c.js'), '// shared/nested/c\n');
+
+    const found = walkJsFiles(dir).map(p => path.relative(dir, p)).sort();
+    ok(found.length === 4, `walkJsFiles: finds exactly the 4 real .js files (found ${found.length}: ${found.join(', ')})`);
+    ok(found.includes('app.js'), 'walkJsFiles: top-level .js file found');
+    ok(found.includes(path.join('views', 'a.js')), 'walkJsFiles: one-level-deep .js file found');
+    ok(found.includes(path.join('shared', 'b.js')), 'walkJsFiles: a sibling directory not previously enumerated is found');
+    ok(found.includes(path.join('shared', 'nested', 'c.js')),
+      'walkJsFiles: TWO levels deep is still found — recursion is real, not a single extra hop');
+    ok(!found.some(p => p.endsWith('readme.md')), 'walkJsFiles: non-.js files are excluded');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // 4. Inline var(--x) references embedded in src/public/app.js (CSS-in-JS)
 // ─────────────────────────────────────────────────────────────────────────
 // app.js builds a handful of inline `style="color:var(--x)"` HTML snippets
@@ -598,6 +1335,226 @@ ok(appJsRealOffenders.length === 0,
 
 const appJsDistinctNames = [...new Set(appJsRefs.map(r => r.name))].sort();
 console.log(`  → app.js references ${appJsRefs.length} var() usage(s) across ${appJsDistinctNames.length} distinct token(s): ${appJsDistinctNames.join(', ')}`);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5. Discover every LOCAL stylesheet the /next shell actually loads
+// ─────────────────────────────────────────────────────────────────────────
+// Mirrors section 1 exactly, but against src/public/next/index.html — the
+// file list is DERIVED from the shell's own <link> tags, never hardcoded,
+// so a new /next view's stylesheet that gets linked is covered
+// automatically, and one that's added but never linked is (correctly)
+// invisible here too, same as section 1's contract for the shipping app.
+section('5. Discover local stylesheets loaded by next/index.html');
+
+const nextIndexPath = path.join(ROOT, 'src/public/next/index.html');
+const nextIndexHtml = readFileSync(nextIndexPath, 'utf8');
+
+const disc5 = discoverStylesheetLinks(nextIndexHtml);
+const nextLocalCssFiles = disc5.local;
+
+ok(disc5.styleTags.length > 0, 'next/index.html contains at least one <link rel="stylesheet"> tag');
+ok(nextLocalCssFiles.includes('shell.css'), 'shell.css is discovered as a local /next stylesheet');
+ok(nextLocalCssFiles.includes('views/ingest.css'), 'views/ingest.css is discovered as a local /next stylesheet');
+ok(!nextLocalCssFiles.includes('tokens/fonts.css'),
+  'tokens/fonts.css is correctly NOT discovered (deliberately unlinked per v3.1.3 — self-hosting is pending; fonts-local.css stands in)');
+console.log(`  → /next local stylesheets found (${nextLocalCssFiles.length}): ${nextLocalCssFiles.join(', ')}`);
+console.log(`  → /next external stylesheets skipped: ${disc5.externalCount} (e.g. Google Fonts)`);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. Extract definitions and references from the /next CSS universe
+// ─────────────────────────────────────────────────────────────────────────
+section('6. Extract definitions and references from the /next CSS universe');
+
+const nextPublicDir = path.dirname(nextIndexPath);
+const nextInitialFiles = nextLocalCssFiles.map(href => ({
+  relPath: `src/public/next/${href}`,
+  absPath: path.join(nextPublicDir, href),
+}));
+const expanded6 = expandWithImports(nextInitialFiles);
+const nextFiles = expanded6.files;
+if (expanded6.skippedExternalImports.length) {
+  console.log(`  → /next external @import target(s) skipped (not this app's token surface): ` +
+    expanded6.skippedExternalImports.map(s => `${s.target} (from ${s.from})`).join(', '));
+}
+ok(expanded6.unreadableFiles.length === 0,
+  expanded6.unreadableFiles.length === 0
+    ? 'no @import target in the /next CSS failed to resolve to a readable file'
+    : `${expanded6.unreadableFiles.length} @import target(s) in /next CSS could not be read: ` +
+      expanded6.unreadableFiles.map(u => `${u.relPath} (from ${u.from ?? 'next/index.html link'}) — ${u.error}`).join(', '));
+const importedOnly6 = nextFiles.filter(f => !nextInitialFiles.some(i => i.absPath === f.absPath));
+if (importedOnly6.length) {
+  console.log(`  → /next additional local file(s) discovered via @import: ${importedOnly6.map(f => f.relPath).join(', ')}`);
+}
+
+const nextGlobalDefs = new Set();
+const nextPerFileData = [];
+
+for (const f of nextFiles) {
+  const raw = readFileSync(f.absPath, 'utf8');
+  const cleaned = cleanCss(raw);
+  const defs = extractDefinitions(cleaned);
+  const refs = extractReferences(cleaned);
+  const lineStarts = computeLineStarts(raw);
+  for (const name of defs.keys()) nextGlobalDefs.add(name);
+  nextPerFileData.push({ ...f, raw, cleaned, defs, refs, lineStarts });
+}
+
+const nextTotalDefs = nextGlobalDefs.size;
+const nextTotalRefs = nextPerFileData.reduce((n, f) => n + f.refs.length, 0);
+
+ok(nextTotalDefs > 0, `found ${nextTotalDefs} distinct custom-property definitions across ${nextFiles.length} /next file(s)`);
+ok(nextTotalRefs > 0, `found ${nextTotalRefs} total var() references across ${nextFiles.length} /next file(s)`);
+console.log(`  → /next defined tokens (${nextTotalDefs}): ${[...nextGlobalDefs].sort().join(', ')}`);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6b. The /next token universe is NOT merged with the shipping app's
+// ─────────────────────────────────────────────────────────────────────────
+// If the two universes were unioned, a var() genuinely undefined in one
+// could silently resolve via a same-named definition in the other —
+// defeating the point of scanning them at all. Rather than assert this
+// against hardcoded names (which would rot as either token set evolves),
+// find a name that is REALLY defined in exactly one universe at scan time
+// and confirm the two independently-built Sets agree; this can only pass
+// if the two scans stayed genuinely separate.
+section("6b. The /next token universe is NOT merged with the shipping app's");
+
+const oldOnlyName = [...globalDefs].find(n => !nextGlobalDefs.has(n));
+const nextOnlyName = [...nextGlobalDefs].find(n => !globalDefs.has(n));
+
+ok(!!oldOnlyName, `found a token defined ONLY in the shipping app (e.g. --${oldOnlyName}) to test separation against`);
+ok(!!nextOnlyName, `found a token defined ONLY in /next (e.g. --${nextOnlyName}) to test separation against`);
+ok(!!oldOnlyName && !nextGlobalDefs.has(oldOnlyName),
+  `--${oldOnlyName} (shipping-app-only) is correctly ABSENT from the /next definition set — the universes are not merged`);
+ok(!!nextOnlyName && !globalDefs.has(nextOnlyName),
+  `--${nextOnlyName} (/next-only) is correctly ABSENT from the shipping-app definition set — the universes are not merged`);
+
+// A concrete real-world case this separation protects, found while building
+// this section: /next's tokens/typography.css defines its OWN --font-mono
+// (a real font stack) and /next JS legitimately references it
+// (views/shared.js — checked in section 8). The SHIPPING app also once had
+// a var(--font-mono) bug (section 3b's regression guard) but its real token
+// is --mono — --font-mono is undefined there. Merge the two universes and
+// that distinction disappears; kept separate, each reference is checked
+// against only the definitions that actually apply to it.
+ok(nextGlobalDefs.has('font-mono'),
+  '--font-mono is a real, defined token in the /next universe (tokens/typography.css) — used legitimately by /next JS (views/shared.js)');
+ok(!globalDefs.has('font-mono'),
+  '--font-mono is NOT defined in the shipping-app universe (its real token is --mono) — proving the two universes must be checked separately, not unioned');
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. Every var() reference in /next CSS resolves within the /next universe
+// ─────────────────────────────────────────────────────────────────────────
+section('7. Every var() reference in /next CSS resolves to a /next-defined custom property');
+
+// One pre-existing, already-in-production /next finding, verified BEFORE
+// baselining it (per CLAUDE.md: "never add a variable to the CSS-token
+// baseline to make the suite pass" without checking whether it should
+// simply be defined instead). `--scrim` (shell.css:337) carries a working
+// rgba(5,5,10,0.68) fallback, and the light-theme override three lines
+// below (shell.css:343) replaces the WHOLE `background` declaration
+// directly rather than going through the var — so the fallback is the
+// only value ever actually used, in either theme. This suite does not own
+// shell.css (it is out of scope for this task), so it is baselined by name
+// exactly like section 3's three shipping-app entries, rather than "fixed"
+// here. Any NEW undefined name in /next CSS is still a hard failure.
+const NEXT_KNOWN_ISSUES = new Set([
+  'scrim', // rgba(...) fallback; shell.css:337; light theme bypasses it entirely (shell.css:343)
+]);
+ok(NEXT_KNOWN_ISSUES.size === 1,
+  'baseline contains exactly the one known /next fallback-carrying name (--scrim)');
+
+const nextRealOffenders = [];
+const nextKnownOffenders = [];
+
+for (const f of nextPerFileData) {
+  for (const ref of f.refs) {
+    if (nextGlobalDefs.has(ref.name)) continue; // defined somewhere in /next — fine
+    const line = lineNumberFor(f.lineStarts, ref.index);
+    const declaration = f.raw.split('\n')[line - 1]?.trim() ?? '(unavailable)';
+    const entry = { file: f.relPath, line, name: ref.name, declaration };
+    if (NEXT_KNOWN_ISSUES.has(ref.name)) nextKnownOffenders.push(entry);
+    else nextRealOffenders.push(entry);
+  }
+}
+
+if (nextKnownOffenders.length > 0) {
+  console.log(`\n  ⚠ ${nextKnownOffenders.length} pre-existing (baselined) undefined-variable reference(s) in /next — not new, not failing this suite:`);
+  for (const o of nextKnownOffenders) {
+    console.log(`      ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`);
+  }
+}
+
+// Named positive assertion the baseline pattern requires: confirms the
+// baselined --scrim really is the ONLY undefined /next CSS reference today,
+// so a second, DIFFERENT undefined name can't silently hide behind this one
+// baseline entry (the same discipline section 3's header describes being
+// added after that suite was audited for exactly this gap).
+ok(nextKnownOffenders.length === 1 && nextKnownOffenders[0].name === 'scrim',
+  'the only baselined /next reference is --scrim, and it is at the known location (shell.css)');
+
+ok(nextRealOffenders.length === 0,
+  nextRealOffenders.length === 0
+    ? 'no NEW undefined custom-property references found in /next CSS'
+    : `found ${nextRealOffenders.length} NEW undefined custom-property reference(s) in /next CSS:\n` +
+      nextRealOffenders.map(o => `        ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`).join('\n')
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 8. Inline var(--x) references in /next JS files (CSS-in-JS)
+// ─────────────────────────────────────────────────────────────────────────
+// The /next views build HTML strings with inline `style="...var(--x)..."`
+// attributes — the same CSS-in-JS shape section 4 covers for the shipping
+// app's app.js — entirely outside the <link> discovery in section 5, so
+// section 7 never sees them. Checked against nextGlobalDefs (the /next
+// universe defined in section 6), NOT globalDefs (the shipping app) — see
+// section 6b for why that separation matters. The file list is discovered
+// by WALKING the entire src/public/next/ tree for *.js files (walkJsFiles),
+// not by enumerating known subdirectories, so a new sibling directory (like
+// next/shared/, introduced in this very release) is covered automatically
+// instead of requiring this scanner to be told its name — an earlier
+// version hardcoded exactly two locations (next/app.js + next/views/*.js)
+// and was audit-found to silently never look inside next/shared/**, where
+// ingest-queue-logic.js's inline var(--x) usages live.
+section('8. Inline var(--x) references in /next JS files (CSS-in-JS)');
+
+const nextRootDir = path.join(ROOT, 'src/public/next');
+const nextJsFiles = walkJsFiles(nextRootDir)
+  .map(abs => path.relative(ROOT, abs).split(path.sep).join('/'))
+  .sort();
+
+ok(nextJsFiles.length > 1, `discovered ${nextJsFiles.length} /next JS files to scan (app.js + views/*.js + shared/*.js)`);
+ok(nextJsFiles.includes('src/public/next/shared/ingest-queue-logic.js'),
+  'the recursive /next JS walk reaches next/shared/ingest-queue-logic.js (not just app.js + views/)');
+
+let nextJsTotalRefs = 0;
+const nextJsRealOffenders = [];
+const nextJsDistinctNames = new Set();
+
+for (const relPath of nextJsFiles) {
+  const absPath = path.join(ROOT, relPath);
+  const raw = readFileSync(absPath, 'utf8');
+  const cleaned = stripLineComments(stripBlockComments(raw));
+  const refs = extractReferences(cleaned);
+  const lineStarts = computeLineStarts(raw);
+  nextJsTotalRefs += refs.length;
+  for (const ref of refs) {
+    nextJsDistinctNames.add(ref.name);
+    if (nextGlobalDefs.has(ref.name)) continue;
+    const line = lineNumberFor(lineStarts, ref.index);
+    const declaration = raw.split('\n')[line - 1]?.trim() ?? '(unavailable)';
+    nextJsRealOffenders.push({ file: relPath, line, name: ref.name, declaration });
+  }
+}
+
+ok(nextJsTotalRefs > 0, `found ${nextJsTotalRefs} var() reference(s) across /next JS files`);
+ok(nextJsRealOffenders.length === 0,
+  nextJsRealOffenders.length === 0
+    ? 'every var(--x) reference in /next JS files resolves to a token defined in the /next CSS universe'
+    : `found ${nextJsRealOffenders.length} undefined custom-property reference(s) in /next JS files:\n` +
+      nextJsRealOffenders.map(o => `        ${o.file}:${o.line}  var(--${o.name})  →  ${o.declaration}`).join('\n')
+);
+
+console.log(`  → /next JS files reference ${nextJsTotalRefs} var() usage(s) across ${nextJsDistinctNames.size} distinct token(s): ${[...nextJsDistinctNames].sort().join(', ')}`);
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

@@ -72,6 +72,8 @@ const OFFLINE = [
   'test-ingest-abort.js',           // real mid-file cancellation: AbortSignal threading, recovery-ladder bypass, queue `cancelled` item state
   'test-raw-store.js',              // Track 7 Part II raw-source retrieval — traversal corpus, REAL symlink escapes (v3.2.0 CRITICAL class), manifest tolerance, MCP never emits binary
   'test-raw-source-ui.js',           // Track 7 Part II frontend affordance — Wiki tab source bar, reason→copy mapping, external-source no-link/no-fetch invariant
+  'test-route-write-guards.js',      // write-registry guard on mutating /api/config + /api/sync/setup + domain-rename routes — fires during a write, and (the half people forget) does NOT fire when idle
+  'test-next-ingest-logic-drift.js', // TEMPORARY — delete alongside app.js at /next cutover. Byte-identity tripwire between app.js's batch-ingest pure helpers and their src/public/next/shared/ingest-queue-logic.js copy, so a bug fixed in one frontend and not the other goes RED instead of silently re-shipping.
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is

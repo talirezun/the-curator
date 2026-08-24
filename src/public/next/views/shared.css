@@ -1,4 +1,579 @@
-/* View: Shared Brain — owned by views/shared.js.
-   No view-specific rules yet — the "beta" pill on the sidebar title is
-   currently inline (small/one-off). Promote it to a class here — and add
-   the rest of the connected-state styling — as the real view is built. */
+/* View: Shared Brain — owned by views/shared.js. */
+
+/* ── Small utilities also used in sync.css/settings.css ──────────────────
+   Duplicated on purpose rather than shared — see views/README.md: "put
+   every rule specific to your view's markup" in its own file, so an edit
+   to another view's CSS can never silently change this one. */
+
+.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+
+.settings-hint-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 66ch;
+}
+
+.settings-inline-error {
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}
+
+/* ── Sidebar title "beta" pill ───────────────────────────────────────── */
+
+.sb-beta-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 7px;
+  vertical-align: middle;
+  font: var(--weight-medium) 10px/1.6 var(--font-mono);
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-full);
+}
+
+/* ── Sidebar: connection list ────────────────────────────────────────── */
+
+.sb-conn-list { display: flex; flex-direction: column; gap: 2px; }
+.sb-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 7px;
+}
+.sb-conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--success-text);
+}
+.sb-conn-dot-readonly { background: var(--attention-text); }
+.sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-conn-state { font-size: var(--text-2xs); color: var(--text-faint); }
+
+/* ── Disabled (feature-flag off) state ───────────────────────────────── */
+
+.sb-enable-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  max-width: 560px;
+}
+.sb-enable-title { font: var(--type-h3); color: var(--text); }
+
+/* ── Not-connected CTA cards + "add another" row ─────────────────────── */
+
+.sb-cta-row { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+.sb-cta-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.sb-cta-content { flex: 1; min-width: 200px; }
+.sb-cta-title {
+  margin: 0 0 4px;
+  font: var(--type-h3);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sb-cta-title svg { flex: none; color: var(--accent-text); }
+.sb-cta-desc { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+
+.sb-add-more { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+
+/* ── Cards container ──────────────────────────────────────────────────── */
+
+.sb-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sb-card {
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sb-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.sb-card-title {
+  margin: 0;
+  font: var(--type-h3);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sb-pill-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font: var(--weight-medium) var(--text-2xs)/1.6 var(--font-mono);
+  color: var(--attention-text);
+  background: var(--attention-tint);
+  border: 1px solid var(--attention-text);
+  border-radius: var(--radius-full);
+}
+.sb-card-repo { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; text-align: right; }
+a.sb-card-repo:hover { color: var(--text-link); }
+
+/* ── Stats grid ───────────────────────────────────────────────────────── */
+
+.sb-card-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 18px;
+  margin-bottom: 12px;
+}
+.sb-card-stats > span { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); color: var(--text); }
+.sb-card-stat-label { font-size: var(--text-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: var(--track-eyebrow); }
+
+/* ── Pending / busy notices ───────────────────────────────────────────── */
+
+.sb-card-pending,
+.sb-card-busy-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  margin-bottom: 12px;
+}
+.sb-card-pending { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.sb-card-pending > svg, .sb-card-busy-note > svg { flex: none; }
+.sb-card-pending-note { font-size: var(--text-2xs); color: var(--text-3); }
+.sb-card-busy-note { color: var(--text-2); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+
+.sb-card-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.sb-card-actions .btn svg { margin-right: 5px; vertical-align: -2px; }
+
+.sb-confirm-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  flex-wrap: wrap;
+}
+.sb-confirm-block { flex-basis: 100%; align-items: flex-start; }
+.sb-confirm-actions { display: flex; gap: 7px; margin-left: auto; flex: none; }
+
+/* ── Skipped pages ────────────────────────────────────────────────────── */
+
+.sb-card-skips {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+}
+.sb-card-skips summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--danger-text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sb-card-skips summary svg { flex: none; }
+.sb-card-skips-list {
+  margin: 10px 0;
+  padding-left: 18px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.sb-card-skips-list li { margin-bottom: 3px; overflow-wrap: anywhere; }
+
+/* ── Cohort & sharing details (lazy) ─────────────────────────────────── */
+
+.sb-card-cohort {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+}
+.sb-card-cohort summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  font-weight: var(--weight-medium);
+}
+.sb-card-cohort-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.sb-card-cohort-row { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text); }
+.sb-card-cohort-note { color: var(--text-3); font-size: var(--text-xs); line-height: var(--leading-normal); }
+
+/* ── Status line ──────────────────────────────────────────────────────── */
+
+.sb-card-status {
+  margin-bottom: 10px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.sb-card-status.error { color: var(--danger-text); }
+
+.sb-card-note {
+  margin: 0 0 12px;
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+/* ── Footer: fellow id + Leave ───────────────────────────────────────── */
+
+.sb-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+.sb-fellow-pill {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.sb-leave-link {
+  margin-left: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+}
+.sb-leave-link:hover { color: var(--danger-text); }
+.sb-leave-link[disabled] { opacity: 0.5; cursor: not-allowed; }
+.sb-card-footer .sb-confirm-inline { flex: 1 1 100%; margin-left: 0; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Shared Brain setup wizard — owned by views/shared-brain-wizard.js.
+   Restyled from src/public/index.html's #sharedbrain-wizard /
+   .onboarding-* / .ob-* / .sb-pat-* / .sb-dht-* / .sb-review-box etc. to
+   the /next token set. The FLOW those rules serve is ported verbatim in
+   the JS file — this is chrome only. `sbw-` prefix throughout, distinct
+   from the `sb-` prefix used by the connected-state cards above, so the
+   two can never collide even though both live in this one CSS file.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.sbw-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  /* Plain literal, not var(--scrim, ...) — that token is deliberately
+     undefined anywhere and test-css-tokens.js baselines its one fallback
+     use to shell.css:337 specifically; this is the same rgba value,
+     inlined, so a second /next surface can use the same scrim darkness
+     without tripping that "exactly one" invariant. */
+  background: rgba(5,5,10,0.68);
+  backdrop-filter: blur(6px);
+}
+[data-theme="light"] .sbw-scrim { background: rgba(20,20,31,0.5); }
+
+.sbw-card {
+  position: relative;
+  width: min(640px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,0.55);
+  padding: 26px 28px 24px;
+  margin: auto;
+}
+
+.sbw-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: none;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.sbw-close:hover { background: var(--surface-hover); color: var(--text); }
+
+.sbw-header { text-align: center; margin-bottom: 18px; }
+.sbw-header-icon { color: var(--accent-text); margin-bottom: 6px; }
+.sbw-title { margin: 0 0 4px; font: var(--type-h2); color: var(--text); }
+.sbw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+
+/* ── Progress pips ────────────────────────────────────────────────────── */
+
+.sbw-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+.sbw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-3); }
+.sbw-pip-num {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.sbw-pip-label { font-size: var(--text-xs); white-space: nowrap; }
+.sbw-pip.active { color: var(--accent-text); }
+.sbw-pip.active .sbw-pip-num { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
+.sbw-pip.done { color: var(--success-text); }
+.sbw-pip.done .sbw-pip-num { border-color: var(--success-text); background: var(--success-tint); color: var(--success-text); }
+.sbw-pip-line { width: 18px; height: 1px; background: var(--border-strong); margin: 0 6px; flex: none; }
+
+/* ── Panels ───────────────────────────────────────────────────────────── */
+
+.sbw-panel { animation: sbwFadeIn 0.16s ease; }
+.sbw-panel.sbw-hidden { display: none; }
+.sbw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
+@keyframes sbwFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.sbw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.sbw-note-block {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  border: 1px dashed var(--border-strong);
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.sbw-note-block svg { flex: none; margin-top: 2px; color: var(--text-3); }
+
+/* ── Form fields ──────────────────────────────────────────────────────── */
+
+.sbw-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.sbw-field-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.sbw-field-row .sbw-field { flex: 1; min-width: 180px; }
+.sbw-label { font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--text-2); }
+.sbw-label-note { font-weight: var(--weight-regular); color: var(--text-faint); }
+.sbw-help { font-size: var(--text-2xs); color: var(--text-3); line-height: var(--leading-normal); }
+.sbw-help code, .sbw-hint code, .sbw-steps code { font-family: var(--font-mono); background: var(--surface-inset); padding: 1px 4px; border-radius: 4px; }
+
+.sbw-input {
+  height: 34px;
+  padding: 0 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-md);
+}
+.sbw-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+.sbw-input-row { display: flex; align-items: center; gap: 8px; }
+.sbw-input-row .sbw-input { flex: 1; }
+.sbw-toggle-vis { width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center; padding: 0; }
+
+.sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: pointer; }
+.sbw-checkbox-label input[type="checkbox"] { margin-top: 2px; flex: none; }
+
+/* ── Status / validation line ─────────────────────────────────────────── */
+
+.sbw-status { margin-top: 6px; padding: 9px 11px; border-radius: var(--radius-md); font-size: var(--text-sm); line-height: var(--leading-normal); }
+.sbw-status.sbw-hidden { display: none; }
+.sbw-status-error { color: var(--danger-text); background: var(--danger-tint); border: 1px solid var(--danger-text); }
+.sbw-status-ok { color: var(--success-text); background: var(--success-tint); border: 1px solid var(--success-text); }
+.sbw-status-warn { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.sbw-status-checking { color: var(--text-3); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
+
+/* ── Actions row ──────────────────────────────────────────────────────── */
+
+.sbw-actions { display: flex; align-items: center; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+
+/* ── Outbound link buttons ────────────────────────────────────────────── */
+
+.sbw-link-btn { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; margin-bottom: 6px; }
+.sbw-link-btn-primary { width: 100%; justify-content: center; }
+
+/* ── Step 1: invite preview ──────────────────────────────────────────── */
+
+.sbw-preview {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--success-text);
+  background: var(--success-tint);
+}
+.sbw-preview.sbw-hidden { display: none; }
+.sbw-preview h4 { margin: 0 0 8px; font-size: var(--text-sm); color: var(--success-text); display: flex; align-items: center; gap: 6px; }
+.sbw-preview dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
+.sbw-preview dt { font-size: var(--text-2xs); color: var(--text-3); }
+.sbw-preview dd { margin: 0; font-size: var(--text-sm); color: var(--text); }
+
+/* ── Step 2: access confirmation ─────────────────────────────────────── */
+
+.sbw-access-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.sbw-access-icon { color: var(--accent-text); flex: none; }
+.sbw-access-text { font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--text-2); display: flex; flex-direction: column; gap: 3px; }
+.sbw-access-text strong { color: var(--text); }
+
+/* ── Step 3: PAT creation steps ───────────────────────────────────────── */
+
+.sbw-steps { margin: 0 0 14px; padding-left: 20px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
+.sbw-steps li { margin-bottom: 5px; }
+
+/* ── Token boxes (admin invite + admin token) ────────────────────────── */
+
+.sbw-token-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.sbw-token-display { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
+.sbw-copy-btn { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.sbw-copy-btn.copied { color: var(--success-text); border-color: var(--success-text); }
+
+.sbw-admin-token-block {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+}
+.sbw-admin-token-block h4 { margin: 0 0 6px; font-size: var(--text-sm); color: var(--attention-text); display: flex; align-items: center; gap: 6px; }
+.sbw-admin-token-block .sbw-hint { margin-bottom: 10px; }
+.sbw-admin-token-block .sbw-token-box { background: var(--surface); }
+
+.sbw-checklist { margin-top: 4px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--surface-inset); border: 1px solid var(--border); }
+.sbw-checklist h4 { margin: 0 0 8px; font-size: var(--text-sm); color: var(--text); }
+.sbw-checklist ol { margin: 0; padding-left: 20px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
+.sbw-checklist li { margin-bottom: 4px; }
+
+/* ── Admin step 1: data-handling-terms radio cards ───────────────────── */
+
+.sbw-dht-options { display: flex; flex-direction: column; gap: 9px; }
+.sbw-dht-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  cursor: pointer;
+}
+.sbw-dht-card:hover { border-color: var(--border-strong); }
+.sbw-dht-card:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
+.sbw-dht-card input[type="radio"] { margin-top: 3px; flex: none; }
+.sbw-dht-text { display: flex; flex-direction: column; gap: 2px; }
+.sbw-dht-text strong { font-size: var(--text-sm); color: var(--text); }
+.sbw-dht-text span { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-normal); }
+
+/* ── Step 4: domain checkboxes ───────────────────────────────────────── */
+
+.sbw-domain-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.sbw-domain-checkboxes .sbw-checkbox-label { padding: 4px 4px; border-radius: 5px; }
+.sbw-domain-checkboxes .sbw-checkbox-label:hover { background: var(--surface-hover); }
+
+/* ── Step 5: review + consent ────────────────────────────────────────── */
+
+.sbw-review {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.sbw-review dl { margin: 0; display: grid; grid-template-columns: 1fr 1.4fr; gap: 7px 12px; }
+.sbw-review dt { font-size: var(--text-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: var(--track-eyebrow); align-self: center; }
+.sbw-review dd { margin: 0; font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
+
+.sbw-consent { padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface-inset); font-size: var(--text-sm); color: var(--text-2); }
+.sbw-consent p { margin: 0 0 8px; color: var(--text); }
+.sbw-consent ul { margin: 0; padding-left: 18px; line-height: var(--leading-relaxed); }
+.sbw-consent li { margin-bottom: 4px; }
+.sbw-consent-check { margin-top: 12px; }

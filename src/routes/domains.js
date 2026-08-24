@@ -101,6 +101,31 @@ router.post('/', async (req, res) => {
 
 // PUT /api/domains/:domain — rename a domain
 router.put('/:domain', async (req, res) => {
+  // Refuse to rename a domain that has an active write. Verified empirically,
+  // and the failure is silent rather than loud: renameDomain() moves the
+  // directory with rename(2), but an in-flight ingest rebuilds its paths PER
+  // PAGE from the slug it captured at request time (wikiPath() calls
+  // getDomainsDir() on every call — the v3.1.0 per-call invariant), so it keeps
+  // writing to the OLD path. writePage() does `mkdir(dir, {recursive:true})`
+  // (files.js:999), so instead of failing it RECREATES the old directory and
+  // writes the document's remaining pages into it. That ghost has no
+  // CLAUDE.md, so listDomains() filters it out (the v2.3.4 ghost-domain rule)
+  // and those pages are invisible in every UI surface — Domains, Wiki, Health,
+  // chat retrieval and the MCP alike. The ingest then dies at appendLog() with
+  // a raw ENOENT, after the spend and after the pages are on disk.
+  //
+  // Predicate is per-domain (isDomainActive), matching the DELETE handler
+  // below rather than the global hasActiveWrites(): a rename affects exactly
+  // one domain, so blocking it because an unrelated domain is busy would be
+  // broader than the harm.
+  //
+  // Guards BOTH branches, not just the slug-changing one: a display-name-only
+  // rename still rewrites log.md's header via writeFileAtomic, which races
+  // appendLog() writing the same file at the end of an ingest.
+  if (isDomainActive(req.params.domain)) {
+    const { status, body } = conflictResponse(`rename domain "${req.params.domain}"`);
+    return res.status(status).json(body);
+  }
   try {
     const oldSlug = req.params.domain;
     const { displayName } = req.body;

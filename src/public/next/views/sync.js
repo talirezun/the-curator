@@ -41,10 +41,38 @@
 // one) before its first await and checks isCurrentMount(token) after.
 // setSidebar/setMain in app.js now also REQUIRE a token (fail closed on
 // omission) — this view could no longer opt out even if it tried to.
+//
+// Cross-view write gate (this session's task): Push / Pull / Sync now /
+// Disconnect all run `git` against the SAME work-tree that ingests and
+// Shared Brain pulls are writing wiki pages into — `git pull --no-rebase
+// -X theirs` can race a write in progress, and `git add -A` would snapshot
+// a half-written batch. The backend already knows this: every one of these
+// four routes is wrapped in `guardConcurrent()` (src/routes/sync.js), which
+// checks `hasActiveWrites()` (src/brain/write-registry.js — ANY domain, not
+// a specific one, because sync's work-tree spans every domain) and refuses
+// with a 409 mid-write. Until this change that 409 was the ONLY thing
+// stopping the click — the user saw a raw failure with no warning
+// beforehand. This view now reads the SAME signal the backend already acts
+// on (app.js's isAnyWriteBusy(), the frontend mirror of hasActiveWrites())
+// and disables the four buttons proactively, so the common case is a
+// disabled control with an explanation instead of a failed request.
+// `/api/sync/setup` (the "Connect" button on the unconfigured card) is
+// deliberately NOT gated — it has no guardConcurrent() wrapper on the
+// backend (a fresh repo connection can't conflict with an in-flight write
+// the way a push/pull/sync/disconnect against an ALREADY-connected repo
+// can), so gating it here would be inventing a restriction the backend
+// doesn't itself enforce.
+//
+// FAIL-OPEN, not fail-closed (see crossWriteBusy() below): if reading gate
+// state ever throws, every button stays ENABLED. The backend's 409 is the
+// real safety net; a frontend read failure should degrade to "the user
+// might see an honest error", never to "Sync is permanently unusable with
+// no path forward but a page reload".
 
 import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
+  isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
 } from '../app.js';
 
 function freshState() {
@@ -71,12 +99,29 @@ let state = freshState();
 // and threaded through rather than re-derived afterward.
 let myMountToken = 0;
 
+// Unsubscribe function for this mount's write-gate subscription (see
+// onWriteGateChange in app.js) — released in teardown, same discipline
+// views/ingest.js already uses. A torn-down mount must stop reacting to
+// gate changes; leaving this subscribed would re-render a view that no
+// longer owns the sidebar/main DOM (setSidebar/setMain's own token guard
+// would refuse the paint, but there is no reason to even try).
+let unsubscribeWriteGate = null;
+
 registerView('sync', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
     render(mountToken);
     loadAll(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+
+    // Re-render whenever ANY domain's write-gate state changes — e.g. an
+    // ingest starts/finishes on some domain while the user is sitting on
+    // Sync. This view only READS the gate to decide its own button/notice
+    // state; it never begins a write itself.
+    unsubscribeWriteGate = onWriteGateChange(() => {
+      if (isCurrentMount(mountToken)) render(mountToken);
+    });
+
     return () => {
       // L2 fix (re-audit finding): don't let a typed-but-unsubmitted (or
       // in-flight, later-abandoned) GitHub token sit in memory after the
@@ -86,9 +131,58 @@ registerView('sync', {
       // the user has already navigated away — this is the unconditional
       // backstop.
       state.setupForm.token = '';
+
+      if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
     };
   },
 });
+
+// ── Cross-view write gate (see this file's header comment) ────────────────
+
+// FAIL-OPEN: if isAnyWriteBusy() itself throws for any reason, every Sync
+// button stays enabled rather than becoming permanently stuck disabled.
+// The backend's guardConcurrent() 409 is the real safety net (see the
+// header comment) — losing the proactive frontend signal just means the
+// user occasionally sees that 409 instead of a disabled button, which is
+// the pre-existing behaviour this change is layered on top of, not a new
+// failure mode.
+function crossWriteBusy() {
+  try {
+    return isAnyWriteBusy();
+  } catch (err) {
+    console.error('[sync] isAnyWriteBusy() failed — failing OPEN (Sync buttons stay enabled)', err);
+    return false;
+  }
+}
+
+// Best-effort "what's busy" for a disabled control's tooltip.
+// isAnyWriteBusy() alone can't say which domain or what kind of write —
+// app.js's write-gate is keyed per-domain (getDomainWriteLabel(domain)),
+// so this asks it about every domain this view already knows about (from
+// GET /api/domains, loaded into state.domains). A busy domain this view
+// hasn't loaded — a race on first paint, or a Shared Brain mirror slug the
+// domains list doesn't happen to include — still correctly counts toward
+// crossWriteBusy() above (the buttons still disable); it only means the
+// tooltip falls back to a generic message instead of naming the domain.
+function activeWriteInfo() {
+  try {
+    for (const d of state.domains) {
+      const label = getDomainWriteLabel(d);
+      if (label) return { domain: d, label };
+    }
+  } catch (err) {
+    console.error('[sync] getDomainWriteLabel() failed while building a tooltip', err);
+  }
+  return null;
+}
+
+function crossWriteTitle() {
+  const info = activeWriteInfo();
+  return info
+    ? 'A write (' + info.label + ') is running for domain "' + info.domain +
+      '" — wait for it to finish, or it may conflict with this sync.'
+    : 'A write is running in another view — wait for it to finish, or it may conflict with this sync.';
+}
 
 async function loadAll(token) {
   await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token)]);
@@ -164,13 +258,25 @@ function renderSidebar(token) {
       )).join('')
     : '<div class="sidebar-note">No domains to report on yet.</div>';
 
+  // Same cross-view write-gate note ingest.js's sidebar shows (own class,
+  // own copy — see the README's "own your own CSS file" rule) — only
+  // meaningful once a repo is actually connected, since an unconfigured
+  // card's one action (Connect) isn't gated (see this file's header
+  // comment for why).
+  const writeBusy = state.status && state.status.configured && crossWriteBusy();
+  const busyNote = writeBusy
+    ? '<div class="sync-sidebar-busy">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml(crossWriteTitle()) + '</span></div>'
+    : '';
+
   setSidebar(
     '<div class="sidebar-title">Sync</div>' +
     '<div class="sidebar-hint">Your whole wiki, backed up to a private GitHub repository you own. Pages, chats ' +
     'and schemas travel; source files and keys stay here.</div>' +
     '<div class="cur-eyebrow" style="margin-top:2px">PER DOMAIN</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
-    (state.domains.length ? '<div class="sync-domain-footnote">Per-domain state isn’t available yet — the total unpushed count below is the real signal.</div>' : ''),
+    (state.domains.length ? '<div class="sync-domain-footnote">Per-domain state isn’t available yet — the total unpushed count below is the real signal.</div>' : '') +
+    busyNote,
     token
   );
 }
@@ -238,6 +344,15 @@ function renderConfigured(s) {
   const lastSyncLabel = s.lastSync ? formatSyncTime(s.lastSync) : 'never';
   const pendingCount = typeof s.changesCount === 'number' ? s.changesCount : 0;
 
+  // Cross-view write gate (see this file's header comment). `acting` is
+  // THIS view's own in-flight action (e.g. mid-push) — that already
+  // disables the buttons and shows its own "Pushing…" label, and is NOT a
+  // conflict with itself, so the cross-write title only applies when
+  // something ELSE is busy and this view is idle.
+  const crossBusy = !acting && crossWriteBusy();
+  const disabled = acting || crossBusy;
+  const crossTitle = crossBusy ? ' title="' + escapeHtml(crossWriteTitle()) + '"' : '';
+
   return (
     '<div class="sync-status-card">' +
       '<div class="sync-status-top">' +
@@ -247,11 +362,11 @@ function renderConfigured(s) {
       '</div>' +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
       '<div class="sync-status-actions">' +
-        '<button type="button" class="btn btn-primary" id="btn-sync-now"' + (acting ? ' disabled' : '') + '>' +
+        '<button type="button" class="btn btn-primary" id="btn-sync-now"' + (disabled ? ' disabled' : '') + crossTitle + '>' +
           icon('refresh', 14) + ' ' + (acting === 'sync' ? 'Syncing…' : 'Sync now') +
         '</button>' +
-        '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (acting ? ' disabled' : '') + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
-        '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (acting ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
+        '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
+        '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
         '<span class="sync-pending-note mono">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
       '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
@@ -289,21 +404,32 @@ function renderSharedBrainRow() {
 }
 
 function renderDisconnect() {
+  // Same cross-write gate as the three main action buttons above — the
+  // backend's guardConcurrent('disconnect sync') 409s this exact request
+  // while any write is in flight (see this file's header comment), so
+  // there is no case where enabling this and letting it fail is better
+  // than explaining upfront.
+  const acting = state.acting;
+  const crossBusy = !acting && crossWriteBusy();
+  const disabled = acting || crossBusy;
+  const crossTitle = crossBusy ? ' title="' + escapeHtml(crossWriteTitle()) + '"' : '';
+
   if (state.disconnectConfirmOpen) {
     return (
       '<div class="sync-disconnect-confirm">' +
         '<span>Disconnect this repository? Your local wiki files stay exactly as they are — only the sync ' +
         'connection is removed. You can reconnect any time.</span>' +
         '<div class="sync-disconnect-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" id="btn-disconnect-confirm"' + (state.acting ? ' disabled' : '') + '>' +
-            (state.acting === 'disconnect' ? 'Disconnecting…' : 'Disconnect') +
+          '<button type="button" class="btn btn-secondary btn-xs" id="btn-disconnect-confirm"' + (disabled ? ' disabled' : '') + crossTitle + '>' +
+            (acting === 'disconnect' ? 'Disconnecting…' : 'Disconnect') +
           '</button>' +
+          // Cancel never hits the network — always enabled, even mid cross-write, so there is always a way out of the confirm panel.
           '<button type="button" class="btn btn-ghost btn-xs" id="btn-disconnect-cancel">Cancel</button>' +
         '</div>' +
       '</div>'
     );
   }
-  return '<button type="button" class="sync-disconnect-link" id="btn-disconnect-open">Disconnect this repository</button>';
+  return '<button type="button" class="sync-disconnect-link" id="btn-disconnect-open"' + (disabled ? ' disabled' : '') + crossTitle + '>Disconnect this repository</button>';
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────

@@ -236,14 +236,27 @@ const PROVIDER_LABELS = Object.assign(Object.create(null), { gemini: 'Gemini', a
 const STYLE_LABELS = { concise: 'Concise', balanced: 'Balanced', comprehensive: 'Detailed' };
 const STYLE_ORDER = ['concise', 'balanced', 'comprehensive'];
 
-// ── localStorage keys (namespaced separately from the shipping app's own
-// curator-chat-* keys — same origin, but a distinct prefix keeps this
-// parallel shell's persisted choices from ever being confused with the
-// shipping app's, even though nothing would actually break if they
-// collided since both mean the same thing here). ─────────────────────────
+// ── localStorage keys ────────────────────────────────────────────────────
+// STYLE and PROVIDER deliberately read/write the SHIPPING app's own keys
+// (src/public/app.js CHAT_STYLE_KEY / CHAT_MODEL_KEY) rather than a /next-
+// namespaced pair — verified the stored-value FORMATS are identical before
+// wiring this up, not just the key names: CHAT_STYLE_KEY holds one of the
+// plain strings 'concise'|'balanced'|'comprehensive' (app.js CHAT_STYLES),
+// exactly STYLE_ORDER below; CHAT_MODEL_KEY holds one of 'gemini'|
+// 'anthropic', exactly the provider strings used here. Both sides already
+// guard every read with an `.includes()` allow-list against the live
+// available-providers/styles list (see applyApiKeys below and app.js's own
+// `CHAT_STYLES.includes(saved)` / `providers.includes(saved)`), so an
+// unrecognised or stale value on either side already degrades to "not set"
+// rather than being applied — no extra normalisation needed here. Reading
+// the same keys means a user's per-chat model and response-length choice
+// survives the /next cutover instead of silently resetting to the
+// defaults (global provider, 'balanced'). LS_DOMAIN has no shipping
+// counterpart (the shipping app doesn't persist a chat-scoped domain this
+// way) and stays namespaced to this shell.
 const LS_DOMAIN = 'curator-next-chat-domain';
-const LS_STYLE = 'curator-next-chat-style';
-const LS_PROVIDER = 'curator-next-chat-provider';
+const LS_STYLE = 'curator-chat-response-style';
+const LS_PROVIDER = 'curator-chat-model-provider';
 
 // ── View state ────────────────────────────────────────────────────────────
 

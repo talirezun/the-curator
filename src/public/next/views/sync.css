@@ -91,6 +91,25 @@
   padding: 6px 4px 0;
 }
 
+/* Cross-view write-gate notice — same visual pattern as ingest.css's
+   .ing-sidebar-busy, deliberately re-declared here rather than shared (see
+   the views/README's "own your own CSS file" rule: each view stands on
+   its own so an edit to ingest.css can never silently change this one). */
+.sync-sidebar-busy {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.sync-sidebar-busy svg { flex: none; margin-top: 1px; }
+
 /* ── Setup (unconfigured) card ───────────────────────────────────────── */
 
 .sync-setup-card {
@@ -196,6 +215,10 @@
   text-decoration-color: var(--border-strong);
 }
 .sync-disconnect-link:hover { color: var(--danger-text); }
+/* Doesn't carry the shared `.btn` class, so the global `.btn[disabled]`
+   rule (shell.css) never applies to it — needs its own disabled treatment. */
+.sync-disconnect-link[disabled] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+.sync-disconnect-link[disabled]:hover { color: var(--text-3); }
 
 .sync-disconnect-confirm {
   display: flex;
