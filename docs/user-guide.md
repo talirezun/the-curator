@@ -1500,7 +1500,7 @@ For a typical 10-page article on a small or fresh domain:
 
 ### What about MCP / Health / semantic dupe scans?
 
-- **My Curator MCP** runs entirely on your machine and **costs you nothing** in API fees — it's just a local read-only bridge. The frontier model you connect *to* it (Claude Desktop, etc.) bills you separately on its own plan.
+- **My Curator MCP** runs entirely on your machine and **costs you nothing** in API fees — it's just a local bridge to your wiki files (reading and, since v2.5.2, writing) and never calls an AI model itself. The frontier model you connect *to* it (Claude Desktop, etc.) bills you separately on its own plan.
 - **Wiki Health structural scan** is local and **free**.
 - **Wiki Health Phase 1 / 2 (✨ Ask AI)** uses your configured provider; ~$0.0001–0.0005 per click. Trivial.
 - **Wiki Health Phase 3 (semantic dupe scan)** is **opt-in and cost-gated**. A 500-pair scan on Gemini Flash Lite costs ~$0.03; a confirm dialog shows the estimate before you run it. See [docs/ai-health.md](ai-health.md).

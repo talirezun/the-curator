@@ -1,12 +1,12 @@
 ---
 name: my-curator
 description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and handles Shared Brain mirrors correctly (read-only locally; contributions go through the user's personal opted-in domain + Sync-tab Push). Always calls list_domains and get_index before composing any write.
-allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue
+allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue
 ---
 
 # My Curator — second brain playbook
 
-This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 17 tools — 10 for reading the wiki and 7 for writing to it. This playbook tells you how to use them well, in the order that produces the best results.
+This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 18 tools — 11 for reading the wiki and 7 for writing to it. This playbook tells you how to use them well, in the order that produces the best results.
 
 ## §1 — What the second brain is
 
@@ -56,7 +56,7 @@ Before you do anything, know which domain you're working in.
 
 Some domains in `list_domains` may be **Shared Brain mirrors** — named like `shared-<slug>` (e.g. `shared-cohort`, `shared-team`). These are local read-only copies of a collective wiki the user contributes to as part of a cohort, team, or research group (see [`docs/shared-brain-user-guide.md`](../../docs/shared-brain-user-guide.md) for the user-facing model).
 
-**Reading a mirror is unrestricted.** All ten read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
+**Reading a mirror is unrestricted.** All eleven read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `get_raw_source`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
 
 **Writing to a mirror is refused.** All seven write tools (`compile_to_wiki`, `fix_wiki_issue`, `scan_semantic_duplicates` merge path, `dismiss_wiki_issue`, `undismiss_wiki_issue`) check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
 
@@ -153,6 +153,23 @@ When the user asks a question of their wiki, your job is to traverse the graph e
 | **Bidirectional tracing** | `get_node` + `get_backlinks` | "Every source that mentions Y". Pull the entity page; then list every page that links to it. |
 | **Multi-hop traversal** | `get_connected_nodes` | "How is X connected to the rest?". Returns the neighborhood up to 2 hops, ranked by hop+degree. |
 | **Tag-driven clusters** | `get_tags` (with `filter`) → `get_node` | "Pages tagged ai-safety, then synthesise". Tag inventory then per-page fetch. |
+| **Verbatim / exact figure** | `get_summary` or `get_node` first, `get_raw_source` only on escalation | "What's the exact quote?" / "Check the actual source for that number." See §4.1 — this is the one pattern where reaching for the tool too early is a mistake, not a shortcut. |
+
+### §4.1 — Compiled first, verbatim only on escalation
+
+The wiki is compiled knowledge, not a retrieval index — every summary already distilled what mattered from its source. **Default to the wiki for everything.** `get_raw_source` (the original document a summary was built from, text-extracted) is an **escalation**, reached for only when the compiled version genuinely isn't enough:
+
+- The user needs an **exact quote** or the author's own wording.
+- The user needs a **precise figure** they'll be held to (a statistic, a date, a dollar amount) — don't launder an approximate number from a summary as if it were exact.
+- The summary is silent on something you have specific reason to believe the source covers.
+
+Do NOT reach for `get_raw_source` as your first move on a research question, and do not call it for every citation "just to be safe" — that defeats the reason a compiled wiki exists in the first place (see §1) and floods your own context with verbatim text the wiki already distilled for you.
+
+Three things to know about the tool itself:
+
+- **It never returns binary.** PDFs are text-extracted server-side; you get plain text, capped in size, with the response telling you when it was truncated.
+- **"The original isn't on this machine" is a normal, expected answer — not an error.** Raw source files never sync (only wiki pages do), so on any machine other than the one that ingested a document — including right after the user pulls via Sync, or on a Shared Brain mirror — you'll be told the filename, size, and ingest date instead of the text. Report that plainly; it does not mean anything is broken or lost.
+- **A `source:` that is a URL is reported as text, never fetched.** Some summaries record a web page instead of a local file. Don't attempt to retrieve it yourself — just relay what the tool returns.
 
 ### Cross-domain reasoning
 
@@ -271,6 +288,7 @@ Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the u
 | `get_connected_nodes` | Neighborhood traversal | "How is X connected" | Yes |
 | `get_backlinks` | Incoming-link list | "Every source that mentions X" | Yes |
 | `get_summary` | Pull a summary page | When user references a specific source | Yes |
+| `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 | Yes (usually reports the file isn't on this machine, since raw sources never sync) |
 | `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 | **No — refused.** Redirect to personal opted-in domain per §3.3 |
 | `scan_wiki_health` | Find structural issues | "Check my wiki" | Yes (read-only scan) |
 | `fix_wiki_issue` | Apply ONE Health fix | After scan, per issue | **No — refused.** Fixes don't propagate from mirrors |
@@ -297,6 +315,8 @@ A compact reminder of what NOT to do:
 12. **Don't promise the user "I've added this to the shared brain"** when you've actually compiled to their personal domain. Be precise: *"Saved to your `work-ai` domain — it'll appear in the shared brain after you click **Push contributions** in the Sync tab and the admin runs synthesis."* The Push and synthesise steps aren't yours to do.
 13. **Don't try to call a "push" or "synthesize" MCP tool.** They don't exist in v3.0.0-beta.1. Those operations live in the Curator app's Sync tab. If the user asks you to push, tell them how to do it themselves.
 14. **Don't suggest fixing Health issues on a `shared-*` mirror.** Suggest the upstream fix (in the contributor's personal domain) and a Push + synthesise cycle.
+15. **Don't reach for `get_raw_source` as your default.** The wiki is compiled knowledge — answer from `get_node`/`get_summary` first, and escalate to the raw source only for verbatim quotes, exact figures, or a real gap in the summary (§4.1). Reaching for it by default turns a compiled second brain back into a retrieval-at-query-time system.
+16. **Don't treat "the original isn't on this machine" as an error.** Raw sources never sync — report the filename/date the tool gives you and move on.
 
 ## §9 — Quick reference
 
@@ -324,7 +344,8 @@ For sample dialogues that show end-to-end flows for each scenario, see [examples
 
 **This skill targets Curator v3.0.0-beta.1 and later.** If you're working with The Curator, the following features are covered by this version of the skill:
 
-- The 17 MCP tools (10 read + 7 write, list in §7)
+- The 18 MCP tools (11 read + 7 write, list in §7)
+- `get_raw_source` and the compiled-first/verbatim-on-escalation rule (§4.1) — requires Curator v3.5.0 or later; on an earlier version this tool simply won't be in the list, and every other reading pattern in §4 still works
 - Shared Brain mirror domains (`shared-*`) — §3.1 read/write contract, §3.2 indirect-write model, §3.3 dialogue scripts
 - Health on mirrors — scan allowed, fix refused (§6)
 - Two-primitives model — invite token (metadata) vs PAT (per-contributor identity)

@@ -28,7 +28,7 @@ That's the difference between *"I have a folder of notes"* and *"I have a querya
 
 ## What it does
 
-My Curator exposes **seventeen tools** to Claude Desktop — ten read tools that explore your knowledge graph, and seven write tools (v2.5.2+) that let Claude *update* the wiki on your behalf.
+My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools that explore your knowledge graph, and seven write tools (v2.5.2+) that let Claude *update* the wiki on your behalf.
 
 ### Read tools (since v2.3.0)
 
@@ -44,6 +44,7 @@ My Curator exposes **seventeen tools** to Claude Desktop — ten read tools that
 | `get_connected_nodes` | Multi-hop graph traversal |
 | `get_backlinks` | Find every page that links TO a given page |
 | `get_summary` | Pull a source summary page |
+| `get_raw_source` | Retrieve the *original* document a summary was built from — extracted text, never binary (v3.5.0) |
 
 ### Write tools (v2.5.2+)
 
@@ -110,7 +111,7 @@ A frontier model can always get the full picture — it just has to ask in piece
 
 ## The My Curator Claude skill — best results out of the box (v2.5.7+)
 
-The MCP exposes 17 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
+The MCP exposes 18 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
 
 The **My Curator skill** packages that playbook into a single markdown file you install once. After install, every Claude conversation that touches the my-curator MCP automatically follows the rules — no detailed prompting needed.
 
@@ -419,6 +420,34 @@ The MCP and the in-app Health tab share the **same** dismissal store (`domains/<
 
 ---
 
+## Reading the original source from Claude Desktop (v3.5.0+)
+
+A summary page is a *lossy* rendering of whatever you ingested — the AI kept what it judged important and left the rest behind. `get_raw_source` lets Claude go back to the actual document a summary was built from.
+
+### Compiled first, verbatim only on escalation
+
+**The wiki stays the default source for everything.** That's the whole point of a compiled second brain instead of a RAG pipeline: the wiki already did the work of extracting and connecting what matters, and reading it is cheap. `get_raw_source` is an **escalation**, not a first move — reach for it only when the summary genuinely isn't enough:
+
+- You need an **exact quote** or the author's own wording.
+- You need a **precise figure** you'll be held to (a statistic, a date, a dollar amount).
+- The summary is silent on something you have reason to believe the source covers.
+
+Composing every answer from raw source text instead of the compiled wiki would quietly turn The Curator into the retrieval-at-query-time pattern it was built to avoid (see [Why this matters](#why-this-matters-the-elevator-pitch) above). If you notice Claude reaching for `get_raw_source` by default rather than as a fallback, tell it to answer from the wiki first.
+
+### What to expect
+
+- **Text only, never binary.** PDFs are text-extracted before Claude ever sees them; the tool cannot return raw file bytes. Response size is capped well under the MCP's response budget, and the response says explicitly when it was truncated.
+- **"The original isn't on this machine" is a normal answer, not an error.** Raw source files (`raw/`) are deliberately never synced — only your wiki pages are. On any machine other than the one you ingested a document on, `get_raw_source` reports the filename, size, and ingest date it still knows about, and says plainly that the file itself isn't here. This is expected after a Personal Sync pull or on a Shared Brain mirror, and nothing about your wiki page is affected.
+- **A `source:` that's a URL is reported as-is, never fetched.** Some summaries record a web page rather than a local file (e.g. `medium.com/@author`). Claude sees that value as text; The Curator never turns it into an outbound request.
+
+### Phrases that work
+
+- *"Check the actual source for that figure."*
+- *"What's the exact quote the summary is paraphrasing?"*
+- *"Pull the original text of the document behind this summary."*
+
+---
+
 ## Things to know
 
 **If you move your domains folder, MCP stops working.** The config file has an absolute path baked in. When you change the Knowledge Base Location in the Domains tab (or move the Curator install), come back to Settings → My Curator, click **Regenerate**, paste the new snippet, and restart Claude Desktop. The wizard detects staleness and shows a warning banner when it happens.
@@ -433,7 +462,7 @@ The one way they can still drift apart is the one described just above: the `--d
 
 **Privacy.** Everything stays on your machine. There is no network component. No telemetry.
 
-**Security.** The MCP is read-only. Every tool validates its `domain` and `slug` arguments against a strict alphanum-plus-hyphen/underscore pattern, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk.
+**Security.** Every tool validates its `domain` and `slug` arguments against a strict alphanum-plus-hyphen/underscore pattern, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The ten graph-reading tools are strictly read-only. The seven write tools (v2.5.2+) are hard-capped (50 KB/page, 10 pages/call), idempotent per conversation, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
 
 ---
 

@@ -1,6 +1,6 @@
 # My Curator — sample dialogues
 
-Worked end-to-end examples showing how the playbook in [SKILL.md](SKILL.md) plays out. Four scenarios, covering deep research, fresh-domain compile (the strictest mode), compounding into an established domain, and maintenance.
+Worked end-to-end examples showing how the playbook in [SKILL.md](SKILL.md) plays out. Six scenarios, covering deep research, fresh-domain compile (the strictest mode), compounding into an established domain, maintenance, Shared Brain contribution, and escalating from a summary to its original source.
 
 ---
 
@@ -288,15 +288,50 @@ The user clicks Push themselves. A week later when the admin synthesises, the co
 
 ---
 
+## Example 6 — Escalating to the original source (Curator v3.5.0+)
+
+The user is citing a figure from the wiki and wants to be sure it's exact before it goes in front of someone else.
+
+> **User:** *"What does my `articles` wiki say about the water usage of a single ChatGPT query? I need the exact number for a slide, not a rounded one."*
+
+**Step 1 — Answer from the wiki first, as always.**
+
+```
+search_wiki(domain="articles", query="ChatGPT water usage per query")
+get_node(domain="articles", slug="the-energy-and-water-footprint-of-generative-ai")
+```
+
+The summary states a figure, attributed to a specific paper.
+
+**Step 2 — This is the escalation case, not the default case.** The user explicitly said "exact number, not rounded" — for a slide, a number they'll be held to. Per SKILL.md §4.1, that's exactly when `get_raw_source` is the right call, not routine.
+
+```
+get_raw_source(domain="articles", slug="the-energy-and-water-footprint-of-generative-ai")
+```
+
+Two possible outcomes:
+
+- **Found.** The response returns extracted text (never binary). Locate the exact sentence with the figure and quote it precisely, citing that it's from the original paper rather than the wiki's summary.
+- **Not found on this machine.** Perfectly normal — raw sources never sync. The response still tells you the original filename and when it was ingested. Say so plainly: *"The wiki's summary gives [the figure], sourced from `[filename]` (ingested [date]) — but the original file isn't on this machine (raw sources don't sync across computers), so I can't quote it verbatim. The summary's number is the most precise figure I have access to right now."*
+
+**Key moves**
+- Don't call `get_raw_source` on the first pass of an ordinary question — only because the user specifically needs verbatim accuracy.
+- Never treat "not found" as a dead end or an error — report what IS known (filename, date) and move on.
+- If the tool returns a `truncation_notice`, don't assume the rest of the document lacks what you're looking for — say you only saw the first part.
+
+---
+
 ## Quick decision tree
 
 When the user makes a request, ask:
 
 ```
 "What does my wiki say about X?"          → §4 reading workflow (Example 1)
+"I need the exact quote/figure, not a summary" → §4.1 escalation to get_raw_source (Example 6)
 "Save this to my <fresh> domain"          → §5 writing workflow, refuse mode (Example 2)
 "Save this to my <established> domain"    → §5 writing workflow, keep mode (Example 3)
 "Check / clean up / find problems in my wiki" → §6 maintenance workflow (Example 4)
+"Save this to our shared brain"           → §3.2/§3.3 indirect-write model (Example 5)
 ```
 
 If the request mixes patterns (e.g. *"Research X and save the conclusions"*), do them in order — research first, then ask the user to confirm before the write phase.

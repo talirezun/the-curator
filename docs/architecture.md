@@ -20,11 +20,13 @@ Browser (http://localhost:3333)
 │           src/server.js             │
 │                                     │
 │  /api/domains      /api/ingest      │
-│  /api/chat         /api/wiki/:domain│
+│  /api/ingest-queue /api/query       │ ← batch ingest, v3.3.0+
+│  /api/wiki/:domain /api/chat        │ ← +page/+source, v3.2.0+/v3.5.0
 │  /api/sync         /api/config      │
 │  /api/health       /api/mcp         │
 │  /api/compile      /api/sharedbrain │ ← v3.0.0-beta+ (gated by flag)
-│  /api/restart      /api/version     │
+│  /api/diagnostics  /api/restart     │
+│  /api/version                       │
 └───────────────┬─────────────────────┘
                 │
         ┌───────┴──────────┐
@@ -112,17 +114,22 @@ the-curator/
 │   ├── server.js               Express entry point (port 3333, auto-opens browser)
 │   ├── routes/
 │   │   ├── domains.js          GET/POST/PUT/DELETE /api/domains[/:domain]
-│   │   ├── ingest.js           POST /api/ingest
+│   │   ├── ingest.js           POST /api/ingest (single file)
+│   │   ├── ingest-queue.js     /api/ingest-queue — batch ingest job (create/list/start/pause/cancel/delete) (v3.3.0+)
 │   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]
-│   │   ├── wiki.js             GET  /api/wiki/:domain
+│   │   ├── wiki.js             GET /api/wiki/:domain, GET .../page (v3.2.0+), GET .../source + POST .../source/reveal (v3.5.0)
 │   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
+│   │   ├── diagnostics.js      GET /api/diagnostics/quick, POST /api/diagnostics/live (System Check)
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
+│   │   ├── ingest-queue.js     Batch-ingest queue: disk-persisted, sequential worker, pause/cancel/resume (v3.3.0+)
+│   │   ├── raw-store.js        Raw-source resolution/extraction — the `resolveRawSource` chokepoint (v3.5.0)
+│   │   ├── wiki-read.js        Single-page read + backlinks (`getWikiPage`) for the reader panel (v3.2.0+)
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
@@ -138,11 +145,13 @@ the-curator/
 │   ├── graph.js                Wiki parser: frontmatter, [[wikilinks]], backlinks, tag inventory (cached)
 │   ├── util.js                 Slug + domain validators, resolveDomainArg shared helper
 │   ├── storage/local.js        Filesystem adapter (resolveInsideBase chokepoint, audit-log writer)
-│   └── tools/                  Tool modules (10 read + 7 write = 17 tools as of v2.5.2)
+│   └── tools/                  Tool modules (11 read + 7 write = 18 tools as of v3.5.0)
 │       ├── index.js            Registration hub + response-size guard (400 KB)
 │       ├── domains.js, index-tool.js, search.js, nodes.js, connected.js,
-│       │                       Read tools (10): list_domains, get_index, search_wiki, get_node, get_connected_nodes,
-│       │                       get_summary, search_cross_domain, get_graph_overview, get_tags, get_backlinks
+│       │   summary.js, cross.js, overview.js, tags.js, backlinks.js, raw-source.js
+│       │                       Read tools (11): list_domains, get_index, search_wiki, get_node, get_connected_nodes,
+│       │                       get_summary, search_cross_domain, get_graph_overview, get_tags, get_backlinks,
+│       │                       get_raw_source (v3.5.0 — the original document behind a summary, text-extracted only)
 │       ├── compile.js          Write tool (v2.5.2): compile_to_wiki — research → wiki pages
 │       ├── health.js           Write tools (v2.5.2): scan_wiki_health, fix_wiki_issue, scan_semantic_duplicates
 │       └── dismissed.js        Write tools (v2.5.2): get_health_dismissed, dismiss_wiki_issue, undismiss_wiki_issue
@@ -157,8 +166,10 @@ the-curator/
 │       │   ├── entities/       People, tools, companies, datasets
 │       │   ├── concepts/       Ideas, techniques, frameworks
 │       │   ├── summaries/      One page per ingested source or compiled conversation
-│       │   └── .health-dismissed.jsonl  Persistent Health-issue dismissals (v2.5.1+); git-tracked, syncs across machines
+│       │   ├── .health-dismissed.jsonl  Persistent Health-issue dismissals (v2.5.1+); git-tracked, syncs across machines
+│       │   └── .raw-manifest.jsonl      Append-only record of ingested source filenames/size/sha256 (v3.5.0); git-tracked so a second machine can name a missing raw file even though raw/ itself never syncs
 │       └── conversations/      Saved chat threads (JSON, gitignored)
+├── <user-data dir>/.ingest-queue/   Batch-ingest job manifests + staged uploads (v3.3.0+) — deliberately OUTSIDE domains/, since that directory is Personal Sync's git work-tree; see src/brain/paths.js
 ├── docs/                       This documentation
 │   ├── user-guide.md           End-to-end guide for non-technical users
 │   ├── architecture.md         This file — system internals
@@ -286,6 +297,8 @@ For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's nat
 ## Data flow: Ingest
 
 > **For the comprehensive technical deep dive** on the ingestion pipeline — every safeguard, every failure mode the code defends against, the full quality contract, Mermaid flowcharts, and the deep-test harness — see [docs/ingestion-pipeline.md](ingestion-pipeline.md). The summary below is the entry-point overview.
+
+**Single file vs. batch (v3.3.0+):** selecting exactly one file uses the flow below, `POST /api/ingest`, unchanged since before v3.3.0. Selecting **two or more** routes instead to `POST /api/ingest-queue` — a separate, disk-persisted job that ingests each file through this same `ingestFile()` pipeline, one at a time. See [§ Batch ingest queue](#batch-ingest-queue-v330) below for that path.
 
 ```
 User uploads file
@@ -438,6 +451,30 @@ wiki. The chain that makes this work, in order of where it kicks in:
 | **Summary "Entities Mentioned"** | `syncSummaryEntities` always rebuilds from the ground-truth `pagesWritten` list | List always matches the actual pages written this run. |
 | **Backlinks** | `injectSummaryBacklinks` is dedup-safe (`dedupKey()`) | Same `[[summaries/<slug>]]` bullet is never added twice. |
 | **`index.md` rows** | `mergeIntoIndex` scans existing wikilinks → skips any slug already mentioned | Re-ingest never adds a duplicate row. Only newly CREATED pages get rows. |
+
+### Batch ingest queue (v3.3.0+)
+
+Selecting two or more files switches the Ingest tab to a **server-owned, disk-persisted queue** (`src/brain/ingest-queue.js`, routed at `POST /api/ingest-queue` and friends) instead of the single-file flow above. It exists so a large batch survives a closed browser tab or an app restart, and so duplicate/partial-failure handling doesn't have to be reasoned about per click.
+
+```
+POST /api/ingest-queue          (multipart: files[] + domain) → creates a job, returns a cost estimate; nothing uploads or spends until…
+POST /api/ingest-queue/:jobId/start   → begins the strictly-sequential worker
+GET  /api/ingest-queue/:jobId/stream  → SSE progress (per-item status, live pause/cancel flags)
+POST /api/ingest-queue/:jobId/pause   → stops between files (lossless — never aborts an in-flight call)
+POST /api/ingest-queue/:jobId/cancel  → aborts the in-flight file immediately (v3.4.0+; see below)
+DELETE /api/ingest-queue/:jobId       → dismiss a finished/cancelled/failed job
+```
+
+Properties that are correctness requirements, not conveniences:
+
+- **Strictly sequential, process-wide.** `ingestFile` snapshots a domain's existing entity/concept filenames once per call; two concurrent ingests into the same domain would both see "doesn't exist yet" and both create it. A synchronous mutex claim (not "check a flag, then await, then set it") plus an in-flight counter around the one `ingestFileImpl` call closes the TOCTOU window a same-process double-click or two open tabs can hit.
+- **Durable staging.** Each uploaded file is copied into the queue's own directory (see below) at job-creation time, before the create call returns — multer's OS-temp-dir upload does not survive a restart, so "resume after a crash" needs its own copy of the bytes.
+- **Duplicates are decided ONCE, at job creation**, against the domain's `raw/` state as it exists before the batch starts — never re-checked at run time. `ingestFile` writes `raw/<name>` as its first internal step, so an item interrupted mid-ingest already looks like a duplicate; a runtime check would mark the resumed item `skipped` and silently drop the very file the crash interrupted.
+- **A rate limit pauses the whole batch; a bad file fails alone.** `llm.js` already retries 429/503 with backoff before giving up, so one reaching the queue means the provider said stop, not "this file is bad." A structured `err.curatorTransient` tag (not a substring match — see the module's own docblock for why a bare `\b429\b` regex is unsafe) plus a consecutive-failure circuit breaker (3 in a row → pause) bound the damage either way.
+- **Never auto-starts spend.** A job interrupted by a crash or restart recovers to `paused`; nothing calls start on its own.
+- **The job directory lives OUTSIDE `domains/`** — `<user-data dir>/.ingest-queue/` via `getIngestQueueDir()` in `src/brain/paths.js` — because `getDomainsDir()` is Personal Sync's git work-tree (`sync.js` passes `--work-tree=getDomainsDir()`). A queue directory inside it would commit and push staged, possibly-large source files to the user's GitHub repo — the same class of bug this project has shipped twice before (`.DS_Store` in v3.0.16, `.write-lock` in v3.0.15).
+
+**Pause vs. Cancel — deliberately not the same "stop" (v3.4.0+).** Pause is lossless: it only ever stops between files. Cancel means "stop spending right now": an `AbortController` is threaded from the queue worker through `ingestFile` down to the `generateText` call and both provider SDKs, so a click aborts the file that's *currently* in flight rather than waiting for it to finish. Measured on a real multi-phase 150 KB source: cancel acknowledged in single-digit milliseconds and the job reached a terminal state in ~63–74 ms, versus the ~334 s and up to 17 further paid provider calls the same run would otherwise have made. The interrupted item gets its own terminal status, `cancelled` ("Stopped"), distinct from `failed`; nothing already written is rolled back, and re-ingesting that one file (with Overwrite ticked, since it's already recorded in `raw/`) completes it. The abort check is placed FIRST in every one of `ingest.js`'s LLM-reachable recovery catches (Phase 1 outline retry, Phase 2 batch → page-by-page → stub, single-pass → multi-phase) — a cancel caught by one of those ladders instead of honoured would silently keep spending, the exact inverse of what Cancel is for.
 
 ## Data flow: Chat
 
@@ -632,6 +669,27 @@ merge cleanly through git's standard 3-way merge.
 
 ---
 
+## Data flow: Raw source retrieval (v3.5.0)
+
+"Which original document was this summary built from, and can I get its actual text back?" — Track 7 Part II. The link already existed (`injectFrontmatter` promotes a summary's `Source:` line into a `source:` frontmatter field at ingest time); this feature makes it *usable and safe* rather than adding a new one.
+
+```
+GET /api/wiki/:domain/source?path=summaries/foo.md[&hash=1]   → does the original file still exist on this machine?
+POST /api/wiki/:domain/source/reveal   body: { path }         → open it in Finder (macOS only, 501 elsewhere)
+```
+
+Both routes, and the MCP's `get_raw_source` tool, funnel through **`src/brain/raw-store.js`**, the single chokepoint for turning an untrusted `source:` value into a path on disk. `source:` is treated as hostile input throughout — it is LLM-written, hand-editable in Obsidian, and arrives over Personal Sync and Shared Brain mirror pulls, i.e. potentially from another machine or another person. `resolveRawSource()` layers a sanitiser (no path separators, no control characters, basename-only, ≤512 chars) → lexical containment inside the domain's `raw/` folder → **physical** `realpath` containment (a symlinked leaf or ancestor, or a dangling symlink, is refused) → `lstat().isFile()` (refuses directories and *any* symlink, even one that resolves back inside `raw/` — a raw source is a file that was ingested, never a link). It deliberately reuses `resolveInsideWiki` from `wiki-read.js` rather than keeping a second hand-maintained copy of the containment check — two independently-maintained copies of the same guard is what produced the v3.2.0 CRITICAL (see that release's CLAUDE.md entry).
+
+`found: false` is a normal `200` response, not an error — it covers four distinct cases (`missing`, `external-source`, `not-a-summary`, `no-source-recorded`; see [api-reference.md](api-reference.md#get-apiwikidomainsource) for the full list) and the most common by far is `missing`: `raw/` is gitignored and never syncs, so any machine that only pulled the wiki reports every summary's source as missing by design. The UI and the MCP tool both say so plainly.
+
+**A summary's `source:` can also name a web page** (`medium.com/@author`) rather than a local file — found in real data, not hypothesised. That value is classified as `external-source` and reported to the caller **as inert text — never fetched**. Turning an LLM-authored, sync-delivered string into an outbound HTTP request would make it an SSRF primitive; neither `raw-store.js` nor the wiki routes import an HTTP client.
+
+**`get_raw_source` (MCP, v3.5.0)** returns extracted plain text, byte-capped well under the MCP response budget — never raw bytes. PDFs are text-extracted first; anything that doesn't decode as text comes back as `text: null` with `text_unavailable: "binary"` rather than mangled bytes or a corrupted JSON-RPC stream (the same class of failure the v2.5.3 stdout-pollution fix closed). See [§ Module reference](#module-reference) below and the MCP section that follows for where this sits among the other 17 tools.
+
+An append-only manifest, `<domain>/wiki/.raw-manifest.jsonl`, records filename/size/sha256/ingest-date for every raw file — deliberately placed *inside* `wiki/` so it syncs even though the blobs themselves never do, mirroring the `.health-dismissed.jsonl` precedent. It leaks nothing new: the filename is already present in the synced `source:` field. A manifest write failure can never fail an ingest.
+
+---
+
 ## Data flow: My Curator MCP
 
 The MCP server is a **standalone** Node process spawned by the MCP client
@@ -660,7 +718,7 @@ mcp/server.js
       ├─ registerTools(server, storage)          tools/index.js
       └─ StdioServerTransport.connect()
 
-Tool call (any of 17 tools):
+Tool call (any of 18 tools):
       │
       ▼
 tools/index.js — CallToolRequestSchema handler
@@ -668,9 +726,13 @@ tools/index.js — CallToolRequestSchema handler
       ├─ Stringify result → enforceSizeLimit (400 KB cap; trims heavy arrays)
       └─ Return { content: [{ type: 'text', text }] }
 
-Read tools (v2.3.0+, 10 tools)
-      └─ Walk markdown via storage.listWikiFiles / readFile
-         Cached per-process graph (mcp/graph.js, 10-min TTL)
+Read tools (v2.3.0+ through v3.5.0, 11 tools)
+      ├─ Walk markdown via storage.listWikiFiles / readFile
+      │    Cached per-process graph (mcp/graph.js, 10-min TTL)
+      └─ get_raw_source (v3.5.0) is the one exception: it does NOT go
+           through storage.readFile (which forces utf8 and would mangle a
+           PDF) — it calls raw-store.js's resolveRawSource + text extractor
+           directly, and returns extracted text only, never binary bytes.
 
 Write tools (v2.5.2+, 7 tools)
       ├─ resolveDomainArg(args, storage, getDefaultDomain)
@@ -823,7 +885,7 @@ The file lock is what lets the MCP server (separate child process spawned by Cla
 ### `src/brain/ingest.js`
 
 ```js
-ingestFile(domain, filePath, originalName, isOverwrite?, onProgress?)
+ingestFile(domain, filePath, originalName, isOverwrite?, onProgress?, opts = {})
   → Promise<{
       title: string,
       pagesWritten: string[],
@@ -831,12 +893,18 @@ ingestFile(domain, filePath, originalName, isOverwrite?, onProgress?)
       warnings: string[],        // v3.0.1+: truncation, validator patches, stub pages
       truncated: boolean,        // v3.0.1+: was the source > 80k chars?
     }>
+  // opts.signal — AbortSignal (v3.4.0+): checked FIRST in every LLM-reachable
+  // recovery catch (Phase 1 retry, Phase 2 → page-by-page → stub, single-pass
+  // → multi-phase) so an abort can never be "recovered" into a stub page that
+  // keeps spending. Optional; ingest.js's own behaviour is byte-identical
+  // when no signal is passed.
 
 computeSummarySlugFromSource(originalName)  → string                    // v3.0.1+
 extractAuthorHints(text)  → string[]   // YAML/byline/"Author:" scan    // v3.0.1+
 slugifyName(name)  → string            // honorific-stripped slug       // v3.0.1+
 validateOutline(outline, summaryPath, originalName, originatorHints?)
   → { outline, warnings: string[] }                                     // v3.0.1+
+isOutputTokenLimit(err)  → boolean     // shared token-limit classifier // v3.0.1-beta.27+
 parseJSON(raw)  → object   // shared with compile.js
 ```
 
@@ -848,6 +916,41 @@ A REQUIRED COVERAGE checklist is injected into both prompts (single-pass and
 multi-phase outline) so the LLM always produces a summary at the canonical
 slug, an originator entity for the source's author/speaker, and applies the
 parent-over-children consolidation rule.
+
+### `src/brain/ingest-queue.js` (v3.3.0+)
+
+Batch-ingest job orchestration — see [§ Batch ingest queue](#batch-ingest-queue-v330) above for the design rationale (sequentiality, staging, duplicate handling, why the job directory lives outside `domains/`, and the v3.4.0 Pause-vs-Cancel `AbortSignal` threading). Disk state is one manifest JSON per job under `getIngestQueueDir()` (`paths.js`), written via `writeFileAtomic`.
+
+| Export | Description |
+|--------|-------------|
+| `createJob(domain, files, opts)` | Stages uploaded files into the queue's own directory, decides duplicate/skip status once against `raw/`'s pre-batch state, returns the job id. |
+| `startOrResumeJob(jobId)` | Claims a process-wide mutex synchronously (not check-then-await-then-set) before doing any async work — the TOCTOU window a double-click or two tabs can hit. |
+| `requestPause(jobId)` / `requestCancel(jobId)` | Sets a live (never persisted) control flag; cancel additionally aborts the in-flight item's `AbortController` if one is published. |
+| `getJob(jobId)` / `listJobs()` / `toWire(job)` | Read the manifest; `toWire` is an explicit allow-list with length caps (not a `...rest` spread) so a raw fs error or an oversized field can't leak an absolute path or blow the wire size. |
+| `reclaimStrandedItems(job)` | Runs at the top of every loop iteration and inside the settle chokepoint — a job cannot reach `done` while any item is non-terminal. |
+| `estimateIngestQueueCost(domain, files)` | Free, local cost-range estimate shown before any upload — the confirm gate. |
+
+### `src/brain/raw-store.js` (v3.5.0)
+
+Raw-source resolution and text extraction — see [§ Raw source retrieval](#data-flow-raw-source-retrieval-v350) above for the full threat model and containment layering.
+
+| Export | Description |
+|--------|-------------|
+| `resolveRawSource(domain, sourceName)` | THE chokepoint. Untrusted `source:` string → `{ok:true, absPath, filename, bytes, mtime}` or `{ok:false, reason}`. Never throws. |
+| `sourceForSummary(domain, summaryPath)` | Reads a summary's frontmatter, classifies its `source:` value (local file / `external-source` / `not-a-summary` / `no-source-recorded`), and resolves it if it's a local file. |
+| `looksLikeExternalSource(value)` | Classification only — a web-page-shaped `source:` is reported as text and never fetched (SSRF avoidance). |
+| `readRawSourceText(absPath, maxChars)` | Extracts text (PDF via `pdf-parse`, else `readFile`), byte-capped with character-boundary-safe truncation; refuses anything that doesn't decode as text rather than emitting mojibake. |
+| `hashRawSource(absPath)` | Streamed sha256, opt-in (`?hash=1` on the route) since it reads the whole file. |
+
+### `src/brain/wiki-read.js` (v3.2.0+)
+
+Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:domain/page` in [api-reference.md](api-reference.md). Deliberately does not import from or get imported by `mcp/` (the MCP is a stdio JSON-RPC child process; see the module's own docblock). `resolveInsideWiki`, its path-containment chokepoint, is also imported by `health.js` and `raw-store.js` — one hardened implementation, not three.
+
+| Export | Description |
+|--------|-------------|
+| `getWikiPage(domain, requestedPath)` | `{domain, path, folder, slug, title, type, frontmatter, body, backlinks, resolvableTarget}`. Throws with `.status` (404/400) on an unknown or escaping path. |
+| `getBacklinks(domain, targetFolder, targetSlug)` | Pages linking to a given target, using the exact same link-resolution rule `health.js`'s `scanWiki()` uses to decide a link is broken — the reader and the Health tab can never disagree. |
+| `resolveInsideWiki(wikiDir, candidate)` | Lexical + physical (`realpath`) containment chokepoint; refuses symlink escapes and dangling symlinks. |
 
 ### `src/brain/chat.js`
 
@@ -870,8 +973,10 @@ POST /api/config/domains-path  → set domains folder path
 POST /api/config/pick-folder   → macOS native folder picker (osascript)
 GET  /api/config/api-keys      → masked keys + active provider info
 POST /api/config/api-keys      → save API keys (partial update)
+POST /api/config/api-keys/disconnect → clear one provider's saved key (v2.4.2+)
+POST /api/config/api-keys/active     → switch the active provider without re-saving a key (v3.0.1-beta.24+)
 GET  /api/config/update-check  → compare local vs GitHub version
-POST /api/config/update        → git pull + npm install + rebuild .app (build-app.sh)
+POST /api/config/update        → git fetch + git reset --hard origin/main + npm install + rebuild .app (build-app.sh) (v2.3.2+)
 POST /api/restart               → spawn new server process, exit current one
 ```
 

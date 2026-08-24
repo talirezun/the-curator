@@ -380,6 +380,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 | **Personal Sync** (Sync now / Push only / Pull only) | A `git push` / `git pull` over HTTPS to your own private repo. |
 | **Wiki Health — structural scan & deterministic fixes** (broken-link auto-fix, folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) | Algorithmic — runs entirely on your machine. |
 | **My Curator MCP server** (locally, on this machine) | The bridge itself is free. The frontier model you connect *to* it (Claude Desktop, etc.) bills you on its own plan, not through your Curator API key. |
+| **Reveal in Finder / `get_raw_source`** (find the original document behind a summary) | Plain text extraction from a local file — no LLM call, on either the app's Wiki tab or the MCP tool. |
 | **Shared Brain — Pull updates / Disconnect / List connections** | GitHub REST API calls to read pages or list metadata — no LLM involved. |
 | **Shared Brain — Revoke a contributor** (GDPR Article 17) | Storage operations only (delete contributions, scan + delete tainted pages, append audit log). Synthesis re-runs after — that step uses the LLM as above. |
 

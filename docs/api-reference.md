@@ -601,6 +601,54 @@ Pages are returned in filesystem traversal order (depth-first). The `path` field
 
 ---
 
+## GET /api/wiki/:domain/page
+
+Return exactly **one** page — frontmatter, title, type, raw body — plus every page in the domain that links to it (backlinks). Built for the citation-chip reader panel, which needs to open a single page without paying for the whole domain the way `GET /api/wiki/:domain` above does (14 MB on the real `articles` domain). Reads are served from `src/brain/wiki-read.js`, independent of `mcp/graph.js` (the MCP server is a stdio child process; see that module's docblock for why the two readers are deliberately not coupled).
+
+Reads are allowed on read-only Shared Brain mirror domains — this route never writes.
+
+**Path / query parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `domain` | Domain slug (path parameter) |
+| `path` | Page path relative to `domains/<domain>/wiki/`, e.g. `entities/tali-rezun.md` (query parameter; the same string used elsewhere in the app — chat citations, `readWikiPages()`'s `path` field) |
+
+**Success response** `200 OK`
+
+```json
+{
+  "domain": "ai-tech",
+  "path": "entities/tali-rezun.md",
+  "folder": "entities",
+  "slug": "tali-rezun",
+  "title": "Tali Rezun",
+  "type": "entity",
+  "frontmatter": { "tags": ["type/entity"], "...": "..." },
+  "body": "## Summary\n...",
+  "backlinks": [
+    { "path": "summaries/attention-paper.md", "folder": "summaries", "slug": "attention-paper", "title": "Attention Is All You Need", "readable": true }
+  ],
+  "resolvableTarget": true,
+  "readonly": false
+}
+```
+
+`backlinks` uses **exactly** the same "does this `[[link]]` point at that page" rule `health.js`'s `scanWiki()` uses to decide whether a link is broken, so the reader can never disagree with the Health tab about whether a link resolves — a bare `[[slug]]` resolves only against `entities/`/`concepts/` (never `summaries/`, which always needs its prefix), and `[[folder/slug]]` needs an exact folder+slug match.
+
+`resolvableTarget` is `false` for a page nested below the canonical folder's first level (e.g. `entities/companies/nested-corp.md` — `writePage` never produces these, but a hand-edited or migrated wiki can have them). Such a page is still readable and its `backlinks` array is truthfully empty: *nothing in this wiki can resolve a link to it*, not merely "nothing does".
+
+`readonly` mirrors the domain's Shared Brain mirror status (`isDomainReadonly`), additive to what `getWikiPage()` itself returns.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain, or the page doesn't exist on disk |
+| `400` | Missing/invalid `path`, path outside `entities/`/`concepts/`/`summaries/`, or the path is a symlink (or sits under a symlinked folder) that escapes the wiki folder (`code: "WIKI_PATH_ESCAPES"`) |
+
+---
+
 ## GET /api/wiki/:domain/source
 
 Track 7 Part II. "Which original document was this summary built from, and is it still on this machine?" Every resolution goes through `resolveRawSource()` in `src/brain/raw-store.js` — the single chokepoint for turning an untrusted `source:` frontmatter value into a path on disk; see [docs/ingestion-pipeline.md](ingestion-pipeline.md) for the full security design.

@@ -25,7 +25,7 @@ Compared to alternatives:
 | Wiki pages (`wiki/`) | Yes | This is your knowledge — the whole point |
 | Chat conversations (`conversations/`) | Yes | So you can continue threads on any machine |
 | Domain schemas (`CLAUDE.md`) | Yes | So the AI behaves consistently everywhere |
-| Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed |
+| Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed. A per-domain manifest of what was ingested (filename, size, ingest date) DOES sync inside `wiki/`, so on a second machine a summary page can still tell you what its source was called and when it arrived, even though the file itself isn't there — see the Wiki tab's "Reveal in Finder" panel or [mcp-user-guide.md](mcp-user-guide.md)'s `get_raw_source` section |
 | API keys (`.env`) | No | Never synced — stays on each machine only |
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
