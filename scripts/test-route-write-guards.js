@@ -606,6 +606,27 @@ console.log('\n=== 11. POST /api/health/:domain/fix is guarded like /fix-all ===
   }
   assert(released, '/fix released its registration when it finished');
 
+  // ── (d) the cross-process file lock, exercised behaviourally ────────────
+  // Mutation-testing showed the lock was covered only by the source invariant
+  // in section 13, so removing it went RED for a source reason and not a
+  // behavioural one. A lock file stamped with THIS process's pid reads as held
+  // by a live owner (isPidAlive is true for self), which is exactly the state a
+  // concurrent MCP write produces.
+  build('hlock', 2);
+  writeFileSync(path.join(TMP_DOMAINS, 'hlock', '.write-lock'), JSON.stringify({
+    pid: process.pid, op: 'mcp:fix_wiki_issue', startedAt: Date.now(), hostname: 'test',
+  }));
+  const lockedBefore = readFileSync(page('hlock', 0), 'utf8');
+  const locked = await post('/api/health/hlock/fix', { type: 'folderPrefixLinks' });
+  eq(locked.status, 409, '/fix refused with 409 while another process holds the file lock');
+  assert(locked.body && locked.body.conflict === 'file_lock',
+    "/fix lock refusal carries conflict: 'file_lock' (distinct from write_in_progress)");
+  eq(readFileSync(page('hlock', 0), 'utf8'), lockedBefore,
+    '/fix lock refusal performed NO partial work');
+  rmSync(path.join(TMP_DOMAINS, 'hlock', '.write-lock'));
+  const afterUnlock = await post('/api/health/hlock/fix', { type: 'folderPrefixLinks' });
+  eq(afterUnlock.status, 200, '/fix works again once the lock is released');
+
   // ── (c) parity: /fix-all behaves identically, proving a mirror not an invention
   build('hpar', 2);
   registry.beginUpdate();
