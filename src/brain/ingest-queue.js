@@ -193,6 +193,7 @@ import { registerWrite, acquireFileLock, isUpdateInProgress } from './write-regi
 import {
   ingestFile as realIngestFile,
   capExistingFilesForPrompt,
+  makeUsageAccumulator,
   __testing as ingestTesting,
 } from './ingest.js';
 import { getProviderInfo, getModelPrice, isAbortError } from './llm.js';
@@ -659,6 +660,7 @@ export function toWire(job) {
     budgetUsd: wireNum(job.budgetUsd),
     spentUsd: wireNum(job.spentUsd),
     spendIsEstimated: wireBool(job.spendIsEstimated),
+    spendIsLowerBound: wireBool(job.spendIsLowerBound),
     order: wireStr(job.order, 64),
     estimate: est ? {
       inputTokensLow: wireNum(est.inputTokensLow),
@@ -1303,7 +1305,33 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
     overwrite: !!overwrite,
     budgetUsd: requestedBudget,
     spentUsd: 0,
+    // ── TWO FLAGS, BECAUSE THERE ARE TWO WAYS TO BE INEXACT ──────────────
+    // These were ONE flag, and it meant two contradictory things at once:
+    //
+    //   spendIsEstimated — some charge was an ESTIMATE SHARE (usdHigh / n),
+    //     because the model has no published price. usdHigh is the no-caching
+    //     end of an estimate and is NOT a bound in either direction: measured
+    //     at 103.1% of actual on Gemini and 66.8% on Anthropic, i.e. it can
+    //     read ~50% ABOVE real spend. The honest word is "approx.".
+    //
+    //   spendIsLowerBound — some charge was MEASURED but INCOMPLETE: the
+    //     provider call in flight when the item was cancelled / failed / 429'd
+    //     never completed, so llm.js never reported it, so it is not in the
+    //     totals. Every counted dollar was really billed. The honest words
+    //     are "at least".
+    //
+    // Rendering an estimate share as "at least" is simply false, and calling
+    // a measured partial "estimated, not measured" is false in the other
+    // direction. Both are additive: `spendIsEstimated` keeps its name, its
+    // default and its meaning-of-record, and readers that only know it still
+    // work — they just stop claiming a floor they were never given.
+    //
+    // BOTH ARE STICKY AND NEITHER IS EVER RESET. They describe the CUMULATIVE
+    // `spentUsd`, not the current item: once an approximate or incomplete
+    // charge has been folded into a running total, no later item completing
+    // successfully can make that total exact again.
     spendIsEstimated: false,   // additive — flips true if any item's cost had to be estimate-charged
+    spendIsLowerBound: false,  // additive — flips true if any charge was a measured PARTIAL
     order: 'largest-first',
     estimate: estimate.estimate,
     currentIndex: null,
@@ -1379,6 +1407,94 @@ function chargeForItem(job, item) {
   const plannedCount = job.items.filter(i => i.status !== 'skipped').length || 1;
   const perFileHigh = (job.estimate && typeof job.estimate.usdHigh === 'number') ? job.estimate.usdHigh : 0;
   return perFileHigh / plannedCount;
+}
+
+/**
+ * Charge an item that did NOT complete — cancelled, failed, or bounced back to
+ * `pending` by a transient provider error.
+ *
+ * THE DEFECT THIS CLOSES, and why it was the worst of the three:
+ * `chargeForItem` was reachable from exactly ONE place, the success path.
+ * Every other outcome charged nothing. Measured: a 2-file batch where item 2
+ * (21.7 KB, multi-phase) was cancelled at Phase-2 batch 9 of 11 reported
+ * `spentUsd: 0.009368` — the figure from before item 2 started — with
+ * `spendIsEstimated: false`. Item 2 had really run a Phase-1 outline call plus
+ * nine Phase-2 calls. Real spend was ~35-40% higher than reported, AND the
+ * flag asserted the number was measured rather than estimated. Under-reporting
+ * money while claiming precision is the worst available combination: the flag
+ * is the thing that tells a reader whether to trust the figure, so a wrong
+ * figure carrying `false` is worse than no figure at all.
+ *
+ * `totals` is the per-item usage accumulated live from `opts.onUsage`, which
+ * llm.js fires once per COMPLETED provider call — under the 429/503 retry loop
+ * and under the model-fallback chain — so it is what was actually BILLED, not
+ * what the successful path cost.
+ *
+ * THREE CASES, and the middle one is the honest part:
+ *
+ *   calls === 0 — charge NOTHING and touch no flag. Not a guess: zero
+ *     completed provider calls means zero was billed. This covers a cancel
+ *     before Phase 1, a PDF that failed text extraction, a file refused for
+ *     being too short, and the injected test seam. Routing this through
+ *     `chargeForItem` instead would take its fallback branch and charge a FULL
+ *     file's share of the estimate for a file that spent nothing — an
+ *     over-report, and it would flip `spendIsEstimated` for no reason.
+ *
+ *   calls > 0, model priced — charge the REAL measured cost.
+ *
+ *   calls > 0, model unpriced — no per-call price exists, so fall through to
+ *     `chargeForItem`'s estimate share (which flips the flag itself). Over-
+ *     charging a partial item is the safe direction for a budget cap.
+ *
+ * AND, IN BOTH `calls > 0` CASES, `spendIsLowerBound` IS SET TRUE. This is the
+ * decision that matters and it is deliberate: the call that was in flight when
+ * the user hit Cancel never completed, so llm.js never reported it, so it is
+ * NOT in `totals` — and providers do bill for tokens generated before an abort.
+ * The figure is therefore a measured LOWER BOUND, not an exact total. Reporting
+ * it as exact would repeat the defect in a smaller font.
+ *
+ * IT IS `spendIsLowerBound`, NOT `spendIsEstimated`, AND THE DISTINCTION IS
+ * THE FIX: every dollar counted here was MEASURED — llm.js reported it for a
+ * completed provider call. Flagging that as "estimated, not measured" was
+ * false, and it made the UI render an estimate share (which can read ~50%
+ * ABOVE real spend) with the same "at least" prefix as a genuine floor. The
+ * unpriced-model case still ALSO sets `spendIsEstimated`, because it really
+ * does fall through to the estimate share — see chargeForItem.
+ *
+ * ── STICKINESS, corrected rather than papered over ────────────────────────
+ * This docblock used to claim "a batch in which every item ran to completion
+ * still reports false". That was FALSE on the transient-429 path, which
+ * charges the partial and puts the item back to `pending` for a full retry:
+ * a batch that paused on a 503 and then completed perfectly kept the flag,
+ * and nothing reset it.
+ *
+ * The claim is corrected, NOT the behaviour, and deliberately so. These flags
+ * describe the cumulative `spentUsd`, not the current item. The pre-429
+ * partial charge really is in that total and really is incomplete; the
+ * retry's own charge is added independently on top. Resetting the flag when
+ * the retry succeeds would assert exactness over a total that still contains
+ * an unmeasurable component — trading a slightly pessimistic label for a
+ * quietly wrong number, which is the trade this whole area exists to refuse.
+ * So: once true, true for the life of the job.
+ *
+ * @param {object} job
+ * @param {object} item
+ * @param {object|null} totals per-item usage accumulator totals
+ * @returns {number} USD to add to job.spentUsd
+ */
+function chargePartialSpend(job, item, totals) {
+  const calls = totals && typeof totals.calls === 'number' && Number.isFinite(totals.calls) ? totals.calls : 0;
+  if (calls <= 0) return 0;
+  // MEASURED but INCOMPLETE — see the docblock. chargeForItem below may
+  // ADDITIONALLY set spendIsEstimated if the model turns out to be unpriced,
+  // in which case the charge is an estimate share as well and the UI's
+  // "approx." wins over "at least".
+  job.spendIsLowerBound = true;
+  // chargeForItem reads item.tokenUsage, so hand it the measured partial via a
+  // shallow stand-in rather than mutating the caller's item — the transient
+  // path leaves the item `pending` for a full retry, and a tokenUsage stamped
+  // on it there would be double-counted against the retry's own charge.
+  return chargeForItem(job, { tokenUsage: totals, status: item && item.status });
 }
 
 // ── SSE pub/sub ──────────────────────────────────────────────────────────────
@@ -1692,6 +1808,17 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
   // runs outside the try where the controller is published.
   let itemAbort = null;
 
+  // Live per-item spend, accumulated AS EACH PROVIDER CALL COMPLETES.
+  //
+  // `result.tokenUsage` only exists when the ingest RETURNS. Every non-return
+  // outcome — cancel, failure, a transient error that bounces the item back to
+  // pending — used to charge nothing at all, so the money those calls cost
+  // vanished from the batch total while `spendIsEstimated: false` insisted the
+  // total was measured. This accumulator survives the throw, which is the whole
+  // point, so like `itemAbort` it MUST be declared outside the try the catch
+  // sits beside. See `chargePartialSpend`.
+  const itemUsage = makeUsageAccumulator();
+
   try {
     releaseRegistry = registerWrite(domain, 'batch-ingest');
     releaseLock = await acquireFileLock(domainPath(domain), { op: 'batch-ingest' });
@@ -1754,6 +1881,7 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
     try {
       result = await ingestFileImpl(domain, item.stagedPath, item.name, job.overwrite, onProgress, {
         signal: controller.signal,
+        onUsage: itemUsage.onUsage,
       });
     } finally {
       exitIngest();
@@ -1808,6 +1936,15 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
         // and unpicking that is destructive in a way an abandoned page is not.
         it.error = 'Stopped partway through — some pages may already have been written. ' +
                    'Re-ingest this file to complete it.';
+        // A cancelled item HAS SPENT MONEY — a mid-document cancel can be nine
+        // Phase-2 calls deep. Attribute what was measurably billed, and stamp
+        // the partial usage on the item so the manifest and the wire stop
+        // reporting `tokenUsage: null` for a file that made real calls.
+        // `chargePartialSpend` also downgrades `spendIsEstimated`, because the
+        // call that was in flight at the moment of the abort never completed
+        // and so is not in these totals.
+        it.tokenUsage = itemUsage.totals.calls > 0 ? itemUsage.totals : null;
+        j.spentUsd = round6((j.spentUsd || 0) + chargePartialSpend(j, it, itemUsage.totals));
         j.currentIndex = null;
         j.updatedAt = new Date().toISOString();
         await writeJob(j);
@@ -1841,6 +1978,13 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
         it.status = 'pending';
         it.startedAt = null;
         it.attempts = Math.max(0, it.attempts - 1);
+        // A 429/503 reaching here means llm.js already burned up to four
+        // billed attempts, and any Phase-1/Phase-2 calls that landed before it
+        // were billed too. Charge them. `it.tokenUsage` is deliberately NOT
+        // stamped: this item goes back to `pending` and will be re-run from
+        // scratch on resume, and that run's own full charge is independent —
+        // stamping here would leave a stale figure to be double-counted.
+        j.spentUsd = round6((j.spentUsd || 0) + chargePartialSpend(j, it, itemUsage.totals));
         j.currentIndex = null;
         await writeJob(j);
       }
@@ -1854,6 +1998,13 @@ async function processItemInner(jobId, itemIdx, ingestFileImpl) {
       it.status = 'failed';
       it.finishedAt = new Date().toISOString();
       it.error = scrubPaths((err && err.message) || String(err));
+      // A failed item can also have spent money — a document that dies in
+      // Phase 2 has already paid for its Phase-1 outline. Failures that spend
+      // NOTHING (unextractable PDF, too-short source: both throw before any
+      // provider call) report `calls === 0` and are charged nothing, with the
+      // measured/estimated flag left alone.
+      it.tokenUsage = itemUsage.totals.calls > 0 ? itemUsage.totals : null;
+      j.spentUsd = round6((j.spentUsd || 0) + chargePartialSpend(j, it, itemUsage.totals));
 
       j.consecutiveFailures = (j.consecutiveFailures || 0) + 1;
       j.currentIndex = null;
@@ -1916,7 +2067,17 @@ async function runWorkerLoop(jobId, ingestFileImpl, workerToken) {
       if (job.budgetUsd != null && job.spentUsd >= job.budgetUsd) {
         await settleAsPaused(jobId, 'budget',
           `Paused — spent $${job.spentUsd.toFixed(4)} of the $${job.budgetUsd.toFixed(4)} budget.` +
-          (job.spendIsEstimated ? ' (Some of this spend is estimated, not measured — see spendIsEstimated.)' : ''));
+          // The two flags mean different things and must not be described with
+          // one sentence: "estimated, not measured" was FALSE for a partial
+          // charge, where every counted dollar was measured and only the
+          // in-flight call is missing. Estimated wins when both are set,
+          // because an estimate share can read ABOVE real spend and so cannot
+          // honestly be called a floor.
+          (job.spendIsEstimated
+            ? ' (Some of this spend is estimated, not measured — see spendIsEstimated.)'
+            : (job.spendIsLowerBound
+              ? ' (Real spend is at least this much: an interrupted item’s final, in-flight call could not be measured — see spendIsLowerBound.)'
+              : '')));
         break;
       }
       if ((job.consecutiveFailures || 0) >= CONSECUTIVE_FAILURE_LIMIT) {
@@ -2209,7 +2370,7 @@ export async function recoverOnBoot() {
 
 export const __testing = {
   jobDir, manifestPath, filesDir,
-  chargeForItem, estimateCallCounts, sanitizeBaseName, stagedFileName,
+  chargeForItem, chargePartialSpend, estimateCallCounts, sanitizeBaseName, stagedFileName,
   reclaimStrandedItems, pruneOldJobs,
   // Exposed so the `done` tripwire can be tested DIRECTLY. It is the second
   // of two layers: while `reclaimStrandedItems` works, the state the tripwire

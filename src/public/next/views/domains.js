@@ -54,6 +54,7 @@ import * as shell from '../app.js';
 // a hardcoded three-file list, so a copy pasted into a fourth view passed
 // unnoticed. It is a tree walk now, and mutation-proven.)
 import { renderMarkdown } from '../shared/markdown.js';
+import { formatUsdHonest } from '../shared/format-usd.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -322,9 +323,17 @@ async function streamSSE(url, body, onEvent) {
 
 // ── Formatting helpers ─────────────────────────────────────────────────────
 
+// COST HONESTY: this used to be `n < 0.01 ? n.toFixed(4) : n.toFixed(2)`,
+// which rendered every charge below $0.00005 as the literal string
+// `$0.0000` — a PAID action (the quick-maintenance badge sits on buttons
+// that make real AI calls) labelled as free, on the one surface whose
+// entire purpose is to state the cost before the user commits to it.
+// Delegated to the shared formatter so the rule "a non-zero cost never
+// renders as zero" has exactly one implementation; see format-usd.js for
+// why it is imported rather than copied, and for the two byte-pinned
+// siblings in ingest-queue-logic.js that could not be fixed with it.
 function formatUsd(n) {
-  if (typeof n !== 'number' || Number.isNaN(n)) return null;
-  return n < 0.01 ? '$' + n.toFixed(4) : '$' + n.toFixed(2);
+  return formatUsdHonest(n);
 }
 
 // Cost-readout helper for Health AI estimate/plan payloads (health-ai.js's
@@ -414,8 +423,16 @@ async function loadDomainsList(token) {
   }
 
   if (!isCurrentMount(token)) return;
-  if (state.activeSlug) await loadHealth(state.activeSlug, token);
-  else render(token);
+  if (state.activeSlug) {
+    // Cost honesty: a completed, PAID semantic-duplicate scan for THIS same
+    // domain survives the remount instead of being thrown away and charged
+    // for again. Its destructive-action gate was already re-armed by the
+    // teardown (see disarmSemanticScan) — this only decides whether the
+    // pair list itself is kept.
+    await loadHealth(state.activeSlug, token, {
+      keepSemanticScan: shouldKeepSemanticScanOnReload(state.semanticScan, state.activeSlug),
+    });
+  } else render(token);
 }
 
 // LAYER 1 of the two-layer domain-scoping guard (LAYER 2 is
@@ -443,6 +460,53 @@ function resetDomainScopedHealthState(opts) {
   state.pendingPlan = null;
   if (!(opts && opts.keepSemanticScan)) state.semanticScan = null;
   state.dismissedRecords = null;
+}
+
+// ── Paid-scan survival across a view change (cost honesty) ─────────────────
+//
+// THE DEFECT: a semantic-duplicate scan is the only LLM-billed READ in this
+// view — a real measured run produced 8 pairs for $0.0040. Clicking any
+// rail item and coming back destroyed the result and forced the user to
+// re-scan and RE-PAY. Two places did it: this view's unmount teardown
+// (`state.semanticScan = null`) and, on the way back in, loadDomainsList ->
+// loadHealth -> resetDomainScopedHealthState with no keepSemanticScan.
+//
+// THE INVARIANT THAT MUST SURVIVE THE FIX (v3.7.0, recorded): a previewed
+// set that outlives a navigate-away can authorise a destructive merge on a
+// DIFFERENT domain's pair. So this fix is deliberately asymmetric:
+//
+//   • THE PAID DATA survives — `pairs`, `cost` and the `slug` stamp. It is
+//     inert plain data (no closure over a scan run, unlike `confirm.run`
+//     and `pendingPlan`, which the teardown still discards), and LAYER 2
+//     (activeSemanticScan) refuses it outright on a different slug.
+//
+//   • THE DESTRUCTIVE-ACTION GATE IS RE-ARMED — `previewed` is emptied and
+//     any open `preview` dropped. Re-previewing is FREE; re-scanning costs
+//     money. So the safe direction here costs the user nothing, which is
+//     why it is taken even though the domain stamp alone would arguably
+//     suffice. After a navigate-away the raw previewed set is EMPTY, not
+//     merely refused by a later check — the same standard §2 of
+//     test-next-semantic-gate.js already holds the other three clearing
+//     paths (new scan, domain switch, flip) to.
+//
+// Mutating in place rather than rebuilding the object keeps any field this
+// function does not know about; the two it does know about are the two
+// that arm a file deletion.
+function disarmSemanticScan(scan) {
+  if (!scan || typeof scan !== 'object') return null;
+  if (scan.previewed && typeof scan.previewed.clear === 'function') scan.previewed.clear();
+  else scan.previewed = new Set();
+  scan.preview = null;
+  return scan;
+}
+
+// Re-entry half of the same fix. Keeps the scan ONLY when the domain about
+// to be loaded is the very domain it was scanned for — evaluated at the
+// call site, AFTER loadDomainsList has resolved state.activeSlug (which it
+// can change, e.g. when the previously active domain no longer exists), so
+// a vanished or switched domain re-takes the clearing path.
+function shouldKeepSemanticScanOnReload(scan, slug) {
+  return !!(scan && typeof scan === 'object' && slug && scan.slug === slug);
 }
 
 async function loadHealth(slug, token, opts) {
@@ -2094,7 +2158,10 @@ function bindHealthListeners(domain, readonly) {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation(); // don't toggle the <details> — see v3.0.1-beta.18 note in CLAUDE.md
-      Promise.resolve().then(() => fixAllOfType(domain.slug, btn.dataset.fixall)).catch(reportAsyncActionFailure);
+      // Same wrapper as every other action binding in this function — see the
+      // comment above the quick-action loop for why `.then()` is used even for
+      // a synchronous target (confirmFixAllOfType only sets state.confirm).
+      Promise.resolve().then(() => confirmFixAllOfType(domain.slug, btn.dataset.fixall)).catch(reportAsyncActionFailure);
     });
   });
 
@@ -2297,6 +2364,82 @@ async function runFixSafe(slug) {
 }
 
 // ── Single-category "Fix all N" (free, deterministic) ──────────────────────
+
+// Per-section "Fix all N" — confirm first.
+//
+// The global "Fix N safe issues" button has always confirmed; this one did
+// not, and it is the MORE dangerous of the two: `crossFolderDupes` and
+// `hyphenVariants` both MERGE two pages and DELETE one of them. A user
+// reported reaching a file-deleting merge in one click, with no dialog.
+//
+// Every fix-all is gated (not only the two destructive types) so the two
+// bulk-fix surfaces behave the same way — an inconsistent gate is the thing
+// that makes a destructive click feel safe. Reuses the SAME state.confirm /
+// renderConfirmCard() plumbing as confirmFixSafe and every cost-before-action
+// dialog in this view; #dm-confirm-yes / #dm-confirm-no are already wired
+// unconditionally in bindHealthListeners.
+const DESTRUCTIVE_FIX_TYPES = new Set(['crossFolderDupes', 'hyphenVariants']);
+
+// ── AN ISSUE IS NOT A PAGE, AND FOR ONE TYPE IT IS NOT EVEN A PAIR ───────
+// The number in the TITLE ("Fix all N …") counts ISSUES and is right. The
+// number in the destructive SENTENCE has to count PAGES ABOUT TO BE DELETED,
+// and those are not the same quantity. MEASURED against the real scanWiki
+// and the real fixIssue, not reasoned about:
+//
+//   crossFolderDupes — issue shape is { keep, remove }: a PAIR. Exactly one
+//     `rm` per issue in fixCrossFolderDupe. deletes === issues.length. ✓
+//
+//   hyphenVariants  — issue shape is { files: [...], suggestedSlug }: a
+//     GROUP. On {tali-rezun, dr-tali-rezun, talirezun} scanWiki emits ONE
+//     issue with files.length === 3, and fixHyphenVariant deletes
+//     files.length - 1 = TWO pages. The old `issues.length` said "1 page
+//     will be deleted"; the wiki went 6 pages -> 4. Two deleted, one
+//     announced, and the under-report grows without bound as (groupSize - 2).
+//
+// This is the operation that produced the original bug report, and this
+// dialog is the only thing standing between a user and it. A destructive
+// confirm that UNDERSTATES the damage is worse than no confirm at all, so
+// where the shape is unrecognisable the fallback ROUNDS UP (1, never 0):
+// over-stating by one costs a moment's hesitation, under-stating costs a
+// page the user did not agree to lose.
+function deletedPageCount(type, issues) {
+  if (type === 'hyphenVariants') {
+    return issues.reduce(
+      (n, i) => n + (Array.isArray(i && i.files) ? Math.max(0, i.files.length - 1) : 1),
+      0);
+  }
+  // crossFolderDupes (and any future strict pair type): one page per issue.
+  return issues.length;
+}
+
+function confirmFixAllOfType(slug, type) {
+  if (!AUTO_FIX_TYPES.has(type)) return;
+  const cat = HEALTH_CATEGORIES.find((c) => c.key === type);
+  const issues = (state.health && state.health[type]) || [];
+  const count = type === 'brokenLinks' ? issues.filter((i) => i.suggestedTarget).length : issues.length;
+  if (count === 0) return;
+
+  const label = cat ? cat.label.toLowerCase() : type;
+  // "group", not "pair": one hyphen-variant issue can hold three or more
+  // slugs, and "pair" told the user the wrong thing about the SHAPE as well
+  // as the count.
+  const body = DESTRUCTIVE_FIX_TYPES.has(type)
+    ? 'This MERGES each group and DELETES the duplicate pages, then repoints every '
+      + '[[link]] that pointed at them. ' + pluralize(deletedPageCount(type, issues), 'page')
+      + ' will be deleted. '
+      + 'Every change is git-tracked and can be reverted from Sync.'
+    : 'Applies the deterministic repair to every ' + label.replace(/s$/, '')
+      + ' listed here. No AI tokens are spent. Every change is git-tracked and can be '
+      + 'reverted from Sync.';
+
+  state.confirm = {
+    title: 'Fix all ' + count + ' ' + label + '?',
+    body,
+    confirmLabel: DESTRUCTIVE_FIX_TYPES.has(type) ? 'Merge and delete' : 'Fix now',
+    run: () => fixAllOfType(slug, type),
+  };
+  render(myMountToken);
+}
 
 async function fixAllOfType(slug, type) {
   const token = myMountToken;
@@ -2862,7 +3005,12 @@ registerView('domains', {
     return () => {
       state.confirm = null;
       state.pendingPlan = null;
-      state.semanticScan = null;
+      // NOT `state.semanticScan = null` any more. That discarded an LLM-
+      // BILLED result on a rail click and made the user pay again. The paid
+      // pair list is kept (stamped with its domain, and LAYER 2 refuses it
+      // elsewhere); only the destructive-merge gate is re-armed. See
+      // disarmSemanticScan for why the split falls exactly there.
+      disarmSemanticScan(state.semanticScan);
       // A create/rename/delete form must not survive leaving the view: the
       // two destructive ones carry a target slug, and this file's `state`
       // is module-scoped, so an abandoned "Delete X?" card would otherwise

@@ -596,7 +596,178 @@ async function fixFolderPrefixLink(wikiDir, issue) {
   return content !== before;
 }
 
+/**
+ * Split a scan-emitted wiki reference (`entities/foo.md`) into its folder and
+ * slug. Structural validation only — exactly two segments, a canonical
+ * folder, a `.md` suffix, and a slug that cannot escape or corrupt a
+ * generated regex.
+ *
+ * Deliberately NOT character-class validated: `entities/petar-urdešić.md` and
+ * `entities/snežana-ilić.md` exist in real user wikis today, and an
+ * ASCII-only slug rule here would silently refuse to repoint their links
+ * while the merge still deleted the file — the exact failure this whole
+ * change exists to remove. The slug never becomes a path in
+ * `repointInboundLinks` (it is regex-escaped into a pattern), so character
+ * restrictions would buy nothing; the caller still builds every real path
+ * through `wikiFile()`.
+ *
+ * @returns {{folder: string, slug: string}|null}
+ */
+function splitWikiRef(rel) {
+  if (typeof rel !== 'string') return null;
+  const parts = rel.split('/');
+  if (parts.length !== 2) return null;
+  const folder = parts[0];
+  const file = parts[1];
+  if (folder !== 'entities' && folder !== 'concepts' && folder !== 'summaries') return null;
+  if (!file.endsWith('.md')) return null;
+  const slug = file.slice(0, -3);
+  if (!slug || slug.length > 200) return null;
+  if (slug === '.' || slug === '..' || slug.includes('\\')) return null;
+  // A newline or a link delimiter could never appear in a real `[[wikilink]]`
+  // and would produce a nonsense pattern.
+  if (/[\r\n\[\]|]/.test(slug)) return null;
+  return { folder, slug };
+}
+
+/**
+ * Repoint every inbound `[[wikilink]]` that targets a page about to be
+ * DELETED, so a merge never leaves a dangling link behind.
+ *
+ * ── WHY THIS IS SHARED, AND WHY THERE IS A TEST THAT COUNTS `rm(` SITES ──
+ *
+ * Three handlers in this module delete a page after merging it into another:
+ * `fixCrossFolderDupe`, `fixHyphenVariant` and `fixSemanticDuplicate`. Until
+ * this function existed, only the third repointed links — it carried its own
+ * inline copy of this logic ("Step 3"), and the other two simply deleted the
+ * file. Measured consequences on real fixtures (all via the real `scanWiki`):
+ *
+ *   • hyphen variant `dr-tali-rezun` → `tali-rezun`: every `[[dr-tali-rezun]]`
+ *     dangled. Reported live by a user as Health going 5 issues → 50.
+ *   • cross-folder `concepts/google` → `entities/google` (slug UNCHANGED):
+ *     bare `[[google]]` still resolved, but `[[concepts/google]]` did not —
+ *     2 new broken links.
+ *   • cross-folder `concepts/e-mail` → `entities/email`: `crossFolderDupes`
+ *     matches on the hyphen-NORMALISED key, so the slug can change too —
+ *     3 new broken links, including the bare form.
+ *
+ * Both handlers are in `AUTO_FIXABLE` and in `fixAllSafe`'s TYPES, so the
+ * "Fix N safe issues" button — labelled as free, local, structural repair —
+ * was orphaning links.
+ *
+ * The defect is not three bugs, it is ONE SHAPE: a guard that lives inside
+ * one of several siblings that all perform the same destructive act. That is
+ * the shape that produced this module's v3.2.0 CRITICAL (four handlers, one
+ * containment gate), and copying "Step 3" into the other two would have
+ * reproduced it exactly — three hand-maintained copies instead of two.
+ *
+ * So the rule is enforced mechanically, not remembered:
+ * `scripts/test-health-merge-links.js` enumerates EVERY `await rm(` in this
+ * file by brace-matching its enclosing function, and fails the build unless
+ * that function calls `repointInboundLinks(` at an earlier offset. A new
+ * page-deleting handler that forgets to repoint cannot ship.
+ *
+ * LIMIT, stated rather than implied: this makes the omission unshippable, not
+ * syntactically impossible. `rm` is still called by the handlers, not by this
+ * function, because moving it here would mean passing an absolute path as a
+ * parameter — and `test-wiki-page.js` §8c's provenance classifier only
+ * accepts a path parameter named in its VERIFIED_PARAMS set. Trading a
+ * working containment guard for a marginally stronger locality guard is a bad
+ * exchange; the enumeration test covers the same ground.
+ *
+ * @param {string} wikiDir
+ * @param {Array<{folder: string, slug: string}>} retired — pages being deleted
+ * @param {string} keepSlug   — the surviving page's slug
+ * @param {string} keepFolder — the surviving page's folder
+ * @returns {Promise<number>} number of files rewritten
+ */
+async function repointInboundLinks(wikiDir, retired, keepSlug, keepFolder) {
+  if (!Array.isArray(retired) || typeof keepSlug !== 'string' || !keepSlug) return 0;
+
+  // A retired page whose slug already equals the survivor's needs no link
+  // rewriting — every `[[slug]]` pointing at it still resolves to the kept
+  // file. The folder-PREFIXED forms still need repointing, which is why the
+  // entry is kept rather than dropped; see the alternation below.
+  const seen = new Set();
+  const slugs = [];
+  for (const r of retired) {
+    if (!r || typeof r.slug !== 'string' || !r.slug) continue;
+    if (seen.has(r.slug)) continue;
+    seen.add(r.slug);
+    slugs.push(r.slug);
+  }
+  if (slugs.length === 0) return 0;
+
+  // Match `[[X]]`, `[[entities/X]]`, `[[concepts/X]]`, `[[summaries/X]]`,
+  // with an optional `|alias` suffix that must be preserved verbatim. The
+  // closing `]]` is required immediately after the slug (modulo the padding
+  // below), so `[[google-cloud]]` is never matched by a retired `google`.
+  //
+  // ── WHY THE PADDING ALLOWANCE IS LOAD-BEARING, NOT TIDINESS ───────────
+  // scanWiki's own link scan does `m[1].trim()` (see the brokenLinks loop),
+  // so `[[ dr-tali-rezun ]]` is a LIVE inbound link as far as the user's
+  // Health report is concerned. Without the padding here the repoint simply
+  // did not see it, and the page was deleted anyway: measured on the
+  // single-type `hyphenVariants` path, broken links went 1 -> 2 with a new
+  // `entities/hub.md::dr-tali-rezun` entry. It self-heals under fixAllSafe
+  // ONLY because that runs `brokenLinks` last and the suggestion resolver
+  // happens to recover the slug — an accident of ordering, not coverage,
+  // and the exact masking already labelled at assertion 6.3.
+  //
+  // `[^\S\n]*` (whitespace EXCEPT newline), not `\s*`, and that is the whole
+  // point: it matches precisely what the scanner can see. The scanner's slug
+  // class is `[^\]|#\n]`, which admits spaces, tabs and \r but never \n — so
+  // `[[foo\n]]` is NOT a link to it, and a `\s*` here would rewrite a
+  // construct the scanner never counted, making the two disagree in the
+  // opposite direction.
+  const WS = '[^\\S\\n]*';
+  const alternation = slugs
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const linkRe = new RegExp(
+    `\\[\\[${WS}(?:entities/|concepts/|summaries/)?(?:${alternation})${WS}(\\|[^\\]]+)?\\]\\]`,
+    'g'
+  );
+  // Wiki convention (CLAUDE.md): links carry no folder prefix EXCEPT
+  // summaries, which live in a subfolder Obsidian needs for routing. Rewriting
+  // `[[concepts/google]]` to bare `[[google]]` therefore also clears the
+  // folder-prefix violation the old link carried.
+  const replacement = keepFolder === 'summaries' ? `summaries/${keepSlug}` : keepSlug;
+
+  // Pages that are about to be unlinked are skipped: writing them would be an
+  // atomic temp-file + rename immediately before an `rm`.
+  const doomed = [];
+  for (const r of retired) {
+    if (!r || typeof r.folder !== 'string' || typeof r.slug !== 'string') continue;
+    const doomedAbs = wikiFile(wikiDir, r.folder, `${r.slug}.md`);
+    if (doomedAbs) doomed.push(doomedAbs);
+  }
+
+  const allFiles = await walkMdFiles(wikiDir);
+  let changed = 0;
+  for (const full of allFiles) {
+    const rel = path.relative(wikiDir, full);
+    if (rel === 'index.md' || rel === 'log.md') continue;
+    if (doomed.some((d) => path.resolve(d) === path.resolve(full))) continue;
+    const content = await readFile(full, 'utf8');
+    const rewritten = content.replace(linkRe, (_m, alias) => `[[${replacement}${alias || ''}]]`);
+    if (rewritten !== content) {
+      await writeFileAtomic(full, rewritten, 'utf8');
+      changed++;
+    }
+  }
+  return changed;
+}
+
 async function fixCrossFolderDupe(wikiDir, issue) {
+  // Folder + slug are needed to repoint inbound links before the delete.
+  // Refusing an unsplittable reference is fail-safe: nothing is merged and
+  // nothing is deleted. The scan always emits `<folder>/<file>.md`; only a
+  // hand-crafted MCP `fix_wiki_issue` payload can reach the null branch.
+  const keepRef = splitWikiRef(issue && issue.keep);
+  const removeRef = splitWikiRef(issue && issue.remove);
+  if (!keepRef || !removeRef) return false;
+
   const keepPath = wikiFile(wikiDir, issue.keep);
   const removePath = wikiFile(wikiDir, issue.remove);
   if (!keepPath || !removePath) return false;
@@ -615,7 +786,17 @@ async function fixCrossFolderDupe(wikiDir, issue) {
     merged = merged.replace(/type\/concept/g, 'type/entity');
   }
 
+  // Persist the merged body FIRST: repointInboundLinks rewrites files on
+  // disk, so a later write of in-memory content would clobber the kept page's
+  // own repointed links.
   await writeFileAtomic(keepPath, merged, 'utf8');
+  // The slug is often UNCHANGED here (concepts/google → entities/google), but
+  // the folder-prefixed form `[[concepts/google]]` still dangles once the
+  // concepts file is gone — measured, 2 broken links. And because
+  // crossFolderDupes matches on the hyphen-NORMALISED key, the slug CAN
+  // change (concepts/e-mail → entities/email), which breaks the bare form
+  // too — measured, 3 broken links. Both cases are repointed here.
+  await repointInboundLinks(wikiDir, [removeRef], keepRef.slug, keepRef.folder);
   await rm(removePath);
   return true;
 }
@@ -640,6 +821,7 @@ async function fixHyphenVariant(wikiDir, issue) {
   if (!canonPath || !existsSync(canonPath)) return false;
 
   let canonContent = await readFile(canonPath, 'utf8');
+  const retiredSlugs = [];
   for (const slug of (issue.files || [])) {
     if (slug === canonical) continue;
     if (!isSafeSlug(slug)) continue;
@@ -647,9 +829,29 @@ async function fixHyphenVariant(wikiDir, issue) {
     if (!dupPath || !existsSync(dupPath)) continue;
     const dupContent = await readFile(dupPath, 'utf8');
     canonContent = mergeBulletSections(canonContent, dupContent);
-    await rm(dupPath);
+    retiredSlugs.push(slug);
   }
+
+  // Persist the merged canonical page BEFORE repointing. The merge folds the
+  // duplicate's body in, and that body routinely contains links to the
+  // duplicate's own slug — writing this after the repoint would reinstate
+  // exactly the dangling links the repoint just removed.
   await writeFileAtomic(canonPath, canonContent, 'utf8');
+
+  // This is the case reported live: merging `dr-tali-rezun` into
+  // `tali-rezun` changes the slug, so every `[[dr-tali-rezun]]` in the domain
+  // dangled — Health went from 5 issues to 50 on the user's wiki.
+  const retired = retiredSlugs.map((s) => ({ folder: 'entities', slug: s }));
+  await repointInboundLinks(wikiDir, retired, canonical, 'entities');
+
+  // Deleted only after the repoint, and re-derived through wikiFile() so the
+  // path handed to `rm` has the same provenance as every other path in this
+  // module (see the gate docblock at the top of the file).
+  for (const slug of retiredSlugs) {
+    const dupAbs = wikiFile(wikiDir, 'entities', `${slug}.md`);
+    if (!dupAbs || !existsSync(dupAbs)) continue;
+    await rm(dupAbs);
+  }
   return true;
 }
 
@@ -1112,10 +1314,10 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
  * Steps (ordered so a mid-operation crash leaves the wiki recoverable):
  *   1. Validate both slugs exist, distinct, not summaries, slug-regex safe.
  *   2. Read both files + merge bullet sections (larger body wins as base).
- *   3. Rewrite `[[removeSlug]]` / `[[removeFolder/removeSlug]]` →
- *      `[[keepSlug]]` across every .md file in the domain (summaries included —
- *      a summary linking to the old slug must point to the new canonical).
- *   4. Write the merged content to the kept file.
+ *   3. Write the merged content to the kept file.
+ *   4. Repoint every inbound link across the domain via the SHARED
+ *      `repointInboundLinks` (summaries included — a summary linking to the
+ *      old slug must point to the new canonical).
  *   5. Delete the removed file.
  *
  * Returns true on success, false on any validation failure (silent no-op —
@@ -1124,7 +1326,7 @@ export async function previewSemanticDuplicateMerge(domain, issue) {
 async function fixSemanticDuplicate(wikiDir, issue) {
   const resolved = resolveSemanticDupePair(wikiDir, issue);
   if (!resolved) return false;
-  const { keepSlug, keepFolder, keepPath, removeSlug, removePath } = resolved;
+  const { keepSlug, keepFolder, keepPath, removeSlug, removeFolder, removePath } = resolved;
   if (!existsSync(keepPath) || !existsSync(removePath)) return false;
 
   // Step 2: merge bodies
@@ -1140,42 +1342,22 @@ async function fixSemanticDuplicate(wikiDir, issue) {
   merged = merged.replace(new RegExp(`^type:\\s*${otherType}$`, 'm'), `type: ${wantType}`);
   merged = merged.replace(new RegExp(`type/${otherType}`, 'g'), `type/${wantType}`);
 
-  // Step 3: rewrite links across the entire domain.
-  // We match `[[X]]`, `[[entities/X]]`, `[[concepts/X]]`, `[[summaries/X]]`,
-  // plus any alias suffix `|alias`.
-  const escRemove = removeSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const linkRe = new RegExp(
-    `\\[\\[(?:entities/|concepts/|summaries/)?${escRemove}(\\|[^\\]]+)?\\]\\]`,
-    'g'
+  // Step 3: persist the merged body. This happens BEFORE the repoint (it used
+  // to be interleaved with it) because repointInboundLinks writes to disk, so
+  // a later write of the in-memory `merged` would clobber the kept page's own
+  // repointed links.
+  await writeFileAtomic(keepPath, merged, 'utf8');
+
+  // Step 4: repoint every inbound link across the domain. This used to be an
+  // inline copy of this logic, unique to this handler — the two sibling
+  // handlers that also delete a page had none, which is the defect this
+  // shared helper exists to close. See its docblock.
+  await repointInboundLinks(
+    wikiDir,
+    [{ folder: removeFolder, slug: removeSlug }],
+    keepSlug,
+    keepFolder
   );
-
-  const allFiles = await walkMdFiles(wikiDir);
-  for (const full of allFiles) {
-    // Skip the file we're about to delete
-    if (path.resolve(full) === path.resolve(removePath)) continue;
-    const rel = path.relative(wikiDir, full);
-    if (rel === 'index.md' || rel === 'log.md') continue;
-    let content;
-    // If this is the keep file, use our already-merged content
-    if (path.resolve(full) === path.resolve(keepPath)) {
-      content = merged;
-    } else {
-      content = await readFile(full, 'utf8');
-    }
-    const rewritten = content.replace(linkRe, (_m, alias) => `[[${keepSlug}${alias || ''}]]`);
-    if (rewritten !== content) {
-      await writeFileAtomic(full, rewritten, 'utf8');
-      if (path.resolve(full) === path.resolve(keepPath)) merged = rewritten;
-    } else if (path.resolve(full) === path.resolve(keepPath)) {
-      // Keep file had no inbound-to-self links but we still need to persist merge
-      await writeFileAtomic(full, merged, 'utf8');
-    }
-  }
-
-  // Step 4: ensure the merged content was written even if the keep file
-  // didn't appear in the loop's mutation set (no links to remove to itself).
-  const keepFinal = await readFile(keepPath, 'utf8');
-  if (keepFinal !== merged) await writeFileAtomic(keepPath, merged, 'utf8');
 
   // Step 5: delete the removed file
   await rm(removePath);

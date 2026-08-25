@@ -70,7 +70,31 @@ const PORT = process.env.PORT || 3333;
 // domain) doesn't get rejected with HTTP 413. This is a localhost app, so a
 // generous limit carries no DoS risk.
 app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Static assets — deliberately WITHOUT directory indexes (cutover) ─────────
+// `index: false` is load-bearing, not tidiness. express.static defaults to
+// `index: 'index.html'`, which means a request for "/" was answered by THIS
+// MOUNT, from src/public/index.html, and never reached the app.get('*')
+// catch-all below. Measured before the cutover: `GET /` returned the shipping
+// app's <title>The Curator</title> AND returned 200 even with `Host: evil.com`,
+// because this mount is registered ABOVE the Host-header guard.
+//
+// So flipping the catch-all alone would NOT have moved "/" to the new shell —
+// the old app would have kept serving at "/" with three route-level guards all
+// reporting success. Turning the index off makes the route table the single
+// place that decides which HTML shell a path gets, instead of the answer
+// depending on which middleware happened to match first.
+//
+// Two consequences, both deliberate:
+//   - "/" now resolves through the catch-all, which sits BELOW the Host and
+//     Origin guards, so it is covered by them for the first time. Strictly a
+//     tightening; every real browser sends a loopback Host.
+//   - Directory REDIRECTS are a separate option and stay on, so a bare "/next"
+//     still 301s to "/next/" exactly as before; the explicit route below then
+//     answers it (previously this mount's index option did).
+// Asset requests (/app.js, /next/tokens/color.css, ...) are unaffected: they
+// name a file, so the index option never applied to them.
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // ── Cross-origin guard (v3.0.1-beta.20) ───────────────────────────────────────
 // The Curator binds to 127.0.0.1 (see startListen below), so it's not reachable
@@ -212,26 +236,63 @@ app.post('/api/restart', (_req, res) => {
   }, 200);
 });
 
-// ── /next — Phase 1 UI redesign shell (parallel; does not touch the shipping
-// app in any way). Static assets under it (tokens/, assets/, app.js, ...)
-// are already served by the express.static() mount above, since
-// src/public/next/** lives inside src/public/. A request for the bare
-// "/next" path (no trailing slash) is actually caught by that same
-// express.static() mount first: it recognizes "next" as a directory and
-// issues its own 301 to "/next/" before this route ever runs (harmless —
-// every browser follows it transparently). This route's real job is
-// "/next/": it resolves to THIS shell's index.html instead of falling
-// through to the SPA catch-all below, which would otherwise serve the
-// shipping app's index.html at that path. The bare "/next" is kept in the
-// list too as a direct fallback, in case that static-redirect behavior
-// ever changes.
+// ═══ THE CUTOVER (v3.8.0) ════════════════════════════════════════════════════
+// "/" and the SPA catch-all now serve the REDESIGNED shell
+// (src/public/next/index.html). The shipping frontend is NOT removed — it
+// stays reachable at "/old" for 2-3 releases, and every one of its files
+// (src/public/{app,markdown}.js, index.html, styles.css) is byte-untouched.
+//
+// The two shells resolve their assets DIFFERENTLY, and that difference is what
+// makes the path shapes below load-bearing:
+//
+//   next/index.html  — all 18 refs are ROOT-ABSOLUTE and /next/-prefixed
+//                      (test-next-asset-paths.js pins this; v3.6.1 made them
+//                      so precisely for today). It therefore loads the same
+//                      /next/app.js no matter which path served the HTML, so
+//                      "/", "/next/" and a deep SPA path are interchangeable.
+//
+//   public/index.html — refs are BARE-RELATIVE (src="app.js"). Those resolve
+//                      against the DIRECTORY of the URL that served the page.
+//                      At "/old" the directory is "/", so src="app.js" →
+//                      "/app.js", which the static mount serves. At "/old/"
+//                      the directory is "/old/", so it would request
+//                      "/old/app.js" — no such file — which the catch-all
+//                      would answer with the NEXT shell's HTML at 200
+//                      text/html, and the browser would parse HTML as
+//                      JavaScript. That is the v3.6.1 landmine in mirror
+//                      image, so "/old/" is REDIRECTED to "/old" rather than
+//                      served. 302, not 301: a permanently-cached redirect on
+//                      a path we intend to retire is not worth the recovery
+//                      story.
+//
+// The trailing-slash test is INSIDE one handler, on req.path, and not a
+// second `app.get('/old/')` route. Express's router is non-strict by default,
+// so a '/old/' route ALSO matches '/old' — a separate route therefore caught
+// both and redirected '/old' to itself. Reproduced live before this shape:
+// `GET /old` answered 302 -> /old, an endless loop where the shipping app
+// used to be. Making the router strict would have fixed it too and is the
+// wrong trade: `strict` is app-wide and would change matching for every
+// existing route.
+app.get('/old', (req, res) => {
+  if (req.path !== '/old') return res.redirect(302, '/old');
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// /next keeps working — bookmarks, muscle memory, and every link written
+// during the redesign. It serves the SAME shell as "/" (one file, not a copy).
+// A bare "/next" is still 301'd to "/next/" by the static mount's directory
+// redirect (that option is unrelated to `index: false`); this route then
+// answers "/next/". The bare form is kept in the list as a direct fallback in
+// case that redirect behaviour ever changes.
 app.get(['/next', '/next/'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'next', 'index.html'));
 });
 
-// Catch-all: serve index.html for SPA
+// Catch-all: serve the SPA shell. Post-cutover this is the NEXT shell — and
+// because the static mount above now runs with `index: false`, "/" reaches
+// here too rather than being answered by a directory index.
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'next', 'index.html'));
 });
 
 // Listen with EADDRINUSE retry (v2.7.1).

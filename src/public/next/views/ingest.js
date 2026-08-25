@@ -127,6 +127,11 @@ import {
   computeQueueStatusCounts, computeQueueSpentLabel,
 } from '../shared/ingest-queue-logic.js';
 
+// The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
+// separate module precisely because those are frozen to app.js and this
+// fixes a defect in how money is displayed. See ../shared/format-usd.js.
+import { formatUsdHonest } from '../shared/format-usd.js';
+
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
 
@@ -1620,7 +1625,48 @@ function renderQueueDoneSummary(job) {
 
   const pages = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.pagesWritten) ? i.result.pagesWritten : 0), 0);
   const warningsN = items.reduce((sum, i) => sum + (i && i.result && Number.isFinite(i.result.warningCount) ? i.result.warningCount : 0), 0);
-  const spent = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? ('$' + job.spentUsd.toFixed(4)) : '—';
+  // COST HONESTY, two changes on one line's worth of readout:
+  //
+  //  (1) `toFixed(4)` rendered any real charge under $0.00005 as `$0.0000`,
+  //      i.e. a paid batch reported as free. formatUsdHonest renders
+  //      `< $0.0001` instead; a genuine zero still reads `$0.00`.
+  //
+  //  (2) A batch containing a CANCELLED or FAILED item can no longer claim
+  //      its total is exact. The queue now attributes the spend those items
+  //      really incurred (see chargePartialSpend in src/brain/ingest-queue.js)
+  //      but the provider call that was in flight at the moment of the abort
+  //      never completed, so it is not in the totals — the figure is a
+  //      measured LOWER BOUND, and the panel that read `Finished · $0.0094
+  //      spent` after a mid-document cancel was stating a precise-looking
+  //      number that was ~35-40% low.
+  //
+  //  (3) THERE ARE TWO WAYS TO BE INEXACT AND THEY NEED DIFFERENT WORDS.
+  //      This line rendered "at least" from `spendIsEstimated`, which is the
+  //      flag for the OTHER case: a model with no published price, charged a
+  //      share of `estimate.usdHigh`. usdHigh is the no-caching end of an
+  //      estimate, not a bound — measured at 66.8% of actual on Anthropic,
+  //      i.e. the displayed figure can be ~50% ABOVE real spend. Prefixing
+  //      THAT with "at least" asserts a floor that does not exist, which is
+  //      the same class of error as the precise-looking figure in (2), just
+  //      pointing the other way.
+  //
+  //      So: `spendIsLowerBound` (a MEASURED partial — every counted dollar
+  //      was billed, only the in-flight call is missing) renders "at least ";
+  //      `spendIsEstimated` (an ESTIMATE SHARE — could be high or low)
+  //      renders "approx. ". Estimated WINS when both are set: the weaker
+  //      claim is the true one, and "at least" over a possibly-inflated
+  //      number is the reading we must never produce.
+  //
+  // The qualifier sits OUTSIDE the <span class="mono"> below: it is prose,
+  // and this view's rule is that the NUMBER is monospace, not the sentence
+  // around it (same reasoning as the per-count spans beside it).
+  const spentUsd = (job && typeof job.spentUsd === 'number' && Number.isFinite(job.spentUsd)) ? job.spentUsd : null;
+  const spentFigure = formatUsdHonest(spentUsd);
+  const spent = spentFigure === null ? '—' : spentFigure;
+  const spentQualifier = spentFigure === null ? ''
+    : (job && job.spendIsEstimated === true) ? 'approx. '
+    : (job && job.spendIsLowerBound === true) ? 'at least '
+    : '';
   const healthStr = formatHealthCounts(job && job.health && job.health.counts);
   const healthLine = (job && job.health)
     ? '<div class="ing-queue-done-health">Health scan: ' + (healthStr ? escapeHtml(healthStr) : 'no issues found') + ' — see Health inside the <strong>Domains</strong> view.</div>'
@@ -1648,7 +1694,7 @@ function renderQueueDoneSummary(job) {
         otherSpans +
         '<span><span class="mono">' + pages + '</span> page' + (pages === 1 ? '' : 's') + ' written</span>' +
         '<span><span class="mono">' + warningsN + '</span> warning' + (warningsN === 1 ? '' : 's') + '</span>' +
-        '<span class="mono">' + spent + ' spent</span>' +
+        '<span>' + spentQualifier + '<span class="mono">' + spent + '</span> spent</span>' +
       '</div>' +
       healthLine +
     '</div>'

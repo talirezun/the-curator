@@ -35,6 +35,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+// domains.js's formatUsd now DELEGATES to the one honest USD renderer
+// (a non-zero cost must never render as '$0.0000'), so the sandbox has to
+// be given the REAL implementation. Injecting the real module — not a
+// stub — is what keeps this suite's costReadout assertions meaningful.
+import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -65,7 +70,7 @@ function extractFn(src, name) {
   return m ? m[0] : null;
 }
 
-function buildSandbox(src, names) {
+function buildSandbox(src, names, inject) {
   let combined = '';
   const missing = [];
   for (const n of names) {
@@ -75,7 +80,12 @@ function buildSandbox(src, names) {
   }
   if (missing.length) throw new Error(`extractFn could not find: ${missing.join(', ')}`);
   combined += `\nreturn { ${names.join(', ')} };\n`;
-  return new Function(combined)();
+  // `inject` supplies anything an extracted function IMPORTS rather than
+  // declares locally. Without it the extraction still builds fine and only
+  // blows up at CALL time with a bare ReferenceError, which reads as a test
+  // bug rather than a missing dependency.
+  const injectedNames = inject ? Object.keys(inject) : [];
+  return new Function(...injectedNames, combined)(...injectedNames.map((k) => inject[k]));
 }
 
 // ── 1. formatHealthCost (app.js) — extraction sanity ────────────────────────
@@ -167,7 +177,7 @@ section('4. app.js call sites — old broken patterns are GONE, formatHealthCost
 section('5. costReadout extracts and runs from the real domains.js source');
 let costReadout;
 {
-  const sandbox = buildSandbox(domainsSrc, ['formatUsd', 'costReadout']);
+  const sandbox = buildSandbox(domainsSrc, ['formatUsd', 'costReadout'], { formatUsdHonest });
   costReadout = sandbox.costReadout;
   ok(typeof costReadout === 'function', 'costReadout extracted as a callable function');
 }

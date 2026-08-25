@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The Curator — Next (preview)</title>
+<title>The Curator</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="/next/assets/mark-small-on-dark.svg">
 
@@ -53,6 +53,14 @@
      scripts/test-css-tokens.js §5, which discovers /next stylesheets only
      from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/views/onboarding.css">
+<!-- Also not a view: the one-time cutover notice, a SHELL-level bar owned by
+     views/cutover-notice.js and opened from app.js's boot() for an existing
+     user's first load after "/" started serving this shell. Same load-bearing
+     <link> as above — without it the bar is unstyled in the browser AND the
+     #app-shell reservation that stops it covering live controls never
+     applies, AND it is invisible to scripts/test-css-tokens.js §5, which
+     discovers /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/views/cutover-notice.css">
 
 <!--
   Boot guard (M2 fix) — ported from src/public/index.html; read that file's

@@ -87,6 +87,9 @@ const OFFLINE = [
   'test-next-sharedbrain-admin.js',   // /next Shared Brain revoke + admin-token rotate — outcome tone comes from the structured fields, never the summary prose
   'test-next-onboarding.js',         // /next first-run guidance panel (R7) — non-blocking, dismissible, re-findable. Pins the R7 step order, the SHOW-on-storage-throw fail-safe, and that the boot() hook cannot stop markBooted() (the blank-page guard).
   'test-next-markdown.js',           // /next's ONE markdown renderer (next/shared/markdown.js) — escape-first XSS battery over the WIDENED input surface (wiki page bodies arrive over Sync/Shared Brain), + the single-declaration guard that keeps it one copy.
+  'test-cutover.js',                 // The cutover: `/` + the SPA catch-all serve the /next shell, `/old` serves the shipping app, plus the one-time notice. Pins express.static's index:false (without it `/` never reaches the catch-all and the OLD app stays at `/` with every guard green), the HIDE-on-can't-tell fail-safe, and mutual exclusion with the first-run panel proved over all 8 fact combinations.
+  'test-health-merge-links.js',      // A merge that DELETES a page must repoint every [[link]] to it. Two of the three deleting handlers did not, and the one-click "Fix all safe" path reached one of them. Enumerates EVERY `await rm(` in health.js and requires a repoint before it — a class guard, not a list of three names.
+  'test-next-cost-honesty.js',       // Money must never be misstated: a cancelled item's real partial spend is charged AND flagged as a lower bound, no non-zero cost renders as $0.0000, and a paid scan survives a view change without surviving a DOMAIN change.
   'check-doc-suite-counts.js',
   'test-repair-wiki-args.js',
   'test-wiki-script-args.js',

@@ -1657,8 +1657,19 @@ function throwIfCancelled(signal) {
  *
  * The callback never throws (llm.js also guards it) and never affects the
  * ingest's outcome.
+ *
+ * `forward` (optional, additive) is a CALLER-SUPPLIED observer that receives
+ * the same per-call payload. It exists because `ingestFile`'s totals are only
+ * READABLE ON THE SUCCESS RETURN: when an ingest is cancelled or throws, every
+ * completed provider call it already paid for is lost with the accumulator, so
+ * the batch queue attributed $0 to a cancelled item while reporting the batch
+ * total as MEASURED. A caller that needs partial spend has to watch the calls
+ * as they land, not wait for a return value that will never come.
+ *
+ * Guarded the same way llm.js guards `onUsage`: a throwing observer is logged
+ * and swallowed. Bookkeeping must never be able to fail an ingest.
  */
-export function makeUsageAccumulator() {
+export function makeUsageAccumulator(forward = null) {
   // Field semantics are the provider-neutral convention documented on
   // normalizeGeminiUsage in llm.js: inputTokens EXCLUDES cached tokens on BOTH
   // providers, so `inputTokens + cachedReadTokens + cacheWriteTokens` is the
@@ -1680,6 +1691,10 @@ export function makeUsageAccumulator() {
       totals.cacheWriteTokens += num(r.cacheWriteTokens);
       if (r.provider) totals.provider = r.provider;
       if (r.model)    totals.model = r.model;
+      if (typeof forward === 'function') {
+        try { forward(u); }
+        catch (err) { console.error(`[ingest] usage forward callback threw (ignored): ${err && err.message}`); }
+      }
     },
   };
 }
@@ -2467,7 +2482,15 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
 
   // v3.0.16: real token spend, gathered out-of-band from every LLM call this
   // ingest makes (including retries and model-fallback rungs).
-  const usage = makeUsageAccumulator();
+  //
+  // `opts.onUsage` (additive) mirrors each call to the caller AS IT LANDS.
+  // `result.tokenUsage` below is only reachable when the ingest RETURNS, so a
+  // cancelled or failed ingest would otherwise take every call it already paid
+  // for with it — which is exactly how the batch queue came to report a
+  // cancelled item as having cost $0.
+  const usage = makeUsageAccumulator(
+    (opts && typeof opts.onUsage === 'function') ? opts.onUsage : null
+  );
 
   let result;
 
