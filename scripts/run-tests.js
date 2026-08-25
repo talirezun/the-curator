@@ -144,7 +144,31 @@ const CREDENTIAL_ENV = [
 // Gemini and Anthropic). Give live suites a generous ceiling so a slow-but-fine
 // run isn't killed; offline keeps a tight one.
 const OFFLINE_TIMEOUT_MS = 120_000;  // 2 min (deterministic; never approached)
-const LIVE_TIMEOUT_MS = 600_000;     // 10 min — heavy dual-provider live suites
+const LIVE_TIMEOUT_MS = 600_000;     // 10 min — most live suites
+
+// ── PER-SUITE LIVE TIMEOUTS ────────────────────────────────────────────────
+// A live suite's runtime is dominated by PROVIDER LATENCY, which varies by
+// ~1.7x across runs on byte-identical code. A flat cap therefore fails on
+// provider weather rather than on a defect — and the runner deliberately does
+// NOT retry a TIMEOUT (that would double an already-long wait), so a suite
+// running near its cap is a gate that will eventually go red for no reason.
+//
+// MEASURED, not guessed — test-beta15-production.js (large multi-phase ingest
+// + compile on BOTH Gemini and Anthropic) across six consecutive green CI runs
+// on main, newest first:
+//
+//     351,607ms · 380,428ms · 512,421ms · 452,822ms · 590,860ms · 554,881ms
+//
+// That is 59%-98% of the 600,000ms cap, with one run inside 0.15% of it. It
+// then timed out on v3.6.2 — a release that touched NO ingest, llm, files or
+// compile code, confirming the cause is latency, not a regression.
+//
+// 1,200,000ms is ~2x the observed worst case, so a further 1.7x provider swing
+// from the SLOWEST recorded run still passes. Do not lower this back toward the
+// observed maximum: the maximum is what fails.
+const LIVE_SUITE_TIMEOUT_MS = {
+  'test-beta15-production.js': 1_200_000,   // 20 min
+};
 
 // ── Args ────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -235,7 +259,7 @@ function tail(out, n = 12) {
     const isLive = LIVE.includes(file) || (forcedLive !== null && forcedLive.has(file));
     const opts = {
       stripCreds: !runLive,
-      timeoutMs: isLive ? LIVE_TIMEOUT_MS : OFFLINE_TIMEOUT_MS,
+      timeoutMs: isLive ? (LIVE_SUITE_TIMEOUT_MS[file] || LIVE_TIMEOUT_MS) : OFFLINE_TIMEOUT_MS,
     };
     let r = await runSuite(file, opts);
 
