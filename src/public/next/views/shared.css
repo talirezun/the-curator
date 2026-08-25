@@ -354,6 +354,10 @@ a.sb-card-repo:hover { color: var(--text-link); }
   cursor: pointer;
 }
 .sbw-close:hover { background: var(--surface-hover); color: var(--text); }
+/* M3 fix (shared-brain-wizard.js setSaveChromeDisabled): disabled while a
+   save is in flight, so it visually matches the Save/Back buttons rather
+   than looking clickable while its click handler silently no-ops. */
+.sbw-close[disabled] { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 
 .sbw-header { text-align: center; margin-bottom: 18px; }
 .sbw-header-icon { color: var(--accent-text); margin-bottom: 6px; }

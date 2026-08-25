@@ -38,8 +38,15 @@
 //      after a successful save, AND on close. This port goes one step
 //      further than the shipping app for the same reason: close()
 //      removes the wizard's DOM subtree from the document entirely
-//      (not just hidden), so there is never a detached-but-reachable
-//      password input holding a credential after the wizard closes.
+//      (not just hidden) AND explicitly clears the PAT input's .value
+//      before detaching it (see closeWizard()'s own comment — root.remove()
+//      alone does not clear an input's value, only take it out of the
+//      document) AND cancels both debounced timers (an audit found one of
+//      them could otherwise still run post-close and reach for
+//      state.inviteMetadata, which by then had already gone null — an
+//      INCIDENTAL guard, not a deliberate one; see the L4 fix in
+//      closeWizard() and the hoisted freshness checks in bindStep1/
+//      bindStep3 for the actual, deliberate guarantee this now rests on).
 //   6. Accessibility: role="dialog", aria-modal="true", aria-labelledby;
 //      Escape closes; Tab is focus-trapped inside the card; focus moves
 //      to the active panel's <h3> on every step change; focus returns
@@ -58,6 +65,41 @@
 //      server-side refusal of a masked value (sharedbrain-config.js
 //      validateConnection) is a defence this wizard's own design keeps
 //      out of reach of, not something it needs to work around.
+//
+// FIXES APPLIED AFTER AN INDEPENDENT AUDIT (all reproduced live before
+// being fixed, and re-verified after):
+//   H1 (HIGH) — a PAT verdict obtained for repo A survived an invite-token
+//       edit to repo B: no re-validation call fired, Continue stayed
+//       enabled, and a save could persist `read_only` derived from a repo
+//       the PAT was never checked against. Fixed via setInviteMetadata()/
+//       resetPatVerdict()/currentValidatedPat() — see their own comments,
+//       just above isFresh() and around isReadOnlyVerdict()/bindStep5.
+//   M2 — admin step 1's branch field was never validated client-side
+//       (despite a comment claiming it mirrored the server's checks
+//       verbatim) — a malformed branch advanced past this step and 200'd
+//       from POST /generate-invite, only to be refused by every
+//       contributor's own parse-invite AND, for the admin, by /save five
+//       panels later. Fixed in bindAdminStep1's validation block below,
+//       using the exact rule src/routes/sharedbrain.js's decodeInviteToken
+//       and src/brain/sharedbrain-config.js's validateConnection both use.
+//   M3 — Escape, the backdrop click, and the Close button had no
+//       AbortController on the save fetch and no in-flight check, so any
+//       of them closed the wizard instantly while POST /save kept running
+//       server-side with zero further feedback. Fixed via isSaveBlocking()
+//       (used by onWizardKeydown and bindChrome) and setSaveChromeDisabled
+//       (used by bindStep5's save handler) — see their own comments, and
+//       closeSharedBrainWizardIfOpen's comment for the deliberate decision
+//       to leave rail-navigation UNguarded (already safe by construction).
+//   L4 — both debounced timers (invite-token parse, PAT validate) were
+//       neither cancelled on close nor gated by a freshness check BEFORE
+//       their first `await` — only after. Fixed in closeWizard() (cancels
+//       both timers, explicitly clears the PAT input's value) and in
+//       bindStep1/bindStep3 (freshness check hoisted above the fetch).
+//   N5 — bindStep5's save handler built `connection` (including
+//       `meta.name.toLowerCase()` / `meta.repo.split('/')`) OUTSIDE its
+//       own try/catch; unreachable today, but a future throw there would
+//       have left "Saving…" stuck with no recovery but a now-blocked
+//       Escape (see M3). Moved inside the try.
 //
 // CREDENTIAL DISCIPLINE, additional to the eight points above:
 //   - The PAT and the admin token exist ONLY in this module's `state`
@@ -79,9 +121,16 @@
 //     brand-new session's state (the same trap app.js's docblock names
 //     for its own mountToken).
 //   - close() removes the wizard's root DOM node from the document
-//     entirely (`root.remove()`), not merely a hidden-class toggle — so
-//     there is no way for a stray input element to keep holding a typed
-//     credential in memory after the wizard is closed.
+//     entirely (`root.remove()`), not merely a hidden-class toggle, AND
+//     explicitly clears the PAT input's `.value` before removal, AND
+//     cancels both debounced timers before either of those — see
+//     closeWizard()'s own comment for the specific gap this closes (an
+//     audit found the PAT-timer's only protection against firing
+//     post-close was an INCIDENTAL side effect of `state` being replaced,
+//     not a deliberate guard). What this actually guarantees: no reachable
+//     reference to the PAT survives close() — not "no stray input element
+//     could ever hold one", which overclaimed what root.remove() alone
+//     does (it detaches a node; it does not clear its value).
 //
 // Owned only by views/shared.js — never registered as a view (no
 // registerView() call here), never imported anywhere else.
@@ -105,6 +154,7 @@ function freshState() {
     // Step 3 — PAT
     pat: '',                      // set ONLY after a valid/warn verdict — see rule 4 above
     patValidation: null,           // {valid, hasWriteAccess, ...} | null
+    patValidatedRepo: null,         // H1 fix — the repo `pat`/`patValidation` were actually checked against; see currentValidatedPat()/isReadOnlyVerdict() below
     patSeq: 0,
     patDebounce: null,
 
@@ -129,6 +179,68 @@ let wizardGen = 0;   // module-level, NEVER part of `state` — see the file hea
 let root = null;      // the wizard's own detached DOM subtree, or null when closed
 
 function isFresh(myGen) { return myGen === wizardGen; }
+
+// ── H1 fix: a PAT verdict is only trustworthy for the repo it was ─────────
+// actually checked against.
+//
+// Bug (found by audit, reproduced live before this fix): state.pat and
+// state.patValidation were cleared ONLY inside step 3's own 'input'
+// handler. state.inviteMetadata is (re)assigned in three other places
+// (step 1's parse-invite success, admin step 1's generate-invite success)
+// and NONE of them touched the verdict — so pasting a token for repo A,
+// validating a PAT, going Back, and pasting a token for repo B carried
+// the repo-A verdict straight into a save for repo B: no /validate-pat
+// call for B, Continue stayed enabled, and the saved connection's
+// `read_only` flag (the ONLY thing step 3 exists to produce) described a
+// repository the PAT was never checked against. Reproduced both
+// directions; captured payload showed `read_only: false` for a PAT that
+// was actually only ever validated against a different repo.
+//
+// setInviteMetadata() is the single assignment point for
+// state.inviteMetadata — every call site below goes through it instead of
+// writing the field directly, so the reset can't be forgotten at a future
+// call site. But per the audit's own framing, "clear on the event that
+// usually causes staleness" is a fragile shape by itself (an event can be
+// missed, mis-ordered, or bypassed by a future edit) — the DURABLE
+// guarantee is currentValidatedPat()/isReadOnlyVerdict() below, which are
+// the ONLY two ways the rest of this file reads the verdict, and BOTH
+// independently refuse to return anything unless state.patValidatedRepo
+// still equals state.inviteMetadata.repo. Losing the proactive reset
+// still degrades gracefully (Continue would show a stale-looking success
+// state, but bindStep5's save can never actually SEND that stale verdict
+// or derive read_only from it); losing the accessor guard would not.
+function setInviteMetadata(newMeta) {
+  const oldRepo = state.inviteMetadata && state.inviteMetadata.repo;
+  state.inviteMetadata = newMeta;
+  const newRepo = newMeta && newMeta.repo;
+  if (oldRepo !== newRepo) resetPatVerdict();
+}
+
+// Clears the PAT/verdict and visibly resets step 3's UI (re-disables
+// Continue, hides the validation box) — all panels exist in the DOM
+// simultaneously while the wizard is open, so this is safe to call
+// regardless of which step is currently visible.
+function resetPatVerdict() {
+  state.pat = '';
+  state.patValidation = null;
+  state.patValidatedRepo = null;
+  const nextBtn = byId('sbw-step3-next');
+  if (nextBtn) nextBtn.disabled = true;
+  const validation = byId('sbw-pat-validation');
+  if (validation) {
+    validation.textContent = '';
+    validation.className = 'sbw-status sbw-hidden';
+  }
+}
+
+// The only way bindStep5's save handler may read the PAT — returns '' (an
+// obviously-unusable value, never the real token) unless the verdict on
+// file was actually obtained for the CURRENT invite metadata's repo.
+function currentValidatedPat() {
+  if (!state.inviteMetadata || !state.patValidation) return '';
+  if (state.patValidatedRepo !== state.inviteMetadata.repo) return '';
+  return state.pat;
+}
 
 // ── Panel / label tables (mirrors SB_STEP_PANELS / SB_STEP_LABELS) ────────
 
@@ -182,6 +294,35 @@ export function openSharedBrainWizard(mode, opts) {
 // so navigating away from the Shared Brain view always closes any open
 // wizard rather than leaving a credential-holding overlay mounted behind
 // the next view.
+//
+// M3 DECISION — deliberately NOT gated on isSaveBlocking(), unlike
+// Escape/backdrop/Close. Reasoning:
+//   (a) The rail-navigation contract this shell already enforces (see
+//       app.js's navigate(): an overlay must never survive a view change)
+//       is a hard, unconditional rule the whole shell relies on. Carving
+//       out "unless a Shared Brain save is in flight" would make this the
+//       one view whose overlay can trap the user on it against a rail
+//       click — a worse UX than the thing M3 is fixing.
+//   (b) It is already SAFE by construction, not merely convenient:
+//       closeWizard() bumps wizardGen, and bindStep5's save handler's own
+//       `if (!isFresh(myGen)) return;` (present before this fix, for the
+//       unrelated close-during-save race) means the in-flight fetch
+//       finishes in the background but its result-handling — including
+//       closeWizard()+onSaved() on success — becomes a no-op. The POST
+//       still completes server-side (the connection IS created; nothing
+//       is silently lost), it just isn't reflected by THIS callback. The
+//       next time the user opens Shared Brain, GET /list runs fresh
+//       (loadConnections in views/shared.js, unrelated to wizardGen) and
+//       shows it. No token round-trips twice, nothing hangs.
+//   (c) L4's fix (clearing the PAT input's value before root.remove())
+//       applies here too, since this function calls the same closeWizard()
+//       — so navigating away mid-save leaves no credential in a detached
+//       node any more than an ordinary close does.
+// If a future change makes the save itself abortable (an AbortController,
+// matching this app's own v3.4.0 ingest-cancel precedent), navigate-away
+// would be the natural place to also abort it — deliberately out of scope
+// here since M3 asked about dismiss gestures on an open dialog, not about
+// making the write itself cancellable.
 export function closeSharedBrainWizardIfOpen() {
   if (root) closeWizard();
 }
@@ -189,6 +330,39 @@ export function closeSharedBrainWizardIfOpen() {
 function closeWizard() {
   if (!root) return;
   wizardGen += 1; // any in-flight handler from this session is now stale — see the file header
+
+  // L4 fix, belt: cancel both debounce timers outright. Before this, the
+  // freshness check inside each timer's callback only ran AFTER `await
+  // fetch(...)` — so the callback itself, and everything before the
+  // first await, still executed post-close. For the PAT timer specifically
+  // that meant it still called `state.inviteMetadata` (by then null, since
+  // `state` had already been replaced below) — the ONLY thing stopping the
+  // validate-pat POST (carrying the real PAT) from firing was that
+  // incidental null-check, not a deliberate guard. See the file header:
+  // "the check does not reach what it was written to protect" is the named
+  // failure shape this closes. (The L4 fix, suspenders — hoisting the
+  // freshness check to the TOP of each callback, before any await — lives
+  // in bindStep1/bindStep3 themselves, so this protection holds even if a
+  // future edit ever left a debounce timer running past a close by some
+  // other path.)
+  clearTimeout(state.step1Debounce);
+  clearTimeout(state.patDebounce);
+
+  // L4 fix: explicitly clear the PAT input's value before detaching it.
+  // root.remove() takes the node out of the document, but does NOT clear
+  // its .value — the input is garbage-COLLECTIBLE after this function
+  // returns (nothing keeps a reference to it once `root` itself is reset
+  // to null below), but for the instant between now and whenever the GC
+  // actually runs, an unclearred detached node would still hold the full
+  // PAT in memory, reachable by anything that happened to have captured a
+  // reference to it (e.g. a timer closure — see the clearTimeout calls
+  // just above for why that specific path is now also closed). This line
+  // is what the docblock's "no stray input element can keep holding a
+  // typed credential" claim actually rests on — root.remove() alone did
+  // not make that claim true.
+  const patInput = byId('sbw-pat-input');
+  if (patInput) patInput.value = '';
+
   document.removeEventListener('keydown', onWizardKeydown, true);
   const prevFocus = state.prevFocus;
   root.remove();
@@ -199,11 +373,27 @@ function closeWizard() {
   }
 }
 
+// M3 fix: the single check every dismiss path (Escape, backdrop click, the
+// Close button, the Cancel buttons on step 1/admin step 1) goes through.
+// Escape had NO AbortController on the save fetch and NO check here, so it
+// closed the wizard instantly while the credential-carrying POST /save
+// kept running in the background with zero further UI feedback — a user
+// pressing Escape during a save reasonably believes they cancelled it;
+// they did not, and the resulting connection (holding their real PAT)
+// doesn't appear until they leave Shared Brain and come back. Reproduced
+// live before this fix with millisecond timestamps: the wizard's DOM was
+// gone ~7ms after Escape while the mocked save didn't even start firing
+// until ~4.25s later. This function is intentionally the ONLY place that
+// answers "is a dismiss allowed right now" — every call site below reads
+// it rather than re-deriving its own copy of the condition.
+function isSaveBlocking() { return !!(root && state.saveInProgress); }
+
 // v3.0.4 (L16) parity: Escape closes; Tab cycles within the wizard card.
 function onWizardKeydown(e) {
   if (!root) return;
   if (e.key === 'Escape') {
     e.preventDefault();
+    if (isSaveBlocking()) return; // M3 fix — see isSaveBlocking's comment
     closeWizard();
     return;
   }
@@ -528,14 +718,18 @@ function panelStep5() {
 // ── Chrome: close / back / cancel / password-visibility toggles ──────────
 
 function bindChrome() {
-  byId('sbw-close')?.addEventListener('click', () => closeWizard());
-  byId('sbw-scrim')?.addEventListener('click', (e) => { if (e.target.id === 'sbw-scrim') closeWizard(); });
+  // M3 fix: all three checks below route through isSaveBlocking() — see
+  // its own comment for why a save in progress must refuse every dismiss
+  // path, not just Escape.
+  byId('sbw-close')?.addEventListener('click', () => { if (isSaveBlocking()) return; closeWizard(); });
+  byId('sbw-scrim')?.addEventListener('click', (e) => { if (isSaveBlocking()) return; if (e.target.id === 'sbw-scrim') closeWizard(); });
 
   qsa('[data-sbw-action]').forEach((btn) => {
     const action = btn.dataset.sbwAction;
     btn.addEventListener('click', () => {
       const myGen = wizardGen;
       if (action === 'close') {
+        if (isSaveBlocking()) return; // M3 fix
         closeWizard();
       } else if (action === 'back') {
         const n = state.step;
@@ -567,12 +761,17 @@ function bindStep1() {
     const mySeq = ++state.step1Seq; // rule 3: anything in flight is now stale
     const myGen = wizardGen;
     nextBtn.disabled = true;
-    state.inviteMetadata = null;
+    // H1 fix: goes through setInviteMetadata (not a direct assignment) so
+    // editing the token also invalidates any PAT verdict obtained for
+    // whatever repo the field previously held — see that function's
+    // comment for why this alone isn't the whole guarantee.
+    setInviteMetadata(null);
     statusEl.classList.add('sbw-hidden');
     preview.classList.add('sbw-hidden');
     const token = input.value.trim();
     if (!token) return;
     state.step1Debounce = setTimeout(async () => {
+      if (mySeq !== state.step1Seq || !isFresh(myGen)) return; // L4 fix: gate the SEND, not just the response
       try {
         const r = await fetch('/api/sharedbrain/parse-invite', {
           method: 'POST',
@@ -587,7 +786,7 @@ function bindStep1() {
           statusEl.classList.remove('sbw-hidden');
           return;
         }
-        state.inviteMetadata = j.metadata;
+        setInviteMetadata(j.metadata); // H1 fix — see setInviteMetadata's comment
         preview.querySelector('[data-field="name"]').textContent = j.metadata.name;
         preview.querySelector('[data-field="repo"]').textContent = j.metadata.repo;
         preview.querySelector('[data-field="branch"]').textContent = j.metadata.branch || 'main';
@@ -655,6 +854,7 @@ function bindStep3() {
     nextBtn.disabled = true;
     state.pat = '';               // rule 4: cleared until a fresh valid verdict
     state.patValidation = null;
+    state.patValidatedRepo = null; // H1 fix
     const pat = input.value.trim();
 
     if (!pat) {
@@ -667,6 +867,7 @@ function bindStep3() {
     }
 
     state.patDebounce = setTimeout(async () => {
+      if (mySeq !== state.patSeq || !isFresh(myGen)) return; // L4 fix: gate the SEND, not just the response
       const meta = state.inviteMetadata;
       if (!meta) {
         setValidation('error', 'Lost the invite metadata — go back to step 1.');
@@ -686,9 +887,12 @@ function bindStep3() {
           setValidation('error', j.error || 'Token rejected by GitHub.');
           return;
         }
-        // Valid → store it (rule 4: only on a valid/warn verdict).
+        // Valid → store it (rule 4: only on a valid/warn verdict), and
+        // record which repo it was checked against (H1 fix) — this is
+        // what currentValidatedPat()/isReadOnlyVerdict() key on.
         state.patValidation = j;
         state.pat = pat;
+        state.patValidatedRepo = meta.repo;
 
         if (!j.hasWriteAccess) {
           setValidation('warn',
@@ -777,10 +981,16 @@ async function populateDomains() {
   }
 }
 
-// A connection is read-only when the PAT verdict was valid-but-no-write.
+// A connection is read-only when the PAT verdict was valid-but-no-write —
+// H1 fix: AND that verdict was actually obtained for the CURRENT invite
+// metadata's repo (same guard as currentValidatedPat(), independently
+// enforced here since this is the other of the only two places the rest
+// of the file reads the verdict).
 function isReadOnlyVerdict() {
+  if (!state.inviteMetadata || !state.patValidation) return false;
+  if (state.patValidatedRepo !== state.inviteMetadata.repo) return false;
   const v = state.patValidation;
-  return !!(v && v.valid && !v.hasWriteAccess);
+  return !!(v.valid && !v.hasWriteAccess);
 }
 
 function bindStep4() {
@@ -856,43 +1066,50 @@ function bindStep5() {
   save.addEventListener('click', async () => {
     if (!state.consent) return;
     const myGen = wizardGen;
-    state.saveInProgress = true;
+    state.saveInProgress = true;      // M3 fix: gates Escape/backdrop/close — see onWizardKeydown and bindChrome
     save.disabled = true;
     save.textContent = 'Saving…';
     status?.classList.add('sbw-hidden');
-
-    const meta = state.inviteMetadata;
-    // Verbatim from the shipping app — a DIFFERENT slugify than the admin
-    // step-1 "folder inside the repo" field (that one allows underscores
-    // and collapses hyphen runs; this one doesn't, and falls back to
-    // "cohort"). Both are ported unchanged, on purpose — see the file
-    // header: this is a credential/data path, not a place to "clean up".
-    const brainSlug = meta.name.toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || 'cohort';
-
-    const connection = {
-      label: meta.name,
-      storage_type: meta.storage_type || 'github',
-      github_repo_owner: meta.repo.split('/')[0],
-      github_repo_name: meta.repo.split('/')[1],
-      github_pat: state.pat,
-      github_branch: meta.branch || 'main',
-      fellow_display_name: state.displayName,
-      shared_domain: meta.shared_domain,
-      shared_brain_slug: brainSlug,
-      local_domains: [...state.selectedDomains],
-      attribute_by_name: state.attributeByName,
-      read_only: isReadOnlyVerdict(),
-      data_handling_terms: meta.data_handling_terms || 'contributor_retains',
-      enabled: true,
-    };
-    if (state.mode === 'create' && state.generatedAdminToken) {
-      connection.admin_token = state.generatedAdminToken;
-    }
+    setSaveChromeDisabled(true);       // M3 fix: Close (x) + this panel's Back also disabled while a credential write is in flight
 
     try {
+      // N5 fix: this whole block used to sit OUTSIDE the try — a throw
+      // here (e.g. state.inviteMetadata somehow null) left the button
+      // stuck at "Saving…", disabled, with no recovery but Escape (which
+      // is now itself blocked while saveInProgress — see M3 fix above).
+      const meta = state.inviteMetadata;
+      if (!meta) throw new Error('Lost the connection details — go back to step 1 and try again.');
+
+      // Verbatim from the shipping app — a DIFFERENT slugify than the admin
+      // step-1 "folder inside the repo" field (that one allows underscores
+      // and collapses hyphen runs; this one doesn't, and falls back to
+      // "cohort"). Both are ported unchanged, on purpose — see the file
+      // header: this is a credential/data path, not a place to "clean up".
+      const brainSlug = meta.name.toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'cohort';
+
+      const connection = {
+        label: meta.name,
+        storage_type: meta.storage_type || 'github',
+        github_repo_owner: meta.repo.split('/')[0],
+        github_repo_name: meta.repo.split('/')[1],
+        github_pat: currentValidatedPat(), // H1 fix: '' unless the verdict actually matches this repo
+        github_branch: meta.branch || 'main',
+        fellow_display_name: state.displayName,
+        shared_domain: meta.shared_domain,
+        shared_brain_slug: brainSlug,
+        local_domains: [...state.selectedDomains],
+        attribute_by_name: state.attributeByName,
+        read_only: isReadOnlyVerdict(), // H1 fix: same repo-matching guard
+        data_handling_terms: meta.data_handling_terms || 'contributor_retains',
+        enabled: true,
+      };
+      if (state.mode === 'create' && state.generatedAdminToken) {
+        connection.admin_token = state.generatedAdminToken;
+      }
+
       const r = await fetch('/api/sharedbrain/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -915,8 +1132,23 @@ function bindStep5() {
       save.textContent = 'Save & Connect';
       state.saveInProgress = false;
       save.disabled = false;
+      setSaveChromeDisabled(false); // M3 fix
     }
   });
+}
+
+// M3 fix: disables/re-enables the Close (x) button and step 5's own Back
+// button for the duration of a save. Escape and the backdrop click are
+// blocked by checking state.saveInProgress directly (see onWizardKeydown
+// and bindChrome) rather than by relying on these being disabled — two
+// independent guards, same shape as the rest of this file's credential
+// paths (see e.g. the H1 fix above): losing either one still leaves the
+// other.
+function setSaveChromeDisabled(disabled) {
+  const closeBtn = byId('sbw-close');
+  if (closeBtn) closeBtn.disabled = disabled;
+  const step5Back = byId('sbw-panel-step-5')?.querySelector('[data-sbw-action="back"]');
+  if (step5Back) step5Back.disabled = disabled;
 }
 
 // ── Admin step 1: collect form, generate invite + admin token ────────────
@@ -965,7 +1197,18 @@ function bindAdminStep1() {
       if (status) { status.textContent = msg; status.className = 'sbw-status sbw-status-error'; status.classList.remove('sbw-hidden'); }
     }
 
-    // Client-side validation mirroring the server's checks (verbatim).
+    // Client-side validation mirroring the server's checks for repo,
+    // display name, shared_domain, AND branch (M2 fix — the branch rule
+    // was missing here entirely, despite this comment's own prior claim
+    // of "verbatim"; that overclaim is exactly why it went unnoticed: a
+    // comment that says more than the code does stops the next reviewer
+    // looking). The branch regex is copied byte-for-byte from BOTH
+    // decodeInviteToken (src/routes/sharedbrain.js) and validateConnection
+    // (src/brain/sharedbrain-config.js) — those two already had to match
+    // each other for parse-invite and save to agree; this is now a third,
+    // client-side copy of the same rule, so a malformed branch is caught
+    // here instead of silently minting a token every contributor's wizard
+    // (and the admin's own eventual /save) will refuse.
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/.test(repo)) {
       fail('Repository must be in “owner/name” format (no spaces).');
       return;
@@ -973,6 +1216,10 @@ function bindAdminStep1() {
     if (!name) { fail('Display name is required.'); return; }
     if (!/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(sharedDomain)) {
       fail('Shared domain slug: lowercase letters, digits, hyphens, underscores. No spaces.');
+      return;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(branch) || branch.includes('..')) {
+      fail('Branch must be a valid git ref name (letters, digits, ., _, -, / — no spaces, no ".." segments).');
       return;
     }
 
@@ -988,7 +1235,7 @@ function bindAdminStep1() {
       if (!isFresh(myGen)) return;
       if (!r.ok) throw new Error(j.error || 'generate-invite failed');
 
-      state.inviteMetadata = { v: 1, repo, name, shared_domain: sharedDomain, branch, data_handling_terms: dht, storage_type: 'github' };
+      setInviteMetadata({ v: 1, repo, name, shared_domain: sharedDomain, branch, data_handling_terms: dht, storage_type: 'github' }); // H1 fix
       state.generatedInviteToken = j.token;
       // Rule 7: keep the FIRST generated admin token across a Back+regenerate.
       if (!state.generatedAdminToken && j.admin_token) state.generatedAdminToken = j.admin_token;
