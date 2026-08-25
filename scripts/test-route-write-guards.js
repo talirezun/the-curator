@@ -109,6 +109,255 @@ function eq(actual, expected, label) {
   assert(actual === expected, `${label} (got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)})`);
 }
 
+// ── Shared route-guard classifier ─────────────────────────────────────────
+//
+// Used by every "every mutating route is guarded" assertion below (sync.js,
+// config.js, domains.js, health.js). An earlier version of this file had FOUR
+// different matchers of differing soundness: a single-line, single-quote
+// regex for sync.js claiming to be "the invariant, not a per-route spot
+// check" (defeated by a double-quoted path, OR by a guard placed on the
+// FOLLOWING line rather than the declaration line); a hardcoded 5-route loop
+// for config.js that only ever looked at routes it already knew about, so a
+// sixth unguarded route was invisible to it by construction; ad hoc PUT/DELETE
+// checks for domains.js with no invariant over the file at all; and a
+// comment-stripped, brace-matched scanner for health.js gated behind a
+// hardcoded DESTRUCTIVE function-name allow-list, so a new destructive helper
+// under a name the list didn't know about was silently never checked. An
+// adversarial audit mutation-proved all four gaps. This is the single,
+// generalised replacement, applied identically to all four files.
+//
+// Soundness properties:
+//   1. Comments and string/template literals are blanked BEFORE any pattern
+//      is matched (stripSource below), so a `router.post(` inside a comment
+//      or string literal can never manufacture a phantom route, and a real
+//      route hidden behind a commented-out example can never mask a genuine
+//      one. Verified against the recorded "a `//` comment containing `/*` can
+//      desync a naive stripper" failure mode: `line` mode short-circuits with
+//      `continue` before the block-comment-start check ever runs, so a line
+//      comment can never accidentally open block mode, and `block` mode never
+//      even reaches the line-comment-start check while active. Both directions
+//      hold.
+//   2. Guard detection reads the WHOLE brace-matched call body, not one line
+//      of it — a guard on a following line counts.
+//   3. Route-PATH quoting is irrelevant to whether a route is DISCOVERED at
+//      all (single/double/backtick all match): discovery keys off the method
+//      name (`router.post(` etc.), never the quote character of its first
+//      argument.
+//   4. The router variable name is discovered from `const X = Router()`
+//      rather than assumed to be literally `router`; if that declaration does
+//      not appear EXACTLY once in the file, classification refuses outright
+//      (a second router variable would otherwise register routes invisibly to
+//      every check below — sound-in-the-safe-direction, not a convenience).
+//   5. UNCLASSIFIABLE IS A FAILURE, NEVER A SILENT SKIP. A mutating route
+//      whose path cannot be read as a plain literal (built from a variable, a
+//      computed expression, a template literal with interpolation) can NEVER
+//      be matched against the exemption list — there is no literal to check
+//      it against — so it is REQUIRED to carry a guard unconditionally.
+//      Skipping it because "we can't tell" would be exactly the failure shape
+//      this round exists to remove.
+//   6. `.route(path).post(...).get(...)` chaining is recognised as a second,
+//      independent call pattern — each chained method call shares the
+//      route()'s literal path and is checked on its own brace-matched body.
+//   7. An independent, DELIBERATELY DIFFERENTLY-IMPLEMENTED cross-check
+//      counts every `<routerVar>.<method>(` occurrence via a plain indexOf
+//      scan with NO regex and NO brace-matching, and asserts it exactly
+//      equals the number of DIRECT calls the brace-matching pass above
+//      actually produced. This is the CLAUDE.md-recorded lesson applied here:
+//      "a scanner silently seeing 78 of 90 declarations while reporting every
+//      assertion green" was caught only by an independent second count, never
+//      by the sophisticated pass agreeing with itself.
+//
+// KNOWN REMAINING BLIND SPOT — stated plainly, not left for the next reviewer
+// to find: a `.route(...)` call whose Route object is assigned to an
+// intermediate variable and chained in a SEPARATE statement
+// (`const r = router.route('/x'); r.post(fn);`) is invisible to both the
+// chained-call pass and the indexOf cross-check, because the chained method
+// call no longer carries `<routerVar>.` as a textual prefix at all. No route
+// in this codebase uses that form today (grepped before writing this
+// classifier); if one ever does, it will not be checked, and nothing here
+// will say so. A second, unrelated blind spot: bracket-notation dispatch
+// (`router['post'](...)`) is not recognised either, for the same reason.
+function stripSource(src) {
+  let o = ''; let q = null, line = false, block = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (line) { if (c === '\n') { line = false; o += '\n'; } else o += ' '; continue; }
+    if (block) { if (c === '*' && src[i + 1] === '/') { block = false; o += '  '; i++; } else o += (c === '\n' ? '\n' : ' '); continue; }
+    if (q) { if (c === '\\') { o += '  '; i++; continue; } if (c === q) q = null; o += (c === '\n' ? '\n' : ' '); continue; }
+    if (c === '/' && src[i + 1] === '/') { line = true; o += ' '; continue; }
+    if (c === '/' && src[i + 1] === '*') { block = true; o += ' '; continue; }
+    if (c === '"' || c === "'" || c === '`') { q = c; o += ' '; continue; }
+    o += c;
+  }
+  return o;
+}
+
+function matchPair(s, from) {
+  let d = 0;
+  for (let i = from; i < s.length; i++) {
+    if (s[i] === '(') d++;
+    else if (s[i] === ')') { d--; if (d === 0) return i; }
+  }
+  return -1;
+}
+
+// Literal-string extraction reads the RAW source (stripSource blanks quote
+// contents), using the position-preserving index computed against `stripped`
+// — stripSource never changes the string's length, so indices line up.
+function extractLiteralArg(raw, openIdx) {
+  const m = raw.slice(openIdx, openIdx + 4000).match(/^\(\s*(['"`])([^'"`]*)\1/);
+  return m ? m[2] : null;
+}
+
+function classifyRouteFile(absPath) {
+  const raw = readFileSync(absPath, 'utf8');
+  const stripped = stripSource(raw);
+  const result = { raw, stripped, routes: [], parseFails: 0, routerVar: null, routerDeclCount: 0 };
+
+  const routerDecls = [...stripped.matchAll(/\bconst\s+(\w+)\s*=\s*Router\s*\(\s*\)/g)];
+  result.routerDeclCount = routerDecls.length;
+  if (routerDecls.length !== 1) return result; // caller refuses to proceed on this
+  const routerVar = routerDecls[0][1];
+  result.routerVar = routerVar;
+
+  // Pass 1: direct `routerVar.method(...)` calls.
+  const METHOD_RE = new RegExp('\\b' + routerVar + '\\.(get|post|put|delete|patch)\\s*\\(', 'g');
+  let m;
+  while ((m = METHOD_RE.exec(stripped))) {
+    const openIdx = stripped.indexOf('(', m.index);
+    const endIdx = matchPair(stripped, openIdx);
+    if (endIdx === -1) { result.parseFails++; continue; }
+    result.routes.push({
+      method: m[1].toUpperCase(),
+      path: extractLiteralArg(raw, openIdx),
+      body: stripped.slice(openIdx, endIdx + 1),
+      kind: 'direct',
+    });
+  }
+
+  // Pass 2: chained `routerVar.route(path).method(...).method(...)`. Each
+  // chained segment shares the route()'s literal path and is checked on its
+  // OWN brace-matched body (a guard on one chained method must not silently
+  // "cover" a sibling method on the same route()).
+  const ROUTE_RE = new RegExp('\\b' + routerVar + '\\.route\\s*\\(', 'g');
+  let rm;
+  while ((rm = ROUTE_RE.exec(stripped))) {
+    const openIdx = stripped.indexOf('(', rm.index);
+    const endIdx = matchPair(stripped, openIdx);
+    if (endIdx === -1) { result.parseFails++; continue; }
+    const routePath = extractLiteralArg(raw, openIdx);
+    let pos = endIdx + 1;
+    for (;;) {
+      const chainM = /^\s*\.\s*(get|post|put|delete|patch)\s*\(/.exec(stripped.slice(pos, pos + 200));
+      if (!chainM) break;
+      const chainOpenIdx = pos + chainM[0].lastIndexOf('(');
+      const chainEndIdx = matchPair(stripped, chainOpenIdx);
+      if (chainEndIdx === -1) { result.parseFails++; break; }
+      result.routes.push({
+        method: chainM[1].toUpperCase(),
+        path: routePath,
+        body: stripped.slice(chainOpenIdx, chainEndIdx + 1),
+        kind: 'chained',
+      });
+      pos = chainEndIdx + 1;
+    }
+  }
+
+  return result;
+}
+
+// Independent cross-check for DIRECT calls only (pass 1) — deliberately a
+// different implementation (plain indexOf scan, no regex, no brace-matching)
+// so a bug specific to the regex/brace-matching machinery above cannot also
+// break this count in the same way. Requires a non-identifier char (or start
+// of string) immediately before `routerVar` so it can't match e.g.
+// `myrouter.post(` as a false positive.
+function dumbCountDirectCalls(stripped, routerVar) {
+  const methods = ['get', 'post', 'put', 'delete', 'patch'];
+  let count = 0;
+  for (const method of methods) {
+    const needle = routerVar + '.' + method + '(';
+    let idx = 0;
+    for (;;) {
+      const found = stripped.indexOf(needle, idx);
+      if (found === -1) break;
+      const before = found > 0 ? stripped[found - 1] : '';
+      if (!/[A-Za-z0-9_$]/.test(before)) count++;
+      idx = found + needle.length;
+    }
+  }
+  return count;
+}
+
+function bodyIsGuarded(body, guardTokens, guardMode) {
+  const res = guardTokens.map(t => new RegExp('\\b' + t + '\\s*\\(').test(body));
+  return guardMode === 'all' ? res.every(Boolean) : res.some(Boolean);
+}
+
+// Runs the full class-invariant sweep over one route file and pushes
+// assertions via assert()/eq(). `guardTokens`/`guardMode` define what counts
+// as "guarded"; `exemptions` is the explicit, commented, per-file allow-list
+// for mutating routes that genuinely cannot conflict with an in-flight write
+// (documented inline at each call site below) — this is the INVERSION
+// requested in place of a hardcoded destructive-function allow-list: every
+// mutating route is in scope by default, and only an explicit, justified
+// exemption removes it, rather than only routes matching a known-destructive
+// function name ever being checked at all.
+function auditRouteGuards(relPath, { guardTokens, guardMode = 'any', exemptions = [], expectedMutatingCount, label }) {
+  const abs = path.join(REPO_ROOT, relPath);
+  const info = classifyRouteFile(abs);
+  eq(info.routerDeclCount, 1,
+    `${label}: exactly one \`const X = Router()\` declaration (router variable identified unambiguously)`);
+  if (info.routerDeclCount !== 1) return; // cannot proceed safely — see property 4
+  eq(info.parseFails, 0, `${label}: every router.X(...)/.route(...) call brace-matched cleanly`);
+
+  const directRoutes = info.routes.filter(r => r.kind === 'direct');
+  const dumbCount = dumbCountDirectCalls(info.stripped, info.routerVar);
+  eq(dumbCount, directRoutes.length,
+    `${label}: independent indexOf cross-check agrees with the brace-matching classifier on direct calls (${dumbCount} vs ${directRoutes.length})`);
+
+  const MUTATING = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+  const mutating = info.routes.filter(r => MUTATING.has(r.method));
+  assert(mutating.length >= 1, `${label}: found mutating routes to check (${mutating.length})`);
+  if (typeof expectedMutatingCount === 'number') {
+    eq(mutating.length, expectedMutatingCount,
+      `${label}: exactly ${expectedMutatingCount} mutating routes found (a drift means EXEMPTIONS/guard config below needs review)`);
+  }
+
+  const exemptSet = new Set(exemptions.map(e => e.method + ' ' + e.path));
+  const consumed = new Set();
+
+  for (const r of mutating) {
+    const pathDisplay = r.path === null ? '(non-literal)' : r.path;
+    const chainNote = r.kind === 'chained' ? ' [chained via .route()]' : '';
+    const routeLabel = `${label} ${r.method} '${pathDisplay}'${chainNote}`;
+
+    if (r.path === null) {
+      // Property 5: a non-literal path can never be exempted.
+      assert(bodyIsGuarded(r.body, guardTokens, guardMode),
+        `${routeLabel}: non-literal path — REQUIRED to carry a guard unconditionally (cannot be exempted)`);
+      continue;
+    }
+
+    const key = r.method + ' ' + r.path;
+    if (exemptSet.has(key)) {
+      consumed.add(key);
+      assert(true, `${routeLabel}: explicitly exempted — ${exemptions.find(e => e.method + ' ' + e.path === key).reason}`);
+      continue;
+    }
+    assert(bodyIsGuarded(r.body, guardTokens, guardMode),
+      `${routeLabel}: carries a guard (${guardMode === 'all' ? 'ALL of' : 'one of'} ${JSON.stringify(guardTokens)})`);
+  }
+
+  // Every declared exemption must correspond to a route that actually exists
+  // — a stale exemption for a renamed/removed route would otherwise rot into
+  // a hole a differently-motivated future route could reuse by coincidence.
+  for (const e of exemptions) {
+    const k = e.method + ' ' + e.path;
+    assert(consumed.has(k), `${label}: exemption "${k}" matches an actual route (not stale)`);
+  }
+}
+
 // ── Test server: the REAL router, mounted in-process ────────────────────
 // In-process is required, not a convenience: the write registry is an
 // in-memory Map scoped to one process, so an out-of-process test could not
@@ -295,7 +544,10 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
 {
   const src = readFileSync(path.join(REPO_ROOT, 'src/routes/config.js'), 'utf8');
 
-  // Each guarded route must carry the middleware on its own declaration line.
+  // Wording quality only — NOT a guard-presence invariant (that is section 6b
+  // below, over the whole file). This just pins that each of the five known
+  // guardConcurrent(...) calls names the right action phrase, so a refusal's
+  // message stays accurate if someone edits one in passing.
   for (const [route, action] of [
     ['/domains-path', 'change the knowledge folder'],
     ['/pick-folder', 'change the knowledge folder'],
@@ -303,10 +555,8 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
     ['/api-keys/disconnect', 'disconnect an API key'],
     ['/api-keys/active', 'switch the AI provider'],
   ]) {
-    const re = new RegExp(`router\\.post\\(\\s*'${route.replace(/\//g, '\\/')}'\\s*,\\s*guardConcurrent\\(`);
-    assert(re.test(src), `${route} declares guardConcurrent(...) as middleware`);
     assert(src.includes(`guardConcurrent('${action}')`),
-      `${route} uses the action phrase "${action}"`);
+      `${route}: some guardConcurrent(...) call in config.js uses the action phrase "${action}"`);
   }
 
   // The refusal must be built by the SHARED conflictResponse, never a
@@ -334,18 +584,11 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
   assert(upStart !== -1 && src.slice(upStart, upStart + 1200).includes('hasActiveWrites()'),
     'POST /update still carries its original hasActiveWrites() guard');
 
-  // ── sync.js: EVERY mutating route must carry guardConcurrent ────────────
-  // This is the invariant, not a per-route spot check. POST /setup was the one
-  // route in that file without the middleware while its four siblings had it,
-  // and nothing caught it because no test asserted the class. A future sync
-  // route added without the guard now fails here instead of shipping.
-  const syncSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/sync.js'), 'utf8');
-  const syncMut = [...syncSrc.matchAll(/router\.(post|put|delete|patch)\(\s*'([^']+)'([^\n]*)/g)];
-  assert(syncMut.length >= 5, 'found sync.js mutating routes to check (' + syncMut.length + ')');
-  for (const m of syncMut) {
-    assert(/guardConcurrent\(/.test(m[3]),
-      'sync.js ' + m[1].toUpperCase() + " '" + m[2] + "' carries guardConcurrent");
-  }
+  // sync.js's own "every mutating route must carry guardConcurrent" invariant
+  // moved to section 6b below — a line-oriented, single-quote-only regex used
+  // to live here, claimed to be a class invariant, and was mutation-proven to
+  // be a per-route spot check (defeated by a double-quoted path, and it flagged
+  // a false positive when a guard sat on the line AFTER the declaration).
 
   // ── domains.js: rename and delete use the PER-DOMAIN predicate ──────────
   // A rename or delete affects exactly one domain, so blocking either because
@@ -372,6 +615,96 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
   // The guard must precede the work, not sit after it.
   assert(putBody.indexOf('isDomainActive') < putBody.indexOf('renameDomain('),
     'domains.js PUT guard runs BEFORE renameDomain()');
+}
+
+console.log('\n=== 6b. INVARIANT: every mutating route in these four files is guarded or explicitly exempted ===');
+{
+  // The class assertion, over ALL FOUR route files that mutate wiki state or
+  // app config, using the single shared classifier defined above. Replaces:
+  //   - sync.js's line-oriented, single-quote-only "invariant" (defeated by a
+  //     double-quoted path, or a guard on the following line);
+  //   - config.js's hardcoded 5-route loop (never looked at a 6th route);
+  //   - domains.js's total absence of a file-wide invariant (only PUT/DELETE
+  //     had ad hoc checks; POST '/' was never reasoned about at all);
+  //   - health.js's comment-stripped scanner gated behind a hardcoded
+  //     DESTRUCTIVE function-name allow-list (a new destructive helper under
+  //     an unlisted name was invisible to it).
+  //
+  // Each mutating route must EITHER carry a guard (any-of / all-of per file,
+  // matching how that file actually protects itself) OR appear on that file's
+  // explicit, reasoned EXEMPTIONS list below. There is no third option — an
+  // unrecognised new route is neither guarded nor exempted, and fails.
+
+  auditRouteGuards('src/routes/sync.js', {
+    label: 'sync.js',
+    guardTokens: ['guardConcurrent'],
+    guardMode: 'any',
+    expectedMutatingCount: 5,
+    exemptions: [], // every mutating route here runs a real git operation over the wiki repo
+  });
+
+  auditRouteGuards('src/routes/config.js', {
+    label: 'config.js',
+    // /update guards itself with a direct hasActiveWrites() check (it also
+    // sets the global updateInProgress flag, so it can't reuse the plain
+    // guardConcurrent() middleware unchanged) — both count as "guarded".
+    guardTokens: ['guardConcurrent', 'hasActiveWrites'],
+    guardMode: 'any',
+    expectedMutatingCount: 7, // default-domain, domains-path, pick-folder, api-keys, api-keys/disconnect, api-keys/active, update
+    exemptions: [
+      { method: 'POST', path: '/default-domain', reason:
+        'selects which domain MCP write tools assume when the caller does not name one; an in-flight write already carries an explicit domain captured at request time, so changing this default cannot affect it (see CLAUDE.md section 5 of this same file\'s own docblock).' },
+    ],
+  });
+
+  auditRouteGuards('src/routes/domains.js', {
+    label: 'domains.js',
+    guardTokens: ['isDomainActive', 'hasActiveWrites'],
+    guardMode: 'any',
+    expectedMutatingCount: 3, // POST '/', PUT '/:domain', DELETE '/:domain'
+    exemptions: [
+      { method: 'POST', path: '/', reason:
+        'creates a brand-new domain at a freshly generated, not-yet-existing slug — there is no existing directory or in-flight write it could conflict with.' },
+    ],
+  });
+
+  auditRouteGuards('src/routes/health.js', {
+    label: 'health.js',
+    // health.js's protection is a THREE-guard combo, not any single one —
+    // matching the original section 13 invariant this replaces.
+    guardTokens: ['registerWrite', 'acquireFileLock', 'isUpdateInProgress'],
+    guardMode: 'all',
+    expectedMutatingCount: 14,
+    exemptions: [
+      { method: 'POST', path: '/ai-settings', reason:
+        'writes only the aiHealth cost-ceiling/candidate-pair-cap settings to .curator-config.json — never touches wiki content.' },
+      { method: 'POST', path: '/:domain/ai-suggest', reason:
+        'health-ai.js is READ-ONLY by design (the v2.4.3 invariant) — proposes a target, never writes; the actual write happens through the guarded /fix route.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/scan', reason:
+        'runs the LLM scan and streams candidate pairs; read-only (health-ai.js), no wiki write.' },
+      { method: 'POST', path: '/:domain/semantic-dupes/preview', reason:
+        'computes and returns a merge diff preview; read-only, no wiki write.' },
+      { method: 'POST', path: '/:domain/broken-links/plan', reason:
+        'runs the deterministic pre-pass + AI batches and streams the plan; read-only — the write happens in the separate, guarded /broken-links/apply route.' },
+      { method: 'POST', path: '/:domain/orphans/plan', reason:
+        'same shape as broken-links/plan — read-only planning stage; the write happens in the separate, guarded /orphans/apply route.' },
+      { method: 'POST', path: '/:domain/dismiss', reason:
+        'appends to the .health-dismissed.jsonl sidecar (v2.5.1 dismissal store), not wiki content — the pre-existing route docblock already gave this same rationale for excluding it.' },
+      { method: 'POST', path: '/:domain/undismiss', reason:
+        'removes an entry from the same sidecar file; not a wiki-content write.' },
+    ],
+  });
+
+  // Control: prove the classifier CAN see a missing guard on a synthetic
+  // handler shaped like the real bug this section exists to catch (an
+  // unguarded call to a destructive write helper) — so the assertions above
+  // are not vacuously green.
+  const fakeGuarded   = "router.post('/x', async (req,res) => { registerWrite(d,'y'); acquireFileLock(p); isUpdateInProgress(); await fixIssue(d,t,i); });";
+  const fakeUnguarded = "router.post('/x', async (req,res) => { await fixIssue(d,t,i); });";
+  assert(bodyIsGuarded(fakeGuarded, ['registerWrite', 'acquireFileLock', 'isUpdateInProgress'], 'all'),
+    '  (control) a handler carrying all three guards is classified as guarded');
+  assert(!bodyIsGuarded(fakeUnguarded, ['registerWrite', 'acquireFileLock', 'isUpdateInProgress'], 'all'),
+    '  (control) an unguarded destructive-shaped handler is classified as NOT guarded');
 }
 
 console.log('\n=== 7. The real credential files were never touched ===');
@@ -608,7 +941,7 @@ console.log('\n=== 11. POST /api/health/:domain/fix is guarded like /fix-all ===
 
   // ── (d) the cross-process file lock, exercised behaviourally ────────────
   // Mutation-testing showed the lock was covered only by the source invariant
-  // in section 13, so removing it went RED for a source reason and not a
+  // in section 6b, so removing it went RED for a source reason and not a
   // behavioural one. A lock file stamped with THIS process's pid reads as held
   // by a live owner (isPidAlive is true for self), which is exactly the state a
   // concurrent MCP write produces.
@@ -669,71 +1002,11 @@ console.log('\n=== 12. Regression: /fix with no `issue` runs the BULK path ===')
       .includes('[[concepts/'), 'bulk path rewrote src-' + n + '.md');
 }
 
-console.log('\n=== 13. INVARIANT: every destructive health.js route registers ===');
-{
-  // The class assertion, not a spot check. /:domain/fix reached fixIssue() --
-  // the same destructive function as /fix-all -- while carrying none of the
-  // three protections, and nothing caught it because no test asserted the
-  // class. Enumerated mechanically: strip comments and strings, brace-match
-  // each router.X(...) call, and for any handler that reaches a destructive
-  // wiki-write, require all three guards. A route added later without them
-  // fails HERE rather than shipping.
-  //
-  // Sound in the safe direction: anything the classifier cannot prove
-  // destructive is simply not required to register, so a parsing miss yields a
-  // missed check, never a false accusation. DESTRUCTIVE is an explicit
-  // allow-list of the wiki-mutating functions health.js calls; the dismissal
-  // sidecar (.health-dismissed.jsonl) is deliberately excluded -- it is an
-  // append to a metadata file, not a wiki-content write, and none of the
-  // existing dismissal routes register.
-  const healthSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/health.js'), 'utf8');
-  const stripped = (function strip(src) {
-    let o = ''; let q = null, line = false, block = false;
-    for (let i = 0; i < src.length; i++) {
-      const c = src[i];
-      if (line) { if (c === '\n') { line = false; o += '\n'; } else o += ' '; continue; }
-      if (block) { if (c === '*' && src[i + 1] === '/') { block = false; o += '  '; i++; } else o += (c === '\n' ? '\n' : ' '); continue; }
-      if (q) { if (c === '\\') { o += '  '; i++; continue; } if (c === q) q = null; o += (c === '\n' ? '\n' : ' '); continue; }
-      if (c === '/' && src[i + 1] === '/') { line = true; o += ' '; continue; }
-      if (c === '/' && src[i + 1] === '*') { block = true; o += ' '; continue; }
-      if (c === '"' || c === "'" || c === '`') { q = c; o += ' '; continue; }
-      o += c;
-    }
-    return o;
-  })(healthSrc);
-  const matchPair = (s, from) => { let d = 0; for (let i = from; i < s.length; i++) { if (s[i] === '(') d++; else if (s[i] === ')') { d--; if (d === 0) return i; } } return -1; };
-  const DESTRUCTIVE = ['fixIssue', 'fixAllSafe', 'applyBrokenLinkFixes', 'applyOrphanRescue', 'fixSemanticDuplicatesBatch'];
-
-  const MUT = /\brouter\.(post|put|delete|patch)\s*\(/g;
-  let m, mutating = 0, destructiveRoutes = 0, parseFails = 0;
-  while ((m = MUT.exec(stripped))) {
-    mutating++;
-    const open = stripped.indexOf('(', m.index);
-    const end = matchPair(stripped, open);
-    if (end === -1) { parseFails++; continue; }
-    const body = stripped.slice(open, end + 1);
-    const route = (healthSrc.slice(open, end + 1).match(/^\(\s*['"`]([^'"`]*)['"`]/) || [])[1] || '(non-literal)';
-    const hits = DESTRUCTIVE.filter(f => new RegExp('\\b' + f + '\\s*\\(').test(body));
-    if (!hits.length) continue;
-    destructiveRoutes++;
-    const label = 'health.js ' + m[1].toUpperCase() + " '" + route + "' (calls " + hits.join(',') + ')';
-    assert(/\bregisterWrite\s*\(/.test(body), label + ' registers with the write registry');
-    assert(/\bacquireFileLock\s*\(/.test(body), label + ' takes the cross-process file lock');
-    assert(/\bisUpdateInProgress\s*\(/.test(body), label + ' refuses during an app update');
-  }
-  eq(parseFails, 0, 'every router.X(...) in health.js brace-matched cleanly');
-  assert(mutating >= 10, 'enumerated health.js mutating routes (' + mutating + ')');
-  // Pin the count so a destructive route that stops being RECOGNISED (renamed
-  // helper, new wrapper) shows up as a drop rather than silently leaving the
-  // loop with nothing to check -- the way a green suite can hide a no-op.
-  eq(destructiveRoutes, 6,
-    'exactly 6 health.js routes reach a destructive wiki-write (if this moved, the DESTRUCTIVE allow-list needs updating)');
-  // Prove the classifier can actually SEE a missing guard, so the loop above is
-  // not vacuously green.
-  const fake = "router.post('/x', async (req,res) => { await fixIssue(d,t,i); });";
-  assert(!/\bregisterWrite\s*\(/.test(fake) && /\bfixIssue\s*\(/.test(fake),
-    '  (control) an unguarded destructive handler is detectable by these same tests');
-}
+// Section 13 ("INVARIANT: every destructive health.js route registers") has
+// been folded into section 6b above, which now covers all four route files
+// with one sound classifier instead of health.js alone with a hardcoded
+// destructive-function allow-list. See section 6b's docblock for the full
+// rationale and the class of bug this replacement closes.
 
 // ── Teardown ─────────────────────────────────────────────────────────────
 await new Promise(r => server.close(r));

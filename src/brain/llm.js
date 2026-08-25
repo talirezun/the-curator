@@ -588,7 +588,13 @@ function isModelNotFound(err) {
  *
  * Anthropic's minimum cacheable prefix is model-dependent and NOT monotonic
  * across generations: it is 4096 tokens on claude-haiku-4-5 — the Curator's
- * Anthropic default — and 2048 on the claude-3-5-haiku fallback rungs. A prefix
+ * Anthropic default — and 1024 on every CURRENT fallback rung (sonnet-5,
+ * sonnet-4-6, sonnet-4-5), i.e. four times LOWER, not higher. (This comment
+ * previously cited 2048 on the claude-3-5-haiku rungs; those were removed in
+ * 2026-08 after a live probe found all four returned 404.) Note the floor
+ * below is applied without reference to the active model, so a cacheable
+ * Sonnet prefix between ~4k and 16k chars is skipped — benign while Sonnet is
+ * only ever a fallback, worth revisiting if that changes. A prefix
  * below the model's minimum is silently NOT cached (no error, no write charge,
  * `cache_creation_input_tokens: 0`), so a too-short breakpoint is harmless but
  * pointless. 16,000 chars is ~4,000 tokens at the ~4 chars/token typical of
