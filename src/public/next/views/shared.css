@@ -296,6 +296,263 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-leave-link[disabled] { opacity: 0.5; cursor: not-allowed; }
 .sb-card-footer .sb-confirm-inline { flex: 1 1 100%; margin-left: 0; }
 
+/* ── Admin controls: admin token + contributor revocation ─────────────
+   Every colour here is an EXISTING token. No new custom property is
+   introduced: test-css-tokens.js hard-fails on any undefined var() in the
+   /next universe and a fallback does not exempt it. --scrim in particular
+   is baselined at exactly one reference (shell.css) — this section adds no
+   overlay and therefore no second one. */
+
+.sb-card-admin {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+}
+.sb-card-admin summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  font-weight: var(--weight-medium);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.sb-card-admin summary svg { flex: none; }
+.sb-admin-body { margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+
+.sb-admin-block {
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.sb-admin-block-danger { border-color: var(--danger); }
+
+.sb-admin-row { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.sb-admin-row-text { flex: 1; min-width: 220px; }
+.sb-admin-row-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sb-admin-hint {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+}
+.sb-admin-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+}
+.sb-admin-note > svg { flex: none; margin-top: 1px; }
+.sb-admin-note-danger { color: var(--danger-text); }
+
+.sb-irreversible-pill {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--danger-text);
+  background: var(--danger-tint);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+  font-weight: var(--weight-semibold);
+}
+
+/* ── Shown-once admin token box ───────────────────────────────────────
+   Rendered from card.shownAdminToken, so a re-render REDRAWS it instead of
+   destroying it, and nothing on the rotate path issues a list refresh. */
+
+.sb-token-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.sb-token-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--attention-text);
+  line-height: var(--leading-normal);
+}
+.sb-token-warn > svg { flex: none; margin-top: 1px; }
+.sb-token-value {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.sb-token-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.sb-token-actions .btn svg { margin-right: 4px; vertical-align: -2px; }
+
+/* ── Revoke panel ─────────────────────────────────────────────────────── */
+
+.sb-revoke-panel { margin-top: 12px; display: flex; flex-direction: column; gap: 14px; }
+.sb-revoke-step { display: flex; flex-direction: column; gap: 6px; }
+.sb-revoke-step-label {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+  font-weight: var(--weight-semibold);
+}
+
+.sb-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  background: var(--surface-sunken);
+}
+.sb-member-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sb-member-row:hover { background: var(--surface-hover); }
+.sb-member-row.selected { background: var(--danger-tint); }
+.sb-member-row input { margin-top: 3px; flex: none; accent-color: var(--danger); }
+.sb-member-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sb-member-who {
+  font-size: var(--text-sm);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.sb-member-self {
+  font-size: var(--text-2xs);
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+  letter-spacing: var(--track-eyebrow);
+}
+.sb-member-meta { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+
+.sb-revoke-input {
+  width: 100%;
+  max-width: 420px;
+  height: var(--control-md);
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.sb-revoke-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+.sb-revoke-go { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sb-revoke-gate-reason { font-size: var(--text-xs); color: var(--text-3); }
+
+/* NIT (audit): scoped to .sb-revoke-go, its only user — .btn/.btn-primary/
+   .btn-secondary/.btn-ghost are the real cross-view button variants and
+   live centrally in shell.css; a bare `.btn-danger` here would leak into
+   every other view sharing the same class name. This genuinely belongs
+   alongside those siblings in shell.css, but that file is outside this
+   view's exclusive scope for this pass — reported rather than moved. */
+.sb-revoke-go .btn-danger {
+  background: var(--danger);
+  border: 1px solid var(--danger);
+  color: var(--text-on-accent);
+}
+.sb-revoke-go .btn-danger:hover:not([disabled]) { background: var(--danger-text); border-color: var(--danger-text); }
+.sb-revoke-go .btn-danger[disabled] { opacity: 0.45; cursor: not-allowed; }
+.sb-revoke-go .btn-danger svg { margin-right: 5px; vertical-align: -2px; }
+
+/* ── Revoke outcome ───────────────────────────────────────────────────
+   Three tones, because "the contributor's data is gone" and "the collective
+   is whole" are different questions: success only when the run was clean
+   AND erasure_complete is true; warning when the erasure landed but
+   something else did not; danger when erasure is unconfirmed or denied. */
+
+.sb-outcome {
+  margin-top: 14px;
+  padding: 11px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.sb-outcome-ok { border-color: var(--success-text); background: var(--success-tint); }
+.sb-outcome-warn { border-color: var(--attention-text); background: var(--attention-tint); }
+.sb-outcome-danger { border-color: var(--danger-text); background: var(--danger-tint); }
+
+.sb-outcome-headline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+.sb-outcome-headline > svg { flex: none; margin-top: 1px; }
+.sb-outcome-ok .sb-outcome-headline { color: var(--success-text); }
+.sb-outcome-warn .sb-outcome-headline { color: var(--attention-text); }
+.sb-outcome-danger .sb-outcome-headline { color: var(--danger-text); }
+
+.sb-outcome-erasure { font-size: var(--text-xs); color: var(--text); line-height: var(--leading-normal); }
+.sb-outcome-counts { font-size: var(--text-2xs); color: var(--text-2); }
+
+.sb-outcome-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 7px; }
+.sb-outcome-lines li { font-size: var(--text-xs); color: var(--text); line-height: var(--leading-normal); }
+.sb-outcome-line-label { display: block; font-weight: var(--weight-medium); }
+.sb-outcome-line-detail { display: block; margin-top: 2px; font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
+
+.sb-outcome-notice {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.sb-outcome-notice-danger { border-color: var(--danger-text); color: var(--danger-text); }
+.sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--attention-text); }
+.sb-outcome-notice-ok { color: var(--text-3); }
+
+.sb-outcome-raw summary { cursor: pointer; font-size: var(--text-2xs); color: var(--text-3); }
+.sb-outcome-summary {
+  margin: 7px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    Shared Brain setup wizard — owned by views/shared-brain-wizard.js.
    Restyled from src/public/index.html's #sharedbrain-wizard /

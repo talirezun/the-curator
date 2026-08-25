@@ -20,6 +20,7 @@
 import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, openReader, navigate, isCurrentMount,
   reportAsyncMountFailure, isCurrentReader, reportAsyncActionFailure,
+  consumeChatScopeRequest,
 } from '../app.js';
 
 // ── Markdown rendering (ported from src/public/markdown.js) ─────────────
@@ -236,6 +237,13 @@ const PROVIDER_LABELS = Object.assign(Object.create(null), { gemini: 'Gemini', a
 const STYLE_LABELS = { concise: 'Concise', balanced: 'Balanced', comprehensive: 'Detailed' };
 const STYLE_ORDER = ['concise', 'balanced', 'comprehensive'];
 
+// Compile to Wiki (v3.0.14/v3.0.1-beta.15 parity — src/public/app.js's
+// COMPILE_MIN_USER_MESSAGES): one good question->answer exchange is worth
+// saving. Backend MIN_USER_MESSAGES in src/brain/compile.js matches; a
+// conversation with fewer user turns gets refused server-side with a plain
+// "too short to compile" reason rather than the button ever appearing.
+const COMPILE_MIN_USER_MESSAGES = 1;
+
 // ── localStorage keys ────────────────────────────────────────────────────
 // STYLE and PROVIDER deliberately read/write the SHIPPING app's own keys
 // (src/public/app.js CHAT_STYLE_KEY / CHAT_MODEL_KEY) rather than a /next-
@@ -278,7 +286,49 @@ const state = {
   convToken: 0,           // guards against out-of-order conversation-list fetches (SAME mount, e.g. two quick conversation clicks)
   selectToken: 0,         // guards against out-of-order selectConversation resolutions (SAME mount)
   readerToken: 0,         // guards against out-of-order reader-page fetches (SAME mount)
+
+  // Compile to Wiki. Deliberately a SINGLE global lock (matches the
+  // shipping app's `compileBusy`, not per-conversation) — one compile in
+  // flight is enough; a second click while one is running is refused by the
+  // button's own `disabled`, not by conversation identity.
+  //
+  // THE LOCK'S LIFETIME IS THE RUN, NOT THE MOUNT. `compileOwner` carries the
+  // token of the run that currently holds it (minted by runCompile from
+  // `compileRunSeq`), and updateCompileButtonBusy refuses to publish anything
+  // on behalf of a token that is not the current owner. That is what makes
+  // "only the run holding this lock may release it" a property of the code
+  // rather than a rule someone has to remember: before this, onEnter cleared
+  // compileBusy on EVERY mount, so navigating away from Chat and back during
+  // the 15-45s LLM call (src/brain/compile.js emits progress(20) and then
+  // nothing until progress(85), so there is no SSE frame for almost the whole
+  // run) re-enabled the button and a second click fired a SECOND paid,
+  // destructive compile — whose route then told the user to delete a
+  // .write-lock the first, still-running compile was legitimately holding.
+  // See onEnter's own comment for why state.sending is different and IS still
+  // reset there.
+  //
+  // `compilePct` is read by a full renderMain() rebuild (e.g. a domain switch
+  // mid-compile, or a fresh mount arriving while a compile is in flight) so
+  // that rebuild reflects the LAST progress this view actually saw rather
+  // than resetting to 0% — the live, frame-by-frame update during a compile
+  // writes straight to the DOM (see updateCompileButtonBusy) without going
+  // through a full render. There is deliberately NO `compileLabel`: both the
+  // live fast path and renderCompileButtonHtml render the identical
+  // "Compiling… NN%" string, so the per-frame SSE `message` had no consumer.
+  // It used to be stored here and read by nothing (two docblocks claimed
+  // renderMain read it; renderMain never did). If that message should be
+  // surfaced, the honest way is the shipping app's shape — a real progress
+  // ROW with its own label element (src/public/app.js's #compile-progress-
+  // label) — not a field held in state on the chance someone renders it.
+  compileBusy: false,
+  compilePct: 0,
+  compileOwner: null,
 };
+
+// Monotonic; source of `state.compileOwner`. Module-scoped (not in `state`)
+// because it must never be reset — a reused owner token would let a stale run
+// release a newer run's lock, which is the whole thing compileOwner prevents.
+let compileRunSeq = 0;
 
 let escHandler = null;
 let outsideClickHandler = null;
@@ -322,9 +372,54 @@ registerView('chat', {
     // already correctly dropped by sendCurrentMessage's isCurrentMount
     // check — this just makes sure a FRESH mount never opens already
     // showing someone else's spinner.
+    //
+    // THIS IS THE ONLY FLAG RESET HERE, and the reset IS deliberately
+    // ungated. `state.compileBusy` is NOT reset — an earlier version of this
+    // file reset it (and compilePct, and a compileLabel that nothing read)
+    // under a comment generalising the rule above to "every other busy/
+    // transient flag this file owns". That generalisation was wrong, and the
+    // two flags differ for a concrete reason:
+    //
+    //   - state.sending drives a VISUAL ARTIFACT (the trailing "thinking…"
+    //     bubble) that the in-flight send will never repaint away on a
+    //     foreign mount, because every render sendCurrentMessage makes is
+    //     isCurrentMount-gated. Clearing it here loses nothing: that send's
+    //     reply is dropped by its own stillRelevant check regardless.
+    //
+    //   - state.compileBusy is a LOCK on a paid, destructive write. Clearing
+    //     it here unlocked a live compile: the button re-enabled, a second
+    //     click started a second compile, and the route answered it with
+    //     "manually delete <domains>/<d>/.write-lock and retry" — advice that
+    //     would remove the only cross-process guard while the FIRST compile
+    //     was still writing. Nothing needs to clear it on mount anyway:
+    //     runCompile's `finally` releases it unconditionally (no
+    //     isCurrentMount gate, and the fetch is never aborted on teardown),
+    //     and updateCompileButtonBusy writes the live button ungated by
+    //     mount — so a fresh mount opened mid-compile correctly shows a
+    //     disabled "Compiling… NN%" button that the run itself re-enables.
+    //     There is no path to a permanently-stuck disabled button.
     state.sending = false;
+
+    // app.js's consumeChatScopeRequest() contract: this MUST be called
+    // exactly once, synchronously, right here — before renderShell/boot,
+    // before any `await` anywhere in this function — so nothing can
+    // intervene between navigate() invoking onEnter and the pending
+    // request (if any) being consumed. Consuming clears it in the SAME
+    // call (see app.js's own doc comment on why that's the whole point):
+    // a second mount of this view with no new request from Domains gets
+    // back { slug: null, firstRun: false } and boots exactly as if nothing
+    // had ever been requested — it does NOT re-apply whatever the previous
+    // mount consumed. scripts/test-next-chat-compile.js §1 proves this by
+    // consuming twice in a row and asserting the second call is empty.
+    //
+    // `firstRun` is part of consumeChatScopeRequest()'s return shape but
+    // this file does not act on it — see resolveBootDomain()'s own comment
+    // below for why (Domains creates domains directly now; there is
+    // nothing left to hand off).
+    const scopeReq = consumeChatScopeRequest();
+
     renderShell(mountToken); // paints sidebar+main immediately with a loading state
-    boot(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+    boot(mountToken, scopeReq).catch((err) => reportAsyncMountFailure(mountToken, err));
 
     escHandler = (e) => {
       if (e.key !== 'Escape') return;
@@ -362,7 +457,50 @@ registerView('chat', {
 
 // ── Boot sequence ─────────────────────────────────────────────────────────
 
-async function boot(token) {
+// Pure, DOM-free — deliberately factored out of boot() so the scope-handoff
+// decision (which domain to activate) is testable offline without a server
+// or a DOM (see scripts/test-next-chat-compile.js). `scopeReq` is whatever
+// consumeChatScopeRequest() returned to onEnter — by the time it reaches
+// here it has ALREADY been cleared in app.js's module state (this function
+// never re-reads it and has no way to; it only ever sees the one value it
+// was handed). A request naming a domain that no longer exists (deleted
+// between the click and this mount, or just a bad slug) falls back to the
+// ordinary saved-domain/first-domain logic rather than silently doing
+// nothing — same "never worse than not having scoped at all" shape as
+// every other defensive fallback in this file.
+//
+// consumeChatScopeRequest()'s return also carries `firstRun` — this
+// function deliberately does not read it. Chat originally showed a
+// create-domain panel when a request arrived with no slug (Domains' old
+// "+ New domain" button had no create UI of its own and punted here).
+// Domains now creates domains directly (openLifecycle('create'), a real
+// modal over POST /api/domains) and no longer produces a no-slug request —
+// grep confirms every call site in src/public/next/ passes a real slug —
+// so `firstRun` is currently always false in practice. It stays part of
+// the CONTRACT (app.js's consumeChatScopeRequest() keeps returning it,
+// unchanged, for whichever caller Agent A's degradation path expects it
+// from) without this file pretending to act on it. Reviving a Chat-side
+// first-run affordance would mean: (a) a producer that calls
+// requestChatScope() with no slug again, and (b) this function once more
+// branching on `scopeReq.firstRun` the way an earlier version of this file
+// did — neither exists today.
+function resolveBootDomain(domains, scopeReq, savedLsDomain) {
+  const req = scopeReq || { slug: null };
+  const list = Array.isArray(domains) ? domains : [];
+  if (list.length === 0) {
+    return { activeDomain: null, appliedScopeSlug: false };
+  }
+  if (req.slug && list.some((d) => d.slug === req.slug)) {
+    return { activeDomain: req.slug, appliedScopeSlug: true };
+  }
+  const savedValid = list.some((d) => d.slug === savedLsDomain);
+  return {
+    activeDomain: savedValid ? savedLsDomain : list[0].slug,
+    appliedScopeSlug: false,
+  };
+}
+
+async function boot(token, scopeReq) {
   let domainsData = null;
   let keysData = null;
   try {
@@ -381,16 +519,25 @@ async function boot(token) {
   state.domains = Array.isArray(domainsData.domains) ? domainsData.domains : [];
   applyApiKeys(keysData || {});
 
-  if (state.domains.length === 0) {
+  let saved = null;
+  try { saved = localStorage.getItem(LS_DOMAIN); } catch { /* ignore */ }
+  const decision = resolveBootDomain(state.domains, scopeReq, saved);
+
+  if (!decision.activeDomain) {
     state.activeDomain = null;
     renderShell(token);
     return;
   }
 
-  let saved = null;
-  try { saved = localStorage.getItem(LS_DOMAIN); } catch { /* ignore */ }
-  const savedValid = state.domains.some(d => d.slug === saved);
-  state.activeDomain = savedValid ? saved : state.domains[0].slug;
+  state.activeDomain = decision.activeDomain;
+  // Persist only when the handoff itself chose the domain — an ordinary
+  // fallback to the already-saved value (or to domains[0]) has nothing new
+  // to remember; re-writing the same key either way would be harmless but
+  // this keeps the write scoped to an actual, deliberate scope change,
+  // mirroring switchDomain()'s own persist-on-real-change discipline below.
+  if (decision.appliedScopeSlug) {
+    try { localStorage.setItem(LS_DOMAIN, decision.activeDomain); } catch { /* ignore */ }
+  }
 
   await loadDomainConversations(state.activeDomain, token, { autoSelectMostRecent: true });
 }
@@ -605,6 +752,375 @@ async function sendCurrentMessage() {
       renderComposerBusy(false, mountToken);
       focusComposer();
     }
+  }
+}
+
+// ── Compile to Wiki ──────────────────────────────────────────────────────
+// Streams POST /api/compile/conversation and renders the outcome as an
+// inline card in the thread — ported from src/public/app.js's Compile
+// section (v3.0.14/v3.0.1-beta.27), which is where every invariant below
+// comes from and was hard-won:
+//   - `refused` is a NORMAL outcome (conversation too short, etc.), not an
+//     error — src/routes/compile.js only emits it from a `result.reason`,
+//     which compile.js's own comment distinguishes explicitly from
+//     `result.error`. Rendered informational (chat-compile-refused, an
+//     accent/neutral tone), never in the danger-red error styling.
+//   - Pre-flight failures (missing field, unknown domain, a read-only
+//     mirror, a 409 while an update is running) are plain HTTP JSON,
+//     checked BEFORE the stream is ever read. A held file lock is NOT one
+//     of these — the route acquires the lock, THEN starts the SSE stream,
+//     so a lock conflict arrives as an in-stream `error` event, never an
+//     HTTP status.
+//   - Never `(await r.json())` inside a `throw` — a non-JSON error body
+//     (any real HTML 5xx page) throws `Unexpected token '<'` instead of the
+//     real message; the `.json()` call is wrapped in its own try/catch.
+//   - THE v3.0.14 INVARIANT, verbatim: the outcome renders as a card
+//     APPENDED INTO THE THREAD, never a fixed panel. A fixed panel between
+//     thread and composer once took its height out of the message area and
+//     never gave it back, permanently compressing every later message in
+//     that conversation with no way to close it. `.chat-compile-card`
+//     therefore carries NO max-height/overflow/flex-shrink of its own (see
+//     chat.css) — any `overflow` there would flip its flex `min-height:
+//     auto` to 0 and let the thread squeeze it back into a scroll box,
+//     re-creating the bug indirectly. Horizontal containment lives on the
+//     INNER `.chat-compile-change-summary` block instead.
+//   - Scroll the card's TOP into view, never the thread's bottom — a card
+//     taller than the visible thread (any double-digit-page compile) would
+//     otherwise bury its own title and change counts, the whole point of
+//     showing it. "Top" means below the sticky, opaque `.chat-scopebar`,
+//     whose MEASURED height scrollCompileCardIntoView subtracts: landing the
+//     card at the scrollport's own top parks its first rows behind that bar
+//     instead (see that function's own comment for the measured repro).
+//   - A compile runs 15-45s with the UI fully live, so `compileConvId`/
+//     `compileDomain` are captured at CLICK time and `renderCompileOutcome`
+//     below refuses to append if either has since changed — otherwise the
+//     card either lands in an unrelated transcript (switch conversations
+//     mid-compile) or floats alone over a freshly emptied thread (New chat
+//     mid-compile). The pages are written either way; only the CARD is
+//     conditional on the user still being where they clicked from.
+//   - `warnings[]` on `done` is the ONLY signal that the full->concise->
+//     summary-only fallback ladder degraded this compile (large/complex
+//     conversation). It renders as an info note ABOVE the change list —
+//     silently swallowing it would make a degraded compile look identical
+//     to a clean one.
+
+function formatBytesChat(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' B';
+  return (n / 1024).toFixed(1) + ' KB';
+}
+
+// Pure — builds the inner HTML for a finished compile's change list. No DOM,
+// no state; takes exactly the fields src/brain/compile.js's `done` event
+// carries (same {canonPath, status, bytesBefore, bytesAfter, sectionsChanged,
+// bulletsAdded} contract writePage() has returned since v2.5.0). Deliberately
+// simpler than the shipping app's renderChangeRecords: "unchanged" pages are
+// a static count line rather than a click-to-expand list — a compile's
+// unchanged set is rarely interesting and this avoids wiring a second
+// interactive toggle inside a card that already has none.
+function buildCompileOutcomeHtml(title, changes, warnings) {
+  const list = Array.isArray(changes) ? changes : [];
+  const created = list.filter((c) => c && c.status === 'created');
+  const updated = list.filter((c) => c && c.status === 'updated');
+  const unchanged = list.filter((c) => c && c.status === 'unchanged');
+
+  const formatRecord = (c) => {
+    let detail = '';
+    if (c.status === 'updated' && c.bulletsAdded > 0) {
+      const sections = Array.isArray(c.sectionsChanged) && c.sectionsChanged.length
+        ? ' in ' + c.sectionsChanged.map(escapeHtml).join(', ')
+        : '';
+      detail = '<span class="chat-compile-change-detail">+<span class="mono">' + c.bulletsAdded + '</span> bullet' + (c.bulletsAdded === 1 ? '' : 's') + sections + '</span>';
+    } else if (c.status === 'created') {
+      detail = '<span class="chat-compile-change-detail mono">' + formatBytesChat(c.bytesAfter) + '</span>';
+    } else if (c.status === 'updated') {
+      detail = '<span class="chat-compile-change-detail mono">' + formatBytesChat(c.bytesBefore) + ' → ' + formatBytesChat(c.bytesAfter) + '</span>';
+    }
+    return '<li><span class="chat-compile-change-path mono">' + escapeHtml(c.canonPath || '') + '</span>' + detail + '</li>';
+  };
+
+  const createdBlock = created.length ? (
+    '<div class="chat-compile-change-section chat-compile-change-created">' +
+      '<div class="chat-compile-change-header">' + icon('plus', 13) + ' <span class="mono">' + created.length + '</span> new ' + (created.length === 1 ? 'page' : 'pages') + '</div>' +
+      '<ul class="chat-compile-change-list">' + created.map(formatRecord).join('') + '</ul>' +
+    '</div>'
+  ) : '';
+  const updatedBlock = updated.length ? (
+    '<div class="chat-compile-change-section chat-compile-change-updated">' +
+      '<div class="chat-compile-change-header">' + icon('activity', 13) + ' <span class="mono">' + updated.length + '</span> ' + (updated.length === 1 ? 'page' : 'pages') + ' updated</div>' +
+      '<ul class="chat-compile-change-list">' + updated.map(formatRecord).join('') + '</ul>' +
+    '</div>'
+  ) : '';
+  const emptyBlock = (!created.length && !updated.length)
+    ? '<div class="chat-compile-change-empty">No pages were written.</div>'
+    : '';
+  const unchangedNote = unchanged.length
+    ? '<div class="chat-compile-change-unchanged mono">' + unchanged.length + ' page' + (unchanged.length === 1 ? '' : 's') + ' already up to date</div>'
+    : '';
+
+  const warningsHtml = (Array.isArray(warnings) && warnings.length)
+    ? '<div class="chat-compile-note">' + warnings.map((w) => '<div>' + icon('alertCircle', 12) + ' ' + escapeHtml(w) + '</div>').join('') + '</div>'
+    : '';
+
+  return (
+    warningsHtml +
+    '<div class="chat-compile-change-summary">' +
+      '<h3 class="chat-compile-change-title">Compiled to wiki: ' + escapeHtml(title || '') + '</h3>' +
+      createdBlock + updatedBlock + emptyBlock + unchangedNote +
+    '</div>'
+  );
+}
+
+// Updates the LIVE button label/disabled state directly — called on every
+// SSE `progress`/`wait` frame, far too often to justify a full renderMain()
+// rebuild (which would tear down and re-focus the composer on every tick).
+// A full rebuild DOES still happen if the user switches domain/conversation
+// mid-compile, or arrives on a fresh mount while a compile is in flight —
+// renderCompileButtonHtml reads state.compileBusy/compilePct for exactly
+// that case. This function is the fast path for the common one.
+//
+// `owner` is the calling run's token (see state.compileOwner). A call whose
+// owner is not the current holder publishes NOTHING — not to `state`, not to
+// the DOM. That single guard is what makes the lock's lifetime the RUN's:
+// without it, any run that somehow outlives its claim can release a lock it
+// no longer holds, re-enabling the button under a live compile. Note the
+// guard is deliberately NOT an isCurrentMount check — the owner's own
+// updates SHOULD reach whatever mount is on screen, so that a Chat mount
+// entered mid-compile shows a correctly disabled button.
+//
+// Null-checks both elements the same way renderComposerBusy does: if a
+// domain switch mid-compile has already replaced this DOM subtree, or the
+// user is on another view entirely, these are harmless no-ops, not errors.
+function updateCompileButtonBusy(owner, busy, pct) {
+  if (owner !== state.compileOwner) return;
+  state.compileBusy = busy;
+  state.compilePct = busy ? (pct || 0) : 0;
+  if (!busy) state.compileOwner = null;
+  const btn = document.getElementById('chat-compile-btn');
+  const labelEl = document.getElementById('chat-compile-btn-label');
+  if (btn) btn.disabled = busy;
+  if (labelEl) labelEl.textContent = busy ? ('Compiling… ' + Math.round(pct || 0) + '%') : 'Compile to Wiki';
+}
+
+// Scrolls so the card's TOP lands at the top of the visible thread area —
+// see this section's own header comment for why. #chat-thread has NO
+// scroll of its own (see renderThreadOnly's own comment, bottom of this
+// file): #main is the real scrolling ancestor, so offsets are measured
+// against it, not against the thread element.
+//
+// `.chat-scopebar` is `position: sticky; top: 0` with an OPAQUE background
+// (see chat.css), so it pins to the top of #main's scrollport and covers
+// whatever is underneath it. Landing the card at the scrollport's own top
+// therefore parked its first rows BEHIND the bar: measured live at 1440x892
+// on a 30-change card, the bar occupied 0->55 while `.chat-compile-note` —
+// the ONLY signal that compile's full->concise->summary-only ladder degraded
+// this run — sat at 8->45, entirely hidden. With no warning present the same
+// arithmetic hides the "Compiled to wiki: <title>" heading instead. It bit
+// precisely in the case this function exists for (a card taller than the
+// viewport). The bar's height is MEASURED, never hardcoded: it wraps and
+// grows with the number of scope pills, and its padding comes from tokens.
+function scrollCompileCardIntoView(card) {
+  const scrollHost = document.getElementById('main');
+  if (!scrollHost) return;
+  const bar = scrollHost.querySelector('.chat-scopebar');
+  const barHeight = bar ? bar.getBoundingClientRect().height : 0;
+  const hostRect = scrollHost.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  scrollHost.scrollTop += (cardRect.top - hostRect.top) - barHeight - 8;
+}
+
+// Pure — the mid-compile-switch guard runCompile()'s renderCompileOutcome
+// closure relies on, factored out so it's directly testable without a DOM
+// (see scripts/test-next-chat-compile.js). Captures the exact bug this
+// closes: a compile runs 15-45s with the UI live, so by the time it
+// resolves the user may have switched conversations or domains (or started
+// a New chat, which sets activeConversationId to null) — appending the
+// outcome card in that case would land it in an unrelated transcript, or
+// float alone over a freshly emptied thread. The pages are written either
+// way; only whether the CARD appears is conditional on this.
+function compileStillTargetsActive(activeConversationId, compileConvId, activeDomain, compileDomain) {
+  return activeConversationId === compileConvId && activeDomain === compileDomain;
+}
+
+async function runCompile() {
+  // Two independent expressions of the same single-flight invariant, both
+  // read and both claimed SYNCHRONOUSLY (no `await` anywhere between this
+  // check and the claim below), so there is no window for a second click to
+  // pass. They are written in exactly two places — here and
+  // updateCompileButtonBusy — and always together, so they cannot drift.
+  if (state.compileBusy || state.compileOwner !== null) return;
+  if (!state.activeConversationId || !state.activeDomain) return;
+
+  // Captured at click time (this function is only ever entered from the
+  // compile button's own click handler) — see this section's header
+  // comment for why the outcome render below re-checks both against the
+  // LIVE state before appending anything. `mountToken` is captured here,
+  // before any await, per this file's H1 rule; it is used ONLY by the
+  // best-effort state.domains refresh at the end (which genuinely must not
+  // write module state on behalf of a dead mount). It is deliberately NOT
+  // used to decide whether the outcome card renders — see
+  // renderCompileOutcome below.
+  const mountToken = myMountToken;
+  const compileConvId = state.activeConversationId;
+  const compileDomain = state.activeDomain;
+
+  // This run's owner token. Minting it here (rather than inside the try
+  // below, where the actual claim now happens) keeps it synchronous with
+  // the guard above with no `await` in between — see that guard's own
+  // comment. Minting alone is inert: nothing is claimed yet, so a throw
+  // here (there is none — `++` on a module-scoped `let` cannot throw)
+  // would have nothing to release.
+  const owner = ++compileRunSeq;
+
+  // Pushes into `state.thread` (as a synthetic `{role:'compile', html}`
+  // item) rather than appending straight into the DOM — see renderThreadOnly's
+  // own comment on that branch for why: this file rebuilds `#chat-thread`
+  // from `state.thread` on every subsequent send/domain-switch/etc., so a
+  // card that lived only in the DOM would vanish the next time any of those
+  // ran, one message after the user saw it. Refuses to push at all if the
+  // conversation/domain moved on since the click (the mid-compile-switch
+  // race this whole section exists to close) — the pages are written
+  // either way; only the card's presence is conditional.
+  //
+  // compileStillTargetsActive is the WHOLE gate, deliberately. An
+  // isCurrentMount(mountToken) check used to sit in front of it and was
+  // strictly harmful: both documented harms (card lands in an unrelated
+  // transcript / floats over a freshly emptied thread) are already covered
+  // by the conversation+domain comparison, while the mount check ALSO fired
+  // when the user had merely glanced at another view and come back to the
+  // SAME domain and SAME conversation — a remount, a new token, and a
+  // successful paid compile whose only trace was a console.warn. This
+  // matches the shipping app (src/public/app.js's own renderCompileOutcome
+  // compares activeConvId/chatDomain and nothing else).
+  //
+  // The render therefore uses the LIVE myMountToken, not the token captured
+  // at click time. That is not a violation of this file's "never re-read
+  // myMountToken after an await" rule — it is the one case the rule's own
+  // reasoning permits: we are not asking "was I still current?", we are
+  // asking "which mount am I painting into NOW?", and the gate above has
+  // already established the user is looking at the right conversation. If
+  // Chat is not the mounted view at all, renderThreadOnly's own
+  // isCurrentMount check makes this a no-op and #chat-thread is absent, so
+  // nothing paints and nothing throws (the card stays in state.thread and is
+  // replaced by the server's copy on the next boot — the same outcome as
+  // before, minus the false negative above).
+  const renderCompileOutcome = (html) => {
+    if (!compileStillTargetsActive(state.activeConversationId, compileConvId, state.activeDomain, compileDomain)) {
+      console.warn('[next/chat] compile finished after the user navigated away — card not shown');
+      return false;
+    }
+    state.thread.push({ role: 'compile', html });
+    const liveToken = myMountToken;
+    renderThreadOnly(liveToken);
+    // `querySelectorAll(...)`'s last match, NOT `:last-child` — if
+    // state.sending happens to be true at this exact moment (a message send
+    // racing a compile in the same conversation), renderThreadOnly appends
+    // a trailing "thinking…" bubble AFTER every state.thread item, which
+    // would otherwise BE the last child and defeat a `:last-child` selector.
+    const threadEl = document.getElementById('chat-thread');
+    const cards = threadEl ? threadEl.querySelectorAll('.chat-compile-card') : null;
+    const card = cards && cards.length ? cards[cards.length - 1] : null;
+    if (card) scrollCompileCardIntoView(card);
+    return true;
+  };
+
+  try {
+    // The actual claim — both statements, inside the try, so a throw from
+    // either (neither can throw today: a plain assignment, then a function
+    // that only touches `state` and `document.getElementById`, both
+    // null-checked) is caught below and the `finally` still releases what
+    // was claimed. Before this they sat between the guard and `try`: the
+    // one throw-shaped path left to a PERMANENTLY disabled Compile button
+    // (no finally to run at all, so the claim would never be released).
+    // Not reachable today — recorded as closed anyway, since closing it
+    // costs nothing and finding the next thing that makes it reachable is
+    // exactly the kind of assumption this codebase's history warns against.
+    state.compileOwner = owner;
+    updateCompileButtonBusy(owner, true, 0);
+
+    const res = await fetch('/api/compile/conversation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain: compileDomain, conversationId: compileConvId }),
+    });
+
+    if (!res.ok && res.status !== 200) {
+      // Pre-flight validation errors (missing field, unknown domain, a
+      // read-only mirror, an in-progress update) are plain JSON, not SSE.
+      let errMsg = 'HTTP ' + res.status;
+      try { const j = await res.json(); errMsg = j.error || errMsg; } catch { /* non-JSON body — keep the generic message */ }
+      throw new Error(errMsg);
+    }
+    if (!res.body) throw new Error('Streaming is not supported by this browser.');
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let final = null, refused = null, errored = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let event;
+        try { event = JSON.parse(line.slice(6)); } catch { continue; }
+        if (event.type === 'progress' || event.type === 'wait') {
+          updateCompileButtonBusy(owner, true, event.pct != null ? event.pct : 50);
+        } else if (event.type === 'done') {
+          final = event;
+        } else if (event.type === 'refused') {
+          refused = event.reason;
+        } else if (event.type === 'error') {
+          errored = event.message;
+        }
+      }
+    }
+
+    if (errored) throw new Error(errored);
+    if (refused) {
+      // Normal outcome, not an error — see this section's header comment.
+      renderCompileOutcome('<div class="chat-compile-refused">' + icon('alertCircle', 14) + ' ' + escapeHtml(refused) + '</div>');
+      return;
+    }
+    if (!final) throw new Error('The compile finished with no result.');
+
+    const changes = Array.isArray(final.changes) ? final.changes : [];
+    const warnings = Array.isArray(final.warnings) ? final.warnings : [];
+    renderCompileOutcome(buildCompileOutcomeHtml(final.title, changes, warnings));
+
+    // Best-effort refresh of `state.domains` (pageCount etc.) so the NEXT
+    // natural full render (a domain switch, a remount) picks up what this
+    // compile just wrote. Deliberately does NOT call renderMain()/
+    // renderShell() itself: renderMain() re-reads `state.domains` and
+    // rebuilds the entire main column — scopebar, thread, composer — which
+    // would tear down and re-create the composer (losing focus and any
+    // half-typed message) purely to update a page count the user has not
+    // asked to see. The outcome card itself would SURVIVE that rebuild (it
+    // lives in `state.thread`, which is the whole reason renderCompileOutcome
+    // pushes it there rather than appending to the DOM — see renderThreadOnly's
+    // `role === 'compile'` branch); the earlier claim here that a render would
+    // "silently wipe the outcome card" was false, though the conclusion —
+    // don't render — stands for the composer-teardown reason above. A failed
+    // fetch here is invisible and fine either way.
+    //
+    // isCurrentMount IS correct here, unlike in renderCompileOutcome: this
+    // writes module state (`state.domains`) that a dead mount has no business
+    // touching, and `mountToken` is the click-time capture per the H1 rule.
+    try {
+      const domainsData = await fetch('/api/domains/stats').then(r => r.json());
+      if (isCurrentMount(mountToken) && Array.isArray(domainsData.domains)) state.domains = domainsData.domains;
+    } catch { /* best-effort, see above */ }
+  } catch (err) {
+    renderCompileOutcome('<div class="chat-compile-error">' + icon('alertCircle', 14) + ' ' + escapeHtml(err.message) + '</div>');
+  } finally {
+    // Releases the lock. Runs unconditionally — not isCurrentMount-gated,
+    // and the fetch above is never aborted on teardown — which is exactly
+    // why onEnter does not need (and must not have) a compileBusy reset.
+    updateCompileButtonBusy(owner, false, 0);
   }
 }
 
@@ -869,6 +1385,12 @@ function renderSidebarConversationsOnly(token) {
 
 function renderMain(token) {
   if (!isCurrentMount(token)) return;
+
+  // Chat has no domain-creation UI of its own — Domains owns that
+  // (openLifecycle('create'), a real modal over POST /api/domains). A
+  // zero-domain user is routed there rather than shown a duplicate create
+  // flow; see resolveBootDomain()'s own comment for why a Chat-side
+  // create-domain panel used to exist here and was removed.
   if (state.domains.length === 0) {
     setMain(
       eyebrow('the default view') +
@@ -897,6 +1419,7 @@ function renderMain(token) {
         '<span class="chat-scope-eyebrow mono">SCOPE</span>' +
         '<div class="chat-scope-pills">' + scopePills + '</div>' +
         '<div class="chat-scope-spacer"></div>' +
+        renderCompileButtonHtml() +
         '<span class="chat-scope-count mono">' + pageCount.toLocaleString() + ' page' + (pageCount === 1 ? '' : 's') + ' in scope</span>' +
       '</div>' +
       '<div class="chat-thread" id="chat-thread"></div>' +
@@ -908,10 +1431,33 @@ function renderMain(token) {
   document.querySelectorAll('[data-scope-domain]').forEach(btn => {
     btn.addEventListener('click', () => switchDomain(btn.dataset.scopeDomain));
   });
+  document.getElementById('chat-compile-btn')?.addEventListener('click', () => runCompile().catch(reportAsyncActionFailure));
 
   wireComposer();
   renderThreadOnly(token);
   renderComposerPickers();
+}
+
+// Shown/hidden the same way the shipping app's #compile-btn is (v3.0.1-
+// beta.15's COMPILE_MIN_USER_MESSAGES = 1): once this conversation has at
+// least one user turn. Unlike the shipping app, this does NOT hide the
+// button for a read-only Shared Brain mirror domain — the backend already
+// refuses that with a clear, user-facing 400 (see runCompile's error
+// handling below), and duplicating that domain-readonly check here would
+// be a second place for the two to drift apart. A deliberate scope
+// simplification, not an oversight.
+function renderCompileButtonHtml() {
+  const userTurns = state.thread.filter((m) => m.role === 'user').length;
+  if (!state.activeConversationId || userTurns < COMPILE_MIN_USER_MESSAGES) return '';
+  const label = state.compileBusy
+    ? ('Compiling… ' + Math.round(state.compilePct || 0) + '%')
+    : 'Compile to Wiki';
+  return (
+    '<button class="chat-compile-btn" id="chat-compile-btn"' + (state.compileBusy ? ' disabled' : '') +
+      ' title="Save this conversation as wiki pages">' +
+      icon('sparkles', 13) + ' <span id="chat-compile-btn-label">' + escapeHtml(label) + '</span>' +
+    '</button>'
+  );
 }
 
 function renderComposerHtml(active) {
@@ -1079,6 +1625,21 @@ function renderThreadOnly(token) {
     : (state.activeProvider ? (PROVIDER_LABELS[state.activeProvider] || state.activeProvider) : 'The Curator');
 
   el.innerHTML = state.thread.map(m => {
+    // Compile-to-Wiki outcome cards (see the "Compile to Wiki" section
+    // above runCompile()). Pushed into `state.thread` itself — NOT
+    // appended to the DOM directly — specifically so they survive being
+    // caught up in a rebuild like this one: this function does a full
+    // `el.innerHTML = ...` on every subsequent send, domain switch, etc.,
+    // so anything not represented in `state.thread` would vanish the next
+    // time ANY of those ran. `m.html` was built by buildCompileOutcomeHtml/
+    // the refused/error branches in runCompile(), which already escape
+    // every piece of server- or user-derived text they interpolate (title,
+    // paths, error/refusal messages) — this is the one spot in this
+    // function that inserts pre-built HTML rather than escaping inline,
+    // and it is safe for exactly that reason.
+    if (m.role === 'compile') {
+      return '<div class="chat-compile-card">' + m.html + '</div>';
+    }
     if (m.role === 'user') {
       return (
         '<div class="chat-msg chat-msg-user">' +

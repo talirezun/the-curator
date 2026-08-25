@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { execFile } from 'child_process';
 import { readWikiPages, listDomains, isDomainReadonly } from '../brain/files.js';
-import { getWikiPage } from '../brain/wiki-read.js';
+import { getWikiPage, listWikiInventory } from '../brain/wiki-read.js';
 import { sourceForSummary, hashRawSource } from '../brain/raw-store.js';
 
 const router = Router();
@@ -20,6 +20,46 @@ router.get('/:domain', async (req, res) => {
   } catch (err) {
     console.error('Wiki error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/wiki/:domain/list
+ *
+ * Cheap, readdir-only inventory of every page in the domain's wiki — the
+ * data source for a wiki-BROWSE list view. The third sibling next to
+ * `GET /:domain` above (full content of every page — 14 MB on `articles`,
+ * wrong shape for "what pages exist") and `GET /:domain/page` (open exactly
+ * one already-known page — wrong shape for "list what I could open").
+ *
+ * Built on `listWikiInventory` in wiki-read.js, which itself is built on
+ * health.js's gated `listMd` rather than a fresh readdir — see that
+ * function's docblock for why a second hand-rolled inventory would silently
+ * disagree with what `/page` can actually open (the same class of bug fixed
+ * app-wide in the v3.2.0 audit).
+ *
+ * Response: `{domain, entries: [{slug, folder, path, title}], count, total,
+ * truncated}`. `title` is derived from the slug only (no content read —
+ * see listWikiInventory's docblock for that trade-off, spelled out
+ * explicitly there). Capped at 20,000 entries; `truncated` says whether more
+ * exist, `total` is the real (uncapped) count. Reads are allowed on
+ * read-only Shared Brain mirror domains, matching `/page` — this route never
+ * writes.
+ */
+router.get('/:domain/list', async (req, res) => {
+  try {
+    const { domain } = req.params;
+
+    const domains = await listDomains();
+    if (!domains.includes(domain)) {
+      return res.status(404).json({ error: `Unknown domain: ${domain}` });
+    }
+
+    const result = await listWikiInventory(domain);
+    res.json(result);
+  } catch (err) {
+    console.error('Wiki list error:', err);
+    res.status(err.status || 500).json({ error: err.message });
   }
 });
 

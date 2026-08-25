@@ -724,7 +724,7 @@ A domain is a focused knowledge silo — a dedicated wiki for one topic area. Ea
 The **Domains** tab is the control panel: each card shows the folder path, wiki page count, conversation count, and last-ingested date. Buttons cover the three lifecycle actions:
 
 - **New Domain** — pick a name, scope, and template (Tech / AI · Business · Personal Growth · Generic). The folder slug is generated and shown as a live preview.
-- **Rename** (pencil icon) — folder is renamed on disk; wiki pages, conversations, and Obsidian links are preserved.
+- **Rename** (pencil icon) — updates the display name. If the new name changes the folder slug, the folder is renamed on disk too; if it doesn't (e.g. a capitalization-only edit), the folder stays put. Either way, wiki pages, conversations, and Obsidian links are preserved.
 - **Delete** (trash icon) — confirmation shows exact page and conversation counts before commit. Deletion is permanent — no undo.
 
 Changes are reflected in dropdowns and Obsidian instantly — no restart needed. If sync is configured, run **Sync now** soon after a rename or delete so your other computers stay consistent.

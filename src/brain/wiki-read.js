@@ -71,6 +71,24 @@ import { readFile, readdir, stat } from 'fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'fs';
 import path from 'path';
 import { wikiPath } from './files.js';
+// listWikiInventory() below reuses health.js's listMd — the SAME gated,
+// symlink-aware directory listing scanWiki() uses to build its page
+// inventory — rather than a third hand-rolled readdir. See listWikiInventory's
+// own docblock for why importing (not copying) it is load-bearing here, the
+// same way health.js imports resolveInsideWiki from THIS file rather than
+// keeping a second copy (the v3.2.0 CRITICAL was exactly two hand-maintained
+// copies of a path guard drifting apart).
+//
+// This makes health.js <-> wiki-read.js a circular import. That is safe here
+// because both symbols crossing the cycle (`resolveInsideWiki` below,
+// `listMd` in health.js) are `function`/`export function` DECLARATIONS, which
+// are hoisted and bound during ES module instantiation — before either
+// module's body executes — so it does not matter which module Node happens
+// to load first. Neither module calls the other's export at module-eval
+// time (only from inside request-handled async functions), which is the
+// property that must hold for that to stay true; do not add a top-level call
+// across this boundary.
+import { listMd } from './health.js';
 
 const CANONICAL_FOLDERS = new Set(['entities', 'concepts', 'summaries']);
 
@@ -688,5 +706,117 @@ export async function getWikiPage(domain, requestedPath) {
     // Additive (v3.2.0): false for a nested page, whose empty `backlinks`
     // means "nothing in this wiki can link here", not "nothing does".
     resolvableTarget,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// listWikiInventory — the wiki-browse listing endpoint's data source.
+//
+// `/next` has no wiki-browse surface at all. The two existing reads are the
+// wrong shape for it: `GET /:domain` (readWikiPages, src/routes/wiki.js)
+// reads the FULL CONTENT of every page — 14 MB on the real `articles`
+// domain — and `getWikiPage` above opens exactly one already-known page.
+// Populating a browse list needs neither: it needs to enumerate what pages
+// EXIST, cheaply, so the client can filter/search in memory and fetch full
+// content only for whatever the user actually opens.
+//
+// THE LOAD-BEARING DECISION: this is built from `listMd` (imported from
+// health.js, see the import comment above), not a fresh `readdir`. A naive
+// readdir would list pages `getWikiPage` can refuse to open — a symlink
+// escaping the wiki, a directory literally named `x.md`, a dangling
+// symlinked leaf — and the two would silently disagree about what "a page
+// of this wiki" means, the exact way scanWiki() and getWikiPage() disagreed
+// before v3.2.0 (audit finding M4, documented in listMd's own docblock in
+// health.js). `listMd` is also EXACTLY the shape `isResolvableTargetPath`
+// requires (a depth-1 file directly inside one canonical folder) — the same
+// invariant getWikiPage's backlink resolution depends on — so every entry
+// this function returns is, by construction, openable via GET :domain/page.
+//
+// ENFORCED contract:
+//   - Every entry is `{slug, folder, path, title}`. `path` is the exact
+//     string GET /:domain/page's `path` query param expects (folder/slug.md,
+//     no leading slash) — the same convention readWikiPages() and chat
+//     citations already use elsewhere in the app.
+//   - `title` is derived from the SLUG ONLY — never from file content or
+//     frontmatter. This function performs ZERO `readFile` calls; cost scales
+//     with page COUNT (one readdir per canonical folder), not with wiki size,
+//     which is the entire reason it can return ~3,300 entries in one call
+//     instead of the 14 MB `GET /:domain` returns.
+//   - Capped at MAX_LIST_ENTRIES (20,000) with `truncated: true` when the
+//     domain has more. `total` always reports the real (uncapped) count —
+//     computing it costs nothing extra, since `listMd` already returned
+//     every filename before the slice.
+//
+// NOT ENFORCED — known, accepted trade-off (do not "fix" this by adding a
+// content read here):
+//   - A page whose REAL title (an explicit frontmatter `title:`, or the
+//     first `# Heading` in the body — see `deriveTitle` above) differs from
+//     a humanised form of its slug will show the SLUG-DERIVED label in this
+//     list. Its real title is correct the instant it's opened via
+//     GET /:domain/page, which DOES read the file. This is intentional, not
+//     an oversight: reading file content here to get "real" titles
+//     reinstates the exact 14 MB-response problem this endpoint exists to
+//     avoid. If real titles in the browse list are ever wanted, that needs a
+//     separately-costed mechanism (e.g. a title-only cache built once and
+//     invalidated the way the backlink index above is, or a client-side
+//     cache populated as pages get opened) — never a body read inside this
+//     function.
+// ─────────────────────────────────────────────────────────────────────────
+
+const LIST_FOLDERS = ['entities', 'concepts', 'summaries'];
+// Exported so scripts/test-wiki-list.js can prove the real cap boundary
+// (MAX_LIST_ENTRIES vs MAX_LIST_ENTRIES + 1 real files on disk) instead of
+// hardcoding 20000 twice and hoping the two numbers never drift apart.
+export const MAX_LIST_ENTRIES = 20000;
+
+/**
+ * Humanise a slug into a display label using ONLY the slug string — no file
+ * read. Intentionally duplicates deriveTitle()'s last-resort branch (line
+ * ~334 above) rather than importing/sharing it: that branch is a one-line
+ * pure string transform with no path-safety or parity stakes, unlike
+ * resolveInsideWiki/listMd — a second copy of a one-liner carries none of
+ * the drift risk a second path guard would, so it isn't worth the coupling.
+ */
+function titleFromSlug(slug) {
+  return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * Cheap, readdir-only inventory of every page in `domain`'s wiki — see the
+ * block comment above for the full contract. Throws an Error with `.status`
+ * set (404) if the domain has no wiki, matching getWikiPage's convention.
+ */
+export async function listWikiInventory(domain) {
+  const wikiDir = wikiPath(domain);
+  if (!existsSync(wikiDir)) {
+    const err = new Error(`No wiki found for domain: ${domain}`);
+    err.status = 404;
+    throw err;
+  }
+
+  const entries = [];
+  for (const folder of LIST_FOLDERS) {
+    const filenames = await listMd(wikiDir, folder);
+    for (const filename of filenames) {
+      const slug = filename.slice(0, -3); // listMd only ever returns names ending in ".md"
+      entries.push({
+        slug,
+        folder,
+        path: `${folder}/${filename}`,
+        title: titleFromSlug(slug),
+      });
+    }
+  }
+
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+
+  const total = entries.length;
+  const truncated = total > MAX_LIST_ENTRIES;
+  return {
+    domain,
+    entries: truncated ? entries.slice(0, MAX_LIST_ENTRIES) : entries,
+    count: Math.min(total, MAX_LIST_ENTRIES),
+    total,
+    truncated,
   };
 }

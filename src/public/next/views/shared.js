@@ -175,6 +175,7 @@ function freshState() {
     cards: {},              // connection id -> ensureCard() shape, below
     expandedSkips: new Set(),
     expandedCohort: new Set(),
+    expandedAdmin: new Set(),
   };
 }
 
@@ -187,13 +188,45 @@ let unsubscribeWriteGate = null;
 function ensureCard(id) {
   if (!state.cards[id]) {
     state.cards[id] = {
-      acting: null,               // null | 'push' | 'pull' | 'synthesize' | 'unskip' | 'leave'
+      acting: null,               // null | 'push' | 'pull' | 'synthesize' | 'unskip' | 'leave' | 'rotate' | 'revoke'
       message: null,
       error: false,
       pushConfirmOpen: false,
       synthesizeConfirmOpen: false,
       leaveConfirmOpen: false,
       cohort: null,                // null = not loaded | 'loading' | {members, selfFellowId, mirrorStats} | {error}
+
+      // ── Admin controls (see the "Admin controls" section below) ────────
+      // adminTokenProvisioned: a successful rotate makes the revoke
+      // affordance appear WITHOUT re-reading GET /list. That is not a
+      // convenience — it is the shown-once rule (CLAUDE.md v3.0.5: the
+      // display "deliberately SKIPS the post-op list refresh … don't 'fix'
+      // that by adding one"). In THIS architecture a refresh is worse than
+      // in the shipping app's: loadConnections() can set state.listError,
+      // and renderEnabled() then returns the error branch, which renders NO
+      // CARDS AT ALL — the freshly-minted token would vanish from the
+      // screen entirely. So the card learns "a token now exists" from this
+      // local flag instead, and no refresh is issued.
+      adminTokenProvisioned: false,
+      // The one place a real admin token is ever held. Set only from the
+      // rotate response, rendered only inside its own shown-once box,
+      // cleared only when the admin explicitly presses Hide. Never written
+      // to localStorage, a URL, or any other surface.
+      shownAdminToken: null,
+      rotateConfirmOpen: false,
+
+      revokeOpen: false,
+      revokeMembers: null,          // null = not loaded | 'loading' | {members, selfFellowId} | {error}
+      revokeSelectedFellowId: null,
+      revokeTyped: '',              // the typed confirmation — NOT a secret
+      // BOOLEAN ONLY. The admin token itself lives in the password input in
+      // the DOM and nowhere else; this records merely that something long
+      // enough has been typed, so the unlock state survives a re-render.
+      // runRevoke() re-reads the live input and refuses locally if it is
+      // gone, so a stale `true` here can never produce a doomed request.
+      revokeTokenPresent: false,
+      revokeProgress: null,
+      revokeOutcome: null,          // classifyRevokeOutcome() output
     };
   }
   return state.cards[id];
@@ -529,6 +562,8 @@ function renderCard(conn) {
 
       renderCohort(conn, card) +
 
+      renderAdmin(conn, card, busy, mirrorBusy) +
+
       (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' : '') +
 
       (mirrorDomain ? '<p class="sb-card-note">Pulled content appears as the read-only domain <span class="mono">' + escapeHtml(mirrorDomain) + '</span> in the Domains tab.</p>' : '') +
@@ -687,6 +722,982 @@ function renderCohort(conn, card) {
   );
 }
 
+// ── Admin controls: admin token + contributor revocation (Art. 17) ────────
+//
+// WHY THIS EXISTS AT ALL. Before this, /next shipped GET /:id/members —
+// which exists for exactly one reason, to let an admin discover a
+// fellow_id so they can revoke — and not the revocation itself. Cutting
+// over in that state would mean an admin could not serve a GDPR erasure
+// request from the app at all. Revoke is the Article 17 path; it is
+// IRREVERSIBLE; and its result is what an admin uses to certify to a data
+// subject that their data is gone.
+//
+// FIVE RULES, each one a recorded bug in this repo's history:
+//
+//  1. The admin token is shown ONCE. No post-op list refresh — see
+//     ensureCard()'s comment for why a refresh is *more* destructive in
+//     this render-from-state architecture than in the shipping app's.
+//  2. The admin types the SHORT form (REVOKE-<short_id>); the client
+//     expands it to the full-UUID literal the API requires. The
+//     confirmation field is NEVER prefilled — prefilling it would defeat
+//     the entire accident gate, which is the only thing standing between a
+//     mis-click and an irreversible erasure.
+//  3. fellow_id comes from GET /:id/members, whose identity is derived
+//     from the STORAGE PATH, never from a payload's self-declared
+//     fellow_id — the same trust rule synthesis uses, so a spoofed payload
+//     cannot impersonate or merge a fellow.
+//  4. read_only connections get no admin section at all; a connection with
+//     no admin token gets rotate (as the PROVISIONING path) but no revoke.
+//  5. A non-clean outcome must NEVER read as success. v3.0.3 records the
+//     pre-fix admin seeing "Revocation complete" over a gutted collective.
+//
+// THE FIELD-TO-PIXEL TRACE. This backend was reworked in v3.6.2 to be
+// self-reporting, and v3.6.2's own changelog records TWO instances of
+// "new fields, no consumer" shipping inside its own fixes. So every field
+// consumed here is traced to something an admin actually sees:
+//
+//   summary            → outcome.summary        → rendered verbatim (it is
+//                        server-built from a `problems[]` accumulator and
+//                        honest by construction; the reassuring wording is
+//                        emitted at exactly one site, inside
+//                        `if (problems.length === 0)`, with no `else` and
+//                        no `default:`. Preferred over any client-composed
+//                        string — a client-composed one is how the old UI
+//                        drifted into claiming success.)
+//   erasure_complete   → outcome.tone + outcome.erasureLine
+//   partial / ok       → outcome.tone + outcome.headline
+//   marker_active      → outcome.marker  (the actionable one: is cohort
+//                        synthesis blocked RIGHT NOW)
+//   marker_cleared     → outcome.marker  (null = N/A, never "blocked")
+//   contributions_failed[], pages_failed[], digest_failed,
+//   pages_rebuild_failed, state_reset_failed, audit_failed
+//                      → outcome.lines   → one rendered row each
+//   audit_record       → outcome.audit   (and an ABORT, which writes NO
+//                        audit line, must not be implied to have been
+//                        logged)
+//
+// THE SSE TRAP, and why nothing here breaks on the first terminal frame.
+// revokeContributor calls onProgress('done', msg) — which the route
+// forwards as {type:'done', message} with NO result — and only THEN does
+// the route emit its own {type:'done', result} once the await returns. The
+// failure path is the same shape: onProgress('error', msg) first, then
+// {type:'error', message, result}. A reader that breaks on the first
+// terminal frame therefore gets the prose and NONE of the structured
+// fields — the exact "the fields reach nobody" shape this release is
+// guarding against. absorbRevokeFrame() below never stops absorption and
+// never lets a later result-less frame clear a result already seen; the
+// caller reads to stream end (the route's `finally` calls res.end(), so it
+// terminates).
+
+// The admin affordances for one connection. Rule 4 lives here, in one
+// place, so the render, the click handlers and the tests cannot disagree
+// about who may see what.
+function adminAffordances(conn, card) {
+  if (conn && conn.read_only === true) {
+    return { show: false, showRotate: false, showRevoke: false, hasToken: false, rotateLabel: '' };
+  }
+  const hasToken =
+    !!(conn && typeof conn.admin_token === 'string' && conn.admin_token.length > 0) ||
+    !!(card && card.adminTokenProvisioned);
+  return {
+    show: true,
+    showRotate: true,
+    showRevoke: hasToken,
+    hasToken,
+    rotateLabel: hasToken ? 'Rotate admin token' : 'Generate admin token',
+  };
+}
+
+// What the admin must TYPE — the short form, per rule 2. short_id is
+// `fellow_id.replace(/-/g,'').slice(0,8)` (hyphens stripped) and is
+// therefore NOT recoverable back into a UUID by string surgery, which is
+// exactly why the expansion below reads the picked member's own fellow_id.
+function revokeExpectedTyped(member) {
+  return member && typeof member.short_id === 'string' && member.short_id
+    ? 'REVOKE-' + member.short_id
+    : null;
+}
+
+// What the API must RECEIVE — the full-UUID literal. Never shown, never
+// prefilled, never derived from what was typed.
+function revokeConfirmationFor(member) {
+  return member && typeof member.fellow_id === 'string' && member.fellow_id
+    ? 'REVOKE-' + member.fellow_id
+    : null;
+}
+
+function revokeGateState({ member, typed, tokenPresent, busy }) {
+  if (busy) return { unlocked: false, reason: 'An operation is already running on this connection.' };
+  if (!member) return { unlocked: false, reason: 'Select the contributor to revoke.' };
+  if (!tokenPresent) return { unlocked: false, reason: 'Paste the admin token from your password manager.' };
+  const expected = revokeExpectedTyped(member);
+  if (!expected) return { unlocked: false, reason: 'This member has no usable short id — it cannot be revoked from here.' };
+  if (String(typed == null ? '' : typed).trim() !== expected) {
+    return { unlocked: false, reason: 'Type ' + expected + ' exactly to unlock.' };
+  }
+  if (!revokeConfirmationFor(member)) {
+    return { unlocked: false, reason: 'This member has no usable fellow id — it cannot be revoked from here.' };
+  }
+  return { unlocked: true, reason: null };
+}
+
+function freshRevokeAcc() {
+  return { result: null, lastMessage: null, errorMessage: null, sawError: false, sawTerminal: false };
+}
+
+// See "THE SSE TRAP" above. Returns a NEW accumulator; a frame that
+// carries no `result` can never clear one already absorbed.
+function absorbRevokeFrame(acc, payload) {
+  const next = {
+    result: acc.result,
+    lastMessage: acc.lastMessage,
+    errorMessage: acc.errorMessage,
+    sawError: acc.sawError,
+    sawTerminal: acc.sawTerminal,
+  };
+  if (!payload || typeof payload !== 'object') return next;
+  const hasResult = !!payload.result && typeof payload.result === 'object';
+  const msg = typeof payload.message === 'string' && payload.message ? payload.message : null;
+
+  if (payload.type === 'error') {
+    next.sawError = true;
+    next.sawTerminal = true;
+    if (msg) next.errorMessage = msg;
+    if (hasResult) next.result = payload.result;
+    return next;
+  }
+  if (payload.type === 'done') {
+    next.sawTerminal = true;
+    if (hasResult) next.result = payload.result;
+    else if (msg) next.lastMessage = msg;
+    return next;
+  }
+  if (msg) next.lastMessage = msg;
+  return next;
+}
+
+// The buffering half of "THE SSE TRAP", extracted so it is EXECUTED by the
+// offline suite rather than grepped for. Feeds one decoded text chunk (what
+// `dec.decode(value, { stream: true })` produces for one `reader.read()`)
+// into a { acc, buf } state, absorbing every complete `data: …` frame it
+// completes along the way — a partial frame straddling a chunk boundary
+// stays in `buf` for the next call, exactly as the inline version runRevoke
+// used to do. `onFrame(acc)` fires once per absorbed frame (not once per
+// chunk) so a caller driving the real network stream gets the same
+// per-frame progress granularity the old inline loop had.
+function consumeRevokeChunk(consumeState, chunk, onFrame) {
+  let acc = consumeState.acc;
+  let buf = consumeState.buf + chunk;
+  const events = buf.split('\n\n');
+  buf = events.pop();
+  for (const ev of events) {
+    if (!ev.startsWith('data:')) continue;
+    let payload;
+    try { payload = JSON.parse(ev.slice(5).trim()); } catch { continue; }
+    acc = absorbRevokeFrame(acc, payload);
+    if (typeof onFrame === 'function') onFrame(acc);
+  }
+  return { acc, buf };
+}
+
+// MEDIUM-4 (audit): the whole-stream replay, callable from the offline
+// suite with NO network/DOM. It contains the entire "keep going" decision
+// for a revoke stream: there is no early exit here on `acc.sawTerminal` —
+// every chunk in `chunks` is fed through consumeRevokeChunk unconditionally,
+// so a fixture shaped [done-with-no-result, done-with-result] proves the
+// SECOND terminal frame — the one carrying the real result — is never
+// dropped. runRevoke's real reader loop delegates its "keep reading" test
+// to `reader.read()`'s own `done` flag alone (see below) and has NO other
+// early-exit path, so this function is not a parallel re-implementation of
+// that decision — it IS that decision, lifted out of the network loop so it
+// can be driven by a fixture. The audit's exact regression —
+// `if (acc.sawTerminal) { streamDone = true; break; }` inserted into this
+// loop — is exactly what a mutation test against this function must catch;
+// a source regex checking for the literal string "break outer" or for
+// `if (done) break;`'s presence could not, and did not.
+function consumeRevokeStream(chunks) {
+  let state = { acc: freshRevokeAcc(), buf: '' };
+  for (const chunk of chunks) state = consumeRevokeChunk(state, chunk);
+  return state.acc;
+}
+
+// Every per-category failure field the v3.6.2 backend can report, turned
+// into rows. This function is the ONLY reason those fields are not dead
+// data; renderRevokeOutcomeHtml() renders whatever it returns.
+function revokeFailureLines(result) {
+  const lines = [];
+  if (!result || typeof result !== 'object') return lines;
+  const detailOf = (o) => (o && typeof o.error === 'string' && o.error ? o.error : 'unknown error');
+
+  const cf = Array.isArray(result.contributions_failed) ? result.contributions_failed : [];
+  if (cf.length > 0) {
+    lines.push({
+      label: cf.length + ' contribution file' + (cf.length === 1 ? '' : 's') + ' could NOT be deleted — still in shared storage',
+      detail: cf.map((f) => (f && f.submission_id ? String(f.submission_id).slice(0, 8) + '… — ' : '') + detailOf(f)).join(' · '),
+    });
+  }
+  if (result.digest_failed) {
+    lines.push({ label: 'The contributor’s digest cache could NOT be deleted', detail: detailOf(result.digest_failed) });
+  }
+  const pf = Array.isArray(result.pages_failed) ? result.pages_failed : [];
+  if (pf.length > 0) {
+    lines.push({
+      label: pf.length + ' collective page' + (pf.length === 1 ? '' : 's') + ' could NOT be checked or deleted — they may still carry this contributor’s content',
+      detail: pf.map((f) => (f && f.path ? String(f.path) + ' — ' : '') + detailOf(f)).join(' · '),
+    });
+  }
+  // rebuild_ok is deliberately read out of audit_record: it is NOT a
+  // top-level result field (checked against sharedbrain-revoke.js's
+  // baseResult and abortResult, and against the documented shape in
+  // docs/shared-brain-admin.md) and inventing a top-level one here would
+  // read as `undefined` forever — a row that could never fire.
+  const rec = result.audit_record && typeof result.audit_record === 'object' ? result.audit_record : null;
+  if (rec && rec.rebuild_ok === false) {
+    lines.push({
+      label: 'The rebuild synthesis FAILED',
+      detail: 'The erasure ran, but the collective is missing the deleted pages until a rebuild succeeds. Re-running this revocation is safe — every step is idempotent.',
+    });
+  }
+  const prf = typeof result.pages_rebuild_failed === 'number' ? result.pages_rebuild_failed : 0;
+  if (prf > 0) {
+    lines.push({
+      label: prf + ' page' + (prf === 1 ? '' : 's') + ' failed to write during the rebuild',
+      detail: 'The erasure is unaffected, but the collective is incomplete until a further synthesis succeeds.',
+    });
+  }
+  if (result.state_reset_failed) {
+    lines.push({
+      label: 'The synthesis watermark could not be reset',
+      detail: detailOf(result.state_reset_failed) + ' — reported for completeness; this is not an erasure failure.',
+    });
+  }
+  if (result.audit_failed) {
+    lines.push({
+      label: 'The erasure was NOT written to the audit log',
+      detail: detailOf(result.audit_failed) + ' — you have no permanent record of this revocation.',
+    });
+  }
+  return lines;
+}
+
+// marker_active is the field to act on: is cohort synthesis blocked right
+// now? marker_cleared is deliberately NOT reinterpreted here — a `null`
+// means "no marker was ever written", and rendering that as "synthesis
+// blocked" would raise a cohort-wide alarm for a request that failed input
+// validation and touched nothing.
+function revokeMarkerNotice(result) {
+  if (!result || typeof result !== 'object') return null;
+  if (result.marker_active === true) {
+    return {
+      tone: 'danger',
+      text: 'Cohort synthesis is BLOCKED right now — the revocation-in-progress marker is still set, so every contributor’s ordinary synthesis is being refused. Re-run this revocation (safe — every step is idempotent) to clear it.',
+    };
+  }
+  if (result.marker_active === null || result.marker_active === undefined) {
+    return {
+      tone: 'warning',
+      text: 'Whether cohort synthesis is blocked is UNKNOWN — the in-progress marker write itself failed, so a partial commit cannot be ruled out. If contributors report synthesis refusing, that is why.',
+    };
+  }
+  return { tone: 'ok', text: 'Cohort synthesis is not blocked (the in-progress marker is clear).' };
+}
+
+// An ABORT writes no audit line at all. Saying nothing would let an admin
+// assume one exists, so the "no record" case is stated explicitly.
+function revokeAuditNotice(result) {
+  if (!result || typeof result !== 'object') return null;
+  if (result.audit_failed) {
+    return { tone: 'danger', text: 'No audit record: the erasure could not be written to state/revocations.jsonl.' };
+  }
+  if (result.audit_record) {
+    return { tone: 'ok', text: 'Recorded in the revocation audit log (state/revocations.jsonl).' };
+  }
+  return { tone: 'warning', text: 'No audit record was written for this attempt — a run that aborts before the erasure steps writes no log line at all.' };
+}
+
+// THE CLASSIFIER. Success is a NARROW conjunction and everything else
+// falls to the honest side. v3.6.1 records a `default:` arm that fell into
+// the cheerful branch; the direction of the default is the whole lesson,
+// so an unrecognised/absent shape here degrades to "not proven", never to
+// "complete".
+function classifyRevokeOutcome(acc) {
+  const result = acc && acc.result && typeof acc.result === 'object' ? acc.result : null;
+  const transport = acc && typeof acc.errorMessage === 'string' && acc.errorMessage ? acc.errorMessage : null;
+
+  if (!result) {
+    return {
+      tone: 'danger',
+      headline: 'Revocation did not report a result — treat this contributor’s data as NOT erased.',
+      // L4 (audit): this is a fallback — transport error text, or whatever
+      // progress message happened to be last (which can itself be
+      // success-shaped prose, e.g. "Revocation complete" cut off before the
+      // structured result that would have confirmed it). summaryFromServer
+      // stays false on this whole branch so the render never labels it
+      // quotable.
+      summary: transport || (acc && acc.lastMessage) || 'The revocation stream ended without a result.',
+      summaryFromServer: false,
+      erasureLine: 'Erasure NOT confirmed. Do not certify this revocation. Re-running it is safe — every step is idempotent.',
+      lines: [],
+      marker: null,
+      audit: null,
+      certifiable: false,
+      sawError: !!(acc && acc.sawError),
+    };
+  }
+
+  const erasureComplete = result.erasure_complete === true;
+  const erasureDenied = result.erasure_complete === false;
+  const clean = result.ok === true && result.partial !== true;
+
+  let tone, headline, erasureLine;
+  if (erasureDenied) {
+    tone = 'danger';
+    headline = '⚠ ERASURE INCOMPLETE — this contributor’s data has NOT been fully removed.';
+    erasureLine = 'Do NOT report this erasure as complete to the data subject. Resolve the problems below and re-run the revocation.';
+  } else if (!erasureComplete) {
+    // erasure_complete absent/null: the server did not assert completeness,
+    // so neither do we.
+    tone = 'warning';
+    headline = 'Erasure completeness was NOT confirmed by the server.';
+    erasureLine = 'Do not certify this revocation — the response carried no erasure_complete verdict. Re-running it is safe.';
+  } else if (!clean) {
+    tone = 'warning';
+    headline = 'Erasure completed, but the revocation did NOT finish cleanly.';
+    erasureLine = 'The contributor’s data IS gone, but do NOT certify this revocation until the problems below are resolved.';
+  } else {
+    tone = 'success';
+    headline = 'Revocation complete.';
+    erasureLine = 'The contributor’s data has been erased. Next: tell every contributor to Pull updates so their mirrors drop the erased content, and remove the person as a GitHub collaborator so they cannot push again.';
+  }
+
+  const hasServerSummary = typeof result.summary === 'string' && !!result.summary;
+
+  return {
+    tone,
+    headline,
+    // The server owns this wording. Preferred outright over anything
+    // composed here — see the field-to-pixel trace above.
+    summary: hasServerSummary ? result.summary : (transport || 'No summary was returned.'),
+    // L4 (audit): true ONLY when `summary` above is actually quoting
+    // result.summary. The transport-error / "no summary" fallbacks are not
+    // server-authored prose and must never be labelled quotable either.
+    summaryFromServer: hasServerSummary,
+    erasureLine,
+    lines: revokeFailureLines(result),
+    marker: revokeMarkerNotice(result),
+    audit: revokeAuditNotice(result),
+    certifiable: tone === 'success',
+    // L5 (audit): recorded on freshRevokeAcc/absorbRevokeFrame but never
+    // reached the outcome the UI reads — carried through so a stream that
+    // reported an error frame partway through (even one recovered by a
+    // later terminal `done` with a clean result) is visible to the admin,
+    // not silently dropped.
+    sawError: !!(acc && acc.sawError),
+    counts: {
+      contributionsDeleted: typeof result.contributions_deleted === 'number' ? result.contributions_deleted : null,
+      pagesDeleted: typeof result.pages_deleted === 'number' ? result.pages_deleted : null,
+      pagesRebuilt: typeof result.pages_rebuilt === 'number' ? result.pages_rebuilt : null,
+    },
+  };
+}
+
+// Pure string renderer — no DOM, so the suite can assert that a given
+// backend field reaches the actual markup rather than trusting a source
+// regex that a field is "consumed somewhere".
+function renderRevokeOutcomeHtml(outcome) {
+  if (!outcome) return '';
+  const toneClass = outcome.tone === 'success' ? 'sb-outcome-ok'
+    : outcome.tone === 'warning' ? 'sb-outcome-warn'
+    : 'sb-outcome-danger';
+  const glyph = outcome.tone === 'success' ? icon('check', 14) : icon('alertTriangle', 14);
+
+  const c = outcome.counts || {};
+  const countsRow = (c.contributionsDeleted !== null && c.contributionsDeleted !== undefined)
+    ? '<div class="sb-outcome-counts mono">' +
+        escapeHtml(c.contributionsDeleted + ' contribution' + (c.contributionsDeleted === 1 ? '' : 's') + ' deleted · ' +
+          c.pagesDeleted + ' page' + (c.pagesDeleted === 1 ? '' : 's') + ' removed · ' + c.pagesRebuilt + ' rebuilt') +
+      '</div>'
+    : '';
+
+  const linesHtml = outcome.lines && outcome.lines.length
+    ? '<ul class="sb-outcome-lines">' + outcome.lines.map((l) =>
+        '<li><span class="sb-outcome-line-label">' + escapeHtml(l.label) + '</span>' +
+        (l.detail ? '<span class="sb-outcome-line-detail mono">' + escapeHtml(l.detail) + '</span>' : '') + '</li>'
+      ).join('') + '</ul>'
+    : '';
+
+  const noticeHtml = (n) => n
+    ? '<div class="sb-outcome-notice sb-outcome-notice-' + escapeHtml(n.tone) + '">' + escapeHtml(n.text) + '</div>'
+    : '';
+
+  // L5 (audit): certifiable and sawError render here — the only place that
+  // reads them outside the test file.
+  const certifyNotice = outcome.certifiable
+    ? { tone: 'ok', text: 'Certifiable: this result is safe to certify to the data subject as a completed erasure.' }
+    : null;
+  const streamErrorNotice = outcome.sawError
+    ? {
+        tone: 'warning',
+        text: outcome.tone === 'success'
+          ? 'An error frame was reported partway through this stream, even though the run went on to report success above — re-check the details before certifying.'
+          : 'An error frame was reported partway through this stream, consistent with the outcome above.',
+      }
+    : null;
+
+  // L4 (audit): only label the quoted text "the wording to quote" when it
+  // is genuinely result.summary from the server — never leftover progress
+  // prose or a transport error, which can read as success-shaped even when
+  // the tone above correctly says otherwise.
+  const summaryLabel = outcome.summaryFromServer
+    ? 'Server summary (the wording to quote)'
+    : 'Last message received (not a confirmed result — do not quote this)';
+
+  return (
+    '<div class="sb-outcome ' + toneClass + '" role="status" aria-live="polite">' +
+      '<div class="sb-outcome-headline">' + glyph + '<span>' + escapeHtml(outcome.headline) + '</span></div>' +
+      '<div class="sb-outcome-erasure">' + escapeHtml(outcome.erasureLine) + '</div>' +
+      noticeHtml(certifyNotice) +
+      countsRow +
+      linesHtml +
+      noticeHtml(streamErrorNotice) +
+      noticeHtml(outcome.marker) +
+      noticeHtml(outcome.audit) +
+      '<details class="sb-outcome-raw"><summary>' + escapeHtml(summaryLabel) + '</summary>' +
+        '<p class="sb-outcome-summary">' + escapeHtml(outcome.summary) + '</p>' +
+      '</details>' +
+    '</div>'
+  );
+}
+
+// Scrolls the just-rendered revoke outcome into view if it landed
+// off-screen. A no-op when it's already fully in the viewport — same
+// "already visible = don't yank the page" reasoning as domains.js's own
+// revealMessage() (see that file's comment for the full origin story); not
+// lifted into a shared helper on purpose, since one hand-maintained copy of
+// a small DOM check drifting per view is a much smaller risk than the two
+// hand-maintained copies of a SECURITY guard that produced the v3.2.0
+// CRITICAL — this is not that shape.
+//
+// MEDIUM-3 (audit): runRevoke's finally block renders the outcome, then —
+// when the panel is open — fires loadRevokeMembers(), whose OWN render
+// re-expands the (now member-less, reloading) panel underneath the outcome
+// that was just drawn, pushing it further down the page with no scroll
+// adjustment. A revoke is a GDPR Article 17 erasure the admin must be able
+// to see the result of, so this must be called AFTER every re-render that
+// can move it — never right after the first render, which is provably too
+// early.
+function revealRevokeOutcome(connId) {
+  const el = document.querySelector('.sb-card[data-conn-id="' + connId + '"] .sb-outcome');
+  if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+  const r = el.getBoundingClientRect();
+  if (r.height === 0 && r.width === 0) return false;
+  if (r.top >= 0 && r.bottom <= window.innerHeight) return false; // already readable
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
+  return true;
+}
+
+// ── Admin controls: render ────────────────────────────────────────────────
+
+function renderAdmin(conn, card, busy, mirrorBusy) {
+  const aff = adminAffordances(conn, card);
+  if (!aff.show) return '';   // rule 4: read-only members get no admin surface at all
+
+  const open = state.expandedAdmin.has(conn.id);
+  return (
+    '<details class="sb-card-admin"' + (open ? ' open' : '') + ' data-sb-admin="' + escapeHtml(conn.id) + '">' +
+      '<summary>' + icon('lock', 13) + ' Admin controls — admin token &amp; contributor revocation</summary>' +
+      '<div class="sb-admin-body">' +
+        renderAdminToken(card, aff, busy) +
+        (aff.showRevoke
+          ? renderRevoke(conn, card, busy, mirrorBusy)
+          : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
+            '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
+            'Generate one above first — that is also the provisioning path for brains created before admin tokens existed.</span></div>') +
+      '</div>' +
+    '</details>'
+  );
+}
+
+function renderAdminToken(card, aff, busy) {
+  let html = '<div class="sb-admin-block">';
+  html +=
+    '<div class="sb-admin-row">' +
+      '<div class="sb-admin-row-text">' +
+        '<div class="sb-admin-row-title">Admin token</div>' +
+        '<p class="sb-admin-hint">' +
+          (aff.hasToken
+            ? 'Authorises contributor revocation on this connection. Rotate it if you think it leaked — the current token stops working immediately.'
+            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection yet.') +
+        '</p>' +
+      '</div>' +
+      (card.rotateConfirmOpen
+        ? ''
+        : '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="rotate-open"' + (busy ? ' disabled' : '') + '>' +
+            (card.acting === 'rotate' ? 'Working…' : escapeHtml(aff.rotateLabel)) +
+          '</button>') +
+    '</div>';
+
+  if (card.rotateConfirmOpen) {
+    html +=
+      '<div class="sb-confirm-inline sb-confirm-block">' +
+        '<span>' +
+          (aff.hasToken
+            ? 'Rotate the admin token? The CURRENT token stops working immediately — anywhere you stored it becomes invalid, including any other machine you administer this brain from.'
+            : 'Generate an admin token for this connection? It authorises contributor revocation (GDPR erasure).') +
+          ' It is shown <strong>once</strong> and never again — have your password manager open before you continue.' +
+        '</span>' +
+        '<div class="sb-confirm-actions">' +
+          '<button type="button" class="btn btn-primary btn-xs" data-sb-action="rotate-confirm"' + (busy ? ' disabled' : '') + '>' +
+            (aff.hasToken ? 'Rotate token' : 'Generate token') +
+          '</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="rotate-cancel">Cancel</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // The shown-once box. Rendered straight from card.shownAdminToken, so a
+  // re-render REDRAWS it rather than destroying it — and nothing on this
+  // path issues a list refresh (see ensureCard()'s comment). It is cleared
+  // only by the admin's own Hide button.
+  if (card.shownAdminToken) {
+    html +=
+      '<div class="sb-token-box">' +
+        '<div class="sb-token-warn">' + icon('alertTriangle', 13) +
+          // Browser-verified: the token survives every re-render WITHIN this
+          // mount, and is discarded when you leave the view (state =
+          // freshState() on re-entry — a credential must not outlive the
+          // mount that minted it). That is the right behaviour and a silent
+          // trap if unstated, so the copy states it.
+          '<span>Your admin token — <strong>shown once</strong>. Store it in a password manager now; it authorises contributor ' +
+          'revocation and cannot be displayed again. Leaving this view discards it — you would have to rotate, which invalidates this one.</span>' +
+        '</div>' +
+        '<code class="sb-token-value mono">' + escapeHtml(card.shownAdminToken) + '</code>' +
+        '<div class="sb-token-actions">' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="token-copy">' + icon('copy', 12) + ' Copy</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="token-hide">I’ve stored it — hide</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  return html + '</div>';
+}
+
+function renderRevoke(conn, card, busy, mirrorBusy) {
+  let html = '<div class="sb-admin-block sb-admin-block-danger">';
+  html +=
+    '<div class="sb-admin-row">' +
+      '<div class="sb-admin-row-text">' +
+        '<div class="sb-admin-row-title">Revoke a contributor <span class="sb-irreversible-pill">irreversible</span></div>' +
+        '<p class="sb-admin-hint">GDPR Article 17. Permanently erases this contributor’s submissions and every collective page ' +
+        'carrying their provenance, then rebuilds the collective from the remaining contributors. This cannot be undone.</p>' +
+      '</div>' +
+      (card.revokeOpen
+        ? '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="revoke-close"' + (card.acting === 'revoke' ? ' disabled' : '') + '>Close</button>'
+        : '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="revoke-open"' + (busy || mirrorBusy ? ' disabled' : '') + '>Revoke a contributor…</button>') +
+    '</div>';
+
+  if (card.revokeOpen) html += renderRevokePanel(conn, card, busy, mirrorBusy);
+  if (card.revokeOutcome) html += renderRevokeOutcomeHtml(card.revokeOutcome);
+
+  return html + '</div>';
+}
+
+function selectedMemberOf(card) {
+  const m = card.revokeMembers;
+  if (!m || typeof m !== 'object' || m === 'loading' || !Array.isArray(m.members)) return null;
+  return m.members.find((x) => x && x.fellow_id === card.revokeSelectedFellowId) || null;
+}
+
+// The ENTIRE state transition for picking a member in the revoke panel,
+// factored out of its DOM `change` listener so it can be called directly.
+//
+// MEDIUM-5 (audit): the old guard was a whole-FILE regex for the literal
+// string `card.revokeTyped = '';`, which occurs at three unrelated sites
+// (here, revoke-close, and runRevoke's own post-run reset) — so a mutation
+// that made member SELECTION prefill the confirmation (defeating the
+// accident gate outright: with a token already pasted, one click would
+// leave the irreversible button one click from firing) still matched the
+// regex and stayed green. Calling this function and asserting its OUTPUT
+// is what actually proves the invariant.
+function selectRevokeMember(card, fellowId) {
+  card.revokeSelectedFellowId = fellowId;
+  // Deliberately does NOT prefill the confirmation — picking a member must
+  // never fill in the phrase that unlocks an irreversible write.
+  card.revokeTyped = '';
+  return card;
+}
+
+function renderRevokePanel(conn, card, busy, mirrorBusy) {
+  const m = card.revokeMembers;
+  if (m === null || m === 'loading') {
+    return '<div class="sb-admin-note">Loading the contributor list from the shared repo…</div>';
+  }
+  if (m.error) {
+    return '<div class="sb-admin-note sb-admin-note-danger">' + icon('alertTriangle', 13) +
+      '<span>Could not load the contributor list: ' + escapeHtml(m.error) + '</span></div>';
+  }
+  const members = Array.isArray(m.members) ? m.members : [];
+  if (members.length === 0) {
+    return '<div class="sb-admin-note">No contributions have been made to this brain yet — there is nobody to revoke.</div>';
+  }
+
+  if (card.acting === 'revoke') {
+    return '<div class="sb-admin-note">' + icon('alertTriangle', 13) +
+      '<span>' + escapeHtml(card.revokeProgress || 'Revocation running — do not close the app.') + '</span></div>';
+  }
+
+  const selected = selectedMemberOf(card);
+  const gate = revokeGateState({
+    member: selected,
+    typed: card.revokeTyped,
+    tokenPresent: card.revokeTokenPresent,
+    busy: busy || mirrorBusy,
+  });
+  const expected = revokeExpectedTyped(selected);
+
+  const memberRows = members.map((mem) => {
+    const isSelf = !!(m.selfFellowId && mem.fellow_id === m.selfFellowId);
+    const who = mem.display_name ? mem.display_name + ' (' + mem.short_id + '…)' : 'fellow ' + mem.short_id + '…';
+    const subs = typeof mem.submissions === 'number' ? mem.submissions : 0;
+    const meta = subs + ' submission' + (subs === 1 ? '' : 's') +
+      ' · ' + (typeof mem.pages === 'number' ? mem.pages : 0) + ' page' + ((mem.pages === 1) ? '' : 's') +
+      ' · last active ' + formatRelativeTime(mem.last_contributed_at, 'never');
+    return (
+      '<label class="sb-member-row' + (card.revokeSelectedFellowId === mem.fellow_id ? ' selected' : '') + '">' +
+        '<input type="radio" name="sb-revoke-' + escapeHtml(conn.id) + '" value="' + escapeHtml(mem.fellow_id) + '"' +
+          (card.revokeSelectedFellowId === mem.fellow_id ? ' checked' : '') + ' data-sb-member="' + escapeHtml(mem.fellow_id) + '">' +
+        '<span class="sb-member-text">' +
+          '<span class="sb-member-who">' + escapeHtml(who) + (isSelf ? '<span class="sb-member-self">YOU</span>' : '') + '</span>' +
+          '<span class="sb-member-meta mono">' + escapeHtml(meta) + '</span>' +
+        '</span>' +
+      '</label>'
+    );
+  }).join('');
+
+  return (
+    '<div class="sb-revoke-panel">' +
+      '<div class="sb-revoke-step">' +
+        '<div class="sb-revoke-step-label">1 · Who</div>' +
+        '<div class="sb-member-list">' + memberRows + '</div>' +
+        '<p class="sb-admin-hint">Identity comes from the shared repo’s own storage paths, not from anything a contributor’s payload claims about itself.</p>' +
+      '</div>' +
+      '<div class="sb-revoke-step">' +
+        '<div class="sb-revoke-step-label">2 · Admin token</div>' +
+        '<input type="password" class="sb-revoke-input mono" id="sb-revoke-token-' + escapeHtml(conn.id) + '" ' +
+          'placeholder="sbat_…" autocomplete="off" spellcheck="false" data-sb-input="token">' +
+        '<p class="sb-admin-hint">Read from your password manager. It is sent once, in the request body, and is never stored by this screen.</p>' +
+      '</div>' +
+      '<div class="sb-revoke-step">' +
+        '<div class="sb-revoke-step-label">3 · Confirm</div>' +
+        '<input type="text" class="sb-revoke-input mono" id="sb-revoke-confirm-' + escapeHtml(conn.id) + '" ' +
+          'placeholder="' + escapeHtml(selected ? 'Type ' + expected : 'Select a contributor first') + '" ' +
+          'value="' + escapeHtml(card.revokeTyped || '') + '" autocomplete="off" spellcheck="false" data-sb-input="confirm">' +
+        '<p class="sb-admin-hint">' +
+          (selected
+            ? 'Type <span class="mono">' + escapeHtml(expected) + '</span> exactly. It is deliberately not filled in for you.'
+            : 'Pick a contributor above and the exact phrase to type will appear here.') +
+        '</p>' +
+      '</div>' +
+      '<div class="sb-revoke-go">' +
+        '<button type="button" class="btn btn-danger" data-sb-action="revoke-run"' + (gate.unlocked ? '' : ' disabled') + '>' +
+          icon('trash', 14) + ' Permanently revoke this contributor' +
+        '</button>' +
+        (gate.reason ? '<span class="sb-revoke-gate-reason">' + escapeHtml(gate.reason) + '</span>' : '') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// Typing must NOT trigger a full render(): setMain() replaces innerHTML
+// wholesale, which would destroy the focused field mid-keystroke and empty
+// the password input on every character. So the gate's two visible effects
+// — the danger button's disabled state and the reason line — are patched in
+// place from the SAME revokeGateState() the render uses, so the two can
+// never disagree about whether the button should be live.
+function updateRevokeGateUi(cardEl, connId) {
+  const card = ensureCard(connId);
+  const conn = findConnection(connId);
+  const mirrorDomain = mirrorDomainFor(conn);
+  const gate = revokeGateState({
+    member: selectedMemberOf(card),
+    typed: card.revokeTyped,
+    tokenPresent: card.revokeTokenPresent,
+    busy: !!card.acting || (!!mirrorDomain && isDomainWriteBusy(mirrorDomain)),
+  });
+  const btn = cardEl.querySelector('button[data-sb-action="revoke-run"]');
+  if (btn) btn.disabled = !gate.unlocked;
+  const reason = cardEl.querySelector('.sb-revoke-gate-reason');
+  if (reason) reason.textContent = gate.reason || '';
+}
+
+// ── Admin controls: actions ───────────────────────────────────────────────
+
+async function onRotateAdminToken(token, connId) {
+  const card = ensureCard(connId);
+  if (card.acting) {
+    card.message = 'An operation is already running on this connection — wait for it to finish.';
+    card.error = true;
+    render(token);
+    return;
+  }
+  const conn = findConnection(connId);
+  const aff = adminAffordances(conn, card);
+  if (!aff.showRotate) return;   // rule 4, enforced at the action too, not only in the render
+
+  card.rotateConfirmOpen = false;
+  card.acting = 'rotate';
+  card.message = aff.hasToken ? 'Rotating the admin token…' : 'Generating an admin token…';
+  card.error = false;
+  render(token);
+
+  try {
+    const res = await fetch('/api/sharedbrain/' + connId + '/admin-token/rotate', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok !== true || typeof data.admin_token !== 'string' || !data.admin_token) {
+      throw new Error(data.error || 'The admin token could not be ' + (aff.hasToken ? 'rotated' : 'generated') + ' (HTTP ' + res.status + ').');
+    }
+    // Deliberately NOT gated on isCurrentMount: `card` is this mount's own
+    // object and `state` is replaced wholesale on re-entry, so writing here
+    // touches a detached object on an abandoned mount and nothing else. The
+    // render call below IS gated.
+    card.shownAdminToken = data.admin_token;
+    card.adminTokenProvisioned = true;
+    card.message = data.rotated
+      ? 'Admin token rotated. The previous token no longer works.'
+      : 'Admin token generated. Contributor revocation is now available on this connection.';
+    card.error = false;
+  } catch (err) {
+    card.message = err.message;
+    card.error = true;
+  } finally {
+    card.acting = null;
+    // NO refreshConnections() here, on purpose — see ensureCard()'s comment.
+    // A list reload that errored would flip renderEnabled() to its error
+    // branch, which renders no cards, taking the shown-once token off screen
+    // before it could be copied.
+    if (isCurrentMount(token)) {
+      state.expandedAdmin.add(connId);
+      render(token);
+    }
+  }
+}
+
+// Copy must never be able to lose the token: the value is read from card
+// state (not the DOM), and neither the success nor the failure path clears
+// card.shownAdminToken or re-renders the box away. A failed clipboard write
+// says so, and the token stays on screen to be selected by hand.
+function copyShownAdminToken(token, connId) {
+  const card = ensureCard(connId);
+  const value = card.shownAdminToken;
+  if (!value) return;
+  const done = (msg, isError) => {
+    card.message = msg;
+    card.error = !!isError;
+    if (isCurrentMount(token)) render(token);
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(
+        () => done('Admin token copied to the clipboard. It is still shown below until you press Hide.', false),
+        () => done('Could not copy automatically — select the token below and copy it by hand.', true)
+      );
+      return;
+    }
+  } catch { /* fall through to the manual message */ }
+  done('Could not copy automatically — select the token below and copy it by hand.', true);
+}
+
+async function loadRevokeMembers(token, connId) {
+  const card = ensureCard(connId);
+  if (card.revokeMembers === 'loading') return;
+  card.revokeMembers = 'loading';
+  render(token);
+  try {
+    const res = await fetch('/api/sharedbrain/' + connId + '/members');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'members returned HTTP ' + res.status);
+    card.revokeMembers = {
+      members: Array.isArray(data.members) ? data.members : [],
+      selfFellowId: data.self_fellow_id || null,
+    };
+  } catch (err) {
+    card.revokeMembers = { error: err.message };
+  } finally {
+    if (isCurrentMount(token)) render(token);
+  }
+}
+
+// The irreversible one. Guarded exactly like runSseAction(): card.acting
+// for a second click on THIS mount, isDomainWriteBusy() for a click on a
+// different (possibly abandoned) mount, re-checked here as well as at the
+// click. The backend registers `shared-<slug>` for revoke, which is what
+// domainsForAction() already returns for anything that is not a push — so
+// client and server agree about what counts as busy.
+async function runRevoke(token, connId) {
+  const card = ensureCard(connId);
+  // NIT (audit): siblings (startAction, onRotateAdminToken) surface a
+  // message on this exact guard; this one used to be a silent no-op.
+  if (card.acting) {
+    card.message = 'An operation is already running on this connection — wait for it to finish.';
+    card.error = true;
+    render(token);
+    return;
+  }
+
+  const conn = findConnection(connId);
+  const aff = adminAffordances(conn, card);
+  if (!aff.showRevoke) return;   // rule 4 at the action, not only in the render
+
+  const member = selectedMemberOf(card);
+
+  // Re-read the live inputs. card.revokeTokenPresent is only a boolean, and
+  // an unrelated re-render (the cross-view write gate fires one) can empty
+  // the password field while leaving that flag set — so the value that is
+  // actually sent is read here, and a doomed request is refused locally
+  // rather than turned into a confusing 403.
+  const tokenEl = document.getElementById('sb-revoke-token-' + connId);
+  const adminToken = tokenEl ? tokenEl.value.trim() : '';
+  const confirmEl = document.getElementById('sb-revoke-confirm-' + connId);
+  const typed = confirmEl ? confirmEl.value : card.revokeTyped;
+
+  const busyDomain = domainsForAction(conn, 'revoke').find((d) => isDomainWriteBusy(d));
+  const gate = revokeGateState({
+    member,
+    typed,
+    tokenPresent: adminToken.length >= 16,
+    busy: !!busyDomain,
+  });
+  if (!gate.unlocked) {
+    card.revokeTyped = typed;
+    card.revokeTokenPresent = adminToken.length >= 16;
+    card.message = busyDomain
+      ? 'A write (' + (getDomainWriteLabel(busyDomain) || 'write') + ') is already running for ' + busyDomain + ' — wait for it to finish.'
+      : gate.reason;
+    card.error = true;
+    render(token);
+    return;
+  }
+
+  // Rule 2: the admin typed REVOKE-<short_id>; the API requires the
+  // full-UUID literal, built from the PICKED MEMBER's own fellow_id (short_id
+  // has its hyphens stripped and cannot be expanded back).
+  const confirmation = revokeConfirmationFor(member);
+  const fellowId = member.fellow_id;
+
+  card.acting = 'revoke';
+  card.revokeOutcome = null;
+  card.revokeProgress = 'Starting revocation…';
+  card.message = 'Starting revocation…';
+  card.error = false;
+  state.expandedAdmin.add(connId);
+  render(token);
+
+  const releases = domainsForAction(conn, 'revoke').map((d) => beginDomainWrite(d, 'sharedbrain-revoke'));
+
+  let acc = freshRevokeAcc();
+  try {
+    const res = await fetch('/api/sharedbrain/' + connId + '/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_token: adminToken, fellow_id: fellowId, confirmation }),
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('text/event-stream')) {
+      // 403 / 400 / 409 land here. Never `(await res.json())` inside a throw —
+      // a non-JSON body would surface as "Unexpected token '<'".
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Revocation refused (HTTP ' + res.status + ').');
+    }
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    // MEDIUM-4 (audit): the frame-buffering/absorption logic itself now
+    // lives in consumeRevokeChunk/consumeRevokeStream (see their own
+    // comments) so the offline suite can drive the exact same code this
+    // loop runs. This loop's OWN and ONLY "keep going" decision is
+    // `reader.read()`'s `done` flag, right below — there is no other
+    // early-exit path here, on purpose.
+    let consumeState = { acc, buf: '' };
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        // Read to STREAM END — never break on a terminal frame; see
+        // "THE SSE TRAP" above.
+        if (done) break;
+        consumeState = consumeRevokeChunk(consumeState, dec.decode(value, { stream: true }), (frameAcc) => {
+          // Live progress line only. Once a terminal frame has been
+          // absorbed, sawTerminal flips and this stops overwriting
+          // card.message — the outcome rendered from `acc` after the loop
+          // takes over instead (see "THE SSE TRAP" for why absorption
+          // still continues past that point regardless).
+          if (!frameAcc.sawTerminal && frameAcc.lastMessage) {
+            card.revokeProgress = frameAcc.lastMessage;
+            card.message = frameAcc.lastMessage;
+            card.error = false;
+            if (isCurrentMount(token)) render(token);
+          }
+        });
+      }
+    } finally {
+      acc = consumeState.acc;
+      reader.cancel().catch(() => {});
+    }
+
+    if (!acc.sawTerminal) {
+      acc.errorMessage = 'The revocation stream ended without a result — treat this contributor’s data as NOT erased and re-run the revocation.';
+    }
+  } catch (err) {
+    acc.errorMessage = err.message;
+  } finally {
+    releases.forEach((r) => r());
+    const outcome = classifyRevokeOutcome(acc);
+    card.revokeOutcome = outcome;
+    card.revokeProgress = null;
+    card.message = outcome.headline;
+    card.error = outcome.tone !== 'success';
+    // Terminal beats pending: cleared in the SAME synchronous block that
+    // set the final outcome, before the single render below.
+    card.acting = null;
+    // The token and confirmation are single-use — clear the gate so a second
+    // irreversible run needs the whole ceremony again.
+    card.revokeTyped = '';
+    card.revokeTokenPresent = false;
+    card.revokeSelectedFellowId = null;
+    card.revokeMembers = null;
+    if (isCurrentMount(token)) {
+      state.expandedAdmin.add(connId);
+      render(token);
+      // The member directory was invalidated above, and NOTHING else reloads
+      // it — loadRevokeMembers only runs on revoke-open. Found in browser
+      // verification: after a refused run the panel sat on "Loading the
+      // contributor list…" forever, with no way forward but closing and
+      // re-opening it. The reset was right (a stale list after a successful
+      // erasure would offer a contributor who no longer exists); leaving the
+      // panel with no way to repopulate was the half that was broken.
+      //
+      // MEDIUM-3 (audit): both of these fire their OWN render() once they
+      // resolve, and each of those re-renders can push .sb-outcome further
+      // down the page (loadRevokeMembers re-expands the panel underneath
+      // it; refreshConnections repaints the whole card list). Reveal the
+      // outcome only after every render that can still move it has run —
+      // scrolling right after the render above would be provably too early.
+      const settling = [];
+      if (card.revokeOpen) settling.push(loadRevokeMembers(token, connId).catch(reportAsyncActionFailure));
+      // A completed revoke changes what /list reports. Refreshed only on the
+      // SUCCESS path — a failed run's outcome panel is the thing the admin
+      // must read, and a list error would flip the whole view to its error
+      // branch, which renders no cards at all.
+      if (outcome.tone === 'success') settling.push(refreshConnections(token).catch(reportAsyncActionFailure));
+      if (settling.length > 0) {
+        Promise.all(settling).then(() => { if (isCurrentMount(token)) revealRevokeOutcome(connId); });
+      } else {
+        revealRevokeOutcome(connId);
+      }
+    }
+  }
+}
+
 // ── Listeners ─────────────────────────────────────────────────────────────
 
 function wireListeners(token) {
@@ -718,6 +1729,36 @@ function wireListeners(token) {
     });
   });
 
+  document.querySelectorAll('.sb-card-admin[data-sb-admin]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      const id = el.dataset.sbAdmin;
+      if (el.open) state.expandedAdmin.add(id); else state.expandedAdmin.delete(id);
+    });
+  });
+
+  // Revoke gate inputs. The confirmation text is kept in card state (it is
+  // not a secret) so a re-render preserves it; the admin token is NOT —
+  // only the boolean "is something long enough typed" is recorded, and the
+  // value itself never leaves the DOM until runRevoke() reads it for the
+  // one request body. See runRevoke()'s own comment for the re-read.
+  document.querySelectorAll('.sb-card[data-conn-id]').forEach((cardEl) => {
+    const connId = cardEl.dataset.connId;
+    const card = ensureCard(connId);
+    cardEl.querySelectorAll('input[data-sb-input]').forEach((input) => {
+      input.addEventListener('input', () => {
+        if (input.dataset.sbInput === 'confirm') card.revokeTyped = input.value;
+        else card.revokeTokenPresent = input.value.trim().length >= 16;
+        updateRevokeGateUi(cardEl, connId);
+      });
+    });
+    cardEl.querySelectorAll('input[data-sb-member]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        selectRevokeMember(card, radio.dataset.sbMember);
+        render(token);
+      });
+    });
+  });
+
   document.querySelectorAll('.sb-card-cohort[data-sb-cohort]').forEach((el) => {
     el.addEventListener('toggle', () => {
       const id = el.dataset.sbCohort;
@@ -746,6 +1787,33 @@ function onCardButton(token, connId, action) {
     case 'leave-open': card.leaveConfirmOpen = true; render(token); return;
     case 'leave-cancel': card.leaveConfirmOpen = false; render(token); return;
     case 'leave-confirm': onLeave(token, connId); return;
+
+    // ── Admin controls ──────────────────────────────────────────────────
+    case 'rotate-open': card.rotateConfirmOpen = true; render(token); return;
+    case 'rotate-cancel': card.rotateConfirmOpen = false; render(token); return;
+    case 'rotate-confirm': onRotateAdminToken(token, connId).catch(reportAsyncActionFailure); return;
+    case 'token-hide': card.shownAdminToken = null; render(token); return;
+    case 'token-copy': copyShownAdminToken(token, connId); return;
+    case 'revoke-open':
+      card.revokeOpen = true;
+      card.revokeOutcome = null;
+      state.expandedAdmin.add(connId);
+      render(token);
+      if (card.revokeMembers === null) loadRevokeMembers(token, connId).catch(reportAsyncActionFailure);
+      return;
+    case 'revoke-close':
+      card.revokeOpen = false;
+      // Single-use ceremony: closing the panel drops the typed
+      // confirmation and the token-present flag, so re-opening it cannot
+      // start already half-unlocked.
+      card.revokeTyped = '';
+      card.revokeTokenPresent = false;
+      card.revokeSelectedFellowId = null;
+      card.revokeMembers = null;
+      render(token);
+      return;
+    case 'revoke-run': runRevoke(token, connId).catch(reportAsyncActionFailure); return;
+
     default: return;
   }
 }

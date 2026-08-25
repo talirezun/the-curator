@@ -1244,12 +1244,22 @@ try {
 
     // (f) The export surface is pinned. A new exported function is a new way
     //     in, and this fails until whoever adds it classifies it in 8b above.
+    //
+    //     `listMd` (added when GET /api/wiki/:domain/list was built on top
+    //     of it, so the browse-list inventory and scanWiki() cannot silently
+    //     diverge on what "a page" is — see scripts/test-wiki-list.js) needs
+    //     NO §8b case: it only calls `readdir` and resolves through
+    //     `wikiFile` — no write/rm/unlink anywhere in it — matching the
+    //     existing precedent for the other read-only exports already in this
+    //     list (`countLinksToSlug`, `findSemanticCandidatePairs`,
+    //     `previewSemanticDuplicateMerge`, `scanWiki`), none of which carry
+    //     an §8b case either.
     const exports = Object.keys(healthModule).sort();
     const KNOWN = [
       'AUTO_FIXABLE', 'SEMANTIC_DUPE_DEFAULT_CAP', 'SEMANTIC_DUPE_MAX_DOMAIN_PAGES',
       'applyBrokenLinkFixes', 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
-      'previewSemanticDuplicateMerge', 'scanWiki',
+      'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',
     ].sort();
     assert(JSON.stringify(exports) === JSON.stringify(KNOWN),
       '8c #7: health.js\'s export surface is unchanged — a NEW export must be added to section 8b\'s enumeration and to this list',

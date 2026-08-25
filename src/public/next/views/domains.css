@@ -457,3 +457,399 @@
   max-width: 66ch;
   line-height: var(--leading-relaxed);
 }
+
+/* ── Domain lifecycle: create / rename / delete ───────────────────────── */
+/* No new custom properties are introduced anywhere below — test-css-tokens.js
+   hard-fails on a var(--x) with no definition in the /next universe, and a
+   fallback does NOT exempt it. Every value here is an existing token or a
+   literal. Nothing here opens an overlay either: a refusal must never be
+   able to render underneath a scrim (v3.6.0 finding 7). */
+
+.dm-title-btn {
+  flex: none;
+  height: var(--control-sm);
+  padding: 0 10px;
+  font-size: var(--text-xs);
+}
+.dm-delete-btn { color: var(--danger-text); }
+.dm-delete-btn:hover { background: var(--danger-tint); }
+
+.dm-lc-card {
+  margin: 14px 0 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.dm-lc-card.dm-lc-danger { border-color: var(--danger-text); }
+
+.dm-lc-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.dm-lc-body {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: var(--leading-relaxed);
+  max-width: 70ch;
+}
+.dm-lc-label {
+  display: block;
+  margin: 14px 0 5px;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.dm-lc-optional { text-transform: none; letter-spacing: 0; }
+.dm-lc-input {
+  width: 100%;
+  max-width: 420px;
+  height: var(--control-md);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.dm-lc-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+
+.dm-lc-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dm-lc-template {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  flex: 1 1 180px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color var(--t-state), background var(--t-state);
+}
+.dm-lc-template:hover:not([disabled]) { background: var(--surface-hover); }
+.dm-lc-template.active {
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.dm-lc-template[disabled] { opacity: 0.55; cursor: default; }
+.dm-lc-template-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.dm-lc-template-hint { font-size: var(--text-2xs); color: var(--text-3); }
+
+.dm-lc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dm-lc-danger-btn {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--text-on-accent);
+}
+
+/* A refusal is visually distinct from an error on purpose: "the server said
+   no, nothing happened, try again in a moment" is a different thing to tell
+   someone than "this broke". */
+.dm-lc-refusal,
+.dm-lc-error,
+.dm-sem-refusal,
+.dm-sem-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.dm-lc-refusal,
+.dm-sem-refusal {
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  border: 1px solid var(--attention);
+}
+.dm-lc-error,
+.dm-sem-error {
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  border: 1px solid var(--danger);
+}
+
+/* ── Semantic-duplicate pair cards ────────────────────────────────────── */
+
+.dm-sem-batch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+.dm-sem-batch-note {
+  flex: 1 1 260px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+}
+
+.dm-sem-list { display: flex; flex-direction: column; gap: 10px; }
+
+.dm-sem-card {
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.dm-sem-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: var(--text-2xs);
+}
+.dm-sem-remove { color: var(--danger-text); overflow-wrap: anywhere; }
+.dm-sem-keep { color: var(--success-text); overflow-wrap: anywhere; }
+.dm-sem-arrow { color: var(--text-3); }
+.dm-sem-conf {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.dm-sem-conf-high { background: var(--attention-tint); color: var(--attention-text); }
+.dm-sem-conf-med { background: var(--surface-active); color: var(--text-2); }
+.dm-sem-conf-low { background: var(--surface-inset); color: var(--text-3); }
+
+.dm-sem-sub {
+  margin-top: 5px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+}
+.dm-sem-rationale {
+  margin-top: 4px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 76ch;
+}
+
+.dm-sem-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+.dm-sem-btn {
+  height: var(--control-sm);
+  padding: 0 9px;
+  font-size: var(--text-2xs);
+}
+.dm-sem-gate {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.dm-sem-gate-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success-text);
+}
+
+.dm-sem-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+.dm-sem-preview-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--danger-text);
+  font-size: var(--text-2xs);
+}
+.dm-sem-preview-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.dm-sem-preview-files {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.dm-sem-preview-more { list-style: none; margin-left: -18px; }
+.dm-sem-preview-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dm-sem-handled { opacity: 0.6; }
+
+/* ── Wiki browse panel ────────────────────────────────────────────────── */
+
+.dm-browse-card {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+}
+.dm-browse-empty {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  margin-bottom: 10px;
+  max-width: 66ch;
+  line-height: var(--leading-relaxed);
+}
+.dm-browse-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.dm-browse-filter {
+  flex: 1 1 220px;
+  min-width: 160px;
+  height: var(--control-sm);
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+.dm-browse-filter:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+.dm-browse-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.dm-browse-tab {
+  height: var(--control-sm);
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-2xs);
+  transition: background var(--t-state), color var(--t-state);
+}
+.dm-browse-tab:hover { background: var(--surface-hover); }
+.dm-browse-tab.active {
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.dm-browse-tab-count { color: var(--text-3); }
+
+.dm-browse-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 420px;
+  overflow-y: auto;
+}
+.dm-browse-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--t-state);
+}
+.dm-browse-row:hover { background: var(--surface-hover); }
+.dm-browse-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.dm-browse-dot-entities { background: var(--type-entity); }
+.dm-browse-dot-concepts { background: var(--type-concept); }
+.dm-browse-dot-summaries { background: var(--type-summary); }
+.dm-browse-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dm-browse-path {
+  flex: none;
+  max-width: 44%;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dm-browse-note {
+  margin-top: 8px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+
+/* The reader body for a page opened from the browse list. /next's markdown
+   renderer lives in views/chat.js and must not be imported across views, and
+   copying a security-sensitive escape-first renderer into a second file is
+   the duplication shape that produced the v3.2.0 CRITICAL — so the page's
+   own markdown source is shown, escaped, until that renderer is lifted into
+   next/shared/ and both surfaces can use one copy. */
+.dm-page-source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

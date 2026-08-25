@@ -134,13 +134,26 @@ Rename a domain — changes the folder name and updates all internal references.
 
 `syncWarning` is `true` when GitHub sync is configured — the rename appears as a delete + add on GitHub, so the user should sync promptly.
 
+**The new display name can slugify to the SAME folder name as the old one** — e.g. changing only capitalization or punctuation, or changing the display name back to what it was. This is not an error: the server derives `newSlug` from `displayName` and explicitly excludes the domain's own current slug from its collision check, so this is a normal, successful **display-name-only rename**. The folder is never touched (no `fs.rename` call at all in that branch) and the response looks like:
+
+```json
+{
+  "oldSlug": "health-and-fitness",
+  "newSlug": "health-and-fitness",
+  "displayName": "Health and Fitness",
+  "syncWarning": false
+}
+```
+
+`syncWarning` is always `false` on this branch — nothing moved for GitHub sync to see as a delete + add. A caller should always read `newSlug` from the response rather than assume it differs from `oldSlug`; treating a display-name-only rename as a slug change will 404 on every subsequent call for a domain that in fact still exists under its old name.
+
 **Concurrency:** refuses with `409` while this domain has an active write (per-domain `isDomainActive` check). Renaming mid-ingest is silently dangerous rather than loudly broken — an in-flight ingest resolves its own wiki paths per page from the slug it captured at request time, so it keeps writing under the OLD (now-renamed-away) directory name, which `writePage`'s `mkdir(recursive: true)` happily recreates; those pages become invisible to every UI surface (the v2.3.4 ghost-domain filter hides any directory with no `CLAUDE.md`) until the ingest finally dies at the logging step. The guard covers a display-name-only rename too, since that still rewrites `log.md`'s header and races `appendLog`.
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
-| `400` | Missing `displayName`; new slug identical to old slug |
+| `400` | Missing `displayName` |
 | `404` | Domain not found |
 | `409` | This domain has an active write (ingest, batch item, Sync, Shared Brain pull, etc.) in progress |
 | `500` | Filesystem error |
@@ -652,6 +665,51 @@ Reads are allowed on read-only Shared Brain mirror domains — this route never 
 |--------|-----------|
 | `404` | Unknown domain, or the page doesn't exist on disk |
 | `400` | Missing/invalid `path`, path outside `entities/`/`concepts/`/`summaries/`, or the path is a symlink (or sits under a symlinked folder) that escapes the wiki folder (`code: "WIKI_PATH_ESCAPES"`) |
+
+---
+
+## GET /api/wiki/:domain/list
+
+A cheap, **readdir-only** inventory of every page in the domain's wiki — the third sibling next to `GET /:domain` above (full content of every page — 14 MB on the real `articles` domain, the wrong shape for "what pages exist") and `GET /:domain/page` (open exactly one already-known page, the wrong shape for "list what I could open"). This endpoint reads no file content at all — it does not open a single page body, only directory listings — so its cost scales with page *count*, not wiki size. On a real domain with 3,363 pages it returns roughly 462 KB in about 25 ms cold / 8 ms warm, versus the multi-megabyte, multi-hundred-millisecond cost of reading every page's content.
+
+Built on `listWikiInventory()` in `src/brain/wiki-read.js`, which itself is built on `health.js`'s gated `listMd()` — the same directory listing `scanWiki()` uses — rather than a second, independently-written `readdir`. This matters because a naive readdir can surface entries `GET /:domain/page` would then refuse to open (a directory literally named `x.md`, a symlink escaping the wiki, a dangling symlinked leaf); reusing `listMd` means this endpoint can never list a page the page-reader can't actually open — the same class of drift the v3.2.0 audit fixed elsewhere in this file's sibling routes.
+
+Reads are allowed on read-only Shared Brain mirror domains, matching `/page` — this route never writes.
+
+**Path parameter**
+
+| Parameter | Description |
+|-----------|-------------|
+| `domain` | Domain slug |
+
+**Success response** `200 OK`
+
+```json
+{
+  "domain": "ai-tech",
+  "entries": [
+    { "slug": "tali-rezun", "folder": "entities", "path": "entities/tali-rezun.md", "title": "Tali Rezun" },
+    { "slug": "rag", "folder": "concepts", "path": "concepts/rag.md", "title": "Rag" },
+    { "slug": "attention-paper", "folder": "summaries", "path": "summaries/attention-paper.md", "title": "Attention Paper" }
+  ],
+  "count": 3,
+  "total": 3,
+  "truncated": false
+}
+```
+
+Entries are sorted by `path` and drawn only from the three canonical folders (`entities/`, `concepts/`, `summaries/`). `path` is the exact string `GET /:domain/page`'s `path` query parameter expects.
+
+**`title` is derived from the slug alone (`tali-rezun` → `Tali Rezun`), never from frontmatter or file content.** This is a deliberate trade-off, not an oversight: reading each file for its real title (an explicit `title:` in frontmatter, or the first `# Heading`) would mean opening every page body — reinstating the exact 14 MB read this endpoint exists to avoid. A page whose real title differs from its slug (e.g. an acronym, or a title that doesn't match its filename) shows the slug-derived label here; its real title is correct the instant it's opened via `GET /:domain/page`, which does read the file.
+
+Capped at 20,000 entries (`truncated: true` beyond that; `count` is the number actually returned). `total` always reports the real, uncapped count — it costs nothing extra, since every filename is enumerated before the cap is applied.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain |
+| `500` | Filesystem read error |
 
 ---
 

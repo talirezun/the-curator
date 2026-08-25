@@ -245,7 +245,7 @@ function mergeBulletSections(canonicalContent, duplicateContent) {
  * points back inside the wiki (a legitimate in-wiki alias), refused when it
  * escapes or dangles.
  */
-async function listMd(wikiDir, folder) {
+export async function listMd(wikiDir, folder) {
   const dir = wikiFile(wikiDir, folder);
   if (!dir) return [];
   try {

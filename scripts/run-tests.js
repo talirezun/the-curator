@@ -80,6 +80,11 @@ const OFFLINE = [
   'test-mcp-setup-contract.js',      // write-registry guard on mutating /api/config + /api/sync/setup + domain-rename routes — fires during a write, and (the half people forget) does NOT fire when idle
   'test-next-ingest-logic-drift.js', // TEMPORARY — delete alongside app.js at /next cutover. Byte-identity tripwire between app.js's batch-ingest pure helpers and their src/public/next/shared/ingest-queue-logic.js copy, so a bug fixed in one frontend and not the other goes RED instead of silently re-shipping.
   'test-next-mcp-wizard.js',        // /next MCP setup wizard — pure decision logic + escaping/CSS/HTML seams. NOT temporary: it outlives cutover.
+  'test-wiki-list.js',                // GET /api/wiki/:domain/list — readdir-only inventory built on health.js's listMd (imported, never copied), set-equal to what /page will open
+  'test-next-domain-lifecycle.js',    // /next domain create/rename/delete — incl. the display-name-only rename where newSlug EQUALS oldSlug, and a 409 refusal that renders in-viewport
+  'test-next-semantic-gate.js',       // /next per-pair semantic-merge gate — the previewed set must be EMPTY after scan, domain switch and flip (two independent layers), and the batch bar must read LIVE state
+  'test-next-chat-compile.js',        // /next Compile to Wiki + the chat-scope handoff — `refused` is a normal outcome not an error, and a consumed scope request must NOT re-apply on a second mount
+  'test-next-sharedbrain-admin.js',   // /next Shared Brain revoke + admin-token rotate — outcome tone comes from the structured fields, never the summary prose
   'check-doc-suite-counts.js',
   'test-repair-wiki-args.js',
   'test-wiki-script-args.js',
@@ -95,7 +100,6 @@ const OFFLINE = [
 const LIVE_CI = [
   'test-beta8-live-llm.js',
   'test-beta14-anthropic-fix.js',
-  'test-beta15-production.js',   // large source = committed docs/ingestion-pipeline.md
   'test-beta16-production.js',
   'test-beta17-production.js',
   'test-beta25-compile-live.js', // compile on a seeded large-index domain (Fix #1)
@@ -124,10 +128,34 @@ const LIVE_CI = [
 //     none. Stays local-only because CI has no article to point it at, not
 //     because of anything personal in the test itself anymore.
 //   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
+//   - test-beta15-production: MOVED OUT OF CI (was LIVE_CI). Not flaky output —
+//     flaky RUNTIME, and bimodally so. It drives large multi-phase ingests on
+//     BOTH providers, and ingest's Phase-2 recovery ladder turns a single
+//     failed batch into page-by-page: one LLM call per page, each with a
+//     possible brevity retry. So the suite has TWO runtimes, not a spread:
+//     fast path ~250-600s, fallback path >20 min. Measured on main, in order:
+//     351s, 380s, 512s, 452s, 590s, 554s (green) -> 600s TIMEOUT -> 248s (the
+//     fastest ever recorded) -> 1,200s TIMEOUT against a cap that had just
+//     been RAISED to 20 min. The 1,200s run's last output was
+//     "[ingest] ↻ concepts/… — retrying with a brevity directive", i.e. it was
+//     inside the fallback; two other live suites in the same run passed in 71s
+//     and 25s, so the providers were healthy.
+//
+//     Raising the cap was the WRONG FIX and is recorded here so it is not
+//     retried: the fallback's cost is O(pages) sequential calls, so no finite
+//     cap bounds it. CI keeps live multi-phase ingest coverage via
+//     test-beta8-live-llm (Gemini) and test-beta14-anthropic-fix (Anthropic);
+//     what moves local-only is the dual-provider LARGE-document combination.
+//
+//     PRODUCT FOLLOW-UP, not just a CI concern: a run that enters the
+//     page-by-page ladder is spending dozens of extra LLM calls, and real
+//     users pay for that too. Why a Phase-2 batch fails on this fixture is
+//     worth investigating on its own merits.
 const LIVE_LOCAL = [
   'test-beta13-chat-live.js',
   'test-ingest-real-llm.js',     // needs CURATOR_LIVE_SCHEMA + CURATOR_LIVE_ARTICLE supplied locally; self-skips otherwise
   'test-ingest-deep.js',
+  'test-beta15-production.js',   // bimodal runtime — see the note above; a cap cannot bound the fallback ladder
 ];
 
 // All live suites, for labelling.
@@ -239,7 +267,56 @@ function runSuite(file, { stripCreds, timeoutMs }) {
       // only the strong markers the gating code prints — the ⏭ glyph, an
       // all-caps "SKIPPED", or a leading "SKIP:" line — NOT the lowercase word
       // "skip" that appears in ordinary assertion labels ("graceful skip…").
-      const skipped = /⏭/.test(out) || /\bSKIPPED\b/.test(out) || /^SKIP:/m.test(out);
+      // A suite announces a real self-skip at the START of a line — verified
+      // against every suite that actually self-skips: 'SKIP: …',
+      // '⏭  LIVE tests SKIPPED …', 'SKIPPED — GEMINI_API_KEY not set.'.
+      //
+      // These patterns are ANCHORED because the unanchored form is a live
+      // bug, not a hypothetical: a bare /\bSKIPPED\b/ against the whole
+      // output classifies any suite that merely MENTIONS the word as
+      // not-run. test-next-semantic-gate.js hit this with the accurate
+      // assertion label "the SKIPPED pair was not sent" — 95/95 green, and
+      // the runner reported it as ⏭ skip, i.e. invisible to CI, on the suite
+      // guarding the most destructive path in the release.
+      //
+      // v3.3.0 recorded this class ("npm test reported the whole suite as
+      // skip … because an assertion label contained the word SKIPPED") and
+      // the response was a defensive assertion inside ONE suite
+      // (test-ingest-abort.js:649), which left every suite written since
+      // unprotected. This is the class fix; that per-suite canary is kept as
+      // defence in depth.
+      // A suite counts as SKIPPED only when it BOTH announces a skip AND
+      // reports no assertion tally. Prose alone is not enough in either
+      // direction, and both halves are load-bearing:
+      //
+      //   - Announcement alone over-reports. test-sharedbrain-revoke.js prints
+      //     "  ⏭  running as root — chmod cannot deny unlink; §7 permission
+      //     case not exercised" — a PARTIAL skip, mid-run, after 254 real
+      //     assertions. Matching on the glyph alone marks the whole OFFLINE
+      //     suite not-run on any root CI runner.
+      //   - Matching only the idioms I had first enumerated under-reports.
+      //     `⊘ No Gemini key configured — skipping…` (test-beta25/27-compile-
+      //     live) and `Self-skipping (live-suite convention)` (test-ingest-
+      //     real-llm) matched NEITHER earlier pattern, so those reported
+      //     ✓ pass while running nothing.
+      //
+      // A genuine self-skip returns before its summary, so it emits no
+      // "Passed: N" line; a partial skip always has one. That is the
+      // discriminator — a property of what ran, not a phrase.
+      //
+      // HISTORY, so this is not "fixed" a third time by widening a regex:
+      // v3.3.0 hit this class and answered it with a defensive assertion
+      // inside ONE suite (test-ingest-abort.js), leaving every later suite
+      // exposed. This session hit it again (test-next-semantic-gate.js, 95/95
+      // green and invisible to CI, on the guard for the most destructive path
+      // in the release), and the first repair anchored the patterns —
+      // which fixed that instance, missed the two idioms above, and added the
+      // partial-skip false positive. The list below is the set actually
+      // verified against the tree, not a claim of completeness.
+      const announcesSkip = /^\s*⏭/m.test(out) || /^\s*SKIPPED\b/m.test(out)
+        || /^SKIP:/m.test(out) || /^\s*⊘/m.test(out) || /^\s*Self-skipping\b/m.test(out);
+      const reportedAssertions = /^\s*(?:Total:\s*\d+\s+)?Passed:\s*\d+/m.test(out);
+      const skipped = announcesSkip && !reportedAssertions;
       const ok = code === 0 && !failMarker;
       resolve({ file, ok, ms, code, skipped, out });
     });

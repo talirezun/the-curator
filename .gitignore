@@ -39,6 +39,23 @@ PARITY-RELEASE-PLAN.md
 BOOT-PROMPT.md
 curator-memory-layer-research-proposal.md
 
+# ── Internal working documents — PATTERNS, not just the names above ──────────
+# The named rules above cover the docs that exist TODAY. They do not cover the
+# NEXT one, and this is a public repository: an internal plan that lands in
+# `git status` as untracked is one `git add -A` away from being published.
+# These patterns close the class. Verified against the tree when added: no
+# tracked file matches any of them, so nothing legitimate is hidden.
+*-PLAN.md
+*-UPGRADE.md
+*-roadmap.md
+*-proposal.md
+HANDOFF*.md
+BOOT-PROMPT*.md
+NOTES.md
+SCRATCH*.md
+PRIVATE-*.md
+INTERNAL-*.md
+
 # ── Domains folder (personal wiki data — lives outside the app repo) ──────────
 # The wiki is managed separately (via the Sync tab / a private GitHub repo).
 # Clone this repo to get the app; your wiki folder is pointed to by DOMAINS_PATH.

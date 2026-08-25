@@ -306,12 +306,33 @@ section('13. app.js — the revoke SSE done-handler is wired to sbRevokeDoneStat
     'the revoke error branch still renders visibly via the same per-card setStatus() as done/progress');
 }
 
-// ── 14. next/views/shared.js — verified, not assumed, to have no revoke UI ─
-section('14. next/views/shared.js has no revoke UI (verified by direct inspection, not assumed)');
+// ── 14. next/views/shared.js — the revoke UI, and the same visibility rule ─
+//
+// v3.6.2 recorded here that `/next` contained no revoke UI at all, so job 2
+// needed no change in that file. That was a TRUE statement about that release
+// and is now false BY DESIGN: the parity release built the /next admin
+// surface, because shipping a cutover where an admin cannot serve an Article
+// 17 erasure was the gap this assertion was documenting.
+//
+// The absence check is replaced rather than deleted, because the property
+// section 13 actually cares about is not "no revoke UI exists" — it is "the
+// structured result reaches a visible surface on BOTH terminal frames".
+// That property now has to hold in two frontends, so it is asserted in two.
+// Behavioural coverage of the /next side lives in
+// scripts/test-next-sharedbrain-admin.js; these are the seams that keep the
+// two frontends from drifting apart on the rule section 13 exists to protect.
+section('14. next/views/shared.js — revoke UI present, and result consumed on BOTH terminal frames');
 {
   const sharedPath = path.join(ROOT, 'src/public/next/views/shared.js');
   const sharedSrc = readFileSync(sharedPath, 'utf8');
-  ok(!/[Rr]evoke/.test(sharedSrc), 'src/public/next/views/shared.js contains no "revoke"/"Revoke" — no change needed there for job 2');
+  ok(/data-sb-action="revoke-run"/.test(sharedSrc),
+    'src/public/next/views/shared.js now ships the revoke UI (the v3.6.2 gap is closed)');
+  ok(/function absorbRevokeFrame\(acc, payload\)/.test(sharedSrc),
+    '/next routes every revoke SSE frame through one absorber, so a result-less terminal frame cannot drop the structured result');
+  ok(/if \(payload\.type === 'error'\)[\s\S]{0,400}?if \(hasResult\) next\.result = payload\.result;/.test(sharedSrc),
+    '/next reads `result` off the ERROR frame too — the half the shipping app still leaves on the floor');
+  ok(/function classifyRevokeOutcome\(acc\)/.test(sharedSrc),
+    '/next decides the outcome tone from the structured fields, not from the summary prose');
 }
 
 // ── 15. Mutation proof — formatHealthCost ───────────────────────────────────

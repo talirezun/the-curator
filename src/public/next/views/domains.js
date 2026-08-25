@@ -27,9 +27,22 @@
 
 import {
   registerView, setSidebar, setMain, eyebrow, emptyCard, icon, escapeHtml, navigate, isCurrentMount,
-  reportAsyncMountFailure, reportAsyncActionFailure,
+  reportAsyncMountFailure, reportAsyncActionFailure, isCurrentReader, openReader,
   beginDomainWrite,
 } from '../app.js';
+
+// Second import of the SAME module, as a namespace, for exactly one thing:
+// the chat-scope handoff (see goToChatScoped below). A static named import
+// of an export that does not exist is a HARD MODULE-LOAD ERROR in ESM — it
+// takes the entire /next shell down to a blank page, which is the precise
+// failure class v3.1.0's boot guard exists for. The chat-scope function is
+// owned by app.js and lands in a different edit than this one, so a named
+// import here would couple "did that edit land yet" to "does the app boot
+// at all". A namespace import cannot fail that way, and the call site below
+// degrades loudly (console.warn) + usefully (unscoped Chat) rather than
+// silently, so a rename can never become an invisible dead button. The
+// module is evaluated once regardless of how many times it is imported.
+import * as shell from '../app.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -100,7 +113,24 @@ const state = {
   banner: null,           // { tone: 'success'|'error'|'info', text }
 
   pendingPlan: null,      // { kind: 'brokenLinks'|'orphans', plan, summary }
-  semanticScan: null,     // { pairs, cost } once a semantic-dupe scan has completed
+
+  // Semantic-duplicate scan result. STAMPED WITH THE SLUG IT WAS SCANNED
+  // FOR — see activeSemanticScan() for why that stamp is load-bearing and
+  // not merely tidy.
+  //   { slug, pairs: [{keepFolder, keepSlug, removeFolder, removeSlug,
+  //                    confidence, rationale, status}],
+  //     cost, previewed: Set<pairKey>, preview: {key, data|error}|null }
+  semanticScan: null,
+
+  // Domain create/rename/delete form state (one at a time).
+  //   { mode: 'create'|'rename'|'delete', slug?, displayName, description,
+  //     template, busy, error, refusal }
+  lifecycle: null,
+
+  // Wiki page browser for the active domain. Stamped with its slug for the
+  // same reason semanticScan is — see activeBrowse().
+  //   { slug, loading, error, entries, truncated, total, filter, folder }
+  browse: null,
 };
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
@@ -174,27 +204,22 @@ const inFlightWriteSlugs = new Set();
 // Domain key: the PLAIN slug string (the `slug` parameter every one of
 // these functions already takes), matching exactly what src/routes/
 // health.js's own registerWrite(domain, ...) calls key on — `domain` is
-// `req.params.domain`, i.e. the same plain slug, at every one of its five
-// call sites (broken-links/apply :300, orphans/apply :378, fix-all-safe
-// :415, semantic-dupes/merge-batch :468, fix-all :521). Never a composite
-// key, so client and server can never disagree about which domain is busy.
-// DISCREPANCY FOUND, flagged rather than silently worked around (out of
-// this view's scope to fix): fixAllOfType below posts to POST
-// /api/health/:domain/fix (singular) for its "Fix all N <category>"
-// button — the body carries {type} with no `issue`, so fixIssue(domain,
-// type, null) behaves identically to what /:domain/fix-all does — but
-// unlike the other four flows, health.js's plain /:domain/fix route has
-// NO registerWrite() of its own (only /:domain/fix-all does, at line 521,
-// and nothing in this file ever calls that route). So this one flow is
-// now gated on the FRONTEND shell but the matching BACKEND route still
-// isn't 409-protected against a concurrent sync/update — the frontend gate
-// closes the UX gap (Sync's buttons correctly show busy either way), but a
-// non-UI client (curl, the MCP, a second browser tab) hitting /:domain/fix
-// directly during a sync is not caught by guardConcurrent() the way the
-// other four routes are. Worth deciding whether /:domain/fix should also
-// call registerWrite(), or whether fixAllOfType should call /:domain/fix-all
-// instead — recorded here rather than changed, since routes/health.js is
-// outside this session's file ownership.
+// `req.params.domain`, i.e. the same plain slug, in every mutating handler
+// in that file: POST /:domain/fix, /broken-links/apply, /orphans/apply,
+// /fix-all-safe, /semantic-dupes/merge-batch, /fix-all. Cited by route,
+// not by line number — line numbers rot, which is exactly what put a
+// false claim here (see below). Never a composite key, so client and
+// server can never disagree about which domain is busy.
+// CORRECTED (MEDIUM-2, this session): a prior version of this comment
+// claimed POST /:domain/fix — the route fixAllOfType below actually
+// calls — had "NO registerWrite() of its own" and was unprotected against
+// a concurrent sync/update. Re-verified directly against the current
+// src/routes/health.js: that route checks isUpdateInProgress(), calls
+// registerWrite(domain, 'health-fix'), and acquires the per-domain file
+// lock before doing any work — identically to its five siblings above.
+// There is no discrepancy and nothing to decide; the prior text sent
+// whoever read it to re-open a hole that was already closed. See
+// fixAllOfType's own comment below, corrected alongside this one.
 
 // ── Fetch helpers ──────────────────────────────────────────────────────────
 
@@ -223,8 +248,28 @@ async function streamSSE(url, body, onEvent) {
   });
   if (!res.ok || !res.body) {
     let msg = 'Request failed (' + res.status + ')';
-    try { const j = await res.json(); if (j && j.error) msg = j.error; } catch { /* ignore */ }
-    throw new Error(msg);
+    let parsedBody = null;
+    try { const j = await res.json(); parsedBody = j; if (j && j.error) msg = j.error; } catch { /* ignore */ }
+    // L1 fix (this session): mirror fetchJSON's shape (err.status / err.body)
+    // on this pre-stream failure path. Without it, classifyDomainError's
+    // 409-detection (`err.status === 409 || err.body.conflict`) could never
+    // fire for a caller fed by streamSSE, because a bare `new Error(msg)`
+    // carries neither field — verified live: a real write-registry 409 on
+    // /semantic-dupes/merge-batch (the route refuses BEFORE the SSE stream
+    // starts — see routes/health.js's isUpdateInProgress()/registerWrite()
+    // check ahead of `res.setHeader('Content-Type', 'text/event-stream')`)
+    // rendered as the generic "Could not merge duplicates — …" error banner
+    // instead of the dedicated refusal banner, on the single most
+    // destructive flow this file has. This branch is genuinely reachable
+    // for a 409: only a mid-stream failure (the `type === 'error'` frame
+    // handlers in each caller's onEvent) is a plain processing error with
+    // no conflict shape, because the backend's write-registry/file-lock
+    // refusals all happen before it ever calls res.flushHeaders() — so
+    // those throws are deliberately left as bare Errors.
+    const err = new Error(msg);
+    err.status = res.status;
+    err.body = parsedBody;
+    throw err;
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -362,13 +407,37 @@ async function loadDomainsList(token) {
   else render(token);
 }
 
+// LAYER 1 of the two-layer domain-scoping guard (LAYER 2 is
+// activeSemanticScan()/activeBrowse()). Pulled out of loadHealth() as a
+// plain synchronous function for one reason: it is the ONLY place any of
+// these four per-domain caches is cleared, so it is the thing a test has
+// to be able to drive directly to prove "switching domains really does
+// empty the previewed-merge gate" — rather than proving only that some
+// second check happens to refuse afterwards. Both layers are asserted
+// separately, and each is mutation-proven on its own, because two guards
+// that mask each other are two guards nobody is testing (v3.4.0's recorded
+// lesson: a mutation that stays green because a second layer covers it is
+// not coverage, it is a blind spot with a passing test in front of it).
+//
+// `keepSemanticScan` is opt-in and used by exactly the two per-pair
+// semantic actions (merge one, skip one), which refresh the health report
+// while the scan that produced the pair list is still meaningful. Without
+// it, merging pair 1 of 8 would wipe the whole list and the user would
+// have to RE-RUN a paid LLM scan to reach pair 2 — the fine-grained path
+// would cost money per pair. It is deliberately NOT set for the batch
+// merge, a domain switch, a plain rescan, or any other fix, all of which
+// invalidate the scan for real.
+function resetDomainScopedHealthState(opts) {
+  state.estimates = {};
+  state.pendingPlan = null;
+  if (!(opts && opts.keepSemanticScan)) state.semanticScan = null;
+  state.dismissedRecords = null;
+}
+
 async function loadHealth(slug, token, opts) {
   const silent = !!(opts && opts.silent);
   if (!silent) { state.healthLoading = true; state.healthError = null; state.health = null; }
-  state.estimates = {};
-  state.pendingPlan = null;
-  state.semanticScan = null;
-  state.dismissedRecords = null;
+  resetDomainScopedHealthState(opts);
   render(token);
 
   try {
@@ -426,18 +495,510 @@ async function loadEstimates(slug, token) {
 }
 
 // ── Chat handoff ─────────────────────────────────────────────────────────
-// "Ask this domain" / "New domain" both navigate to Chat, which owns scope
-// selection and the first-run composer. There is no shared shell state for
-// "the domain Chat should scope to" yet, so this writes a best-effort
-// localStorage hint Chat MAY read on its own onEnter — it is not required
-// to. See the final report for the shell function this should really be.
-function requestChatScope(slug) {
-  try { localStorage.setItem('curator-next-chat-scope-request', slug); } catch { /* private mode etc. */ }
+//
+// "Ask this domain" hands the selected domain to Chat, which owns scope
+// selection. This used to write two localStorage keys
+// ('curator-next-chat-scope-request', 'curator-next-chat-first-run-request')
+// that NOTHING read — dead on arrival, and worse than dead: localStorage
+// survives a reload, so a key written by a click the user then abandoned
+// sat there until some future Chat entry silently picked it up and scoped
+// the conversation to a domain the user had not asked about. Both keys, and
+// both writers, are gone; the handoff now goes through the shell's own
+// in-memory request/consume pair (app.js), which is cleared on read.
+//
+// The second of those two functions (requestChatFirstRun) is deleted
+// outright rather than rewired: its only caller was the "New domain"
+// button, which punted to Chat because this view had no way to create a
+// domain. It does now — openLifecycle('create') below — so there is
+// nothing left to hand off.
+//
+// Degradation contract: if app.js's requestChatScope is missing (renamed,
+// or not landed yet), warn LOUDLY on the console and still navigate to
+// Chat unscoped. A dead button that does nothing is the failure this
+// project keeps recording; a button that works slightly less well and says
+// so in the console is not.
+function goToChatScoped(slug) {
+  // VERIFIED against app.js rather than assumed: requestChatScope(slug) only
+  // RECORDS the pending request (`_pendingChatScopeRequest = {slug, firstRun}`)
+  // — it does NOT navigate. So this call site owns the navigation, and must
+  // do it, or the button records a scope nobody goes to see. The record must
+  // happen FIRST: chat.js consumes the request synchronously at the top of
+  // its onEnter, which navigate() invokes before returning.
+  //
+  // Exactly ONE navigate() call, deliberately. navigate() does not
+  // early-return when the target view is already current — it re-mounts —
+  // and consumeChatScopeRequest() CLEARS on read, so a second navigate would
+  // find nothing pending and silently drop the scope.
+  if (typeof shell.requestChatScope === 'function') {
+    shell.requestChatScope(slug);
+  } else {
+    console.warn('[next/domains] app.js does not export requestChatScope() — opening Chat without a domain scope.');
+  }
   navigate('chat');
 }
-function requestChatFirstRun() {
-  try { localStorage.setItem('curator-next-chat-first-run-request', '1'); } catch { /* ignore */ }
-  navigate('chat');
+
+// ── Domain lifecycle: create / rename / delete ─────────────────────────────
+//
+// Before this, every /api/domains call in /next was a bare GET: there was no
+// way to create, rename or delete a domain at all. The three routes have
+// existed since v2.x (src/routes/domains.js) — this is wiring, not new
+// server capability — but three of their semantics are easy to get wrong and
+// each was verified against that file rather than assumed:
+//
+//  1. POST returns **201**, not 200. `res.ok` covers both, so nothing here
+//     tests the number; it is called out so nobody "fixes" a 201 later.
+//  2. The slug is **server-generated** (generateUniqueSlug). The client never
+//     sends one. The shipping onboarding wizard does compute and send a
+//     `slug` field, which the server silently ignores — a client-computed
+//     slug that disagrees with the server's is a bug waiting for the first
+//     name collision, so it is deliberately not copied.
+//  3. On rename, **newSlug can EQUAL oldSlug** — the display-name-only
+//     branch of PUT /api/domains/:domain (routes/domains.js; cited by
+//     route, not line number, which rots) returns `{oldSlug, newSlug:
+//     oldSlug, …, syncWarning: false}`. Every piece of state re-keying below reads
+//     the RESPONSE, never an assumption that the slug moved; assuming it
+//     changed makes every subsequent call 404 on the domain that in fact
+//     still exists under its old name. Both branches are tested.
+//
+// PUT and DELETE also 409 when the domain has an active write
+// (isDomainActive). That refusal is rendered as its own message inside the
+// form card the user is looking at — see the LIFECYCLE REFUSAL note on
+// renderLifecycleCard.
+
+const DOMAIN_TEMPLATES = [
+  { value: 'generic', label: 'Generic', hint: 'A balanced starting schema. Good default.' },
+  { value: 'tech', label: 'Tech', hint: 'Tools, frameworks, architectures, engineering practice.' },
+  { value: 'business', label: 'Business', hint: 'Companies, markets, strategy, operations.' },
+  { value: 'personal', label: 'Personal', hint: 'Notes, people, ideas from your own life.' },
+];
+const DOMAIN_TEMPLATE_VALUES = DOMAIN_TEMPLATES.map((t) => t.value);
+
+// Client-side mirror of the server's two 400s (missing displayName, invalid
+// template) so the user is told before a round trip. Deliberately NOT a
+// slug validator — the server owns slug generation entirely.
+function validateDomainForm(form) {
+  const name = (form && typeof form.displayName === 'string') ? form.displayName.trim() : '';
+  if (!name) return { ok: false, error: 'Give the domain a name.' };
+  if (name.length > 120) return { ok: false, error: 'That name is too long — keep it under 120 characters.' };
+  const template = (form && form.template) || 'generic';
+  if (!DOMAIN_TEMPLATE_VALUES.includes(template)) return { ok: false, error: 'Pick one of the listed templates.' };
+  return { ok: true, error: null };
+}
+
+// The exact POST body. No `slug` key — see semantic (2) above; a test
+// asserts its absence, because "we accidentally started sending one again"
+// is invisible until a collision renames someone's domain.
+function createRequestBody(form) {
+  return {
+    displayName: (form.displayName || '').trim(),
+    description: (form.description || '').trim(),
+    template: form.template || 'generic',
+  };
+}
+
+// Re-keys every piece of per-domain state off the rename RESPONSE.
+// Returns { slugChanged, slug, message } — `slug` is the slug to keep
+// using from here on, whichever branch fired.
+function applyRenameResult(result) {
+  const oldSlug = result.oldSlug;
+  const newSlug = result.newSlug;
+  const slugChanged = newSlug !== oldSlug;
+
+  if (slugChanged) {
+    // Move, don't duplicate: a stale healthSummary entry under the old slug
+    // would keep painting an attention dot for a row that no longer exists.
+    if (Object.prototype.hasOwnProperty.call(state.healthSummary, oldSlug)) {
+      state.healthSummary[newSlug] = state.healthSummary[oldSlug];
+      delete state.healthSummary[oldSlug];
+    }
+    if (state.readonlySet.has(oldSlug)) {
+      state.readonlySet.delete(oldSlug);
+      state.readonlySet.add(newSlug);
+    }
+    // Anything stamped with the OLD slug is now unreachable through the
+    // active-* accessors anyway, but drop it explicitly rather than relying
+    // on that: a scan of the pages under a name that no longer exists is
+    // not something to keep offering merges from.
+    if (state.semanticScan && state.semanticScan.slug === oldSlug) state.semanticScan = null;
+    if (state.browse && state.browse.slug === oldSlug) state.browse = null;
+    if (state.activeSlug === oldSlug) state.activeSlug = newSlug;
+  }
+
+  const name = result.displayName;
+  const message = slugChanged
+    ? ('Renamed to “' + name + '” — the folder moved from domains/' + oldSlug + '/ to domains/' + newSlug + '/.')
+    : ('Renamed to “' + name + '” — the folder stays at domains/' + oldSlug + '/.');
+  return { slugChanged, slug: slugChanged ? newSlug : oldSlug, message };
+}
+
+// Drops a deleted domain from every piece of state that references it, and
+// picks a surviving domain to show (or none).
+function applyDeleteResult(slug) {
+  state.domains = state.domains.filter((d) => d.slug !== slug);
+  state.readonlySet.delete(slug);
+  delete state.healthSummary[slug];
+  if (state.semanticScan && state.semanticScan.slug === slug) state.semanticScan = null;
+  if (state.browse && state.browse.slug === slug) state.browse = null;
+  if (state.activeSlug === slug) {
+    state.activeSlug = state.domains.length ? state.domains[0].slug : null;
+    state.health = null;
+    state.healthError = null;
+  }
+  return { nextSlug: state.activeSlug };
+}
+
+// Turns a thrown fetchJSON error into { refusal, error }: a 409 from the
+// write-registry is a REFUSAL (the operation did not happen, the server
+// already explains why in a full sentence, and retrying later will work) —
+// not a failure, and never a generic "something went wrong". v3.6.0's
+// finding 7 is what this exists for: a refused destructive write that
+// rendered nothing at all, so the user read the button snapping back as
+// "my click didn't register" and clicked the destructive action again.
+function classifyDomainError(err) {
+  const conflict = err && (err.status === 409 || (err.body && err.body.conflict));
+  if (conflict) return { refusal: err.message, error: null };
+  return { refusal: null, error: err ? err.message : 'Unknown error' };
+}
+
+// Scrolls a just-rendered refusal/error into view if it landed off-screen.
+//
+// FOUND IN BROWSER VERIFICATION of this very change, which is the point of
+// doing it: a 409 on a per-pair merge rendered correctly, on the pair the
+// user clicked, with NO overlay anywhere on the page — and at y=1067 in an
+// 892px viewport. The user clicks Merge near the top of a long scan list,
+// the button re-enables, and the explanation is 175px below the fold. That
+// is v3.6.0 finding 7's user experience reached by a different mechanism
+// (scroll position rather than a scrim), and "we rendered it" is not the
+// same claim as "they can see it" — which is exactly the distinction that
+// finding was about. Same lesson as v3.0.14's scrollCardIntoView.
+//
+// Deliberately a no-op when the element is already fully in view: yanking
+// the page around under someone who can already read the message is its own
+// small hostility.
+function revealMessage(selector) {
+  const el = document.querySelector(selector);
+  if (!el || typeof el.getBoundingClientRect !== 'function') return false;
+  const r = el.getBoundingClientRect();
+  if (r.height === 0 && r.width === 0) return false;
+  if (r.top >= 0 && r.bottom <= window.innerHeight) return false; // already readable
+  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center' });
+  return true;
+}
+
+function openLifecycle(mode, domain) {
+  state.banner = null;
+  state.confirm = null;
+  if (mode === 'create') {
+    state.lifecycle = { mode: 'create', slug: null, displayName: '', description: '', template: 'generic', busy: false, error: null, refusal: null };
+  } else {
+    state.lifecycle = {
+      mode,
+      slug: domain.slug,
+      displayName: domain.displayName || domain.slug,
+      description: '',
+      template: 'generic',
+      busy: false,
+      error: null,
+      refusal: null,
+    };
+  }
+  render(myMountToken);
+}
+
+function closeLifecycle() {
+  state.lifecycle = null;
+  render(myMountToken);
+}
+
+async function runCreateDomain() {
+  const token = myMountToken;
+  const form = state.lifecycle;
+  if (!form || form.mode !== 'create' || form.busy) return;
+  const v = validateDomainForm(form);
+  if (!v.ok) { form.error = v.error; form.refusal = null; render(token); return; }
+
+  form.busy = true; form.error = null; form.refusal = null;
+  render(token);
+  let succeeded = false;
+  try {
+    // 201 Created. `res.ok` in fetchJSON covers 2xx, so the status number
+    // is not special-cased — see semantic (1) in the section comment.
+    const result = await fetchJSON('/api/domains', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(createRequestBody(form)),
+    });
+    if (!isCurrentMount(token)) return;
+    state.lifecycle = null;
+    // Select the domain the SERVER named, never a slug guessed here.
+    state.activeSlug = result.slug;
+    state.banner = { tone: 'success', text: 'Created “' + result.displayName + '” at domains/' + result.slug + '/.' };
+    succeeded = true;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const c = classifyDomainError(err);
+    if (state.lifecycle) { state.lifecycle.error = c.error; state.lifecycle.refusal = c.refusal; }
+  } finally {
+    if (state.lifecycle) state.lifecycle.busy = false;
+  }
+  if (!isCurrentMount(token)) return;
+  // The reload is deliberately OUTSIDE the try: it runs AFTER the write has
+  // already happened, so a failure in it is a stale-list problem, not a
+  // failed create/rename/delete. Reporting it through the catch above would
+  // tell the user their domain was not created when it was — the same
+  // shape as reporting a refusal as a success, in the other direction.
+  if (succeeded) await reloadAfterLifecycleChange(token);
+  else { render(token); revealMessage('.dm-lc-refusal, .dm-lc-error'); }
+}
+
+async function runRenameDomain() {
+  const token = myMountToken;
+  const form = state.lifecycle;
+  if (!form || form.mode !== 'rename' || form.busy) return;
+  const v = validateDomainForm({ displayName: form.displayName, template: 'generic' });
+  if (!v.ok) { form.error = v.error; form.refusal = null; render(token); return; }
+
+  // Target the slug the FORM was opened for, never state.activeSlug — see
+  // the note in selectDomain(). Second layer; the form is also cleared on
+  // any domain switch.
+  const target = form.slug;
+  form.busy = true; form.error = null; form.refusal = null;
+  render(token);
+  let succeeded = false;
+  const releaseGate = beginDomainWrite(target, 'rename-domain');
+  try {
+    const result = await fetchJSON('/api/domains/' + encodeURIComponent(target), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName: form.displayName.trim() }),
+    });
+    if (!isCurrentMount(token)) return;
+    const applied = applyRenameResult(result);
+    state.lifecycle = null;
+    state.banner = {
+      tone: 'success',
+      text: applied.message + (result.syncWarning ? ' This change will propagate to GitHub on your next Sync.' : ''),
+    };
+    succeeded = true;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const c = classifyDomainError(err);
+    if (state.lifecycle) { state.lifecycle.error = c.error; state.lifecycle.refusal = c.refusal; }
+  } finally {
+    releaseGate(); // unconditional — a stale mount must not leak a shell-wide write gate
+    if (state.lifecycle) state.lifecycle.busy = false;
+  }
+  if (!isCurrentMount(token)) return;
+  if (succeeded) await reloadAfterLifecycleChange(token); // outside the try — see runCreateDomain
+  else { render(token); revealMessage('.dm-lc-refusal, .dm-lc-error'); }
+}
+
+async function runDeleteDomain() {
+  const token = myMountToken;
+  const form = state.lifecycle;
+  if (!form || form.mode !== 'delete' || form.busy) return;
+  const target = form.slug;
+  form.busy = true; form.error = null; form.refusal = null;
+  render(token);
+  let succeeded = false;
+  const releaseGate = beginDomainWrite(target, 'delete-domain');
+  try {
+    const result = await fetchJSON('/api/domains/' + encodeURIComponent(target), { method: 'DELETE' });
+    if (!isCurrentMount(token)) return;
+    applyDeleteResult(target);
+    state.lifecycle = null;
+    state.banner = {
+      tone: 'success',
+      text: 'Deleted “' + (form.displayName || target) + '”.' +
+        (result && result.syncWarning ? ' The deletion propagates to GitHub on your next Sync.' : ''),
+    };
+    succeeded = true;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const c = classifyDomainError(err);
+    if (state.lifecycle) { state.lifecycle.error = c.error; state.lifecycle.refusal = c.refusal; }
+  } finally {
+    releaseGate(); // unconditional
+    if (state.lifecycle) state.lifecycle.busy = false;
+  }
+  if (!isCurrentMount(token)) return;
+  if (succeeded) await reloadAfterLifecycleChange(token); // outside the try — see runCreateDomain
+  else { render(token); revealMessage('.dm-lc-refusal, .dm-lc-error'); }
+}
+
+// Shared tail for all three: re-fetch the list (page counts, display names
+// and readonly flags all come from the server) and rescan whichever domain
+// is now active. Never assumes the local list is already correct.
+async function reloadAfterLifecycleChange(token) {
+  const keepBanner = state.banner;
+  await loadDomainsList(token);
+  if (!isCurrentMount(token)) return;
+  // loadDomainsList -> loadHealth renders several times; re-assert the
+  // outcome banner afterwards so the result of a destructive action is not
+  // scrolled off or repainted away before the user reads it.
+  state.banner = keepBanner;
+  render(token);
+}
+
+// ── Semantic-duplicate pair gate ───────────────────────────────────────────
+//
+// WHY THIS SECTION EXISTS AT ALL. The shipping app offers TWO ways to act on
+// a semantic-duplicate pair: a per-pair path where Merge is DISABLED until
+// the user has opened a Preview diff for that exact pair (and the handler
+// hard-refuses without it), and a batch "Merge all N high-confidence" path
+// behind a text confirm. /next shipped only the batch path — so the only
+// available action on an LLM's duplicate judgement was "merge all of them,
+// sight unseen". That merge DELETES a file and rewrites every [[link]] to it
+// across the whole domain. Without Flip there was no way to correct a
+// high-confidence pair pointing the wrong way (keep the stub, delete the
+// rich page); without Skip the same false positive returned on every future
+// scan, forever.
+//
+// TWO INVARIANTS, both with precedent, both of which have already been real
+// bugs in this project:
+//
+//  1. THE PREVIEWED SET IS CLEARED ON: a new scan, a domain switch, and a
+//     Flip. `state` in this file is module-scoped and survives leaving the
+//     view, so a set that is never cleared can outlive the scan it belongs
+//     to and authorise a merge on a DIFFERENT domain's pair. It is defended
+//     twice, and the two layers are deliberately independent:
+//       LAYER 1 — the set lives INSIDE state.semanticScan, and
+//         resetDomainScopedHealthState() nulls that object. Structural: a
+//         new scan cannot inherit an old set, because the set is part of the
+//         object being replaced. There is no second place holding a copy.
+//       LAYER 2 — the scan is STAMPED with the slug it was scanned for, and
+//         activeSemanticScan() returns it only while that stamp still
+//         matches state.activeSlug. Every reader and every action goes
+//         through that accessor.
+//     Layer 2 does not depend on anyone remembering layer 1, and the tests
+//     assert each SEPARATELY (a mutation that only one layer catches is a
+//     blind spot with a passing test in front of it — v3.4.0's lesson).
+//
+//  2. THE BATCH RUNNER DERIVES ITS PAIR LIST FROM LIVE STATE AT CLICK TIME,
+//     never from the array the scan returned. This is not a nicety: the
+//     shipping app fixed exactly this in a v3.0.1-beta.15 audit — "a user's
+//     Flip / Skip / individual-Merge before clicking 'Merge all' could merge
+//     the WRONG direction or re-merge a dismissed pair". It reads the live
+//     DOM cards because there the cards ARE the state; here the pairs array
+//     IS the state, so liveHighConfidencePairs() reads it at call time and
+//     runMergeSemanticDuplicates() re-derives once more at execution, after
+//     the confirm dialog the user may have left open while flipping things.
+//     Adding Flip/Skip on top of a frozen array would have re-created a bug
+//     this project has already paid for once.
+
+function semanticPairKey(pair) {
+  return pair.keepFolder + '/' + pair.keepSlug + '||' + pair.removeFolder + '/' + pair.removeSlug;
+}
+
+// LAYER 2. The ONLY way any renderer or action reaches the scan.
+function activeSemanticScan() {
+  const s = state.semanticScan;
+  if (!s) return null;
+  if (s.slug !== state.activeSlug) return null;
+  return s;
+}
+
+// Test/observability accessor for LAYER 1: what the previewed set actually
+// holds, unfiltered by the slug stamp. Asserting on this is what makes
+// "the set is EMPTY after a scan / domain switch / Flip" a real claim
+// rather than "some later check happens to refuse".
+function rawPreviewedKeys() {
+  const s = state.semanticScan;
+  if (!s || !s.previewed) return [];
+  return [...s.previewed];
+}
+
+function markSemanticPreviewed(pair) {
+  const s = activeSemanticScan();
+  if (!s) return false;
+  s.previewed.add(semanticPairKey(pair));
+  return true;
+}
+
+function isSemanticPreviewed(pair) {
+  const s = activeSemanticScan();
+  if (!s) return false;
+  return s.previewed.has(semanticPairKey(pair));
+}
+
+// The gate itself. Returns { allowed, reason } so a refusal always has
+// something to SAY — a silently-disabled button is how a user concludes
+// their click did not register.
+function canMergeSemanticPair(pair) {
+  const s = activeSemanticScan();
+  if (!s) return { allowed: false, reason: 'That scan belongs to a different domain — run a new scan here first.' };
+  const idx = s.pairs.indexOf(pair);
+  const known = idx !== -1 ? s.pairs[idx] : s.pairs.find((p) => semanticPairKey(p) === semanticPairKey(pair));
+  if (!known) return { allowed: false, reason: 'That pair is no longer part of the current scan.' };
+  if (known.status !== 'open') return { allowed: false, reason: 'That pair has already been handled.' };
+  if (!s.previewed.has(semanticPairKey(known))) return { allowed: false, reason: 'Open the preview diff for this pair before merging it.' };
+  return { allowed: true, reason: null };
+}
+
+// Swaps which side of the pair survives, and CLEARS THE WHOLE PREVIEWED SET.
+//
+// Clearing the whole set (rather than just this pair's key) is deliberate
+// and is the fail-closed direction. The shipping app relies on the flipped
+// pair getting a different identity key, so the old key simply stops
+// matching — correct today, and silently wrong the day anyone makes the key
+// direction-insensitive. Clearing outright does not depend on the key
+// derivation being right. The cost is that other pairs must be previewed
+// again; the preview is a free, local, read-only call (no LLM), so re-doing
+// it costs the user nothing but a click, while the failure it prevents is
+// deleting a file in the direction the user did not choose.
+function flipSemanticPair(pair) {
+  const s = activeSemanticScan();
+  if (!s) return false;
+  const idx = s.pairs.findIndex((p) => semanticPairKey(p) === semanticPairKey(pair));
+  if (idx === -1) return false;
+  const p = s.pairs[idx];
+  s.pairs[idx] = {
+    keepFolder: p.removeFolder, keepSlug: p.removeSlug,
+    removeFolder: p.keepFolder, removeSlug: p.keepSlug,
+    confidence: p.confidence, rationale: p.rationale, status: p.status,
+  };
+  s.previewed.clear();
+  s.preview = null;
+  return true;
+}
+
+// INVARIANT 2. Read at call time, never captured.
+function liveHighConfidencePairs() {
+  const s = activeSemanticScan();
+  if (!s) return [];
+  return s.pairs.filter((p) => p.status === 'open' && p.confidence === 'high');
+}
+
+function markSemanticPairStatus(pair, status) {
+  const s = activeSemanticScan();
+  if (!s) return false;
+  const key = semanticPairKey(pair);
+  const idx = s.pairs.findIndex((p) => semanticPairKey(p) === key);
+  if (idx === -1) return false;
+  s.pairs[idx] = Object.assign({}, s.pairs[idx], { status });
+  // Defense in depth, not redundancy: canMergeSemanticPair's own
+  // `status !== 'open'` check already refuses a merged/skipped pair, so
+  // this line's effect is invisible to any assertion that only goes
+  // THROUGH the gate. Covered independently in
+  // scripts/test-next-semantic-gate.js §2d via rawPreviewedKeys(), the
+  // same raw-read escape hatch §2a-§2c use to test LAYER 1 on its own —
+  // otherwise a docblock elsewhere in this file claiming "the tests assert
+  // each layer separately" would be true of the previewed-set-clearing
+  // invariant in general but silently false of this one line.
+  s.previewed.delete(key);
+  if (s.preview && s.preview.key === key) s.preview = null;
+  return true;
+}
+
+// The wire shape fixSemanticDuplicate() resolves (keep*/remove*), with no
+// client-side extras. `status` is view-local bookkeeping and must never be
+// sent — the batch route validates each pair through the same resolver.
+function toWirePair(p) {
+  return {
+    keepFolder: p.keepFolder, keepSlug: p.keepSlug,
+    removeFolder: p.removeFolder, removeSlug: p.removeSlug,
+    confidence: p.confidence,
+  };
 }
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
@@ -465,7 +1026,7 @@ function renderSidebar(token) {
     setSidebar(
       '<div class="sidebar-title">Domains</div>' + newBtn +
       '<div class="cur-eyebrow" style="margin-top:10px">KNOWLEDGE</div>' +
-      '<div class="sidebar-note">No domains yet. A domain is one compounding wiki — create your first one from Chat.</div>',
+      '<div class="sidebar-note">No domains yet. A domain is one compounding wiki — create your first one above.</div>',
       token
     );
     bindNewDomainBtn();
@@ -511,7 +1072,7 @@ function renderSidebar(token) {
 
 function bindNewDomainBtn() {
   const btn = document.getElementById('dm-new-domain-btn');
-  if (btn) btn.addEventListener('click', requestChatFirstRun);
+  if (btn) btn.addEventListener('click', () => openLifecycle('create'));
 }
 
 // Entered synchronously by a click handler — reading myMountToken here is
@@ -522,6 +1083,15 @@ function selectDomain(slug) {
   state.confirm = null;
   state.banner = null;
   state.expandedGroups = new Set();
+  // A create/rename/delete form opened for the PREVIOUS domain must not
+  // survive a domain switch. Rename and delete both carry a target slug, so
+  // a form left standing across a switch is a destructive action pointing
+  // at one domain while the whole screen around it describes another. (The
+  // action functions independently target `lifecycle.slug` rather than
+  // `state.activeSlug`, so even a form that somehow survived could not act
+  // on the wrong domain — same two-layer shape as the semantic gate.)
+  state.lifecycle = null;
+  state.browse = null;
   render(myMountToken);
   loadHealth(slug, myMountToken).catch(reportAsyncActionFailure);
 }
@@ -545,16 +1115,18 @@ function renderMain(token) {
   if (state.domains.length === 0) {
     setMain(
       eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' +
+      renderLifecycleCard() +
       '<div class="view-body">A domain is one compounding wiki — a subject you read about often. Everything ingested ' +
       'into it updates the pages already there, so the graph gets denser rather than just bigger.</div>' +
       emptyCard({
         title: 'No domains yet',
-        body: 'Name your first domain from Chat and it sets up its schema. Nothing is written until you confirm.',
+        body: 'Name it, pick a starting schema, and it is ready to ingest into. Nothing is written until you confirm.',
         actionHtml: '<button class="btn btn-primary" id="dm-empty-new-btn">' + icon('grid', 13) + ' New domain</button>',
       }),
       token
     );
-    document.getElementById('dm-empty-new-btn')?.addEventListener('click', requestChatFirstRun);
+    document.getElementById('dm-empty-new-btn')?.addEventListener('click', () => openLifecycle('create'));
+    bindLifecycleListeners();
     return;
   }
 
@@ -589,16 +1161,23 @@ function renderMain(token) {
     '<div class="dm-title-row">' +
       '<h1 class="view-title dm-title">' + escapeHtml(domain.displayName || domain.slug) + '</h1>' +
       (readonly ? '<span class="dm-mirror-pill">' + icon('lock', 11) + ' read-only mirror</span>' : '') +
+      '<button class="btn btn-secondary dm-title-btn" id="dm-rename-btn">Rename</button>' +
+      '<button class="btn btn-ghost dm-title-btn dm-delete-btn" id="dm-delete-btn">' + icon('trash', 13) + ' Delete</button>' +
       '<button class="btn btn-primary dm-ask-btn" id="dm-ask-btn">' + icon('messageSquare', 14) + ' Ask this domain</button>' +
     '</div>' +
     '<div class="view-body dm-scope-desc">' + escapeHtml(scopeSentence) + '</div>' +
+    renderLifecycleCard() +
     renderStatCards(counts, pages) +
     renderHealthPanel(domain, readonly) +
-    renderRecentlyWritten();
+    renderBrowsePanel();
 
   setMain(html, token);
-  document.getElementById('dm-ask-btn')?.addEventListener('click', () => requestChatScope(domain.slug));
+  document.getElementById('dm-ask-btn')?.addEventListener('click', () => goToChatScoped(domain.slug));
+  document.getElementById('dm-rename-btn')?.addEventListener('click', () => openLifecycle('rename', domain));
+  document.getElementById('dm-delete-btn')?.addEventListener('click', () => openLifecycle('delete', domain));
+  bindLifecycleListeners();
   bindHealthListeners(domain, readonly);
+  bindBrowseListeners();
 }
 
 function renderStatCards(counts, pages) {
@@ -621,18 +1200,361 @@ function renderStatCards(counts, pages) {
   );
 }
 
-function renderRecentlyWritten() {
-  // No lightweight "recent pages" endpoint exists — GET /api/wiki/:domain
-  // returns full body content for every page in the domain (documented in
-  // src/routes/wiki.js as "14 MB on the real articles domain"), which is
-  // the wrong shape and cost for a sidebar-adjacent recency list. Rather
-  // than pull that much data just to read mtimes, this is left an honest
-  // placeholder — see the final report.
+// ── Wiki browse panel ──────────────────────────────────────────────────────
+//
+// /next had no way to see what is IN a domain — the only route to a page was
+// clicking a citation in Chat, so a page nothing had cited was unreachable.
+// Shipping's Wiki tab lists every page; this is that capability, inside the
+// domain where the design puts it.
+//
+// Backed by GET /api/wiki/:domain/list (readdir only; no file bodies), which
+// returns { entries: [{slug, folder, path, title}], truncated }. The whole
+// list is fetched once and filtered IN MEMORY — ~3,300 entries is ~300 KB in
+// one call, versus a request per keystroke.
+//
+// ACCEPTED TRADE-OFF, stated so nobody "fixes" it: `title` is derived from
+// the SLUG, not from the page's frontmatter, because a real title needs the
+// file body — the 14 MB whole-domain read this endpoint exists to avoid. A
+// page whose frontmatter title differs shows a slightly-off label in this
+// list and its correct title the instant it is opened.
+
+const BROWSE_FOLDERS = [
+  { key: 'all', label: 'All' },
+  { key: 'entities', label: 'Entities' },
+  { key: 'concepts', label: 'Concepts' },
+  { key: 'summaries', label: 'Summaries' },
+];
+// How many rows are painted at once. The filter box is the way to reach
+// past it; painting 3,300 rows costs more than it tells anyone.
+const BROWSE_RENDER_CAP = 150;
+
+// LAYER 2 for the browse list, same shape as activeSemanticScan(): a list
+// fetched for domain A must never render under domain B, even if the
+// clearing in selectDomain() were ever removed.
+function activeBrowse() {
+  const b = state.browse;
+  if (!b) return null;
+  if (b.slug !== state.activeSlug) return null;
+  return b;
+}
+
+function filterBrowseEntries(entries, filter, folder) {
+  const q = (filter || '').trim().toLowerCase();
+  const out = [];
+  for (const e of entries) {
+    if (folder && folder !== 'all' && e.folder !== folder) continue;
+    if (q) {
+      const hay = (e.slug + ' ' + (e.title || '')).toLowerCase();
+      if (!hay.includes(q)) continue;
+    }
+    out.push(e);
+  }
+  return out;
+}
+
+async function loadBrowse(slug, token) {
+  state.browse = { slug, loading: true, error: null, entries: [], truncated: false, total: 0, filter: '', folder: 'all' };
+  render(token);
+  try {
+    const data = await fetchJSON('/api/wiki/' + encodeURIComponent(slug) + '/list');
+    if (!isCurrentMount(token)) return;
+    const b = state.browse;
+    if (!b || b.slug !== slug) return; // domain switched mid-fetch
+    b.entries = Array.isArray(data.entries) ? data.entries : [];
+    b.truncated = !!data.truncated;
+    b.total = b.entries.length;
+    b.loading = false;
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const b = state.browse;
+    if (!b || b.slug !== slug) return;
+    b.loading = false;
+    b.error = err.message;
+  }
+  render(token);
+}
+
+function renderBrowsePanel() {
+  const b = activeBrowse();
+  if (!b) {
+    return (
+      '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
+      '<div class="dm-browse-card">' +
+        '<div class="dm-browse-empty">Browse every page in this domain — entities, concepts and summaries.</div>' +
+        '<button class="btn btn-secondary" id="dm-browse-load-btn">' + icon('book', 13) + ' Browse pages</button>' +
+      '</div>'
+    );
+  }
+  if (b.loading) {
+    return '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div><div class="dm-browse-card"><div class="dm-browse-empty">Loading pages…</div></div>';
+  }
+  if (b.error) {
+    return (
+      '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
+      '<div class="dm-browse-card">' +
+        '<div class="dm-browse-empty dm-error-text">Could not list pages — ' + escapeHtml(b.error) + '</div>' +
+        '<button class="btn btn-secondary" id="dm-browse-load-btn">Try again</button>' +
+      '</div>'
+    );
+  }
+
+  const matches = filterBrowseEntries(b.entries, b.filter, b.folder);
+  const shown = matches.slice(0, BROWSE_RENDER_CAP);
+  const tabs = BROWSE_FOLDERS.map((f) => {
+    const n = f.key === 'all' ? b.entries.length : b.entries.filter((e) => e.folder === f.key).length;
+    return '<button class="dm-browse-tab' + (b.folder === f.key ? ' active' : '') + '" data-browse-folder="' + f.key + '">' +
+      escapeHtml(f.label) + ' <span class="mono dm-browse-tab-count">' + n + '</span></button>';
+  }).join('');
+
+  const rows = shown.map((e) => (
+    '<button class="dm-browse-row" data-browse-path="' + escapeHtml(e.path) + '" data-browse-title="' + escapeHtml(e.title || e.slug) + '">' +
+      '<span class="dm-browse-dot dm-browse-dot-' + escapeHtml(e.folder) + '"></span>' +
+      '<span class="dm-browse-title">' + escapeHtml(e.title || e.slug) + '</span>' +
+      '<span class="mono dm-browse-path">' + escapeHtml(e.path) + '</span>' +
+    '</button>'
+  )).join('') || '<div class="dm-browse-empty">No pages match that filter.</div>';
+
+  const capNote = matches.length > shown.length
+    ? '<div class="dm-browse-note">Showing the first ' + shown.length + ' of ' + matches.length.toLocaleString() + ' matches — narrow the filter to see the rest.</div>'
+    : '';
+  const truncNote = b.truncated
+    ? '<div class="dm-browse-note dm-quick-note-busy">' + icon('alertTriangle', 12) + ' This domain has more pages than the listing endpoint returns — the list below is incomplete.</div>'
+    : '';
+
   return (
-    '<div class="cur-eyebrow dm-recent-eyebrow">RECENTLY WRITTEN</div>' +
-    '<div class="dm-recent-note">Not wired up in this phase — the only available endpoint returns full page ' +
-    'content for the whole domain, too heavy for a recency list. A lightweight path+mtime endpoint would unlock this.</div>'
+    '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
+    '<div class="dm-browse-card">' +
+      '<div class="dm-browse-controls">' +
+        '<input class="dm-browse-filter" id="dm-browse-filter" type="text" placeholder="Filter by name…" value="' + escapeHtml(b.filter) + '" />' +
+        '<div class="dm-browse-tabs">' + tabs + '</div>' +
+      '</div>' +
+      truncNote +
+      '<div class="dm-browse-list">' + rows + '</div>' +
+      capNote +
+    '</div>'
   );
+}
+
+// Opens a page in the shell reader.
+//
+// The body is rendered as its own MARKDOWN SOURCE inside a <pre>, escaped,
+// not as rich HTML. /next's markdown renderer lives in views/chat.js, and
+// this view must not import another view's internals. The alternative —
+// copying a security-sensitive escape-first renderer into a second file —
+// is the "two hand-maintained copies of a guard" shape that produced the
+// v3.2.0 CRITICAL, and this project pins duplicated frontend helpers with a
+// byte-identity drift suite precisely because that duplication rots. Raw
+// markdown is readable by design; the correct fix is lifting renderMarkdown
+// into next/shared/ so both surfaces share ONE renderer, which is a change
+// to a file this work does not own. Flagged, not worked around.
+async function openWikiPageFromBrowse(path, titleHint) {
+  const mount = myMountToken;
+  const slug = state.activeSlug;
+  const epoch = openReader({ slug: path, title: titleHint || path, loading: true }, mount);
+  try {
+    const page = await fetchJSON('/api/wiki/' + encodeURIComponent(slug) + '/page?path=' + encodeURIComponent(path));
+    if (!isCurrentMount(mount)) return;
+    if (!isCurrentReader(epoch)) return; // Esc / scrim / ✕ closed it while we fetched
+    const tags = Array.isArray(page.frontmatter && page.frontmatter.tags) ? page.frontmatter.tags : [];
+    const plainTags = tags.map((t) => String(t).replace(/^"+|"+$/g, '')).filter((t) => !/^type\//.test(t));
+    openReader({
+      slug: page.path || path,
+      title: page.title || titleHint || path,
+      type: page.folder,
+      typeLabel: page.type,
+      tags: plainTags,
+      readonly: !!page.readonly,
+      bodyHtml: '<pre class="dm-page-source">' + escapeHtml(page.body || '') + '</pre>',
+      backlinks: Array.isArray(page.backlinks)
+        ? page.backlinks.map((bl) => ({ path: bl.path, title: bl.title || bl.slug, type: bl.folder }))
+        : [],
+      onBacklinkClick: (bp, bt) => openWikiPageFromBrowse(bp, bt),
+    }, mount);
+  } catch (err) {
+    if (!isCurrentMount(mount)) return;
+    if (!isCurrentReader(epoch)) return;
+    openReader({ slug: path, title: titleHint || path, error: err.message }, mount);
+  }
+}
+
+// ── Domain lifecycle card ──────────────────────────────────────────────────
+//
+// LIFECYCLE REFUSAL (v3.6.0 finding 7). PUT and DELETE both 409 when the
+// domain has an active write. That refusal renders as its OWN message,
+// visually distinct from an error, inside this card — the surface the user
+// is already looking at and the one they cannot scroll away from while the
+// form is open. The failure being designed against is not "we forgot to
+// handle 409"; it is "we handled it and the user never saw it", after which
+// they clicked the destructive action again.
+function renderLifecycleCard() {
+  const f = state.lifecycle;
+  if (!f) return '';
+  const busy = !!f.busy;
+
+  const messages =
+    (f.refusal
+      ? '<div class="dm-lc-refusal">' + icon('alertCircle', 14) +
+        '<span><strong>Not done — the server refused this.</strong> ' + escapeHtml(f.refusal) + '</span></div>'
+      : '') +
+    (f.error ? '<div class="dm-lc-error">' + icon('alertCircle', 14) + '<span>' + escapeHtml(f.error) + '</span></div>' : '');
+
+  if (f.mode === 'delete') {
+    const domain = state.domains.find((d) => d.slug === f.slug);
+    // pageCount is the RECURSIVE total (files.js's stated invariant:
+    // entities + concepts + summaries + other). v3.2.0 recorded that
+    // narrowing it made the shipping delete dialog promise 4 pages and then
+    // delete 7 — so the number quoted here is deliberately that one.
+    const pages = domain && typeof domain.pageCount === 'number' ? domain.pageCount : null;
+    const readonly = state.readonlySet.has(f.slug);
+    return (
+      '<div class="dm-lc-card dm-lc-danger">' +
+        '<div class="dm-lc-title">Delete “' + escapeHtml(f.displayName || f.slug) + '”?</div>' +
+        '<div class="dm-lc-body">This permanently removes <span class="mono">domains/' + escapeHtml(f.slug) + '/</span>' +
+          (pages === null ? '' : ' and all ' + pluralize(pages, 'page') + ' in it') +
+          ', including its raw sources and saved conversations. It cannot be undone from inside The Curator.' +
+          (readonly ? ' This is a Shared Brain mirror — deleting it removes only your local copy, and a future Pull recreates it.' : '') +
+        '</div>' +
+        messages +
+        '<div class="dm-lc-actions">' +
+          '<button class="btn btn-primary dm-lc-danger-btn" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' +
+            (busy ? 'Deleting…' : 'Delete permanently') + '</button>' +
+          '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  if (f.mode === 'rename') {
+    // A mirror's slug IS its contract: pullCollective writes to
+    // shared-<slug>, and both validateConnection and pushDomain refuse a
+    // `shared-*` domain as a contributing domain. Renaming one away from
+    // that prefix would leave a domain that the next Pull recreates
+    // alongside it AND that those two refusals no longer recognise — so it
+    // could be pushed as a contributor. The backend does not block this;
+    // this refusal is deliberate UI policy, stated rather than silent.
+    if (state.readonlySet.has(f.slug)) {
+      return (
+        '<div class="dm-lc-card">' +
+          '<div class="dm-lc-title">Read-only mirrors cannot be renamed</div>' +
+          '<div class="dm-lc-body">' + escapeHtml(f.displayName || f.slug) + ' is a Shared Brain mirror. Its folder name ' +
+            '(<span class="mono">' + escapeHtml(f.slug) + '</span>) is what marks it as a mirror — renaming it would make the ' +
+            'next Pull create a second copy alongside it. Rename the brain from the Shared Brain view instead.</div>' +
+          '<div class="dm-lc-actions"><button class="btn btn-secondary" id="dm-lc-cancel">Close</button></div>' +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="dm-lc-card">' +
+        '<div class="dm-lc-title">Rename “' + escapeHtml(f.slug) + '”</div>' +
+        '<div class="dm-lc-body">The display name changes immediately. The folder name is chosen by the server and only ' +
+          'changes if the new name produces a different one — either way, nothing here assumes which.</div>' +
+        '<label class="dm-lc-label" for="dm-lc-name">Display name</label>' +
+        '<input class="dm-lc-input" id="dm-lc-name" type="text" value="' + escapeHtml(f.displayName) + '"' + (busy ? ' disabled' : '') + ' />' +
+        messages +
+        '<div class="dm-lc-actions">' +
+          '<button class="btn btn-primary" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Renaming…' : 'Rename') + '</button>' +
+          '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  const templates = DOMAIN_TEMPLATES.map((t) => (
+    '<button class="dm-lc-template' + (f.template === t.value ? ' active' : '') + '" data-template="' + t.value + '"' + (busy ? ' disabled' : '') + '>' +
+      '<span class="dm-lc-template-label">' + escapeHtml(t.label) + '</span>' +
+      '<span class="dm-lc-template-hint">' + escapeHtml(t.hint) + '</span>' +
+    '</button>'
+  )).join('');
+
+  return (
+    '<div class="dm-lc-card">' +
+      '<div class="dm-lc-title">New domain</div>' +
+      '<div class="dm-lc-body">A domain is one compounding wiki. The template picks the starting schema that tells the ' +
+        'AI how to categorise what you ingest — you can edit it later.</div>' +
+      '<label class="dm-lc-label" for="dm-lc-name">Name</label>' +
+      '<input class="dm-lc-input" id="dm-lc-name" type="text" placeholder="e.g. Articles" value="' + escapeHtml(f.displayName) + '"' + (busy ? ' disabled' : '') + ' />' +
+      '<label class="dm-lc-label" for="dm-lc-desc">Description <span class="dm-lc-optional">(optional)</span></label>' +
+      '<input class="dm-lc-input" id="dm-lc-desc" type="text" placeholder="What goes in here?" value="' + escapeHtml(f.description) + '"' + (busy ? ' disabled' : '') + ' />' +
+      '<div class="dm-lc-label">Template</div>' +
+      '<div class="dm-lc-templates">' + templates + '</div>' +
+      messages +
+      '<div class="dm-lc-actions">' +
+        '<button class="btn btn-primary" id="dm-lc-submit"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Creating…' : 'Create domain') + '</button>' +
+        '<button class="btn btn-secondary" id="dm-lc-cancel"' + (busy ? ' disabled' : '') + '>Cancel</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function bindLifecycleListeners() {
+  const f = state.lifecycle;
+  if (!f) return;
+  document.getElementById('dm-lc-cancel')?.addEventListener('click', closeLifecycle);
+
+  const nameEl = document.getElementById('dm-lc-name');
+  // Written straight into state on every keystroke, WITHOUT a re-render —
+  // re-rendering here would rebuild the input and lose the caret. The
+  // submit handlers read state, never the DOM, so the two cannot disagree.
+  nameEl?.addEventListener('input', () => { f.displayName = nameEl.value; });
+  const descEl = document.getElementById('dm-lc-desc');
+  descEl?.addEventListener('input', () => { f.description = descEl.value; });
+
+  document.querySelectorAll('.dm-lc-template[data-template]').forEach((btn) => {
+    btn.addEventListener('click', () => { f.template = btn.dataset.template; render(myMountToken); });
+  });
+
+  const submit = document.getElementById('dm-lc-submit');
+  submit?.addEventListener('click', () => {
+    const run = f.mode === 'create' ? runCreateDomain : (f.mode === 'rename' ? runRenameDomain : runDeleteDomain);
+    Promise.resolve().then(() => run()).catch(reportAsyncActionFailure);
+  });
+  // Enter submits the two text forms. Delete deliberately has no keyboard
+  // shortcut — it is the one action with no undo.
+  if (f.mode !== 'delete') {
+    nameEl?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); submit?.click(); }
+    });
+  }
+}
+
+function bindBrowseListeners() {
+  document.getElementById('dm-browse-load-btn')?.addEventListener('click', () => {
+    if (!state.activeSlug) return;
+    loadBrowse(state.activeSlug, myMountToken).catch(reportAsyncActionFailure);
+  });
+
+  const filterEl = document.getElementById('dm-browse-filter');
+  if (filterEl) {
+    filterEl.addEventListener('input', () => {
+      const b = activeBrowse();
+      if (!b) return;
+      b.filter = filterEl.value;
+      // Re-render repaints the input, so restore focus + caret. Keeping the
+      // list in sync with the box on every keystroke is the whole point of
+      // holding all entries in memory.
+      const caret = filterEl.selectionStart;
+      render(myMountToken);
+      const again = document.getElementById('dm-browse-filter');
+      if (again) { again.focus(); try { again.setSelectionRange(caret, caret); } catch { /* not all inputs support it */ } }
+    });
+  }
+
+  document.querySelectorAll('.dm-browse-tab[data-browse-folder]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const b = activeBrowse();
+      if (!b) return;
+      b.folder = btn.dataset.browseFolder;
+      render(myMountToken);
+    });
+  });
+
+  document.querySelectorAll('.dm-browse-row[data-browse-path]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      Promise.resolve()
+        .then(() => openWikiPageFromBrowse(btn.dataset.browsePath, btn.dataset.browseTitle))
+        .catch(reportAsyncActionFailure);
+    });
+  });
 }
 
 // ── Health panel ───────────────────────────────────────────────────────────
@@ -696,7 +1618,7 @@ function renderHealthPanel(domain, readonly) {
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
       (state.confirm ? renderConfirmCard() : '') +
       (state.pendingPlan ? renderPendingPlan(crossMountBusy) : '') +
-      (state.semanticScan ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
+      (activeSemanticScan() ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
       renderIssueGroups(report, readonly, crossMountBusy) +
     '</div>'
   );
@@ -840,34 +1762,127 @@ function renderPendingPlan(crossMountBusy) {
 }
 
 function renderSemanticScanResult(readonly, crossMountBusy) {
-  const s = state.semanticScan;
+  const s = activeSemanticScan();
+  if (!s) return '';
   const busy = state.busyKey || crossMountBusy;
-  const high = s.pairs.filter((p) => p.confidence === 'high');
-  const rest = s.pairs.filter((p) => p.confidence !== 'high');
+  const open = s.pairs.filter((p) => p.status === 'open');
+  const handled = s.pairs.filter((p) => p.status !== 'open');
+
   if (s.pairs.length === 0) {
     return '<div class="dm-plan-card"><div class="dm-plan-title">No likely duplicates found</div></div>';
   }
-  const rows = (list, actionable) => list.map((p) =>
-    '<div class="dm-issue-row">' +
-      '<span class="mono dm-issue-main">' + escapeHtml(p.keepFolder + '/' + p.keepSlug) + ' ← ' + escapeHtml(p.removeFolder + '/' + p.removeSlug) + '</span>' +
-      '<span class="dm-issue-meta">' + escapeHtml(p.confidence) + (actionable ? '' : ' · review manually') + '</span>' +
+
+  const high = liveHighConfidencePairs();
+  const batchBar = (readonly || high.length === 0) ? '' : (
+    '<div class="dm-sem-batch">' +
+      '<button class="btn btn-primary" id="dm-semantic-merge-btn"' + (busy ? ' disabled' : '') + '>' +
+        (busy === 'semanticMerge' ? 'Merging…' : 'Merge ' + pluralize(high.length, 'high-confidence duplicate')) +
+      '</button>' +
+      '<span class="dm-sem-batch-note">Merges every high-confidence pair below at once, in the direction currently shown. ' +
+      'Use Preview / Flip / Skip on individual pairs first if any of them look wrong.</span>' +
     '</div>'
-  ).join('');
+  );
+
+  const cards = open.map((p) => renderSemanticPairCard(p, readonly, busy)).join('');
+  const handledRows = handled.map((p) => (
+    '<div class="dm-issue-row dm-sem-handled">' +
+      '<span class="mono dm-issue-main">' + escapeHtml(p.removeFolder + '/' + p.removeSlug) + ' → ' + escapeHtml(p.keepFolder + '/' + p.keepSlug) + '</span>' +
+      '<span class="dm-issue-meta">' + (p.status === 'merged' ? 'merged' : 'skipped') + '</span>' +
+    '</div>'
+  )).join('');
+
   return (
     '<div class="dm-plan-card">' +
       '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'candidate pair') + ' found</div>' +
-      (high.length > 0 ? (
-        '<div class="dm-plan-summary">' + pluralize(high.length, 'high-confidence pair') + ' can be merged automatically.</div>' +
-        rows(high, true) +
-        (readonly ? '' : (
-          '<div class="dm-plan-actions">' +
-            '<button class="btn btn-primary" id="dm-semantic-merge-btn"' + (busy ? ' disabled' : '') + '>' +
-              (busy === 'semanticMerge' ? 'Merging…' : 'Merge ' + pluralize(high.length, 'high-confidence duplicate')) +
-            '</button>' +
-          '</div>'
-        ))
-      ) : '') +
-      (rest.length > 0 ? ('<div class="dm-plan-detail mono">' + pluralize(rest.length, 'lower-confidence pair') + ' left for manual review:</div>' + rows(rest, false)) : '') +
+      '<div class="dm-plan-summary">Each merge deletes one page and repoints every [[wikilink]] to it across the domain. ' +
+      'Preview a pair to enable its Merge button; Flip swaps which side survives; Skip dismisses the pair so it stops ' +
+      'coming back on future scans. Everything here is git-tracked and revertable from Sync.</div>' +
+      batchBar +
+      '<div class="dm-sem-list">' + cards + '</div>' +
+      (handledRows ? ('<div class="dm-plan-detail mono">Already handled in this scan:</div>' + handledRows) : '') +
+    '</div>'
+  );
+}
+
+// One pair. The four actions mirror the shipping app's per-pair card, which
+// is the ONLY place a semantic duplicate can be acted on with judgement
+// rather than in bulk.
+function renderSemanticPairCard(pair, readonly, busy) {
+  const key = semanticPairKey(pair);
+  const previewed = isSemanticPreviewed(pair);
+  const gate = canMergeSemanticPair(pair);
+  const conf = pair.confidence || 'medium';
+  const confCls = conf === 'high' ? 'dm-sem-conf-high' : (conf === 'low' ? 'dm-sem-conf-low' : 'dm-sem-conf-med');
+  const rowBusy = !!busy;
+  const preview = (activeSemanticScan() || {}).preview;
+  const showPreview = preview && preview.key === key;
+
+  return (
+    '<div class="dm-sem-card" data-sem-key="' + escapeHtml(key) + '">' +
+      '<div class="dm-sem-head">' +
+        '<span class="mono dm-sem-remove">' + escapeHtml(pair.removeFolder + '/' + pair.removeSlug) + '</span>' +
+        '<span class="dm-sem-arrow">→</span>' +
+        '<span class="mono dm-sem-keep">' + escapeHtml(pair.keepFolder + '/' + pair.keepSlug) + '</span>' +
+        '<span class="dm-sem-conf ' + confCls + '">' + escapeHtml(conf) + ' confidence</span>' +
+      '</div>' +
+      '<div class="dm-sem-sub">Keeps <span class="mono">' + escapeHtml(pair.keepSlug) + '</span>, deletes <span class="mono">' +
+        escapeHtml(pair.removeSlug) + '</span>.</div>' +
+      (pair.rationale ? '<div class="dm-sem-rationale">' + escapeHtml(pair.rationale) + '</div>' : '') +
+      (readonly ? '' : (
+        '<div class="dm-sem-actions">' +
+          '<button class="btn btn-secondary dm-sem-btn" data-sem-action="preview" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') + '>' +
+            (state.busyKey === 'semanticPreview:' + key ? 'Loading…' : 'Preview diff') + '</button>' +
+          '<button class="btn btn-secondary dm-sem-btn" data-sem-action="flip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') +
+            ' title="Swap which side is kept">↔ Flip</button>' +
+          '<button class="btn btn-primary dm-sem-btn" data-sem-action="merge" data-sem-key="' + escapeHtml(key) + '"' +
+            ((rowBusy || !gate.allowed) ? ' disabled' : '') + ' title="' + escapeHtml(gate.allowed ? 'Merge this pair' : gate.reason) + '">' +
+            (state.busyKey === 'semanticMergeOne:' + key ? 'Merging…' : 'Merge') + '</button>' +
+          '<button class="btn btn-ghost dm-sem-btn" data-sem-action="skip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') + '>' +
+            (state.busyKey === 'semanticSkip:' + key ? 'Skipping…' : 'Skip') + '</button>' +
+          (previewed
+            ? '<span class="dm-sem-gate dm-sem-gate-ok">' + icon('check', 11) + ' previewed</span>'
+            : '<span class="dm-sem-gate">Preview required before Merge</span>') +
+        '</div>'
+      )) +
+      (showPreview ? renderSemanticPreview(preview) : '') +
+      (pair.refusal ? '<div class="dm-sem-refusal">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.refusal) + '</span></div>' : '') +
+      (pair.error ? '<div class="dm-sem-error">' + icon('alertCircle', 13) + '<span>' + escapeHtml(pair.error) + '</span></div>' : '') +
+    '</div>'
+  );
+}
+
+// The preview renders INLINE, inside the pair's own card — deliberately not
+// in a modal/overlay. v3.6.0 finding 7 was a refused destructive write whose
+// error was written to a status line sitting UNDERNEATH a 92%-opaque
+// full-screen overlay that stayed up: the user saw the button reset and
+// nothing else, read it as "my click didn’t register", and clicked the
+// refused destructive action again. An inline card has no overlay that can
+// hide its own outcome, and it keeps the pair’s context on screen while the
+// user decides.
+function renderSemanticPreview(preview) {
+  if (preview.error) {
+    return '<div class="dm-sem-preview dm-sem-preview-error">' + icon('alertCircle', 13) +
+      '<span>Could not build a preview — ' + escapeHtml(preview.error) + '</span></div>';
+  }
+  const d = preview.data || {};
+  const files = Array.isArray(d.affectedFiles) ? d.affectedFiles : [];
+  const shown = files.slice(0, 12).map((f) =>
+    '<li><span class="mono">' + escapeHtml(f.path) + '</span> — ' + pluralize(f.linkCount || 0, 'link') + '</li>'
+  ).join('');
+  const more = (d.affectedCount || 0) > shown.length
+    ? '<li class="dm-sem-preview-more">…and ' + ((d.affectedCount || 0) - files.slice(0, 12).length) + ' more files</li>'
+    : '';
+  return (
+    '<div class="dm-sem-preview">' +
+      '<div class="dm-sem-preview-grid mono">' +
+        '<div>keep: ' + escapeHtml(d.keepPath || '') + '</div>' +
+        '<div>delete: ' + escapeHtml(d.removePath || '') + '</div>' +
+        '<div>' + (d.totalLinksRewritten || 0) + ' link rewrites across ' + pluralize(d.affectedCount || 0, 'file') + '</div>' +
+      '</div>' +
+      (files.length ? '<ul class="dm-sem-preview-files">' + shown + more + '</ul>' : '') +
+      '<div class="cur-eyebrow">MERGED CONTENT (FIRST 4 KB)</div>' +
+      '<pre class="dm-sem-preview-body">' + escapeHtml(d.mergedPreview || '') +
+        ((d.mergedLength || 0) > 4000 ? '\n…(truncated)' : '') + '</pre>' +
     '</div>'
   );
 }
@@ -1035,6 +2050,27 @@ function bindHealthListeners(domain, readonly) {
 
   document.getElementById('dm-semantic-merge-btn')?.addEventListener('click', () => {
     Promise.resolve().then(() => mergeSemanticDuplicates(domain.slug)).catch(reportAsyncActionFailure);
+  });
+
+  // Per-pair semantic actions. The pair object is looked up from LIVE state
+  // by key at click time rather than captured in the closure — a pair that
+  // was flipped since this markup was painted must be merged in the
+  // direction it now shows, not the one it had when the listener bound.
+  document.querySelectorAll('.dm-sem-btn[data-sem-action]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.semAction;
+      const key = btn.dataset.semKey;
+      Promise.resolve().then(() => {
+        const scan = activeSemanticScan();
+        if (!scan) return;
+        const pair = scan.pairs.find((p) => semanticPairKey(p) === key);
+        if (!pair) return;
+        if (action === 'preview') return previewSemanticPair(domain.slug, pair);
+        if (action === 'flip') { flipSemanticPair(pair); render(myMountToken); return; }
+        if (action === 'merge') return mergeOneSemanticPair(domain.slug, pair);
+        if (action === 'skip') return skipSemanticPair(domain.slug, pair);
+      }).catch(reportAsyncActionFailure);
+    });
   });
 
   document.querySelectorAll('.dm-group-fixall-btn[data-fixall]').forEach((btn) => {
@@ -1249,10 +2285,11 @@ async function fixAllOfType(slug, type) {
   const token = myMountToken;
   state.busyKey = 'group:' + type;
   render(token);
-  // MEDIUM-1 fix — see the module-level comment above inFlightWriteSlugs
-  // for the flagged fix-vs-fix-all backend-route discrepancy this label
-  // name is deliberately calling out ('health-fix', not 'health-fix-all' —
-  // this flow really does hit POST /:domain/fix, singular).
+  // MEDIUM-1 fix — this flow really does hit POST /:domain/fix (singular,
+  // not /fix-all), and the label below ('health-fix', not 'health-fix-all')
+  // matches the backend's own registerWrite(domain, 'health-fix') call
+  // inside that exact route — see the corrected module-level comment above
+  // inFlightWriteSlugs (MEDIUM-2).
   const releaseGate = beginDomainWrite(slug, 'health-fix');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
@@ -1362,7 +2399,10 @@ async function applyPendingPlan(slug) {
   const url = '/api/health/' + encodeURIComponent(slug) + '/' + (kind === 'brokenLinks' ? 'broken-links' : 'orphans') + '/apply';
   // MEDIUM-1 fix — label matches src/routes/health.js's own registerWrite()
   // label for whichever endpoint `url` above actually resolves to
-  // ('broken-links-apply' :300 / 'orphan-rescue-apply' :378).
+  // (POST /:domain/broken-links/apply -> 'broken-links-apply' /
+  // POST /:domain/orphans/apply -> 'orphan-rescue-apply'; cited by route,
+  // not line number — see the MEDIUM-2 fix on the module-level comment
+  // above inFlightWriteSlugs for why).
   const releaseGate = beginDomainWrite(slug, kind === 'brokenLinks' ? 'broken-links-apply' : 'orphan-rescue-apply');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
@@ -1479,7 +2519,23 @@ async function runSemanticScan(slug) {
       if (type === 'error') throw new Error(ev.error || 'Scan failed');
     });
     if (!result) throw new Error('No scan result returned');
-    if (isCurrentMount(token)) state.semanticScan = { pairs: result.pairs || [], cost: result.cost };
+    if (isCurrentMount(token)) {
+      // A NEW SCAN GETS A NEW OBJECT, so the previewed set is empty by
+      // construction — there is no set from the previous scan to forget to
+      // clear (LAYER 1, structural). The slug stamp is LAYER 2.
+      state.semanticScan = {
+        slug,
+        pairs: (result.pairs || []).map((p) => ({
+          keepFolder: p.keepFolder, keepSlug: p.keepSlug,
+          removeFolder: p.removeFolder, removeSlug: p.removeSlug,
+          confidence: p.confidence, rationale: p.rationale,
+          status: 'open',
+        })),
+        cost: result.cost,
+        previewed: new Set(),
+        preview: null,
+      };
+    }
   } catch (err) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message };
   } finally {
@@ -1489,53 +2545,222 @@ async function runSemanticScan(slug) {
 }
 
 function mergeSemanticDuplicates(slug) {
-  const s = state.semanticScan;
-  if (!s) return;
-  const high = s.pairs.filter((p) => p.confidence === 'high');
+  // Read live — never a captured array. See INVARIANT 2.
+  const high = liveHighConfidencePairs();
   if (high.length === 0) return;
   state.confirm = {
     title: 'Merge ' + pluralize(high.length, 'high-confidence duplicate') + '?',
     body: 'Combines each pair’s bullet sections onto the kept page, retargets every [[wikilink]] across the ' +
       'domain to it, and deletes the removed file. Nothing else changes. Every change is git-tracked and revertable from Sync.',
     confirmLabel: 'Merge now',
-    run: () => runMergeSemanticDuplicates(slug, high),
+    // NOTE the missing argument: the pair list is NOT captured here. The
+    // confirm card renders inline, so Flip / Skip / single-Merge stay
+    // clickable while it is open — capturing `high` now would merge a pair
+    // the user has since flipped (wrong direction) or skipped (already
+    // dismissed). That is the exact bug the shipping app fixed in a
+    // v3.0.1-beta.15 audit. runMergeSemanticDuplicates re-derives at the
+    // moment the user actually confirms.
+    run: () => runMergeSemanticDuplicates(slug),
   };
   render(myMountToken);
 }
 
-async function runMergeSemanticDuplicates(slug, pairs) {
+// ── Per-pair semantic actions: preview / flip / merge one / skip ───────────
+
+async function previewSemanticPair(slug, pair) {
   const token = myMountToken;
+  const key = semanticPairKey(pair);
+  state.busyKey = 'semanticPreview:' + key;
+  render(token);
+  try {
+    const data = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issue: toWirePair(pair) }),
+    });
+    if (!isCurrentMount(token)) return;
+    const scan = activeSemanticScan();
+    if (!scan) return; // domain changed while the preview was in flight
+    scan.preview = { key, data };
+    // ONLY a SUCCESSFUL preview opens the gate. A failed one must leave
+    // Merge disabled — otherwise the guard degrades into "clicking Preview
+    // is enough", which is not what it promises.
+    markSemanticPreviewed(pair);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    const scan = activeSemanticScan();
+    if (scan) scan.preview = { key, error: err.message };
+  } finally {
+    state.busyKey = null;
+  }
+  render(token);
+}
+
+async function mergeOneSemanticPair(slug, pair) {
+  const token = myMountToken;
+  const key = semanticPairKey(pair);
+  // Re-check the gate at EXECUTION time, not just at render time. A
+  // disabled button is a UI affordance; this is the actual guard, and it is
+  // the one a keyboard, a stale render, or a future refactor has to get
+  // past. Same reasoning as the shipping app's handler, which refuses even
+  // though its button is disabled.
+  const gate = canMergeSemanticPair(pair);
+  if (!gate.allowed) {
+    setSemanticPairMessage(key, { refusal: gate.reason });
+    render(token);
+    revealSemanticMessage(key);
+    return;
+  }
+  state.busyKey = 'semanticMergeOne:' + key;
+  setSemanticPairMessage(key, {});
+  render(token);
+  const releaseGate = beginDomainWrite(slug, 'semantic-dupe-merge');
+  try {
+    inFlightWriteSlugs.add(slug);
+    const result = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/fix', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'semanticDupe', issue: toWirePair(pair) }),
+    });
+    if (isCurrentMount(token)) {
+      if (!result || !result.fixed) {
+        setSemanticPairMessage(key, { error: 'The server refused this merge (the pair failed validation on disk).' });
+      } else {
+        markSemanticPairStatus(pair, 'merged');
+        state.banner = { tone: 'success', text: 'Merged ' + pair.removeSlug + ' → ' + pair.keepSlug + '.' };
+      }
+    }
+  } catch (err) {
+    if (isCurrentMount(token)) {
+      // A 409 is a REFUSAL, not a failure — render it as its own visible
+      // message on the pair the user clicked, never a silent button reset.
+      const c = classifyDomainError(err);
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not merge — ' + c.error });
+    }
+  } finally {
+    inFlightWriteSlugs.delete(slug);
+    releaseGate();
+    state.busyKey = null;
+  }
+  if (!isCurrentMount(token)) return;
+  // keepSemanticScan: the remaining pairs in this scan are still valid and
+  // re-earning them costs a paid LLM pass. See resetDomainScopedHealthState.
+  await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+  revealSemanticMessage(key);
+}
+
+async function skipSemanticPair(slug, pair) {
+  const token = myMountToken;
+  const key = semanticPairKey(pair);
+  state.busyKey = 'semanticSkip:' + key;
+  setSemanticPairMessage(key, {});
+  render(token);
+  try {
+    // Dismissal shape mirrors health-dismissed.js's semanticDupe key
+    // (slugA/folderA/slugB/folderB), same as the shipping app's Skip.
+    await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'semanticDupe',
+        issue: {
+          slugA: pair.keepSlug, folderA: pair.keepFolder,
+          slugB: pair.removeSlug, folderB: pair.removeFolder,
+        },
+      }),
+    });
+    if (isCurrentMount(token)) markSemanticPairStatus(pair, 'skipped');
+  } catch (err) {
+    if (isCurrentMount(token)) {
+      const c = classifyDomainError(err);
+      setSemanticPairMessage(key, c.refusal ? { refusal: c.refusal } : { error: 'Could not skip — ' + c.error });
+    }
+  } finally {
+    state.busyKey = null;
+  }
+  if (!isCurrentMount(token)) return;
+  await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
+  revealSemanticMessage(key);
+}
+
+// Reveals a per-pair refusal/error after the repaint. Scoped to the pair the
+// user actually clicked — see revealMessage for why "rendered" is not
+// "visible".
+function revealSemanticMessage(key) {
+  const sel = '.dm-sem-card[data-sem-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"] ';
+  return revealMessage(sel + '.dm-sem-refusal') || revealMessage(sel + '.dm-sem-error');
+}
+
+// Per-pair message slot (refusal / error), cleared by passing {}.
+function setSemanticPairMessage(key, msg) {
+  const scan = activeSemanticScan();
+  if (!scan) return;
+  const idx = scan.pairs.findIndex((p) => semanticPairKey(p) === key);
+  if (idx === -1) return;
+  scan.pairs[idx] = Object.assign({}, scan.pairs[idx], {
+    refusal: msg.refusal || null,
+    error: msg.error || null,
+  });
+}
+
+async function runMergeSemanticDuplicates(slug) {
+  const token = myMountToken;
+  // INVARIANT 2, second reading: derived HERE, at the moment the user
+  // confirmed — not at the moment the confirm dialog opened. Between those
+  // two moments the user can flip a pair (changing which page survives) or
+  // skip one (dismissing it), and both must be honoured.
+  const pairs = liveHighConfidencePairs().map(toWirePair);
+  if (pairs.length === 0) {
+    state.banner = { tone: 'info', text: 'Nothing left to merge — every high-confidence pair has been handled.' };
+    render(token);
+    return;
+  }
   state.busyKey = 'semanticMerge';
   render(token);
   // MEDIUM-1 fix — label matches src/routes/health.js's own
-  // registerWrite(domain, 'semantic-dupes-merge-batch') at line 468.
+  // registerWrite(domain, 'semantic-dupes-merge-batch') inside
+  // POST /:domain/semantic-dupes/merge-batch; cited by route, not line
+  // number — see the MEDIUM-2 fix on the module-level comment above
+  // inFlightWriteSlugs for why.
   const releaseGate = beginDomainWrite(slug, 'semantic-dupes-merge-batch');
   try {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     let result = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/merge-batch', { pairs }, (type, ev) => {
+      // Per-pair outcomes arrive as progress frames. Recording them keeps
+      // the pair list truthful about what happened rather than wiping it —
+      // see the `finally` below for why wiping was the wrong default.
+      if (type === 'progress' && ev.pair && (ev.status === 'merged' || ev.status === 'skipped')) {
+        markSemanticPairStatus(ev.pair, ev.status);
+      }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Merge failed');
     });
     if (isCurrentMount(token)) state.banner = { tone: 'success', text: 'Merged ' + (result.merged || 0) + ' of ' + (result.total || pairs.length) + ' duplicate pairs.' };
   } catch (err) {
-    if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not merge duplicates — ' + err.message };
+    if (isCurrentMount(token)) {
+      const c = classifyDomainError(err);
+      state.banner = c.refusal
+        ? { tone: 'error', text: c.refusal }
+        : { tone: 'error', text: 'Could not merge duplicates — ' + c.error };
+    }
   } finally {
-    // MEDIUM-4 fix (re-audit): same reasoning as applyPendingPlan's
-    // `pendingPlan` above — the semantic-duplicate scan is the single most
-    // expensive operation in this view (a real pairwise LLM pass), so
-    // silently destroying a NEWER scan the user built after coming back to
-    // this domain, just because an OLDER, abandoned merge happened to
-    // finish afterward, is the worst possible place for an ungated reset.
-    // busyKey stays ungated (it must always clear, or the maintenance bar
-    // bricks — H2).
-    if (isCurrentMount(token)) state.semanticScan = null;
+    // The scan is NO LONGER discarded here. It used to be, and that made
+    // the batch destroy the medium/low-confidence pairs it never touched —
+    // pairs that only a paid LLM pass can produce, so the user had to buy
+    // them again to review three pages the batch had nothing to do with.
+    // Each pair's real outcome is recorded from the progress frames above
+    // instead. (The MEDIUM-4 concern that motivated the old reset — an
+    // abandoned merge destroying a NEWER scan — is now structurally
+    // impossible rather than gated: a newer scan is a different object with
+    // a different slug stamp, and markSemanticPairStatus only ever writes
+    // through activeSemanticScan().)
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as inFlightWriteSlugs.delete above
     state.busyKey = null;
   }
   if (!isCurrentMount(token)) return;
-  await loadHealth(slug, token, { silent: true });
+  await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
 }
 
 // ── Dismiss / undismiss ──────────────────────────────────────────────────
@@ -1621,6 +2846,12 @@ registerView('domains', {
       state.confirm = null;
       state.pendingPlan = null;
       state.semanticScan = null;
+      // A create/rename/delete form must not survive leaving the view: the
+      // two destructive ones carry a target slug, and this file's `state`
+      // is module-scoped, so an abandoned "Delete X?" card would otherwise
+      // be sitting there — armed — the next time the user opens Domains,
+      // above whatever domain happens to be selected then.
+      state.lifecycle = null;
       state.busyKey = null;
     };
   },

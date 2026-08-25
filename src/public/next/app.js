@@ -879,6 +879,82 @@ export function escapeHtml(s) {
   ));
 }
 
+// ── Chat scope handoff (Domains -> Chat) ──────────────────────────────────
+//
+// Two view files, neither owning the other, need to pass one shot of intent
+// across a navigate() call: Domains' "Ask this domain" affordance wants the
+// NEXT Chat mount to open pre-scoped to a specific domain. This is that
+// handoff — MODULE state, deliberately NEVER localStorage. A value written
+// to localStorage OUTLIVES the page that asked for it: a stale key from a
+// session that clicked "Ask this domain" and then picked a different rail
+// item (or reloaded, or just came back an hour later) would silently
+// hijack the NEXT time Chat happens to mount, with no relationship to any
+// click that actually just happened. Module state has exactly the lifetime
+// this needs — gone the instant the tab closes, and (the load-bearing
+// half) gone the instant Chat's onEnter actually consumes it.
+//
+//   requestChatScope(slug)
+//     Call with a real domain slug to scope the NEXT Chat mount to that
+//     domain. This function only RECORDS the intent — it does not
+//     navigate; the caller (Domains) calls navigate('chat') itself
+//     immediately after, same division of responsibility as every other
+//     cross-view action in this shell.
+//
+//     Calling with no argument (or any falsy/non-string value) produces
+//     firstRun: true on the consumed request instead of a slug — see
+//     consumeChatScopeRequest()'s return shape below. NOTHING IN THIS
+//     REPO CALLS IT THAT WAY TODAY: `grep -rn "requestChatScope(" src/
+//     public/next/` finds exactly one non-definition call site
+//     (views/domains.js's goToChatScoped), and it always passes a real
+//     slug. Chat originally showed a create-domain panel when a no-slug
+//     request arrived (Domains' "+ New domain" button had no domain-
+//     creation UI of its own and punted to Chat for it); that panel is
+//     gone — Domains creates domains directly now
+//     (openLifecycle('create'), a real modal over POST /api/domains), so
+//     there is nothing left to hand off. `firstRun` stays part of the
+//     return shape rather than being deleted because deleting it would be
+//     a breaking change to this function's contract for no present
+//     benefit; reviving a Chat-side first-run affordance would mean
+//     writing a new producer that calls requestChatScope() with no slug
+//     AND a new consumer in chat.js that branches on it again — neither
+//     exists today, and this comment is the record of why.
+//
+//   consumeChatScopeRequest()
+//     Returns { slug, firstRun } and CLEARS the pending request in the SAME
+//     call. THE INVARIANT THAT MATTERS: if a later, unrelated Chat mount
+//     could read the same request again, EVERY subsequent Chat entry would
+//     silently re-scope to a stale domain forever — clicking a rail item,
+//     reloading, coming back an hour later, all would re-apply a request
+//     from one click, long ago. Consume is therefore destructive by
+//     construction: reading the pending value and resetting it to null
+//     happen as one atomic pair of statements with no `await` between them
+//     and no code path that reads without also clearing — there is exactly
+//     one function that can observe a pending request, and calling it is
+//     what makes it stop being pending. No request pending returns
+//     { slug: null, firstRun: false } — the "nothing to apply, mount
+//     normally" case, which is also what every SECOND call in a row
+//     returns once the first call has consumed it.
+//
+//     Callers MUST consume synchronously, at the top of onEnter (before any
+//     `await`) rather than from inside an async boot() — onEnter runs
+//     exactly once per mount and nothing can intervene between navigate()
+//     invoking it and the consume happening, whereas a value read after an
+//     await could race a second, faster navigate() to the same view. See
+//     views/chat.js's onEnter for the real call site.
+let _pendingChatScopeRequest = null; // null = nothing pending; else { slug, firstRun }
+
+export function requestChatScope(slug) {
+  const clean = (typeof slug === 'string' && slug) ? slug : null;
+  _pendingChatScopeRequest = { slug: clean, firstRun: !clean };
+}
+
+export function consumeChatScopeRequest() {
+  const req = _pendingChatScopeRequest;
+  _pendingChatScopeRequest = null;
+  if (!req) return { slug: null, firstRun: false };
+  return req;
+}
+
 // ── Cross-view write gate ────────────────────────────────────────────────
 //
 // Shell-level replacement for the shipping app's window.__curatorIngestStart
