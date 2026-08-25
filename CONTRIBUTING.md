@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (58 suites total — 41 OFFLINE
+The Curator has an extensive battle-test suite (59 suites total — 42 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count drifts every time a
 suite is added or removed and has gone stale in this file more than once —
@@ -271,6 +271,8 @@ own header instructs deleting the file and its `OFFLINE` entry in
 [scripts/run-tests.js](scripts/run-tests.js) — never repointing it at some
 other pair of files or turning it into a coverage test for the survivor.**
 The comparison it performs is meaningless once there is only one copy left.
+
+**A new OFFLINE suite pins the write-registry guard on `/api/config`, `/api/sync/setup`, and domain-rename** — `test-route-write-guards.js`. These routes (API-key save/disconnect/switch, the knowledge-folder path, sync setup, domain rename) mutate state that a running ingest reads live (`getDomainsDir()` and `getProviderInfo()` both resolve fresh on every call), so changing them mid-ingest can split a document's pages across two folders or finish it on a different model. Every "the guard fires" assertion is paired with a "the guard does NOT fire while idle" assertion against the same route — a guard that always blocks is exactly as broken as one that never does, and only the negative half tells those two apart. A dedicated section also pins the routes deliberately left **unguarded** (`POST /api/config/default-domain` — it only selects which domain an unnamed MCP write assumes, and can't affect a write already in flight), so a future blanket sweep shows up as a failing assertion rather than shipping silently. It spins up the real router in-process against isolated tempdirs (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`, set before any app module is imported) and never calls `POST /api/config/update` or exercises `POST /pick-folder` outside its refused state, for the same reasons any suite in this repo avoids them (see the sections above).
 
 ---
 

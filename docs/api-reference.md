@@ -134,12 +134,15 @@ Rename a domain — changes the folder name and updates all internal references.
 
 `syncWarning` is `true` when GitHub sync is configured — the rename appears as a delete + add on GitHub, so the user should sync promptly.
 
+**Concurrency:** refuses with `409` while this domain has an active write (per-domain `isDomainActive` check). Renaming mid-ingest is silently dangerous rather than loudly broken — an in-flight ingest resolves its own wiki paths per page from the slug it captured at request time, so it keeps writing under the OLD (now-renamed-away) directory name, which `writePage`'s `mkdir(recursive: true)` happily recreates; those pages become invisible to every UI surface (the v2.3.4 ghost-domain filter hides any directory with no `CLAUDE.md`) until the ingest finally dies at the logging step. The guard covers a display-name-only rename too, since that still rewrites `log.md`'s header and races `appendLog`.
+
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
 | `400` | Missing `displayName`; new slug identical to old slug |
 | `404` | Domain not found |
+| `409` | This domain has an active write (ingest, batch item, Sync, Shared Brain pull, etc.) in progress |
 | `500` | Filesystem error |
 
 ---
@@ -147,6 +150,8 @@ Rename a domain — changes the folder name and updates all internal references.
 ## DELETE /api/domains/:domain
 
 Permanently delete a domain and all its contents (wiki pages, conversations, source files).
+
+**Concurrency:** refuses with `409` while this domain has an active write (same per-domain `isDomainActive` check as the rename above) — deleting the folder mid-write would race the ingest's own `writePage` calls.
 
 **Example (curl)**
 
@@ -171,6 +176,7 @@ curl -X DELETE http://localhost:3333/api/domains/health-and-wellness
 |--------|-----------|
 | `400` | Invalid slug (path traversal attempt) |
 | `404` | Domain not found |
+| `409` | This domain has an active write (ingest, batch item, Sync, Shared Brain pull, etc.) in progress |
 | `500` | Filesystem error |
 
 ---
@@ -828,18 +834,21 @@ Apply a single fix for a specific issue.
 { "ok": true, "fixed": 1, "total": 1 }
 ```
 
+**Concurrency:** registered as a write-op with a per-domain file lock (this branch — it used to be unguarded on the theory that a single fix is sub-second, which turned out to be wrong: an omitted `issue` runs the same bulk path as `/fix-all` below, and even the single-issue `semanticDupe` path walks every file in the domain). A concurrent sync/update/delete, or an update already in progress, is refused with `409`.
+
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
 | `400` | Missing `type`; type is review-only (`orphans`), or `brokenLinks` issue has no `suggestedTarget` |
 | `404` | Unknown domain |
+| `409` | A write/update is already in progress for this domain (write-registry conflict), or the per-domain file lock is held by another process |
 
 ---
 
 ## POST /api/health/:domain/fix-all
 
-Apply every fix of a given type in one call. Re-scans the wiki, then applies each fix in turn.
+Apply every fix of a given type in one call. Re-scans the wiki, then applies each fix in turn. Registered as a write-op with a per-domain file lock; a concurrent sync/update/delete, or an update already in progress, is refused with `409`.
 
 **Request body** `Content-Type: application/json`
 
@@ -855,7 +864,7 @@ Apply every fix of a given type in one call. Re-scans the wiki, then applies eac
 
 `fixed` may be less than `total` if any individual fix fails (each failure is logged to the server console but does not abort the batch).
 
-**Error responses** — same as `/fix`.
+**Error responses** — same as `/fix`, including `409`.
 
 ---
 
