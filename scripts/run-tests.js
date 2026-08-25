@@ -148,7 +148,7 @@ const LIVE_TIMEOUT_MS = 600_000;     // 10 min — most live suites
 
 // ── PER-SUITE LIVE TIMEOUTS ────────────────────────────────────────────────
 // A live suite's runtime is dominated by PROVIDER LATENCY, which varies by
-// ~1.7x across runs on byte-identical code. A flat cap therefore fails on
+// ~2.4x across runs on byte-identical code. A flat cap therefore fails on
 // provider weather rather than on a defect — and the runner deliberately does
 // NOT retry a TIMEOUT (that would double an already-long wait), so a suite
 // running near its cap is a gate that will eventually go red for no reason.
@@ -159,12 +159,16 @@ const LIVE_TIMEOUT_MS = 600_000;     // 10 min — most live suites
 //
 //     351,607ms · 380,428ms · 512,421ms · 452,822ms · 590,860ms · 554,881ms
 //
+// It then TIMED OUT at 600,005ms, and on the very next run — same suite, no
+// change to any code it exercises — finished in 248,345ms, the fastest ever
+// recorded. Observed range 248,345ms to >600,000ms is a 2.4x swing.
+//
 // That is 59%-98% of the 600,000ms cap, with one run inside 0.15% of it. It
 // then timed out on v3.6.2 — a release that touched NO ingest, llm, files or
 // compile code, confirming the cause is latency, not a regression.
 //
-// 1,200,000ms is ~2x the observed worst case, so a further 1.7x provider swing
-// from the SLOWEST recorded run still passes. Do not lower this back toward the
+// 1,200,000ms is ~2x the observed worst case, so even the SLOWEST recorded run
+// could double again and still pass. Do not lower this back toward the
 // observed maximum: the maximum is what fails.
 const LIVE_SUITE_TIMEOUT_MS = {
   'test-beta15-production.js': 1_200_000,   // 20 min
