@@ -215,6 +215,19 @@ function ensureCard(id) {
       shownAdminToken: null,
       rotateConfirmOpen: false,
 
+      // ── Invite re-display (v3.0.5 §4.4) ───────────────────────────────
+      // The invite token is NOT a credential — it is base64 of the
+      // connection's own public metadata, deterministic, and designed to be
+      // forwarded over Slack and email. It is held here purely so a
+      // re-render redraws it instead of destroying it (same reason as
+      // shownAdminToken, different reason for existing: that one is
+      // shown-once because it is secret; this one is re-derivable at any
+      // time and simply must not vanish mid-copy).
+      inviteOpen: false,
+      inviteToken: null,
+      inviteLoading: false,
+      inviteError: null,
+
       revokeOpen: false,
       revokeMembers: null,          // null = not loaded | 'loading' | {members, selfFellowId} | {error}
       revokeSelectedFellowId: null,
@@ -714,9 +727,9 @@ function renderCohort(conn, card) {
       '<summary>Cohort &amp; sharing details</summary>' +
       '<div class="sb-card-cohort-body">' +
         networkBody +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it needs your access token re-entered, which this preview shell doesn’t handle outside the setup wizard yet.</div>' +
+        '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Disconnect and re-join to change the selection.</div>' +
         '<div class="sb-card-cohort-row sb-card-cohort-note">No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.</div>' +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Exporting your Shared Brain data isn’t available in this build yet.</div>' +
+        '<div class="sb-card-cohort-row sb-card-cohort-note">Exporting your Shared Brain data — coming soon.</div>' +
       '</div>' +
     '</details>'
   );
@@ -805,6 +818,75 @@ function adminAffordances(conn, card) {
     showRevoke: hasToken,
     hasToken,
     rotateLabel: hasToken ? 'Rotate admin token' : 'Generate admin token',
+  };
+}
+
+// ── Invite re-display (v3.0.5 §4.4) ───────────────────────────────────────
+//
+// WHY THIS EXISTS. Before this, /next minted an invite token in exactly one
+// place — the setup wizard's step 2. An admin who closed that wizard and
+// later needed to onboard someone had NO path back to the token except
+// tearing the brain down and re-creating it. That is the precise defect
+// v3.0.5 §4.4 shipped to fix in the shipping frontend, re-introduced by
+// omission here; cutting over in that state would have regressed it.
+//
+// THE DERIVATION IS THE WHOLE FEATURE. The token is DETERMINISTIC:
+// `encodeInviteToken` (src/routes/sharedbrain.js) builds a fixed payload
+// object and base64url-encodes it, so re-sending the connection's stored
+// metadata reproduces the ORIGINAL token byte-for-byte. It is not stored
+// verbatim anywhere and must never be reconstructed by string surgery. The
+// consequence of getting a field wrong is silent: a well-formed token that
+// simply nobody in the cohort can redeem against the right brain.
+//
+// The route's defaults are mirrored here rather than left to the server so
+// the body is explicit and testable: `branch || 'main'`, storage_type
+// 'github', `data_handling_terms || 'contributor_retains'`.
+//
+// PRE-v3.0.5 CONNECTIONS. `data_handling_terms` was not persisted before
+// v3.0.5, so a connection saved back then re-derives with the DEFAULT
+// terms. If the brain was actually set up in the organisational (IP
+// transfer) mode, that token shows a joining contributor the wrong consent
+// text — a consent defect, not a cosmetic one. So the absence of the field
+// is surfaced as an explicit caution rather than silently defaulted.
+function inviteRequestBody(conn) {
+  if (!conn) return null;
+  return {
+    repo: String(conn.github_repo_owner) + '/' + String(conn.github_repo_name),
+    name: conn.label,
+    shared_domain: conn.shared_domain,
+    branch: conn.github_branch || 'main',
+    storage_type: 'github',
+    data_handling_terms: conn.data_handling_terms || 'contributor_retains',
+  };
+}
+
+// Who may see the invite affordance. Deliberately STRICTER than the
+// shipping app, which shows "Show invite token" to every connection
+// including read-only members: minting an invitation to a brain is an
+// administrative act, and a read-only member cannot add collaborators to
+// the repo anyway — the token alone would strand whoever received it. So
+// this reuses the same gate the rest of the admin surface uses (rule 4):
+// no admin section for read-only members, and the invite block only where
+// an admin token exists (or has just been provisioned this mount).
+//
+// storage_type is also gated: encodeInviteToken REFUSES a non-github
+// storage_type at mint time, so offering the button on a local-folder
+// brain would only ever produce a 400.
+function inviteAffordance(conn, card) {
+  const admin = adminAffordances(conn, card);
+  if (!admin.show || !admin.hasToken) {
+    return { show: false, reason: 'not-admin', cautionTerms: false };
+  }
+  if (!conn || conn.storage_type !== 'github') {
+    return { show: false, reason: 'not-github', cautionTerms: false };
+  }
+  return {
+    show: true,
+    reason: null,
+    // TRUE only when the stored value is genuinely absent. A stored
+    // 'contributor_retains' is a real recorded choice and must NOT raise
+    // the caution — that would train admins to ignore it.
+    cautionTerms: !conn.data_handling_terms,
   };
 }
 
@@ -1208,6 +1290,7 @@ function renderAdmin(conn, card, busy, mirrorBusy) {
       '<summary>' + icon('lock', 13) + ' Admin controls — admin token &amp; contributor revocation</summary>' +
       '<div class="sb-admin-body">' +
         renderAdminToken(card, aff, busy) +
+        renderInvite(conn, card, busy) +
         (aff.showRevoke
           ? renderRevoke(conn, card, busy, mirrorBusy)
           : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
@@ -1277,6 +1360,58 @@ function renderAdminToken(card, aff, busy) {
           '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="token-hide">I’ve stored it — hide</button>' +
         '</div>' +
       '</div>';
+  }
+
+  return html + '</div>';
+}
+
+// The invite block. Every class here already exists in views/shared.css
+// (which this session does not own) — the neutral .sb-admin-block is used
+// as the container rather than the amber .sb-token-box, because the amber
+// box means "secret, shown once" and this token is neither.
+function renderInvite(conn, card, busy) {
+  const aff = inviteAffordance(conn, card);
+  if (!aff.show) return '';
+
+  let html = '<div class="sb-admin-block">';
+  html +=
+    '<div class="sb-admin-row">' +
+      '<div class="sb-admin-row-text">' +
+        '<div class="sb-admin-row-title">Invite token</div>' +
+        '<p class="sb-admin-hint">Share this with anyone joining the brain — it carries the repository, branch and ' +
+        'data-handling terms, and no credentials. It never expires and it is the same token everyone else already ' +
+        'has, so re-showing it is safe. They still need a GitHub collaborator invitation and their own access token.</p>' +
+      '</div>' +
+      (card.inviteOpen
+        ? '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="invite-hide">Hide</button>'
+        : '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="invite-show"' + (busy ? ' disabled' : '') + '>' +
+            (card.inviteLoading ? 'Working…' : 'Show invite token') +
+          '</button>') +
+    '</div>';
+
+  if (card.inviteOpen) {
+    if (card.inviteError) {
+      html +=
+        '<div class="sb-admin-note sb-admin-note-danger" style="margin-top:10px">' + icon('alertCircle', 13) +
+        '<span>' + escapeHtml(card.inviteError) + '</span></div>';
+    } else if (card.inviteLoading || !card.inviteToken) {
+      html += '<p class="sb-admin-hint" style="margin-top:10px">Re-deriving the invite token…</p>';
+    } else {
+      html +=
+        '<div style="margin-top:10px;display:flex;flex-direction:column;gap:9px">' +
+          (aff.cautionTerms
+            ? '<div class="sb-token-warn">' + icon('alertTriangle', 13) +
+              '<span>This connection was set up before the data-handling choice was recorded, so the token above ' +
+              'uses the default <strong>contributor retains copyright</strong> terms. If this brain actually runs on ' +
+              'the organisational (IP transfer) terms, share your originally issued token instead — this one would ' +
+              'show a joining contributor the wrong consent text.</span></div>'
+            : '') +
+          '<code class="sb-token-value mono">' + escapeHtml(card.inviteToken) + '</code>' +
+          '<div class="sb-token-actions">' +
+            '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="invite-copy">' + icon('copy', 12) + ' Copy</button>' +
+          '</div>' +
+        '</div>';
+    }
   }
 
   return html + '</div>';
@@ -1505,6 +1640,81 @@ function copyShownAdminToken(token, connId) {
     }
   } catch { /* fall through to the manual message */ }
   done('Could not copy automatically — select the token below and copy it by hand.', true);
+}
+
+// Re-derive and show the invite token.
+//
+// Deliberately does NOT set card.acting: this is a pure read that mutates
+// nothing on the server (POST /generate-invite is an encoder, and its
+// docblock says so), so it must not take the per-connection action lock and
+// block a Push, nor be blocked by one. It carries its own inviteLoading
+// flag instead, and re-entry is refused on that flag alone.
+//
+// The response ALSO carries a freshly-minted admin_token — the route mints
+// one for the setup wizard's step 2. It is deliberately ignored here, the
+// same way the shipping app ignores it: nothing persists it, so reading it
+// would only put a live credential on screen that authorises nothing.
+async function onShowInvite(token, connId) {
+  const card = ensureCard(connId);
+  if (card.inviteLoading) return;
+
+  const conn = findConnection(connId);
+  const aff = inviteAffordance(conn, card);
+  if (!aff.show) return;   // enforced at the action too, not only in the render
+
+  card.inviteOpen = true;
+  card.inviteError = null;
+
+  // Already derived on this mount — deterministic, so nothing can have
+  // changed it. Show it again without a second round trip.
+  if (card.inviteToken) { render(token); return; }
+
+  card.inviteLoading = true;
+  render(token);
+
+  try {
+    const res = await fetch('/api/sharedbrain/generate-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inviteRequestBody(conn)),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || typeof data.token !== 'string' || !data.token) {
+      throw new Error(data.error || 'The invite token could not be re-generated (HTTP ' + res.status + ').');
+    }
+    card.inviteToken = data.token;
+    card.inviteError = null;
+  } catch (err) {
+    card.inviteToken = null;
+    card.inviteError = err.message;
+  } finally {
+    card.inviteLoading = false;
+    if (isCurrentMount(token)) {
+      state.expandedAdmin.add(connId);
+      render(token);
+    }
+  }
+}
+
+function copyInviteToken(token, connId) {
+  const card = ensureCard(connId);
+  const value = card.inviteToken;
+  if (!value) return;
+  const done = (msg, isError) => {
+    card.message = msg;
+    card.error = !!isError;
+    if (isCurrentMount(token)) render(token);
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(
+        () => done('Invite token copied to the clipboard.', false),
+        () => done('Could not copy automatically — select the invite token below and copy it by hand.', true)
+      );
+      return;
+    }
+  } catch { /* fall through to the manual message */ }
+  done('Could not copy automatically — select the invite token below and copy it by hand.', true);
 }
 
 async function loadRevokeMembers(token, connId) {
@@ -1794,6 +2004,15 @@ function onCardButton(token, connId, action) {
     case 'rotate-confirm': onRotateAdminToken(token, connId).catch(reportAsyncActionFailure); return;
     case 'token-hide': card.shownAdminToken = null; render(token); return;
     case 'token-copy': copyShownAdminToken(token, connId); return;
+    case 'invite-show': onShowInvite(token, connId).catch(reportAsyncActionFailure); return;
+    case 'invite-hide':
+      card.inviteOpen = false;
+      card.inviteError = null;
+      // card.inviteToken is deliberately KEPT — it is public metadata, not
+      // a secret, so re-showing it should not re-hit the network.
+      render(token);
+      return;
+    case 'invite-copy': copyInviteToken(token, connId); return;
     case 'revoke-open':
       card.revokeOpen = true;
       card.revokeOutcome = null;

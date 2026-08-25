@@ -23,6 +23,7 @@ import {
   consumeChatScopeRequest,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
+import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -297,6 +298,13 @@ registerView('chat', {
       // grows another transient overlay-like flag (another dropdown, an
       // inline confirm), reset it here too.
       state.openPicker = null;
+
+      // Same rule, one level up: the delete confirm is a real overlay on
+      // document.body, so it would otherwise outlive this view entirely.
+      // Unconditional and safe when nothing is open; it resolves the
+      // pending confirmThen() on the CANCEL path, so a teardown can never
+      // fire the delete.
+      closeConfirmIfOpen();
     };
   },
 });
@@ -482,21 +490,47 @@ function startNewChat() {
 }
 
 // `mountToken` is passed in by the caller (captured synchronously at click
-// time — see wireConvRows below) rather than read fresh here, because this
-// function itself awaits (window.confirm is synchronous/blocking, but the
-// fetch afterwards is not) before it may touch shared state/DOM.
+// time — see wireConvRows below) rather than read fresh here.
+//
+// UPDATED with the confirm-dialog swap: the staleness reasoning that
+// comment recorded still holds, but it now bites HARDER and EARLIER, so it
+// is restated rather than left saying something half-true. Before, the
+// first statement was `window.confirm`, which is synchronous and BLOCKING —
+// nothing could re-mount the view while it was up, and the only await was
+// the fetch afterwards. The in-design dialog is a normal in-page overlay:
+// it awaits from the very first statement and the user can sit on it
+// indefinitely, during which a rail click can tear this mount down and
+// build another. So `mountToken` must be the value captured at CLICK time
+// (it is — see the two call sites), never `myMountToken` read in here, and
+// the isCurrentMount guard below is now load-bearing for a much wider
+// window than it used to be.
+//
+// The destructive work lives INSIDE confirmThen's `onConfirm`, which is
+// only ever reached from the dialog's own confirm button. There is no
+// decision boolean anywhere in that API to be mis-tested, so the classic
+// port of this code — `const ok = openConfirm(...)` without `await`, where
+// `ok` is a truthy Promise and the DELETE fires on Cancel — is not
+// expressible here. See shared/confirm.js's header.
 async function deleteConversationRow(id, title, mountToken) {
-  const ok = window.confirm('Delete "' + (title || 'this conversation') + '"? This cannot be undone.');
-  if (!ok) return;
-  try {
-    await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
-  } catch { /* best-effort; the list refresh below will show the true state either way */ }
-  if (!isCurrentMount(mountToken)) return; // H1 fix
-  if (state.activeConversationId === id) {
-    state.activeConversationId = null;
-    state.thread = [];
-  }
-  await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false });
+  await confirmThen({
+    title: 'Delete this conversation?',
+    message: title || 'this conversation',
+    detail: 'The thread and its messages are removed from this domain. This cannot be undone.',
+    confirmLabel: 'Delete',
+    cancelLabel: 'Cancel',
+    tone: 'danger',
+    onConfirm: async () => {
+      try {
+        await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
+      } catch { /* best-effort; the list refresh below will show the true state either way */ }
+      if (!isCurrentMount(mountToken)) return; // H1 fix
+      if (state.activeConversationId === id) {
+        state.activeConversationId = null;
+        state.thread = [];
+      }
+      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false });
+    },
+  });
 }
 
 async function sendCurrentMessage() {
@@ -1067,6 +1101,10 @@ function paintReaderPage(path, page, mount) {
     : [];
 
   openReader({
+    // Raw-source handoff: the shell reader's RAW bar needs the domain to call
+    // GET /api/wiki/:domain/source. Without it a citation-opened reader shows no
+    // bar and issues NO request — degraded, never a wrong-domain guess.
+    domain: state.activeDomain,
     slug: page.path || path,
     title: page.title,
     type: folder,
@@ -1130,13 +1168,15 @@ function renderSidebar(token) {
     convListHtml = groupHtml('TODAY', today) + groupHtml('EARLIER', earlier);
   }
 
-  const dropZone =
-    '<div class="chat-drop-zone" title="Not wired up in this shell yet — open the Ingest view to add sources.">' +
-      icon('upload', 15) +
-      '<div class="chat-drop-title">Drop sources to ingest</div>' +
-      '<div class="chat-drop-sub mono">pdf · md · txt · or a folder</div>' +
-      '<div class="chat-drop-sub mono chat-drop-inert">not wired up yet — open <span class="chat-drop-link" id="chat-drop-goto-ingest" role="link" tabindex="0">Ingest</span> instead</div>' +
-    '</div>';
+  // REMOVED (cutover): a "Drop sources to ingest" zone used to sit here with
+  // no drag, drop or click handler of any kind — its own label admitted it
+  // was inert. A drop target that silently swallows a dragged PDF is worse
+  // than no drop target: the user's first attempt fails with no feedback and
+  // nothing tells them where the file went. Ingest is a rail destination one
+  // click away and owns the whole upload surface (picker, batch queue, cost
+  // estimate, cancel), so duplicating a half of it here buys nothing. If
+  // drag-to-ingest is ever wired, it belongs in views/ingest.js's queue path,
+  // not as a second entry point that has to stay in sync with it.
 
   setSidebar(
     '<div class="sidebar-title">Chat</div>' +
@@ -1147,8 +1187,7 @@ function renderSidebar(token) {
           '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Search conversations…" value="' + escapeHtml(state.searchQuery) + '">' +
         '</div>' +
         '<div class="chat-conv-list">' + convListHtml + '</div>'
-      : '<div class="sidebar-hint">No domains exist yet — nothing to chat with.</div>') +
-    dropZone,
+      : '<div class="sidebar-hint">No domains exist yet — nothing to chat with.</div>'),
     token
   );
 
@@ -1171,13 +1210,6 @@ function renderSidebar(token) {
       deleteConversationRow(el.dataset.convDelete, el.dataset.convTitle, myMountToken).catch(reportAsyncActionFailure);
     });
   });
-  const gotoIngest = document.getElementById('chat-drop-goto-ingest');
-  if (gotoIngest) {
-    gotoIngest.addEventListener('click', () => navigate('ingest'));
-    gotoIngest.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate('ingest'); }
-    });
-  }
 }
 
 // Lighter re-render used after search input / a completed send that
@@ -1314,10 +1346,13 @@ function renderComposerHtml(active) {
     '<div class="chat-composer-wrap">' +
       '<div class="chat-composer" id="chat-composer">' +
         '<textarea class="chat-input" id="chat-input" rows="2" placeholder="' + escapeHtml(placeholder) + '"></textarea>' +
+        // REMOVED (cutover): a permanently-disabled paperclip sat here whose
+        // own tooltip said it was not wired up. The shipping composer has no
+        // attach control at all, so this was a NEW dead affordance in the
+        // most-used surface in the app — a user clicks it, nothing happens,
+        // and the only thing they learn is that the product ships broken
+        // buttons. Attaching a source is Ingest's job (rail, one click).
         '<div class="chat-composer-controls">' +
-          '<button class="chat-ctrl-btn" id="chat-attach-btn" disabled title="Not wired up in this phase — ingestion from Chat isn\'t connected yet. Use the Ingest view.">' +
-            icon('paperclip', 15) +
-          '</button>' +
           (showModelPicker ? renderModelDropdownHtml() : '') +
           renderLengthDropdownHtml() +
           '<div class="chat-composer-spacer"></div>' +

@@ -56,6 +56,16 @@ import * as shell from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 
+// The design system's two-layer progress ring. Health's long AI operations
+// (broken-link planning, orphan rescue, the duplicate scan, the batch
+// merge, the deterministic fix-all) all run for tens of seconds behind a
+// button whose only signal today is the word "…". Three of them ALREADY
+// stream a real {processed,total} / {done,total} count over SSE that this
+// view was throwing away — so the outer ring here is fed by genuine server
+// counts, and is `null` (activity only, orbit alone) for exactly as long as
+// the server has reported nothing.
+import { progressRingHtml, ringValueFromCounts } from '../shared/progress-ring.js';
+
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
 // icon() below — there is no view-local icon table.
@@ -122,6 +132,12 @@ const state = {
   confirm: null,          // { title, body, confirmLabel, run }
   busyKey: null,          // action key currently in flight, or null
   progressText: null,     // present-participle status line while busy
+  // Live SSE counts for the operation named by busyKey, or null.
+  //   { key, processed, total }
+  // `key` is stamped so a frame arriving late from an operation the user
+  // has already moved on from cannot drive the ring of a DIFFERENT one —
+  // the same slug-stamp discipline semanticScan uses, for the same reason.
+  aiProgress: null,
   banner: null,           // { tone: 'success'|'error'|'info', text }
 
   pendingPlan: null,      // { kind: 'brokenLinks'|'orphans', plan, summary }
@@ -1441,6 +1457,12 @@ async function openWikiPageFromBrowse(path, titleHint) {
     openReader({
       slug: page.path || path,
       title: page.title || titleHint || path,
+      // The one fact the shell reader cannot derive for itself. It drives
+      // the RAW-source bar (app.js, "Reader RAW-source bar") — which
+      // original document this summary was built from, and whether it is
+      // still on this machine. `slug` here is the DOMAIN slug (this view's
+      // state.activeSlug), captured before the await; `path` is the page.
+      domain: slug,
       type: page.folder,
       typeLabel: page.type,
       tags: plainTags,
@@ -1688,7 +1710,7 @@ function renderHealthPanel(domain, readonly) {
       '<div class="dm-health-top">' +
         '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
         '<button class="btn btn-secondary" id="dm-rescan-btn"' + (busy ? ' disabled' : '') + '>' +
-          icon('refresh', 13) + ' ' + (busy === 'rescan' ? 'Scanning…' : 'Rescan') +
+          (busy === 'rescan' ? buttonRingHtml() + ' Scanning…' : icon('refresh', 13) + ' Rescan') +
         '</button>' +
       '</div>' +
       '<div class="dm-health-body">Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) +
@@ -1697,6 +1719,7 @@ function renderHealthPanel(domain, readonly) {
       '<div class="dm-chip-row">' + chips + '</div>' +
       (state.banner ? renderBanner() : '') +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
+      (readonly ? '' : renderAiProgressRing()) +
       (state.confirm ? renderConfirmCard() : '') +
       (state.pendingPlan ? renderPendingPlan(crossMountBusy) : '') +
       (activeSemanticScan() ? renderSemanticScanResult(readonly, crossMountBusy) : '') +
@@ -1720,6 +1743,87 @@ function renderMirrorNote() {
   );
 }
 
+// The design's smallest size: 16px, activity-only, inside a button that is
+// waiting. No stages and no value — a button has no room for either, and
+// the real count (when the server sends one) renders in the ring under the
+// action bar. This is liveness and nothing more.
+function buttonRingHtml() {
+  return progressRingHtml({ value: null, size: 16, center: 'none', className: 'dm-btn-ring' });
+}
+
+// ── Live progress for the long Health operations ─────────────────────────
+// The SSE streams below already carry real counts and this view used to
+// drop them on the floor, listening only for `done` and `error`:
+//
+//   planBrokenLinkFixes / planOrphanRescue / scanSemanticDuplicates
+//                              -> { type:'progress', processed, total }
+//   applyBrokenLinkFixes / applyOrphanRescue
+//                              -> { type:'progress', done, total }
+//   fixSemanticDuplicatesBatch -> { type:'progress', done, total, pair, status }
+//
+// Two different key names for the same quantity, so read BOTH. A frame
+// carrying neither (the merge stream's per-pair outcome frames, which are
+// consumed elsewhere for their own purpose) leaves the count untouched
+// rather than resetting it to zero.
+function noteAiProgress(key, ev) {
+  const processed = ev && Number.isFinite(ev.processed) ? ev.processed
+    : (ev && Number.isFinite(ev.done) ? ev.done : null);
+  const total = ev && Number.isFinite(ev.total) ? ev.total : null;
+  if (processed == null || total == null || total <= 0) return;
+  state.aiProgress = { key, processed, total };
+}
+
+// Human-readable name for whatever busyKey names. Anything unrecognised
+// gets a neutral "Working…" rather than a guess — this string sits next to
+// a spend gate and must not imply an operation the user did not start.
+const BUSY_LABELS = {
+  rescan: 'Scanning the wiki…',
+  fixSafe: 'Applying the safe repairs…',
+  brokenLinksPlan: 'Planning broken-link fixes…',
+  orphansPlan: 'Finding homes for orphan pages…',
+  brokenLinksApply: 'Rewriting links…',
+  orphansApply: 'Linking orphan pages…',
+  semanticDupesEstimate: 'Counting candidate pairs…',
+  semanticDupesScan: 'Comparing pages for duplicates…',
+  semanticMerge: 'Merging duplicate pages…',
+};
+function busyRingLabel(key) {
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(BUSY_LABELS, key)) return BUSY_LABELS[key];
+  if (key.indexOf('group:') === 0) return 'Applying fixes…';
+  return 'Working…';
+}
+
+// The progress ring for whatever Health operation is in flight.
+//
+// `value` is null — activity only, orbit and nothing else — until the
+// server sends a count, and for the operations that never send one at all
+// (rescan, fix-all, the per-pair actions). That is deliberate and it is the
+// component's whole contract: an empty outer ring beside a turning orbit
+// says "running, amount genuinely unknown", which is the truth. Do not
+// substitute an elapsed-time-derived percentage here.
+function renderAiProgressRing() {
+  const key = state.busyKey;
+  if (!key) return '';
+  // The per-pair actions (preview / merge one / skip) are sub-second and
+  // render their own inline button label; a ring would be noise.
+  if (key.indexOf('semanticPreview:') === 0 || key.indexOf('semanticMergeOne:') === 0 || key.indexOf('semanticSkip:') === 0) return '';
+  const p = state.aiProgress && state.aiProgress.key === key ? state.aiProgress : null;
+  const value = p ? ringValueFromCounts(p.processed, p.total) : null;
+  const sublabel = p ? (p.processed + ' of ' + p.total) : 'no count reported yet';
+  return (
+    '<div class="dm-ai-progress">' +
+      progressRingHtml({
+        value,
+        size: 32,
+        label: busyRingLabel(key),
+        sublabel,
+        className: 'dm-ai-progress-ring',
+      }) +
+    '</div>'
+  );
+}
+
 function renderQuickMaintenance(domain, report, crossMountBusy) {
   const busy = state.busyKey;
   // MEDIUM-5 fix: disable every DESTRUCTIVE quick-maintenance button (not
@@ -1732,6 +1836,7 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   if (safeTotal > 0) {
     items.push(
       '<button class="dm-quick-btn" data-action="fixSafe"' + (disableAll ? ' disabled' : '') + '>' +
+        (busy === 'fixSafe' ? buttonRingHtml() : '') +
         '<span class="dm-quick-label">' + (busy === 'fixSafe' ? 'Fixing…' : 'Fix ' + pluralize(safeTotal, 'safe issue')) + '</span>' +
       '</button>'
     );
@@ -1790,10 +1895,15 @@ function quickAiButton(key, label, busy, crossMountBusy) {
   if (est === 'loading') costText = '…';
   else costText = costReadout(est, { compact: true });
   const disabled = busy || crossMountBusy || est === 'loading' || (est && est.error);
-  const label2 = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate') ? label + '…' : label;
+  const running = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate');
+  const label2 = running ? label + '…' : label;
   return (
     '<button class="dm-quick-btn dm-quick-btn-ai" data-action="' + key + '"' + (disabled ? ' disabled' : '') + '>' +
-      icon('sparkles', 12) +
+      // The sparkles mark (token spend) gives way to the ring only while
+      // THIS action is the one running — the spend has already happened by
+      // then, and liveness is the useful signal. Every other button keeps
+      // its sparkles so the cost warning never disappears from the bar.
+      (running ? buttonRingHtml() : icon('sparkles', 12)) +
       '<span class="dm-quick-label">' + escapeHtml(label2) + '</span>' +
       (costText ? '<span class="mono dm-quick-cost">' + escapeHtml(costText) + '</span>' : '') +
     '</button>'
@@ -2358,6 +2468,7 @@ async function runFixSafe(slug) {
     inFlightWriteSlugs.delete(slug); // unconditional — the real write actually finished
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as the delete() above
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true });
@@ -2465,6 +2576,7 @@ async function fixAllOfType(slug, type) {
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true });
@@ -2494,10 +2606,12 @@ async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
   state.progressText = 'Planning…';
+  state.aiProgress = null;
   render(token);
   try {
     let result = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/broken-links/plan', {}, (type, ev) => {
+      if (type === 'progress') { noteAiProgress('brokenLinksPlan', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
@@ -2507,6 +2621,7 @@ async function runBrokenLinksPlan(slug) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message };
   } finally {
     state.busyKey = null;
+    state.aiProgress = null;
   }
   render(token);
 }
@@ -2532,10 +2647,12 @@ function confirmOrphansPlan(slug) {
 async function runOrphansPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'orphansPlan';
+  state.aiProgress = null;
   render(token);
   try {
     let result = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/orphans/plan', {}, (type, ev) => {
+      if (type === 'progress') { noteAiProgress('orphansPlan', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
@@ -2545,6 +2662,7 @@ async function runOrphansPlan(slug) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message };
   } finally {
     state.busyKey = null;
+    state.aiProgress = null;
   }
   render(token);
 }
@@ -2555,6 +2673,7 @@ async function applyPendingPlan(slug) {
   if (!p) return;
   const kind = p.kind;
   state.busyKey = kind + 'Apply';
+  state.aiProgress = null;
   render(token);
   const url = '/api/health/' + encodeURIComponent(slug) + '/' + (kind === 'brokenLinks' ? 'broken-links' : 'orphans') + '/apply';
   // MEDIUM-1 fix — label matches src/routes/health.js's own registerWrite()
@@ -2568,6 +2687,7 @@ async function applyPendingPlan(slug) {
     inFlightWriteSlugs.add(slug); // MEDIUM-5 fix — LOW-4: inside the try, see runFixSafe's comment
     let result = null;
     await streamSSE(url, { plan: p.plan }, (type, ev) => {
+      if (type === 'progress') { noteAiProgress(kind + 'Apply', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Apply failed');
     });
@@ -2594,6 +2714,7 @@ async function applyPendingPlan(slug) {
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix — unconditional, regardless of mount staleness (same as inFlightWriteSlugs.delete above)
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true });
@@ -2635,6 +2756,7 @@ async function confirmSemanticScan(slug) {
       // exit from the block above, including a `return` inside it, so
       // this can no longer be skipped.
       state.busyKey = null;
+    state.aiProgress = null;
     }
   }
 
@@ -2671,10 +2793,12 @@ async function confirmSemanticScan(slug) {
 async function runSemanticScan(slug) {
   const token = myMountToken;
   state.busyKey = 'semanticDupesScan';
+  state.aiProgress = null;
   render(token);
   try {
     let result = null;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/semantic-dupes/scan', {}, (type, ev) => {
+      if (type === 'progress') { noteAiProgress('semanticDupesScan', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Scan failed');
     });
@@ -2700,6 +2824,7 @@ async function runSemanticScan(slug) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not scan for duplicates — ' + err.message };
   } finally {
     state.busyKey = null;
+    state.aiProgress = null;
   }
   render(token);
 }
@@ -2752,6 +2877,7 @@ async function previewSemanticPair(slug, pair) {
     if (scan) scan.preview = { key, error: err.message };
   } finally {
     state.busyKey = null;
+    state.aiProgress = null;
   }
   render(token);
 }
@@ -2801,6 +2927,7 @@ async function mergeOneSemanticPair(slug, pair) {
     inFlightWriteSlugs.delete(slug);
     releaseGate();
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   // keepSemanticScan: the remaining pairs in this scan are still valid and
@@ -2837,6 +2964,7 @@ async function skipSemanticPair(slug, pair) {
     }
   } finally {
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
@@ -2876,6 +3004,7 @@ async function runMergeSemanticDuplicates(slug) {
     return;
   }
   state.busyKey = 'semanticMerge';
+  state.aiProgress = null;
   render(token);
   // MEDIUM-1 fix — label matches src/routes/health.js's own
   // registerWrite(domain, 'semantic-dupes-merge-batch') inside
@@ -2893,6 +3022,10 @@ async function runMergeSemanticDuplicates(slug) {
       if (type === 'progress' && ev.pair && (ev.status === 'merged' || ev.status === 'skipped')) {
         markSemanticPairStatus(ev.pair, ev.status);
       }
+      // Same frames also carry {done, total}. Feeding the ring here is
+      // additive — it does not touch the pair-status recording above, which
+      // has its own audit history and its own reasons.
+      if (type === 'progress') { noteAiProgress('semanticMerge', ev); render(token); }
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Merge failed');
     });
@@ -2918,6 +3051,7 @@ async function runMergeSemanticDuplicates(slug) {
     inFlightWriteSlugs.delete(slug);
     releaseGate(); // MEDIUM-1 fix — unconditional, same reasoning as inFlightWriteSlugs.delete above
     state.busyKey = null;
+    state.aiProgress = null;
   }
   if (!isCurrentMount(token)) return;
   await loadHealth(slug, token, { silent: true, keepSemanticScan: true });
@@ -3018,6 +3152,7 @@ registerView('domains', {
       // above whatever domain happens to be selected then.
       state.lifecycle = null;
       state.busyKey = null;
+    state.aiProgress = null;
     };
   },
 });

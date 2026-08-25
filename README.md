@@ -70,6 +70,19 @@ with strict daily quotas; pay-as-you-go costs roughly **€5/month** for moderat
 
 ---
 
+## The interface
+
+The app is organized as a left icon rail rather than a row of tabs: **Chat, Domains, Shared
+Brain, Ingest**, and **Agent memory** (a rail slot for a planned feature — visible, not yet
+functional) run down the side, with **Sync** and **Settings** in the rail footer. There's no
+separate Wiki section — pages open in an overlay reader from a chat citation or from the page
+browser inside Domains — and **Wiki Health now lives inside each domain in Domains** rather than
+being its own section.
+
+> The previous interface is still available at **`/old`** while people get used to the new one.
+
+---
+
 ## Core Concept: Curation, Not Retrieval
 
 Most AI integrations use RAG (Retrieval-Augmented Generation): the AI scans raw files,
@@ -125,11 +138,11 @@ This is the shift from a file cabinet to a neural network.
 - **Shared Brain (v3.0.0-beta+, opt-in)** — contribute to a **collective wiki** shared with your cohort, team, or research group. Each contributor keeps a private Curator; only opted-in domains push LLM-synthesised Delta summaries to a shared private GitHub repo; the synthesised collective wiki pulls back as a separate read-only `shared-<slug>/` mirror domain. Two-primitives security model (invite token = metadata only, PAT = per-contributor identity), GDPR Article 17 right-to-erasure built in, two IP modes (`contributor_retains` for cohorts / `organisational` for enterprise). A Cloudflare R2 storage backend for EU data residency is planned for a future release. See [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)
 - **Domain management** — create, rename, and delete domains from the UI; four AI-tuned templates
   auto-generate the right schema
-- **Settings tab** — manage API keys, view version info, and check for updates from within the app
-- **System Check (Settings)** — one click confirms the app itself is set up correctly: API key configured, knowledge folder writable, credential files locked down (`0600`), and sync status. A free, instant, local-only check that never touches your wiki content — plus an optional, cost-confirmed **"Verify AI connection"** test (~$0.0001) that makes one tiny request to your provider so you can tell at a glance whether a failure is your key or a provider outage. (Distinct from the **Health** tab, which cleans up your wiki *content*.) See [docs/system-check.md](docs/system-check.md)
-- **Wiki Health tab** — one-click scan for broken links, orphans, duplicate entities, folder-prefix violations, and missing backlinks. Auto-fix categories rewrite in place; broken links with a suggested target get an **Apply** button (and a bulk **Apply all suggestions** action); genuine ambiguities stay review-only. Review-only rows also get a ✨ **Ask AI** button that uses your configured LLM: for **broken links** it proposes a target; for **orphans** it proposes up to 5 existing pages that should link to the orphan — each with an AI-written bullet description. An opt-in **✨ Find duplicate pages** action (in the ⚡ Quick maintenance bar, after a scan) finds pages that describe the same concept under different slugs (e.g. `[[email]]` + `[[e-mail]]`, `[[rag]]` + `[[retrieval-augmented-generation]]`) — with cost preview, user-configurable ceiling, and a mandatory Preview-diff safety gate before any individual merge (high-confidence pairs can also be merged in bulk behind an explicit confirm step). **Decisions persist**: dismiss any review-only issue or semantic-duplicate pair once and it stops surfacing on future scans — and because dismissals live inside the wiki folder, they sync to your other computers automatically. See [docs/ai-health.md](docs/ai-health.md).
-- **Find the original document behind a summary** — every summary page remembers the source file it was built from; open it in the Wiki tab to see the filename, size, and a **Reveal in Finder** button, or ask Claude (via MCP) to pull the actual extracted source text when a summary's condensed version isn't enough. Raw files aren't synced (only your wiki pages are), so "not on this machine" after a Sync pull is expected, not an error — you still get the filename and ingest date either way.
-- **First-run onboarding wizard** — guided setup on first launch: API keys, create a domain, sync, and an optional (skippable) Claude Desktop connection
+- **Settings** — manage API keys, view version info, and check for updates from within the app
+- **System Check (Settings)** — one click confirms the app itself is set up correctly: API key configured, knowledge folder writable, credential files locked down (`0600`), and sync status. A free, instant, local-only check that never touches your wiki content — plus an optional, cost-confirmed **"Verify AI connection"** test (~$0.0001) that makes one tiny request to your provider so you can tell at a glance whether a failure is your key or a provider outage. (Distinct from **Wiki Health**, which cleans up your wiki *content*.) See [docs/system-check.md](docs/system-check.md)
+- **Wiki Health** (inside each domain, in Domains) — one-click scan for broken links, orphans, duplicate entities, folder-prefix violations, and missing backlinks. Auto-fix categories rewrite in place; broken links with a suggested target get an **Apply** button (and a bulk **Apply all suggestions** action); genuine ambiguities stay review-only. Review-only rows also get a ✨ **Ask AI** button that uses your configured LLM: for **broken links** it proposes a target; for **orphans** it proposes up to 5 existing pages that should link to the orphan — each with an AI-written bullet description. An opt-in **✨ Find duplicate pages** action (in the ⚡ Quick maintenance bar, after a scan) finds pages that describe the same concept under different slugs (e.g. `[[email]]` + `[[e-mail]]`, `[[rag]]` + `[[retrieval-augmented-generation]]`) — with cost preview, user-configurable ceiling, and a mandatory Preview-diff safety gate before any individual merge (high-confidence pairs can also be merged in bulk behind an explicit confirm step). **Decisions persist**: dismiss any review-only issue or semantic-duplicate pair once and it stops surfacing on future scans — and because dismissals live inside the wiki folder, they sync to your other computers automatically. See [docs/ai-health.md](docs/ai-health.md).
+- **Find the original document behind a summary** — every summary page remembers the source file it was built from; ask Claude (via MCP) to pull the actual extracted source text when a summary's condensed version isn't enough. Raw files aren't synced (only your wiki pages are), so "not on this machine" after a Sync pull is expected, not an error — you still get the filename and ingest date either way.
+- **First-run "Getting started" guide** — a dismissible checklist that points you through the three things a fresh install needs: add an API key, create a domain, ingest your first source
 - **Live UI updates** — domain stats, wiki pages, and page counts refresh automatically after ingest and sync — no manual browser reload needed
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
@@ -172,11 +185,11 @@ The license text has not been reviewed by a lawyer, and says so at the top. If a
 
 | Mode | Tool | Best for |
 |------|------|----------|
-| **Chat** | Built-in AI (Chat tab) | "How does X relate to Y?", synthesising across sources, multi-turn conversation |
+| **Chat** | Built-in AI (Chat) | "How does X relate to Y?", synthesising across sources, multi-turn conversation |
 | **Visual** | Obsidian graph view | Seeing the full knowledge map, spotting clusters, browsing pages |
 | **Frontier LLM** | Claude Desktop via *My Curator* MCP bridge (v2.3+) | Deep research with Opus / Sonnet over the full graph — tags, links, backlinks, topology |
 
-All three read the same markdown files — no sync or export needed between them. Set up *My Curator* from the Settings tab; see [`docs/mcp-user-guide.md`](docs/mcp-user-guide.md).
+All three read the same markdown files — no sync or export needed between them. Set up *My Curator* from Settings; see [`docs/mcp-user-guide.md`](docs/mcp-user-guide.md).
 
 ---
 
@@ -306,7 +319,7 @@ Paste this into Terminal and press Enter:
 curl -fsSL https://raw.githubusercontent.com/talirezun/the-curator/main/install.sh | bash
 ```
 
-The script auto-detects and installs Node.js if needed, clones the repo, installs dependencies, and builds **The Curator.app** — all in one step. When it finishes, the app opens automatically. An onboarding wizard walks you through API key setup on first launch.
+The script auto-detects and installs Node.js if needed, clones the repo, installs dependencies, and builds **The Curator.app** — all in one step. When it finishes, the app opens automatically. A "Getting started" guide points you to API key setup on first launch.
 
 > **Pin it to your Dock.** The installer puts **The Curator.app** in `~/the-curator/` but doesn't add it to your Dock automatically — open a Finder window, navigate to `~/the-curator`, and **drag the app icon down into your Dock**. Now you can launch The Curator with one click any time.
 
@@ -345,7 +358,7 @@ Open **http://localhost:3333** in your browser.
 
 > **Install with a coding agent:** Claude Code, Cursor, Augment, Cline, and other CLI-aware AI coding agents can install The Curator for you — paste the prompt from [User Guide §20](docs/user-guide.md#20-install-with-a-coding-agent).
 
-> **API keys:** The onboarding wizard appears on first launch and asks for your key. You can also add or change keys anytime in the **Settings** tab. Alternatively, developers can create a `.env` file manually (`cp .env.example .env`) and set `GEMINI_API_KEY` there.
+> **API keys:** The "Getting started" guide appears on first launch and points you to add a key. You can also add or change keys anytime in **Settings**. Alternatively, developers can create a `.env` file manually (`cp .env.example .env`) and set `GEMINI_API_KEY` there.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](docs/mac-app.md)**.
 
@@ -363,7 +376,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 | Feature | Uses tokens? | Why |
 |---|---|---|
 | **Ingest** (drop in a PDF / article / note) | ✅ Yes | The LLM reads the source and writes the wiki pages. This is by far the largest consumer of tokens. Multi-batch documents benefit from automatic prompt caching (explicit on Anthropic, implicit on Gemini), which cuts repeated-context input cost — the exact token/cache split for that ingest is shown in the result panel afterward. |
-| **Chat** (built-in tab) | ✅ Yes | Each message + reply is one LLM call. Cheap — typically a few cents per long conversation. |
+| **Chat** (built in) | ✅ Yes | Each message + reply is one LLM call. Cheap — typically a few cents per long conversation. |
 | **Wiki Health — ✨ Ask AI on broken links** (Phase 1) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
 | **Wiki Health — ✨ Ask AI on orphan pages** (Phase 2) | ✅ Yes | One LLM call per click. ~$0.0001–0.0005 each. |
 | **Wiki Health — Semantic duplicate scan** (Phase 3) | ✅ Yes — opt-in, cost-gated | A confirm dialog shows the estimate before you run it (typical: $0.003–$0.03 on Gemini Flash Lite). |
@@ -374,13 +387,13 @@ The Curator itself is **free, open-source software**. The only paid component is
 
 | Feature | Why it's free |
 |---|---|
-| **Wiki tab** (browse pages) | Pure file rendering. No LLM call. |
+| **Browsing your wiki pages** (Domains, or the reader opened from a chat citation) | Pure file rendering. No LLM call. |
 | **Domain management** (create / rename / delete) | Filesystem operations only. |
 | **Settings**, **API keys**, **updates** | Local. No LLM call. |
 | **Personal Sync** (Sync now / Push only / Pull only) | A `git push` / `git pull` over HTTPS to your own private repo. |
 | **Wiki Health — structural scan & deterministic fixes** (broken-link auto-fix, folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) | Algorithmic — runs entirely on your machine. |
 | **My Curator MCP server** (locally, on this machine) | The bridge itself is free. The frontier model you connect *to* it (Claude Desktop, etc.) bills you on its own plan, not through your Curator API key. |
-| **Reveal in Finder / `get_raw_source`** (find the original document behind a summary) | Plain text extraction from a local file — no LLM call, on either the app's Wiki tab or the MCP tool. |
+| **`get_raw_source`** (find the original document behind a summary, via MCP) | Plain text extraction from a local file — no LLM call. |
 | **Shared Brain — Pull updates / Disconnect / List connections** | GitHub REST API calls to read pages or list metadata — no LLM involved. |
 | **Shared Brain — Revoke a contributor** (GDPR Article 17) | Storage operations only (delete contributions, scan + delete tainted pages, append audit log). Synthesis re-runs after — that step uses the LLM as above. |
 
@@ -401,7 +414,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 
 Building a second brain is rewarding. **Querying it with a frontier model** is the moment it becomes irreplaceable.
 
-For most second-brain users, the loop is: ingest sources → admire the Obsidian graph. The graph is beautiful, the visual structure is enjoyable, and the local Chat tab handles everyday lookups. But the graph is something you *look at*. The synapses — the actual connections between thousands of knowledge nodes accumulated over years — are mostly invisible to you while you're inside the graph.
+For most second-brain users, the loop is: ingest sources → admire the Obsidian graph. The graph is beautiful, the visual structure is enjoyable, and the local Chat view handles everyday lookups. But the graph is something you *look at*. The synapses — the actual connections between thousands of knowledge nodes accumulated over years — are mostly invisible to you while you're inside the graph.
 
 **My Curator MCP** is the bridge that opens that synapse layer to a frontier model. From v2.3 onwards, The Curator ships a local MCP server that exposes your wiki to any [Model Context Protocol](https://modelcontextprotocol.io/)-compatible client — most importantly **Claude Desktop with Opus or Sonnet**, but also VS Code with an MCP-aware coding agent, [LM Studio](https://lmstudio.ai/) with a local model, or any other MCP client. From v2.5.2+, the bridge is **read+write** — Claude can save what you discussed, clean up wiki problems, and manage dismissals without you ever leaving the conversation.
 
@@ -443,7 +456,7 @@ That is not a chat interface. That is a frontier model doing **deep research ove
 
 When you join a Shared Brain (see [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)), the collective wiki appears on your machine as a `shared-<slug>/` domain. **MCP read tools work fully on it** — Claude can `search_wiki`, `get_node`, `get_index`, `search_cross_domain` across the collective just like any other domain. This is where the cohort/team use cases get powerful: a research team can ask *"across our shared brain, which papers contradict each other on X?"* and Claude reads everyone's combined reading to surface the answer with citations.
 
-**The four mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from the Sync tab. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
+**The four mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from Sync. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
 
 ### Why this is first-of-its-kind
 
@@ -455,7 +468,7 @@ For teams, Shared Brain extends this further: now the analyst-database is collec
 
 This is what makes the difference between "I have a folder of notes" and "I have a queryable, compounding extension of my own thinking that any frontier model can reason against on demand."
 
-> 📖 **Setup is under 2 minutes** from the **Settings** tab inside the app — see **[docs/mcp-user-guide.md](docs/mcp-user-guide.md)** for the wizard, prompt patterns, and the privacy/security model.
+> 📖 **Setup is under 2 minutes** from **Settings** inside the app — see **[docs/mcp-user-guide.md](docs/mcp-user-guide.md)** for the wizard, prompt patterns, and the privacy/security model.
 >
 > 💡 **The My Curator Claude skill (v2.5.7+):** drop **[claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md)** into Claude Code's `~/.claude/skills/` — or upload it to any Claude Desktop project's knowledge files — and every conversation that touches the my-curator MCP automatically follows the playbook: ground every wikilink, refuse speculative writes on fresh domains, three-tier-track Health fixes, respect domain siloing. No more typing detailed prompts every time. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-my-curator-claude-skill--best-results-out-of-the-box-v257).
 
@@ -463,7 +476,7 @@ This is what makes the difference between "I have a folder of notes" and "I have
 
 ## Chat with your knowledge
 
-The **Chat tab** is a full multi-turn conversation interface. Ask anything about your wiki —
+**Chat** is a full multi-turn conversation interface. Ask anything about your wiki —
 the AI answers from your own pages, cites its sources, and remembers the entire conversation
 thread. Past conversations are saved and survive server restarts.
 
@@ -491,7 +504,7 @@ Create multiple conversations per domain. Delete old ones. Pick up any thread la
 
 ## Manage your domains
 
-The **Domains tab** is a full GUI for creating, renaming, and deleting domains — no Finder or terminal needed.
+**Domains** is a full GUI for creating, renaming, and deleting domains — no Finder or terminal needed.
 
 **Create a domain** — type a display name, pick a template, and click Create. The folder and schema are generated automatically:
 
@@ -502,9 +515,9 @@ The **Domains tab** is a full GUI for creating, renaming, and deleting domains �
 | 🌱 Personal Growth | Books, habits, mental models |
 | 📁 Generic | Any other topic |
 
-**Rename** — click the pencil icon. The folder is renamed on disk; all wiki pages, conversations, and Obsidian links update instantly.
+**Rename** — click the **Rename** button on the domain page. The folder is renamed on disk; all wiki pages, conversations, and Obsidian links update instantly.
 
-**Delete** — click the trash icon. The confirmation panel shows exact page and conversation counts before you commit.
+**Delete** — click **Delete**. The confirmation panel shows the exact page count before you commit.
 
 > If GitHub sync is configured, a rename or delete shows a reminder to **Sync now** so all your computers stay consistent.
 
@@ -514,21 +527,21 @@ The **Domains tab** is a full GUI for creating, renaming, and deleting domains �
 
 ## Sync across computers
 
-The **Sync tab** connects The Curator to a private GitHub repository so your wiki and chat history are available on every machine.
+**Sync**, in the rail footer, connects The Curator to a private GitHub repository so your wiki and chat history are available on every machine.
 
 **One-time setup (~3 minutes):**
 1. Create a free, **empty** private repository on GitHub (no README/.gitignore/license)
 2. Create a Personal Access Token — **fine-grained** (recommended; *Contents: Read and write* on that one repo) or **classic** (`repo` scope; can be set to never expire)
-3. Open the Sync tab → follow the 3-step wizard
+3. Open Sync → follow the 3-step wizard
 
 **Three ways to set it up:**
-- **In-app wizard** (most users) — Sync tab → 3 steps. Full guide: [docs/sync.md](docs/sync.md).
+- **In-app wizard** (most users) — Sync → 3 steps. Full guide: [docs/sync.md](docs/sync.md).
 - **With a coding agent** (Claude Code, Cursor, opencode, Aider…) — paste one prompt and it does the whole thing: [docs/sync-via-coding-agent.md](docs/sync-via-coding-agent.md).
 - **Manual** — create the repo + token yourself and enter them in the wizard.
 
 **Daily use:**
 - Click **Sync now** at the start and end of every work session — it pulls remote changes first, then pushes yours. One button, both directions.
-- Need a one-way operation? Open the **Advanced** disclosure in the Sync tab for **Push only** and **Pull only** buttons.
+- Need a one-way operation? Open the **Advanced** disclosure in Sync for **Push only** and **Pull only** buttons.
 
 What syncs: wiki pages, chat history, domain schemas.
 What stays local: source files, API keys, app code.
@@ -553,7 +566,7 @@ Alice's Mac     Bob's PC       Carlos's laptop
 
 **Use cases:** educational cohorts (each student contributes a `work` domain), enterprise knowledge management (employees opt-in their work domain), research teams (shared `research` domain compounds everyone's reading).
 
-**Shared Brain is opt-in.** Open **Settings → Shared Brain (beta)** and click **Enable Shared Brain (beta)** (on versions before v3.0.2 the button was at the bottom of the Sync tab). Then open the Sync tab and pick a card: **📨 I have an invite token → Join** if your cohort admin sent you a token, or **⚙ I'm starting a new Shared Brain → Set up** if you're spinning one up for your team. The 5-step wizard (Token → Access → PAT → Domains → Save) walks through it.
+**Shared Brain is opt-in.** Open **Shared Brain** in the rail and click **Enable Shared Brain (beta)**, then pick a card: **📨 I have an invite token → Join** if your cohort admin sent you a token, or **⚙ I'm starting a new Shared Brain → Set up** if you're spinning one up for your team. The 5-step wizard (Token → Access → PAT → Domains → Save) walks through it.
 
 Future generations: a Cloudflare R2 storage backend is planned for EU data residency and custom-domain endpoints, followed by GitHub App mode and SSO for enterprise. See the [roadmap](docs/shared-brain.md#7--roadmap).
 
@@ -563,9 +576,9 @@ Future generations: a Cloudflare R2 storage backend is planned for EU data resid
 
 ## Using Obsidian for the knowledge graph
 
-After ingesting your first document, open Obsidian → **Open folder as vault** → select your **Knowledge Base folder** (shown in the Domains tab → Knowledge Base Location). Click the graph icon to see all your knowledge as an interactive, zoomable network.
+After ingesting your first document, open Obsidian → **Open folder as vault** → select your **Knowledge Base folder** (shown in Domains → Knowledge Base Location). Click the graph icon to see all your knowledge as an interactive, zoomable network.
 
-> **Tip:** The Domains tab shows your Knowledge Base Location path and has a **Copy** button — paste it directly into Obsidian's vault picker.
+> **Tip:** Domains shows your Knowledge Base Location path and has a **Copy** button — paste it directly into Obsidian's vault picker.
 
 **Activate graph colors (one-time setup):** In Graph View → ⚙ → Groups, create three groups:
 
@@ -679,7 +692,7 @@ the-curator/
 
 ## Security
 
-- API keys can be stored via the **Settings** tab (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed. Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`) are written with `0600` permissions (owner-only) as of v3.0.1-beta.20
+- API keys can be stored via **Settings** (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed. Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`) are written with `0600` permissions (owner-only) as of v3.0.1-beta.20
 - Sync token lives in `.sync-config.json` — gitignored, never committed
 - The app runs entirely on your local machine — the only outbound calls are to Gemini/Claude and (when syncing) to your own private GitHub repo
 - The server binds to `127.0.0.1` (loopback) only, so it is **not reachable from your local network**, and a cross-origin guard rejects state-changing requests from other web origins (CSRF / DNS-rebinding defense). It still has no per-request authentication — it is a single-user local app and should not be reverse-proxied onto a public network

@@ -121,6 +121,16 @@
 //                                    navigate itself; the caller decides
 //                                    (typically by calling openReader()
 //                                    again for the new page).
+//       domain            string   — the domain this page belongs to. The
+//                                    ONE fact the reader cannot derive for
+//                                    itself, and the only thing an entry
+//                                    point contributes to the RAW-source
+//                                    bar (see "Reader RAW-source bar"
+//                                    below — all of the behaviour lives
+//                                    here, in the shell). Omit it and the
+//                                    bar is simply not shown and no
+//                                    request is made: degraded, never
+//                                    wrong.
 //   setSidebar(html, token) / setMain(html, token)
 //     Replace the contextual sidebar / main column content for the view
 //     currently mounting. Call once each from onEnter. html is raw markup
@@ -307,7 +317,18 @@ const ICON_BODY = {
   users: '<circle cx="8.5" cy="8" r="3"/><path d="M2.5 20a6 6 0 0 1 12 0"/><circle cx="16.7" cy="9" r="2.4"/><path d="M15 12.2a5 5 0 0 1 6.5 4.8"/>',
   cpu: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.6"/><rect x="10" y="10" width="4" height="4" rx="0.8"/><path d="M9 3v2.3M15 3v2.3M9 18.7V21M15 18.7V21M3 9h2.3M3 15h2.3M18.7 9H21M18.7 15H21"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.5-4.5M4 4.5V9h4.5"/><path d="M4 13a8 8 0 0 0 14.5 4.5M20 19.5V15h-4.5"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V19.7a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06A2 2 0 1 1 4.16 15.6l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H2.9a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.55 7.6a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 6.98 2.84l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.04-1.56V1.55a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.04h.09a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.46z" opacity="0"/><path d="M12 4.2v1.9M12 17.9v1.9M4.2 12h1.9M17.9 12h1.9M6.7 6.7l1.3 1.3M16 16l1.3 1.3M6.7 17.3 8 16M16 8l1.3-1.3"/>',
+  // DEFECT 1 FIX (v3.7.x visual pass): this used to be a circle + 8 short
+  // spoke lines with the actual gear-teeth outline hidden behind
+  // `opacity="0"` — i.e. it rendered as a smaller, shorter-rayed copy of
+  // the `sun` glyph directly below, which is exactly why the theme toggle
+  // and the Settings rail button read as the same icon. Replaced with a
+  // real cog: a ring + a smaller center hole + 8 short teeth that TOUCH
+  // the ring (no gap), as opposed to sun's small dot with long rays that
+  // float clear of it — the two are unambiguous at any size, including
+  // the 18px the rail footer renders at. Deliberately simple (3 flat
+  // primitives, no bezier teeth) rather than a literal Lucide-style cog —
+  // an intricate gear turns to mush at 18px.
+  settings: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.6"/><path d="M19 12h2.2M17 17l1.5 1.5M12 19v2.2M7 17l-1.5 1.5M5 12h-2.2M7 7l-1.5-1.5M12 5v-2.2M17 7l1.5-1.5"/>',
   sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/>',
   moon: '<path d="M20 13.6A8.5 8.5 0 1 1 10.4 4a6.6 6.6 0 0 0 9.6 9.6z"/>',
   close: '<path d="M5 5l14 14M19 5 5 19"/>',
@@ -345,8 +366,26 @@ const ICON_BODY = {
   copy: '<rect x="8" y="8" width="12" height="12" rx="1.6"/><path d="M4 16V5.6A1.6 1.6 0 0 1 5.6 4H16"/>',
 };
 
+// DEFECT 1 FIX, the class-level half: `icon()` used to fall back to
+// ICON_BODY.dot for any unrecognised name — a real, legitimate glyph used
+// elsewhere as a status marker. That is how a broken/missing icon shipped
+// unnoticed: the fallback looked like a plausible glyph instead of an
+// obviously-wrong one. `dot` is a single small filled circle; nothing on
+// screen would ever flag it as "the icon system failed here". A missing
+// name now renders a dashed box with an X through it — a shape that does
+// not resemble any real icon in ICON_BODY, so it cannot be silently
+// mistaken for one — and logs loudly so it's caught in dev, not guessed
+// at from a screenshot. See test-next-icons.js for the companion static
+// assertion (every VIEW_META[*].icon name exists in ICON_BODY) that
+// catches this class of bug BEFORE it ever reaches icon() at runtime.
+const MISSING_ICON_BODY = '<rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 2"/><path d="M8 8l8 8M16 8l-8 8"/>';
+
 export function icon(name, size) {
-  const body = ICON_BODY[name] || ICON_BODY.dot;
+  const known = Object.prototype.hasOwnProperty.call(ICON_BODY, name);
+  if (!known) {
+    console.error('[icon] unknown icon name: "' + name + '" — rendering the missing-icon placeholder instead of guessing.');
+  }
+  const body = known ? ICON_BODY[name] : MISSING_ICON_BODY;
   const px = size || 19;
   return (
     '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" ' +
@@ -442,6 +481,14 @@ export function navigate(name) {
   const myToken = mountToken;
 
   renderRailActive();
+
+  // Rail sync badge, refreshed on every view change. This is the /next
+  // equivalent of the shipping app's "refresh on every tab click": the
+  // common case is a user doing something that creates pending work (delete
+  // a domain, ingest a file, compile a conversation) and then moving to
+  // another screen — the badge is correct by the time they land. Never
+  // awaited; the function cannot throw.
+  refreshSyncBadge();
 
   const def = registry.get(name);
   let result = null;
@@ -723,6 +770,11 @@ function renderReader() {
         tags.map((t) => '<span class="reader-tag-chip reader-chip-plain">' + escapeHtml(t) + '</span>').join('') +
       '</div>';
 
+    // RAW-source bar placeholder. Painted EMPTY and hidden here, then filled
+    // in asynchronously by loadReaderSource() below — see that function's
+    // header for why the fill is a targeted innerHTML write into this node
+    // rather than another openReader() round-trip.
+
     const backlinksHtml = backlinks.length === 0
       ? '<div class="reader-empty-note">No other page links here yet.</div>'
       : backlinks.map((b, i) => (
@@ -736,6 +788,7 @@ function renderReader() {
       (p.readonly ? '<div class="reader-readonly-note">' + icon('alertCircle', 13) + ' Read-only Shared Brain mirror</div>' : '') +
       '<div class="reader-title">' + escapeHtml(title) + '</div>' +
       tagsHtml +
+      '<div class="reader-source-bar" id="reader-source-bar" hidden></div>' +
       '<div class="reader-body-text">' + (p.bodyHtml || '') + '</div>' +
       '<div class="reader-backlinks-head">BACKLINKS · ' + backlinks.length + '</div>' +
       '<div class="reader-backlinks">' + backlinksHtml + '</div>';
@@ -767,6 +820,228 @@ function renderReader() {
         if (b) p.onBacklinkClick(b.path, b.title);
       });
     });
+  }
+
+  if (!p.loading && !p.error) loadReaderSource(p.domain, p.slug, readerEpoch);
+}
+
+// ── Reader RAW-source bar (v3.5.0 parity) ──────────────────────────────
+//
+// "Which original document was this summary built from, and is it still on
+// this machine?" v3.5.0 shipped this end to end — a hardened resolver
+// (src/brain/raw-store.js), two routes (src/routes/wiki.js), an MCP tool
+// and a manifest — and the /next reader was fetching `page.frontmatter`
+// and reading only `.tags`, dropping `frontmatter.source` on the floor.
+// Cutover without this bar would silently DELETE an in-app feature.
+//
+// IT LIVES IN THE SHELL, NOT IN A VIEW, ON PURPOSE. The reader is opened
+// from two places — a Domains browse row and a Chat citation chip — and a
+// second copy of an escape-and-classify guard is the "two hand-maintained
+// copies" shape that produced the v3.2.0 CRITICAL. The reader carries the
+// whole behaviour; an entry point contributes only the one fact it alone
+// knows, the DOMAIN (`content.domain` on the openReader payload). A caller
+// that does not supply it gets no bar and no request — degraded, never
+// wrong. views/chat.js does not supply it yet; that is one line in its
+// paintReaderPage() and is REPORTED, not edited here (file ownership).
+//
+// describeRawSource() / renderReaderSourceHtml() / formatSourceBytes() are
+// deliberately PURE — no DOM, no fetch — so scripts/test-next-raw-source.js
+// can extract and execute them standalone. Keep them that way.
+
+function formatSourceBytes(n) {
+  if (typeof n !== 'number' || !isFinite(n) || n < 0) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Maps a GET /api/wiki/:domain/source response onto one of the display
+// states argued out in v3.5.0, or null to render nothing at all.
+//
+//   found          — the file is here: name, size, Reveal.
+//   missing        — THE NORMAL CASE, not damage. raw/ is gitignored and
+//                    never syncs, so a second machine legitimately has the
+//                    wiki and not the blobs. The copy has to say that.
+//   external       — frontmatter.source is a URL. Classified, shown as
+//                    INERT TEXT, never linked and never fetched.
+//   no-source      — no `source:` recorded at all (a conversation-compiled
+//                    summary, or one written before the field existed).
+//                    Renders nothing; classified distinctly anyway so the
+//                    suite can prove it was recognised, not fallen through.
+//   unsafe         — resolvable name, unopenable target.
+//
+// Anything NOT explicitly recognised — 'not-a-summary', and any reason a
+// future backend adds that this build has never heard of — degrades to
+// null. A confidently-wrong bar is worse than no bar; that is the same
+// principle raw-store.js applies server-side.
+function describeRawSource(result) {
+  if (!result || typeof result !== 'object') return null;
+
+  if (result.found === true) {
+    return {
+      state: 'found',
+      filename: typeof result.filename === 'string' ? result.filename : '',
+      sizeText: formatSourceBytes(result.bytes),
+    };
+  }
+
+  const reason = result.reason;
+
+  if (reason === 'external-source') {
+    const url = (typeof result.url === 'string' && result.url)
+      ? result.url
+      : (typeof result.declaredSource === 'string' ? result.declaredSource : '');
+    if (!url) return null;
+    return { state: 'external', url };
+  }
+
+  if (reason === 'missing') {
+    const name = typeof result.declaredSource === 'string' ? result.declaredSource : '';
+    return {
+      state: 'missing',
+      text: name
+        ? '"' + name + '" isn’t on this machine — raw source files aren’t synced.'
+        : 'The original file isn’t on this machine — raw source files aren’t synced.',
+    };
+  }
+
+  if (reason === 'no-source-recorded') return { state: 'no-source' };
+
+  if (reason === 'unsafe' || reason === 'not-a-file') {
+    return { state: 'unsafe', text: 'The recorded source can’t be opened.' };
+  }
+
+  return null;
+}
+
+// Pure HTML-string builder. `info` is describeRawSource()'s output (or
+// null). Every user-controlled string reaches the output ONLY through
+// escapeHtml, and never inside an attribute.
+//
+// THE EXTERNAL CASE IS SECURITY, NOT STYLING. `frontmatter.source` is
+// LLM-authored, hand-editable in Obsidian, and arrives over Personal Sync
+// and Shared Brain mirrors from other people's machines. Rendering it as
+// an <a href> hands a remote author a click-through in the user's app;
+// fetching it to preview would make it an SSRF primitive outright. v3.5.0
+// asserts that NO HTTP CLIENT EXISTS for this value in either module —
+// keep it a plain <span>, and do not add one here either.
+function renderReaderSourceHtml(info) {
+  if (!info) return '';
+
+  if (info.state === 'found') {
+    // Labelled RAW — the maintainer's own call in v3.5.1. `raw/` is the
+    // real folder name the code and the docs already use; inventing a
+    // second word re-creates the confusion the label was added to fix. A
+    // markdown source can produce a summary slug identical to its own
+    // filename (the reported case), so without this label the bar looks
+    // like it points at the page you are already reading.
+    return (
+      '<span class="reader-source-label">RAW</span>' +
+      '<span class="reader-source-name mono">' + escapeHtml(info.filename) + '</span>' +
+      (info.sizeText ? '<span class="reader-source-size">' + escapeHtml(info.sizeText) + '</span>' : '') +
+      '<button type="button" class="reader-source-reveal" id="reader-source-reveal">Reveal in Finder</button>' +
+      '<span class="reader-source-status" id="reader-source-status"></span>'
+    );
+  }
+
+  if (info.state === 'external') {
+    return (
+      '<span class="reader-source-label">RAW</span>' +
+      '<span class="reader-source-text">Built from a web page, not a local file:</span>' +
+      '<span class="reader-source-url mono">' + escapeHtml(info.url) + '</span>'
+    );
+  }
+
+  if (info.state === 'missing' || info.state === 'unsafe') {
+    return (
+      '<span class="reader-source-label">RAW</span>' +
+      '<span class="reader-source-text">' + escapeHtml(info.text) + '</span>'
+    );
+  }
+
+  // 'no-source' — recognised, and deliberately silent.
+  return '';
+}
+
+// Sequence guard for the async fill. Two rapid opens (a backlink click, a
+// second citation chip) must not let the FIRST response paint into the
+// SECOND page's bar. `readerEpoch` alone is not enough on its own here
+// because a repaint of the same page bumps it too — we check both.
+let readerSourceSeq = 0;
+
+// Fills #reader-source-bar in place. Deliberately NOT a re-openReader():
+// that repaints the whole overlay, bumps readerEpoch, and would invalidate
+// every in-flight caller's captured epoch — including the one that painted
+// this page a moment ago.
+async function loadReaderSource(domain, pagePath, epoch) {
+  const seq = ++readerSourceSeq;
+  // Only summary pages can ever record a source. Skipping the request for
+  // everything else is not just an optimisation: it keeps the common case
+  // (every entity and concept page) free of a round-trip that can only
+  // ever come back 'not-a-summary'.
+  if (!domain || typeof pagePath !== 'string' || !pagePath.startsWith('summaries/')) return;
+
+  let data = null;
+  try {
+    const res = await fetch(
+      '/api/wiki/' + encodeURIComponent(domain) + '/source?path=' + encodeURIComponent(pagePath)
+    );
+    data = await res.json().catch(() => null);
+    if (!res.ok || !data || data.ok === false) return;
+  } catch {
+    // The bar sits on top of an already-rendered page. A network hiccup
+    // here must not surface as an error over readable content.
+    return;
+  }
+
+  if (seq !== readerSourceSeq) return;      // superseded by a later open
+  if (!isCurrentReader(epoch)) return;      // closed, or repainted, since
+  const bar = document.getElementById('reader-source-bar');
+  if (!bar) return;
+
+  const html = renderReaderSourceHtml(describeRawSource(data));
+  if (!html) { bar.innerHTML = ''; bar.hidden = true; return; }
+  bar.innerHTML = html;
+  bar.hidden = false;
+
+  const btn = document.getElementById('reader-source-reveal');
+  if (btn) btn.addEventListener('click', () => revealReaderSource(domain, pagePath, btn));
+}
+
+// Reveal is macOS-only by construction: the route shells out to
+// `open -R` and answers 501 everywhere else. Report that honestly in the
+// bar rather than leaving a button that just errors.
+async function revealReaderSource(domain, pagePath, btn) {
+  const statusEl = document.getElementById('reader-source-status');
+  const say = (cls, text) => {
+    if (!statusEl) return;
+    statusEl.className = 'reader-source-status ' + cls;
+    statusEl.textContent = text;
+  };
+  if (btn) btn.disabled = true;
+  say('', '');
+
+  try {
+    const res = await fetch(
+      '/api/wiki/' + encodeURIComponent(domain) + '/source/reveal',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: pagePath }),
+      }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 501) {
+      say('is-error', data.error || 'Revealing a file is only supported on macOS.');
+      if (btn) btn.remove();   // it can never work on this machine
+      return;
+    }
+    if (!res.ok || !data.ok) { say('is-error', data.error || 'Could not reveal the file.'); return; }
+    say('is-ok', 'Revealed in Finder');
+  } catch {
+    say('is-error', 'Could not reach the server.');
+  } finally {
+    if (btn && btn.isConnected) btn.disabled = false;
   }
 }
 
@@ -831,16 +1106,15 @@ function renderRail() {
 
   const syncMeta = VIEW_META.sync;
   const settingsMeta = VIEW_META.settings;
-  const pendingCount = 0; // no backend wiring in Phase 1 — badge hides at zero, per spec
 
   rail.innerHTML =
     '<img class="rail-mark" src="' + markSrc + '" alt="The Curator" width="26" height="26">' +
     navBtns +
     '<div class="rail-spacer"></div>' +
     '<button class="rail-theme-toggle" id="rail-theme-toggle" title="Toggle theme"></button>' +
-    '<button class="rail-btn rail-btn-sm" data-view="sync" title="' + syncMeta.title + '" aria-label="' + syncMeta.title + '">' +
+    '<button class="rail-btn rail-btn-sm" data-view="sync" title="' + syncBadgeTitle(_syncPendingCount) + '" aria-label="' + syncMeta.title + '">' +
       icon(syncMeta.icon, 18) +
-      (pendingCount > 0 ? '<span class="rail-badge">' + pendingCount + '</span>' : '') +
+      syncBadgeMarkup(_syncPendingCount) +
     '</button>' +
     '<button class="rail-btn rail-btn-sm" data-view="settings" title="' + settingsMeta.title + '" aria-label="' + settingsMeta.title + '">' +
       icon(settingsMeta.icon, 18) +
@@ -859,6 +1133,117 @@ function renderRailActive() {
   document.querySelectorAll('.rail-btn[data-view]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.view === state.view);
   });
+}
+
+// ── Rail sync badge ─────────────────────────────────────────────────────
+// The number of uncommitted local changes, visible from EVERY screen.
+//
+// This is not decoration. The shipping app grew this badge in
+// v3.0.1-beta.5 for one reported failure: a user deleted a domain on one
+// machine, assumed it had propagated, and it never had — nothing on any
+// other screen told them there was unpushed work. Wiring it back is the
+// point of restoring it; `const pendingCount = 0` (what stood here through
+// the whole preview) rendered a badge that could only ever be absent, i.e.
+// it silently asserted "you are fully synced" to every user, always.
+//
+// THREE rules, all of which the decision function below enforces and the
+// offline suite drives directly:
+//
+//   1. NOT CONFIGURED ⇒ NO BADGE. A user who has never set up GitHub sync
+//      has no "unpushed work" to have; a badge would be noise pointing at
+//      a feature they do not use.
+//   2. ZERO CHANGES ⇒ NO BADGE. Same shape as the shipping app's.
+//   3. FAIL QUIET. Any failure — fetch rejects, non-200, unparseable body,
+//      or `getStatus()`'s real `{configured:true, error}` shape (which
+//      carries NO changesCount when the git call itself failed) — resolves
+//      to 0, i.e. no badge. A badge that LIES about unpushed work is worse
+//      than no badge: it is the same false "you are fine" the feature
+//      exists to prevent, just with a number on it. Never render a guess.
+//
+// COST. One GET /api/sync/status, which is a local `git status --porcelain`
+// — the same endpoint views/sync.js's own loadStatus() already calls, not a
+// second source of truth. It is NOT polled on a tight loop: the refresh is
+// event-driven off the same moments the shipping app used (a view change,
+// which is this shell's "tab click"; app start; a batch ingest finishing),
+// plus one slow 60s safety net for a user who lingers on one screen — the
+// identical cadence src/public/app.js has run for many releases.
+//
+// SCOPE, stated rather than implied: this counts GIT pending changes only.
+// The shipping app's badge also adds Shared Brain `pending_pages` from
+// /api/sharedbrain/list. That is deliberately NOT carried over here yet —
+// it doubles the request count on every refresh, and this defect was about
+// the git number being hardcoded to zero. If Shared Brain is added later,
+// add it INSIDE syncPendingFromStatus's caller, not as a second badge.
+const SYNC_BADGE_REFRESH_MS = 60_000;
+let _syncPendingCount = 0;
+
+// PURE. Given whatever GET /api/sync/status produced (or null, meaning the
+// request did not usably complete), return the number to render. 0 = hide.
+function syncPendingFromStatus(status) {
+  if (!status || status.configured !== true) return 0;
+  const n = status.changesCount;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+// PURE. Both of these are interpolated into an HTML string by renderRail(),
+// so neither may ever emit a quote or an angle bracket. They cannot: the
+// only variable part is a number that has already been through
+// syncPendingFromStatus (finite, > 0, floored), and every other character
+// is a literal in this file.
+function syncBadgeMarkup(count) {
+  return count > 0 ? '<span class="rail-badge">' + count + '</span>' : '';
+}
+function syncBadgeTitle(count) {
+  if (count > 0) {
+    return 'Sync — ' + count + ' local change' + (count === 1 ? '' : 's')
+      + ' not yet pushed to GitHub';
+  }
+  return VIEW_META.sync.title;
+}
+
+// Surgical DOM update — deliberately NOT a renderRail() call.
+// renderRail() rebuilds rail.innerHTML and re-binds a click listener on
+// every [data-view] button; driving a badge refresh through it would
+// discard and re-create the whole rail on a 60s timer (and on every
+// navigation), which is both wasteful and the classic way to end up with
+// duplicate listeners if the rebuild is ever made incremental. This touches
+// exactly one <span> and one title attribute, and binds nothing.
+function applySyncBadge() {
+  const btn = document.querySelector('#rail .rail-btn[data-view="sync"]');
+  // Rail not rendered yet — nothing to do; the next renderRail() reads
+  // _syncPendingCount for itself and paints the badge from it.
+  if (!btn) return;
+  const existing = btn.querySelector('.rail-badge');
+  btn.title = syncBadgeTitle(_syncPendingCount);
+  if (_syncPendingCount > 0) {
+    if (existing) {
+      existing.textContent = String(_syncPendingCount);
+    } else {
+      const span = document.createElement('span');
+      span.className = 'rail-badge';
+      span.textContent = String(_syncPendingCount);
+      btn.appendChild(span);
+    }
+  } else if (existing) {
+    existing.remove();
+  }
+}
+
+// Fire-and-forget. NEVER throws and never rejects — every call site below
+// invokes it without awaiting, and one of them is inside boot(), where a
+// throw would prevent markBooted() from running and paint index.html's
+// full-page recovery panel for every user (see boot()'s own comment).
+export async function refreshSyncBadge() {
+  let next = 0;
+  try {
+    const res = await fetch('/api/sync/status');
+    if (res.ok) next = syncPendingFromStatus(await res.json());
+  } catch {
+    next = 0; // rule 3: fail quiet, never a stale or guessed number
+  }
+  _syncPendingCount = next;
+  try { applySyncBadge(); } catch { /* rail missing/detached — nothing to show */ }
 }
 
 // ── Sidebar + main render helpers shared by view stubs ─────────────────
@@ -1282,6 +1667,12 @@ async function _checkActiveJobOnce() {
   } else if (decision === 'exit') {
     if (_activeJobRelease) { _activeJobRelease(); _activeJobRelease = null; }
     _activeJobId = null;
+    // A batch that just stopped writing has (usually) left new pages on
+    // disk, so the pending-change count is stale the moment it exits. This
+    // is the /next equivalent of the shipping app's post-ingest badge
+    // refresh, hung off the ONE transition that already knows a batch
+    // finished rather than a second watcher of its own.
+    refreshSyncBadge();
   }
   _activeJobLastStatus = nextStatus;
 
@@ -1369,6 +1760,13 @@ function boot() {
   // in-app navigate-away-and-back — see the active-job watcher's own
   // comment above. Fire-and-forget; the function never throws.
   reportPossibleActiveJob();
+
+  // Rail sync badge: one fetch at start (navigate() above has already fired
+  // one, so this is really the slow safety net being armed), plus a 60s
+  // refresh for a user who lingers on a single screen without navigating —
+  // the same cadence src/public/app.js has used since v3.0.1-beta.5. Both
+  // are fire-and-forget for the same markBooted() reason documented below.
+  setInterval(refreshSyncBadge, SYNC_BADGE_REFRESH_MS);
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs

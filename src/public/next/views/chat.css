@@ -101,28 +101,10 @@
 .chat-conv-row:hover .chat-conv-delete { display: inline-flex; }
 .chat-conv-delete:hover { background: var(--surface-active); color: var(--danger-text); }
 
-.chat-drop-zone {
-  margin-top: 6px;
-  padding: 10px 11px;
-  border-radius: var(--radius-lg);
-  border: 1px dashed var(--border-strong);
-  background: var(--surface-inset);
-  color: var(--text-3);
-  opacity: 0.7; /* inert in this shell — see the note below and chat.js's honest-disable comment */
-}
-.chat-drop-title {
-  font: var(--type-body-sm);
-  color: var(--text-2);
-  margin-top: 6px;
-}
-.chat-drop-sub { font-size: var(--text-2xs); margin-top: 2px; }
-.chat-drop-inert { color: var(--text-faint); }
-.chat-drop-link {
-  color: var(--text-link);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
+/* The .chat-drop-* rules that used to live here styled a sidebar drop zone
+   with no drag, drop or click handler. Removed with the element (see
+   chat.js's renderSidebar comment) rather than left as dead CSS — an
+   orphaned block is how a removed control gets half-resurrected later. */
 
 /* ── Main: scope bar ─────────────────────────────────────────────────── */
 
@@ -381,17 +363,9 @@
 .chat-composer-spacer { flex: 1; }
 .chat-cost-hint { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
 
-.chat-ctrl-btn {
-  width: 30px; height: 30px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  transition: background var(--t-state), color var(--t-state);
-}
-.chat-ctrl-btn:hover { background: var(--surface-hover); }
-.chat-ctrl-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+/* .chat-ctrl-btn styled exactly one element: the disabled paperclip in the
+   composer, removed at cutover (see chat.js's renderComposerHtml comment).
+   Removed with it — no other control uses this class. */
 
 .chat-send-btn {
   width: 30px; height: 30px;

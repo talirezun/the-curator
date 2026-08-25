@@ -117,6 +117,16 @@ const FNS = [
   'liveHighConfidencePairs',
   'markSemanticPairStatus',
   'setSemanticPairMessage',
+  // A real dependency of runSemanticScan and runMergeSemanticDuplicates,
+  // not a convenience: both feed the Health progress ring from the SSE
+  // frames they already read. Omitting it made the merge stream throw a
+  // ReferenceError on its FIRST progress frame — which the handler's own
+  // try/catch swallowed into an error banner, so §5g reported "merged pairs
+  // are recorded" (frame 1 had already run) and only "skipped pairs are
+  // recorded" (frame 2, never reached) went red. Worth reading twice: a
+  // missing sandbox binding here does not crash, it silently truncates the
+  // stream.
+  'noteAiProgress',
   'toWirePair',
   'resetDomainScopedHealthState',
   'loadHealth',

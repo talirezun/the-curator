@@ -13,7 +13,7 @@ The core insight, from researcher Andrej Karpathy and educator Nick Spisak: **on
 - **Ingest** any PDF, article, or note — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
 - **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
-- **Sync** your entire wiki and chat history across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with optional Push-only / Pull-only advanced controls) for daily use
+- **Sync** your entire wiki and chat history across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with Push only / Pull only alongside it) for daily use
 - **Build** a personal library that gets smarter over time — the more you add, the richer the connections
 
 ### Why it matters
@@ -46,7 +46,7 @@ For students, researchers, entrepreneurs, and lifelong learners: this is the dif
 | [use-cases.md](use-cases.md) | Detailed workflows for every user profile |
 | [mcp-user-guide.md](mcp-user-guide.md) | My Curator MCP — connect your wiki to Claude Desktop / VS Code / LM Studio for frontier-model research and write-back |
 | [ai-health.md](ai-health.md) | AI-assisted Wiki Health — broken-link rescue, orphan rescue, semantic-duplicate detection, persistent dismissals |
-| [system-check.md](system-check.md) | Settings → System Check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
+| [system-check.md](system-check.md) | Settings → General → System check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
 | [sync.md](sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers (wizard, token permissions, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
 | [shared-brain-user-guide.md](shared-brain-user-guide.md) | **Shared Brain — User Guide (v3.0.0-beta+)** — step-by-step setup for contributors AND admins, daily workflow, troubleshooting |
@@ -91,4 +91,4 @@ node src/server.js
 
 Get a free Gemini API key at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey).
 
-To sync across computers, go to the **Sync tab** in the app and follow the 3-step wizard. See [sync.md](sync.md) for details.
+To sync across computers, click **Sync** in the app's left rail (bottom) and fill in the Connect card. See [sync.md](sync.md) for details.

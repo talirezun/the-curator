@@ -163,6 +163,8 @@ const PURE_FNS = [
   'selectRevokeMember',
   'renderRevokePanel',
   'renderAdminToken',
+  'inviteAffordance',
+  'renderInvite',
   'renderRevoke',
   'renderAdmin',
 ];

@@ -31,13 +31,28 @@
 //     explicit click reaches the network. This mirrors the shipping app's
 //     System Check gate, which is the product's trust mechanism — see
 //     CLAUDE.md "The cost rule is a hard requirement."
-//   - "Check for updates" only ever calls the read-only version-compare
-//     endpoint. Applying an update (git reset --hard + npm install against
-//     the live app repo, then a process restart) is deliberately NOT wired
-//     from this preview shell — seeing that action fire against a
-//     developer's real checkout while reviewing a design is not a good
-//     trade against the small UI gap. The banner says so and points at
-//     the shipping app's Settings tab instead.
+//   - Updates. This was previously check-only: the banner told the user to
+//     go and install it from "the shipping app's Settings tab" instead.
+//     That was correct while /next was a PREVIEW shell sitting beside the
+//     real app. Cutover made it false and user-hostile — /next IS the app
+//     now, and the interface it pointed at is only reachable at /old, so
+//     the honest reading of the old copy was "you cannot update from here".
+//     The flow is now wired end to end against the SAME routes the shipping
+//     frontend uses (GET /api/config/update-check + GET /api/version, then
+//     POST /api/config/update -> POST /api/restart -> poll GET /api/health
+//     -> reload), with the destructive step behind the shared confirm
+//     dialog. Only the presentation is new; the contract is not.
+//     The three shapes the shipping flow handles and this one must not
+//     drop: `restartRequired` (files on disk are newer than the running
+//     process — offer a restart, do not re-pull), `partial: true` (git
+//     succeeded, npm install did not — surface `warning` and restart
+//     anyway), and a plain failure. Plus one the shipping flow does NOT
+//     handle and this one does: the route computes `updateAvailable` as
+//     `latest !== current || commitsDiffer`, so a LOCAL version AHEAD of
+//     the published one (a release committed but not yet pushed — the
+//     maintainer's own state) reported "Update available: v3.9.0 -> v3.8.0"
+//     and a button that would roll the checkout BACKWARDS. classifyUpdate()
+//     below detects that and says so instead.
 //
 // The icon set this view needs lives in app.js's shared ICON_BODY — see
 // icon() below — there is no view-local icon table. Two of this view's
@@ -139,6 +154,10 @@ import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // a SHELL-level layer whose entire purpose is to point AT other views — it
 // is opened from app.js's boot() and is required to survive navigate().
 import { openOnboardingPanel } from './onboarding.js';
+// The in-design replacement for window.confirm — see shared/confirm.js's
+// header for why it takes the ACTION rather than returning a DECISION.
+// Closed unconditionally by this view's teardown, exactly like the wizard.
+import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -159,6 +178,225 @@ const PROVIDER_ROWS = [
   { id: 'local',     name: 'Local model', dot: 'var(--text-faint)', available: false },
 ];
 
+// ── Updates: the decision, as pure functions ─────────────────────────────
+// DOM-free and fetch-free on purpose, so scripts/test-next-confirm-dialog.js
+// can execute them directly rather than asserting on the shape of the
+// source that renders them.
+
+/**
+ * Compare two dotted version strings. Returns >0 if a is newer than b, <0
+ * if older, 0 if equal OR UNCOMPARABLE.
+ *
+ * "Uncomparable collapses to 0" is the fail-safe direction, and it is the
+ * whole reason this is not a one-liner: the only caller uses a positive
+ * result to SUPPRESS the update button. Guessing "local is newer" from a
+ * string it could not actually parse would hide a real, wanted update
+ * behind a reassuring message. Guessing 0 merely falls through to the
+ * route's own updateAvailable verdict, which is the pre-existing
+ * behaviour.
+ *
+ * Only the numeric core is compared. A pre-release suffix (the retired
+ * `3.0.1-beta.27` line) makes the cores equal and therefore returns 0 —
+ * deliberately, per the paragraph above.
+ */
+function compareSemver(a, b) {
+  const parse = (v) => {
+    if (typeof v !== 'string') return null;
+    const core = v.trim().split('-')[0].split('+')[0];
+    const parts = core.split('.');
+    if (parts.length === 0 || parts.length > 4) return null;
+    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+    return nums.some(Number.isNaN) ? null : nums;
+  };
+  const av = parse(a), bv = parse(b);
+  if (!av || !bv) return 0;
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const x = av[i] || 0, y = bv[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * Turn the two read-only endpoints' payloads into exactly one thing to say.
+ *
+ *   check       GET /api/config/update-check  | { error } | null
+ *   versionInfo GET /api/version              | null (non-critical; the
+ *               shipping flow also treats a failed version read as absent)
+ *
+ * Order is load-bearing:
+ *   1. error            — the check itself failed; nothing else is known.
+ *   2. restart-required — files on disk are already newer than the running
+ *                         process. Pulling AGAIN is not the fix; restarting
+ *                         is. Same precedence the shipping app uses.
+ *   3. local-ahead      — see this file's header. The route reports
+ *                         updateAvailable for ANY version difference, in
+ *                         either direction.
+ *   4. current / available.
+ */
+function classifyUpdate(check, versionInfo) {
+  if (!check) return { kind: 'idle' };
+  if (check.error) return { kind: 'error', message: String(check.error) };
+
+  if (versionInfo && versionInfo.restartRequired) {
+    return { kind: 'restart-required', running: versionInfo.version, onDisk: versionInfo.onDiskVersion };
+  }
+
+  const cmp = compareSemver(check.current, check.latest);
+  if (cmp > 0) {
+    return { kind: 'local-ahead', current: check.current, latest: check.latest };
+  }
+  if (!check.updateAvailable) {
+    return { kind: 'current', current: check.current };
+  }
+  return {
+    kind: 'available',
+    current: check.current,
+    latest: check.latest,
+    localCommit: check.localCommit || null,
+    remoteCommit: check.remoteCommit || null,
+    // false when the versions match and only the commits differ — the label
+    // has to read "v3.9.0 (abc → def)", not "v3.9.0 → v3.9.0".
+    versionsDiffer: cmp < 0,
+  };
+}
+
+// ── Model lifecycle: the decision, as pure functions ─────────────────────
+// DOM-free and fetch-free for the same reason classifyUpdate() above is —
+// scripts/test-next-model-fallback.js executes these directly rather than
+// asserting on the shape of the markup that renders them.
+//
+// WHY THIS EXISTS AT ALL. `GET /api/config/api-keys` returns
+// `fallback: getFallbackStatus()` (src/routes/config.js) and
+// `activeModel: getProviderInfo()?.model`. Until this was written, /next
+// read NEITHER — `grep -rn "\.fallback\b" src/public/next/` returned zero
+// hits — which is this project's named dead-data shape: a backend field
+// computed, returned, and read by nobody.
+//
+// It is not cosmetic. The v2.4.0 model-lifecycle safety net exists because
+// providers RETIRE models: when the pinned default 404s, llm.js walks
+// FALLBACK_CHAINS onto the next live model and keeps working. That is a
+// silent change to what the user is BILLED. v3.0.15 added the cost
+// comparison precisely because every Gemini rung costs more than the
+// default (2.5x input / 3.75x output on the first rung), and v3.6.0 found
+// four of five Anthropic rungs dead — silently landing users on Sonnet at
+// 3x Haiku's price, the exact inverse of the chain's documented promise to
+// reach the cheapest still-working model. Without a surface, the user is
+// billed more and sees nothing, anywhere.
+
+function providerLabel(id) {
+  if (id === 'gemini') return 'Gemini';
+  if (id === 'anthropic') return 'Anthropic';
+  return (typeof id === 'string' && id) ? id : null;
+}
+
+/**
+ * Turn `fallback` (null | the getFallbackStatus() payload) into exactly one
+ * thing to say.
+ *
+ * Contract, read off src/brain/llm.js getFallbackStatus():
+ *   null                       — the pinned default is working. Say nothing.
+ *   { provider, requestedModel, usingModel, at,
+ *     costTier: 'costlier'|'similar'|'unknown',
+ *     costlier: boolean }      — a fallback is in use.
+ *
+ * costTier is derived by compareModelCost(), which looks BOTH ids up in
+ * MODEL_PRICES_USD_PER_MTOK and returns 'unknown' if either is missing.
+ * Three states, three different things to say:
+ *   costlier — confirmed more expensive. A money warning, plainly, because
+ *              a silent 2.5x-3.75x jump on every ingest is the whole
+ *              reason this banner exists.
+ *   unknown  — we have no price for one of the ids. NEVER imply parity.
+ *              v3.0.15 deleted a family-name heuristic for exactly this:
+ *              it rated a 3.75x output jump as "same tier" because the
+ *              family word ("flash-lite") is stable across generations
+ *              while the price is not. Point at the provider's pricing
+ *              page instead of saying nothing.
+ *   similar  — confirmed same-or-cheaper. No cost line; the banner alone.
+ *
+ * DELIBERATE DEVIATION from the shipping banner's tier resolution. The
+ * shipping code reads `fallback.costTier || (fallback.costlier ? 'costlier'
+ * : 'similar')`. getFallbackStatus() always sets costTier today, so that
+ * fallback arm only fires on a legacy/absent payload — and on one, mapping
+ * `costlier: false` to 'similar' asserts a parity we do not know, because
+ * the legacy boolean collapses 'similar' AND 'unknown' into false (llm.js
+ * says so in its own comment). Anything that is not one of the three known
+ * strings resolves to 'unknown' here: it is the only arm that is honest
+ * about not knowing, and the fail-safe direction on a money question is to
+ * warn, never to reassure.
+ */
+function classifyFallback(fallback) {
+  if (!fallback || typeof fallback !== 'object') return { show: false };
+
+  let costTier = fallback.costTier;
+  if (costTier !== 'costlier' && costTier !== 'similar' && costTier !== 'unknown') {
+    costTier = fallback.costlier === true ? 'costlier' : 'unknown';
+  }
+
+  let costNote = null;
+  let costLevel = 'none';
+  if (costTier === 'costlier') {
+    costLevel = 'danger';
+    costNote = 'This model costs more than your usual one — every ingest, compile and chat is ' +
+      'billed at the higher rate until the default is restored.';
+  } else if (costTier === 'unknown') {
+    costLevel = 'attention';
+    costNote = 'Pricing for this model is not known here and may differ from your usual one — ' +
+      "check your provider's pricing page before a large ingest.";
+  }
+
+  return {
+    show: true,
+    provider: fallback.provider || null,
+    // A provider id we do not recognise still gets a banner — the fallback
+    // itself is the fact that matters — with a neutral noun rather than a
+    // wrong label.
+    providerLabel: providerLabel(fallback.provider) || 'Your provider',
+    requestedModel: String(fallback.requestedModel || 'unknown'),
+    usingModel: String(fallback.usingModel || 'unknown'),
+    costTier,
+    costLevel,
+    costNote,
+    // POST-CUTOVER ADVICE, and it is deliberately not the shipping app's
+    // wording. The shipping banner says "Open Check for Updates ABOVE",
+    // which is true there because its Updates control sits directly above
+    // the provider badge in one long Settings tab. In /next, Settings is
+    // sectioned: Updates lives in General, and Providers & keys is a
+    // different landable destination — "above" would point at nothing. The
+    // SUBSTANCE is still correct, and more so than before cutover: /next
+    // now installs the update end to end against the same routes rather
+    // than telling the user to go and do it in the shipping app.
+    action: 'Check for updates in General — or the Updates button in the sidebar — to pull a ' +
+      'Curator release whose default model is live again.',
+  };
+}
+
+/**
+ * The active-provider / resolved-model readout. `activeModel` is the model
+ * getProviderInfo() resolved for THIS process; when a fallback is in play
+ * it is the model actually being billed, which is why it is worth showing
+ * on its own: it is an independent tell that something changed underneath
+ * the user, and it had zero readers in /next before this.
+ *
+ * Distinct from the per-row `models[provider]` already rendered, which is
+ * the CONFIGURED default for that provider (DEFAULTS in llm.js) and does
+ * not move when a fallback fires.
+ */
+function activeModelLine(keys) {
+  if (!keys || typeof keys !== 'object') return { show: false };
+  const label = providerLabel(keys.activeProvider);
+  if (!label) return { show: false };
+  return {
+    show: true,
+    provider: keys.activeProvider,
+    providerLabel: label,
+    // No key configured -> getProviderInfo() throws -> the route sends
+    // null. Say so rather than rendering an empty gap.
+    model: (typeof keys.activeModel === 'string' && keys.activeModel) ? keys.activeModel : 'unknown',
+  };
+}
+
 // ── Module state ─────────────────────────────────────────────────────────
 // One object, reset on every onEnter so a second visit never leaks stale
 // in-flight state (e.g. a confirm panel left open) from a prior visit.
@@ -168,8 +406,16 @@ function freshState() {
 
     // General
     version: null,          // { version, onDiskVersion, restartRequired }
-    updateCheck: null,      // { current, latest, updateAvailable } | { error }
+    updateCheck: null,      // { current, latest, localCommit, remoteCommit, updateAvailable } | { error }
     updateChecking: false,
+    // The apply half of the Updates flow. `updatePhase` is one of
+    // 'idle' | 'applying' | 'restarting' | 'done' | 'failed'; it is
+    // SEPARATE from updateChecking so a re-check can never silently wipe an
+    // in-flight install's progress off the screen.
+    updatePhase: 'idle',
+    updateResult: null,     // POST /api/config/update body ({ from, to, partial?, warning? })
+    updateError: null,      // string — apply/restart failure, rendered inline
+    updateRestartHint: false, // the poll gave up; tell the user how to finish by hand
     quick: null,            // { checks, summary } | { error }
     quickLoading: false,
     liveConfirmOpen: false,
@@ -281,6 +527,18 @@ registerView('settings', {
       // Never leave the MCP wizard's overlay mounted behind the next view —
       // the same unconditional rule views/shared.js applies to the Shared
       // Brain wizard. Safe to call when it isn't open.
+      // Same unconditional rule for the shared confirm dialog — it mounts
+      // on document.body, so without this an "Install this update?" left
+      // open would sit over whatever view came next. Closing takes the
+      // CANCEL path, so a teardown can never fire the destructive action.
+      //
+      // Ordered BEFORE the wizard close deliberately, and it must stay
+      // that way: scripts/test-next-mcp-wizard.js pins closeMcpWizardIfOpen()
+      // as the LAST statement of this teardown. The two are independent —
+      // neither can be open while the other is — so there is no behavioural
+      // reason to prefer either order, and keeping that existing guard
+      // intact is worth more than the alphabetical tidiness of appending.
+      closeConfirmIfOpen();
       closeMcpWizardIfOpen();
     };
   },
@@ -501,6 +759,8 @@ function renderMain(token) {
 
 function renderGeneral() {
   const dark = currentTheme() === 'dark';
+  // Re-checking mid-install would race the very process being replaced.
+  const updatesBusy = state.updateChecking || state.updatePhase === 'applying' || state.updatePhase === 'restarting';
   const quick = state.quick;
   const summary = quick && !quick.error
     ? quick.summary
@@ -538,6 +798,23 @@ function renderGeneral() {
         (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
       '</div>' +
 
+      // Software update. The sidebar footer's "Updates" button lands here
+      // (it switches to this section and runs the check) — a 272px footer
+      // has no room for a version comparison, a partial-install warning
+      // and a restart progress line, and the flow needs a surface that
+      // stays put while the server is restarting under it.
+      '<div class="settings-field-block" id="block-updates">' +
+        '<span class="settings-field-label">Software update</span>' +
+        '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
+        'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>' +
+        '<div class="settings-btn-row">' +
+          '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
+            (state.updateChecking ? 'Checking…' : 'Check for updates') +
+          '</button>' +
+        '</div>' +
+        renderUpdateStatus() +
+      '</div>' +
+
       // Setup guide (D-C). The first-run panel is dismissible, so it needs
       // exactly one place it can be found again.
       '<div class="settings-field-block">' +
@@ -548,6 +825,85 @@ function renderGeneral() {
           '<button type="button" class="btn btn-secondary" id="btn-show-setup-guide">Show setup guide</button>' +
         '</div>' +
       '</div>' +
+    '</div>'
+  );
+}
+
+// The apply half of the flow OWNS the panel while it is running — an
+// install in progress must never be redrawn as a stale "Update available"
+// banner underneath the process replacing itself.
+function renderUpdateStatus() {
+  if (state.updatePhase === 'applying') {
+    return box('', 'Installing…', 'Pulling the published version and installing dependencies. This can take a minute. Don’t quit the app.');
+  }
+  if (state.updatePhase === 'restarting') {
+    const r = state.updateResult || {};
+    return box('',
+      'Restarting…',
+      'Update installed. Waiting for the app to come back, then this page reloads itself.' +
+        (r.from && r.to ? '<span class="upd-detail upd-sha">' + escapeHtml(r.from) + ' → ' + escapeHtml(r.to) + '</span>' : ''),
+      r.partial && r.warning ? r.warning : null,
+      state.updateRestartHint
+        ? 'The app hasn’t answered yet. If it doesn’t come back on its own, right-click the Dock icon → Quit, then re-open The Curator.'
+        : null);
+  }
+  if (state.updatePhase === 'failed') {
+    return box('upd-bad', 'Update failed', escapeHtml(state.updateError || 'Unknown error.'),
+      null, 'Nothing was restarted. You can try again, or update by hand from your checkout.');
+  }
+
+  const v = classifyUpdate(state.updateCheck, state.version);
+
+  if (v.kind === 'idle') return '';
+  if (v.kind === 'error') return box('upd-bad', 'Couldn’t check for updates', escapeHtml(v.message));
+
+  if (v.kind === 'restart-required') {
+    return box('upd-attention',
+      'Restart needed',
+      'The files on disk are already v' + escapeHtml(String(v.onDisk)) + ', but the running app is still v' +
+        escapeHtml(String(v.running)) + '. There is nothing to download — it just needs to restart.',
+      null, null,
+      '<button type="button" class="btn btn-primary btn-xs" id="btn-update-restart">Restart now</button>');
+  }
+
+  if (v.kind === 'local-ahead') {
+    // The maintainer's own state: a release committed locally and not yet
+    // pushed. The route's updateAvailable is true here purely because the
+    // versions DIFFER, so the naive banner offered to "update" the checkout
+    // backwards onto the older published tree. Say what is actually true.
+    return box('upd-good',
+      'This copy is ahead of the published version',
+      'You’re running v' + escapeHtml(String(v.current)) + '; the published version is v' + escapeHtml(String(v.latest)) +
+        '. There is nothing to install — installing would replace your newer files with the older published ones.',
+      null,
+      'If this is your own unpushed work, push it; the check will agree once it’s published.');
+  }
+
+  if (v.kind === 'current') {
+    return box('upd-good', 'You’re up to date', 'Running v' + escapeHtml(String(v.current)) + '.');
+  }
+
+  const label = v.versionsDiffer
+    ? 'v' + escapeHtml(String(v.current)) + ' → v' + escapeHtml(String(v.latest))
+    : 'v' + escapeHtml(String(v.current)) +
+      (v.localCommit && v.remoteCommit
+        ? ' <span class="upd-sha">' + escapeHtml(v.localCommit) + ' → ' + escapeHtml(v.remoteCommit) + '</span>'
+        : ' (newer commits published)');
+  return box('upd-attention', 'Update available', label, null,
+    'Installing replaces the app’s program files and restarts it. Your knowledge base, keys and sync settings are untouched.',
+    '<button type="button" class="btn btn-primary btn-xs" id="btn-apply-update"' + (crossWriteBusy() ? ' disabled title="Wait for the running ingest or sync to finish"' : '') + '>Install update</button>');
+}
+
+// Small local builder — everything interpolated is either escaped at the
+// call site or a server-authored string that is escaped here.
+function box(cls, headline, bodyHtml, warningText, detailText, actionsHtml) {
+  return (
+    '<div class="upd-status' + (cls ? ' ' + cls : '') + '" role="status">' +
+      '<span class="upd-headline">' + escapeHtml(headline) + '</span>' +
+      '<span>' + (bodyHtml || '') + '</span>' +
+      (detailText ? '<span class="upd-detail">' + escapeHtml(detailText) + '</span>' : '') +
+      (warningText ? '<span class="upd-warning">' + escapeHtml(warningText) + '</span>' : '') +
+      (actionsHtml ? '<div class="upd-actions">' + actionsHtml + '</div>' : '') +
     '</div>'
   );
 }
@@ -646,11 +1002,57 @@ function renderProviders() {
     'picker; the active provider is used for ingest and health scans.</p>' +
     renderCrossWriteBanner('wait for it to finish before changing keys or the active provider — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
+    // Deliberately ABOVE the provider list and never behind a disclosure:
+    // a fallback is a silent change to what the user is billed, so it has
+    // to be unmissable on the section that owns providers.
+    renderFallbackBanner(k.fallback) +
+    renderActiveModelLine(k) +
     '<div class="provider-row-list">' + rows + '</div>' +
     '<div class="settings-note-row">' +
       icon('lockAlt', 15) +
       '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
       'never sent anywhere except the provider you call.</span>' +
+    '</div>'
+  );
+}
+
+// Amber callout, rendered whenever a fallback is active. Every interpolated
+// value is model/provider text that originates upstream of us, so all of it
+// goes through escapeHtml — the ids are ours today, but "the payload is
+// trustworthy" is not a property this render function can verify.
+function renderFallbackBanner(fallback) {
+  const v = classifyFallback(fallback);
+  if (!v.show) return '';
+  const cost = v.costNote
+    ? '<span class="provider-fallback-cost provider-fallback-cost-' + escapeHtml(v.costLevel) + '">' +
+        escapeHtml(v.costNote) + '</span>'
+    : '';
+  return (
+    '<div class="provider-fallback-banner" data-cost-tier="' + escapeHtml(v.costTier) + '">' +
+      icon('alertTriangle', 15) +
+      '<div class="provider-fallback-body">' +
+        '<span class="provider-fallback-headline"><strong>Using fallback model.</strong> ' +
+          escapeHtml(v.providerLabel) + '’s <code class="mono">' + escapeHtml(v.requestedModel) +
+          '</code> is unavailable; currently running on <code class="mono">' +
+          escapeHtml(v.usingModel) + '</code>.</span>' +
+        cost +
+        '<span class="provider-fallback-action">' + escapeHtml(v.action) + '</span>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// One line of fact: which provider is active and which model it actually
+// resolved to. See activeModelLine()'s docblock for why this is not the
+// same as the per-row default model.
+function renderActiveModelLine(k) {
+  const a = activeModelLine(k);
+  if (!a.show) return '';
+  return (
+    '<div class="provider-active-line">' +
+      '<span class="provider-active-label">Active</span>' +
+      '<span class="mono provider-active-value">' + escapeHtml(a.providerLabel) + ' — ' +
+        escapeHtml(a.model) + '</span>' +
     '</div>'
   );
 }
@@ -944,6 +1346,15 @@ function wireGeneralListeners() {
   // so there is no view-scoped DOM here that could go stale.
   const guideBtn = document.getElementById('btn-show-setup-guide');
   if (guideBtn) guideBtn.addEventListener('click', () => openOnboardingPanel());
+
+  // Updates. Every one of these three is re-bound on each render on a
+  // freshly-created node, like every other binding in this file.
+  const checkBtn = document.getElementById('btn-check-updates');
+  if (checkBtn) checkBtn.addEventListener('click', () => onCheckForUpdates(myMountToken));
+  const applyBtn = document.getElementById('btn-apply-update');
+  if (applyBtn) applyBtn.addEventListener('click', () => onApplyUpdate(myMountToken).catch(reportAsyncActionFailure));
+  const restartBtn = document.getElementById('btn-update-restart');
+  if (restartBtn) restartBtn.addEventListener('click', () => onRestartOnly(myMountToken).catch(reportAsyncActionFailure));
 }
 
 function wireProviderListeners() {
@@ -1063,30 +1474,150 @@ function wireStorageListeners() {
 // fresh mount already starts clean via freshState(), and an ungated reset
 // would instead reach into the CURRENT mount's own state object.
 
+// The verdict is rendered INLINE in the General section's "Software
+// update" block (renderUpdateStatus). It used to be a window.alert, which
+// is the browser's own chrome and — worse — meant `state.updateCheck` was
+// written and then read by nothing at all: dismiss the alert and the
+// answer was gone.
 async function onCheckForUpdates(token) {
   state.updateChecking = true;
+  state.updateError = null;
+  // A fresh check supersedes a finished/failed install banner, but never an
+  // in-flight one (the button is disabled while applying/restarting).
+  if (state.updatePhase === 'failed' || state.updatePhase === 'done') state.updatePhase = 'idle';
+  state.section = 'general'; // the sidebar footer button lands here
   render(token);
   try {
     const res = await fetch('/api/config/update-check');
     const data = await res.json();
     if (!isCurrentMount(token)) return;
-    if (data.error) {
-      state.updateCheck = { error: data.error };
-    } else {
-      state.updateCheck = data;
-      const msg = data.updateAvailable
-        ? 'Update available: v' + data.current + ' → v' + data.latest + '. Applying updates from this preview ' +
-          'shell is disabled — use the shipping app’s Settings tab to install it (git reset --hard + npm install ' +
-          'against your real checkout, then a restart).'
-        : 'You’re on the latest version (v' + data.current + ').';
-      window.alert(msg); // eslint-disable-line no-alert -- deliberately outside the redesigned inline-status pattern: this is a one-off developer-facing check, not a repeating in-flow action, and applying the update is explicitly NOT wired here (see the message text).
-    }
+    state.updateCheck = data.error ? { error: data.error } : data;
+
+    // Re-read the running-vs-on-disk version, exactly as the shipping flow
+    // does: it takes precedence over any remote comparison (see
+    // classifyUpdate), and the cached copy from onEnter can be stale by now.
+    // A failure here is non-critical — classifyUpdate treats an absent
+    // versionInfo as "nothing known", which is the pre-existing behaviour.
+    try {
+      const vr = await fetch('/api/version');
+      const vd = await vr.json();
+      if (!isCurrentMount(token)) return;
+      if (vd && typeof vd === 'object' && !vd.error) state.version = vd;
+    } catch { /* non-critical */ }
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.updateCheck = { error: err.message };
   } finally {
     if (isCurrentMount(token)) { state.updateChecking = false; render(token); }
   }
+}
+
+// ── Applying an update ───────────────────────────────────────────────────
+// Destructive: POST /api/config/update runs `git fetch` + `git reset --hard
+// origin/main` + `npm install` against the live checkout, and the restart
+// that follows kills this server process. It therefore goes through the
+// shared confirm dialog — and, structurally, the work below can only ever
+// be reached from that dialog's confirm button (see shared/confirm.js).
+
+function onApplyUpdate(token) {
+  const v = classifyUpdate(state.updateCheck, state.version);
+  if (v.kind !== 'available') return Promise.resolve(); // the button only renders in this state
+  const label = v.versionsDiffer ? 'v' + v.current + ' → v' + v.latest : 'v' + v.current + ' (newer commits)';
+  return confirmThen({
+    title: 'Install this update?',
+    message: label,
+    detail: 'The Curator will replace its own program files with the published version, reinstall dependencies and ' +
+      'restart. Your knowledge base, API keys and sync settings are untouched. Don’t quit until it finishes.',
+    confirmLabel: 'Install and restart',
+    cancelLabel: 'Not now',
+    tone: 'danger',
+    onConfirm: () => runUpdate(token),
+  });
+}
+
+async function runUpdate(token) {
+  if (!isCurrentMount(token)) return;
+  state.updatePhase = 'applying';
+  state.updateError = null;
+  state.updateResult = null;
+  state.updateRestartHint = false;
+  render(token);
+
+  let data = null;
+  try {
+    const res = await fetch('/api/config/update', { method: 'POST' });
+    data = await res.json();
+    // A 409 from the write-registry guard arrives here as { error, conflict }
+    // — the same shape every other refusal in this app uses.
+    if (!res.ok) throw new Error(data && data.error ? data.error : 'HTTP ' + res.status);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.updatePhase = 'failed';
+    state.updateError = err.message || 'Unknown error';
+    render(token);
+    return;
+  }
+
+  if (!isCurrentMount(token)) return;
+  // `partial: true` means git succeeded and `npm install` did not — the
+  // documented shape for the "npm isn't on the running app's PATH" case,
+  // which the pulled update itself fixes. Restarting is the right move;
+  // the warning explains why to anyone reading it. Dropping this branch
+  // would present a half-applied update as a clean one.
+  state.updateResult = data;
+  state.updatePhase = 'restarting';
+  render(token);
+
+  try { await fetch('/api/restart', { method: 'POST' }); } catch { /* the process is going away; a dropped response is expected */ }
+  pollForRestart(token);
+}
+
+// Deliberately NOT awaited by runUpdate: the server is being replaced, so
+// this outlives the request that started it. It reloads the page on
+// success rather than touching state, so it does not need a mount guard
+// for correctness — only for the "gave up" hint it renders.
+function pollForRestart(token) {
+  const started = Date.now();
+  const timer = setInterval(async () => {
+    if (Date.now() - started > 30000) {
+      clearInterval(timer);
+      if (!isCurrentMount(token)) return;
+      state.updateRestartHint = true;
+      render(token);
+      return;
+    }
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok) {
+        clearInterval(timer);
+        setTimeout(() => location.reload(), 500);
+      }
+    } catch { /* still down — keep polling */ }
+  }, 1200);
+}
+
+// The `restartRequired` branch: the files on disk are ALREADY newer than
+// the running process (a manual `git reset --hard`, or an update whose
+// restart didn't take). Re-pulling would be pointless work against the
+// live checkout — this only restarts.
+function onRestartOnly(token) {
+  return confirmThen({
+    title: 'Restart The Curator?',
+    message: 'The app will stop and start again to pick up the newer files already on disk.',
+    detail: 'Anything mid-flight — an ingest, a sync — is interrupted. Nothing is downloaded or overwritten.',
+    confirmLabel: 'Restart now',
+    cancelLabel: 'Not now',
+    tone: 'danger',
+    onConfirm: async () => {
+      if (!isCurrentMount(token)) return;
+      state.updatePhase = 'restarting';
+      state.updateResult = null;
+      state.updateRestartHint = false;
+      render(token);
+      try { await fetch('/api/restart', { method: 'POST' }); } catch { /* expected */ }
+      pollForRestart(token);
+    },
+  });
 }
 
 async function onRunQuickCheck(token) {

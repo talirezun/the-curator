@@ -250,6 +250,62 @@
 
 /* ── Providers & keys ────────────────────────────────────────────────── */
 
+/* Model-lifecycle fallback callout. Amber (--attention-*) like the
+   cross-write note above it: a state the user must know about and act on,
+   not a failure. Theming comes entirely from the semantic tokens, which
+   color.css redefines under [data-theme] — there is no prefers-color-scheme
+   query here and there must not be one. */
+.provider-fallback-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin-bottom: 12px;
+}
+.provider-fallback-banner svg { flex: none; margin-top: 1px; }
+.provider-fallback-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.provider-fallback-headline { overflow-wrap: anywhere; }
+.provider-fallback-headline code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-inset);
+  color: var(--text);
+  font-size: var(--text-xs);
+}
+/* The cost line is a LADDER, and the two rungs are deliberately different
+   colours. `costlier` is a confirmed money increase, so it escalates past
+   the banner's amber to --danger-text. `unknown` stays amber: we do not
+   know the price, and the one thing it must never look like is the
+   reassuring absence of a warning (see classifyFallback's docblock).
+   A 'similar' verdict renders no cost line at all — that is the only
+   confirmed-safe state. */
+.provider-fallback-cost { font-weight: var(--weight-medium); }
+.provider-fallback-cost-danger { color: var(--danger-text); }
+.provider-fallback-cost-attention { color: var(--attention-text); }
+.provider-fallback-action { color: var(--text-2); font-size: var(--text-xs); }
+
+/* Active provider + the model actually resolved for this process. */
+.provider-active-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: var(--text-xs);
+}
+.provider-active-label { color: var(--text-3); }
+.provider-active-value { color: var(--text-2); overflow-wrap: anywhere; }
+
 .provider-row-list {
   display: flex;
   flex-direction: column;

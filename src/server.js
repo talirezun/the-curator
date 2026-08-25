@@ -236,7 +236,7 @@ app.post('/api/restart', (_req, res) => {
   }, 200);
 });
 
-// ═══ THE CUTOVER (v3.8.0) ════════════════════════════════════════════════════
+// ═══ THE CUTOVER (v3.9.0) ════════════════════════════════════════════════════
 // "/" and the SPA catch-all now serve the REDESIGNED shell
 // (src/public/next/index.html). The shipping frontend is NOT removed — it
 // stays reachable at "/old" for 2-3 releases, and every one of its files

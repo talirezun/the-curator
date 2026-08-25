@@ -22,10 +22,11 @@
 //     is rendered as an honest "coming soon" empty state — never a fake list.
 //   - GET /api/sync/status returns a single TOTAL changesCount from
 //     `git status --porcelain`; there is no per-file or per-domain endpoint
-//     that doesn't ALSO perform a real push/pull. So the sidebar's
-//     "PER DOMAIN" list shows the real domain names (for orientation) but
-//     an honest "—" state rather than a fabricated per-domain unpushed
-//     count, with a footnote pointing at the one real total below.
+//     that doesn't ALSO perform a real push/pull. The sidebar therefore
+//     lists the real domain NAMES only ("what this backup covers"), with the
+//     one real total in the main pane. An earlier version added a per-domain
+//     state column that rendered a hardcoded "—" plus a footnote explaining
+//     why it was empty; both were removed at cutover — see renderSidebar().
 //
 // MEDIUM-3 fix (re-audit, second round): this view used to guard its async
 // work with a hand-rolled `let mounted = false` boolean instead of the
@@ -248,15 +249,27 @@ function render(token) {
 }
 
 function renderSidebar(token) {
+  // The per-domain STATE column that used to sit at the end of each row was
+  // removed at cutover. It rendered a hardcoded "—" for every domain, on
+  // every render, forever: GET /api/sync/status returns a single TOTAL
+  // changesCount from `git status --porcelain`, and no endpoint anywhere
+  // exposes a per-domain breakdown without ALSO performing a real push or
+  // pull (verified against src/routes/sync.js and src/brain/sync.js). So the
+  // column could never display anything, and the footnote underneath it
+  // existed only to apologise for that.
+  //
+  // The domain NAMES are real data (GET /api/domains) and worth keeping —
+  // "these are the domains this backup covers" is the honest, useful claim,
+  // and it is now what the heading says. Deleting the empty column and the
+  // apology leaves exactly that, with the real total below in the main pane.
   const domainRows = state.domains.length
     ? state.domains.map((d) => (
         '<div class="sync-domain-row">' +
           '<span class="sync-domain-dot"></span>' +
           '<span class="sync-domain-name mono">' + escapeHtml(d) + '</span>' +
-          '<span class="mono sync-domain-state" title="Per-domain state isn’t exposed by the sync API yet — see the total on the right">—</span>' +
         '</div>'
       )).join('')
-    : '<div class="sidebar-note">No domains to report on yet.</div>';
+    : '<div class="sidebar-note">No domains to back up yet.</div>';
 
   // Same cross-view write-gate note ingest.js's sidebar shows (own class,
   // own copy — see the README's "own your own CSS file" rule) — only
@@ -273,9 +286,8 @@ function renderSidebar(token) {
     '<div class="sidebar-title">Sync</div>' +
     '<div class="sidebar-hint">Your whole wiki, backed up to a private GitHub repository you own. Pages, chats ' +
     'and schemas travel; source files and keys stay here.</div>' +
-    '<div class="cur-eyebrow" style="margin-top:2px">PER DOMAIN</div>' +
+    '<div class="cur-eyebrow" style="margin-top:2px">DOMAINS BACKED UP</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
-    (state.domains.length ? '<div class="sync-domain-footnote">Per-domain state isn’t available yet — the total unpushed count below is the real signal.</div>' : '') +
     busyNote,
     token
   );

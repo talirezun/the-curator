@@ -132,6 +132,17 @@ import {
 // fixes a defect in how money is displayed. See ../shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
 
+// The design system's two-layer progress ring, and the map from the pct
+// src/brain/ingest.js actually sends onto its five REAL phases. Read that
+// module's header before changing anything here: the outer ring is only
+// ever allowed to move because a stage genuinely advanced, and the ingest
+// map deliberately leaves Saving / Extracting / Planning at stageProgress
+// 0 because those phases report nothing while they run. Planning is the
+// one v3.0.17 was reported as "hung" on.
+import {
+  progressRingHtml, INGEST_STAGES, mapIngestPctToStage,
+} from '../shared/progress-ring.js';
+
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
 
@@ -425,16 +436,41 @@ function renderProgress() {
   // plain server-sent phase message (e.g. "AI is analyzing the
   // document…") with no numbers to mark up, so it stays plain escaped text.
   const labelContent = p.labelHtml ? p.labelHtml : escapeHtml(p.label || 'Working…');
+
+  // The bar is gone; the ring takes over its visual role. NOTHING ELSE
+  // moves: the pct readout, the elapsed clock (same #ing-elapsed id, still
+  // patched by textContent from the interval — see runIngest), the amber
+  // retry state and the "this isn't stuck" note are all still here, they
+  // have just been rearranged around the ring.
+  //
+  // Stage/stageProgress come from mapIngestPctToStage and from nothing
+  // else. During Planning — one LLM call, no sub-progress, the phase
+  // v3.0.17 was reported as hung on — the map returns stageProgress 0, so
+  // that segment sits EMPTY while the orbit keeps turning. That is the
+  // whole point of the component and must not be "improved".
+  const { stage, stageProgress } = mapIngestPctToStage(pct);
+  const stageOrdinal = Math.min(stage + 1, INGEST_STAGES.length);
+  const sublabelHtml =
+    (pct >= 100
+      ? 'finished'
+      : 'stage <span class="mono">' + stageOrdinal + '</span> of <span class="mono">' + INGEST_STAGES.length + '</span>') +
+    ' · <span class="mono" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+    ' · <span class="mono">' + pct + '%</span>';
+
   return (
     '<div class="ing-progress">' +
-      '<div class="ing-progress-header">' +
-        '<span class="ing-progress-label' + (p.waiting ? ' ing-progress-label-waiting' : '') + '">' + labelContent + '</span>' +
-        '<span class="ing-progress-meta">' +
-          '<span class="ing-progress-pct mono">' + pct + '%</span>' +
-          '<span class="ing-progress-elapsed mono" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
-        '</span>' +
-      '</div>' +
-      '<div class="ing-progress-track"><div class="ing-progress-fill' + (p.waiting ? ' ing-progress-fill-waiting' : '') + '" style="width:' + pct + '%"></div></div>' +
+      progressRingHtml({
+        stages: INGEST_STAGES,
+        stage,
+        stageProgress,
+        size: 48,
+        // waiting === a retry/backoff sub-event, which re-sends the SAME
+        // pct — so the ring correctly does not advance, and amber says why.
+        tone: pct >= 100 ? 'success' : (p.waiting ? 'attention' : 'accent'),
+        labelHtml: labelContent,
+        sublabelHtml,
+        className: 'ing-progress-ring',
+      }) +
       '<div class="ing-progress-note">Large documents can take a minute or more per phase — especially planning. The timer keeps ticking while the AI works; it isn’t stuck.</div>' +
     '</div>'
   );
@@ -1288,12 +1324,24 @@ function updateQueueItemProgress(idx, pct, message) {
   if (!Number.isFinite(idx)) return;
   const row = document.querySelector('[data-queue-idx="' + idx + '"]');
   if (!row) return;
-  const track = row.querySelector('.ing-queue-item-progress-track');
-  const fill = row.querySelector('.ing-queue-item-progress-fill');
-  const msgEl = row.querySelector('.ing-queue-item-progress-msg');
-  if (track) track.classList.remove('ing-hidden');
-  if (fill && Number.isFinite(pct)) fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
-  if (msgEl) msgEl.textContent = typeof message === 'string' ? message : '';
+  const slot = row.querySelector('.ing-queue-item-progress');
+  if (!slot) return;
+  slot.classList.remove('ing-hidden');
+  // Re-emitting the ring markup (rather than mutating a width) is the
+  // honest move here: the segment set itself changes when a phase turns
+  // over, so there is no single attribute to nudge. The orbit does not
+  // visibly restart, because progressRingHtml stamps a negative
+  // animation-delay derived from the clock — the new element picks the
+  // cycle up where the destroyed one left off.
+  const { stage, stageProgress } = mapIngestPctToStage(pct);
+  slot.innerHTML = progressRingHtml({
+    stages: INGEST_STAGES,
+    stage,
+    stageProgress,
+    size: 20,
+    label: typeof message === 'string' ? message : '',
+    className: 'pring-sm ing-queue-item-ring',
+  });
 }
 
 // Resume-on-return: called on every Ingest-view onEnter. If an active
@@ -1766,8 +1814,19 @@ function renderQueueItemRow(item, opts) {
         '<span class="ing-queue-item-size mono">' + size + '</span>' +
         '<span class="ing-queue-item-pill ' + meta.cls + '">' + escapeHtml(meta.label) + '</span>' +
       '</div>' +
-      '<div class="ing-queue-item-progress-track' + (isRunning ? '' : ' ing-hidden') + '"><div class="ing-queue-item-progress-fill" style="width:0%"></div></div>' +
-      '<div class="ing-queue-item-progress-msg mono"></div>' +
+      // The per-item ring. Rendered EMPTY on the initial snapshot even for
+      // a running item: the SSE item-progress frame for it may not have
+      // arrived yet, and inventing a stage here would be exactly the lie
+      // the outer ring exists to prevent. updateQueueItemProgress fills it
+      // the moment the server actually reports something.
+      '<div class="ing-queue-item-progress' + (isRunning ? '' : ' ing-hidden') + '">' +
+        (isRunning
+          ? progressRingHtml({
+            stages: INGEST_STAGES, stage: 0, stageProgress: 0, size: 20,
+            label: '', className: 'pring-sm ing-queue-item-ring',
+          })
+          : '') +
+      '</div>' +
       errorLine +
       resultLine +
     '</li>'
@@ -1791,12 +1850,38 @@ function renderQueuePanel(job) {
   const itemProgressText = isTerminal
     ? 'Finished'
     : ('Item <span class="mono">' + Math.min(settledCount + 1, items.length) + '</span> of <span class="mono">' + items.length + '</span>');
+  // Overall batch progress is a PLAIN PERCENTAGE, not a staged ring: the
+  // stages of a batch are its files, and settled/total is a real, exact
+  // count the server already gives us. Before the first item settles it is
+  // 0 — a real zero, not an unknown — so `value` is a number rather than
+  // null, and the orbit is what says the batch is alive.
+  //
+  // The spend label keeps computeQueueSpentLabel's honesty verbatim: an
+  // in-progress zero reads "spend so far: pending first file", never a
+  // misleading $0.0000 (v3.3.1), and formatUsdHonest's "at least $X" lower
+  // bound is untouched. The ring sits BESIDE that line, it does not
+  // replace it.
+  const overallValue = items.length > 0 ? (settledCount / items.length) * 100 : 0;
   const headerHtml =
     '<div class="ing-queue-panel-head">' +
-      '<div class="ing-queue-panel-title">Batch ingest — <span class="mono">' + escapeHtml(job.domain || '') + '</span></div>' +
-      '<div class="ing-queue-panel-sub">' +
-        itemProgressText +
-        ' · <span class="mono">' + escapeHtml(spentLabel) + '</span>' +
+      progressRingHtml({
+        value: overallValue,
+        // A cancelled batch is terminal with items that never started, so
+        // settled/total never reaches 100. The orbit must still stop: the
+        // work is over. The count stays truthful; only the liveness layer
+        // is told the job ended.
+        complete: isTerminal,
+        size: 32,
+        tone: isTerminal ? 'success' : 'accent',
+        center: 'none',
+        className: 'ing-queue-panel-ring',
+      }) +
+      '<div class="ing-queue-panel-headtext">' +
+        '<div class="ing-queue-panel-title">Batch ingest — <span class="mono">' + escapeHtml(job.domain || '') + '</span></div>' +
+        '<div class="ing-queue-panel-sub">' +
+          itemProgressText +
+          ' · <span class="mono">' + escapeHtml(spentLabel) + '</span>' +
+        '</div>' +
       '</div>' +
     '</div>';
 

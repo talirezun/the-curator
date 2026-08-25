@@ -90,6 +90,13 @@ const OFFLINE = [
   'test-cutover.js',                 // The cutover: `/` + the SPA catch-all serve the /next shell, `/old` serves the shipping app, plus the one-time notice. Pins express.static's index:false (without it `/` never reaches the catch-all and the OLD app stays at `/` with every guard green), the HIDE-on-can't-tell fail-safe, and mutual exclusion with the first-run panel proved over all 8 fact combinations.
   'test-health-merge-links.js',      // A merge that DELETES a page must repoint every [[link]] to it. Two of the three deleting handlers did not, and the one-click "Fix all safe" path reached one of them. Enumerates EVERY `await rm(` in health.js and requires a repoint before it — a class guard, not a list of three names.
   'test-next-cost-honesty.js',       // Money must never be misstated: a cancelled item's real partial spend is charged AND flagged as a lower bound, no non-zero cost renders as $0.0000, and a paid scan survives a view change without surviving a DOMAIN change.
+  'test-next-icons.js',              // Every VIEW_META icon name must exist in ICON_BODY, and an unknown name must render an unmistakable placeholder — Settings shipped rendering a sun because its gear path carried opacity="0" and icon() fell back to a REAL glyph.
+  'test-next-confirm-dialog.js',     // In-design confirm replacing window.confirm. The API resolves to no decision, so `const ok = confirm(...)` without await is INEXPRESSIBLE — the naive port fired the DELETE on Cancel.
+  'test-next-recovery-and-badge.js', // Boot-recovery copy must name /old and NEVER "/" (post-cutover "/" IS the broken shell — the old advice looped), plus the rail sync badge, fail-quiet: a badge that lies about unpushed work is worse than none.
+  'test-next-progress-ring.js',      // The two-layer ring. Pins the honesty invariant: a live stage at stageProgress 0 has ZERO fill, and nothing in the outer ring derives from elapsed time or the orbit.
+  'test-next-model-fallback.js',     // The fallback-cost banner. An unrecognised cost tier resolves to 'unknown', NEVER 'similar' — `costlier:false` cannot tell parity from ignorance, and the fail-safe direction on money is to warn.
+  'test-next-raw-source.js',         // The reader's RAW bar, 4 states. An external-source URL is inert text, proven behaviourally: exactly ONE request, to our own endpoint, and the declared host never contacted.
+  'test-next-invite-and-inert.js',   // Shared Brain invite re-display, verified BYTE-FOR-BYTE against the route's real encodeInviteToken, plus the class invariant that no user-visible string says "preview shell"/"this phase".
   'check-doc-suite-counts.js',
   'test-repair-wiki-args.js',
   'test-wiki-script-args.js',

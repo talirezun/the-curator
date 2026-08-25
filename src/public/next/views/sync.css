@@ -83,13 +83,10 @@
   background: var(--text-faint);
 }
 .sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sync-domain-state { font-size: var(--text-2xs); color: var(--text-faint); cursor: help; }
-.sync-domain-footnote {
-  font-size: var(--text-2xs);
-  color: var(--text-faint);
-  line-height: var(--leading-normal);
-  padding: 6px 4px 0;
-}
+/* .sync-domain-state and .sync-domain-footnote styled a per-domain state
+   column that could only ever render "—" (no endpoint exposes per-domain
+   sync state) and the footnote apologising for it. Both removed with the
+   markup at cutover — see sync.js's renderSidebar comment. */
 
 /* Cross-view write-gate notice — same visual pattern as ingest.css's
    .ing-sidebar-busy, deliberately re-declared here rather than shared (see

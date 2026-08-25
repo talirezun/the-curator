@@ -4,7 +4,21 @@
 <meta charset="utf-8">
 <title>The Curator</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="/next/assets/mark-small-on-dark.svg">
+<!-- DEFECT 2 FIX: mark-small-on-dark.svg is bright ink (#EDEDF4 lines,
+     saturated accent dots) built for a dark background — on the light
+     browser-tab background most users have most of the time, it reads as
+     nearly invisible. mark-small-on-light.svg uses dark ink (#14141F)
+     designed for a light background, and stays legible on a dark tab too
+     because the three accent dots are mid-tone saturated hues rather than
+     near-white or near-black, so they carry visibility across both.
+     A `media="(prefers-color-scheme)"` two-link split was considered, but
+     favicon `media` support is not consistently honoured across browsers
+     (some pick the first link regardless, or only re-evaluate on a hard
+     reload rather than a live OS theme change) and could not be verified
+     end-to-end from this environment — so a single asset that is provably
+     correct in the common case, and still readable in the other, was
+     chosen over a fork that might silently regress to the invisible one. -->
+<link rel="icon" href="/next/assets/mark-small-on-light.svg">
 
 <!-- Design tokens — copied byte-identical from the design system bundle.
      Order matters: typography.css defines --font-sans/--font-mono at :root,
@@ -126,12 +140,12 @@
       ].join(';');
 
       var h = document.createElement('h1');
-      h.textContent = 'The Curator (preview) could not finish loading';
+      h.textContent = 'The Curator could not finish loading';
       h.style.cssText = 'margin:0 0 14px;font-size:19px;font-weight:600;color:#EDBB63;';
       card.appendChild(h);
 
       var p1 = document.createElement('p');
-      p1.textContent = 'This preview shell hit an error while starting up, so the page stayed blank. This is a bug in the /next shell itself, not something you did.';
+      p1.textContent = 'The app hit an error while starting up, so the page stayed blank. This is a bug in The Curator itself, not something you did.';
       p1.style.cssText = 'margin:0 0 14px;';
       card.appendChild(p1);
 
@@ -153,7 +167,13 @@
       ol.style.cssText = 'margin:0 0 18px;padding-left:22px;';
       [
         'Reload this page — a partly-downloaded file usually fixes itself.',
-        'If that keeps happening, go back to the shipping app at / and report the error below.'
+        // CUTOVER (v3.9.0): the escape hatch is /old, NOT "/". Post-cutover
+        // "/" serves THIS shell, so sending a user whose app just failed to
+        // boot back to "/" is a loop that returns them to the broken page.
+        // /old is the previous frontend — still installed, still served, and
+        // reading the same markdown files on disk. If /old is ever removed,
+        // this line must change with it.
+        'Open the previous version of the app at /old — it reads the same files and still works — and report the error below.'
       ].forEach(function (t) {
         var li = document.createElement('li');
         li.textContent = t;
@@ -192,7 +212,7 @@
       host.appendChild(box);
     } catch (e) {
       try { document.documentElement.textContent =
-        'The Curator (preview) could not finish loading. Your markdown files on disk are safe. Reload, or go back to the shipping app at /.'; } catch (e2) {}
+        'The Curator could not finish loading. Reload this page, or open the previous version of the app at /old. Your markdown files on disk are safe.'; } catch (e2) {}
     }
   }
 

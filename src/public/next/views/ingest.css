@@ -122,48 +122,15 @@
   flex-direction: column;
   gap: 6px;
 }
-.ing-progress-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-}
-.ing-progress-label {
-  font-size: var(--text-xs);
-  color: var(--text-3);
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ing-progress-label-waiting { color: var(--attention-text); }
-.ing-progress-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.ing-progress-pct { font-size: var(--text-xs); color: var(--accent-text); }
-.ing-progress-elapsed { font-size: var(--text-xs); color: var(--text-3); min-width: 2ch; }
-.ing-progress-track {
-  height: 3px;
-  background: var(--surface-inset);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-}
-.ing-progress-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  border-radius: var(--radius-full);
-  transition: width 0.35s ease;
-}
-.ing-progress-fill-waiting { animation: ing-progress-pulse 1.4s ease-in-out infinite; }
-@keyframes ing-progress-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
+/* The linear bar (.ing-progress-header/-label/-meta/-pct/-elapsed/-track/
+   -fill/-fill-waiting and the ing-progress-pulse keyframe) was REMOVED
+   here: shared/progress-ring.js now carries the visual role, and a dead
+   rule set is how a stylesheet starts lying about what the view renders.
+   Every piece of INFORMATION those rules displayed survived the move —
+   phase label, pct, elapsed clock, amber retry state — it just lives in
+   the ring's label/sublabel/tone now. `.mono` (shell.css) styles the
+   numbers inside the sublabel; the ring's own stylesheet does the rest. */
+.ing-progress-ring { align-self: flex-start; }
 .ing-progress-note {
   font-size: var(--text-xs);
   color: var(--text-3);
@@ -425,7 +392,13 @@
 
 /* ── Live / terminal job panel ────────────────────────────────────────── */
 
-.ing-queue-panel-head { margin: 4px 0 14px; }
+.ing-queue-panel-head {
+  margin: 4px 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ing-queue-panel-headtext { min-width: 0; }
 .ing-queue-panel-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text); }
 .ing-queue-panel-sub { font-size: var(--text-xs); color: var(--text-3); margin-top: 2px; }
 
@@ -531,26 +504,16 @@
 .queue-pill-cancelled  { border-color: var(--attention-text); color: var(--attention-text); background: var(--attention-tint); }
 .queue-pill-notstarted { border-color: var(--border); color: var(--text-faint); }
 
-.ing-queue-item-progress-track {
-  height: 3px;
+/* Per-item: a 20px ring in the row, replacing the 3px bar + separate
+   message line. The message is now the ring's own label, so the two can
+   never disagree about which phase the row is in. */
+.ing-queue-item-progress {
   margin-top: 8px;
-  background: var(--surface-inset);
-  border-radius: var(--radius-full);
-  overflow: hidden;
+  min-height: 20px;
 }
-.ing-queue-item-progress-fill {
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  border-radius: var(--radius-full);
-  transition: width 0.35s ease;
-}
-.ing-queue-item-progress-msg {
-  margin-top: 4px;
-  font-size: var(--text-xs);
-  color: var(--text-3);
-  min-height: 1.2em;
-}
+/* The row's own label sizing lives in shared/progress-ring.css as the
+   `pring-sm` modifier — every `pring-` rule stays in the file that owns the
+   prefix, so a grep for it lands in one place. */
 .ing-queue-item-error {
   margin-top: 6px;
   font-size: var(--text-xs);

@@ -1,0 +1,126 @@
+/* ── ProgressRing ─────────────────────────────────────────────────────────
+   Stylesheet for src/public/next/shared/progress-ring.js — the ported
+   design-system ring (two concentric layers: staged work outside,
+   continuous liveness inside).
+
+   PREFIX: every selector here is `pring-` (or the bare `.pring` root), a
+   prefix that appears in no other /next stylesheet — the house convention
+   already used by `obp-` (onboarding) and `mcpw-` (MCP wizard).
+
+   COLOUR: not one literal. `--pring-color` is DEFINED on `.pring` and
+   re-pointed by the three tone modifiers, so every stroke resolves to a
+   real token. An undefined custom property fails SILENTLY at
+   computed-value time (the whole reason scripts/test-css-tokens.js exists),
+   so the definition sits at the top of this file where it cannot be missed.
+
+   THEMING: `[data-theme]` only. The tokens carry no `prefers-color-scheme`
+   and neither does this file — the shell stamps the attribute.
+
+   MOTION: the orbit is a CSS animation over `curator-spin`, which is
+   already defined in tokens/motion.css. There is no JS loop; see the
+   module header. `prefers-reduced-motion` is honoured at the bottom, and
+   it has to be: this element is on screen for MINUTES during a large
+   ingest, which is exactly the case a permanent rotation is worst for.  */
+
+.pring {
+  --pring-color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pring-tone-accent    { --pring-color: var(--accent); }
+.pring-tone-success   { --pring-color: var(--success); }
+.pring-tone-attention { --pring-color: var(--attention); }
+
+.pring-svg {
+  flex: none;
+  display: block;
+}
+
+/* Outer layer — the work. */
+.pring-track { stroke: var(--border-strong); }
+.pring-fill {
+  stroke: var(--pring-color);
+  transition: stroke-dasharray var(--t-layout);
+}
+.pring-arc {
+  stroke: var(--pring-color);
+  transition: stroke-dashoffset var(--t-layout);
+}
+
+/* Inner layer — the liveness. Constant period, always. The 1.15s here is
+   the design's own figure and must not be made a function of progress. */
+.pring-orbit {
+  transform-origin: center;
+  animation: curator-spin 1.15s linear infinite;
+}
+.pring-orbit-arc {
+  stroke: var(--pring-color);
+  opacity: 0.45;
+}
+.pring-orbit-dot { fill: var(--pring-color); }
+
+/* Finished: the orbit is gone and a quiet inner circle settles in its
+   place, so the ring does not visually collapse on the last frame. */
+.pring-settled {
+  stroke: var(--pring-color);
+  opacity: 0.25;
+}
+
+.pring-center {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  fill: var(--text);
+}
+
+.pring-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.pring-label {
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pring-sublabel {
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+
+/* Row-scale modifier for the 20px ring, where the default body-sm label is
+   too heavy next to a filename. Lives HERE rather than in the view that
+   needs it: every `pring-` rule belongs to the file that owns the prefix. */
+.pring-sm .pring-label { font-size: var(--text-xs); }
+
+/* An attention-toned ring is a retry/backoff, so the label follows the
+   tone rather than staying neutral — the same signal the shipping app's
+   amber `.ing-progress-label-waiting` carries today. */
+.pring-tone-attention .pring-label { color: var(--attention-text); }
+.pring-tone-success .pring-label { color: var(--success-text); }
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Rotation is removed entirely. Liveness is NOT removed with it: a slow
+   opacity breath keeps the "still working" signal that the whole two-layer
+   design depends on, without anything travelling across the screen. A
+   2.6s period is well under the flash threshold and reads as ambient. */
+@media (prefers-reduced-motion: reduce) {
+  .pring-orbit {
+    animation: pring-breathe 2.6s ease-in-out infinite;
+    animation-delay: 0s !important; /* the phase-continuity hack is inline; it means nothing here */
+  }
+  .pring-fill,
+  .pring-arc { transition: none; }
+}
+
+@keyframes pring-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}

@@ -838,3 +838,121 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-consent ul { margin: 0; padding-left: 18px; line-height: var(--leading-relaxed); }
 .sbw-consent li { margin-bottom: 4px; }
 .sbw-consent-check { margin-top: 12px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Confirm dialog (shared/confirm.js) — the in-design replacement for
+   window.confirm(). Lives here, not in a new stylesheet, because
+   index.html already links views/shared.css globally and both call sites
+   (views/chat.js, views/settings.js) are outside any one view's CSS.
+
+   Every colour is an EXISTING token: test-css-tokens.js hard-fails on any
+   undefined var() in /next and a fallback does not exempt it. The scrim
+   darkness is an INLINE rgba literal for the same reason mcpw-scrim and
+   sbw-scrim are — `--scrim` is baselined at exactly ONE reference
+   (shell.css) with a hard count assertion, so a second reference anywhere
+   in /next fails the suite. Theming is [data-theme] only, never
+   prefers-color-scheme (the shell stamps the attribute).
+   ══════════════════════════════════════════════════════════════════════ */
+
+.cfd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 240;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  background: rgba(5,5,10,0.68);
+}
+[data-theme="light"] .cfd-scrim { background: rgba(20,20,31,0.5); }
+
+.cfd-card {
+  position: relative;
+  width: min(420px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  margin: auto;
+  padding: 22px 24px 18px;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.cfd-card.cfd-danger { border-color: var(--danger); }
+
+.cfd-title {
+  margin: 0 0 10px;
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  color: var(--text);
+}
+.cfd-body { margin-bottom: 18px; }
+.cfd-message {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.cfd-detail {
+  margin: 7px 0 0;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+}
+.cfd-card.cfd-danger .cfd-detail { color: var(--danger-text); }
+
+.cfd-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Software update block (views/settings.js, General section)
+   ══════════════════════════════════════════════════════════════════════ */
+
+.upd-status {
+  margin-top: 11px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+}
+.upd-status.upd-attention { border-color: var(--accent-border); background: var(--attention-tint); }
+.upd-status.upd-bad { border-color: var(--danger); background: var(--danger-tint); }
+.upd-status.upd-good { border-color: var(--success); background: var(--success-tint); }
+
+.upd-headline {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+.upd-status.upd-attention .upd-headline { color: var(--attention-text); }
+.upd-status.upd-bad .upd-headline { color: var(--danger-text); }
+.upd-status.upd-good .upd-headline { color: var(--success-text); }
+
+.upd-detail { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+.upd-sha {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-mono);
+  color: var(--text-3);
+}
+.upd-warning {
+  display: block;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-xs);
+  color: var(--attention-text);
+}
+.upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }

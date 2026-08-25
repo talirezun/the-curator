@@ -849,3 +849,128 @@
    here would put the wiki reader and the chat reader on two stylesheets
    that can drift; scripts/test-next-markdown.js §9 asserts this file has no
    `.dm-page-source` rule left. */
+
+/* ── Health: live progress ────────────────────────────────────────────────
+   The ring under the Quick maintenance bar, and the 16px in-button ring.
+   Both come from shared/progress-ring.css; only placement lives here. */
+
+.dm-ai-progress {
+  display: flex;
+  align-items: center;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+}
+
+/* 16px, inside a button. `flex: none` so a long button label can never
+   squash it into an ellipse, and the vertical nudge lines the circle's
+   optical centre up with the cap height of the text beside it. */
+.dm-btn-ring {
+  flex: none;
+  vertical-align: -2px;
+}
+
+/* ── Reader RAW-source bar ───────────────────────────────────────────────
+   Behaviourally this belongs to the SHELL reader (src/public/next/app.js,
+   "Reader RAW-source bar"), not to this view — the reader is opened from
+   Domains browse AND from a Chat citation chip, and both inherit it.
+
+   It lives in this file rather than shell.css purely as a file-ownership
+   boundary during the parallel cutover build: shell.css is a shared
+   surface that other agents are editing concurrently, and every /next
+   stylesheet is <link>ed globally, so placement here changes nothing about
+   which rules apply. It should be moved to shell.css, next to the other
+   .reader-* rules, once the cutover build is single-owner again.
+
+   Theming: tokens only, and the tokens are theme-aware at their own
+   definition site (tokens/color.css redefines them under [data-theme]) —
+   there is no prefers-color-scheme anywhere in the /next tree and this
+   must not introduce one. */
+
+.reader-source-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 18px;
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+}
+.reader-source-bar[hidden] { display: none; }
+
+/* Same uppercase-label language as the eyebrow/label chrome elsewhere in
+   the shell. The word is "RAW" on purpose — see renderReaderSourceHtml(). */
+.reader-source-label {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  font-weight: var(--weight-semibold);
+  color: var(--text-3);
+  background: var(--surface-raised);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+}
+
+.reader-source-name {
+  color: var(--text);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  min-width: 4ch;
+}
+
+.reader-source-size {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+}
+
+.reader-source-text { overflow-wrap: anywhere; }
+
+/* Inert by construction: this is never an <a>, so it must not LOOK like
+   one either. Muted, monospaced, not underlined, default cursor — the
+   value is an untrusted, LLM-authored string that arrives over sync, and
+   the UI should not invite a click it will not honour. */
+.reader-source-url {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  min-width: 4ch;
+  text-decoration: none;
+  cursor: default;
+  user-select: text;
+}
+
+.reader-source-reveal {
+  flex: none;
+  margin-left: auto;
+  font: var(--type-body-sm);
+  color: var(--text-2);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.reader-source-reveal:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.reader-source-reveal:disabled { opacity: 0.55; cursor: default; }
+.reader-source-reveal:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+
+.reader-source-status:empty { display: none; }
+.reader-source-status {
+  flex: none;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.reader-source-status.is-ok { color: var(--success-text); }
+.reader-source-status.is-error { color: var(--danger-text); }
