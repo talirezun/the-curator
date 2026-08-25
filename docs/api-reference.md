@@ -826,7 +826,13 @@ Apply a single fix for a specific issue.
 
 `type` must be one of the auto-fixable types. `issue` must be an exact issue object returned by `GET /api/health/:domain`.
 
-**Read-only mirrors (v3.0.2+):** every mutating Health endpoint (`/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch`) returns **400** when `:domain` is a read-only Shared Brain mirror (`readonly: true` in the domain's `CLAUDE.md`) — fixes to a mirror would be overwritten on the next Pull. Scanning (`GET /api/health/:domain`) and read-only planning endpoints still work on mirrors.
+**Read-only mirrors (v3.0.2+):** every mutating Health endpoint returns **400** when `:domain` is a read-only Shared Brain mirror (`readonly: true` in the domain's `CLAUDE.md`) — a write to a mirror would be overwritten on the next Pull. The full list is `/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch`, and `/dismiss` and `/undismiss`.
+
+Those last two were missing the refusal until v3.6.2, while their MCP twins (`dismiss_wiki_issue`, `undismiss_wiki_issue`) had carried it since v3.0.0-beta.1. The store they write, `<domain>/wiki/.health-dismissed.jsonl`, lives *inside* the git-tracked `wiki/` folder and therefore syncs, so a dismissal recorded on a mirror was silently discarded by the next Pull exactly like a "fix" would be.
+
+Scanning (`GET /api/health/:domain`), reading dismissals (`GET /api/health/:domain/dismissed`), and the read-only planning endpoints (`/ai-suggest`, `/semantic-dupes/scan`, `/semantic-dupes/preview`, `/broken-links/plan`, `/orphans/plan`) all still work on mirrors — reads are deliberately allowed so users can inspect a mirror and spot conflict markers.
+
+This list is enumerated mechanically rather than maintained by hand: `scripts/test-route-write-guards.js` derives the writability class from `src/routes/health.js` itself and fails if any route in it lacks the guard, if the behavioural sweep leaves one undriven, or if a new mutating route appears without being classified.
 
 **Success response** `200 OK`
 

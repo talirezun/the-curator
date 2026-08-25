@@ -2797,6 +2797,34 @@ function sbComposeDoneMessage(action, payload, lastShown) {
   return lastShown || `${action} completed.`;
 }
 
+// Status line for a revoke 'done' SSE frame. Sibling to sbComposeDoneMessage
+// above (push/pull/synthesize), but revoke needs its own composer: the route
+// (src/routes/sharedbrain.js) forwards revokeContributor's OWN
+// onProgress('done', doneMsg) callback as a type:'done' frame with NO
+// `result` at all, THEN emits a second, real type:'done' frame carrying
+// `result` once the HTTP handler's await returns. Reading
+// result.contributions_deleted unconditionally rendered "Revocation
+// complete: ? contributions deleted, ? pages removed, ? rebuilt." for that
+// empty intermediate frame, for the instant before the real frame arrived.
+// `result.summary` (sharedbrain-revoke.js v3.6.2+) is honest by
+// construction — it is only ever "Revocation complete: …" when the
+// function's own `problems[]` list is empty — so it is preferred outright;
+// the hand-built string is kept only as a fallback for a `result` that has
+// counted fields but no `summary` (an older/mocked backend shape). Returns
+// null when there is nothing useful to show yet, so the caller leaves the
+// last real status on screen rather than flashing a "?" placeholder.
+function sbRevokeDoneStatus(payload) {
+  const res = (payload && payload.result) || {};
+  if (res.summary) return res.summary;
+  if (res.contributions_deleted !== undefined) {
+    return `Revocation complete: ${res.contributions_deleted ?? '?'} contributions deleted, ` +
+      `${res.pages_deleted ?? '?'} pages removed, ${res.pages_rebuilt ?? '?'} rebuilt. ` +
+      'Next: tell every contributor to Pull updates (their mirrors drop the erased content), ' +
+      'and remove the person as a GitHub collaborator so they cannot push again.';
+  }
+  return null;
+}
+
 function renderSharedBrainCard(conn) {
   const card = document.createElement('div');
   card.className = 'sharedbrain-card';
@@ -3459,13 +3487,8 @@ async function runSharedBrainRevoke(connId, card, member, adminToken, goBtn) {
             hadError = true;
             setStatus(`Error: ${payload.message}`, true);
           } else if (payload.type === 'done') {
-            const res = payload.result || {};
-            setStatus(
-              `Revocation complete: ${res.contributions_deleted ?? '?'} contributions deleted, ` +
-              `${res.pages_deleted ?? '?'} pages removed, ${res.pages_rebuilt ?? '?'} rebuilt. ` +
-              'Next: tell every contributor to Pull updates (their mirrors drop the erased content), ' +
-              'and remove the person as a GitHub collaborator so they cannot push again.'
-            );
+            const msg = sbRevokeDoneStatus(payload);
+            if (msg) setStatus(msg);
           } else if (payload.message) {
             setStatus(payload.message);
           }
@@ -3988,7 +4011,7 @@ function populateSharedBrainReview() {
   box.querySelector('[data-field="display-name"]').textContent = sbWizard.state.displayName;
   box.querySelector('[data-field="attribution"]').textContent =
     sbWizard.state.attributeByName
-      ? 'show name (admin must also enable cohort-side)'
+      ? 'show name in contribution records'
       : 'anonymous UUID (default)';
 }
 
@@ -7208,6 +7231,28 @@ function escapeAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
 
+// Cost-readout helper for Health AI estimate/plan/done payloads (health-ai.js's
+// costFields(): {estimatedUsd, priceKnown, costNote}). A known price renders
+// EXACTLY as before ($X.XXXX, optionally "on provider/model") — this must
+// never change. An UNPRICED model (reachable today via the documented
+// LLM_MODEL= override, or a fallback rung with no entry in llm.js's price
+// table) used to render as either a blank string (no number, no message —
+// the worst outcome on a spend gate) or a bare 'cost unknown'; this now
+// surfaces the server's own costNote so the wording has one source of
+// truth, falling back to a locally-honest string only if a payload predates
+// costNote. Callers embedding the result in innerHTML must escapeHtml() it
+// themselves (costNote can echo a model id); callers using .textContent do
+// not need to.
+function formatHealthCost(obj, { withProviderModel = false } = {}) {
+  if (obj && obj.estimatedUsd !== null && obj.estimatedUsd !== undefined) {
+    const usd = `$${obj.estimatedUsd.toFixed(4)}`;
+    return withProviderModel && obj.provider && obj.model ? `${usd} on ${obj.provider}/${obj.model}` : usd;
+  }
+  return (obj && typeof obj.costNote === 'string' && obj.costNote)
+    ? obj.costNote
+    : 'Cost estimate unavailable — no published price for this model.';
+}
+
 // ── AI Health (Phase 1 — v2.4.3) ────────────────────────────────────────────
 
 const AI_DISCLOSURE_KEY = 'curator-ai-health-disclosure-seen-v1';
@@ -7488,9 +7533,7 @@ async function startSemanticScan() {
 semBtn?.addEventListener('click', startSemanticScan);
 
 function openSemanticConfirmModal(est) {
-  const costStr = est.estimatedUsd !== null && est.estimatedUsd !== undefined
-    ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}`
-    : 'cost unknown';
+  const costStr = formatHealthCost(est, { withProviderModel: true });
   const overCap = est.estimatedTokens > est.costCeilingTokens;
   const truncatedNote = est.truncated
     ? `<div class="hint" style="margin-top:6px">Pre-filter found ${est.totalCandidates.toLocaleString()} potential pairs; capped to ${est.candidatePairs.toLocaleString()} highest-similarity (raise the cap in Settings if you want more).</div>`
@@ -7586,8 +7629,7 @@ function handleSemanticEvent(event, ui) {
     showStatus(healthStatusEl, 'error', event.error);
   } else if (event.type === 'done') {
     ui.fill.style.width = '100%';
-    const usd = event.cost && typeof event.cost.estimatedUsd === 'number'
-      ? `$${event.cost.estimatedUsd.toFixed(4)}` : 'cost unknown';
+    const usd = formatHealthCost(event.cost);
     ui.text.textContent = `Done. ${event.pairs.length} duplicate${event.pairs.length === 1 ? '' : 's'} found · ${event.cost.inputTokens.toLocaleString()} in + ${event.cost.outputTokens.toLocaleString()} out tokens · ${usd}`;
     if (event.pairs.length === 0) {
       semResults.innerHTML = '<div class="hint" style="padding:12px">No semantic duplicates found in this domain.</div>';
@@ -7953,9 +7995,7 @@ async function startBrokenLinkFix() {
 blBtn?.addEventListener('click', startBrokenLinkFix);
 
 function openBrokenLinkConfirm(est) {
-  const costStr = est.estimatedUsd != null
-    ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}`
-    : 'cost unknown';
+  const costStr = formatHealthCost(est, { withProviderModel: true });
   blEstimateEl.innerHTML = `
     <div class="semantic-dupes-estimate-row"><strong>Broken links:</strong> ${est.totalOccurrences.toLocaleString()} (${est.uniqueTargets.toLocaleString()} unique targets)</div>
     <div class="semantic-dupes-estimate-row"><strong>Fix for free (formatting):</strong> ${est.resolveFree.toLocaleString()}</div>
@@ -8033,7 +8073,7 @@ async function runBrokenLinkPlan() {
 
 function renderBrokenLinkPreview(summary, cost) {
   blProgress.classList.add('hidden');
-  const usd = cost && cost.estimatedUsd != null ? `$${cost.estimatedUsd.toFixed(4)}` : '';
+  const usd = formatHealthCost(cost);
   const retargetSamples = (_blPlan || []).filter(p => p.action === 'retarget').slice(0, 12);
   const stripSamples = (_blPlan || []).filter(p => p.action === 'strip').slice(0, 12);
   const sampleRow = (p) => p.action === 'retarget'
@@ -8045,7 +8085,7 @@ function renderBrokenLinkPreview(summary, cost) {
       <div>
         <strong>Plan ready.</strong> ${summary.retargetOccurrences.toLocaleString()} link${summary.retargetOccurrences === 1 ? '' : 's'} will be
         repointed to a real page (${summary.retarget} unique), and ${summary.stripOccurrences.toLocaleString()} will have their brackets removed
-        (${summary.strip} unique). ${usd ? `Planning cost: ${usd}.` : ''}
+        (${summary.strip} unique). Planning cost: ${escapeHtml(usd)}.
         <span class="hint">${summary.deterministic} fixed by formatting rules, ${summary.ai} judged by AI.</span>
       </div>
       <div class="broken-links-preview-cols">
@@ -8175,7 +8215,7 @@ async function startOrphanRescue() {
 }
 
 function openOrphanConfirm(est) {
-  const costStr = est.estimatedUsd != null ? `$${est.estimatedUsd.toFixed(4)} on ${est.provider}/${est.model}` : 'cost unknown';
+  const costStr = formatHealthCost(est, { withProviderModel: true });
   orphEstimateEl.innerHTML = `
     <div class="semantic-dupes-estimate-row"><strong>Orphan pages:</strong> ${est.orphanCount.toLocaleString()}</div>
     <div class="semantic-dupes-estimate-row"><strong>Estimated cost:</strong> ${escapeHtml(costStr)}</div>
@@ -8234,7 +8274,7 @@ async function runOrphanPlan() {
 
 function renderOrphanPreview(summary, cost) {
   orphProgress.classList.add('hidden');
-  const usd = cost && cost.estimatedUsd != null ? `$${cost.estimatedUsd.toFixed(4)}` : '';
+  const usd = formatHealthCost(cost);
   const samples = (_orphPlan || []).slice(0, 18);
   const row = (p) => `<li><code>[[${escapeHtml(p.orphanSlug)}]]</code> → linked from <code>[[${escapeHtml(p.target)}]]</code> <span class="hint">${escapeHtml(p.description || '')}</span></li>`;
   if (!summary.rescuable) {
@@ -8243,7 +8283,7 @@ function renderOrphanPreview(summary, cost) {
   }
   orphResults.innerHTML = `
     <div class="semantic-batch-bar" style="flex-direction:column; align-items:stretch">
-      <div><strong>Plan ready.</strong> ${summary.rescuable} of ${summary.orphans} orphan${summary.orphans === 1 ? '' : 's'} will get an incoming link from a related page${summary.noHome ? `; ${summary.noHome} had no confident home and are left for manual review` : ''}. ${usd ? `Planning cost: ${usd}.` : ''}</div>
+      <div><strong>Plan ready.</strong> ${summary.rescuable} of ${summary.orphans} orphan${summary.orphans === 1 ? '' : 's'} will get an incoming link from a related page${summary.noHome ? `; ${summary.noHome} had no confident home and are left for manual review` : ''}. Planning cost: ${escapeHtml(usd)}.</div>
       <ul class="semantic-preview-files" style="max-height:260px">${samples.map(row).join('')}${summary.rescuable > samples.length ? `<li class="hint">…and ${summary.rescuable - samples.length} more</li>` : ''}</ul>
       <div class="semantic-batch-confirm-actions">
         <button class="btn primary orph-apply-btn">Apply — rescue ${summary.rescuable} orphan${summary.rescuable === 1 ? '' : 's'}</button>

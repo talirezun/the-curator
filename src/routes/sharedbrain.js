@@ -643,7 +643,30 @@ router.post('/:id/revoke', gate, async (req, res) => {
       onProgress: (stage, message, meta) => emit({ type: stage, message, ...meta }),
     });
     if (!result.ok) {
-      emit({ type: 'error', message: result.error || 'Revoke failed' });
+      // v3.6.2: carry the STRUCTURED result on the failure path too — a
+      // partial Article 17 erasure now returns ok:false, so this is the
+      // ONLY frame that could ever carry the new per-category failure
+      // fields (contributions_failed, pages_failed, digest_failed,
+      // pages_rebuild_failed, state_reset_failed, marker_cleared).
+      //
+      // HONEST SCOPE, so this comment does not claim more than the code
+      // does: putting the fields on the wire does NOT by itself make them
+      // reachable. TODAY NO CLIENT READS THEM. The shipping revoke handler
+      // in src/public/app.js renders only `payload.message` on an `error`
+      // frame (it reads `payload.result` on `done` only), and /next has no
+      // revoke UI at all. So the fields are wire-visible — to curl, to the
+      // docs' API contract, and to any future client — while the app still
+      // shows just the summary string. That string is itself built from
+      // every failure (revokeContributor's `problems` accumulator), so an
+      // admin is not left uninformed; they are left without the machine-
+      // readable breakdown.
+      //
+      // Closing the gap needs a one-line change in app.js's revoke SSE
+      // error branch (render `payload.result.contributions_failed` etc.
+      // when present). That file is not owned by this change; the field
+      // forwarding is kept because it is free, correct, and the necessary
+      // half of the fix.
+      emit({ type: 'error', message: result.error || 'Revoke failed', result });
     } else {
       emit({ type: 'done', result });
     }

@@ -161,6 +161,13 @@ function makeConnection(label, fellowDisplayName, domainsDir) {
     local_storage_path: storageRoot,
     fellow_id: randomUUID(),
     fellow_display_name: fellowDisplayName,
+    // v3.6.2: the display name only reaches shared storage when the
+    // contributor opted in (contributorNameForStorage). This suite exercises
+    // push MECHANICS and asserts the name lands in the payload, so its fellows
+    // are opted in. The privacy gate itself — including every fail-closed case
+    // and a byte-level scan of the written files — lives in
+    // scripts/test-sharedbrain-attribution.js.
+    attribute_by_name: true,
     shared_domain: 'work-ai',
     shared_brain_slug: 'test-cohort',
     local_domains: ['work-ai'],

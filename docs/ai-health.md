@@ -141,12 +141,16 @@ The batch merge is restricted to high-confidence pairs and guarded by an explici
 
 Using the defaults on Gemini Flash Lite:
 
-- A scan of 500 candidate pairs ≈ 200k tokens ≈ **$0.03**.
-- A scan of 50 candidate pairs ≈ 20k tokens ≈ **$0.003**.
+- A scan of 500 candidate pairs ≈ 200k tokens ≈ **$0.044**.
+- A scan of 50 candidate pairs ≈ 20k tokens ≈ **$0.0044**.
 
-On Claude Haiku 4.5 the cost is roughly 10× higher but still under $0.50 for a default scan.
+On Claude Haiku 4.5 the cost is roughly **12×** higher — about **$0.52** for a default 500-pair scan.
 
-> ⚠️ **The estimate reads low, and the figures above inherit that.** The confirm dialog is priced from `MODEL_PRICING` in [`src/brain/health-ai.js`](../src/brain/health-ai.js) — a **second** price table, dated 2026-04, that has since diverged from the authoritative `MODEL_PRICES_USD_PER_MTOK` in [`src/brain/llm.js`](../src/brain/llm.js). For the default model, `gemini-2.5-flash-lite`, health-ai still carries **$0.075 in / $0.30 out** while llm.js carries the current **$0.10 / $0.40** — so the dialog (and the $0.03 / $0.003 figures above) understate the real cost by roughly **25%**. A 500-pair scan is closer to **$0.04** than $0.03. The absolute amounts are small enough that this is a documentation accuracy issue rather than a spend risk, but treat every USD figure here as an order-of-magnitude guide, not a billing authority. *(Tracked for a follow-up: health-ai.js should read the llm.js table rather than keeping its own.)*
+All AI Health cost estimates (this scan, the broken-link fixer, and the orphan rescuer) are priced from the SAME table the rest of the app uses — `MODEL_PRICES_USD_PER_MTOK` in [`src/brain/llm.js`](../src/brain/llm.js), reached through its exported `getModelPrice(modelId)` accessor. There is no separate copy in `health-ai.js` to drift out of sync (there used to be — a 2026-04-dated table that had gone ~25% stale on the Gemini default and had no entry at all for any automatic-fallback model or for `claude-sonnet-4-5`; a scan running on any of those returned no price at all). The figures above are for the *default* model only — the actual estimate you see always reflects the model the app is currently configured to use.
+
+If the active model genuinely has no published price (for example, an `LLM_MODEL` override in `.env` pointing at a model id `llm.js` doesn't know about — normal fallback-chain models and `claude-sonnet-4-5` are all covered), `estimateUsdCost` returns `null` and the estimate/plan payload additionally carries `priceKnown: false` and a `costNote` explaining why, rather than silently substituting a wrong number. Both frontends render `costNote` verbatim in that case: the shipping app's `formatHealthCost` (in [`src/public/app.js`](../src/public/app.js)) and `/next`'s `costReadout` (in [`src/public/next/views/domains.js`](../src/public/next/views/domains.js)) both fall through to the server-supplied sentence whenever `estimatedUsd` is null. This covers every pre-run confirm dialog (semantic-duplicate scan, broken-link fix, orphan rescue) **and** every post-run readout — the shipping app's broken-link and orphan-rescue plan previews ("Planning cost: …") and the semantic-dupe scan's "Done" summary all read `costNote` the same way, so an unpriced model shows the real sentence there too, not a blank string. The one deliberate exception is `/next`'s per-domain quick-action button badge: a full sentence would break that pill's layout, so `costReadout(est, { compact: true })` renders a short **"cost unknown"** instead of the server's longer note. `/next` does not currently display an actual post-run cost figure anywhere (the scan result stores `cost` but no view renders it) — a pre-existing gap in that frontend, unrelated to pricing coverage, not tracked here.
+
+`priceKnown` itself has no reader in either frontend today — every consumer above checks `costNote`'s truthiness, which is sufficient. It's kept as a structured true/false alternative for a future consumer (a script, an API client, a UI that wants an icon rather than a sentence) that would rather not parse prose.
 
 ### What Phase 3 will NOT do
 

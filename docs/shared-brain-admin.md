@@ -44,7 +44,33 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
 5. Click **Permanently revoke this contributor**. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
 
-If the run ends with *"the rebuild synthesis FAILED"*, the erasure completed but the collective needs rebuilding — re-run the same revocation once the underlying problem (usually a rate limit) clears; every step is idempotent.
+The follow-up checklist appears **only on a clean run**. If anything failed, the
+card renders the failure as an error and prefixes it with `Error: `, so what you
+actually read is *"Error: ⚠ ERASURE INCOMPLETE …"* or *"Error: Erasure completed
+… but the revocation did NOT finish cleanly"*, listing each numbered problem.
+
+**Read which headline you got — they mean different things:**
+
+- ***"⚠ ERASURE INCOMPLETE — this contributor's data has NOT been fully
+  removed"*** — some of their data survived (`erasure_complete: false`). Do
+  **not** certify this erasure. The in-progress marker stays set and ordinary
+  synthesis keeps refusing for **every** contributor until a clean re-run —
+  deliberately, so a partial erasure cannot be walked away from.
+- ***"Erasure completed (…), but the revocation did NOT finish cleanly"*** — the
+  contributor's data **is** gone (`erasure_complete: true`); a *later* step
+  failed. The data subject's request has been honoured. Whether the cohort is
+  blocked now depends on **which** step failed, so do not assume: a failed
+  rebuild (or pages the rebuild could not write) holds the marker, while a
+  failed audit write or a failed watermark reset deliberately do **not** — see
+  the field table below. **From the card**, the message itself tells you: it
+  contains the sentence *"The revocation-in-progress marker is still set, so
+  ordinary synthesis stays blocked"* only when the marker is genuinely held; its
+  absence means the marker was cleared. **From the API**, read `marker_active`.
+  Do not certify the *revocation* until you have an audit record, even though
+  the *erasure* is done.
+
+In both cases: fix the named problem and re-run the same revocation (every step
+is idempotent).
 
 ### Via the API (scripting / headless)
 
@@ -63,37 +89,139 @@ curl -X POST http://localhost:3333/api/sharedbrain/<connection_id>/revoke \
 Where:
 - `<connection_id>` — your own Shared Brain connection ID. Find it via `GET /api/sharedbrain/list`.
 - `<your-admin-token>` — the `sbat_…` token shown once at brain setup (v3.0.5+) or provisioned via **Advanced → Generate admin token** / `POST /api/sharedbrain/<id>/admin-token/rotate`. The revoke endpoint refuses with 403 if it doesn't match the token stored on the connection.
-- `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). v3.0.5+: get it from `GET /api/sharedbrain/<id>/members` (or the card's revoke panel); older fallbacks: their Provenance short-id, or ask them to read it off their connection card.
+- `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). v3.0.5+: get it from `GET /api/sharedbrain/<id>/members` (or the card's revoke panel); older fallbacks: their Provenance short-id, or ask them to read it off their connection card. The directory shows a name for any contributor whose stored payloads carry one, and the **8-character short fellow-ID** otherwise. **The v3.6.2 `attribute_by_name` gate is forward-looking only and changes nothing about this directory on an existing cohort** — it is built by reading every contribution payload ever stored, and pre-v3.6.2 pushes wrote the name unconditionally, so those names are still listed until the contributions are revoked. On a cohort started after v3.6.2, only contributors who opted in will show a name. Either way: if the person you are looking for shows only a short-ID, ask the data subject to read their Fellow ID off their own connection card — a subject identifying themselves is the correct flow for an Article 17 request anyway.
 - `confirmation` — literal string `"REVOKE-<contributor-uuid-to-revoke>"` (the FULL UUID). The brittle confirmation is a GitHub-style accident-prevention gate.
+
+> **If a contributor asks to withdraw name attribution only (v3.6.2 limitation).**
+> `attribute_by_name` is chosen **once, at join time**, in the connection wizard.
+> There is currently **no toggle on the connection card** to change it afterwards.
+> If a contributor wants to stop publishing their display name, they must
+> **Disconnect the Shared Brain connection and re-join** with the box unticked;
+> from that point their pushes carry the UUID alone. The change is **not
+> retroactive** — names already written into `contributions/<fellow_id>/*.json`
+> stay in shared storage and in that repository's git history, and a **full
+> revocation is the only way to remove them**. Tell contributors this when they
+> ask, and treat a withdrawal request that must also erase past names as an
+> Article 17 request (§2 of the compliance doc). A first-class attribution
+> toggle is a known follow-up.
 
 The endpoint returns a SSE stream with progress events and a final `done` event containing:
 
 ```json
 {
   "ok": true,
+  "erasure_complete": true,
+  "summary": "Revocation complete: 4 contributions deleted, 2 pages removed, 7 rebuilt. …",
   "contributions_deleted": <N>,
+  "contributions_failed": [],
+  "digest_failed": null,
   "pages_deleted": <M>,
+  "pages_failed": [],
   "pages_rebuilt": <K>,
+  "pages_rebuild_failed": 0,
+  "state_reset_failed": null,
+  "audit_failed": null,
+  "marker_cleared": true,
+  "marker_active": false,
   "audit_record": { ... }
 }
 ```
 
+A failure carries the same shape with `ok: false`, `partial: true`, and an
+additional `error` field holding the same text as `summary`.
+
+Since **v3.6.2** the result is **self-reporting**: every step that can fail
+per item records what failed instead of only logging it server-side.
+
+| Field | Meaning |
+|---|---|
+| `erasure_complete` | `true` only when every contribution, the digest, and every provenance-tainted page were actually removed. **This is the field to read before telling a data subject their data is gone.** |
+| `contributions_failed` | `[{submission_id, error}]` — payload files still in shared storage. |
+| `digest_failed` | `{error}` — the fellow's synthesis cache (which *would* hold their facts) is still there. In practice this stays `null`: nothing in the shipped code writes a digest, so the file does not exist and the delete is a no-op. The step is defensive, for when digests are wired up. |
+| `pages_failed` | `[{path, error}]` — collective pages that could not be read or deleted, so they may still carry this contributor's content. |
+| `pages_rebuild_failed` | Pages the rebuild could not write. Erasure is fine; the collective is incomplete. |
+| `state_reset_failed` | `{error}` — the synthesis watermark could not be reset. Reported for completeness; it is **not** an erasure failure and the rebuild does not depend on it (it takes its baseline directly, and a successful synthesis rewrites the state at the end). |
+| `audit_failed` | The revocation was **not** written to `state/revocations.jsonl` — you have no record of it. |
+| `marker_cleared` | Did this run clear the in-progress marker? `boolean`, or `null` on an abort where no marker was ever written (nothing to clear — see *Aborts* below). It stays `false` for four reasons, all of which leave the collective in a mid-erasure state: a failed erasure step (`erasure_complete: false`), a failed rebuild (`rebuild_ok: false`), `pages_rebuild_failed > 0`, **or** the clear itself failing to write. A failed audit write or a failed watermark reset do **not** hold the marker — see the note below. |
+| `marker_active` | **The field to act on: is cohort synthesis blocked right now?** `true` means every contributor's ordinary synthesis is being refused until a revocation run finishes. `null` means genuinely unknown — the Step-0 marker write threw, so a partial commit cannot be ruled out; if synthesis is refusing, that is why. On a run that got past Step 0 it is simply the inverse of `marker_cleared`. |
+| `summary` | The one honest sentence to quote. It says *"Revocation complete"* **only** when nothing failed. |
+
+> **Why an audit-write failure does not block synthesis (v3.6.2).** The
+> in-progress marker exists for one thing: to stop ordinary synthesis while
+> the collective may be half-erased. A failed `appendAudit` says nothing
+> about that — the erasure finished and the collective is consistent — so
+> holding the marker for it would take **every contributor's** synthesis
+> offline until an admin re-ran the whole revocation, which is itself a full
+> re-listing plus a full LLM synthesis and fails the same way under a
+> persisting rate limit. It is still reported loudly (`ok: false`,
+> `audit_failed`, and a named problem in `summary`) and you should still not
+> certify the revocation without a record — it just is not weaponised into
+> an outage.
+
+On any failure the endpoint emits an SSE `error` event whose payload carries
+this same object, and `ok` is `false`. Re-running the revocation is always
+safe — every step is idempotent.
+
+**Aborts — the runs that stop early.** Seven failure paths return before the
+ordinary verdict is reached: an invalid `fellow_id`, a connection with no
+`shared_domain`, storage-adapter init, a short-ID that cannot be derived, the
+Step-0 in-progress-marker write, and the two *scope* failures (listing the
+contributor's submissions; listing the collective's pages). All seven return the
+**same full result shape** — so `erasure_complete` is always a real `false`,
+never absent — with the failed enumeration surfaced as a synthetic `'*'` entry
+in `contributions_failed` or `pages_failed` rather than an empty array that
+would read as "nothing went wrong".
+
+The first six abort before any deletion, so their counts are all zero and
+`partial` is `false`. The seventh — the collective-page listing — happens
+*after* the contributions and the digest have been deleted, so it reports
+`partial: true` and a real `contributions_deleted`, and its erasure is genuinely
+half-done. Two more things to know:
+
+- **The marker may be left active.** If the run got past Step 0 (both scope
+  failures do), the marker is set and **cohort-wide synthesis is refused** until
+  a revocation run finishes — `marker_active: true`. If it aborted before Step 0
+  nothing was written and `marker_cleared` is `null` (not applicable). If the
+  Step-0 write itself threw, `marker_active` is `null`: a partial commit cannot
+  be ruled out, and the recovery — re-run the revocation — is the same either
+  way.
+- **No audit line is written.** The append to `state/revocations.jsonl` happens
+  near the end of the run, so an aborted attempt leaves the log looking as if it
+  never happened. Record it yourself from the API response.
+
+> **Where you can actually see these fields today.** They are on the wire —
+> `curl` the endpoint, or read them from any client you write. The **in-app**
+> revoke panel reads only `payload.message` from the SSE `error` frame and
+> prints it after an `Error: ` prefix; it never touches `payload.result`, so
+> none of the per-category fields reach the screen. The string you see happens
+> to equal `summary` because `revokeContributor` assigns the same text to both
+> `error` and `summary` — a coincidence of two assignments, not the card
+> reading `summary`. That is not a loss of information (the text is built from
+> every recorded failure and names each one), but if you want the
+> machine-readable object, use the API rather than the card.
+
 ### What revoke actually does
 
-1. Deletes every `contributions/<fellow_id>/*.json` from the shared repo — **but a per-file delete failure is only written to the server console; the loop continues and the operation still reports success.** See the verification note below.
-2. Deletes `digests/<fellow_id>/latest.json` (the per-fellow synthesis cache). A failure here is likewise only logged.
-3. Scans every collective page. Pages that mention the revoked fellow's short ID in their Provenance section are deleted.
+1. Deletes every `contributions/<fellow_id>/*.json` from the shared repo. A per-file delete failure no longer stops the run — the remaining files are still erased — but since **v3.6.2** each failure is recorded in `contributions_failed`, counted in the audit record, and forces `erasure_complete: false`. (Before v3.6.2 it was written to the server console only, and the run still reported success.)
+2. Deletes `digests/<fellow_id>/latest.json` (the per-fellow synthesis cache — it holds *their* facts, so a failure here is an erasure failure). Recorded in `digest_failed`.
+3. Lists every collective page and scans it. Pages that mention the revoked fellow's short ID in their Provenance section are deleted; per-page failures are recorded in `pages_failed`. **If the page list itself cannot be read the revocation ABORTS** (v3.6.2) — an unreadable listing means we do not know *what* to erase, which is an unattempted erasure, not a partial one. It does not proceed to the rebuild and does not clear the in-progress marker.
 4. Resets the `state.last-synthesis` meta key — stored at **`meta/state/last-synthesis.json`** in the repo — and re-runs synthesis from scratch. Since v3.0.6 the reset writes the full zero-state (`watermark: null`, empty `processed_ids`, `run_number: 0`), not just an epoch timestamp, so no stale processed-id list can cause surviving contributions to be skipped. Deleted pages get rebuilt **only if** other contributors still have submissions for them; otherwise they stay deleted (Article 17 erasure).
-5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + `rebuild_ok` + sha256-hashed admin token. No real names, no contribution content.
+5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + `rebuild_ok` + sha256-hashed admin token. Since **v3.6.2** the line also carries `erasure_complete` plus the failure summary: **counts** for `contributions_failed`, `pages_failed` and `pages_rebuild_failed`, and **booleans** for `digest_failed` and `state_reset_failed` (note these last two are `{error}` objects in the API result but plain booleans in the log — the log deliberately drops the error text). An erasure audit trail that recorded only successes was not an audit trail. Counts and booleans only: still no real names, no contribution content, and no provider error text (that detail stays in the API response you are reading, not in the permanent log). **A run that aborts before this step writes no line at all** — see *Aborts* above.
 
 The operation is irreversible. If the revoked contributor's local wiki is also gone, the data cannot be reconstructed from shared storage.
 
-> ⚠️ **Verify, don't trust the success message.** Compare the *"Found N contributions to delete"*
-> line in the progress stream against `contributions_deleted` in the audit record / response body.
-> If they differ, some payloads survived — **re-run the revocation** (it is idempotent). Also check
-> `rebuild_ok`: `false` means the erasure happened but the rebuild did not, the in-progress marker
-> is still set, ordinary synthesis will keep refusing, and a re-run is required to finish. Full
-> procedure in [`shared-brain-compliance.md` §2b](shared-brain-compliance.md#2b--what-the-revocation-does).
+> ⚠️ **Read `erasure_complete` before you certify anything.** Up to v3.6.1 this
+> was a manual duty — you had to compare the *"Found N contributions to delete"*
+> progress line against `contributions_deleted` yourself, because a failed
+> delete was written only to the server console and the run still said
+> *"Revocation complete"*. Since **v3.6.2** the operation reports its own
+> failures: `erasure_complete: false` and a `summary` beginning
+> *"⚠ ERASURE INCOMPLETE"* whenever anything survived, `ok: false`, and the
+> in-progress marker left set so synthesis stays blocked until you re-run.
+> The manual comparison is still a fine belt-and-braces check, but it is no
+> longer the only thing standing between a partial erasure and a false
+> certification. Full procedure in
+> [`shared-brain-compliance.md` §2b](shared-brain-compliance.md#2b--what-the-revocation-does).
 
 ### What revoke does NOT do (and what to do if you need it to)
 
@@ -233,8 +361,70 @@ Since v3.0.3 synthesis tracks **processed submission IDs** (plus a watermark der
 ### Synthesis or revoke fails with "GitHub returned a TRUNCATED tree listing"
 The repo has grown past GitHub's recursive-listing limit (~100k files). Operations that rely on a full listing (synthesis, pull, and especially revoke) **refuse instead of silently missing files** (v3.0.3) — an incomplete Article 17 erasure reported as success would be far worse. Archive or delete old `contributions/<fellow>/*.json` files (e.g. move them to a separate archive repo) to shrink the tree, then retry.
 
+> Correction (**v3.6.2**): for **revoke** specifically, this had been true of
+> the storage adapter and false of the operation. The adapter raised
+> `SHARED_BRAIN_TREE_TRUNCATED` as documented, but revoke's page scan caught
+> it and substituted an empty list — so it scanned zero pages, deleted none,
+> rebuilt, cleared the marker and reported *"Revocation complete"*: exactly the
+> outcome the refusal exists to prevent. Revoke now aborts on an unreadable
+> page listing and reports `erasure_complete: false`.
+
 ### Revoke failed with "the rebuild synthesis FAILED"
 The erasure part completed (contributions + provenance-tainted pages deleted) but the rebuild didn't run — commonly a rate-limit, since the rebuild re-reads every remaining contribution. The collective is missing the deleted pages until the rebuild completes, and an **in-progress marker** (v3.0.3) blocks ordinary synthesis so nothing is rebuilt from half-erased state. **Re-run the same revoke command** once the underlying problem clears (it's idempotent and finishes the job); the marker clears automatically on success.
+
+### Revoke's rebuild left pages unwritten (`pages_rebuild_failed > 0`) and synthesis is now stuck
+
+A deliberate trade-off with a sharp edge, so it is written down rather than left
+to be discovered. Outside a revocation, a page the synthesis could not write is
+a **self-healing** condition: the submissions that touch it are not marked
+processed, so the next ordinary synthesis retries them. Inside a revocation it
+is not, because `pages_rebuild_failed > 0` holds the in-progress marker — and
+while the marker is active there **is no next ordinary run**: synthesis refuses
+cohort-wide. The condition that normally clears itself cannot.
+
+The supported recovery is to **re-run the same revocation**. Be aware what that
+costs: it re-lists the collective and re-runs a *full* LLM synthesis at real
+spend, and if the cause is persistent — a page over GitHub's 1 MB file cap, a
+repeating SHA conflict, a rate limit that has not cleared — it fails the same
+way. Fix the underlying cause first, then re-run.
+
+If the re-run is not viable and `erasure_complete` was `true`, the marker is a
+plain JSON file in the shared repo: `meta/state/revocation-in-progress.json`.
+Setting `"active": false` there unblocks synthesis for the cohort. Understand
+exactly what you are accepting before you do it:
+
+- **Only ever do this when `erasure_complete: true`.** The marker's entire job
+  is to stop synthesis while the collective may be half-erased. Clearing it over
+  an incomplete erasure re-creates pages from data that is still mid-removal —
+  the precise failure it exists to prevent.
+- With the erasure complete, the revoked contributor's data is already gone and
+  unblocking cannot bring it back. What you are accepting is that the collective
+  is temporarily missing the pages the rebuild could not write — and the next
+  ordinary synthesis will retry exactly those, because their submissions were
+  never marked processed.
+- You still have no audit record if `audit_failed` was set. Record the
+  revocation manually.
+
+### Revoke reported "⚠ ERASURE INCOMPLETE"
+Some of the contributor's data is **still in shared storage**. Read the numbered problems in the message, then match them to the response fields:
+
+| Problem named | Field | What it means |
+|---|---|---|
+| *"N contribution files could NOT be deleted"* | `contributions_failed` | Their raw payloads survive. Usually a permissions or rate-limit error on the storage backend. |
+| *"the contributor's digest cache could NOT be deleted"* | `digest_failed` | Their synthesis cache survives — it contains their facts. |
+| *"N collective pages could NOT be checked or deleted"* | `pages_failed` | Those pages may still carry their content in Provenance or in merged facts. |
+| *"could not list the pages"* (run **ABORTED**) | `pages_failed: [{path: "*"}]` | Nothing was scanned at all. See the truncated-tree entry above. |
+| *"the erasure was NOT written to the audit log"* | `audit_failed` | The erasure may have happened, but you have no record of it. Since v3.6.2 this alone does **not** keep the in-progress marker set — synthesis stays available cohort-wide while you sort the audit log out. |
+
+Fix the named cause and **re-run the same revocation** — it is idempotent and will finish the remainder. Do not report the erasure as complete until a run comes back with `erasure_complete: true`. Under *this* headline the erasure is incomplete by definition, so the in-progress marker stays set the whole time and ordinary synthesis keeps refusing cohort-wide. (Under the other headline — *"Erasure completed … but did NOT finish cleanly"* — that is not automatic; read `marker_active`.)
+
+### Revoke said "Erasure completed … but the revocation did NOT finish cleanly"
+The contributor's data **is** gone (`erasure_complete: true`), but something after the erasure failed — the rebuild, some of the rebuilt pages, the audit write, clearing the marker, or resetting the synthesis watermark. The collective and/or your audit trail need the re-run; the data subject's request has been honoured, and the message says so explicitly rather than telling you the erasure is incomplete.
+
+Check `marker_cleared` to know whether the cohort is affected while you fix it:
+
+- `marker_cleared: false` — check `marker_active`. On this headline the cause is `rebuild_ok: false`, `pages_rebuild_failed > 0`, **or** the marker clear itself failing to write (`problems` names it: *"the revocation-in-progress marker could not be cleared"*). In the first two the collective is genuinely mid-erasure; in the third the collective is fine but the marker is stuck. All three block every contributor's synthesis until you re-run. Treat as urgent.
+- `marker_cleared: true` — only bookkeeping failed (`audit_failed` and/or `state_reset_failed`). Nothing is blocked; re-run when convenient, but do not certify the revocation until you have an audit record.
 
 ### A contributor pushed but their pages don't appear in collective
 Verify:

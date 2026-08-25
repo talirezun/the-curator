@@ -271,6 +271,24 @@ function formatUsd(n) {
   return n < 0.01 ? '$' + n.toFixed(4) : '$' + n.toFixed(2);
 }
 
+// Cost-readout helper for Health AI estimate/plan payloads (health-ai.js's
+// costFields(): {estimatedUsd, priceKnown, costNote}). A known price keeps
+// its exact prior rendering via formatUsd(). An UNPRICED model (reachable
+// today via the documented LLM_MODEL= override, or a fallback rung with no
+// entry in llm.js's price table) used to render as no cost text at all
+// (the quick-action badge simply never appeared) or a bare 'unknown' — this
+// surfaces the server's own costNote instead, so the wording has one
+// source of truth. `compact: true` (the per-button badge, where a full
+// sentence would break the pill layout) uses a short 'cost unknown' instead
+// of the longer server sentence. Returns null only when there's no
+// estimate to report (matching every existing caller's prior null-check).
+function costReadout(est, { compact = false } = {}) {
+  if (!est || est.error) return null;
+  if (typeof est.estimatedUsd === 'number') return formatUsd(est.estimatedUsd);
+  if (compact) return 'cost unknown';
+  return (typeof est.costNote === 'string' && est.costNote) || 'cost unknown';
+}
+
 function relTime(iso) {
   if (!iso) return 'never';
   const ms = Date.now() - new Date(iso).getTime();
@@ -767,7 +785,7 @@ function quickAiButton(key, label, busy, crossMountBusy) {
   const est = state.estimates[key];
   let costText = null;
   if (est === 'loading') costText = '…';
-  else if (est && !est.error && typeof est.estimatedUsd === 'number') costText = formatUsd(est.estimatedUsd);
+  else costText = costReadout(est, { compact: true });
   const disabled = busy || crossMountBusy || est === 'loading' || (est && est.error);
   const label2 = (busy === key + 'Plan' || busy === key + 'Scan' || busy === key + 'Estimate') ? label + '…' : label;
   return (
@@ -1261,7 +1279,7 @@ function confirmBrokenLinksPlan(slug) {
   const est = state.estimates.brokenLinks;
   const provider = state.aiProvider || 'the configured provider';
   const model = state.aiModel || '';
-  const cost = est && !est.error ? formatUsd(est.estimatedUsd) : null;
+  const cost = costReadout(est);
   state.confirm = {
     title: 'Ask AI to resolve broken links?',
     body: 'Sends each broken link’s context, plus the domain’s slug inventory' +
@@ -1302,7 +1320,7 @@ function confirmOrphansPlan(slug) {
   const est = state.estimates.orphans;
   const provider = state.aiProvider || 'the configured provider';
   const model = state.aiModel || '';
-  const cost = est && !est.error ? formatUsd(est.estimatedUsd) : null;
+  const cost = costReadout(est);
   state.confirm = {
     title: 'Ask AI to find homes for orphan pages?',
     body: 'Sends each orphan plus the domain’s entity/concept inventory' +
@@ -1437,7 +1455,7 @@ async function confirmSemanticScan(slug) {
 
   const provider = state.aiProvider || 'the configured provider';
   const model = state.aiModel || '';
-  const cost = formatUsd(est.estimatedUsd);
+  const cost = costReadout(est);
   state.confirm = {
     title: 'Scan for duplicate pages?',
     body: 'Scans ' + est.candidatePairs + ' candidate pairs' +

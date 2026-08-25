@@ -671,8 +671,8 @@ function panelStep4() {
         '<span class="sbw-help">Stored locally on your machine. Only shared as a UUID by default — see attribution below.</span>' +
       '</div>' +
       '<div class="sbw-field">' +
-        '<label class="sbw-checkbox-label"><input type="checkbox" id="sbw-attribute-name"><span>Show my name in Provenance sections (default: anonymous UUID)</span></label>' +
-        '<span class="sbw-help">Name attribution requires BOTH this flag and an admin-enabled cohort setting. If either is off, you appear as a short UUID.</span>' +
+        '<label class="sbw-checkbox-label"><input type="checkbox" id="sbw-attribute-name"><span>Show my name in my contribution records (default: anonymous UUID)</span></label>' +
+        '<span class="sbw-help">Off by default. Wiki pages always credit a short UUID either way; this controls only whether your name is stored in the contribution records every collaborator on the repo can read. It is set here, when you join — changing it later means disconnecting and re-joining. It applies only to future pushes and cannot remove a name already published.</span>' +
       '</div>' +
       '<div id="sbw-step4-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '<div class="sbw-actions">' +
@@ -1037,7 +1037,7 @@ function populateReview() {
     [...state.selectedDomains].join(', ') || (isReadOnlyVerdict() ? '(none — read-only members don’t push)' : '(none)');
   box.querySelector('[data-field="display-name"]').textContent = state.displayName;
   box.querySelector('[data-field="attribution"]').textContent =
-    state.attributeByName ? 'show name (admin must also enable cohort-side)' : 'anonymous UUID (default)';
+    state.attributeByName ? 'show name in contribution records' : 'anonymous UUID (default)';
 }
 
 function refreshConsentTextForMode() {

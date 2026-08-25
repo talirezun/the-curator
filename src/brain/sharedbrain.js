@@ -326,6 +326,67 @@ export async function loadPriorContent(domainsDir, domain, pagePath, sinceDate) 
   }
 }
 
+// ── contributor name attribution gate (v3.6.2) ─────────────────────────────
+
+/**
+ * Decide whether this connection's contributor display name may be written to
+ * SHARED storage, and return the value to write.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Both wizards ask the contributor "attribute my contributions by name?" and
+ * their consent review screens print, as the LAST line before the contributor
+ * agrees, either "show name" or "anonymous UUID (default)". The default is
+ * `false`. Until v3.6.2 `attribute_by_name` had writers and ZERO readers, so
+ * the default path told the contributor "anonymous UUID" and then wrote their
+ * real name into shared storage on every push. This function is the reader.
+ *
+ * THE PREDICATE IS STRICT-EQUALS-TRUE, DELIBERATELY.
+ * `validateConnection` did not constrain this field until v3.6.2, and
+ * `POST /api/sharedbrain/save` only fills it in when it is `undefined` — so a
+ * hand-edited or API-posted config can carry `null`, `0`, `1`, `"true"` or the
+ * string `"false"`. A truthiness test (`if (conn.attribute_by_name)`) would
+ * send the name for the STRING `"false"`, which is the precise inverse of what
+ * that value means. There is no `default:`/else arm that can fall into the
+ * permissive branch: the ONLY way to be attributed is an actual boolean
+ * `true`. Absent, null, undefined, unparseable, or a non-object connection all
+ * suppress. For a consent decision the safe direction is to withhold — the
+ * same rule v3.6.0 applied to the AI-disclosure gate ("failing closed when
+ * localStorage throws — for a consent, asking again is the safe direction").
+ *
+ * RETURN CONTRACT
+ * `string` → the caller MAY write this to shared storage.
+ * `null`   → the caller MUST NOT write any form of the name to shared storage.
+ *
+ * There is exactly ONE call of this function per push, and both consumers (the
+ * delta payload and the contribution payload) read that single value. Two call
+ * sites each re-deriving the decision is how these guards drift apart.
+ *
+ * NOT ENFORCED by this function:
+ *   - Names written by pushes BEFORE v3.6.2 are still in shared storage. This
+ *     is forward-looking only; there is no retroactive scrub. A contributor
+ *     who wants past names removed uses the revoke path, which erases their
+ *     contributions entirely (docs/shared-brain.md).
+ *   - The synthesised collective wiki has never carried names (Provenance uses
+ *     shortened UUIDs) and is unaffected either way.
+ *
+ * The parameter is deliberately named `conn`, not `connection`: it makes this
+ * the ONLY place in the file where the expression `connection.fellow_display_name`
+ * cannot appear, so a source guard can assert that no other read of that field
+ * survives anywhere in sharedbrain.js. Renaming it back would silently disarm
+ * that guard.
+ *
+ * @param {object} conn
+ * @returns {string|null}
+ */
+export function contributorNameForStorage(conn) {
+  if (!conn || typeof conn !== 'object') return null;
+  if (conn.attribute_by_name !== true) return null;
+  const name = conn.fellow_display_name;
+  if (typeof name !== 'string' || !name.trim()) return null;
+  return name;
+}
+
 // ── pushDomain ─────────────────────────────────────────────────────────────
 
 /**
@@ -394,6 +455,14 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
   if (!existsSync(wikiDir)) {
     return { ok: false, error: `pushDomain: wiki folder not found at ${wikiDir}` };
   }
+
+  // ── 1b. Contributor-name attribution gate (v3.6.2) ───────────────────────
+  // Resolved ONCE, here, and consumed by BOTH writers below — the per-page
+  // delta (delta.contributor_name) and the contribution payload
+  // (payload.fellow_display_name). Those are the only two routes from
+  // `connection.fellow_display_name` into shared storage; see the
+  // contributorNameForStorage docblock. `null` means "suppress everywhere".
+  const attributedName = contributorNameForStorage(connection);
 
   // ── 2. Find changed pages ────────────────────────────────────────────────
   const sinceDate = connection.last_push_at ? new Date(connection.last_push_at) : null;
@@ -551,7 +620,15 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     const result = await generateDeltaSummary({
       pagePath, currentContent, priorContent,
       fellowId: connection.fellow_id,
-      fellowDisplayName: connection.fellow_display_name,
+      // v3.6.2: gated. generateDeltaSummary copies this straight into
+      // `delta.contributor_name`, and every delta is written to shared storage
+      // inside the contribution payload — so this is a REAL leak path, not a
+      // local prompt input (buildDeltaPrompt never receives the name, so
+      // suppressing it does not change one byte of any LLM prompt).
+      // `''` rather than `null` because generateDeltaSummary hard-requires a
+      // string and would fail EVERY page on a non-string, which would turn a
+      // privacy default into a total push outage.
+      fellowDisplayName: attributedName === null ? '' : attributedName,
       domainPagePaths,
       options: {
         llmFn: opts.llmFn,
@@ -617,7 +694,14 @@ export async function pushDomain(connection, domainSlug, opts = {}) {
     const payload = {
       submission_id: submissionId,
       fellow_id: connection.fellow_id,
-      fellow_display_name: connection.fellow_display_name,
+      // v3.6.2: gated. The key is OMITTED (not written as null) when the
+      // contributor did not opt into name attribution — a stored `null` would
+      // still assert "there is a name field for this contributor", and omission
+      // is what makes a byte-level search of the written file provably clean.
+      // `groupMembers` initialises `display_name: null` and only overwrites on
+      // a non-empty string, so the admin member directory degrades to the
+      // short-ID label with no change needed there.
+      ...(attributedName === null ? {} : { fellow_display_name: attributedName }),
       domain: connection.shared_domain,
       domain_display_name: connection.shared_domain_display_name || connection.shared_domain,
       contributed_at: pushTimestamp,

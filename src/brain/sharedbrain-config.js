@@ -194,6 +194,17 @@ function validateConnection(conn) {
   if (conn.read_only !== undefined && typeof conn.read_only !== 'boolean') {
     throw new Error('SharedBrain connection: read_only must be a boolean');
   }
+  // v3.6.2: attribute_by_name decides whether the contributor's real display
+  // name is written to SHARED storage (contributorNameForStorage in
+  // sharedbrain.js). It went unvalidated from v3.0.0 to v3.6.2 while having no
+  // readers at all, so a hand-edited config can hold `null`, `0`, or the STRING
+  // "false". This makes a malformed value loud at the save boundary. It is
+  // defence in depth ONLY — the runtime gate is strict `=== true` and already
+  // suppresses every one of those values; do not weaken the gate on the
+  // strength of this check.
+  if (conn.attribute_by_name !== undefined && typeof conn.attribute_by_name !== 'boolean') {
+    throw new Error('SharedBrain connection: attribute_by_name must be a boolean');
+  }
   // v3.0.5 (Phase 4.1): admin_token gates the revoke endpoint. Optional
   // (only the cohort admin's connection has one); null is the explicit
   // "no admin token" value from older schema examples.

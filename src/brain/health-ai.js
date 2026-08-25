@@ -22,7 +22,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
-import { generateText, getProviderInfo } from './llm.js';
+import { generateText, getProviderInfo, getModelPrice } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from './health.js';
 
 // Excerpt window around the broken link — ~4 KB total (≈800 words). Large
@@ -341,21 +341,73 @@ export async function suggestOrphanHomes(domain, issue) {
 const SEMANTIC_BATCH_SIZE = 20;
 const FIRST_PARA_MAX = 500;     // per-page content sample sent to the LLM
 const EST_TOKENS_PER_PAIR = 400; // rough input+output budget per pair in a batch
-// Rough pricing heuristics (USD per 1M tokens). These are intentionally
-// conservative — we show them as estimates only, not billing. Keeping them
-// in-file avoids a separate pricing table that drifts silently.
-const MODEL_PRICING = {
-  // Gemini Flash Lite — input $0.075, output $0.30 per 1M as of 2026-04
-  'gemini-2.5-flash-lite': { input: 0.075, output: 0.30 },
-  'gemini-2.5-flash':      { input: 0.30,  output: 2.50 },
-  // Anthropic Haiku 4.5 — input $1.00, output $5.00 per 1M as of 2026-04
-  'claude-haiku-4-5':      { input: 1.00,  output: 5.00 },
-};
 
+/**
+ * USD cost for a call, priced from llm.js's `MODEL_PRICES_USD_PER_MTOK` via
+ * its exported `getModelPrice()` accessor — the single authoritative price
+ * table for the whole app (it also drives the fallback-chain cost-tier
+ * comparison and carries an offline invariant that every DEFAULTS/
+ * FALLBACK_CHAINS model id is priced).
+ *
+ * This module used to keep its OWN 3-entry copy here ("keeping them in-file
+ * avoids a separate pricing table that drifts silently" — which is exactly
+ * backwards: a second hand-maintained copy IS the drift). It had gone ~25%
+ * stale on the Gemini default (0.075/0.30 vs the current 0.10/0.40) and had
+ * no entry at all for any of the five FALLBACK_CHAINS rungs or for
+ * claude-sonnet-4-5 — the model this project's own CLAUDE.md documents
+ * opting into via `LLM_MODEL`. Any of those active models made
+ * `estimateUsdCost` return `null`, which two of the four cost-readout call
+ * sites in app.js render as `''` — an empty string, not even a "cost
+ * unknown" placeholder. Importing the shared accessor fixes both the stale
+ * numbers and the missing coverage in one move, and makes a second copy
+ * structurally impossible to reintroduce by accident.
+ *
+ * @param {string} provider - unused; kept in the signature so this stays a
+ *   drop-in replacement for the six existing call sites (all of which
+ *   already have `provider` in scope from `getProviderInfo()`).
+ */
 function estimateUsdCost(provider, model, inputTokens, outputTokens) {
-  const p = MODEL_PRICING[model];
+  const p = getModelPrice(model);
   if (!p) return null;
   return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+}
+
+/**
+ * Cluster of cost fields for a cost/estimate payload. `estimatedUsd` keeps
+ * its exact pre-existing contract (`number|null`) so nothing that already
+ * checks `!= null` breaks. `priceKnown`/`costNote` are ADDITIVE — a consumer
+ * that wants to show an honest "cost estimate unavailable" message instead
+ * of silently rendering nothing can key off `priceKnown === false` without
+ * this module changing what `estimatedUsd` means.
+ *
+ * `costNote` IS the wired-up signal. Both frontends' cost-readout helpers
+ * (`formatHealthCost` in src/public/app.js, `costReadout` in
+ * src/public/next/views/domains.js) render it verbatim on every pre-run
+ * confirm dialog and every post-run "planning cost" readout whenever
+ * `estimatedUsd` is null — see docs/ai-health.md for the one deliberate
+ * exception (the `/next` quick-action button badge is too narrow for a full
+ * sentence and shows a short "cost unknown" instead).
+ *
+ * `priceKnown` itself has NO current reader anywhere in the app — every
+ * consumer keys off `costNote`'s truthiness instead (`typeof …costNote ===
+ * 'string' && …costNote`), which is sufficient on its own. The boolean is
+ * kept as a structured, unambiguous alternative for a future consumer that
+ * wants a plain true/false rather than parsing prose (e.g. an API client,
+ * or a UI that wants to render an icon instead of a sentence) — not because
+ * anything reads it today.
+ *
+ * @returns {{estimatedUsd: number|null, priceKnown: boolean, costNote: string|null}}
+ */
+function costFields(provider, model, inputTokens, outputTokens) {
+  const estimatedUsd = estimateUsdCost(provider, model, inputTokens, outputTokens);
+  if (estimatedUsd === null) {
+    return {
+      estimatedUsd: null,
+      priceKnown: false,
+      costNote: `Cost estimate unavailable — no published price for model "${model}".`,
+    };
+  }
+  return { estimatedUsd, priceKnown: true, costNote: null };
 }
 
 /**
@@ -390,14 +442,13 @@ export async function estimateSemanticDuplicateScan(domain, maxPairs = SEMANTIC_
   const estimatedTokens = pairs.length * EST_TOKENS_PER_PAIR;
   const { provider, model } = getProviderInfo();
   // Rough 60/40 input/output split
-  const estimatedUsd = estimateUsdCost(provider, model, estimatedTokens * 0.6, estimatedTokens * 0.4);
   return {
     pageCount,
     candidatePairs: pairs.length,
     totalCandidates,
     truncated,
     estimatedTokens,
-    estimatedUsd,
+    ...costFields(provider, model, estimatedTokens * 0.6, estimatedTokens * 0.4),
     provider,
     model,
   };
@@ -559,13 +610,12 @@ export async function scanSemanticDuplicates(domain, opts = {}, onEvent = () => 
   const approxInputTokens = Math.round(totalInputChars / 4);
   const approxOutputTokens = Math.round(totalOutputChars / 4);
   const { provider, model } = getProviderInfo();
-  const actualUsd = estimateUsdCost(provider, model, approxInputTokens, approxOutputTokens);
 
   const cost = {
     provider, model,
     inputTokens: approxInputTokens,
     outputTokens: approxOutputTokens,
-    estimatedUsd: actualUsd,
+    ...costFields(provider, model, approxInputTokens, approxOutputTokens),
   };
   onEvent({ type: 'done', pairs: acceptedPairs, cost });
   return { pairs: acceptedPairs, cost };
@@ -743,7 +793,6 @@ export async function estimateBrokenLinkFix(domain) {
   const estimatedTokens = needAi.length * EST_TOKENS_PER_BROKEN_TARGET
     + Math.ceil(needAi.length / BROKEN_LINK_BATCH_SIZE) * Math.round((entitySlugs.length + conceptSlugs.length + summarySlugs.length) * 6); // inventory resent per batch
   const { provider, model } = getProviderInfo();
-  const estimatedUsd = estimateUsdCost(provider, model, estimatedTokens * 0.85, estimatedTokens * 0.15);
 
   return {
     totalOccurrences: (report.brokenLinks || []).length,
@@ -752,7 +801,7 @@ export async function estimateBrokenLinkFix(domain) {
     needAi: needAi.length,
     inventorySize: entitySlugs.length + conceptSlugs.length + summarySlugs.length,
     estimatedTokens,
-    estimatedUsd,
+    ...costFields(provider, model, estimatedTokens * 0.85, estimatedTokens * 0.15),
     provider,
     model,
   };
@@ -941,7 +990,7 @@ export async function planBrokenLinkFixes(domain, opts = {}, onEvent = () => {})
     provider, model,
     inputTokens: approxInputTokens,
     outputTokens: approxOutputTokens,
-    estimatedUsd: estimateUsdCost(provider, model, approxInputTokens, approxOutputTokens),
+    ...costFields(provider, model, approxInputTokens, approxOutputTokens),
   };
 
   onEvent({ type: 'done', plan, summary, cost });
@@ -981,7 +1030,7 @@ export async function estimateOrphanRescue(domain) {
     orphanCount: orphans.length,
     inventorySize,
     estimatedTokens,
-    estimatedUsd: estimateUsdCost(provider, model, estimatedTokens * 0.9, estimatedTokens * 0.1),
+    ...costFields(provider, model, estimatedTokens * 0.9, estimatedTokens * 0.1),
     provider, model,
   };
 }
@@ -1113,7 +1162,12 @@ export async function planOrphanRescue(domain, opts = {}, onEvent = () => {}) {
   const approxInputTokens = Math.round(totalInputChars / 4);
   const approxOutputTokens = Math.round(totalOutputChars / 4);
   const { provider, model } = getProviderInfo();
-  const cost = { provider, model, inputTokens: approxInputTokens, outputTokens: approxOutputTokens, estimatedUsd: estimateUsdCost(provider, model, approxInputTokens, approxOutputTokens) };
+  const cost = {
+    provider, model,
+    inputTokens: approxInputTokens,
+    outputTokens: approxOutputTokens,
+    ...costFields(provider, model, approxInputTokens, approxOutputTokens),
+  };
 
   onEvent({ type: 'done', plan, summary, cost });
   return { plan, summary, cost };
@@ -1125,4 +1179,6 @@ export const __testing = {
   buildLinkResolver,
   groupBrokenLinks,
   slugifyText,
+  estimateUsdCost,
+  costFields,
 };

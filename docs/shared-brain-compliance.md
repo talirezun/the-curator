@@ -16,10 +16,10 @@ The table below covers everything that DOES leave a contributor's machine and en
 |---|---|---|---|
 | Wiki page text (entities, concepts, summaries) | `collective/<domain>/wiki/` in shared repo | The contributor explicitly chose to contribute this domain. Pages are LLM-synthesised summaries of their facts, not raw drafts. | Content — not directly PII unless contributors write PII into their wiki pages themselves |
 | Fellow UUID (random 128-bit identifier) | `contributions/<fellow_id>/*.json` + Provenance sections on every page | Identifies which contributor authored which facts so synthesis can attribute provenance | **Pseudonymous identifier** under Article 4(5) — not directly identifying unless mapped to a real name |
-| Real display name (`fellow_display_name`) | `contributions/<fellow_id>/*.json` — **on every push, unconditionally**. Also copied into each delta as `contributor_name`. NOT on synthesised wiki pages (see §3). | Whatever the contributor typed as their display name in the connection wizard. It is read back to build the admin member directory. | **Personal data** under Article 4(1) if the contributor entered a real name. Readable by every collaborator on the private repo. |
+| Real display name (`fellow_display_name`) | `contributions/<fellow_id>/*.json`, and copied into each delta as `contributor_name` — **only when the contributor opted in** via `attribute_by_name` (v3.6.2+; the default is off, and an absent or non-boolean flag suppresses). When they did **not** opt in, the payload key is omitted entirely and the delta key is present but empty (`""`) — no name is stored either way; the reason the two routes differ is in [`shared-brain.md` §6a](shared-brain.md). NOT on synthesised wiki pages, even for opted-in contributors (see §3). | Whatever the contributor typed as their display name in the connection wizard. It is read back to build the admin member directory, which shows a name for **any** contributor whose stored payloads carry one — including payloads pushed before v3.6.2, when the name was written unconditionally — and the 8-character short fellow-ID for everyone else. | **Personal data** under Article 4(1) if the contributor entered a real name. Readable by every collaborator on the private repo. **Before v3.6.2 it was written unconditionally on every push** — the gate is not retroactive, so names already published remain in shared storage and in that repository's git history; revoke is the only removal path. **Withdrawing this consent has no in-place toggle — see §1a.** |
 | Contribution timestamps | `contributions/<fellow_id>/<submission_id>.json` (the `contributed_at` field) | Used by synthesis for chronological ordering | Metadata; combinable with UUID to infer activity patterns |
 | Synthesis state | `meta/state/last-synthesis.json` | Tracks when the last synthesis ran across the whole brain | Not contributor-specific |
-| Revocation audit log | `state/revocations.jsonl` | Records each revocation event (UUID + timestamp) for admin accountability | Pseudonymous; no real names |
+| Revocation audit log | `state/revocations.jsonl` | Records each revocation event (UUID + timestamp + a sha256 hash of the admin token + success/failure counts) for admin accountability. Only for runs that reach the audit step — see §2b step 5. | Pseudonymous; no real names |
 
 **What's never in shared storage:**
 
@@ -30,16 +30,56 @@ The table below covers everything that DOES leave a contributor's machine and en
 - Each contributor's API keys, PATs, or any credential
 - LLM prompt/response data (synthesis runs locally on each contributor's machine, never in shared storage)
 
-> **The display name is not in that list, and that is a real disclosure obligation.**
-> Whatever a contributor types as their display name is written to the shared repo on every
-> single push, with no flag governing it, and every collaborator on the repo can read it.
-> Tell contributors this before they fill in the field. A contributor who wants to stay
-> pseudonymous should enter a pseudonym, not their legal name — the field is free text and
-> nothing downstream depends on it being real.
+> **The display name is not in that list, and it is governed by consent — not by absence.**
+> Since **v3.6.2** a contributor's display name is written to the shared repo only when they
+> ticked *"Show my name in my contribution records (default: anonymous UUID)"* in the join
+> wizard (`attribute_by_name`); the default is off, and an
+> absent or non-boolean flag suppresses. When they did opt in, the name is written on **every
+> push** and every collaborator on the repo can read it. Tell contributors this before they
+> fill in the field. A contributor who wants to stay pseudonymous should leave the box
+> unticked — and should still enter a pseudonym rather than their legal name, since the field
+> is free text and nothing downstream depends on it being real.
+>
+> **Before v3.6.2 the name was written unconditionally, with no flag governing it.** The gate
+> is not retroactive: names already in `contributions/<fellow_id>/*.json` remain in shared
+> storage and in that repository's git history. Revocation (§2) is the only removal path.
+>
+> **Which means the admin member directory is not changed by upgrading, and you must not tell a
+> data subject otherwise.** The directory is built by reading *every* contribution payload ever
+> stored (`groupMembers`, `src/brain/sharedbrain.js`) and displays a name for anyone whose
+> payloads carry one, whenever it was written. On a cohort that existed before v3.6.2, every
+> contributor who entered a real name is **still listed by that name** after the upgrade, opted
+> in or not. Only someone who has never had a name written — a joiner on a post-v3.6.2 cohort
+> who left the box unticked, or someone whose payloads have all been revoked — shows as a bare
+> short-ID. Check the directory before making any statement about it.
 >
 > The **synthesised wiki pages** are a different matter and the pseudonymity claim there does
-> hold: `## Provenance` sections and conflict markers carry only the first 8 hex characters of
-> the fellow UUID. The display name is never rendered onto a collective page.
+> hold, for opted-in and opted-out contributors alike: `## Provenance` sections and conflict
+> markers carry only the first 8 hex characters of the fellow UUID. The display name is never
+> rendered onto a collective page.
+
+### 1a — Withdrawing name-attribution consent (Article 7(3)) — current limitation
+
+`attribute_by_name` is a **consent** in the Article 7 sense: it is opt-in, it defaults to off,
+and it governs whether personal data (a real name, if the contributor entered one) is published
+to shared storage. Article 7(3) expects withdrawal to be as easy as giving it. **Today it is
+not**, and this is stated plainly rather than implied:
+
+| | How it works today |
+|---|---|
+| **When it is chosen** | Once, in the join wizard (step 4). It is saved with the connection. |
+| **How to change it** | There is **no attribution toggle on the connection card**. The contributor must **Disconnect the Shared Brain connection and re-join** with the box in the other state. |
+| **Is it retroactive?** | **No.** Un-ticking (or re-joining without it) stops *future* pushes from carrying the name. Names already written into `contributions/<fellow_id>/*.json` stay in shared storage and in that repository's git history — and the admin member directory keeps displaying the old name for as long as any payload carrying it survives. |
+| **How to remove names already published** | A **full revocation** (§2). That is the only mechanism that deletes a contributor's submission payloads from shared storage — and even then, see §2c on git history. |
+
+**What this means in practice.** A withdrawal request that only needs to affect future pushes is
+satisfied by Disconnect + re-join, and a contributor can do it themselves. A withdrawal request
+that must also remove names already published is an **erasure** request and should be handled
+under §2 — route it to the cohort admin as an Article 17 revocation. Do not describe the wizard
+setting as a way to remove a name that has already been pushed.
+
+A first-class attribution toggle on the connection card (changeable without disconnecting) is a
+**known follow-up**, not a shipped capability.
 
 ---
 
@@ -58,33 +98,63 @@ Only the **cohort admin** can revoke a contributor. Two-factor gate prevents acc
 
 When `POST /api/sharedbrain/:connection_id/revoke` runs with valid credentials and confirmation, the system:
 
-1. **Attempts to delete the contributor's submission payloads** — it lists `contributions/<fellow_id>/` and deletes each file in turn. ⚠️ **A per-file delete failure is logged to the server console and otherwise swallowed**: the loop continues, the operation does not fail, and the final message can still read "Revocation complete". The only signal you get is a count. **The admin MUST verify erasure** — see the box below.
-2. **Deletes the contributor's digest** — `digests/<fellow_id>/latest.json` (the per-fellow synthesis input cache) is removed. A failure here is likewise only logged.
-3. **Rebuilds every affected collective page** — every page that referenced the revoked fellow's UUID in its Provenance section is regenerated from the remaining contributors' contributions only. Their facts no longer appear in the unified content. Pages with no remaining contributors are deleted entirely.
+1. **Deletes the contributor's submission payloads** — it lists `contributions/<fellow_id>/` and deletes each file in turn. A per-file failure does **not** stop the run (the remaining payloads are still erased) but since **v3.6.2** it is recorded in `contributions_failed` and forces `erasure_complete: false`.
+2. **Deletes the contributor's digest** — `digests/<fellow_id>/latest.json` (the per-fellow synthesis input cache, which would hold their facts) is removed. A failure is recorded in `digest_failed` and is likewise an erasure failure. **On a real deployment today this step is a defensive no-op**: nothing in the shipped code ever *writes* a digest (`storeDigest` has no callers outside the storage adapters), so the file does not exist, the delete reports "nothing to remove", and `digest_failed` stays `null`. The step and its erasure-failure classification are in place for when digests are wired up — see the Deferred table in [`docs/shared-brain.md`](shared-brain.md).
+3. **Scans and rebuilds every affected collective page** — every page that referenced the revoked fellow in its Provenance section is deleted (matched on the 8-character short fellow-ID, which is what Provenance actually writes; a full UUID is matched too), then regenerated from the remaining contributors' contributions only. Their facts no longer appear in the unified content. Pages with no remaining contributors stay deleted. Per-page failures are recorded in `pages_failed`. **If the page listing itself cannot be read the run ABORTS** without rebuilding — not knowing *what* to erase is an unattempted erasure, not a partial one.
 4. **Updates the synthesis state** — `meta/state/last-synthesis.json` is rebuilt to reflect the post-revocation state.
-5. **Appends an audit entry** — `state/revocations.jsonl` gains one line: `{"revoked_at": "<ISO>", "fellow_id": "<uuid>", "by_admin_token_hash": "<sha256>", "contributions_deleted": N, "pages_deleted": M, "pages_rebuilt": R, "rebuild_ok": true|false, "revocation_id": "<uuid>"}`. The audit log contains only the UUID — no real names, no contribution content. Admins can review revocation history without exposing PII.
+5. **Appends an audit entry** — `state/revocations.jsonl` gains one line: `{"revoked_at": "<ISO>", "fellow_id": "<uuid>", "by_admin_token_hash": "<sha256>", "contributions_deleted": N, "pages_deleted": M, "pages_rebuilt": R, "rebuild_ok": true|false, "erasure_complete": true|false, "contributions_failed": N, "pages_failed": N, "digest_failed": true|false, "pages_rebuild_failed": N, "state_reset_failed": true|false, "revocation_id": "<uuid>"}`. Failures are recorded as **counts and booleans only** — the audit log still contains no real names and no contribution content, and deliberately no provider error text either. Admins can review revocation history — including attempts that *recorded* failures — without exposing PII. **Note the limit, because it matters for an audit trail:** this line is written near the end of the run, so it exists only for revocations that got that far. A run that aborts earlier writes **no** audit line at all — that covers an unreadable collective-page listing (step 3), and a failure to initialise storage, to write the in-progress marker, or to list the contributor's submissions. Those attempts leave `state/revocations.jsonl` looking as if they never happened; record them yourself from the API response.
 
-> ### ⚠️ Verify the erasure — "Revocation complete" is not proof
+> ### ⚠️ Read `erasure_complete` before certifying an erasure
 >
-> Individual delete failures (a transient GitHub 5xx, a rate-limit, a SHA conflict) are caught and
-> written to the server console only. They do not fail the operation and they do not appear in the
-> progress stream. A revocation that erased 9 of 11 payloads reports success.
+> **Up to v3.6.1 this section described a manual duty, because the operation could not be trusted
+> to report its own failures.** Individual delete failures (a transient GitHub 5xx, a rate-limit,
+> a SHA conflict) were caught and written to the server console only: they did not fail the
+> operation and did not appear in the progress stream, so a revocation that erased 9 of 11
+> payloads reported success. An admin could certify an Article 17 erasure that had not happened.
 >
-> **After every revocation, do this:**
+> **Since v3.6.2 the operation is self-reporting.** Every erasure step records what failed:
 >
-> 1. Note the *"Found N contributions to delete"* line in the progress stream.
-> 2. Compare it against `contributions_deleted` in the audit record (also returned in the response
->    body). **They must be equal.**
-> 3. If they differ — or if you want independent confirmation — check the repo directly:
->    `contributions/<fellow_id>/` should be gone, as should `digests/<fellow_id>/`.
-> 4. If anything remains, **re-run the revocation**. It is idempotent: already-deleted files are
->    simply absent, and the rebuild recomputes from whatever survives.
+> - `erasure_complete: false` whenever any contribution, the digest, or any provenance-tainted
+>   page survived. This is the single field to read before answering a data subject.
+> - `contributions_failed`, `digest_failed`, `pages_failed` name exactly what survived and why.
+> - `ok: false`, with one of **two** headlines on `summary` — they mean different things and the
+>   distinction is deliberate:
+>   - **"⚠ ERASURE INCOMPLETE — this contributor's data has NOT been fully removed"** — some of
+>     their data survived. `erasure_complete` is `false`. Do not certify.
+>   - **"Erasure completed (…), but the revocation did NOT finish cleanly"** — the erasure itself
+>     succeeded (`erasure_complete: true`) and a *later* step failed: the rebuild, some rebuilt
+>     pages, the audit write, the watermark reset, or clearing the marker. The data subject's
+>     request has been honoured; the collective and/or your audit trail still need the re-run.
 >
-> Also check `rebuild_ok`. If it is `false`, the erasure happened but the collective pages were not
-> rebuilt; the in-progress marker stays set, ordinary synthesis keeps refusing, and you must re-run
-> the revocation to finish. That state is reported, not silent.
+>   The words *"Revocation complete"* are produced only when nothing at all failed.
+> - **When the erasure itself is incomplete the revocation-in-progress marker is not cleared**, so
+>   ordinary synthesis refuses for every contributor in the cohort until a clean re-run. A partial
+>   erasure cannot be quietly walked away from. The marker is held only by things that leave the
+>   collective mid-erasure: a surviving contribution, digest or page; a failed rebuild; pages the
+>   rebuild could not write; or the case where the clear itself failed to write. A failed
+>   **audit** write and a failed **watermark** reset are reported as problems and set `ok: false`
+>   but do **not** hold the marker — neither says anything about whether the collective is
+>   half-erased, and taking a whole cohort offline for a bookkeeping failure was judged the worse
+>   outcome. **So do not infer the marker from the fact that something failed — read the result.**
+>   `marker_active` answers "is cohort synthesis blocked right now?" directly; `marker_cleared`
+>   says whether this run cleared it. See
+>   [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) for
+>   the field table and the recovery paths.
+> - When the run reaches the audit step, the audit line records the failure counts, so an
+>   incomplete attempt is visible in `state/revocations.jsonl` afterwards rather than looking like
+>   a clean run. **A run that aborts before that step writes no line at all** — see step 5 above.
 >
-> If you are answering a formal Article 17 request, step 3 is the evidence — record it.
+> **After every revocation:**
+>
+> 1. Confirm `erasure_complete` is `true`. If it is `false`, read the numbered problems in
+>    `summary`, fix the cause, and **re-run the revocation** — it is idempotent, and it will
+>    erase whatever is left.
+> 2. For a formal Article 17 response, take independent evidence from the repo itself:
+>    `contributions/<fellow_id>/` and `digests/<fellow_id>/` should both be gone. **Record it** —
+>    a self-report is a strong signal, but the repository state is the evidence.
+> 3. `rebuild_ok: false` (or `pages_rebuild_failed > 0`) means the erasure happened but the
+>    collective was not fully rebuilt. The data subject's request is honoured; the collective
+>    still needs the re-run.
 
 ### 2c — What revocation does NOT remove
 

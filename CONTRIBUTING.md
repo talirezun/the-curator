@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (65 suites total — 48 OFFLINE
+The Curator has an extensive battle-test suite (68 suites total — 51 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the

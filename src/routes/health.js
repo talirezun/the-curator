@@ -621,7 +621,15 @@ router.post('/:domain/dismiss', async (req, res) => {
     if (!issue || typeof issue !== 'object') {
       return res.status(400).json({ error: 'Missing issue' });
     }
-    await assertDomain(domain);
+    // Refuse read-only Shared Brain mirrors, matching the MCP twin
+    // (mcp/tools/dismissed.js:98). The dismissal store lives at
+    // <domain>/wiki/.health-dismissed.jsonl — INSIDE the git-tracked, synced
+    // wiki/ folder — so a dismissal recorded on a mirror is overwritten on the
+    // next Pull exactly like a "fix" is. assertWritableDomain calls
+    // assertDomain internally, so the 404-on-unknown-domain behaviour is
+    // unchanged; this only adds the 400 refusal. It must stay AHEAD of
+    // addDismissal(), whose writeRecords() mkdirs wiki/ before writing.
+    await assertWritableDomain(domain);
     const result = await addDismissal(domain, type, issue);
     if (!result.ok) return res.status(400).json({ error: result.reason });
     res.json(result);
@@ -642,7 +650,11 @@ router.post('/:domain/undismiss', async (req, res) => {
     if (!issue || typeof issue !== 'object') {
       return res.status(400).json({ error: 'Missing issue' });
     }
-    await assertDomain(domain);
+    // Same rule as /dismiss above, and the same MCP parity
+    // (mcp/tools/dismissed.js:160). removeDismissal REWRITES the whole JSONL
+    // file, so on a mirror it destroys locally-visible dismissals that the
+    // next Pull would restore anyway — a pure lose-lose.
+    await assertWritableDomain(domain);
     const result = await removeDismissal(domain, type, issue);
     if (!result.ok) return res.status(400).json({ error: result.reason });
     res.json(result);

@@ -230,7 +230,7 @@ For each pair (a, b) of incoming new_facts on the same page:
   - Context Engineering coined in 2023 *(per b7c1abcd)*
 ```
 
-The parenthesised id is the shortened fellow UUID (`defaultShortenId` — leading hex characters, per `PROVENANCE_UUID_DISPLAY_LEN`), with no prefix and never a name.
+The parenthesised id is the shortened fellow UUID (`defaultShortenId` — leading hex characters, per `PROVENANCE_UUID_DISPLAY_LEN`), with no prefix and never a name — including for contributors who opted into name attribution, which affects contribution payloads only (Decision 6a).
 
 Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP libraries. **The Health scanner does NOT detect the marker** — `src/brain/health.js` has no conflict handling at all, and the constant's own comment ("Health-scannable in Phase 4+") is aspirational rather than a description of shipped behaviour. Discovery is therefore via the synthesis result, which since v3.0.4 carries an additive `conflict_pages: string[]` and names the affected pages in the summary, or by grepping the mirror for `CONFLICTING SOURCES`. The user resolves interactively by editing the upstream personal opted-in domain and re-pushing.
 
@@ -246,29 +246,81 @@ Cross-domain link syntax (`[[shared:work-ai:openai]]`) is a future roadmap item 
 
 ### Decision 6 — GDPR / Data handling
 
-**Decision: Privacy-first defaults with explicit two-flag opt-in for name attribution; mandatory admin-only revoke endpoint; configurable IP modes; EU residency documented as a deployment caveat.**
+**Decision: Privacy-first defaults with a contributor-controlled opt-in for name attribution; mandatory admin-only revoke endpoint; configurable IP modes; EU residency documented as a deployment caveat.**
 
 Full detail in [`docs/shared-brain-compliance.md`](shared-brain-compliance.md). Summary:
 
-#### 6a. Provenance attribution — UUIDs, always (name attribution is UNIMPLEMENTED)
+#### 6a. Attribution — UUIDs on collective pages always; the real name only if you opt in
 
-**As shipped, the `## Provenance` section always uses the shortened `fellow_id` — the first 8 hex
-characters of the UUID (`PROVENANCE_UUID_DISPLAY_LEN` in `src/brain/sharedbrain-synthesis.js`).
-There is no code path that puts a real name on a collective page.** Conflict markers use the same
-shortened id.
+There are two different surfaces here and they have always behaved differently. Read both.
 
-The originally-designed two-flag gate does **not** exist:
+**Collective wiki pages: shortened UUID, always, no flag involved.** The `## Provenance` section
+uses the shortened `fellow_id` — the leading hex characters of the UUID
+(`PROVENANCE_UUID_DISPLAY_LEN` in `src/brain/sharedbrain-synthesis.js`). Conflict markers use the
+same shortened id. **No code path has ever put a real name on a collective page**, and none does
+now. Nothing in this section changes that.
 
-- `allow_name_attribution` was never implemented — the identifier appears nowhere in the codebase.
-- `attribute_by_name` is captured by the contributor wizard and stored on the connection, but
-  **nothing reads it**. It is inert today.
+**Contribution payloads: gated on `attribute_by_name` since v3.6.2.** Every push writes a payload to
+`contributions/<fellow_id>/<submission>.json` in shared storage, readable by every collaborator on
+the repo. That payload used to carry `fellow_display_name` — and each delta inside it a duplicate
+`contributor_name` — **unconditionally, on every push, regardless of the wizard checkbox**, because
+`attribute_by_name` had writers and no readers. Both routes are now gated by
+`contributorNameForStorage()` in `src/brain/sharedbrain.js`:
 
-The practical effect is *more* private than the design promised on the page surface, and the
-default (UUID) is what everyone gets. But note the separate, real disclosure: `fellow_display_name`
-is written to `contributions/<fellow_id>/*.json` on every push regardless of any flag — see
-[`docs/shared-brain-compliance.md` §1](shared-brain-compliance.md#1--what-pii-personal-data-is-stored-and-where).
-If name attribution is ever implemented, the gate described above is the intended design and this
-section should be rewritten to match the code rather than the other way round.
+| `attribute_by_name` | Contribution payload (`fellow_display_name`) | Each delta (`contributor_name`) |
+|---|---|---|
+| boolean `true` (you ticked the box) | carries your name | carries your name |
+| boolean `false` (the default) | **key omitted entirely** | **key present, value `""`** |
+| absent, `null`, or any non-boolean | **key omitted entirely** — fails closed | **key present, value `""`** — fails closed |
+
+The two routes suppress the name equally; they differ in *how*, and the
+difference is load-bearing rather than cosmetic. The contribution payload
+**omits** the key (`sharedbrain.js` — `...(attributedName === null ? {} : {...})`),
+because a stored `null` would still assert "there is a name field for this
+contributor", and omission is what makes a byte-level search of the written file
+provably clean. The per-page delta writes an **empty string** (`sharedbrain.js`
+passes `attributedName === null ? '' : attributedName` and
+`sharedbrain-delta.js` copies it into `delta.contributor_name` unconditionally),
+because `generateDeltaSummary` hard-requires a string and would fail *every*
+page on a non-string — turning a privacy default into a total push outage. So
+the provably-clean-file property holds for the contribution payload only; the
+delta carries an empty key. No name is written on either route.
+
+The predicate is strict `=== true`, so a malformed value cannot attribute you by accident. In
+particular the *string* `"false"` is truthy in JavaScript and would have leaked under a naive
+truthiness test; it suppresses.
+
+**Older connections do carry the key**, and the consequence runs the other way. `POST
+/api/sharedbrain/save` has defaulted `attribute_by_name` to `false` when absent since the flag
+was introduced (v3.0.0-beta.1), and both wizards have always sent it — so a connection saved
+before v3.6.2 already holds a real boolean. A contributor who *left the box unticked* is
+therefore suppressed the moment they update, with no migration and no re-save. But a contributor
+who **ticked it** holds `true` on disk and keeps being attributed by name after upgrading, with
+no re-consent prompt. That matches the box they ticked, which is why it is left alone — but it
+means the upgrade is not a reset: anyone who wants to change the answer must go through Disconnect
++ re-join (there is still no in-place toggle; see the compliance doc §1a).
+
+Your `fellow_id` (UUID) and each delta's `contributor_id` are unaffected either way — this makes
+contributions **pseudonymous, not unattributable**. The admin member directory falls back to the
+short-ID label for anyone whose stored payloads carry **no** name — which is not the same set as
+"anyone who has not opted in", because `groupMembers` reads every payload ever stored and
+pre-v3.6.2 pushes wrote the name unconditionally. On a cohort that predates this release the
+directory is unchanged by upgrading; see the paragraph below and the compliance doc §1.
+
+**This is forward-looking only. There is no retroactive scrub.** Names written by pushes made
+*before* v3.6.2 — or before you unticked the box — are still in shared storage, in every
+contribution payload already committed there, and in that repository's git history. Updating the
+app removes nothing that is already published. A contributor who wants past names removed must use
+the revoke path (§6b), which erases their contributions entirely; there is no operation that
+strips the name while keeping the contribution.
+
+**`allow_name_attribution` is not implemented and is not planned.** The original design described a
+second, admin-side cohort flag, so that name attribution required *both* the contributor's opt-in
+and the admin's consent. It appears nowhere in the codebase. It has been dropped rather than built,
+because in this architecture it could never be a real gate: contribution payloads are composed and
+written by the **contributor's own client**, so an admin-side flag can only ever be advisory —
+presenting it as a second gate would promise an enforcement that does not exist. The contributor's
+own opt-in is the gate, and it is now real.
 
 #### 6b. Right to erasure (Article 17)
 
@@ -393,7 +445,7 @@ Triggered weekly or on admin demand. Per Decision 4, applies rules 1-5:
 - **Rule 1** — Union new_facts; exact-string dedup
 - **Rule 2** — Union/subtract links per spec (Decision 2 filter enforces same-domain only)
 - **Rule 3** — Jaccard heuristic flags near-duplicate facts; targeted LLM resolves each
-- **Rule 4** — Provenance section auto-appended with shortened contributor UUIDs (always — name attribution is unimplemented, per Decision 6a)
+- **Rule 4** — Provenance section auto-appended with shortened contributor UUIDs (always, on every collective page, with no flag involved — the `attribute_by_name` opt-in gates the *contribution payload*, never a wiki page; see Decision 6a)
 - **Rule 5** — Collective `index.md` rebuilt
 
 Runs locally on admin's machine. Collective storage just receives the written pages — no cloud compute.
