@@ -405,7 +405,7 @@ For most second-brain users, the loop is: ingest sources → admire the Obsidian
 
 **My Curator MCP** is the bridge that opens that synapse layer to a frontier model. From v2.3 onwards, The Curator ships a local MCP server that exposes your wiki to any [Model Context Protocol](https://modelcontextprotocol.io/)-compatible client — most importantly **Claude Desktop with Opus or Sonnet**, but also VS Code with an MCP-aware coding agent, [LM Studio](https://lmstudio.ai/) with a local model, or any other MCP client. From v2.5.2+, the bridge is **read+write** — Claude can save what you discussed, clean up wiki problems, and manage dismissals without you ever leaving the conversation.
 
-This is not "another way to read your files." It's a *graph-native* access path. Eighteen dedicated tools — eleven read tools (eight retrieval, three explicitly graph-shaped, including reaching past a summary to the original source document it was built from) and seven write tools (compile, scan/fix Health, manage dismissals) — let the model:
+This is not "another way to read your files." It's a *graph-native* access path. Eighteen dedicated tools — eleven read tools (eight retrieval, three explicitly graph-shaped, including reaching past a summary to the original source document it was built from) and seven health/authoring tools (compile, scan/fix Health, manage dismissals), of which four actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`) while the other three only scan and report — let the model:
 
 - Pull a topology overview of any domain — central hubs, cluster shape, orphan sample, top tags — in one call
 - Traverse multi-hop neighbourhoods around any concept or entity
@@ -443,7 +443,7 @@ That is not a chat interface. That is a frontier model doing **deep research ove
 
 When you join a Shared Brain (see [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)), the collective wiki appears on your machine as a `shared-<slug>/` domain. **MCP read tools work fully on it** — Claude can `search_wiki`, `get_node`, `get_index`, `search_cross_domain` across the collective just like any other domain. This is where the cohort/team use cases get powerful: a research team can ask *"across our shared brain, which papers contradict each other on X?"* and Claude reads everyone's combined reading to surface the answer with citations.
 
-**MCP write tools refuse on `shared-*` mirrors** by design — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from the Sync tab. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
+**The four mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from the Sync tab. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
 
 ### Why this is first-of-its-kind
 

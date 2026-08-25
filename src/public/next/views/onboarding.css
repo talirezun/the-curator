@@ -29,6 +29,25 @@
    panel can never sit over the rail or the sidebar (both of which stay
    live and clickable per the design spec).
 
+   ── THE CARD'S WIDTH IS NOT DECLARED HERE, AND THAT IS THE FIX ─────────
+   Fixed positioning takes no space, so a top-right card still COVERED the
+   view underneath it — including, measured, Domains' "Ask this domain" and
+   Settings' "Disconnect"/"Replace" buttons, which .obp-panel's
+   `pointer-events: auto` made unclickable rather than merely obscured.
+   shell.css now RESERVES the strip (`body.guide-docked .main`) while
+   views/onboarding.js has the panel open, so content reflows out of the
+   way. Read that rule's comment for the full reasoning and the measured
+   before/after.
+
+   The consequence for THIS file: `--guide-dock-w` is the single source of
+   the dock's width and the card derives from it. Do not put a literal
+   width back on .obp-panel — a second copy of the number is how the
+   reservation silently stops matching the thing it reserves for, which is
+   the original defect re-armed. Anything that changes the card's footprint
+   (its width, or .obp-root's horizontal padding) has to stay inside that
+   28px budget or move the number in shell.css; scripts/test-next-
+   onboarding.js §11 fails if the two drift apart.
+
    z-index 30: above view content (chat's sticky bars are 3 and 5) and
    BELOW the reader overlay (40), so opening a wiki page covers this panel
    instead of the panel floating over the reader. Both wizards live at 200
@@ -59,7 +78,14 @@
 
 .obp-panel {
   pointer-events: auto;
-  width: min(340px, 100%);
+  /* DERIVED, never re-declared — see the header. 28px = this wrapper's own
+     16px right padding + the 12px gap shell.css leaves between the view's
+     content edge and this card. max-width is belt-and-braces: the formula
+     already keeps the card inside .obp-root's content box at every width
+     (the dock is at most 42% of the main column, the wrapper's content box
+     is that column minus 32px), so this can only ever be inert. */
+  width: calc(var(--guide-dock-w) - 28px);
+  max-width: 100%;
   box-sizing: border-box;
   background: var(--surface-overlay);
   border: 1px solid var(--border-strong);
@@ -193,10 +219,12 @@
   color: var(--text-faint);
 }
 
-/* Narrow windows: the main column can be smaller than the card's ideal
-   width, and the card must stay inside it rather than spilling under the
-   sidebar. width: min(340px, 100%) above already handles that; this only
-   tightens the surrounding padding so the card keeps its full text width. */
-@media (max-width: 1100px) {
-  .obp-root { padding: 10px 10px; }
-}
+/* There is deliberately NO narrow-window media query here any more. The
+   old one tightened .obp-root's padding below 1100px so a fixed-340px card
+   kept its full text width in a shrinking column; --guide-dock-w's own
+   min() now scales the card with the column instead, so the query would
+   only fight it. It is also the wrong lever: this wrapper's horizontal
+   padding is one half of the 28px budget shell.css reserves on the other,
+   and changing it at a breakpoint moves one side of that pair alone. If a
+   narrow-window tweak is ever wanted, change --guide-dock-w's formula in
+   shell.css. */

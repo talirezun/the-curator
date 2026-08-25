@@ -725,10 +725,27 @@ section('10. CSS — tokens, [data-theme], prefix ownership, no scrim');
     'it is clipped to the main column with the same grid geometry .reader-scrim uses');
 
   // Prefix ownership: `obp-` belongs to this pair of files only.
-  const otherNextCss = ['shell.css', 'views/shared.css', 'views/settings.css', 'views/chat.css',
-    'views/domains.css', 'views/ingest.css', 'views/sync.css', 'views/memory.css', 'views/mcp-wizard.css']
-    .map((f) => readFileSync(path.join(ROOT, 'src/public/next', f), 'utf8')).join('\n');
+  //
+  // Run against CODE, not raw text. shell.css's guidance-dock rule has to
+  // explain WHY it reserves a strip for this panel, and doing that without
+  // naming .obp-root / .obp-panel would make the comment useless to the
+  // next reader — while a raw-text scan reads that prose as a rule and
+  // fails. Same reasoning, and the same helper, as obCode/appCode above:
+  // an absence check must read the code it protects. Stripping cannot hide
+  // a real rule (comments are all it removes), and the sanity anchors
+  // below fail loudly if the stripper ever over-reaches into one.
+  const otherNextCssFiles = ['shell.css', 'views/shared.css', 'views/settings.css', 'views/chat.css',
+    'views/domains.css', 'views/ingest.css', 'views/sync.css', 'views/memory.css', 'views/mcp-wizard.css'];
+  const otherNextCss = assertStrippedSane(
+    stripComments(otherNextCssFiles
+      .map((f) => readFileSync(path.join(ROOT, 'src/public/next', f), 'utf8')).join('\n')),
+    'the other /next stylesheets',
+    ['.main-inner {', '.reader-scrim {', '.chat-composer {']);
   ok(!/\.obp-/.test(otherNextCss), 'no other /next stylesheet defines an .obp- rule');
+  // Negative control: the detector can still fail. Without this, the
+  // strip above could quietly turn the assertion into a no-op.
+  ok(/\.obp-/.test(otherNextCss + '\n.obp-smuggled { color: red; }'),
+    'and that detector fires on a real .obp- rule planted in the same text');
   ok(!/obp-/.test(settingsCode), 'settings.js does not reach into the panel\u2019s class namespace');
 
   // No inline style="" with a var() — test-css-tokens.js §8 walks these.
@@ -752,6 +769,181 @@ section('10. CSS — tokens, [data-theme], prefix ownership, no scrim');
     'the token detector fires on a deliberately fake token name');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('11. The dock — the panel must reserve the strip it sits on');
+// ═════════════════════════════════════════════════════════════════════════
+// WHAT THIS SECTION EXISTS FOR. `position: fixed` takes no space, so the
+// panel USED TO sit on top of the mounted view. Because .obp-panel is
+// `pointer-events: auto` that was not cosmetic: measured at 1280x800 with
+// document.elementFromPoint, the panel — not the control — was the topmost
+// element over Domains' "Ask this domain" button and over Settings'
+// "Disconnect" and "Replace" buttons. Settings is where the panel's own
+// step 1 sends the user, so the guide covered the controls it points at.
+//
+// The fix is a HANDSHAKE ACROSS TWO FILES: onboarding.js puts a class on
+// <body>, shell.css reserves the gutter for it, and onboarding.css derives
+// the card's width from the same custom property so the reservation and
+// the card can never mean different numbers.
+//
+// Every part of that handshake fails SILENTLY if it drifts. A renamed
+// class, a renamed custom property, a hardcoded width that stops matching:
+// no error, no console warning — the gutter just stops being reserved and
+// live controls go back under the card. Nothing else in the suite would
+// notice, which is exactly why these assertions are here.
+{
+  const shellCssRaw = readFileSync(path.join(ROOT, 'src/public/next/shell.css'), 'utf8');
+  const shellCss = assertStrippedSane(stripComments(shellCssRaw), 'shell.css',
+    ['.main {', '.main-inner {', '.reader-scrim {']);
+
+  // ── The class literal is read from onboarding.js, never typed twice ────
+  // Hardcoding 'guide-docked' here would make this suite agree with itself
+  // while the two real files disagreed with each other.
+  const dockClassDecl = /const DOCK_CLASS = '([a-z0-9-]+)';/.exec(obCode);
+  ok(!!dockClassDecl, 'onboarding.js declares a DOCK_CLASS literal');
+  const DOCK_CLASS = dockClassDecl && dockClassDecl[1];
+
+  // ── shell.css reserves the gutter for THAT class ──────────────────────
+  const dockRule = DOCK_CLASS && new RegExp(
+    'body\\.' + DOCK_CLASS + '\\s+\\.main\\s*\\{[^}]*padding-right:\\s*var\\((--[a-z0-9-]+)\\)'
+  ).exec(shellCss);
+  ok(!!dockRule,
+    `shell.css reserves a right gutter on the main column for body.${DOCK_CLASS} ` +
+    '— if this fails, the class onboarding.js toggles is not the one the shell listens for');
+  const DOCK_VAR = dockRule && dockRule[1];
+
+  // ── and the property it reserves with is really DEFINED ───────────────
+  // An undefined custom property makes the declaration invalid at
+  // computed-value time and the padding silently evaluates to nothing —
+  // the --text-dim class of bug that test-css-tokens.js exists for, landing
+  // here as "the gutter is not reserved and nobody is told".
+  ok(!!DOCK_VAR && new RegExp('\\' + DOCK_VAR + '\\s*:').test(shellCss),
+    `${DOCK_VAR} is defined in shell.css, so the padding is a valid declaration`);
+
+  // ── the card's width is DERIVED from the same property ────────────────
+  const panelRule = /\.obp-panel\s*\{([^}]*)\}/.exec(obCssCode);
+  ok(!!panelRule, '.obp-panel has a rule block');
+  const panelBody = panelRule ? panelRule[1] : '';
+  const widthDecl = /width:\s*calc\(\s*var\((--[a-z0-9-]+)\)\s*-\s*(\d+)px\s*\)/.exec(panelBody);
+  ok(!!widthDecl, '.obp-panel derives its width from a custom property minus a fixed inset');
+  ok(!!widthDecl && widthDecl[1] === DOCK_VAR,
+    `and it is the SAME property the shell reserves (${DOCK_VAR}) — not a second copy of the number`);
+  ok(!/\b340px\b/.test(panelBody),
+    '.obp-panel carries no literal card width — one source of truth, per the header');
+
+  // ── THE GEOMETRIC INVARIANT the whole fix rests on ────────────────────
+  // reserved gutter  =  DOCK_VAR
+  // card footprint   =  (DOCK_VAR - offset) + .obp-root's right padding
+  // so the card fits inside the reservation, with a real gap left over,
+  // iff offset > that padding. Both numbers are parsed from the CSS, so a
+  // future edit to either one is what this checks — not a restated constant.
+  const rootRule = /\.obp-root\s*\{([^}]*)\}/.exec(obCssCode);
+  ok(!!rootRule, '.obp-root has a rule block');
+  const padDecl = rootRule && /padding:\s*(\d+)px\s+(\d+)px/.exec(rootRule[1]);
+  ok(!!padDecl, '.obp-root declares a two-value padding, so its horizontal inset is readable');
+  const inset = padDecl ? Number(padDecl[2]) : NaN;
+  const offset = widthDecl ? Number(widthDecl[2]) : NaN;
+  ok(Number.isFinite(inset) && Number.isFinite(offset) && offset > inset,
+    `the card fits inside the reserved strip with room to spare: offset ${offset}px > ` +
+    `.obp-root's ${inset}px right inset, leaving a ${offset - inset}px gap to the view's content edge`);
+
+  // A media query that moves .obp-root's horizontal padding changes ONE
+  // side of that pair and not the other, so the gap silently shrinks (or
+  // goes negative) at some window width and nothing reports it.
+  ok(!/@media[^{]*\{[^{}]*\.obp-root\s*\{[^}]*padding/.test(obCssCode),
+    'no media query re-declares .obp-root’s padding behind the shell’s back');
+
+  // ── The toggle is wired at both ends, and open wins the race ──────────
+  const openBody = extractFunction(ob, 'openPanel');
+  const closeBody = extractFunction(ob, 'closePanel');
+  ok(/setDocked\(true\)/.test(openBody), 'openPanel() docks');
+  ok(/setDocked\(false\)/.test(closeBody), 'closePanel() undocks — dismissing restores the layout');
+  // openPanel returns early when the panel is already open (a Settings
+  // re-open). Docking after that return would leave the re-open path
+  // unducked.
+  ok(openBody.indexOf('setDocked(true)') < openBody.indexOf('if (root) {'),
+    'and it docks BEFORE the already-open early return, so a re-open cannot skip it');
+  ok(!/setDocked\(/.test(extractFunction(ob, 'render')),
+    'render() does not touch the dock — the class tracks the panel’s existence, not its content');
+
+  // ── EXECUTABLE: setDocked really adds and removes that exact class ────
+  // The assertions above read source. This one RUNS it, against a fake
+  // document, so "it says setDocked(true)" and "it actually docks" are two
+  // different claims and both are checked.
+  {
+    const fake = { classList: {
+      _on: new Set(),
+      toggle(name, force) { if (force) this._on.add(name); else this._on.delete(name); },
+    } };
+    const run = new Function('document',
+      extractConst(ob, 'DOCK_CLASS') + '\n' + extractFunction(ob, 'setDocked') + '\n' +
+      'return setDocked;')({ body: fake });
+    run(true);
+    ok(fake.classList._on.has(DOCK_CLASS), `setDocked(true) adds .${DOCK_CLASS} to <body>`);
+    run(false);
+    ok(!fake.classList._on.has(DOCK_CLASS), 'setDocked(false) removes it — no stranded gutter');
+    run(true); run(true);
+    eq(fake.classList._on.size, 1, 'docking twice is idempotent');
+  }
+
+  // ── It must never be able to take the shell down ──────────────────────
+  // setDocked runs on the boot path (maybeShowOnboarding -> openPanel), and
+  // §6's whole subject is that nothing on that path may stop markBooted().
+  {
+    const run = new Function('document',
+      extractConst(ob, 'DOCK_CLASS') + '\n' + extractFunction(ob, 'setDocked') + '\n' +
+      'return setDocked;')({ get body() { throw new Error('no body yet'); } });
+    let threw = false;
+    try { run(true); } catch { threw = true; }
+    ok(!threw, 'setDocked swallows a throwing document.body — an unducked panel, never a blank page');
+  }
+
+  // ── R7, restated where the dock could break it ────────────────────────
+  // The dock reserves horizontally only. A vertical reservation is the one
+  // change that could push the bottom-anchored composer off screen.
+  const dockRuleBody = DOCK_CLASS && new RegExp(
+    'body\\.' + DOCK_CLASS + '\\s+\\.main\\s*\\{([^}]*)\\}'
+  ).exec(shellCss);
+  ok(!!dockRuleBody && !/padding-(top|bottom)|height|max-height|overflow/.test(dockRuleBody[1]),
+    'the dock rule reserves horizontal space ONLY — no vertical or overflow change that could reach the composer');
+}
+
 // ─────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════
+section('12. refresh() must not strand focus when it re-renders');
+// ═════════════════════════════════════════════════════════════════════════
+// render() replaces root.innerHTML, destroying every node inside it. An
+// explicit "Show setup guide" focuses the heading; refresh()'s two GETs then
+// resolve ~100 ms later and re-render, which dropped focus to <body>.
+//
+// WHY THIS WAS INVISIBLE, and why it is worth a guard: the AUTOMATIC path
+// never takes focus at all (deliberately — someone who opened the app to type
+// keeps their caret), so the bug could only ever fire on the explicit,
+// keyboard-accessible path. A defect that only manifests for the users who
+// depend on focus management is precisely the kind that ships.
+//
+// SOURCE-LEVEL, and labelled as such: refresh() is async and touches
+// document + fetch, so this asserts the ORDERING contract rather than
+// executing it. It pins that the active element is captured BEFORE render()
+// and a focus restore follows AFTER it — which is the whole property, since
+// capturing after the re-render can only ever read <body>.
+{
+  const refreshBody = extractFunction(ob, 'refresh');
+  ok(refreshBody.length > 200, 'sanity: refresh() extracted (a truncated extract would pass the ordering checks vacuously)');
+
+  const iCapture = refreshBody.indexOf('document.activeElement');
+  const iRender = refreshBody.lastIndexOf('render()');
+  const iRestore = refreshBody.indexOf('.focus()');
+
+  ok(iCapture !== -1, 'refresh() captures document.activeElement');
+  ok(iRender !== -1, 'refresh() calls render()');
+  ok(iRestore !== -1, 'refresh() restores focus after re-rendering');
+  ok(iCapture < iRender,
+    `the activeElement capture precedes render() (capture ${iCapture} < render ${iRender}) — capturing after the re-render can only read <body>`);
+  ok(iRestore > iRender,
+    `the focus restore follows render() (restore ${iRestore} > render ${iRender})`);
+  ok(/querySelector\('#'\s*\+/.test(refreshBody) || /getElementById/.test(refreshBody),
+    'the restore re-queries by id — the captured NODE cannot survive innerHTML replacement, so restoring the node reference would be inert');
+}
+
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

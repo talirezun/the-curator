@@ -29,6 +29,30 @@
   // Format the non-code portions of a line (bold, italic, citations, wikilinks).
   // Input is ALREADY html-escaped. Returns safe HTML.
   function formatSegment(t) {
+    // ── DELIBERATELY UNBOUNDED — read before widening this renderer's input ──
+    // The two regexes below (`[^\]]+` / `[^\]|]+`) are QUADRATIC on a string
+    // of unclosed brackets: at every `[` the greedy class runs to end-of-input
+    // hunting a closer that never arrives, then backtracks. Measured on the
+    // identical algorithm: 64 KB -> ~1,890 ms, 1 MB -> ~70 s, synchronous on
+    // the main thread. `/next`'s copy in next/shared/markdown.js IS bounded
+    // (`{1,512}`, derived from the real corpus: longest wikilink 241, longest
+    // citation path 205).
+    //
+    // This copy is left unbounded ON PURPOSE, and the reason is the whole
+    // point: it only ever renders CHAT ANSWERS — the user's own LLM output,
+    // paid for by them. No third party's bytes reach it, so the quadratic is
+    // not reachable by an attacker HERE. What made it a real finding in
+    // `/next` was not the algorithm but WHO CAN REACH IT: that renderer was
+    // widened to wiki page bodies, which arrive over Personal Sync and Shared
+    // Brain mirrors from other machines and other people.
+    //
+    // THEREFORE: if you ever render anything here that did not originate as
+    // this user's own chat answer — a wiki page, a synced file, a mirror, an
+    // imported document — BOUND THESE FIRST. The divergence from /next is
+    // recorded rather than "fixed" because bounding this copy would change
+    // live chat rendering (a >512-char token degrades to literal text) for no
+    // reachable threat. Maintainer decision, v3.8.0.
+    //
     // Citation chips: [source: path] → styled span. No `\s*` adjacent to the
     // capture group (avoids O(n^2) backtracking on an unclosed tag); the leading
     // space after "source:" is trimmed in the callback instead.

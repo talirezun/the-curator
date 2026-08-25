@@ -180,6 +180,67 @@ body {
   padding: 30px 28px 64px;
 }
 
+/* ── First-run guidance dock ─────────────────────────────────────────────
+   views/onboarding.js's guidance panel is `position: fixed` over the
+   top-right of this column. Fixed takes NO space, so before this rule the
+   card simply COVERED whatever the view painted underneath it — and the
+   card is `pointer-events: auto`, so it swallowed the clicks too.
+   Measured at 1280x800, document.elementFromPoint over the centre of each
+   control returned the PANEL, not the control:
+     Domains  — "Ask this domain" (the view's primary action)
+     Settings — the API key rows' "Disconnect" and "Replace" buttons,
+                i.e. the exact controls the panel's own step 1 sends the
+                user to Settings to use
+   plus (cosmetic) Chat's "N pages in scope" readout and a text tail on
+   four views. Not a cosmetic defect: two views had unreachable controls.
+
+   It cannot just move somewhere emptier. R7 is binding — the panel "must
+   not block the composer: someone who would rather just type is never
+   trapped" — and the chat composer is bottom-anchored, centred, max-width
+   780px, so BOTH bottom corners land on it at ordinary sizes (at 1440 it
+   leaves 164px to its left; the card needs 340). Top-left covers the scope
+   pills, which are interactive. Top-right is the only free corner, and the
+   real fix is therefore to make that corner genuinely free.
+
+   So the shell RESERVES the strip while the panel is open:
+   views/onboarding.js adds `.guide-docked` to <body>, the main column's
+   content box ends before the card begins, and content REFLOWS instead of
+   being covered. Removing the class restores the layout exactly — a class
+   toggle is the whole of the state, so there is nothing that can be left
+   half-unwound on dismiss.
+
+   --guide-dock-w is declared HERE, immediately beside the padding that
+   consumes it, and views/onboarding.css DERIVES the card's own width from
+   it (`calc(var(--guide-dock-w) - 28px)`) rather than repeating 340px.
+   Two hand-maintained copies of one width is precisely how a reservation
+   silently stops covering the thing it was reserved for — the defect
+   above, re-armed. The 28px is .obp-root's own 16px right padding plus a
+   12px gap between the content edge and the card.
+
+   The min() is the narrow-window answer, and it is deliberately ONE
+   formula rather than a second layout mode: above ~1180px the dock is a
+   flat 368px (the design's 340px card, unchanged); below that it shrinks
+   WITH the column instead of starving it, so the card gets narrower and
+   the overlap still never returns. /next carries no other responsive
+   handling anywhere, so a breakpoint-switched second positioning mode
+   would be more machinery than this shell has earned. Accepted cost,
+   stated rather than hidden: on a very narrow window the card's text gets
+   cramped, and on first run the view paints full-width for a frame before
+   the panel's two GETs resolve and the dock appears (docking optimistically
+   would instead flash a gutter for every already-set-up user, which is the
+   worse direction).
+
+   Both consumers resolve against the VIEWPORT, never a percentage: a `%`
+   here would resolve against .main's grid area while the same `%` in
+   .obp-panel's width resolves against .obp-root's narrower content box, so
+   the two would silently mean different lengths. */
+:root {
+  --guide-dock-w: min(368px, calc((100vw - 60px - var(--app-sidebar-w)) * 0.42));
+}
+body.guide-docked .main {
+  padding-right: var(--guide-dock-w);
+}
+
 .view-eyebrow {
   margin-bottom: 8px;
 }

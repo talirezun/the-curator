@@ -62,11 +62,11 @@ The key idea: a frontier model doesn't just *read* your wiki — it can *travers
 
 ### Write tools on Shared Brain mirrors (`v3.0.0-beta+`)
 
-When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. **MCP write tools refuse to write to these mirrors** with a clear steer:
+When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. **The four mutating tools — `compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue` — refuse on these mirrors** with a clear steer:
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
 
-Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. The MCP skill at `claude-skills/my-curator/SKILL.md` documents this in §3.1.
+Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. So do the three read-only members of the health/authoring group (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`): scanning a mirror to answer *"is the collective wiki healthy?"* is supported, and it is only *applying* a fix that is refused. The MCP skill at `claude-skills/my-curator/SKILL.md` documents this in §3.1.
 
 ### Write tools while the Curator app is running an ingest (`v3.0.1-beta.8+`)
 
@@ -476,7 +476,7 @@ The one way they can still drift apart is the one described just above: the `--d
 
 **Privacy.** Everything stays on your machine. There is no network component. No telemetry.
 
-**Security.** Every tool validates its `domain` and `slug` arguments against a strict alphanum-plus-hyphen/underscore pattern, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The ten graph-reading tools are strictly read-only. The seven write tools (v2.5.2+) are hard-capped (50 KB/page, 10 pages/call), idempotent per conversation, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
+**Security.** Every tool validates its `domain` and `slug` arguments against a strict alphanum-plus-hyphen/underscore pattern, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The eleven graph-reading tools are strictly read-only, as are three of the seven health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — fourteen of the eighteen never change anything on disk. Of the four that do (v2.5.2+), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all four refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
 
 ---
 

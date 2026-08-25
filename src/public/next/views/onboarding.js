@@ -2,7 +2,7 @@
 // this and I have no idea what to do first."
 //
 // ── THIS IS NOT A WIZARD, AND THAT IS THE WHOLE POINT ───────────────────
-// ARCHITECTURE.md explicitly REJECTS a first-run wizard. The binding
+// the design handoff's ARCHITECTURE.md (a PRIVATE document, not this repo's docs/architecture.md) explicitly REJECTS a first-run wizard. The binding
 // design decision (R7) is that first-run guidance must be a dismissible,
 // re-findable, NON-BLOCKING layer — "coach-marks over the REAL UI, never a
 // modal that hides the thing it describes" — and that it "must not block
@@ -75,6 +75,43 @@ import { navigate, icon, escapeHtml } from '../app.js';
 // Namespaced like every other /next key (curator-next-theme,
 // curator-next-view, curator-next-chat-domain).
 const DISMISS_KEY = 'curator-next-onboarding-dismissed-v1';
+
+// ── THE DOCK HANDSHAKE ──────────────────────────────────────────────────
+// The panel is `position: fixed`, which takes no space, so on its own it
+// COVERED the top-right of whatever view was mounted — and because
+// .obp-panel is `pointer-events: auto`, it swallowed those clicks rather
+// than merely obscuring them. Measured at 1280x800, elementFromPoint over
+// the centre of Domains' "Ask this domain" button and Settings'
+// "Disconnect"/"Replace" buttons returned the PANEL. Settings is where
+// step 1 sends the user, so the guide was covering the controls it exists
+// to point at.
+//
+// Moving it is not available: R7 forbids blocking the composer, and the
+// composer is bottom-centred at 780px, so every bottom corner lands on it.
+// So shell.css reserves the strip instead — `body.guide-docked .main` ends
+// the content box before the card starts and the view REFLOWS.
+//
+// This class name is a CROSS-FILE contract with shell.css, and the failure
+// mode if the two sides drift is silent: no error, no console warning, the
+// gutter simply stops being reserved and the panel goes back to covering
+// live controls. scripts/test-next-onboarding.js §11 compares this literal
+// against shell.css's own selector for exactly that reason.
+//
+// It is toggled in openPanel/closePanel ONLY — the same two-call-site
+// shape as startRefresh/stopRefresh above it — so the class is present iff
+// `root` is, and dismissing therefore restores the layout with nothing
+// left to unwind.
+const DOCK_CLASS = 'guide-docked';
+
+// Never throws: this runs from boot(), and boot() must reach markBooted()
+// (see maybeShowOnboarding's comment). A missing <body> or a classList a
+// host does not implement must degrade to "no gutter reserved", which is
+// the pre-fix cosmetic state, not a blank page.
+function setDocked(on) {
+  try {
+    document.body.classList.toggle(DOCK_CLASS, !!on);
+  } catch { /* no body / no classList — the panel still renders, unducked */ }
+}
 
 // While the panel is open the user is, by definition, mid-setup — so this
 // re-check is running against an install with zero or very few domains and
@@ -363,6 +400,10 @@ export function openOnboardingPanel() {
 function openPanel(nextSteps, opts) {
   const focus = !!(opts && opts.focus);
   autoCloseOnComplete = !(opts && opts.autoCloseOnComplete === false);
+  // Before the already-open early return, not after it: a re-open from
+  // Settings while the panel is on screen must not be able to leave the
+  // gutter unreserved.
+  setDocked(true);
   if (root) {
     // Already open (Settings re-open while it is on screen) — just refresh
     // the content and, if this was an explicit request, move focus to it.
@@ -403,6 +444,10 @@ function closePanel() {
 
   root.remove();
   root = null;
+  // Paired with openPanel's setDocked(true). Runs BEFORE the focus restore
+  // below so the layout the restored element is measured/scrolled into is
+  // the final one, not the docked one.
+  setDocked(false);
 
   if (insidePanel && restore && restore.isConnected && typeof restore.focus === 'function') {
     try { restore.focus(); } catch { /* the element may have gone away */ }
@@ -545,5 +590,22 @@ async function refresh(myGen) {
   // D-D: finishing setup dismisses the panel by itself — but only for a
   // panel that opened itself. See autoCloseOnComplete's own comment.
   if (autoCloseOnComplete && steps.every((s) => s.done)) { closePanel(); return; }
+
+  // PRESERVE FOCUS ACROSS THE RE-RENDER. render() replaces root.innerHTML, so
+  // every node inside it is destroyed — including whichever one the user was
+  // on. Without this, an explicit "Show setup guide" focuses the heading and
+  // then this refresh (its two GETs resolve ~100 ms later) silently drops
+  // focus to <body>, stranding a keyboard user mid-panel. The automatic path
+  // is unaffected because it never takes focus in the first place, which is
+  // exactly why the bug was invisible: it only fires on the accessible path.
+  // Restore by id rather than by node — the node itself will not survive.
+  const active = document.activeElement;
+  const refocusId = root.contains(active) && active.id ? active.id : null;
   render();
+  if (refocusId) {
+    const again = root.querySelector('#' + refocusId);
+    if (again && typeof again.focus === 'function') {
+      try { again.focus(); } catch { /* non-focusable in some engines — harmless */ }
+    }
+  }
 }
