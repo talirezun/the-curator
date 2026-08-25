@@ -128,6 +128,17 @@ import {
 // closed unconditionally by this view's teardown, so navigating away can
 // never leave it mounted behind the next view.
 import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
+// D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
+// none." This is the one control that re-opens the dismissed first-run
+// guidance panel.
+//
+// NOTE THE ASYMMETRY WITH THE WIZARD IMPORT ABOVE, WHICH IS DELIBERATE:
+// there is no closeOnboardingPanelIfOpen() and this view's teardown must
+// NOT close the panel. The MCP wizard is a modal owned by this view, so an
+// overlay surviving a view change would be a bug. The onboarding panel is
+// a SHELL-level layer whose entire purpose is to point AT other views — it
+// is opened from app.js's boot() and is required to survive navigate().
+import { openOnboardingPanel } from './onboarding.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -526,6 +537,17 @@ function renderGeneral() {
         (summary ? renderQuickSummary(quick) : '') +
         (quick && quick.error ? '<div class="settings-inline-error">' + escapeHtml(quick.error) + '</div>' : '') +
       '</div>' +
+
+      // Setup guide (D-C). The first-run panel is dismissible, so it needs
+      // exactly one place it can be found again.
+      '<div class="settings-field-block">' +
+        '<span class="settings-field-label">Setup guide</span>' +
+        '<p class="settings-hint-text">The first-run checklist — AI key, first domain, first source. ' +
+        'It appears on its own until setup is finished, and dismissing it is never permanent.</p>' +
+        '<div class="settings-btn-row">' +
+          '<button type="button" class="btn btn-secondary" id="btn-show-setup-guide">Show setup guide</button>' +
+        '</div>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -916,6 +938,12 @@ function wireGeneralListeners() {
   if (confirmBtn) confirmBtn.addEventListener('click', () => onVerifyAiConfirm(myMountToken));
   const cancelBtn = document.getElementById('btn-verify-ai-cancel');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { state.liveConfirmOpen = false; render(myMountToken); });
+
+  // D-C. No mount token needed: the panel is shell-owned, lives on
+  // document.body, and is meant to survive navigating away from Settings —
+  // so there is no view-scoped DOM here that could go stale.
+  const guideBtn = document.getElementById('btn-show-setup-guide');
+  if (guideBtn) guideBtn.addEventListener('click', () => openOnboardingPanel());
 }
 
 function wireProviderListeners() {

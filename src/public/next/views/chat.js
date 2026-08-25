@@ -22,171 +22,17 @@ import {
   reportAsyncMountFailure, isCurrentReader, reportAsyncActionFailure,
   consumeChatScopeRequest,
 } from '../app.js';
+import { renderMarkdown } from '../shared/markdown.js';
 
-// ── Markdown rendering (ported from src/public/markdown.js) ─────────────
-// That file is the shipping app's dependency-free, XSS-safe renderer for
-// chat answers. It's written as a `window`-attaching IIFE (`<script src>`
-// in the shipping index.html), not an ES module, and this view must not
-// edit next/index.html to add a script tag — so rather than reach across
-// with a runtime <script> injection, the same algorithm is ported here as
-// real module-scope functions. The CARDINAL RULE carries over unchanged
-// and must never be violated by an edit to this section: escape the
-// WHOLE string first, then insert only a fixed allow-list of tags by
-// matching Markdown syntax in the already-escaped text. No model or user
-// text is ever interpolated into an attribute or a URL.
-//
-// One addition beyond the original: citation spans carry their path in a
-// nested `.chat-cite-path` TEXT node (never an attribute — see the M3 fix
-// comment inside formatSegment below) so a single delegated click handler
-// on the thread can open the reader from an inline "[source: ...]" mention,
-// not just the chip row rendered below the message.
-function escHtml(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function formatSegment(t) {
-  // Wikilinks: [[target]] or [[target|alias]] -> readable, non-interactive
-  // styled span (matches the shipping renderer's behaviour — resolving a
-  // bare wikilink to a folder+slug would require guessing which of
-  // entities/concepts it lives in, which the shipping app also declines
-  // to do here).
-  t = t.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, alias) => {
-    const label = (alias != null ? alias : String(target).split('/').pop().replace(/\.md$/, '')).trim();
-    return '<span class="chat-wikilink">' + label + '</span>';
-  });
-  t = t.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  t = t.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
-  t = t.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>');
-  t = t.replace(/(^|[^_\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
-  // Citation chips: [source: path] -> clickable styled span. MUST run LAST
-  // in this function (adversarial-audit finding M1, verified against the
-  // real HTML parser): every pass above scans the WHOLE string for its own
-  // syntax, including HTML this function has already emitted. When this
-  // ran FIRST, a crafted `[source: x[[y] tail]]` made the wikilink pass's
-  // `[[...]]` match START INSIDE this span's data-cite="..." attribute
-  // value and END at the "]]" much later in the string — its replacement
-  // deleted everything in between, including the closing `">` and
-  // `</span>`, leaving the attribute unterminated for the rest of the
-  // document (a real attribute-breakout; not exploitable today only
-  // because nothing downstream of this span carries a second attribute or
-  // a URL sink — one added attribute away from live XSS). Running this
-  // pass last means nothing downstream ever re-scans its output, so no
-  // ordering of characters inside `path` can reach into markup this
-  // function already emitted.
-  //
-  // No `\s*` adjacent to the capture group (avoids backtracking on an
-  // unclosed tag); the leading space after "source:" is trimmed below.
-  // `path` is extracted from `t`, which was already HTML-escaped ONCE by
-  // renderMarkdown's top-level escHtml(raw) before any pass ran — do NOT
-  // escape it again here (that was the separate L5 bug: a citation path
-  // containing "&" got re-escaped from "&amp;" to "&amp;amp;", which the
-  // browser only unescapes one level on click, so the fetch 404'd on a
-  // filename that actually existed).
-  // M3 fix (re-audit finding): this used to drop `path` straight into a
-  // `data-cite="..."` ATTRIBUTE. Citation must stay LAST in this function
-  // (see the big comment above — moving it earlier reopens the M1 bracket-
-  // consumption bug), which means by the time this pass runs, `path` can
-  // already contain markup the wikilink pass emitted a moment ago (e.g. a
-  // citation string that itself embeds a `[[...]]` sequence). That markup
-  // carries real `"` characters as part of `class="chat-wikilink"` — reading
-  // it into an attribute value lets those quotes close the attribute early.
-  // Verified: `[source: [[a]] onerror=alert(1) ]` produced
-  // `data-cite="<span class="chat-wikilink">a</span> onerror=alert(1)">` —
-  // the attribute terminates at the FIRST `"`, right after `class=`, leaving
-  // the rest as loose, unintended markup. Not live script execution today
-  // (nothing downstream reads that broken value as a URL/handler), but it is
-  // one added attribute away from it, and it already lets a crafted citation
-  // repoint or corrupt what the click handler treats as a path.
-  //
-  // Fix: keep `path` in TEXT CONTENT instead (mirrors the shipping
-  // renderer's approach — src/public/markdown.js:36 — adjusted for this
-  // file's citation-LAST ordering). Text content is never re-parsed as
-  // markup by the browser, so no character sequence inside it can break out
-  // of anything; the click handler below reads it back via `.textContent`
-  // on the dedicated `.chat-cite-path` child instead of a data attribute.
-  t = t.replace(/\[source:([^\]]+)\]/g, (_, p) => {
-    const path = p.trim();
-    return '<span class="chat-citation-tag">' + icon('dot', 7) +
-      '<span class="chat-cite-path">' + path + '</span></span>';
-  });
-  return t;
-}
-
-function renderInline(text) {
-  const parts = String(text).split(/(`[^`\n]+`)/g);
-  let out = '';
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) out += '<code>' + parts[i].slice(1, -1) + '</code>';
-    else out += formatSegment(parts[i]);
-  }
-  return out;
-}
-
-function renderMarkdown(raw) {
-  const escaped = escHtml(raw);
-  const lines = escaped.split('\n');
-  const out = [];
-
-  let inCode = false;
-  let codeBuf = [];
-  let listType = null;
-  let listBuf = [];
-  let para = [];
-
-  const flushPara = () => {
-    if (para.length) { out.push('<p>' + para.map(renderInline).join('<br>') + '</p>'); para = []; }
-  };
-  const flushList = () => {
-    if (listType) { out.push('<' + listType + '>' + listBuf.join('') + '</' + listType + '>'); listBuf = []; listType = null; }
-  };
-
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-
-    if (/^\s*```/.test(line)) {
-      if (inCode) { out.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>'); codeBuf = []; inCode = false; }
-      else { flushPara(); flushList(); inCode = true; }
-      continue;
-    }
-    if (inCode) { codeBuf.push(line); continue; }
-    if (/^\s*$/.test(line)) { flushPara(); flushList(); continue; }
-
-    const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
-    if (h) { flushPara(); flushList(); out.push('<div class="chat-md-h">' + renderInline(h[2]) + '</div>'); continue; }
-
-    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (bullet) {
-      flushPara();
-      if (listType && listType !== 'ul') flushList();
-      listType = 'ul';
-      listBuf.push('<li>' + renderInline(bullet[1]) + '</li>');
-      continue;
-    }
-
-    const num = line.match(/^\s*\d+\.\s+(.*)$/);
-    if (num) {
-      flushPara();
-      if (listType && listType !== 'ol') flushList();
-      listType = 'ol';
-      listBuf.push('<li>' + renderInline(num[1]) + '</li>');
-      continue;
-    }
-
-    flushList();
-    para.push(line);
-  }
-
-  flushPara();
-  flushList();
-  if (inCode) out.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>');
-
-  return out.join('');
-}
+// ── Markdown rendering ──────────────────────────────────────────────────
+// The renderer now lives in next/shared/markdown.js so the wiki-browse
+// reader in views/domains.js renders rich Markdown from the SAME code path
+// this view uses, instead of shipping escaped Markdown source. There is
+// exactly one copy — see that file's header for the cardinal escape-first
+// rule, the widened input surface it now has to survive, and why the
+// emitted `chat-*` class names kept their prefix. The supplemental CSS for
+// those classes (including the rules that make them work inside the reader
+// overlay) stays in this view's chat.css, which index.html loads globally.
 
 // ── Small pure helpers ───────────────────────────────────────────────────
 
@@ -1687,8 +1533,11 @@ function renderThreadOnly(token) {
   });
   // Delegated click for inline "[source: ...]" mentions inside the rendered
   // answer text (M3 fix). These never carry a data-cite attribute — the path
-  // lives in TEXT CONTENT (.chat-cite-path), see formatSegment's comment —
-  // so read it back the same way it was displayed rather than via a dataset.
+  // lives in TEXT CONTENT (.chat-cite-path); the reasoning is in
+  // formatSegment's citation-pass comment, which now lives in
+  // ../shared/markdown.js, NOT in this file — the renderer was lifted out so
+  // the wiki reader could share it. Read the path back the same way it was
+  // displayed rather than via a dataset.
   el.querySelectorAll('.chat-citation-tag').forEach(elm => {
     const pathEl = elm.querySelector('.chat-cite-path');
     const path = pathEl ? pathEl.textContent.trim() : '';

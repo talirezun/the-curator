@@ -44,6 +44,17 @@ import {
 // module is evaluated once regardless of how many times it is imported.
 import * as shell from '../app.js';
 
+// The ONE /next Markdown renderer (next/shared/markdown.js). This view and
+// views/chat.js are both callers of the same copy — see that module's header
+// for the escape-first cardinal rule and for why a wiki page body, which
+// arrives over Personal Sync and Shared Brain mirrors, is treated as hostile
+// input. Do not add a local renderer here, ever: scripts/test-next-markdown.js
+// §0 WALKS the whole src/public/next tree and fails on a second declaration in
+// any module it finds, in any form. (That claim used to be false — §0 tested
+// a hardcoded three-file list, so a copy pasted into a fourth view passed
+// unnoticed. It is a tree walk now, and mutation-proven.)
+import { renderMarkdown } from '../shared/markdown.js';
+
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
 // icon() below — there is no view-local icon table.
@@ -1337,16 +1348,22 @@ function renderBrowsePanel() {
 
 // Opens a page in the shell reader.
 //
-// The body is rendered as its own MARKDOWN SOURCE inside a <pre>, escaped,
-// not as rich HTML. /next's markdown renderer lives in views/chat.js, and
-// this view must not import another view's internals. The alternative —
-// copying a security-sensitive escape-first renderer into a second file —
-// is the "two hand-maintained copies of a guard" shape that produced the
-// v3.2.0 CRITICAL, and this project pins duplicated frontend helpers with a
-// byte-identity drift suite precisely because that duplication rots. Raw
-// markdown is readable by design; the correct fix is lifting renderMarkdown
-// into next/shared/ so both surfaces share ONE renderer, which is a change
-// to a file this work does not own. Flagged, not worked around.
+// The body is rendered as RICH MARKDOWN through next/shared/markdown.js —
+// the same single renderer views/chat.js uses for chat answers and for its
+// own citation reader. This view previously showed the page's escaped
+// Markdown SOURCE in a <pre>, because the renderer only existed inside
+// views/chat.js and copying an escape-first security guard into a second
+// file is the "two hand-maintained copies of a guard" shape that produced
+// the v3.2.0 CRITICAL. Lifting the renderer into next/shared/ removed the
+// dilemma rather than picking a side of it.
+//
+// `page.body` is UNTRUSTED. It is LLM-authored, hand-editable in Obsidian,
+// and delivered over Personal Sync and Shared Brain mirrors from other
+// machines and other people — so it is handed to renderMarkdown(), which
+// escapes the whole string before inserting any tag, and never to innerHTML
+// directly. `page.body` also excludes the YAML frontmatter (wiki-read.js's
+// parseFrontmatter strips it), so rendering it as Markdown cannot resurrect
+// the v3.5.1 "frontmatter rendered as body prose" defect.
 async function openWikiPageFromBrowse(path, titleHint) {
   const mount = myMountToken;
   const slug = state.activeSlug;
@@ -1364,7 +1381,7 @@ async function openWikiPageFromBrowse(path, titleHint) {
       typeLabel: page.type,
       tags: plainTags,
       readonly: !!page.readonly,
-      bodyHtml: '<pre class="dm-page-source">' + escapeHtml(page.body || '') + '</pre>',
+      bodyHtml: renderMarkdown(page.body || ''),
       backlinks: Array.isArray(page.backlinks)
         ? page.backlinks.map((bl) => ({ path: bl.path, title: bl.title || bl.slug, type: bl.folder }))
         : [],

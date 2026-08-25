@@ -195,13 +195,16 @@ If you'd rather pay Anthropic than Google (e.g. for privacy preference, or becau
 
 When you first open The Curator, the **onboarding wizard** appears and walks you through setup:
 
-1. **API key** — paste your Gemini API key (from step 4) and click Continue
-2. **Create a domain** — pick a name and template for your first knowledge domain
+1. **API key** — paste your Gemini API key (from step 4) and click Continue. This step is **required**: the wizard will not advance until one key is entered, and it has no Skip.
+2. **Create a domain** — pick a name and template for your first knowledge domain (skippable)
 3. **Sync setup** — optionally connect a GitHub repository (you can skip this and set it up later)
+4. **Connect Claude Desktop** — optionally set up the My Curator MCP bridge now, or later from **Settings** (skippable)
 
 That's it. You can change your API key anytime in the **Settings** tab (the gear icon in the navigation bar).
 
 > **For developers:** You can also configure API keys by creating a `.env` file manually (`cp .env.example .env`) and setting `GEMINI_API_KEY=your_key_here`. The Settings tab takes priority over `.env` when both are present.
+>
+> **Note:** a `.env` key does **not** suppress the onboarding wizard. The wizard's trigger only looks at keys saved through the app (`.curator-config.json`), so a `.env`-only setup shows the wizard on every load even though the app can already make LLM calls. Save a key in **Settings → API Keys** to dismiss it.
 
 ---
 

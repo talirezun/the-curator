@@ -181,6 +181,11 @@ async function waitStatus(jobId, status, opts) {
   }, opts);
 }
 /** Waits until the worker loop has fully released the process-wide claim. */
+// HAZARD for anyone copying a call to this: it polls the in-memory worker
+// claim, so it is only meaningful AFTER an awaited startOrResumeJob() has
+// synchronously taken that claim. Called BEFORE a start, it observes the
+// still-idle claim, returns immediately, and is decorative — green, and
+// guarding nothing. Used at 14 sites; check the ordering at each.
 async function waitWorkerIdle(opts) {
   return waitFor(async () => (__testing.getRunningJobId() === null ? true : null), opts);
 }
@@ -576,6 +581,45 @@ async function testDoneRefusedWithUnfinishedItem() {
   await startOrResumeJob(job.jobId, { ingestFile: fake });
   const final = await waitTerminal(job.jobId);
   assertEq(final.status, 'done', 'baseline: a fully-processed batch does reach done');
+
+  // LOAD-BEARING, DO NOT DELETE AS REDUNDANT. waitTerminal() above resolves on
+  // the manifest reaching a terminal status, which settleJob writes BEFORE the
+  // worker loop's finally releases its claim. Those are normally microtasks
+  // apart, but the order can invert on a loaded/low-core runner.
+  //
+  // That matters because of what comes next: we hand-forge `status:'running'`
+  // into the manifest, a state the module itself never writes while no loop is
+  // live. startOrResumeJob() then refuses to start a worker — but note the
+  // trigger is a CONJUNCTION, not the on-disk status alone: the early return
+  // at ingest-queue.js:2008 sits inside the loop body entered only when
+  // claimSync() at :1988 found the claim ALREADY HELD. With the claim free,
+  // control breaks at :1989, the status is re-read at :2020 where 'running'
+  // is not terminal, and a worker IS started. So the forgery is only harmful
+  // in the window where the claim outlives the terminal manifest write — and
+  // in that window nothing ever runs the job, so the waitTerminal() below can
+  // never succeed. Not slow: never. Raising the 8 s cap moves nothing; this is
+  // a race to remove, not a margin to widen.
+  //
+  // This is the failure that made the v3.7.0 tag build red while the branch
+  // build of the SAME commit passed. Note what it cost: the timeout landed in
+  // this SETUP, so the H1 tripwire assertions below never executed at all —
+  // measured, the failing run reported 335 passed against 343 with the fix.
+  //
+  // Reproducing it naturally needs the writer's threadpool thread descheduled
+  // between the rename syscall and its completion callback for longer than a
+  // read+write round-trip: plausible on a 2-core CI runner, ~1-2 per 150 runs
+  // under heavy synthetic load here, and 0 in 90 idle runs. Widening that
+  // window artificially (a 60 ms delay after settleJob's terminal write) makes
+  // it 12/12 deterministic, which is how the mechanism was confirmed.
+  //
+  // waitWorkerIdle() is GUARANTEED to terminate by the worker loop's
+  // unconditional finally (ingest-queue.js:1955) — though the actual time
+  // bound is waitFor's own 8 s cap, not the finally. It is safe HERE
+  // specifically because the claim was taken synchronously inside the
+  // startOrResumeJob() we already awaited above, so it cannot observe
+  // idle-before-start. The sibling forge site below already had this guard;
+  // this closes the one symmetric gap that was missed.
+  await waitWorkerIdle();
 
   // Now force the inconsistent state directly and drive a settle through the
   // same chokepoint: an item that is neither done, failed nor skipped.

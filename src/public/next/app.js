@@ -1309,6 +1309,15 @@ import './views/ingest.js';
 import './views/sync.js';
 import './views/settings.js';
 
+// NOT a view — it calls no registerView() and owns no rail slot. The
+// first-run guidance panel is a SHELL-level layer (it must survive
+// navigate(), because its entire job is to point at other views), so it is
+// imported here for its export rather than for a registration side effect,
+// and it is opened from boot() below rather than from any view's onEnter.
+// Same cyclic-evaluation constraint as every import above: this module must
+// not call any shell function at its own top level. It does not.
+import { maybeShowOnboarding } from './views/onboarding.js';
+
 // ── Keyboard ─────────────────────────────────────────────────────────────
 // Esc closes the reader — global shell state, handled directly here. The
 // composer's model/length picker is view-owned; its own Escape handling
@@ -1339,6 +1348,28 @@ function boot() {
   // in-app navigate-away-and-back — see the active-job watcher's own
   // comment above. Fire-and-forget; the function never throws.
   reportPossibleActiveJob();
+
+  // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
+  // the line above, and for a much sharper reason: markBooted() runs
+  // IMMEDIATELY after boot() returns, and index.html's <head> guard treats
+  // an unset window.__curatorBooted at DOMContentLoaded as proof this
+  // module died — it then paints a full-page blank-page recovery panel to
+  // EVERY user. So this call must never be able to stop markBooted() from
+  // running.
+  //
+  // Three independent reasons it cannot, none of which relies on the
+  // others being remembered:
+  //   1. It is NOT awaited, and boot() is NOT async. An `await` here would
+  //      require making boot() async, which changes when markBooted() runs
+  //      relative to the rest of startup.
+  //   2. maybeShowOnboarding() is declared `async`, so its body — including
+  //      its synchronous prologue — can only ever produce a rejected
+  //      promise, never a synchronous throw at this call site. (An
+  //      unhandled rejection arriving later is harmless: __curatorBooted is
+  //      already true by then, so the head guard logs it and moves on.)
+  //   3. This try/catch, which contains anything the first two miss.
+  // scripts/test-next-onboarding.js §6 pins reasons 1 and 3 mechanically.
+  try { maybeShowOnboarding(); } catch (err) { console.error('[next] onboarding check failed', err); }
 }
 
 if (document.readyState === 'loading') {

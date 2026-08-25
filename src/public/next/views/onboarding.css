@@ -1,0 +1,202 @@
+/* ══════════════════════════════════════════════════════════════════════
+   First-run guidance panel — owned by views/onboarding.js.
+
+   Chrome only; every behaviour lives in the JS file. The `obp-` prefix is
+   owned exclusively by this pair of files. It is deliberately NOT `ob-`:
+   the SHIPPING app's onboarding overlay already uses `.ob-*` in
+   src/public/styles.css (see the note in views/shared.css), and while the
+   two stylesheets never load together, reusing the name would make a
+   cross-file grep for either one ambiguous.
+
+   ── WHY THERE IS NO SCRIM IN THIS FILE ─────────────────────────────────
+   This is NOT a modal. ARCHITECTURE.md (R7) rejects a first-run wizard:
+   guidance is coach-marks over the real UI, never a modal that hides the
+   thing it describes, and it "must not block the composer". So, unlike
+   views/mcp-wizard.css and the .sbw-* block in views/shared.css, there is
+   no `.obp-scrim`, no `inset: 0`, and no z-index in the 200 band. Do not
+   add one.
+
+   ── POSITIONING, AND THE ONE THING IT MUST NEVER COVER ─────────────────
+   Fixed to the TOP-RIGHT of the main column, never the bottom. The chat
+   composer is at the BOTTOM of the main column (.chat-composer-wrap,
+   sticky bottom, max-width 780px, centred) — a bottom-anchored corner card
+   of any useful width provably overlaps it, including its Send button, at
+   ordinary window sizes. Top-right cannot. That is the whole reason for
+   the corner choice; it is not an aesthetic preference.
+
+   `left: calc(60px + var(--app-sidebar-w))` is the same grid geometry
+   shell.css's .reader-scrim uses to clip itself to the main column, so the
+   panel can never sit over the rail or the sidebar (both of which stay
+   live and clickable per the design spec).
+
+   z-index 30: above view content (chat's sticky bars are 3 and 5) and
+   BELOW the reader overlay (40), so opening a wiki page covers this panel
+   instead of the panel floating over the reader. Both wizards live at 200
+   and therefore also sit above it, which is correct — they are modal, this
+   is not.
+
+   Every colour/size below is a token defined in tokens/*.css — see
+   scripts/test-css-tokens.js §5-§7, which discovers this file from
+   next/index.html's <link> tags and hard-fails on any var(--x) with no
+   definition in the /next token universe (a hex fallback does NOT count).
+   Theming is [data-theme] only, never prefers-color-scheme.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.obp-root {
+  position: fixed;
+  top: 0;
+  left: calc(60px + var(--app-sidebar-w));
+  right: 0;
+  z-index: 30;
+  /* The wrapper spans the main column so the card can be flush-right
+     inside it, but it must not swallow clicks on the view underneath —
+     only the card itself is interactive. */
+  pointer-events: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px;
+}
+
+.obp-panel {
+  pointer-events: auto;
+  width: min(340px, 100%);
+  box-sizing: border-box;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 14px 15px 13px;
+}
+
+.obp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.obp-title {
+  flex: 1;
+  margin: 0;
+  font: var(--type-h3);
+  color: var(--text);
+}
+/* tabindex="-1" makes the heading focusable so the EXPLICIT re-open path
+   can move focus into the panel. It must not draw a focus ring when that
+   happens programmatically, only for real keyboard focus. */
+.obp-title:focus { outline: none; }
+.obp-title:focus-visible { outline: var(--ring-focus); outline-offset: 2px; }
+
+.obp-dismiss {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-state), color var(--t-state);
+}
+.obp-dismiss:hover { background: var(--surface-hover); color: var(--text); }
+
+.obp-progress {
+  margin: 2px 0 10px;
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.obp-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.obp-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.obp-mark {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-3);
+  font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
+}
+.obp-mark-done {
+  border-color: transparent;
+  background: var(--success-tint);
+  color: var(--success-text);
+}
+
+.obp-step-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.obp-step-title {
+  font: var(--type-label);
+  color: var(--text);
+}
+.obp-step-done .obp-step-title { color: var(--text-2); }
+
+.obp-step-body {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-3);
+}
+
+/* The panel's own button size. Deliberately NOT `.btn-xs` — that rule is
+   hand-duplicated in four separate view stylesheets, and depending on one
+   of those copies for a surface that is not a view would be a fifth place
+   the same value has to stay in step. */
+.obp-panel .obp-go {
+  flex: none;
+  margin-top: 1px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: var(--text-xs);
+}
+
+.obp-step-done-tag {
+  flex: none;
+  margin-top: 4px;
+  font-size: var(--text-2xs);
+  color: var(--success-text);
+}
+
+.obp-foot {
+  margin: 11px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  color: var(--text-faint);
+}
+
+/* Narrow windows: the main column can be smaller than the card's ideal
+   width, and the card must stay inside it rather than spilling under the
+   sidebar. width: min(340px, 100%) above already handles that; this only
+   tightens the surrounding padding so the card keeps its full text width. */
+@media (max-width: 1100px) {
+  .obp-root { padding: 10px 10px; }
+}

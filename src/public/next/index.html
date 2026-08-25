@@ -45,6 +45,14 @@
      scripts/test-css-tokens.js §5, which discovers /next stylesheets
      only from this file's <link> tags. -->
 <link rel="stylesheet" href="/next/views/mcp-wizard.css">
+<!-- Also not a view: the first-run guidance panel is a SHELL-level layer
+     owned by views/onboarding.js, opened from app.js's boot() and (D-C)
+     re-openable from Settings → General. It is deliberately not a modal —
+     see views/onboarding.css's header. Same load-bearing <link> as above:
+     without it the panel is unstyled in the browser AND invisible to
+     scripts/test-css-tokens.js §5, which discovers /next stylesheets only
+     from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/views/onboarding.css">
 
 <!--
   Boot guard (M2 fix) — ported from src/public/index.html; read that file's

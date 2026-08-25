@@ -426,11 +426,15 @@ body {
    generalised: this is what openReader()'s content contract renders, so it
    belongs to the shell, not to whichever view happened to write it first).
    Renamed chat-reader-* / chat-backlink-* -> reader-* / reader-backlink-*.
-   `.chat-md-h` (a heading class chat.js's own markdown renderer emits
-   inside `bodyHtml`) is deliberately NOT referenced here — that class is
-   chat.js's own content detail, not the shell's; chat.css carries the one
-   supplemental rule for it (extra margin when nested in `.reader-body-text`)
-   so this file doesn't need to know chat's heading-class name. ────────── */
+   `.chat-md-h` (a heading class emitted by the ONE shared markdown renderer,
+   next/shared/markdown.js, which both the chat view and the wiki-browse
+   reader render through) is deliberately NOT referenced here — it is a
+   detail of the renderer's output, not the shell's; chat.css carries the
+   supplemental rules for it (extra margin when nested in `.reader-body-text`,
+   plus the reader's pre/code styling) so this file doesn't need to know the
+   renderer's class names. The `chat-` prefix is historical: the class names
+   were kept on purpose when the renderer was lifted out of chat.js, so that
+   move's safety proof stayed "output is byte-identical". ────────────────── */
 
 .reader-loading, .reader-error {
   font: var(--type-body-sm);

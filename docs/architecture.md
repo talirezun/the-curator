@@ -355,10 +355,15 @@ Both keys set               →  config.activeProvider  (last saved / toggled)
 Both set, legacy config      →  Gemini  (no activeProvider field → Gemini-first fallback)
 activeProvider set but its
   key missing               →  falls through to whichever provider still has a key
-Neither set                 →  Error on first LLM call (onboarding wizard prompts for a key)
+Neither set                 →  Error on first LLM call
 
 default models (DEFAULTS in llm.js):  gemini-2.5-flash-lite  /  claude-haiku-4-5
 ```
+
+The table above describes the **effective** key (config *or* `.env`). The **onboarding
+wizard's trigger does not**: `checkFirstRun()` reads `hasGeminiKey`/`hasAnthropicKey`,
+which come from `getApiKeys()` — `.curator-config.json` only. A `.env`-only install
+therefore makes working LLM calls *and* shows the first-run wizard on every load.
 
 Chat additionally supports a **per-chat provider override** (v3.0.11+) — `getProviderInfo(preferProvider)` honours it only when that provider has a key saved in Settings, and the model id is always `DEFAULTS[provider]`, never client-supplied.
 

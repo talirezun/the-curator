@@ -470,17 +470,65 @@
 .chat-dd-opt-title { font-size: 13px; }
 .chat-dd-opt-desc { font-size: 10px; color: var(--text-3); }
 
-/* ── Reader body content ──────────────────────────────────────────────
-   The reader overlay itself (loading/error/tags/backlinks markup) is now
-   rendered by the shell (see app.js's openReader() content contract and
-   shell.css's `.reader-*` rules) — this view just hands over data, it no
-   longer writes into `.reader-body` directly. The one rule that stays
-   here: `.chat-md-h` is a class THIS view's own renderMarkdown() emits
-   into the `bodyHtml` it hands to openReader(), so the shell's generic
-   `.reader-body-text` wrapper doesn't know its name — this supplemental
-   margin tweak (only when a heading lands inside the reader, not inside a
-   message bubble) stays local to the file that owns `.chat-md-h`. */
+/* ── SHARED MARKDOWN RENDERER — reader body content ───────────────────
+   The reader overlay's chrome (loading/error/tags/backlinks) is rendered by
+   the shell — see app.js's openReader() content contract and shell.css's
+   `.reader-*` rules; no view writes into `.reader-body` directly. What
+   lands INSIDE `.reader-body-text` is the `bodyHtml` a view hands over, and
+   for both readers that is now the output of next/shared/markdown.js.
+
+   WHY THESE RULES LIVE IN chat.css, and why the emitted classes still say
+   `chat-`: the renderer was lifted OUT of views/chat.js into next/shared/
+   so the wiki-browse reader could stop showing escaped Markdown source. Its
+   emitted class names (`chat-md-h`, `chat-wikilink`, `chat-citation-tag`,
+   `chat-cite-path`) were deliberately NOT renamed in that change — renaming
+   would have altered the renderer's output in the very change whose safety
+   proof is that its output is byte-identical before and after the move. A
+   rename is a separate, mechanical change; until then the three classes that
+   carry VISUAL styling — `chat-md-h`, `chat-wikilink`, `chat-citation-tag` —
+   are each defined UNSCOPED above, and index.html loads this stylesheet
+   globally, so they already reach both surfaces.
+
+   `chat-cite-path` is the fourth name the renderer emits and it has NO rule,
+   here or anywhere else in /next — deliberately. It is a SELECTOR HOOK, not
+   a styled class: the citation path lives in that span's TEXT CONTENT rather
+   than in a data attribute (the M3 fix — see shared/markdown.js), so chat.js
+   reads it back with querySelector('.chat-cite-path').textContent. It
+   inherits the chip's appearance from its `.chat-citation-tag` parent and
+   needs nothing of its own. An earlier version of this note listed all four
+   as "defined UNSCOPED above", which was simply false for this one; nothing
+   rendered wrong, but a comment that overclaims its own file is how the next
+   reader stops trusting the rest of it. If you ever DO give it a rule, style
+   it unscoped like its three siblings so the wiki reader gets it too.
+
+   What did NOT already work is everything scoped to `.chat-answer`: a wiki
+   page legitimately contains fenced code blocks and inline code, and those
+   rules never reached the reader. Mirrored below for `.reader-body-text`.
+   They are NOT in domains.css, because BOTH readers (chat's citation reader
+   and the wiki browse reader) render through the same renderer, and two
+   copies of these rules on two stylesheets is exactly the drift the lift
+   was performed to avoid. */
 .reader-body-text .chat-md-h { margin-top: 18px; }
+.reader-body-text pre {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0 0 14px;
+}
+.reader-body-text code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--surface-raised);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+}
+.reader-body-text pre code { background: none; padding: 0; }
+/* A citation chip is only clickable in the chat THREAD, where renderThread()
+   wires a delegated handler onto it. Neither reader wires one, so inside the
+   reader the chip must not advertise a click that does nothing. */
+.reader-body-text .chat-citation-tag { cursor: default; }
 
 /* ── Compile to Wiki button (scope bar) ───────────────────────────────── */
 

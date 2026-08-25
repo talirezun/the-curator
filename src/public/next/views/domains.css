@@ -838,18 +838,14 @@
   color: var(--text-3);
 }
 
-/* The reader body for a page opened from the browse list. /next's markdown
-   renderer lives in views/chat.js and must not be imported across views, and
-   copying a security-sensitive escape-first renderer into a second file is
-   the duplication shape that produced the v3.2.0 CRITICAL — so the page's
-   own markdown source is shown, escaped, until that renderer is lifted into
-   next/shared/ and both surfaces can use one copy. */
-.dm-page-source {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: var(--leading-relaxed);
-  color: var(--text-2);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+/* The reader body for a page opened from the browse list carries NO rule
+   here. It used to: `.dm-page-source` styled a <pre> of escaped Markdown
+   source, which is what this view showed before next/shared/markdown.js
+   existed. The body is now rendered as real Markdown by that shared
+   renderer, so the classes it emits are styled once, next to the renderer's
+   other styles, in views/chat.css — see the "SHARED MARKDOWN RENDERER"
+   section there, which also carries the `.reader-body-text` supplements the
+   reader overlay needs. Adding a second, view-local copy of those rules
+   here would put the wiki reader and the chat reader on two stylesheets
+   that can drift; scripts/test-next-markdown.js §9 asserts this file has no
+   `.dm-page-source` rule left. */

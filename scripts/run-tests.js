@@ -85,6 +85,8 @@ const OFFLINE = [
   'test-next-semantic-gate.js',       // /next per-pair semantic-merge gate — the previewed set must be EMPTY after scan, domain switch and flip (two independent layers), and the batch bar must read LIVE state
   'test-next-chat-compile.js',        // /next Compile to Wiki + the chat-scope handoff — `refused` is a normal outcome not an error, and a consumed scope request must NOT re-apply on a second mount
   'test-next-sharedbrain-admin.js',   // /next Shared Brain revoke + admin-token rotate — outcome tone comes from the structured fields, never the summary prose
+  'test-next-onboarding.js',         // /next first-run guidance panel (R7) — non-blocking, dismissible, re-findable. Pins the R7 step order, the SHOW-on-storage-throw fail-safe, and that the boot() hook cannot stop markBooted() (the blank-page guard).
+  'test-next-markdown.js',           // /next's ONE markdown renderer (next/shared/markdown.js) — escape-first XSS battery over the WIDENED input surface (wiki page bodies arrive over Sync/Shared Brain), + the single-declaration guard that keeps it one copy.
   'check-doc-suite-counts.js',
   'test-repair-wiki-args.js',
   'test-wiki-script-args.js',
