@@ -7066,6 +7066,7 @@ function describeIssue(type, issue) {
 
 async function fixOne(domain, type, issue, btn) {
   btn.disabled = true;
+  const originalLabel = btn.textContent;
   btn.textContent = 'Fixing…';
   try {
     const r = await fetch(`/api/health/${encodeURIComponent(domain)}/fix`, {
@@ -7073,17 +7074,18 @@ async function fixOne(domain, type, issue, btn) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, issue }),
     });
-    if (!r.ok) throw new Error((await r.json()).error || 'Fix failed');
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Fix failed (HTTP ${r.status})`); }
     await runHealthScan();
   } catch (err) {
     btn.disabled = false;
-    btn.textContent = 'Fix';
+    btn.textContent = originalLabel;
     showStatus(healthStatusEl, 'error', err.message);
   }
 }
 
 async function fixAll(domain, type, btn) {
   btn.disabled = true;
+  const originalLabel = btn.textContent;
   btn.textContent = 'Fixing…';
   try {
     const r = await fetch(`/api/health/${encodeURIComponent(domain)}/fix-all`, {
@@ -7091,12 +7093,13 @@ async function fixAll(domain, type, btn) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type }),
     });
-    if (!r.ok) throw new Error((await r.json()).error || 'Fix-all failed');
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Fix-all failed (HTTP ${r.status})`); }
     const result = await r.json();
     showStatus(healthStatusEl, 'success', `Fixed ${result.fixed} of ${result.total}.`);
     await runHealthScan();
   } catch (err) {
     btn.disabled = false;
+    btn.textContent = originalLabel;
     showStatus(healthStatusEl, 'error', err.message);
   }
 }
@@ -7329,7 +7332,7 @@ function renderOrphanAiResult(domain, issue, result, row, actions) {
               },
             }),
           });
-          if (!r.ok) throw new Error((await r.json()).error || 'Apply failed');
+          if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `Apply failed (HTTP ${r.status})`); }
           const data = await r.json();
           if (!data.fixed) throw new Error('Server reported no changes applied');
           // On success, trigger a full re-scan — orphan may disappear.
@@ -7792,15 +7795,24 @@ semMergeConfirm?.addEventListener('click', async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'semanticDupe', issue: pair }),
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || 'Merge failed');
+    // Defensive parse for the same reason as the three sites above: a
+    // non-JSON 409/500 body (an HTML error page) would otherwise throw a
+    // SyntaxError here, BEFORE the r.ok check, and the user would see
+    // "Unexpected token '<'" where the real refusal should be.
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `Merge failed (HTTP ${r.status})`);
     if (!data.fixed) throw new Error('Server rejected merge (validation failed)');
     card.classList.add('semantic-pair-merged');
     card.innerHTML = `<div class="hint">✓ Merged. <code>[[${escapeHtml(pair.removeSlug)}]]</code> → <code>[[${escapeHtml(pair.keepSlug)}]]</code></div>`;
     closeMergePreview();
     showStatus(healthStatusEl, 'success', `Merged ${pair.removeSlug} → ${pair.keepSlug}`);
   } catch (err) {
-    showStatus(healthStatusEl, 'error', err.message);
+    // Keep the modal open and show the refusal there (same pattern as the
+    // preview-fetch failure below) — it's the one place guaranteed visible
+    // regardless of scroll position, and it keeps the pair's context on
+    // screen so the user can decide whether to retry rather than re-clicking
+    // a destructive action blind.
+    semPreviewBody.innerHTML = `<div class="status error">${escapeHtml(err.message)}</div>`;
   } finally {
     semMergeConfirm.disabled = false;
     semMergeConfirm.textContent = 'Merge and delete duplicate';
