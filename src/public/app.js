@@ -5807,10 +5807,46 @@ async function refreshMcpSection() {
     const snippetEl = document.getElementById('mcp-snippet');
     if (snippetEl) { snippetEl.textContent = snippetStr; snippetEl.dataset.copy = snippetStr; }
     const diffAfter = document.getElementById('mcp-diff-after');
-    if (diffAfter) diffAfter.textContent = JSON.stringify(full.merged, null, 2);
+    const diffAfterCopy = document.querySelector('[data-copy-target="mcp-diff-after"]');
+    if (diffAfter) {
+      // merged is null when claude_desktop_config.json exists but is not valid
+      // JSON: there is nothing to merge INTO, so the server refuses to invent a
+      // payload. Rendering the literal "null" here — and letting the copy button
+      // put it on the clipboard — would be useless, so say what happened instead.
+      // Both branches are written out: restoring the copy button matters as much
+      // as hiding it, or one corrupt-file load disables it for the rest of the
+      // session.
+      if (full.merged === null) {
+        diffAfter.textContent = 'Your Claude Desktop config file exists but is not valid JSON, so it cannot be merged into safely.\n\nOpen it, fix the JSON error, then reopen this wizard.';
+        // Hiding the button is the ONLY mechanism here, stated plainly because
+        // the obvious second belt does not work: the delegated copy handler
+        // reads `el.dataset.copy || el.textContent`, and an empty string is
+        // FALSY, so setting dataset.copy = '' silently falls through and copies
+        // the prose below rather than blanking the clipboard. A line that looks
+        // like a guard and is not one is worse than no line. Residual risk if
+        // the hide ever regressed: the user copies an explanatory sentence —
+        // obviously not JSON, and harmless — never a destructive config.
+        diffAfterCopy?.classList.add('hidden');
+      } else {
+        diffAfter.textContent = JSON.stringify(full.merged, null, 2);
+        delete diffAfter.dataset.copy;
+        diffAfterCopy?.classList.remove('hidden');
+      }
+    }
     const diffBefore = document.getElementById('mcp-diff-before');
     if (diffBefore) {
-      if (full.was_empty) {
+      if (full.merge_available === false) {
+        // This pane must NOT key off `was_empty` alone. For an unparseable file
+        // the route deliberately keeps was_empty:true — and that is correct, not
+        // a bug to fix upstream: was_empty:false alongside merged:null makes the
+        // JSON.parse in the else-branch below throw and takes the whole MCP
+        // section down with it. The cost of that deliberate choice is paid here:
+        // without this branch the user reads "Your file now: {}" on the same
+        // screen as "your config is not valid JSON", i.e. the wizard asserting
+        // the file is empty when it is in fact corrupt and full of their other
+        // MCP servers. Say what is actually known instead.
+        diffBefore.textContent = 'Could not be read — this file is not valid JSON.';
+      } else if (full.was_empty) {
         diffBefore.textContent = '{}';
       } else {
         // Diff should show the user's file WITHOUT our entry
@@ -5970,14 +6006,72 @@ async function runSelfTestInto(btnId, resultId) {
     const data = await r.json();
     out.classList.remove('mcp-selftest-running');
     if (data.ok) {
-      out.classList.add('mcp-selftest-ok');
-      const domainsText = data.domains && data.domains.length
-        ? `${data.domains.length} domain${data.domains.length === 1 ? '' : 's'} (${data.domains.join(', ')})`
-        : 'no domains yet';
-      out.innerHTML = `<strong>✓ My Curator responded.</strong>
-        ${data.tool_count} tools registered, ${domainsText}.
-        The bridge is working — if Claude Desktop still can't see it,
-        the issue is inside its config file.`;
+      // `ok` means ONLY "the bridge speaks MCP" (initialize + tools/list). It is
+      // deliberately not gated on list_domains, because a brand-new user with
+      // zero domains is a healthy install and a false red is as harmful as a
+      // false green. The consequence is that ok===true coexists with a knowledge
+      // folder that is missing or unreadable — and the previous copy answered
+      // that case with "no domains yet" and then blamed the Claude Desktop
+      // config file, sending the user to debug the one file that was fine.
+      // (Deliberately paraphrased, not quoted: the contract suite asserts that
+      // the blame-the-config sentence occurs in exactly ONE switch arm, and a
+      // verbatim quote here would trip it — correctly.) `domains_status`
+      // is the field that makes the two cases distinguishable, so it is read
+      // here; emitting it without a consumer left the defect fully intact.
+      //
+      // Everything interpolated below is child-derived (a spawned process's
+      // stdout, and a filesystem path) and goes through escapeHtml.
+      const n = Array.isArray(data.domains) ? data.domains.length : 0;
+      const tools = `${escapeHtml(data.tool_count)} tool${data.tool_count === 1 ? '' : 's'} registered`;
+      const dir = data.domains_dir
+        ? `<code>${escapeHtml(data.domains_dir)}</code>`
+        : 'the configured knowledge folder';
+      const detail = data.domains_error || data.domains_message;
+      const detailHtml = detail
+        ? `<pre class="mcp-selftest-stderr">${escapeHtml(detail)}</pre>`
+        : '';
+
+      switch (data.domains_status) {
+        case 'ok':
+          out.classList.add('mcp-selftest-ok');
+          out.innerHTML = `<strong>✓ My Curator responded.</strong>
+            ${tools}, ${n} domain${n === 1 ? '' : 's'}
+            (${data.domains.map(escapeHtml).join(', ')}) read from ${dir}.
+            The bridge is working — if Claude Desktop still can't see it,
+            the issue is inside its config file.`;
+          break;
+
+        case 'empty':
+          out.classList.add('mcp-selftest-ok');
+          out.innerHTML = `<strong>✓ My Curator responded.</strong>
+            ${tools}. It read ${dir} and found no domains yet — normal on a fresh
+            install. Create a domain in the Domains tab and Claude will see it.
+            The bridge itself is working.`;
+          break;
+
+        case 'missing_folder':
+          out.classList.add('mcp-selftest-fail');
+          out.innerHTML = `<strong>⚠ The bridge started, but your knowledge folder is missing.</strong>
+            ${tools}, so Claude Desktop will connect — and then see nothing at all.
+            ${dir} does not exist. Point the Curator at the right folder in
+            Settings (or move the folder back), then run this test again.
+            <strong>This is not a mistake in your Claude Desktop config file —
+            don't go looking for one there.</strong>
+            ${detailHtml}`;
+          break;
+
+        default:
+          // 'unreadable' | 'error' | 'no_response' — and any status a future
+          // route version adds. Defaulting into the honest branch is the safe
+          // direction: defaulting into the cheerful one is how this defect
+          // survived in the first place.
+          out.classList.add('mcp-selftest-fail');
+          out.innerHTML = `<strong>⚠ The bridge started, but it could not read your domains.</strong>
+            ${tools}, so Claude Desktop will connect — but listing the domains in
+            ${dir} failed, so Claude may see nothing. Check that the folder exists
+            and is readable, then run this test again.
+            ${detailHtml}`;
+      }
     } else {
       out.classList.add('mcp-selftest-fail');
       out.innerHTML = `<strong>✗ Self-test failed.</strong> ${escapeHtml(data.error || 'Unknown error')}

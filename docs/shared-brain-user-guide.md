@@ -96,8 +96,8 @@ Within ~400ms the wizard validates the token against the cohort repo. Three poss
 #### Step 4 — Domains + display name + attribution
 
 - **Contributing domains**: tick which of YOUR personal domains push to this Shared Brain. The list filters out any `shared-*` mirrors (you can't contribute from one shared brain to another). Read-only members (yellow verdict in Step 3) can leave this empty — they don't push. Your ticks are remembered if you navigate Back and return.
-- **Your display name**: pick a friendly name for the Provenance section. Defaults to "Anonymous Fellow" if you don't fill it in.
-- **Show my name in Provenance sections**: leave unticked (default UUID) unless the admin specifically asked everyone to identify themselves. Even if you tick this, your name only appears if the ADMIN also enabled cohort-side name attribution — defensive double-gate per GDPR.
+- **Your display name**: this is **not** private. Whatever you type here is written into the shared repo on every push (inside `contributions/<your-uuid>/*.json`), with no flag governing it, and everyone with access to the repo can read it. It is also what the admin's member directory shows. It does **not** appear on the synthesised wiki pages. Defaults to "Anonymous Fellow" if you leave it blank — **and a pseudonym is a perfectly valid entry** if you would rather not be named.
+- **Show my name in Provenance sections**: **currently has no effect.** The setting is saved with your connection, but Provenance sections and conflict markers on collective pages always show the first 8 characters of your UUID — name attribution is not implemented. Leave it unticked; ticking it changes nothing today, and if the feature ever ships you should re-confirm the choice at that point.
 
 Click **Continue →**.
 
@@ -327,7 +327,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | Push your contributions | Sync tab → connection card → "Push contributions" |
 | Pull collective updates | Sync tab → connection card → "Pull updates" |
 | Run synthesis (admin) | Sync tab → connection card → Advanced → "Run synthesis" |
-| Revoke a contributor (admin) | API only in v3.0.0-beta.1 — see [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
+| Revoke a contributor (admin) | Sync tab → connection card → Advanced → **"Revoke a contributor…"** (v3.0.5+; shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
 | Disconnect this machine | Sync tab → connection card → Advanced → "Disconnect" |
 
 ## 7 — Related documentation

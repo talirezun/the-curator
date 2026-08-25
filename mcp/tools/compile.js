@@ -52,7 +52,10 @@ export const compileToWikiDefinition = {
     "Save what the user has learned in this conversation to their second brain — the persistent markdown wiki managed by The Curator. " +
     "Use this when the user asks you to 'save what we discussed', 'add this to my wiki', 'update my second brain', 'compile our findings', " +
     "'store these notes', 'put this in my Curator', or any phrasing that means 'persist this knowledge'. " +
-    "Writes a summary page plus any new entity/concept pages that emerged. Existing pages are merged additively (bullet sections grow), never overwritten. " +
+    "Writes a summary page plus any new entity/concept pages that emerged. " +
+    "MERGE SEMANTICS — this is NOT a fully non-destructive write. Bullet-accumulating sections (Key Facts, Key Ideas, Key Points, Key Takeaways, Related, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples) genuinely accumulate: existing bullets are preserved and yours are added. " +
+    "PROSE sections (Definition, Summary, Why It Matters, Overview, …) are only preserved when your page OMITS the heading entirely — if you include a '## Definition' heading, YOUR version REPLACES the existing one. " +
+    "So when updating an existing page, either omit the prose headings you are not deliberately rewriting, or call get_node first and carry the existing prose forward. Shipping a thin page with the same headings will silently discard the richer existing prose. " +
     "Returns the list of created and updated pages with byte counts so you can show the user what changed. " +
     "Refuses with a clear message if the EXACT same title + content was already compiled today (the slug is a hash of title+content+date — same inputs map to the same file). Two compiles with the same title but different content on the same day produce different files; an unchanged re-compile is refused. " +
     "If the user did not specify a domain, call list_domains first OR check the configured default domain. " +
@@ -83,7 +86,7 @@ export const compileToWikiDefinition = {
       },
       additional_pages: {
         type: 'array',
-        description: "Optional. Entity or concept pages that emerged from the conversation and should be created or updated. Each must have path starting with 'entities/' or 'concepts/' and end in '.md'. Existing pages are merged additively (bullet sections accumulate, never replaced).",
+        description: "Optional. Entity or concept pages that emerged from the conversation and should be created or updated. Each must have path starting with 'entities/' or 'concepts/' and end in '.md'. On an existing page, bullet sections accumulate — but a prose section you include (e.g. '## Definition') REPLACES the existing one, and is only preserved if you omit its heading. Read the page with get_node first if you are updating rather than creating.",
         items: {
           type: 'object',
           properties: {

@@ -4,37 +4,47 @@
 <meta charset="utf-8">
 <title>The Curator — Next (preview)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="assets/mark-small-on-dark.svg">
+<link rel="icon" href="/next/assets/mark-small-on-dark.svg">
 
 <!-- Design tokens — copied byte-identical from the design system bundle.
      Order matters: typography.css defines --font-sans/--font-mono at :root,
      and fonts-local.css (below) intentionally redefines those two names at
      the same specificity, so it must load AFTER typography.css to win. -->
-<link rel="stylesheet" href="tokens/base.css">
-<link rel="stylesheet" href="tokens/color.css">
-<link rel="stylesheet" href="tokens/space.css">
-<link rel="stylesheet" href="tokens/shape.css">
-<link rel="stylesheet" href="tokens/motion.css">
-<link rel="stylesheet" href="tokens/typography.css">
+<link rel="stylesheet" href="/next/tokens/base.css">
+<link rel="stylesheet" href="/next/tokens/color.css">
+<link rel="stylesheet" href="/next/tokens/space.css">
+<link rel="stylesheet" href="/next/tokens/shape.css">
+<link rel="stylesheet" href="/next/tokens/motion.css">
+<link rel="stylesheet" href="/next/tokens/typography.css">
 <!-- tokens/fonts.css is deliberately NOT linked here — it @imports Google
      Fonts, which this local-first app does not phone home to. It's still
      copied into tokens/ so nothing from the design bundle is lost; see
      fonts-local.css for why and what replaces it. -->
-<link rel="stylesheet" href="tokens/fonts-local.css">
+<link rel="stylesheet" href="/next/tokens/fonts-local.css">
 
-<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="/next/shell.css">
 
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,
      so agents building different views in parallel never collide here. -->
-<link rel="stylesheet" href="views/chat.css">
-<link rel="stylesheet" href="views/domains.css">
-<link rel="stylesheet" href="views/shared.css">
-<link rel="stylesheet" href="views/memory.css">
-<link rel="stylesheet" href="views/ingest.css">
-<link rel="stylesheet" href="views/sync.css">
-<link rel="stylesheet" href="views/settings.css">
+<link rel="stylesheet" href="/next/views/chat.css">
+<link rel="stylesheet" href="/next/views/domains.css">
+<link rel="stylesheet" href="/next/views/shared.css">
+<link rel="stylesheet" href="/next/views/memory.css">
+<link rel="stylesheet" href="/next/views/ingest.css">
+<link rel="stylesheet" href="/next/views/sync.css">
+<link rel="stylesheet" href="/next/views/settings.css">
+<!-- Not a view: the MCP setup wizard is an overlay owned by
+     views/mcp-wizard.js and opened from the Settings view (the same
+     relationship views/shared-brain-wizard.js has with views/shared.js,
+     whose chrome lives inside views/shared.css). It gets its own file
+     because it is the larger of the two surfaces and has no view of its
+     own to hide in. This <link> is load-bearing twice over: without it
+     the wizard is unstyled in the browser AND invisible to
+     scripts/test-css-tokens.js §5, which discovers /next stylesheets
+     only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/views/mcp-wizard.css">
 
 <!--
   Boot guard (M2 fix) — ported from src/public/index.html; read that file's
@@ -232,6 +242,6 @@
     <div id="reader-root"></div>
   </main>
 </div>
-<script type="module" src="app.js"></script>
+<script type="module" src="/next/app.js"></script>
 </body>
 </html>

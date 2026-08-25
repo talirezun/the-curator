@@ -146,13 +146,13 @@ Using the defaults on Gemini Flash Lite:
 
 On Claude Haiku 4.5 the cost is roughly 10× higher but still under $0.50 for a default scan.
 
-The estimate shown in the confirm dialog uses published per-1M-token pricing from 2026-04; treat the USD figure as an order-of-magnitude guide, not a billing authority.
+> ⚠️ **The estimate reads low, and the figures above inherit that.** The confirm dialog is priced from `MODEL_PRICING` in [`src/brain/health-ai.js`](../src/brain/health-ai.js) — a **second** price table, dated 2026-04, that has since diverged from the authoritative `MODEL_PRICES_USD_PER_MTOK` in [`src/brain/llm.js`](../src/brain/llm.js). For the default model, `gemini-2.5-flash-lite`, health-ai still carries **$0.075 in / $0.30 out** while llm.js carries the current **$0.10 / $0.40** — so the dialog (and the $0.03 / $0.003 figures above) understate the real cost by roughly **25%**. A 500-pair scan is closer to **$0.04** than $0.03. The absolute amounts are small enough that this is a documentation accuracy issue rather than a spend risk, but treat every USD figure here as an order-of-magnitude guide, not a billing authority. *(Tracked for a follow-up: health-ai.js should read the llm.js table rather than keeping its own.)*
 
 ### What Phase 3 will NOT do
 
 - Merge pairs that are related-but-distinct (e.g. `gpt-4` vs `gpt-4-turbo`). The LLM is instructed to err toward non-dupe when ambiguous.
 - Touch `summaries/` as a merge target. A summary can never be the kept or removed page in a merge; link rewrites still go through summary pages (because summaries may link to the old slug and need to point to the new one), but the summary itself is never deleted or structurally modified.
-- Batch-merge. One pair at a time, always, even if 100 high-confidence pairs are found.
+- Batch-merge **medium- or low-confidence pairs**. Those are always one pair at a time, behind the Preview → Merge gate, however many are found. (High-confidence pairs *can* be batch-merged since v3.0.1-beta.15 — see [Merge all high-confidence duplicates](#merge-all-high-confidence-duplicates-v301-beta15) above — behind an explicit confirm step naming the page count, capped at 2,000 pairs per run, and revertable from the Sync tab.)
 - Run without your explicit click. This is the only AI Health feature with a cost preview + cost ceiling, because it's the only one that scans the whole domain.
 
 ---

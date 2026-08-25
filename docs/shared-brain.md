@@ -13,7 +13,7 @@ You keep your private brain private. You only share what you choose. The collect
 
 **Why an LLM is required, and where it runs.** Mechanical file merge produces a bigger wiki. LLM synthesis produces a *better* wiki — resolving conflicting formulations, eliminating broken cross-fellow wikilinks, enriching sparse pages, attributing provenance. The LLM runs **locally on each contributor's machine** (using the Gemini Flash Lite key they already have configured for ingest), pre-processing their changed pages into compact `DeltaSummary` objects before pushing. The collective brain receives structured knowledge summaries — not raw wiki files.
 
-**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta as of v3.1.0). Storage backend is GitHub-only today; a Cloudflare R2 backend is planned for a future release (see [Roadmap](#7--roadmap)). Note: v3.1.0 itself shipped as unrelated infrastructure work (see [Roadmap](#7--roadmap)), so the Shared Brain milestones below have shifted to later, not-yet-numbered releases.
+**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta as of v3.1.0). The wizard, the invite-token flow and every documented path are GitHub-only; a Cloudflare R2 backend is planned for a future release (see [Roadmap](#7--roadmap)). A `local` filesystem backend also exists and is reachable by hand-writing a connection — see [§3 Architecture](#3--architecture) for the licensing consequence. Since v3.6.1 invite tokens are GitHub-only at both ends: `/generate-invite` refuses to mint a non-GitHub token and `/parse-invite` refuses to accept one, so the `local` backend cannot be reached through an invite. Note: v3.1.0 itself shipped as unrelated infrastructure work (see [Roadmap](#7--roadmap)), so the Shared Brain milestones below have shifted to later, not-yet-numbered releases.
 
 ---
 
@@ -94,7 +94,7 @@ state/revocations.jsonl                            ← audit log for revocations
 | Module | Purpose |
 |---|---|
 | `src/brain/sharedbrain-storage.js` | Abstract `SharedBrainStorageAdapter` interface (15 methods) |
-| `src/brain/sharedbrain-local-adapter.js` | `LocalFolderStorageAdapter` (for battle testing — never used in production) |
+| `src/brain/sharedbrain-local-adapter.js` | `LocalFolderStorageAdapter` — a filesystem-backed brain. Primarily a battle-testing backend, but **it is reachable in production**: `storage_type: "local"` passes `validateConnection` and the factory instantiates it. The wizard never offers it, so reaching it means hand-writing a connection and POSTing it to `/save`. Note the licensing consequence: pointing `local_storage_path` at an NFS/SMB share is an on-premise deployment, which is **not** covered by the permanent GitHub-only grant in [`LICENSES/LICENSE-ENTERPRISE.txt`](../LICENSES/LICENSE-ENTERPRISE.txt) §3.1. |
 | `src/brain/sharedbrain-github-adapter.js` | `GitHubStorageAdapter` (v3.0 production backend) |
 | `src/brain/sharedbrain-storage-factory.js` | `createStorageAdapter(connection)` — dispatch by `storage_type` |
 | `src/brain/sharedbrain-config.js` | `.sharedbrain-config.json` read/write with token masking |
@@ -102,7 +102,7 @@ state/revocations.jsonl                            ← audit log for revocations
 | `src/brain/sharedbrain.js` | `pushDomain` + `pullCollective` + `ensureSharedDomainExists` orchestration |
 | `src/brain/sharedbrain-synthesis.js` | `runLocalSynthesis` — applies merge rules 1-5 |
 | `src/brain/sharedbrain-revoke.js` | Article 17 revocation orchestration |
-| `src/routes/sharedbrain.js` | 11 HTTP endpoints under `/api/sharedbrain/*` |
+| `src/routes/sharedbrain.js` | HTTP endpoints under `/api/sharedbrain/*` (15 as of v3.6.x — the authoritative list is the `router.*` calls in that file; see [`api-reference.md`](api-reference.md)) |
 | `mcp/util.js` → `refuseIfReadonly()` | Decision 7 readonly-mirror guard for MCP write tools |
 
 ---
@@ -222,15 +222,17 @@ For each pair (a, b) of incoming new_facts on the same page:
   - similarity < 0.5           → independent facts, keep both
 ```
 
-**Markup for unresolved contradictions** (when LLM picks `both`):
+**Markup for unresolved contradictions** (when LLM picks `both`) — a **bullet inside `## Key Facts`**, not a section of its own:
 
 ```markdown
 - ⚠️ CONFLICTING SOURCES — review needed:
-  - Context Engineering coined in 2024 *(per fellow-a3f9)*
-  - Context Engineering coined in 2023 *(per fellow-b7c1)*
+  - Context Engineering coined in 2024 *(per a3f91234)*
+  - Context Engineering coined in 2023 *(per b7c1abcd)*
 ```
 
-Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP libraries. Health scanner detects the marker via regex; the user resolves interactively by editing the upstream personal opted-in domain and re-pushing. Since v3.0.4 the synthesis result carries an additive `conflict_pages: string[]` and the summary names the affected pages, so the admin doesn't have to hunt for markers.
+The parenthesised id is the shortened fellow UUID (`defaultShortenId` — leading hex characters, per `PROVENANCE_UUID_DISPLAY_LEN`), with no prefix and never a name.
+
+Implementation: pure-JS `jaccardSimilarity(textA, textB)` helper, no NLP libraries. **The Health scanner does NOT detect the marker** — `src/brain/health.js` has no conflict handling at all, and the constant's own comment ("Health-scannable in Phase 4+") is aspirational rather than a description of shipped behaviour. Discovery is therefore via the synthesis result, which since v3.0.4 carries an additive `conflict_pages: string[]` and names the affected pages in the summary, or by grepping the mirror for `CONFLICTING SOURCES`. The user resolves interactively by editing the upstream personal opted-in domain and re-pushing.
 
 ### Decision 5 — Domain isolation
 
@@ -248,13 +250,25 @@ Cross-domain link syntax (`[[shared:work-ai:openai]]`) is a future roadmap item 
 
 Full detail in [`docs/shared-brain-compliance.md`](shared-brain-compliance.md). Summary:
 
-#### 6a. Provenance attribution — UUIDs default
+#### 6a. Provenance attribution — UUIDs, always (name attribution is UNIMPLEMENTED)
 
-The `## Provenance` section uses `fellow_id` (UUID) by default. Real names appear ONLY when BOTH flags are set:
-- Org admin sets `allow_name_attribution: true` in the shared brain's admin config
-- The individual contributor sets `attribute_by_name: true` in their local config
+**As shipped, the `## Provenance` section always uses the shortened `fellow_id` — the first 8 hex
+characters of the UUID (`PROVENANCE_UUID_DISPLAY_LEN` in `src/brain/sharedbrain-synthesis.js`).
+There is no code path that puts a real name on a collective page.** Conflict markers use the same
+shortened id.
 
-Either flag missing → UUID. Defensive double-gate — neither side can unilaterally surface someone's name.
+The originally-designed two-flag gate does **not** exist:
+
+- `allow_name_attribution` was never implemented — the identifier appears nowhere in the codebase.
+- `attribute_by_name` is captured by the contributor wizard and stored on the connection, but
+  **nothing reads it**. It is inert today.
+
+The practical effect is *more* private than the design promised on the page surface, and the
+default (UUID) is what everyone gets. But note the separate, real disclosure: `fellow_display_name`
+is written to `contributions/<fellow_id>/*.json` on every push regardless of any flag — see
+[`docs/shared-brain-compliance.md` §1](shared-brain-compliance.md#1--what-pii-personal-data-is-stored-and-where).
+If name attribution is ever implemented, the gate described above is the intended design and this
+section should be rewritten to match the code rather than the other way round.
 
 #### 6b. Right to erasure (Article 17)
 
@@ -270,9 +284,12 @@ The wizard's consent checkbox text is rewritten accordingly. Locked once the adm
 
 #### 6d. EU data residency
 
-Two adapter paths, two different stories:
-- **Cloudflare R2** (future release): supports per-bucket jurisdiction tagging — `jurisdiction = "eu"` in Wrangler config.
-- **GitHub** (v3.0): data location is determined by the org's plan. Free / Pro / Team store data in the US. **GitHub Enterprise Cloud with EU data residency** required for EU compliance.
+**There is no EU-resident deployment today.** The shipped adapter hardcodes `const GITHUB_API = 'https://api.github.com'` with no configurable endpoint, so it cannot reach GitHub Enterprise Cloud with data residency, nor GitHub Enterprise Server. Buying the EU residency add-on does not make Shared Brain work with it.
+
+- **GitHub** (shipped): every working Shared Brain stores its data in the United States, on every account plan, because `api.github.com` is the only host the adapter can talk to.
+- **Cloudflare R2** (future release): supports per-bucket jurisdiction tagging — `jurisdiction = "eu"` in Wrangler config. This is the intended EU answer and it has not shipped.
+
+Full detail and the disclosure obligation in [`docs/shared-brain-compliance.md` §4](shared-brain-compliance.md#4--eu-data-residency).
 
 ### Decision 7 — MCP write-tool guard on shared-* domains
 
@@ -282,7 +299,9 @@ Two adapter paths, two different stories:
 
 Implementation: `ensureSharedDomainExists()` writes `domains/shared-<slug>/CLAUDE.md` with `readonly: true` frontmatter. New helper `isDomainReadonly(domain)` in `src/brain/files.js`. The MCP `refuseIfReadonly()` chokepoint in `mcp/util.js` is called from all four write tools — refuses with a structured error pointing the user back to their personal opted-in domain.
 
-**Extended in v3.0.2:** the same contract is now enforced by the app's own write surfaces, not just the MCP — the ingest route, the compile route, and all six mutating Health endpoints refuse read-only mirrors with the same steer message; the Ingest tab's domain dropdown excludes mirrors; and `validateConnection` + `pushDomain` reserve the `shared-*` namespace so a mirror can never be registered as a *contributing* domain (which would create a pull→push feedback loop).
+**Extended in v3.0.2:** the same contract is now enforced by the app's own write surfaces, not just the MCP — the ingest route, the compile route, and six mutating Health endpoints (`/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch` — everything that edits wiki *pages*) refuse read-only mirrors with the same steer message; the Ingest tab's domain dropdown excludes mirrors; and `validateConnection` + `pushDomain` reserve the `shared-*` namespace so a mirror can never be registered as a *contributing* domain (which would create a pull→push feedback loop).
+
+**Known gap, recorded not hidden:** `POST /api/health/:domain/dismiss` and `/undismiss` are **not** gated by `assertWritableDomain`, yet they write `.health-dismissed.jsonl` inside the mirror's own `wiki/` directory. The harm is bounded — a dismissal is not wiki content, and the file is not part of the collective's page set, so a pull's prune step leaves it alone — but it does mean the mirror is not strictly read-only on disk, and a dismissal made against a mirror is local-only and will not be seen by anyone else. The MCP equivalents (`dismiss_wiki_issue` / `undismiss_wiki_issue`) *are* guarded, so the two surfaces disagree.
 
 The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read/write contract from Claude's perspective so it knows where to compile when the user says "save this to the shared brain".
 
@@ -361,7 +380,11 @@ Four things worth knowing about the behaviour:
 
 ### Pull (every contributor)
 
-`pullCollective(connection)` lists every page in `collective/<domain>/wiki/` via the adapter's `listPages()`, then for each: `resolveInsideBase()` security check, then writes via existing `writePage(shared-<X>, path, content)` — re-uses the ingest write pipeline (merge, dedup, frontmatter, backlinks, all automatic via v2.5.5+ machinery).
+`pullCollective(connection)` lists every page in `collective/<domain>/wiki/` via the adapter's `listPages()`, then for each: `resolveInsideBase()` security check, then writes via existing `writePage(shared-<X>, path, content, { replace: true })` — re-uses the ingest write pipeline (dedup, frontmatter, backlinks, all automatic via v2.5.5+ machinery).
+
+**Pull is a REPLACE, not a merge (v3.0.3+).** The `{ replace: true }` flag skips the union merge; every other stage of `writePage` is unchanged. This is what makes the mirror a true mirror: a fact removed upstream by conflict resolution or GDPR revocation actually disappears locally instead of being resurrected on every pull. It also means local hand-edits to a mirror page are overwritten — which is the point, and why mirrors are marked `readonly: true`.
+
+Pull additionally **prunes** local `.md` files in the three canonical folders that the collective no longer has, so deleted pages propagate. That prune is **gated on the pull having processed every remote page** — if any page was skipped (read error, unwritable path), the cleanup is deliberately skipped and the pull warns *"N page(s) could not be processed this pull — skipping stale-page cleanup to be safe."* Erasure propagation therefore depends on a clean pull; a contributor who sees that warning still holds the deleted pages. `index.md`, `log.md` and dot-files (e.g. `.health-dismissed.jsonl`) are never pruned, and the empty-collective early return means a transient empty listing cannot wipe a mirror.
 
 ### Synthesize (admin)
 
@@ -370,7 +393,7 @@ Triggered weekly or on admin demand. Per Decision 4, applies rules 1-5:
 - **Rule 1** — Union new_facts; exact-string dedup
 - **Rule 2** — Union/subtract links per spec (Decision 2 filter enforces same-domain only)
 - **Rule 3** — Jaccard heuristic flags near-duplicate facts; targeted LLM resolves each
-- **Rule 4** — Provenance section auto-appended with contributor UUIDs (or names if both attribution flags on, per Decision 6a)
+- **Rule 4** — Provenance section auto-appended with shortened contributor UUIDs (always — name attribution is unimplemented, per Decision 6a)
 - **Rule 5** — Collective `index.md` rebuilt
 
 Runs locally on admin's machine. Collective storage just receives the written pages — no cloud compute.

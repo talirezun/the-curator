@@ -35,14 +35,17 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (59 suites total — 42 OFFLINE
+The Curator has an extensive battle-test suite (65 suites total — 48 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
-all and prints a single pass/fail report. **This count drifts every time a
-suite is added or removed and has gone stale in this file more than once —
-the authoritative source is the `OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the
-top of [scripts/run-tests.js](scripts/run-tests.js) themselves. If you need
-the current number, count those arrays (or run `npm test` — it prints
-`Suites: N` for the offline count) rather than trusting the prose here.**
+all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
+`scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
+`OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the top of
+[scripts/run-tests.js](scripts/run-tests.js) and fails `npm test` if the
+numbers above disagree with them — naming the stale number and the correct
+value. Those arrays remain the authoritative source; the difference since
+v3.6.1 is that the prose here can no longer drift away from them silently.
+**Consequence when you add a suite: you must update the count above in the
+same commit, or `npm test` goes red.**
 
 ```bash
 npm test            # OFFLINE suites only — fast (a few seconds), free, no
@@ -512,6 +515,11 @@ extension of the domains-only one.
 2. **Add the filename to the `OFFLINE` or `LIVE` array in
    [scripts/run-tests.js](scripts/run-tests.js).** A suite not in either array
    is never run by the aggregator.
+2b. **Bump the suite count near the top of this file in the SAME commit.**
+   `scripts/check-doc-suite-counts.js` compares that prose against the arrays
+   and fails `npm test` when they disagree. This is deliberate coupling — the
+   count had gone stale three times before it was checked — but it does mean
+   step 2 alone leaves the suite red until you do this.
 3. If the test needs to point the domains directory at a throwaway tempdir, use
    **`__setDomainsDirOverride(dir)` from `src/brain/config.js`** (and clear it
    with `__setDomainsDirOverride(null)` at cleanup). Do **not** set

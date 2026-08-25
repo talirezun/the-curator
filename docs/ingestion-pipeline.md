@@ -214,13 +214,15 @@ The validator is the single chokepoint where five distinct invariants are enforc
 
 ### Stage 4 — `writePage` (the write chokepoint)
 
-Every wiki write — from ingest, Compile to Wiki, Health auto-fix, MCP `compile_to_wiki` — goes through `writePage()` in `src/brain/files.js`. This is THE one chokepoint. There is no parallel write logic anywhere in the codebase.
+Every wiki page **composed from LLM output** — ingest, Compile to Wiki, MCP `compile_to_wiki`, Shared Brain mirror pulls — goes through `writePage()` in `src/brain/files.js`. For that class of write it is THE chokepoint: there is no second implementation of frontmatter injection, merge, or link normalisation.
+
+> **Health auto-fix is NOT on this path.** `src/brain/health.js` never imports `writePage`; it rewrites and deletes wiki files directly with `writeFileAtomic()` / `rm()`. That is deliberate — a Health fix edits an *existing* page surgically (rewrite one link, merge two files, delete a duplicate) and must not re-run frontmatter injection or a union merge over it. It means `health.js` is a **second write surface with its own guards** (`fixIssue()` for dispatch, `wikiFile()` → `resolveInsideWiki()` for path containment since v3.2.0), and it must be audited as such rather than assumed to inherit `writePage`'s safety.
 
 ```mermaid
 flowchart TD
     A[writePage<br/>domain, relPath, content] --> B[1. normalizePath:<br/>non-canonical folders → canonical]
-    B --> C[1a. Underscores → hyphens<br/>in filename]
-    C --> D[2. Guard:<br/>refuse paths without .md filename]
+    B --> C[1a/1b. Guards: refuse unsafe<br/>or folder-only paths]
+    C --> D[1c. Underscores → hyphens<br/>2. Missing .md → APPEND it + warn]
     D --> E[3. Pass A:<br/>strip honorific prefix]
     E --> F[3. Pass B:<br/>hyphen-normalised match]
     F --> G[3b. Cross-folder dedup:<br/>concepts/X.md → entities/X.md if exists]
@@ -704,7 +706,7 @@ Where §10c controls the answer's **shape** (decision / enumerate / synthesis), 
 | Style (UI label) | Cap | Directive |
 |---|---|---|
 | `concise` (Concise) | 4096 | Short and direct — 1–3 tight paragraphs, lead with the answer, 2–3 sources. |
-| `balanced` (Balanced) | 8192 | *(empty)* — the intent instructions already produce a balanced answer, so `balanced` is byte-identical to the pre-Tier-2 prompt. |
+| `balanced` (Balanced) | 8192 | A soft moderate-length directive: cover the main points and their important nuances in a few short paragraphs — more than a quick summary, **not** exhaustive. **This was empty in v3.0.9** (to keep `balanced` byte-identical to the pre-Tier-2 prompt) and v3.0.10 filled it in: live testing showed an unconstrained `balanced` running *longer* than `comprehensive` on content-rich questions, because `comprehensive`'s own anti-list rules made it the more disciplined of the two. The directive exists to keep the tiers reliably ordered `concise < balanced < comprehensive`, which the live suite now asserts on both providers. |
 | `comprehensive` (Detailed) | 12288 | Be thorough — more depth and more citations where they add value; **never** reproduce the catalogue ("depth means better reasoning, not a longer list"). |
 
 **Flow.** `POST /api/chat/:domain` accepts an optional `responseStyle` in the body → `sendMessage(domain, id, message, { responseStyle })` → `normalizeResponseStyle()` maps any value to a known style (default `balanced`) → `buildPrompt(…, responseStyle)` appends the directive → `generateText(…, RESPONSE_STYLES[style].maxTokens)`. The Chat tab renders a segmented **Length** control persisted in `localStorage` and sent with each message; the choice is per-question, not per-conversation.

@@ -167,7 +167,18 @@ The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, c
    - **Hard output cap.** Claude Haiku 4.5 caps output at **64,000** tokens; the API rejects `max_tokens: 65536` outright as `max_tokens: 65536 > 64000`. The Anthropic branch resolves a **per-model** ceiling via `anthropicMaxOutputTokens(model)` (64,000 for Haiku 4.5 / Sonnet 4.5; 128,000 for Sonnet 4.6 / Sonnet 5; the conservative 64,000 for any unrecognised id). `ANTHROPIC_MAX_OUTPUT_TOKENS` still exists and still equals 64,000, but now means *that conservative default*, not a flat clamp. Gemini keeps the full 65,536 — it is not clamped.
    - **Mandatory streaming above ~21k tokens.** SDK v0.39 throws *"Streaming is strongly recommended for operations that may take longer than 10 minutes"* for **any** non-streaming `messages.create()` call whose `max_tokens` implies a computed timeout over 10 minutes — which fires for any budget above ~21,333 tokens, regardless of model or actual latency. So the clamp alone is insufficient; the Anthropic branch uses `client.messages.stream(...).finalMessage()` (fixed 600s timeout, no guard). `.finalMessage()` returns the identical `Message` object, so `stop_reason` / content handling is unchanged.
 
-   Net effect: Anthropic users on Haiku can run Compile-to-Wiki and single-pass ingest without hitting either error. Chat (4096) and multi-phase ingest (16384) were always under both thresholds and are unaffected.
+   Net effect: Anthropic users on Haiku can run Compile-to-Wiki and single-pass ingest without hitting either error.
+
+   Which call sites sit where, relative to the ~21,333-token streaming threshold:
+
+   | Call site | Requested output budget | Above the streaming threshold? |
+   |---|---|---|
+   | Chat / query | 4,096 · 8,192 · 12,288 (`RESPONSE_STYLES` in `chat.js`) | No |
+   | Multi-phase ingest — Phase 2 batch (`MULTI_PHASE_BATCH_TOKENS`) | 16,384 | No |
+   | Multi-phase ingest — **Phase 1 outline** (`MULTI_PHASE_OUTLINE_TOKENS`) | **24,576** | **Yes** — this call depends on the streaming transport |
+   | Single-pass ingest · Compile-to-Wiki | 65,536 (clamped per model) | Yes |
+
+   Note the Phase 1 outline call: at 24,576 it is **above** the guard, so it is not exempt — an earlier version of this note wrongly grouped all of multi-phase ingest as "always under both thresholds". It works because the Anthropic branch streams unconditionally, not because its budget is small.
 
 If your usage patterns make Haiku's quality insufficient (rare for wiki ingest but possible for dense academic PDFs), you can opt into Sonnet via:
 

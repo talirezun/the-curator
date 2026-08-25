@@ -179,9 +179,20 @@ Returns counts:
 
 **Step 2 — Auto-fix the safe ones.** Loop over the auto-fixable categories:
 
+The `type` argument is the **scan category name** — the key the issue arrived under in the
+`scan_wiki_health` response. Individual issue objects do **not** carry it: a `folderPrefixLinks`
+issue is `{sourceFile, linkText}`, and an `orphans` issue's own `type` field is the *page kind*
+(`"entity"` / `"concept"`), not the issue category. Passing `issue.type` therefore sends
+`undefined` (or an unfixable value) and every call is rejected. Iterate over the categories:
+
 ```
-for issue in (folderPrefixLinks + hyphenVariants + crossFolderDupes + missingBacklinks + brokenLinks-with-target):
-    fix_wiki_issue(domain="articles", type=issue.type, issue=issue)
+for category in ("folderPrefixLinks", "hyphenVariants", "crossFolderDupes", "missingBacklinks"):
+    for issue in scan[category]:
+        fix_wiki_issue(domain="articles", type=category, issue=issue)
+
+for issue in scan["brokenLinks"]:
+    if issue.suggestedTarget:                      # only these are auto-fixable
+        fix_wiki_issue(domain="articles", type="brokenLinks", issue=issue)
 ```
 
 Track successes. Report to the user: *"Fixed 42 issues automatically across 38 files."*

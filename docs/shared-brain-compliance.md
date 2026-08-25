@@ -16,20 +16,30 @@ The table below covers everything that DOES leave a contributor's machine and en
 |---|---|---|---|
 | Wiki page text (entities, concepts, summaries) | `collective/<domain>/wiki/` in shared repo | The contributor explicitly chose to contribute this domain. Pages are LLM-synthesised summaries of their facts, not raw drafts. | Content — not directly PII unless contributors write PII into their wiki pages themselves |
 | Fellow UUID (random 128-bit identifier) | `contributions/<fellow_id>/*.json` + Provenance sections on every page | Identifies which contributor authored which facts so synthesis can attribute provenance | **Pseudonymous identifier** under Article 4(5) — not directly identifying unless mapped to a real name |
-| Real display name | Provenance sections on pages **only when both attribution flags are on** (see §3) | Optional human-readable attribution | **Personal data** under Article 4(1) when present |
+| Real display name (`fellow_display_name`) | `contributions/<fellow_id>/*.json` — **on every push, unconditionally**. Also copied into each delta as `contributor_name`. NOT on synthesised wiki pages (see §3). | Whatever the contributor typed as their display name in the connection wizard. It is read back to build the admin member directory. | **Personal data** under Article 4(1) if the contributor entered a real name. Readable by every collaborator on the private repo. |
 | Contribution timestamps | `contributions/<fellow_id>/<submission_id>.json` (the `contributed_at` field) | Used by synthesis for chronological ordering | Metadata; combinable with UUID to infer activity patterns |
 | Synthesis state | `meta/state/last-synthesis.json` | Tracks when the last synthesis ran across the whole brain | Not contributor-specific |
 | Revocation audit log | `state/revocations.jsonl` | Records each revocation event (UUID + timestamp) for admin accountability | Pseudonymous; no real names |
 
 **What's never in shared storage:**
 
-- Real names (unless both attribution flags are explicitly enabled — see §3)
 - Email addresses
 - IP addresses
 - Each contributor's full personal wiki (only their opted-in domains)
 - Each contributor's chat conversations
 - Each contributor's API keys, PATs, or any credential
 - LLM prompt/response data (synthesis runs locally on each contributor's machine, never in shared storage)
+
+> **The display name is not in that list, and that is a real disclosure obligation.**
+> Whatever a contributor types as their display name is written to the shared repo on every
+> single push, with no flag governing it, and every collaborator on the repo can read it.
+> Tell contributors this before they fill in the field. A contributor who wants to stay
+> pseudonymous should enter a pseudonym, not their legal name — the field is free text and
+> nothing downstream depends on it being real.
+>
+> The **synthesised wiki pages** are a different matter and the pseudonymity claim there does
+> hold: `## Provenance` sections and conflict markers carry only the first 8 hex characters of
+> the fellow UUID. The display name is never rendered onto a collective page.
 
 ---
 
@@ -48,16 +58,38 @@ Only the **cohort admin** can revoke a contributor. Two-factor gate prevents acc
 
 When `POST /api/sharedbrain/:connection_id/revoke` runs with valid credentials and confirmation, the system:
 
-1. **Deletes the contributor's submission payloads** — every `contributions/<fellow_id>/*.json` file is removed from the shared storage.
-2. **Deletes the contributor's digest** — `digests/<fellow_id>/latest.json` (the per-fellow synthesis input cache) is removed.
+1. **Attempts to delete the contributor's submission payloads** — it lists `contributions/<fellow_id>/` and deletes each file in turn. ⚠️ **A per-file delete failure is logged to the server console and otherwise swallowed**: the loop continues, the operation does not fail, and the final message can still read "Revocation complete". The only signal you get is a count. **The admin MUST verify erasure** — see the box below.
+2. **Deletes the contributor's digest** — `digests/<fellow_id>/latest.json` (the per-fellow synthesis input cache) is removed. A failure here is likewise only logged.
 3. **Rebuilds every affected collective page** — every page that referenced the revoked fellow's UUID in its Provenance section is regenerated from the remaining contributors' contributions only. Their facts no longer appear in the unified content. Pages with no remaining contributors are deleted entirely.
 4. **Updates the synthesis state** — `meta/state/last-synthesis.json` is rebuilt to reflect the post-revocation state.
-5. **Appends an audit entry** — `state/revocations.jsonl` gains one line: `{"revoked_at": "<ISO>", "fellow_id": "<uuid>", "by_admin_token_hash": "<sha256>", "pages_rebuilt": N, "pages_deleted": M}`. The audit log contains only the UUID — no real names, no contribution content. Admins can review revocation history without exposing PII.
+5. **Appends an audit entry** — `state/revocations.jsonl` gains one line: `{"revoked_at": "<ISO>", "fellow_id": "<uuid>", "by_admin_token_hash": "<sha256>", "contributions_deleted": N, "pages_deleted": M, "pages_rebuilt": R, "rebuild_ok": true|false, "revocation_id": "<uuid>"}`. The audit log contains only the UUID — no real names, no contribution content. Admins can review revocation history without exposing PII.
+
+> ### ⚠️ Verify the erasure — "Revocation complete" is not proof
+>
+> Individual delete failures (a transient GitHub 5xx, a rate-limit, a SHA conflict) are caught and
+> written to the server console only. They do not fail the operation and they do not appear in the
+> progress stream. A revocation that erased 9 of 11 payloads reports success.
+>
+> **After every revocation, do this:**
+>
+> 1. Note the *"Found N contributions to delete"* line in the progress stream.
+> 2. Compare it against `contributions_deleted` in the audit record (also returned in the response
+>    body). **They must be equal.**
+> 3. If they differ — or if you want independent confirmation — check the repo directly:
+>    `contributions/<fellow_id>/` should be gone, as should `digests/<fellow_id>/`.
+> 4. If anything remains, **re-run the revocation**. It is idempotent: already-deleted files are
+>    simply absent, and the rebuild recomputes from whatever survives.
+>
+> Also check `rebuild_ok`. If it is `false`, the erasure happened but the collective pages were not
+> rebuilt; the in-progress marker stays set, ordinary synthesis keeps refusing, and you must re-run
+> the revocation to finish. That state is reported, not silent.
+>
+> If you are answering a formal Article 17 request, step 3 is the evidence — record it.
 
 ### 2c — What revocation does NOT remove
 
 - **Git history.** GitHub retains commit history. Old commits still contain the revoked contributor's data. The admin can prune git history via `git filter-repo` if absolute erasure is required — see §2d.
-- **Local copies on other contributors' machines.** Each contributor's Curator pulls a local mirror of the shared brain. Those local mirrors are NOT automatically purged on revoke. Contributors with stale mirrors will see the revoked content until they next pull. Since v3.0.3, Pull is a true mirror operation: pages deleted from the collective are removed from the local mirror and facts removed from surviving pages disappear (older versions union-merged pulls, which retained revoked content indefinitely — contributors must be on v3.0.3+ for erasure to propagate).
+- **Local copies on other contributors' machines.** Each contributor's Curator pulls a local mirror of the shared brain. Those local mirrors are NOT automatically purged on revoke. Contributors with stale mirrors will see the revoked content until they next pull. Since v3.0.3, Pull is a true mirror operation: pages are written with `{ replace: true }` (no union-merge), so facts removed from a surviving page genuinely disappear locally, and pages deleted from the collective are pruned from the mirror. Contributors must be on v3.0.3+ for erasure to propagate at all. **One caveat that matters for erasure: the prune step only runs when the pull processed *every* remote page.** If any page is skipped (a read error, an unwritable path), the cleanup is deliberately skipped rather than risk deleting live content, and the pull reports *"N page(s) could not be processed this pull — skipping stale-page cleanup to be safe."* A contributor who sees that warning still holds the deleted pages and should pull again until it is gone.
 - **Backups.** If your cohort takes external backups of the shared repo (e.g. a CI mirror to another git host), revocation does not propagate to those backups. The admin must manually purge backups if absolute erasure is required.
 
 ### 2d — Absolute erasure procedure (for high-compliance scenarios)
@@ -125,21 +157,39 @@ Shared Brain supports two `data_handling_terms` modes, set by the admin at brain
 
 ## 4 — EU data residency
 
-GitHub and Cloudflare R2 have different residency profiles. Choose the right adapter for your jurisdiction.
+> ## ⛔ There is no EU-resident deployment of Shared Brain today.
+>
+> The shipped GitHub adapter has `const GITHUB_API = 'https://api.github.com'` written into it
+> ([`src/brain/sharedbrain-github-adapter.js`](../src/brain/sharedbrain-github-adapter.js)) with
+> **no configurable endpoint**. It therefore cannot reach GitHub Enterprise Cloud with data
+> residency, and it cannot reach GitHub Enterprise Server either. The repo's own
+> [`LICENSES/LICENSE-ENTERPRISE.txt`](../LICENSES/LICENSE-ENTERPRISE.txt) §1.6 states this
+> explicitly.
+>
+> **Do not buy the EU data residency add-on expecting Shared Brain to work with it.** It will
+> not connect. Buying it on the strength of an earlier version of this document was a real
+> possibility, and that is the error this box exists to prevent.
+>
+> If your deployment is EU-regulated: Shared Brain is **not currently a compliant option**, and no
+> configuration or plan upgrade makes it one. The R2 path in §4b would change that, but it has not
+> shipped. Treat §4a and §4c below as a description of GitHub's plans, not as a route The Curator
+> can take you down.
 
-### 4a — GitHub-backed Shared Brains (v3.0.0+)
+### 4a — GitHub-backed Shared Brains: where your data actually lands
 
-GitHub's default storage location depends on your account plan:
+Shared Brain talks to `api.github.com` — the public GitHub service — for every account plan.
+GitHub's storage location for repositories on those plans is the United States:
 
-| Plan | Default residency | EU residency option |
+| Plan | Where a Shared Brain repo lives | Reachable by the shipped adapter? |
 |---|---|---|
-| Free, Pro | United States | Not available — use Enterprise Cloud |
-| Team | United States | Not available — use Enterprise Cloud |
-| **Enterprise Cloud with EU data residency** | **European Union** | **✓ Required for EU compliance** |
+| Free, Pro | United States | Yes |
+| Team | United States | Yes |
+| Enterprise Cloud **with EU data residency** | European Union | **No** — different API host; the adapter cannot connect |
+| Enterprise Server (self-hosted) | Wherever you host it | **No** — different API host; the adapter cannot connect |
 
-For **EU-regulated deployments** (universities, EU businesses, public sector), you must use **GitHub Enterprise Cloud with the EU data residency add-on**. Confirm with GitHub Support that your specific repository is in the EU region — it's set at the organisation level when the account is provisioned.
-
-If you're on a Free/Pro/Team plan and need EU residency: the GitHub Shared Brain adapter is not the right choice. Wait for the Cloudflare R2 adapter (Phase 5+) or self-host using an alternative.
+So in practice: **every working Shared Brain today stores its data in the United States.** If that
+is acceptable for your jurisdiction and data, you are fine. If it is not, there is no supported
+configuration — see the box above.
 
 ### 4b — Cloudflare R2-backed Shared Brains (Phase 5+, not in v3.0.0-beta.1)
 
@@ -156,9 +206,11 @@ Data stays in EU data centres regardless of where your contributors or admins ar
 
 ### 4c — Other jurisdictions
 
-- **United Kingdom**: GitHub Free/Pro stores data in US — same as EU. Use Enterprise Cloud for UK residency.
-- **United States**: Default GitHub plans work.
-- **China, Russia, restricted regions**: Use Cloudflare R2 with the appropriate jurisdiction tag (when Phase 5 ships), or self-host.
+- **United States**: the shipped adapter works and your data stays in the US.
+- **United Kingdom, EU, and anywhere else with a residency requirement**: not supported today, for
+  the reason in the box at the top of §4 — the adapter can only reach `api.github.com`. Enterprise
+  Cloud with residency and Enterprise Server are both unreachable, so a plan upgrade does not help.
+  The R2 path in §4b is the intended answer and has not shipped.
 
 ---
 
@@ -169,9 +221,9 @@ Before deploying Shared Brain for a real cohort or team, answer these five yes/n
 | | Question |
 |---|---|
 | 1 | **Do you understand which contributors will write what data into their personal wikis?** Your contributors' personal wikis are private — only their explicitly opted-in domains push to the shared brain. But contributors control what they write into their own opted-in domains. If they write PII (real names, emails, sensitive personal data) into wiki pages they then opt-in to contribute, that PII lands in the shared repo. Train your contributors on this. |
-| 2 | **Have you confirmed your GitHub plan's data residency matches your legal jurisdiction?** Check §4a above. Default GitHub plans store data in the US. If you're in the EU, UK, or any region with data-residency requirements, you need GitHub Enterprise Cloud with the matching residency option. |
+| 2 | **Is US data residency acceptable for this deployment?** It has to be. Every working Shared Brain stores its data in the US, because the adapter can only reach `api.github.com` — see §4. If you are in the EU, UK, or any region with a residency requirement, the honest answer to this question is "no" and there is no configuration that changes it. |
 | 3 | **Have you chosen the right `data_handling_terms` mode?** §3 covers the two modes. Pick deliberately at brain setup — it's encoded in the invite token. |
-| 4 | **Do you have an admin procedure for revocation requests?** When a contributor leaves (graduates, changes jobs, requests removal), someone needs to run the revoke operation. The Curator UI surfaces this in Settings → Advanced → Revoke contributor. Document who in your org has the `admin_token` and the procedure. |
+| 4 | **Do you have an admin procedure for revocation requests?** When a contributor leaves (graduates, changes jobs, requests removal), someone needs to run the revoke operation. The Curator UI surfaces this on the **Sync** tab → the connection's card → **Advanced** → **"Revoke a contributor…"** (visible only when the connection holds an admin token). Document who in your org has the `admin_token` and the procedure. |
 | 5 | **Do you understand the absolute-erasure procedure?** Standard revocation removes the contributor's data from the live brain but git history retains it. For absolute erasure see §2d. If your contributors might invoke this right, make sure someone in your org knows how. |
 
 If any answer is "no" — pause the deployment and resolve the gap before inviting contributors.

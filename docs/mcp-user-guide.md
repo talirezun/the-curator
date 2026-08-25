@@ -28,7 +28,7 @@ That's the difference between *"I have a folder of notes"* and *"I have a querya
 
 ## What it does
 
-My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools that explore your knowledge graph, and seven write tools (v2.5.2+) that let Claude *update* the wiki on your behalf.
+My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools that explore your knowledge graph, and seven health/authoring tools (v2.5.2+) that let Claude maintain and *update* the wiki on your behalf. Four of those seven actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`); the other three only scan and report.
 
 ### Read tools (since v2.3.0)
 
@@ -106,6 +106,20 @@ A frontier model can always get the full picture — it just has to ask in piece
 7. Back in the Curator, click **Run self-test** to confirm the bridge responds. Then in Claude Desktop:
 
     > *Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to see how everything is connected.*
+
+**If your `claude_desktop_config.json` already exists but contains a JSON syntax error**, the wizard
+will **not** show you an "After" preview and the copy button on that pane disappears. That is
+deliberate: a file that cannot be parsed cannot be merged into, and the only payload the Curator
+could invent would contain *only* the my-curator entry — pasting it would delete every other MCP
+server you have configured. Fix the syntax error in that file first, then reopen the wizard. The
+entry-only **Copy snippet** in step 2 is unaffected and remains safe to paste by hand.
+
+**What the self-test actually checks** (v3.6.1+): it launches `mcp/server.js` with **the same
+`--domains-path` the snippet tells Claude Desktop to use**, so a wrong Knowledge Base Location can
+no longer produce a green pass. It reports two things separately — whether the bridge speaks MCP
+(that is what pass/fail means), and what happened when it asked for your domains. A brand-new
+install with no domains yet passes, and says so, rather than being reported as broken. It never
+reads or validates `claude_desktop_config.json` — see Troubleshooting below.
 
 ---
 
@@ -308,7 +322,7 @@ The tool descriptions are written in plain English with the natural phrases you 
 For every `compile_to_wiki` call:
 
 - **One summary page** under `summaries/<slug>-<date>-<hash>.md` — the durable record of what was learned. The hash makes the slug deterministic, so re-compiling the same conversation never creates a duplicate.
-- **Optional entity / concept pages** for any new people, tools, ideas, or frameworks that emerged. Existing pages are merged additively (bullet sections grow, never replaced).
+- **Optional entity / concept pages** for any new people, tools, ideas, or frameworks that emerged. On an existing page the merge is **partly** additive: bullet sections (Key Facts, Related, Entities Mentioned, and the rest) genuinely accumulate and nothing is lost. **Prose sections behave differently** — a `## Definition` or `## Summary` in the incoming page *replaces* the existing one, and is only preserved when the incoming page omits that heading entirely. That is deliberate (it is how a full re-ingest rewrites a page with complete document context), but it means a thin update can overwrite richer existing prose. The tool description tells Claude to read the page first when updating; if you care about a hand-written Definition, say so in the conversation.
 - **Cross-links** — every entity mentioned in the summary gets a backlink to it; the summary references all the entities and concepts.
 - **Index update** — the new pages are added to `index.md` automatically.
 - **Log entry** in `log.md` recording the compile.
@@ -472,9 +486,9 @@ The one way they can still drift apart is the one described just above: the `--d
 |---|---|---|
 | Claude Desktop shows no `my-curator` tools | Snippet pasted incorrectly, or Claude Desktop not restarted | Double-check the "After" preview in the wizard, then ⌘Q and reopen Claude Desktop |
 | "Stale config" banner in Settings | Knowledge Base Location changed since you last generated the snippet | Click **Regenerate**, paste the new snippet, restart Claude Desktop |
-| Self-test fails with "domains folder not found" | `DOMAINS_PATH` is wrong or folder was deleted | Set a valid path in the Domains tab, then regenerate |
+| Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in the Domains tab, then **Regenerate** the snippet and re-paste it. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
 | Tools show but return "no domains" | You haven't created any domains yet | Open the Curator, create a domain, ingest a source |
-| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | Open `claude_desktop_config.json` — the wizard's self-test reports `claude_config_parse_error` when it can't parse the file |
+| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | The self-test only checks the bridge, never your config file — a syntax error there cannot fail it. The wizard detects it separately: the Settings panel's status call (`GET /api/mcp/config`) returns `claude_config_parse_error: true`, and the merged "After" preview then shows **no merge at all** rather than a misleading one, because a file that can't be parsed can't be safely merged into. Fix the JSON syntax in `claude_desktop_config.json` first, then reload the Settings tab |
 
 ---
 

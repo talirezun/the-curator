@@ -337,7 +337,9 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 - The CLAUDE.md frontmatter declares `readonly: true`.
 - MCP write tools (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`) refuse with a clear steer to use your personal opted-in domain instead.
-- The Curator's app UI keeps Ingest and Compile disabled for these domains.
+- The Curator's app UI keeps Ingest and Compile disabled for these domains, and the mutating Wiki Health endpoints refuse them. (Two exceptions: **dismissing** and **un-dismissing** a Health issue still work in-app on a mirror. That is a local-only note-to-self — it is not wiki content, it does not propagate to other contributors, and it is not pruned by a Pull.)
+
+**Do not hand-edit a mirror.** Since v3.0.3 a Pull *replaces* each page rather than merging into it, and prunes local pages the collective no longer has — which is what makes deletions and GDPR erasure propagate. Any local edit to a `shared-<slug>` page is therefore overwritten on the next Pull.
 
 To contribute to a Shared Brain, write to your **personal opted-in domain** (e.g. `work-ai/`), then click **Push contributions** from the Sync tab. The synthesised collective wiki comes back to `shared-<slug>/` on the next Pull.
 

@@ -1367,13 +1367,75 @@ Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, mes
 | Path | Description |
 |---|---|
 | `POST /api/sharedbrain/parse-invite` | Body: `{token: "sbi_..."}`. Decodes and validates the invite token (no network calls). |
-| `POST /api/sharedbrain/generate-invite` | Body: `{repo, name, shared_domain, branch?, storage_type?, data_handling_terms?}`. Encodes metadata into an `sbi_...` token (deterministic — same metadata reproduces the same token, which is how the card's "Show invite token" works). v3.0.5+: the response also carries a freshly generated `admin_token` for the admin wizard; it is NOT embedded in the invite token, is not persisted by this call, and should be ignored by non-wizard callers. |
+| `POST /api/sharedbrain/generate-invite` | Body: `{repo, name, shared_domain, branch?, storage_type?, data_handling_terms?}`. **`storage_type` must be `"github"` or omitted** — since v3.6.1 the codec refuses to MINT (400) or PARSE any other value, because a non-GitHub brain cannot be joined by the invite flow at all (it works by accepting a repo invitation and creating a PAT). Previously such a token minted and parsed fine, and the contributor was only refused at save — after creating a real PAT. Encodes metadata into an `sbi_...` token (deterministic — same metadata reproduces the same token, which is how the card's "Show invite token" works). v3.0.5+: the response also carries a freshly generated `admin_token` for the admin wizard; it is NOT embedded in the invite token, is not persisted by this call, and should be ignored by non-wizard callers. |
 
 ### Live PAT validator (server-proxy)
 
 | Path | Description |
 |---|---|
 | `POST /api/sharedbrain/validate-pat` | Body: `{repo: "owner/name", pat: "github_pat_..."}`. Curator backend makes one GitHub API call with the supplied PAT, returns `{valid, hasWriteAccess, repoFullName, isPrivate, defaultBranch, message}`. The PAT never leaves the user's machine via the browser. PAT length capped at 400 chars (DoS defense). v3.0.4+: a `valid: true, hasWriteAccess: false` verdict is no longer a dead end — the wizard lets the user continue as a read-only member; 401/403/404 error copy explicitly points at the unaccepted-collaborator-invitation case. |
+
+---
+
+## My Curator MCP endpoints (`/api/mcp`)
+
+These back the **Settings → My Curator** wizard. They inspect and help assemble the Claude Desktop
+config; **none of them writes `claude_desktop_config.json`** — the user always pastes the snippet
+themselves. `CLAUDE_CONFIG_PATH` is a module constant in `src/routes/mcp.js` with no override seam.
+
+The config entry these endpoints describe is always:
+
+```json
+{ "mcpServers": { "my-curator": { "command": "<process.execPath>",
+                                  "args": ["<app>/mcp/server.js", "--domains-path", "<domainsDir>"] } } }
+```
+
+| Path | Description |
+|---|---|
+| `GET /api/mcp/config` | Install status. `{ok, mcp_server_path, mcp_server_exists, mcp_server_name, domains_dir, domains_dir_exists, node_binary, claude_config_path, claude_config_exists, claude_config_parse_error, installed, stale}`. `ok` is `mcp_server_exists && domains_dir_exists`. `installed` is true when the config already has an `mcpServers["my-curator"]` entry; `stale` is true when that entry's `command`/`args` differ from what this install would generate (the usual cause is a moved domains folder). Both are forced `false` when `claude_config_parse_error` is true — an unreadable file cannot be inspected. |
+| `GET /api/mcp/claude-config` | The entry-only snippet, nothing else. Always valid, in every state. |
+| `GET /api/mcp/claude-full-config` | Snippet **plus** a merged preview. `{claude_config_path, entry, was_empty, parse_error, merge_available, merged, merge_error}`. Three input states → three outputs: file **absent** → `merged` = the snippet; file **readable** → `merged` = the existing config with our entry added; file **corrupt** → **`merged: null`**, `merge_available: false`, and `merge_error` explaining why. ⚠️ **Callers must branch on `merge_available` (or `merged !== null`), not assume `merged` is an object.** Before v3.6.1 the corrupt branch returned a config containing *only* our server — a valid-looking payload that, if pasted, would delete every other MCP server the user had. `null` is structurally unpasteable, which is the point. Note `was_empty` is a legacy field that stays `true` in the corrupt case (its only shipped consumer dereferences `merged` on the `false` branch); use `parse_error` / `merge_available` to distinguish "absent" from "corrupt". |
+| `POST /api/mcp/self-test` | Spawns `mcp/server.js` locally over stdio — since v3.6.1 with **the same `--domains-path` the wizard prescribes**, so a wrong domains folder can no longer produce a green pass — and runs `initialize` → `tools/list` → `tools/call list_domains`. ⚠️ **This endpoint never returns a non-200 status. Branch on `data.ok`, not `res.ok`** — every failure path, including a spawn error, is delivered as a 200 with `ok: false`. |
+| `POST /api/mcp/reveal-config` | Opens `claude_desktop_config.json` in Finder (or its parent directory when the file does not exist yet). macOS only; uses `execFile('open', …)` with no shell. Returns `{ok, revealed}`, or **500** `{ok: false, error}` if `open` fails — the one endpoint here that does use a non-200. |
+
+### `POST /api/mcp/self-test` response
+
+```json
+{
+  "ok": true,
+  "server_info": { "name": "my-curator", "version": "…" },
+  "tool_count": 18,
+  "tool_names": ["list_domains", "get_index", "…"],
+  "domains": ["articles", "business"],
+  "domains_status": "ok",
+  "domains_message": null,
+  "domains_error": null,
+  "domains_dir": "/Users/you/second-brain/domains",
+  "domains_dir_exists": true,
+  "spawn_command": "/usr/local/bin/node",
+  "spawn_args": ["/…/mcp/server.js", "--domains-path", "/…/domains"],
+  "stderr": null
+}
+```
+
+**`ok` means "the bridge speaks MCP"** — `initialize` and `tools/list` both returned a result. It
+deliberately does **not** include the `list_domains` outcome: a brand-new user with zero domains is
+a healthy install, and failing them would be as harmful as the false green being fixed.
+
+The `list_domains` outcome is reported separately and honestly in `domains_status` (v3.6.1+):
+
+| `domains_status` | Meaning |
+|---|---|
+| `ok` | Domains found; `domains` is a non-empty array. |
+| `empty` | The folder exists and is genuinely empty. Normal for a new install. |
+| `missing_folder` | The configured domains folder **does not exist**. Decided by the parent's own `existsSync`, not by matching the child's wording — trustworthy only because the child is now spawned with the same `--domains-path`. Previously this collapsed into a cheerful "no domains yet". |
+| `error` | `list_domains` returned a JSON-RPC error or a tool error; see `domains_error`. |
+| `unreadable` | A response arrived but no usable text/array could be read from it. |
+| `no_response` | The child never answered (also the value on every failure path). |
+
+`domains` keeps its original meaning and type — an array, or `null` when no list could be read — so
+pre-v3.6.1 consumers are unaffected. `domains_message` carries the child's own sentence (truncated
+at 500 chars) when it sent one.
 
 ---
 

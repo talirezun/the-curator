@@ -1,0 +1,351 @@
+/* ══════════════════════════════════════════════════════════════════════
+   My Curator MCP setup wizard — owned by views/mcp-wizard.js.
+
+   Chrome only; every behaviour lives in the JS file. The `mcpw-` prefix is
+   owned exclusively by this pair of files, distinct from settings.css's
+   `mcp-` prefix (which styles the MCP section INSIDE Settings) so the two
+   can never collide.
+
+   Structure and z-index deliberately mirror views/shared.css's `.sbw-*`
+   block, so the two overlays in this shell look and behave the same.
+
+   Every colour/size below is a token defined in tokens/*.css — see
+   scripts/test-css-tokens.js §7, which hard-fails on any var(--x) with no
+   definition in the /next token universe (a hex fallback does NOT count).
+   ══════════════════════════════════════════════════════════════════════ */
+
+.mcpw-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+  /* Plain literal, NOT var(--scrim, ...). That token is deliberately
+     undefined everywhere, and test-css-tokens.js baselines exactly ONE
+     fallback-carrying reference to it (shell.css) with a hard assertion
+     that the count is 1 — a second reference anywhere in /next fails the
+     suite. Same rgba value, inlined, exactly as views/shared.css does. */
+  background: rgba(5,5,10,0.68);
+  backdrop-filter: blur(6px);
+}
+[data-theme="light"] .mcpw-scrim { background: rgba(20,20,31,0.5); }
+
+.mcpw-card {
+  position: relative;
+  width: min(660px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 26px 28px 24px;
+  margin: auto;
+}
+
+/* The generic hide rule. Found in browser verification, not by reading:
+   without it, `.mcpw-hidden` was only defined on the specific blocks below
+   (.mcpw-panel, .mcpw-status, …), so an element whose base class sets its
+   own display — every `.btn` (inline-flex from shell.css) — ignored it
+   entirely. Concretely: "I copied it by hand" was permanently visible on
+   step 1, and the blocked panel's Finder-reveal button showed even for the
+   two blockers that have nothing to reveal.
+   Descendant-scoped (0,2,0) rather than !important, so it beats `.btn`
+   (0,1,0) on specificity alone; the per-block rules below are equal
+   specificity and later in the file, and all say the same thing. */
+.mcpw-card .mcpw-hidden { display: none; }
+
+.mcpw-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: none;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.mcpw-close:hover { background: var(--surface-hover); color: var(--text); }
+
+.mcpw-header { text-align: center; margin-bottom: 18px; }
+.mcpw-header-icon { color: var(--accent-text); margin-bottom: 6px; }
+.mcpw-title { margin: 0 0 4px; font: var(--type-h2); color: var(--text); }
+.mcpw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+
+/* ── Progress pips ────────────────────────────────────────────────────── */
+
+.mcpw-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+.mcpw-progress.mcpw-hidden { display: none; }
+.mcpw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-3); }
+.mcpw-pip-num {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-inset);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.mcpw-pip-label { font-size: var(--text-xs); white-space: nowrap; }
+.mcpw-pip.active { color: var(--accent-text); }
+.mcpw-pip.active .mcpw-pip-num { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
+.mcpw-pip.done { color: var(--success-text); }
+.mcpw-pip.done .mcpw-pip-num { border-color: var(--success-text); background: var(--success-tint); color: var(--success-text); }
+.mcpw-pip-line { width: 18px; height: 1px; background: var(--border-strong); margin: 0 6px; flex: none; }
+
+/* ── Panels ───────────────────────────────────────────────────────────── */
+
+.mcpw-panel { animation: mcpwFadeIn 0.16s ease; }
+.mcpw-panel.mcpw-hidden { display: none; }
+.mcpw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
+.mcpw-panel h3:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
+@keyframes mcpwFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+.mcpw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.mcpw-hint-tight { margin-top: -4px; font-size: var(--text-xs); }
+.mcpw-hint strong { color: var(--text-2); }
+.mcpw-hint code,
+.mcpw-checklist code,
+.mcpw-capabilities code {
+  font-family: var(--font-mono);
+  background: var(--surface-inset);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+}
+
+/* ── Stale / already-connected note (defect 4) ────────────────────────── */
+
+.mcpw-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.mcpw-note.mcpw-hidden { display: none; }
+
+/* ── Payload choice (defect 2) ────────────────────────────────────────── */
+
+.mcpw-choices {
+  border: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mcpw-label {
+  padding: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+}
+.mcpw-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  cursor: pointer;
+}
+.mcpw-choice.mcpw-hidden { display: none; }
+.mcpw-choice:hover { border-color: var(--border-strong); }
+.mcpw-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-tint); }
+.mcpw-choice input[type="radio"] { margin-top: 3px; flex: none; }
+.mcpw-choice-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mcpw-choice-text strong { font-size: var(--text-sm); color: var(--text); }
+.mcpw-choice-text span { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-normal); }
+
+/* ── Payload preview ──────────────────────────────────────────────────── */
+
+.mcpw-payload { margin-bottom: 12px; }
+.mcpw-payload-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.mcpw-payload-name {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+}
+.mcpw-pre {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  white-space: pre;
+}
+.mcpw-pre:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+/* ── Path box ─────────────────────────────────────────────────────────── */
+
+.mcpw-pathbox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.mcpw-pathbox.mcpw-hidden { display: none; }
+.mcpw-path-label {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-3);
+}
+.mcpw-path { font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
+
+/* ── Clipboard chip (step 2) ──────────────────────────────────────────── */
+
+.mcpw-clipchip {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 6px 11px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--success-text);
+  background: var(--success-tint);
+  color: var(--success-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+/* The whole-file payload OVERWRITES the user's file — it reads as a
+   caution, not a success, even when the copy itself worked. */
+.mcpw-clipchip-whole {
+  border-color: var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+}
+
+/* ── Checklists ───────────────────────────────────────────────────────── */
+
+.mcpw-checklist {
+  margin: 4px 0 4px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.mcpw-checklist.mcpw-hidden { display: none; }
+.mcpw-checklist h4 { margin: 0 0 8px; font-size: var(--text-sm); color: var(--text); }
+.mcpw-checklist ol { margin: 0; padding-left: 20px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
+.mcpw-checklist li { margin-bottom: 4px; }
+
+/* ── Status line ──────────────────────────────────────────────────────── */
+
+.mcpw-status {
+  margin: 10px 0;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.mcpw-status.mcpw-hidden { display: none; }
+.mcpw-status-error { color: var(--danger-text); background: var(--danger-tint); border: 1px solid var(--danger-text); }
+.mcpw-status-ok { color: var(--success-text); background: var(--success-tint); border: 1px solid var(--success-text); }
+.mcpw-status-warn { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.mcpw-status-checking { color: var(--text-3); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
+
+/* ── Self-test result (defect 5) ──────────────────────────────────────── */
+
+.mcpw-result {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.mcpw-result-ok { border-color: var(--success-text); background: var(--success-tint); }
+.mcpw-result-warn { border-color: var(--attention-text); background: var(--attention-tint); }
+.mcpw-result-error { border-color: var(--danger-text); background: var(--danger-tint); }
+.mcpw-result-head { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text); }
+.mcpw-result-glyph { display: inline-flex; flex: none; }
+.mcpw-result-ok .mcpw-result-glyph { color: var(--success-text); }
+.mcpw-result-warn .mcpw-result-glyph { color: var(--attention-text); }
+.mcpw-result-error .mcpw-result-glyph { color: var(--danger-text); }
+.mcpw-result-detail { margin: 8px 0 0; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.mcpw-result-steps { margin: 8px 0 0; padding-left: 20px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
+.mcpw-result-steps li { margin-bottom: 4px; }
+
+.mcpw-stderr { margin-top: 10px; font-size: var(--text-xs); }
+.mcpw-stderr summary { cursor: pointer; color: var(--text-3); }
+.mcpw-stderr pre {
+  margin: 8px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: 9px 11px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  font-size: var(--text-2xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── Capabilities block (defect 7) ────────────────────────────────────── */
+
+.mcpw-capabilities {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-tint);
+}
+.mcpw-capabilities h4 {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  color: var(--accent-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mcpw-capabilities p { margin: 0 0 8px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
+.mcpw-capabilities ul { margin: 0; padding-left: 18px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
+.mcpw-capabilities li { margin-bottom: 4px; }
+.mcpw-capabilities-note { margin: 8px 0 0; font-size: var(--text-xs); color: var(--text-3); }
+
+/* ── Actions ──────────────────────────────────────────────────────────── */
+
+.mcpw-actions { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+.mcpw-actions-inline { margin-top: 12px; }
+
+/* Off-screen textarea used only by the execCommand('copy') fallback — it
+   must be in the document and selectable, so it cannot be display:none. */
+.mcpw-offscreen {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}

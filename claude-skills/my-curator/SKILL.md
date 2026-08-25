@@ -6,7 +6,7 @@ allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-
 
 # My Curator — second brain playbook
 
-This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 18 tools — 11 for reading the wiki and 7 for writing to it. This playbook tells you how to use them well, in the order that produces the best results.
+This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 18 tools — 11 for reading the wiki, and 7 in the health/authoring group, of which 4 actually mutate it (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`). This playbook tells you how to use them well, in the order that produces the best results.
 
 ## §1 — What the second brain is
 
@@ -58,9 +58,11 @@ Some domains in `list_domains` may be **Shared Brain mirrors** — named like `s
 
 **Reading a mirror is unrestricted.** All eleven read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `get_raw_source`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
 
-**Writing to a mirror is refused.** All seven write tools (`compile_to_wiki`, `fix_wiki_issue`, `scan_semantic_duplicates` merge path, `dismiss_wiki_issue`, `undismiss_wiki_issue`) check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
+**Writing to a mirror is refused.** All four *mutating* tools — `compile_to_wiki`, `fix_wiki_issue` (which is also where the `scan_semantic_duplicates` merge is applied, as `type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue` — check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
+
+`scan_wiki_health`, `scan_semantic_duplicates` and `get_health_dismissed` are **not** guarded, and that is correct — they only read. Scanning a mirror to answer *"is the collective wiki healthy?"* is supported; it is applying a fix that is refused.
 
 ### §3.2 — How to actually contribute to a Shared Brain via MCP
 
@@ -188,7 +190,7 @@ You don't need to enumerate everything. The wiki is large; reasoning over hubs a
 
 This is the rule that produces ZERO broken links and ZERO duplicate pages. **Follow it every single time** the user asks you to save, add, compile, or update.
 
-### The five-step playbook
+### The playbook
 
 **Step 0 — Check the target isn't a Shared Brain mirror.** If the domain starts with `shared-`, STOP. Apply the §3.3 "Save this to our shared brain" script instead — redirect the write to the user's personal opted-in domain. Trying to write directly to a `shared-*` mirror will be refused with a clear error, but earlier rejection saves a round trip.
 
@@ -234,6 +236,26 @@ After the call, inspect the `links` field in the response:
 
 If `broken_count > 0` and you used `'keep'`, decide: retry with corrections, or accept the broken link as a known TODO?
 
+### Step 6 — If you are UPDATING an existing page, read it first
+
+A write to an existing page is **not** fully non-destructive, and this is the single easiest way to
+lose the user's work.
+
+| Section kind | What happens on merge |
+|---|---|
+| Bullet sections — Key Facts, Key Ideas, Key Points, Key Takeaways, Related, Entities Mentioned, Concepts Introduced or Referenced, Applications, Examples | Genuinely accumulate. Existing bullets are kept, yours are added, duplicates are removed. Safe. |
+| Prose sections — Definition, Summary, Why It Matters, Overview, anything else | **Your version REPLACES the existing one.** The existing prose is preserved *only* if your page omits that heading entirely. |
+
+So when a page in `additional_pages` already exists:
+
+- **Adding facts?** Send only the bullet sections. Omit the prose headings and the existing prose
+  survives untouched. This is the safe default.
+- **Genuinely rewriting the prose?** Call `get_node(domain, slug)` first, read what is there, and
+  carry forward anything still true. Do not ship a one-line `## Definition` over a rich one.
+- **Not sure whether the page exists?** It was in the index from step 2 — check.
+
+Use `dry_run: true` when you are unsure. It shows which pages are creates and which are updates.
+
 ### Idempotency
 
 `compile_to_wiki` refuses re-compiles when the title + content + date hash to the same slug. If the user asks to compile the same thing twice, the second call is refused with a clear message. To extend a previous compile, the user should add new content to their conversation first.
@@ -263,6 +285,14 @@ When the user asks to "check my wiki" or "clean up", use the Health tools. There
 4. For each user-approved fix → fix_wiki_issue
 5. For each user dismissal → dismiss_wiki_issue (persists across scans + machines)
 ```
+
+**`type` is the scan CATEGORY, not a field on the issue.** `scan_wiki_health` returns issues grouped
+under `brokenLinks`, `orphans`, `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`,
+`missingBacklinks` — and the individual objects do **not** carry that name. (A `folderPrefixLinks`
+issue is just `{sourceFile, linkText}`; an `orphans` issue *does* have a `type` field, but it holds
+the page kind — `"entity"` / `"concept"` — which is not a fixable issue type.) Pass the key you
+found the issue under, and pass the issue object through unchanged:
+`fix_wiki_issue(domain, type="folderPrefixLinks", issue=<the object>)`.
 
 Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the user's machines. Items dismissed in a Claude Desktop conversation also disappear from the in-app Health tab; same store. Use `get_health_dismissed` to list previously skipped issues if the user asks.
 

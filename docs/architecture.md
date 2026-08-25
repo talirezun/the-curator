@@ -344,17 +344,31 @@ See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-use
 
 ## LLM provider selection (`src/brain/llm.js`)
 
-The app auto-detects which LLM provider to use based on which key is available. Keys are resolved by `config.js` with this priority: `.curator-config.json` (set via Settings UI) takes precedence over `.env` (developer fallback). `GEMINI_API_KEY` takes priority over `ANTHROPIC_API_KEY` if both are set.
+The app selects a provider based on which keys are available and which one the user last activated. Keys are resolved by `config.js` with this priority: `.curator-config.json` (set via Settings UI) takes precedence over `.env` (developer fallback).
+
+With **both** keys stored, the winner is **not** Gemini-by-default — it is `activeProvider` in `.curator-config.json`, which is **last-saved-wins** (v2.4.2+): saving a key in Settings activates that provider, and the Settings provider toggle flips it without re-pasting a key. `getProviderInfo()` reads it via `getActiveProvider()`.
 
 ```
-GEMINI_API_KEY set      →  Google Gemini  (default model: gemini-2.5-flash-lite)
-ANTHROPIC_API_KEY set   →  Anthropic Claude (default model: claude-haiku-4-5)
-Neither set             →  Error on startup (onboarding wizard prompts for key)
+Only one key set            →  that provider
+Both keys set               →  config.activeProvider  (last saved / toggled)
+Both set, legacy config      →  Gemini  (no activeProvider field → Gemini-first fallback)
+activeProvider set but its
+  key missing               →  falls through to whichever provider still has a key
+Neither set                 →  Error on first LLM call (onboarding wizard prompts for a key)
+
+default models (DEFAULTS in llm.js):  gemini-2.5-flash-lite  /  claude-haiku-4-5
 ```
+
+Chat additionally supports a **per-chat provider override** (v3.0.11+) — `getProviderInfo(preferProvider)` honours it only when that provider has a key saved in Settings, and the model id is always `DEFAULTS[provider]`, never client-supplied.
 
 The optional `LLM_MODEL` env var overrides the default model for whichever provider is active.
 
-`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` (v3.0.16) carries two additive, optional fields: `onUsage(payload)` — fired once per completed provider call with normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, so a caller can track real spend without changing the function's bare-string return type — and `cachePrefixChars` — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
+`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` carries four additive, optional fields:
+
+- `onUsage(payload)` (v3.0.16) — fired once per completed provider call with normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, so a caller can track real spend without changing the function's bare-string return type.
+- `cachePrefixChars` (v3.0.16) — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
+- `provider` (v3.0.11) — a per-call provider override for the chat model selector, honoured only when that provider has a key **saved in Settings**; the model id is always `DEFAULTS[provider]`, never client-supplied.
+- `signal` (v3.4.0) — **an `AbortSignal`, and the entire mechanism behind "Cancel" on a batch ingest.** It is threaded queue → `ingestFile` → `generateText` → both provider SDKs; abort is checked *before* the retry ladder, the 429/503 backoff (`sleep()` is itself abortable) and the model-not-found fallback chain, so a cancel stops spending immediately rather than walking up to five more calls. Measured: 334 s → 63 ms. Omitting it leaves every code path byte-identical to the pre-v3.4.0 behaviour.
 
 For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's native `responseMimeType: 'application/json'` — this forces the model to produce structurally valid JSON even when the content contains markdown characters (backticks, quotes, backslashes) that would otherwise break parsing.
 
@@ -401,7 +415,11 @@ src/brain/ingest.js
       │     drops the zero-overlap tail (by token-overlap with the source)
       │     and pushes a warning into result.warnings — never silent.
       ├─ 5. Call LLM via llm.js  (JSON mode, 65,536 max output tokens;
-      │     Anthropic clamps to 64,000 + streams — see model-lifecycle.md)
+      │     the Anthropic branch clamps PER MODEL via
+      │     anthropicMaxOutputTokens(model) — 64,000 for Haiku 4.5 /
+      │     Sonnet 4.5, 128,000 for Sonnet 4.6 / Sonnet 5, and the
+      │     conservative 64,000 for any unrecognised id — and always
+      │     streams. Gemini is not clamped. See model-lifecycle.md)
       │     Two paths, each with its own prompt shape — see
       │     docs/ingestion-pipeline.md §1b for the full breakdown:
       │
@@ -700,8 +718,21 @@ src/brain/health-ai.js  →  suggestBrokenLinkTarget / suggestOrphanHomes
 This module NEVER writes. Applying an AI suggestion goes back through
 the /fix endpoint above — same chokepoint as every other Health write.
 
-Orphans and broken links are surfaced as Review-only — they require
-human judgement and the app refuses to auto-fix them.
+Orphans are always Review-only — `scanWiki` never emits an auto-fixable
+orphan issue, and the only way an orphan gets a link is the user-initiated
+`orphanLink` pseudo-type carrying an AI suggestion the user accepted.
+
+Broken links are SPLIT, and the distinction is the whole safety story:
+
+  brokenLinks WITH issue.suggestedTarget  → auto-fixable. In AUTO_FIXABLE,
+      and included in fixAllSafe()'s TYPES list — so one click on
+      "Fix N safe issues" rewrites every one of them across the domain.
+      The target came from the deterministic scanner, not from an LLM.
+  brokenLinks WITHOUT a suggestedTarget   → review-only. fixIssue()'s
+      fix-all path filters these out (`issues.filter(i => i.suggestedTarget)`),
+      so a bulk fix can never guess a target for them.
+
+See AUTO_FIXABLE and fixAllSafe() in src/brain/health.js.
 
 Persistent dismissals (v2.5.1+):
 
@@ -898,7 +929,7 @@ Pure filesystem helpers. No LLM calls.
 
 | Export | Description |
 |--------|-------------|
-| `listDomains()` | Names of all non-hidden subdirectories under `domains/` |
+| `listDomains()` | Names of non-hidden subdirectories under `domains/` **that contain a `CLAUDE.md` schema**. The schema check is load-bearing, not a formality: it is the v2.3.4 ghost-domain rule (a sync-delete leaves empty dirs behind, since git doesn't track them). A directory without `CLAUDE.md` is invisible to the Domains tab, Wiki, Health, chat retrieval and the MCP alike — which is exactly how v3.6.0's worst bug hid pages that had been written and paid for. |
 | `readSchema(domain)` | Contents of `domains/<domain>/CLAUDE.md` |
 | `readWikiPages(domain)` | All `.md` files under `wiki/`, returned as `{path, content}[]` |
 | `writePage(domain, relativePath, content)` | Full write pipeline: underscore→hyphen slug fix, dedup passes A+B on filename, cross-folder dedup (step 3b), `injectFrontmatter()`, `mergeWikiPage()`, `stripBlanksInBulletSections()`, `deduplicateBulletSections()`, folder-prefix cleanup, step 5c variant-link normalization (Pass A+B+C across all wiki folders, prefix-tolerant), **atomic write to disk** via `writeFileAtomic()` (v3.0.1-beta.8+), `injectSummaryBacklinks()` for summary pages; **returns the canonical path** so callers use redirected slugs |
@@ -928,8 +959,10 @@ Single chokepoint for all wiki + config writes. Replaces `fs.writeFile` and `fs.
 
 | Export | Description |
 |--------|-------------|
-| `writeFileAtomic(targetPath, content, encoding?)` | Async atomic write: writes content to `<dir>/.tmp-<base>-<pid>-<counter>`, then `rename`s into place. Refuses to write through a symlink (`lstat` pre-check). Cleans up the orphan tempfile if rename fails. |
-| `writeFileAtomicSync(targetPath, content, encoding?)` | Sync variant for `.curator-config.json` writes that happen before the async runtime is fully online. |
+| `writeFileAtomic(targetPath, content, encodingOrOpts?)` | Async atomic write: writes content to `<dir>/.tmp-<base>-<pid>-<counter>`, then `rename`s into place. Refuses to write through a symlink (`lstat` pre-check). Cleans up the orphan tempfile if rename fails. |
+| `writeFileAtomicSync(targetPath, content, encodingOrOpts?)` | Sync variant for `.curator-config.json` writes that happen before the async runtime is fully online. |
+
+**The third parameter takes an options object, not just an encoding string** — `{ encoding, mode }` (v3.0.1-beta.20). Passing a bare string still works (legacy form, unchanged). **Any file holding a secret MUST pass `{ mode: 0o600 }`**: the helper `chmod`s the tempfile *before* the rename, so the umask cannot loosen it. Documenting only the encoding form is how the next credentials file ends up world-readable at 0644 — which is exactly what `.sync-config.json` and `.sharedbrain-config.json` were until beta.20. Files currently on that rule: `.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`; a startup sweep in `src/server.js` also hardens them plus `.env` and `.knowledge-git/config` on existing installs, so a new secrets file should be added to that list too.
 
 Used by `files.js` (every wiki + log + index + conversation write), `health.js` (destructive Health fixes), `config.js` (sync writes to `.curator-config.json`), `health-dismissed.js` (JSONL rewrite), `sharedbrain-local-adapter.js` (`_writeFile` chokepoint), and `ingest.js` (raw source save). **NOT used by append-only JSONL audit logs** (MCP write log, sharedbrain audit JSONL) — `appendFile` is already crash-safe at line granularity on local filesystems.
 
@@ -1069,8 +1102,11 @@ An audit ahead of this release found this shape live in several places — most 
 | `express` | ^4 | HTTP server and routing |
 | `multer` | ^2 | Multipart file upload handling |
 | `pdf-parse` | ^1 | Extract text from PDF files |
-| `fs-extra` | ^11 | Extended filesystem utilities |
+| `@modelcontextprotocol/sdk` | ^1.29 | MCP server transport + protocol types for `mcp/server.js` |
+| `jsonrepair` | ^3.13 | Last-resort repair of malformed LLM JSON in `parseJSON()` |
 | `dotenv` | ^16 | Load `.env` into `process.env` |
+
+`package.json` is authoritative. **There is no `fs-extra` dependency** — it was listed here in error; all filesystem work uses `node:fs/promises` plus `src/brain/atomic-write.js`.
 
 **No Axios.** All HTTP is handled by the Express server or Node's native `fetch`. If Axios is added in future (e.g. for URL ingestion), avoid compromised versions `1.14.1` and `0.30.4`; pin to a safe version such as `1.7.9`.
 
@@ -1079,7 +1115,7 @@ An audit ahead of this release found this shape live in several places — most 
 ## Design decisions
 
 **Why markdown files instead of a vector database?**
-At the scale of a focused domain wiki (tens to low hundreds of pages), the LLM can read the entire wiki in a single context window and reason across all of it precisely. Markdown files are human-readable, portable, and work natively with Obsidian's graph view.
+Not because the wiki fits in one context window — a mature domain long ago stopped fitting (the real `articles` wiki is ~4.4 MB against chat's 60 KB content budget). Chat handles scale with **query-driven retrieval** in `src/brain/chat.js` (entity-pivot detection + keyword scoring + a compact slug catalogue, bounded by `CONTENT_BUDGET_CHARS` / `CATALOGUE_BUDGET_CHARS` / `MAX_PAGES_LOADED`), not embeddings. The reason to stay embedding-free is that the `[[wikilink]]` graph is already a hand-curated relevance signal that a vector index would only approximate — and markdown files stay human-readable, portable, and native to Obsidian's graph view.
 
 **Why a provider abstraction layer?**
 `llm.js` keeps `ingest.js` and `query.js` free of provider-specific code. Switching between Gemini and Claude requires only changing an env var — no code changes. Adding a third provider (e.g. local Ollama) means only touching `llm.js`.
@@ -1088,7 +1124,7 @@ At the scale of a focused domain wiki (tens to low hundreds of pages), the LLM c
 Domain context shapes how the LLM categorises knowledge. An AI/Tech wiki uses different entity types and concept hierarchies than a Personal Growth wiki. Per-domain schemas give each wiki a specialist, not a generalist.
 
 **Why vanilla JS instead of React/Vue?**
-The UI has six tabs and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
+The UI has seven tabs (Chat · Ingest · Wiki · Health · Domains · Sync · Settings) and a handful of fetch calls. A framework adds build complexity and bundle size with no meaningful benefit for a local personal tool.
 
 **Why JSON mode for ingest but not chat?**
 Ingest requires structured output (pages + index as a JSON object) that must be machine-parsed. Chat returns free-form markdown prose; JSON mode would constrain the writing style unnecessarily.

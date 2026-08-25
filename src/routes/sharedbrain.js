@@ -135,6 +135,36 @@ function base64UrlDecode(str) {
 // text on their own machine.
 const VALID_DATA_HANDLING_TERMS = ['contributor_retains', 'organisational'];
 
+// v3.6.1 — An invite token may ONLY describe a GitHub-backed brain.
+//
+// This is deliberately NARROWER than what the rest of the Shared Brain stack
+// accepts, and the asymmetry is the point:
+//
+//   - `createStorageAdapter` (sharedbrain-storage-factory.js) and
+//     `validateConnection` (sharedbrain-config.js) still accept "local" —
+//     that backend genuinely works and exists for cohort simulation, which
+//     is configured by writing the connection directly (tests, POST /save
+//     with a local_storage_path). Nothing here narrows that.
+//   - The INVITE flow is a different thing. It is GitHub-shaped end to end:
+//     the contributor wizard collects a repo, a collaborator invitation and
+//     a Personal Access Token, and has no field for `local_storage_path` at
+//     all. So a "local" invite token could never produce a saveable
+//     connection no matter what the contributor typed.
+//   - "cloudflare-r2" is not implemented (Phase 3.1).
+//
+// Before this guard, both slipped through `decodeInviteToken` and the
+// contributor was walked all the way to step 5 — creating a REAL PAT on
+// github.com on the way — before /save refused with
+// "local_storage_path must be an absolute path", which means nothing to a
+// contributor and reads as the app being broken. "cloudflare-r2" was worse:
+// it SAVED, and only failed later at the first Push/Pull.
+//
+// The guard is applied at BOTH ends of the codec on purpose. Refusing only
+// at decode would fix the contributor's symptom while leaving the admin
+// able to mint a token that every contributor will refuse — the same
+// "fixed the call site, not the class" shape this repo has hit before.
+const INVITE_STORAGE_TYPE = 'github';
+
 export function encodeInviteToken(metadata) {
   if (!metadata || typeof metadata !== 'object') {
     throw new Error('encodeInviteToken: metadata is required');
@@ -153,6 +183,16 @@ export function encodeInviteToken(metadata) {
   if (!isValidRepo(payload.repo || '')) throw new Error('encodeInviteToken: repo must be "owner/name"');
   if (typeof payload.name !== 'string' || !payload.name.trim()) throw new Error('encodeInviteToken: name is required');
   if (!isSlug(payload.shared_domain)) throw new Error('encodeInviteToken: shared_domain must be slug-shaped');
+  // See INVITE_STORAGE_TYPE above — refuse at MINT time too, so an admin can
+  // never hand out a token that every contributor's wizard will reject.
+  if (payload.storage_type !== INVITE_STORAGE_TYPE) {
+    throw new Error(
+      `encodeInviteToken: invite tokens can only describe a GitHub-backed Shared Brain ` +
+      `(got storage_type "${payload.storage_type}"). Contributors join by accepting a ` +
+      `repo invitation and creating a Personal Access Token, so a "${payload.storage_type}" ` +
+      `brain cannot be joined this way — omit storage_type, or use "github".`
+    );
+  }
   if (!VALID_DATA_HANDLING_TERMS.includes(payload.data_handling_terms)) {
     throw new Error(`encodeInviteToken: data_handling_terms must be one of ${VALID_DATA_HANDLING_TERMS.join(' | ')}`);
   }
@@ -196,8 +236,29 @@ export function decodeInviteToken(token) {
     const okBranch = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(parsed.branch) && !parsed.branch.includes('..');
     if (!okBranch) throw new Error('Invite token: branch is invalid (must be a valid git ref, no .. segments)');
   }
-  if (parsed.storage_type && !['github', 'local', 'cloudflare-r2'].includes(parsed.storage_type)) {
-    throw new Error(`Invite token: unsupported storage_type "${parsed.storage_type}"`);
+  // See INVITE_STORAGE_TYPE above. An ABSENT storage_type is still tolerated
+  // for backward compatibility with v2.8.0 tokens, which predate the field —
+  // encodeInviteToken has always defaulted it to "github", so absent means
+  // github. Anything explicitly present must be github, and is refused HERE,
+  // at step 1 of the wizard, before the contributor creates a PAT.
+  if (parsed.storage_type && parsed.storage_type !== INVITE_STORAGE_TYPE) {
+    // The storage_type is ATTACKER-CONTROLLED: an invite token is designed to be
+    // pasted around over Slack/email, so a hostile one is a realistic delivery
+    // vector. Echoing it unbounded put up to ~6,000 characters of chosen prose
+    // at the FRONT of a long, official-sounding paragraph, at the exact moment
+    // the user is being asked about credentials — an injected "email your PAT
+    // to ..." reads as our instruction, not the attacker's. (Not XSS: both
+    // consumers use textContent. This is a social-engineering shape.) Echo it
+    // back ONLY when it is short and boring; otherwise describe it generically.
+    const safeToEcho = /^[A-Za-z0-9._-]{1,32}$/.test(parsed.storage_type);
+    const described = safeToEcho ? `a "${parsed.storage_type}"` : 'an unsupported';
+    throw new Error(
+      `This invite is for ${described} Shared Brain, which cannot be joined ` +
+      `with an invite token. Joining a Shared Brain works by accepting an invitation to a ` +
+      `GitHub repository and creating a Personal Access Token, so only GitHub-backed brains ` +
+      `can issue invites. Ask your cohort admin for a GitHub-backed invite token. ` +
+      `(Nothing is wrong with your Curator — do not create an access token for this invite.)`
+    );
   }
   // Decision 6c — tolerate missing data_handling_terms for backward compat
   // with v2.8.0 tokens; default to contributor_retains (the safer default).
@@ -768,6 +829,7 @@ export const __testing = {
   decodeInviteToken,
   INVITE_VERSION,
   INVITE_PREFIX,
+  INVITE_STORAGE_TYPE,
   computeUnskipPatch,
   generateAdminToken,
 };

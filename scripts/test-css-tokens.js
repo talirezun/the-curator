@@ -1352,9 +1352,18 @@ const nextIndexHtml = readFileSync(nextIndexPath, 'utf8');
 const disc5 = discoverStylesheetLinks(nextIndexHtml);
 const nextLocalCssFiles = disc5.local;
 
+function nextHrefToRel(href) {
+  if (href.startsWith('/next/')) return href.slice('/next/'.length);
+  if (href.startsWith('/')) return href.replace(/^\/+/, '');
+  return href;
+}
+
 ok(disc5.styleTags.length > 0, 'next/index.html contains at least one <link rel="stylesheet"> tag');
-ok(nextLocalCssFiles.includes('shell.css'), 'shell.css is discovered as a local /next stylesheet');
-ok(nextLocalCssFiles.includes('views/ingest.css'), 'views/ingest.css is discovered as a local /next stylesheet');
+// Compare NORMALISED names so this holds for both the historical relative
+// form and the root-absolute form adopted in v3.6.1.
+const nextLocalCssNames = nextLocalCssFiles.map(nextHrefToRel);
+ok(nextLocalCssNames.includes('shell.css'), 'shell.css is discovered as a local /next stylesheet');
+ok(nextLocalCssNames.includes('views/ingest.css'), 'views/ingest.css is discovered as a local /next stylesheet');
 ok(!nextLocalCssFiles.includes('tokens/fonts.css'),
   'tokens/fonts.css is correctly NOT discovered (deliberately unlinked per v3.1.3 — self-hosting is pending; fonts-local.css stands in)');
 console.log(`  → /next local stylesheets found (${nextLocalCssFiles.length}): ${nextLocalCssFiles.join(', ')}`);
@@ -1366,10 +1375,18 @@ console.log(`  → /next external stylesheets skipped: ${disc5.externalCount} (e
 section('6. Extract definitions and references from the /next CSS universe');
 
 const nextPublicDir = path.dirname(nextIndexPath);
-const nextInitialFiles = nextLocalCssFiles.map(href => ({
-  relPath: `src/public/next/${href}`,
-  absPath: path.join(nextPublicDir, href),
-}));
+// v3.6.1: next/index.html's refs became ROOT-ABSOLUTE (`/next/tokens/base.css`)
+// so the shell resolves identically at /next/ and at / — see
+// scripts/test-next-asset-paths.js for why that matters. A naive join then
+// produced `src/public/next/next/tokens/...` and this scanner saw ZERO /next
+// files. It failed loudly (a minimum-count assertion below), which is the only
+// reason it was noticed — a scanner that silently measures nothing is this
+// repo's recorded worst case. Normalise BOTH forms so either survives.
+
+const nextInitialFiles = nextLocalCssFiles.map(href => {
+  const rel = nextHrefToRel(href);
+  return { relPath: `src/public/next/${rel}`, absPath: path.join(nextPublicDir, rel) };
+});
 const expanded6 = expandWithImports(nextInitialFiles);
 const nextFiles = expanded6.files;
 if (expanded6.skippedExternalImports.length) {

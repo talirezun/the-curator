@@ -147,7 +147,7 @@ flowchart TB
 | **Read-only** | Pull the collective wiki, read everything, query via Claude (MCP) | Free or small one-time fee |
 | **Contributor (read+write)** | Pull + Push their own reading and synthesis into the collective | Recurring monthly fee |
 
-**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. People who genuinely contribute also pay for the privilege of being attributed in the Provenance of every page they enriched.
+**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. Do not sell "your name on the page": Provenance carries the shortened UUID only, and name attribution is not implemented (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-provenance-attribution--uuids-always-name-attribution-is-unimplemented)).
 
 > ✅ **Read-only membership is first-class as of v3.0.4.** A read-only PAT
 > shows a yellow notice in the join wizard but the member can continue,
@@ -210,7 +210,7 @@ At checkout, collect:
 
 1. **Email** (for sending the invite token and onboarding instructions)
 2. **GitHub username** (custom field — you need this to add them as a collaborator)
-3. (Optional) Display name they want shown in Provenance — if you're using `contributor_retains` and they're tier-2 contributors
+3. (Optional) Display name they want to use. Be accurate about where it goes: it is **not** shown in Provenance (that is UUID-only). It is stored in their contribution payloads in the private repo, readable by every collaborator, and it is what your member directory shows. Tell buyers that, and that a pseudonym is fine.
 
 Gumroad and Lemon Squeezy both support custom checkout fields.
 

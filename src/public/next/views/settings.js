@@ -123,6 +123,11 @@ import {
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
 } from '../app.js';
+// Overlay, not a view — same relationship views/shared.js has with
+// views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
+// closed unconditionally by this view's teardown, so navigating away can
+// never leave it mounted behind the next view.
+import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -262,6 +267,10 @@ registerView('settings', {
       // sitting in memory for however long the user is on another view.
       state.replaceValue = '';
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+      // Never leave the MCP wizard's overlay mounted behind the next view —
+      // the same unconditional rule views/shared.js applies to the Shared
+      // Brain wizard. Safe to call when it isn't open.
+      closeMcpWizardIfOpen();
     };
   },
 });
@@ -722,9 +731,22 @@ function renderMcp() {
     return '<p class="view-body">Loading MCP status…</p>';
   }
   const m = state.mcp;
-  const connected = m.installed && !m.stale;
+  // A corrupt claude_desktop_config.json is its OWN state, not "not
+  // connected": src/routes/mcp.js computes installed/stale inside its
+  // `!parseError` branch, so both come back false for a file it could not
+  // parse — reporting that as "Not connected" would be asserting something
+  // we do not know. The wizard's blocked panel is where this is explained
+  // and where the whole-file payload is withheld; here it only has to stop
+  // claiming a status it cannot have.
+  const unreadable = m.claude_config_parse_error === true;
+  const connected = !unreadable && m.installed && !m.stale;
   const pillClass = connected ? 'status-pill status-pill-ok' : 'status-pill status-pill-muted';
-  const pillLabel = connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected');
+  const pillLabel = unreadable
+    ? 'Config unreadable'
+    : (connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected'));
+  const wizardLabel = unreadable
+    ? 'Fix the config file'
+    : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
 
   const selfTestHtml = state.selfTest ? renderSelfTestResult() : '';
   const snippetHtml = state.configSnippetOpen && state.configSnippet
@@ -742,10 +764,19 @@ function renderMcp() {
       '<span class="' + pillClass + '"><span class="status-pill-dot"></span>' + pillLabel + '</span>' +
       '<code class="mono mcp-path-line">Claude Desktop → ' + escapeHtml(m.mcp_server_name) + ' → ' + escapeHtml(m.domains_dir) + '</code>' +
     '</div>' +
-    '<p class="view-body">Exposes your graph to any MCP client — seventeen tools, ten read and seven write. Write ' +
-    'tools refuse on <code class="mono">shared-*</code> mirrors by design. The Curator does not need to be running: ' +
-    'the bridge is a separate process the client launches on demand.</p>' +
+    // Counted from mcp/tools/index.js, not from memory: 18 registered
+    // tools, of which 4 mutate the wiki (the four guarded by
+    // refuseIfReadonly — compile_to_wiki, fix_wiki_issue,
+    // dismiss_wiki_issue, undismiss_wiki_issue). The previous copy said
+    // "seventeen tools, ten read and seven write", which was wrong on all
+    // three numbers and never mentioned that Claude can WRITE at all.
+    // scripts/test-next-mcp-wizard.js pins these against the real table.
+    '<p class="view-body">Exposes your graph to any MCP client — eighteen tools: fourteen that read your wiki, ' +
+    'and four that write to it (compiling a conversation into pages, and fixing health issues) without leaving ' +
+    'Claude. Write tools refuse on <code class="mono">shared-*</code> mirrors by design. The Curator does not ' +
+    'need to be running: the bridge is a separate process the client launches on demand.</p>' +
     '<div class="settings-btn-row">' +
+      '<button type="button" class="btn btn-primary" id="btn-mcp-wizard">' + escapeHtml(wizardLabel) + '</button>' +
       '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (state.selfTestLoading ? ' disabled' : '') + '>' +
         (state.selfTestLoading ? 'Testing…' : 'Run self-test') +
       '</button>' +
@@ -940,6 +971,41 @@ function focusReplaceInput() {
 }
 
 function wireMcpListeners() {
+  // `myMountToken` is read here, synchronously at bind time, exactly as
+  // every other binding in this file does — wireGlobalListeners() re-runs
+  // after each render on freshly-created nodes, so there is nothing to
+  // removeEventListener.
+  //
+  // onDone: state.mcp is CACHED (ensureSectionData only fetches when it is
+  // null, see its guard above), so a plain re-render after the wizard has
+  // changed something would redraw the PRE-setup status. Nulling it and
+  // calling loadMcp() forces the refetch; loadMcp re-checks isCurrentMount
+  // itself and calls render(), so this is safe even if the user navigated
+  // away while the wizard was open.
+  const wizardBtn = document.getElementById('btn-mcp-wizard');
+  if (wizardBtn) {
+    const token = myMountToken;
+    wizardBtn.addEventListener('click', () => openMcpWizard({
+      onDone: () => {
+        if (!isCurrentMount(token)) return;
+        state.mcp = null;
+        state.selfTest = null;
+        // Re-focus the CTA after the refresh, not before. closeWizard()
+        // restores focus to the launching button and then calls this, so
+        // the re-render below replaces that node underneath the focus and
+        // it falls back to <body> — measured in-browser. Looking the
+        // button up again after the render is the only way to land back on
+        // it. (No-op when the section has moved on; the button is gone.)
+        loadMcp(token)
+          .then(() => {
+            if (!isCurrentMount(token)) return;
+            document.getElementById('btn-mcp-wizard')?.focus();
+          })
+          .catch(reportAsyncActionFailure);
+      },
+    }));
+  }
+
   const testBtn = document.getElementById('btn-mcp-self-test');
   if (testBtn) testBtn.addEventListener('click', () => onMcpSelfTest(myMountToken));
   const viewBtn = document.getElementById('btn-mcp-view-config');

@@ -80,13 +80,20 @@ The endpoint returns a SSE stream with progress events and a final `done` event 
 
 ### What revoke actually does
 
-1. Deletes every `contributions/<fellow_id>/*.json` from the shared repo.
-2. Deletes `digests/<fellow_id>/latest.json` (the per-fellow synthesis cache).
+1. Deletes every `contributions/<fellow_id>/*.json` from the shared repo — **but a per-file delete failure is only written to the server console; the loop continues and the operation still reports success.** See the verification note below.
+2. Deletes `digests/<fellow_id>/latest.json` (the per-fellow synthesis cache). A failure here is likewise only logged.
 3. Scans every collective page. Pages that mention the revoked fellow's short ID in their Provenance section are deleted.
-4. Resets `state/last-synthesis.json` to epoch and re-runs synthesis from scratch. Deleted pages get rebuilt **only if** other contributors still have submissions for them; otherwise they stay deleted (Article 17 erasure).
-5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + sha256-hashed admin token. No real names, no contribution content.
+4. Resets the `state.last-synthesis` meta key — stored at **`meta/state/last-synthesis.json`** in the repo — and re-runs synthesis from scratch. Since v3.0.6 the reset writes the full zero-state (`watermark: null`, empty `processed_ids`, `run_number: 0`), not just an epoch timestamp, so no stale processed-id list can cause surviving contributions to be skipped. Deleted pages get rebuilt **only if** other contributors still have submissions for them; otherwise they stay deleted (Article 17 erasure).
+5. Appends one line to `state/revocations.jsonl` with timestamp + UUID + counts + `rebuild_ok` + sha256-hashed admin token. No real names, no contribution content.
 
 The operation is irreversible. If the revoked contributor's local wiki is also gone, the data cannot be reconstructed from shared storage.
+
+> ⚠️ **Verify, don't trust the success message.** Compare the *"Found N contributions to delete"*
+> line in the progress stream against `contributions_deleted` in the audit record / response body.
+> If they differ, some payloads survived — **re-run the revocation** (it is idempotent). Also check
+> `rebuild_ok`: `false` means the erasure happened but the rebuild did not, the in-progress marker
+> is still set, ordinary synthesis will keep refusing, and a re-run is required to finish. Full
+> procedure in [`shared-brain-compliance.md` §2b](shared-brain-compliance.md#2b--what-the-revocation-does).
 
 ### What revoke does NOT do (and what to do if you need it to)
 
@@ -177,16 +184,36 @@ This is the standard departure flow. Use the revoke endpoint (§3) only when GDP
 After synthesis, the collective wiki may grow `CONFLICTING SOURCES` markers where contributors disagreed and the LLM couldn't unify them. Check periodically:
 
 1. Sync tab → connection card → **Pull updates** (so your local mirror is fresh).
-2. Open the `shared-<slug>` domain in the Wiki tab or Health tab.
-3. Scan for the `## CONFLICTING SOURCES` markers — they look like:
-   ```markdown
-   ## CONFLICTING SOURCES
-   - Coined in 2024 *(per fellow-a3f91234)*
-   - Coined in 2023 *(per fellow-b7c1abcd)*
-   ```
-4. Decide which is correct (sometimes neither — sometimes both). Discuss with the cohort. Resolve manually by editing the **personal** opted-in domain of the contributor whose fact is correct, then **Push contributions** and **Run synthesis** again.
+2. **Read the synthesis result — this is the reliable route.** Since v3.0.4 the synthesis summary on
+   your connection card names the affected pages directly (*"2 unresolved contradictions flagged in
+   concepts/x.md, entities/y.md"*), and the API result carries a `conflict_pages` array. This is
+   where you should look first.
+3. To find them in the files, know the real shape. **A conflict marker is a BULLET inside
+   `## Key Facts` — it is not a heading**, so searching for a `## CONFLICTING SOURCES` section finds
+   nothing on a brain that genuinely has conflicts:
 
-Since v3.0.4 you don't have to hunt: the synthesis summary on your connection card names the affected pages directly (*"2 unresolved contradictions flagged in concepts/x.md, entities/y.md"*), and the API result carries a `conflict_pages` array.
+   ```markdown
+   ## Key Facts
+
+   - Some ordinary fact
+   - ⚠️ CONFLICTING SOURCES — review needed:
+     - Coined in 2024 *(per a3f91234)*
+     - Coined in 2023 *(per b7c1abcd)*
+   ```
+
+   The attribution in parentheses is the contributor's **shortened fellow UUID** (the leading hex
+   characters, per `PROVENANCE_UUID_DISPLAY_LEN` in `src/brain/sharedbrain-synthesis.js`) — no
+   `fellow-` prefix, and never a name. To grep the mirror:
+
+   ```bash
+   grep -rn "CONFLICTING SOURCES" domains/shared-<slug>/wiki/
+   ```
+
+4. ⚠️ **The Wiki Health scanner does NOT detect conflict markers.** There is no conflict handling in
+   `src/brain/health.js`; a Health scan on a mirror full of unresolved contradictions reports
+   nothing about them. It was designed to and never shipped. Use step 2 or step 3 — not the Health
+   tab — to find conflicts.
+5. Decide which is correct (sometimes neither — sometimes both). Discuss with the cohort. Resolve manually by editing the **personal** opted-in domain of the contributor whose fact is correct, then **Push contributions** and **Run synthesis** again.
 
 The collective wiki is read-only for direct edits — that's by design. You resolve conflicts upstream (in someone's personal domain), not downstream.
 
@@ -263,4 +290,5 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 | Read the audit log | `state/revocations.jsonl` in the repo |
 | Compliance / GDPR ref | [`docs/shared-brain-compliance.md`](shared-brain-compliance.md) |
 | Engineering decisions + architecture | [`docs/shared-brain.md`](shared-brain.md) |
-| User-facing guide | [`docs/shared-brain.md`](shared-brain.md) |
+| User-facing guide | [`docs/shared-brain-user-guide.md`](shared-brain-user-guide.md) |
+| Architecture + design decisions | [`docs/shared-brain.md`](shared-brain.md) |

@@ -31,6 +31,12 @@ Compared to alternatives:
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
 | Write locks (`.write-lock`) | No | Machine-local state, not knowledge. Syncing one meant a crash on machine A could block writes on machine B for up to 30 minutes (fixed in v3.0.15) |
 | Finder metadata (`.DS_Store`) | No | macOS drops these into any folder Finder browses. They carry zero wiki content but, if already committed from before this rule existed, would re-sync to every machine on every push/pull and inflate the "pending changes" badge for nothing (fixed in v3.0.16) |
+| MCP write log (`.mcp-write-log.jsonl`) | No | A per-domain record of what Claude wrote through the MCP. Machine-private by design |
+| Batch-ingest queue (`.ingest-queue/`) | No | Mid-batch operational state plus staged source files. It normally lives outside your knowledge folder entirely; the rule is a safety net |
+| Obsidian workspace state (`.obsidian/workspace.json`) | No | Obsidian rewrites it on essentially every pane move or tab switch, so tracking it makes the sync badge tick constantly. Deliberately narrow — the rest of `.obsidian/` (appearance, graph and plugin settings) **does** sync, since whether those follow you between machines is your preference, not ours (v3.5.1) |
+| Obsidian leftovers (`*.base`, `Untitled.md`, `Untitled 1.md`) | No | Empty stub notes Obsidian auto-creates when a wikilink resolves to nothing or the vault root is pointed at the wrong folder (v3.5.1) |
+
+> The authoritative list is `DOMAINS_GITIGNORE_RULES` in [`src/brain/sync.js`](../src/brain/sync.js). The app rewrites `domains/.gitignore` from it on every push and pull, so an install configured before a rule was added picks it up automatically.
 
 ---
 
@@ -167,11 +173,27 @@ For everyday use, prefer **Sync now**.
 
 If you forget to **Sync now** on one machine and then do new work on another machine, you'll have changes in two places. The app handles this gracefully:
 
-- When you click **Sync now**, the app automatically commits any uncommitted local changes first, then pulls from GitHub using a rebase strategy, then pushes
-- In most cases, this works automatically — the changes from both machines are merged cleanly
-- In rare cases where two machines edited the exact same wiki page in conflicting ways, git will flag a conflict. If this happens, see the [Troubleshooting](#troubleshooting) section below
+- When you click **Sync now**, the app automatically commits any uncommitted local changes first (as an *"Auto-save before sync"* commit), then **merges** the GitHub version in, then pushes
+- In most cases this works cleanly — edits from both machines land in the same file, because they touched different parts of it
 
-The best way to avoid conflicts entirely is to **Sync now** at the start and end of every session. But if you forget occasionally, it usually resolves itself.
+⚠️ **What happens when both machines edited the same part of the same page.** The merge runs as `git pull --no-rebase -X theirs` ([`src/brain/sync.js`](../src/brain/sync.js), `pull()`). The `-X theirs` flag means git does **not** stop and ask you — for any section that genuinely conflicts, it silently keeps the **GitHub (remote)** version and drops the local one from the file on disk. Sync reports success; nothing in the UI tells you a local edit was overridden.
+
+Read precisely, because the scope matters:
+
+- This affects **only genuinely conflicting sections** of a page edited on both machines since the last sync. Everything else from both sides merges normally.
+- **Your local version is not destroyed.** The auto-save commit runs *before* the merge, so the pre-merge content is still in the local git history and can be recovered.
+- To recover it, look at the auto-save commit for that page:
+
+  ```bash
+  # macOS default location; adjust the work-tree if you moved your knowledge folder
+  GITDIR="$HOME/Library/Application Support/The Curator/.knowledge-git"
+  git --git-dir="$GITDIR" --work-tree="<your domains folder>" log --oneline -- "<domain>/wiki/<path>.md"
+  git --git-dir="$GITDIR" --work-tree="<your domains folder>" show <sha>:"<domain>/wiki/<path>.md"
+  ```
+
+  In repo-mode installs (running from a git checkout rather than an installed `.app`) `.knowledge-git` sits in the project folder instead.
+
+This behaviour is deliberate — an unattended local app cannot leave a half-merged wiki with conflict markers sitting in your Obsidian vault — but it means **the safe habit is to Sync now at the start *and* end of every session**, so the same page is never edited in two places between syncs.
 
 ---
 
