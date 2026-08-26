@@ -76,6 +76,7 @@ import {
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
   refreshSyncBadge, refreshSyncRemoteBadge,
 } from '../app.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 function freshState() {
   return {
@@ -101,6 +102,10 @@ let state = freshState();
 // and threaded through rather than re-derived afterward.
 let myMountToken = 0;
 
+// Delay-gated loading indicator for this view's entry load. Built in
+// onEnter, cancelled in the teardown. See shared/loading-gate.js.
+let loadGate = null;
+
 // Unsubscribe function for this mount's write-gate subscription (see
 // onWriteGateChange in app.js) — released in teardown, same discipline
 // views/ingest.js already uses. A torn-down mount must stop reacting to
@@ -113,6 +118,10 @@ registerView('sync', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    loadGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
+    loadGate.begin();
     render(mountToken);
     loadAll(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
@@ -134,6 +143,9 @@ registerView('sync', {
       // backstop.
       state.setupForm.token = '';
 
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (loadGate) { loadGate.cancel(); loadGate = null; }
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
     };
   },
@@ -187,10 +199,22 @@ function crossWriteTitle() {
 }
 
 async function loadAll(token) {
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
   await Promise.all([loadStatus(token), loadDomains(token), loadSharedBrainSummary(token)]);
   if (!isCurrentMount(token)) return;
-  state.loading = false;
-  render(token);
+  // Delay-gated: settle() paints immediately when no loader was ever shown
+  // (the measured case here — this load lands in ~3 ms), and holds the
+  // result back only long enough to honour the min-visible clamp when one
+  // WAS shown. See shared/loading-gate.js.
+  settleGate(gate, () => {
+    state.loading = false;
+    render(token);
+  });
 }
 
 // Deliberately does NOT render itself — every caller (loadAll, and
@@ -298,7 +322,7 @@ function renderMain(token) {
   const s = state.status;
   let body;
   if (state.loading) {
-    body = '<p class="view-body">Loading sync status…</p>';
+    body = gatedLoader(loadGate, 'Loading sync status…');
   } else if (!s || !s.configured) {
     body = renderUnconfigured();
   } else {

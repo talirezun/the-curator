@@ -136,6 +136,7 @@
 // registerView() call here), never imported anywhere else.
 
 import { escapeHtml, icon } from '../app.js';
+import { createLoadingGate, loaderHtml } from '../shared/loading-gate.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -177,6 +178,12 @@ function freshState() {
 let state = freshState();
 let wizardGen = 0;   // module-level, NEVER part of `state` — see the file header
 let root = null;      // the wizard's own detached DOM subtree, or null when closed
+
+// Delay-gated reveal of the step-4 domain list placeholder. Created per
+// populateDomains() call and cancelled in its finally; also cancelled on
+// wizard close so a timer can never outlive the overlay. See
+// shared/loading-gate.js.
+let domainsGate = null;
 
 function isFresh(myGen) { return myGen === wizardGen; }
 
@@ -347,6 +354,12 @@ function closeWizard() {
   // other path.)
   clearTimeout(state.step1Debounce);
   clearTimeout(state.patDebounce);
+
+  // Same rule for the step-4 loading gate's delay timer: an armed timer
+  // that outlived this close would paint into a detached (or re-opened)
+  // overlay. populateDomains()'s own finally also clears it; this is the
+  // unconditional path for a close that happens mid-fetch.
+  if (domainsGate) { domainsGate.cancel(); domainsGate = null; }
 
   // L4 fix: explicitly clear the PAT input's value before detaching it.
   // root.remove() takes the node out of the document, but does NOT clear
@@ -663,7 +676,7 @@ function panelStep4() {
       '<p class="sbw-hint">Pick which of your personal domains contribute pages to this Shared Brain. Only their content gets pushed — everything else stays on this computer.</p>' +
       '<div class="sbw-field">' +
         '<label class="sbw-label">Contributing domains</label>' +
-        '<div id="sbw-domain-checkboxes" class="sbw-domain-checkboxes"><p class="sbw-hint">Loading domains…</p></div>' +
+        '<div id="sbw-domain-checkboxes" class="sbw-domain-checkboxes"></div>' +
       '</div>' +
       '<div class="sbw-field">' +
         '<label class="sbw-label" for="sbw-display-name">Your display name</label>' +
@@ -923,7 +936,19 @@ async function populateDomains() {
   const container = byId('sbw-domain-checkboxes');
   if (!container) return;
   const myGen = wizardGen;
-  container.innerHTML = '<p class="sbw-hint">Loading domains…</p>';
+  // Delay-gated: the field label and its help text are already on screen, so
+  // a domain list that arrives in a few milliseconds never paints a
+  // placeholder at all. Only a genuinely slow read reveals one.
+  container.innerHTML = '';
+  if (domainsGate) domainsGate.cancel();
+  domainsGate = createLoadingGate({
+    onChange: () => {
+      if (!isFresh(myGen) || !domainsGate || !domainsGate.visible) return;
+      const c = byId('sbw-domain-checkboxes');
+      if (c) c.innerHTML = loaderHtml('Loading domains…', 'sbw-hint');
+    },
+  });
+  domainsGate.begin();
 
   try {
     const r = await fetch('/api/domains');
@@ -978,6 +1003,11 @@ async function populateDomains() {
     p.className = 'sbw-status sbw-status-error';
     p.textContent = 'Could not load domains: ' + err.message;
     container.appendChild(p);
+  } finally {
+    // Timer hygiene (load-bearing): covers every early return in the try
+    // above. An armed delay timer that outlived this call would paint
+    // "Loading domains…" over an already-populated (or torn-down) list.
+    if (domainsGate) { domainsGate.cancel(); domainsGate = null; }
   }
 }
 

@@ -158,6 +158,7 @@ import { openOnboardingPanel } from './onboarding.js';
 // header for why it takes the ACTION rather than returning a DECISION.
 // Closed unconditionally by this view's teardown, exactly like the wizard.
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -491,6 +492,23 @@ let state = freshState();
 // function, and threaded through rather than re-derived afterward.
 let myMountToken = 0;
 
+// Delay-gated loading indicator for this view's section loads. Built in
+// onEnter, cancelled in the teardown. See shared/loading-gate.js.
+//
+// SCOPE, stated rather than implied: this gate enforces the DELAY half
+// only. The four section loaders below each commit their state AND call
+// render() themselves (they are also called directly by the save flows,
+// which must repaint immediately), so a result landing between 200 ms and
+// 600 ms would paint through the min-visible clamp rather than waiting it
+// out. That is a real gap and it is left open deliberately: all four
+// section loads were measured at ~2.9 ms — two orders of magnitude under
+// the 200 ms threshold — so the loader never appears here at all, and
+// restructuring four loaders plus six call sites to close a window that
+// does not occur is risk without benefit. Named in the NOT ENFORCED block
+// of scripts/test-next-loading-gate.js so it cannot be mistaken for
+// coverage.
+let loadGate = null;
+
 // Unsubscribe function for this mount's write-gate subscription (see
 // onWriteGateChange in app.js) — released in teardown. Same discipline as
 // views/ingest.js and views/sync.js: a torn-down mount must stop reacting
@@ -501,6 +519,9 @@ registerView('settings', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    loadGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
     render(mountToken);
     loadVersion(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));       // cheap, always shown in the sidebar footer
     ensureSectionData('providers', mountToken).catch((err) => reportAsyncMountFailure(mountToken, err)); // default section — prefetch immediately
@@ -538,6 +559,9 @@ registerView('settings', {
       // neither can be open while the other is — so there is no behavioural
       // reason to prefer either order, and keeping that existing guard
       // intact is worth more than the alphabetical tidiness of appending.
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (loadGate) { loadGate.cancel(); loadGate = null; }
       closeConfirmIfOpen();
       closeMcpWizardIfOpen();
     };
@@ -596,10 +620,27 @@ function renderCrossWriteBanner(consequence) {
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
 async function ensureSectionData(section, token) {
-  if (section === 'providers' && state.keys === null) return loadKeys(token);
-  if (section === 'mcp' && state.mcp === null) return loadMcp(token);
-  if (section === 'health' && state.aiHealth === null) return loadAiHealth(token);
-  if (section === 'storage' && state.config === null) return loadConfig(token);
+  let load = null;
+  if (section === 'providers' && state.keys === null) load = loadKeys;
+  else if (section === 'mcp' && state.mcp === null) load = loadMcp;
+  else if (section === 'health' && state.aiHealth === null) load = loadAiHealth;
+  else if (section === 'storage' && state.config === null) load = loadConfig;
+  if (!load) return;
+
+  // The ONE chokepoint every section's entry load passes through, which is
+  // why the gate lives here rather than being repeated in four loaders.
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
+  if (gate) gate.begin();
+  try {
+    await load(token);
+  } finally {
+    settleGate(gate, () => { if (isCurrentMount(token)) render(token); });
+  }
 }
 
 async function loadVersion(token) {
@@ -988,7 +1029,7 @@ function renderProviders() {
       '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
   }
   if (!state.keys) {
-    return '<p class="view-body">Loading provider status…</p>';
+    return gatedLoader(loadGate, 'Loading provider status…');
   }
   const k = state.keys;
   // Cross-view write gate (see file-header comment): a write in flight
@@ -1166,7 +1207,7 @@ function renderMcp() {
     return '<div class="settings-inline-error">' + escapeHtml(state.mcpError) + '</div>';
   }
   if (!state.mcp) {
-    return '<p class="view-body">Loading MCP status…</p>';
+    return gatedLoader(loadGate, 'Loading MCP status…');
   }
   const m = state.mcp;
   // A corrupt claude_desktop_config.json is its OWN state, not "not
@@ -1258,7 +1299,7 @@ function renderHealthLimits() {
     return '<div class="settings-inline-error">' + escapeHtml(state.aiHealthError) + '</div>';
   }
   if (!state.aiHealth) {
-    return '<p class="view-body">Loading scan limits…</p>';
+    return gatedLoader(loadGate, 'Loading scan limits…');
   }
   return (
     '<p class="view-body">Cost ceilings for the AI scans that run from a domain’s health panel. A scan refuses to ' +
@@ -1288,7 +1329,7 @@ function renderStorage() {
     return '<div class="settings-inline-error">' + escapeHtml(state.configError) + '</div>';
   }
   if (!state.config) {
-    return '<p class="view-body">Loading…</p>';
+    return gatedLoader(loadGate, 'Loading…');
   }
   // Cross-view write gate (see file-header comment): changing the folder
   // mid-write sends that write's REMAINING pages to a different folder,

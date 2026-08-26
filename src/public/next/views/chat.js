@@ -24,6 +24,7 @@ import {
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -116,6 +117,19 @@ const LS_PROVIDER = 'curator-chat-model-provider';
 // ── View state ────────────────────────────────────────────────────────────
 
 const state = {
+  // Has boot() reached a conclusion about how many domains exist?
+  //
+  // THE DEFECT THIS EXISTS FOR: `domains: []` is both "we have not asked
+  // yet" and "there genuinely are none", and renderMain branched on
+  // `.length === 0` alone — so the FIRST FRAME A BRAND-NEW USER EVER SEES
+  // was "Chat needs at least one domain to talk to", asserted before a
+  // single request had been made. It is not merely premature, it is
+  // FALSE, and it is false on the app's default view.
+  //
+  // Deliberately a third state rather than a nullable `domains`: every
+  // other reader of state.domains (scope pills, resolveBootDomain,
+  // switchDomain) can keep treating it as an array.
+  booted: false,
   domains: [],           // [{slug, displayName, pageCount, pageCounts, conversationCount}]
   activeDomain: null,
   conversations: [],      // sidebar list for activeDomain: [{id, title, createdAt, messageCount}]
@@ -206,6 +220,10 @@ let outsideClickHandler = null;
 // conversation the user is now looking at with the old send's answer.
 let myMountToken = 0;
 
+// Delay-gated loading indicator for boot(). Built in onEnter, cancelled in
+// the teardown. See shared/loading-gate.js.
+let bootGate = null;
+
 registerView('chat', {
   onEnter(mountToken) {
     myMountToken = mountToken;
@@ -265,8 +283,31 @@ registerView('chat', {
     // nothing left to hand off).
     const scopeReq = consumeChatScopeRequest();
 
-    renderShell(mountToken); // paints sidebar+main immediately with a loading state
-    boot(mountToken, scopeReq).catch((err) => reportAsyncMountFailure(mountToken, err));
+    bootGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) renderShell(mountToken); },
+    });
+    bootGate.begin();
+
+    renderShell(mountToken); // paints the chat chrome immediately; the thread fills in
+    boot(mountToken, scopeReq)
+      .catch((err) => reportAsyncMountFailure(mountToken, err))
+      .finally(() => {
+        // A `finally`, and that is load-bearing: `booted` gates the
+        // zero-domain empty state, so a boot that ends in ANY way this
+        // file does not otherwise cover — a throw from a path with no
+        // handler, an early return — would otherwise strand a brand-new
+        // user on a loader forever. This runs however boot ended.
+        settleGate(bootGate, () => {
+          // Repaint only when the gated branch was actually on screen.
+          // Once domains exist, `booted` changes nothing that renders, so
+          // an unconditional renderShell here would be pure DOM churn on
+          // the common path — exactly the redundant repainting this whole
+          // change exists to remove.
+          const wasBlocking = !state.booted && !state.loadError && state.domains.length === 0;
+          state.booted = true;
+          if (wasBlocking && isCurrentMount(mountToken)) renderShell(mountToken);
+        });
+      });
 
     escHandler = (e) => {
       if (e.key !== 'Escape') return;
@@ -282,6 +323,9 @@ registerView('chat', {
     document.addEventListener('click', outsideClickHandler);
 
     return () => {
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (bootGate) { bootGate.cancel(); bootGate = null; }
       if (escHandler) document.removeEventListener('keydown', escHandler);
       if (outsideClickHandler) document.removeEventListener('click', outsideClickHandler);
       escHandler = null;
@@ -365,10 +409,20 @@ async function boot(token, scopeReq) {
   } catch (err) {
     if (!isCurrentMount(token)) return; // H1 fix — the mount that started this boot() may already be gone
     state.loadError = 'Could not reach the app server (' + err.message + ').';
+    // Set BEFORE the paint, not after: renderShell reads it, and an error
+    // frame rendered while `booted` is still false would show a loader
+    // instead of the error.
+    state.booted = true;
     renderShell(token);
     return;
   }
   if (!isCurrentMount(token)) return;
+
+  // NOTE: `state.booted` is deliberately NOT set here. It flips in
+  // onEnter's settle below, i.e. at the moment we PAINT — setting it on
+  // arrival would let boot()'s own renderShell calls paint straight
+  // through the min-visible clamp. The error path above is the one
+  // exception and says why.
 
   state.domains = Array.isArray(domainsData.domains) ? domainsData.domains : [];
   applyApiKeys(keysData || {});
@@ -1269,6 +1323,21 @@ function renderMain(token) {
   // zero-domain user is routed there rather than shown a duplicate create
   // flow; see resolveBootDomain()'s own comment for why a Chat-side
   // create-domain panel used to exist here and was removed.
+  // Never assert "you have no domains" before boot() has answered. Until
+  // then the chat chrome is painted with an empty body — and a loader only
+  // if the gate fires. `loadError` is excluded because that frame is a
+  // real conclusion with its own rendering elsewhere; waiting on it here
+  // would replace an error with a spinner.
+  if (!state.booted && !state.loadError && state.domains.length === 0) {
+    setMain(
+      eyebrow('the default view') +
+      '<h1 class="view-title">Chat</h1>' +
+      gatedLoader(bootGate, 'Loading…'),
+      token
+    );
+    return;
+  }
+
   if (state.domains.length === 0) {
     setMain(
       eyebrow('the default view') +

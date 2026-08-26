@@ -142,6 +142,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 import {
   progressRingHtml, INGEST_STAGES, mapIngestPctToStage,
 } from '../shared/progress-ring.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 const ALLOWED_EXT = ['.txt', '.md', '.pdf'];
 const QUEUE_API = '/api/ingest-queue';
@@ -190,6 +191,10 @@ let state = freshState();
 // file-header comment for the concrete failure this avoids).
 let myMountToken = 0;
 
+// Delay-gated loading indicator for this view's entry load. Built in
+// onEnter, cancelled in the teardown. See shared/loading-gate.js.
+let loadGate = null;
+
 // Closure state for the currently-running ingest's elapsed-time clock
 // (v3.0.17 in the shipping app — ticks every second, resets only on a
 // genuine new progress step, NOT on a `wait` sub-event, so a stalled phase
@@ -225,6 +230,10 @@ registerView('ingest', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    loadGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
+    loadGate.begin();
     render(mountToken);
     loadDomains(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
@@ -269,6 +278,10 @@ registerView('ingest', {
       // back.
       detachQueueStream();
 
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (loadGate) { loadGate.cancel(); loadGate = null; }
+
       // Write-gate subscription cleanup — a torn-down mount must stop
       // reacting to gate changes.
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
@@ -277,6 +290,12 @@ registerView('ingest', {
 });
 
 async function loadDomains(token) {
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
   try {
     const res = await fetch('/api/domains/stats');
     const data = await res.json();
@@ -295,8 +314,12 @@ async function loadDomains(token) {
     state.domainsError = err.message;
   } finally {
     if (isCurrentMount(token)) {
-      state.loadingDomains = false;
-      render(token);
+      // Delay-gated: paints straight through when the load beat the 200 ms
+      // threshold, which is the measured case here (~5.5 ms).
+      settleGate(gate, () => {
+        state.loadingDomains = false;
+        render(token);
+      });
     }
   }
 }
@@ -339,7 +362,7 @@ function renderSidebar(token) {
 function renderMain(token) {
   let body;
   if (state.loadingDomains) {
-    body = '<p class="view-body">Loading domains…</p>';
+    body = gatedLoader(loadGate, 'Loading domains…');
   } else if (state.domainsError) {
     body = '<div class="settings-inline-error">Could not load domains: ' + escapeHtml(state.domainsError) + '</div>';
   } else if (!state.domains.length) {

@@ -65,6 +65,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 // counts, and is `null` (activity only, orbit alone) for exactly as long as
 // the server has reported nothing.
 import { progressRingHtml, ringValueFromCounts } from '../shared/progress-ring.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
@@ -145,6 +146,15 @@ const state = {
 
   health: null,           // scanWiki() report for activeSlug, or null
   healthLoading: false,
+  // Which domain state.health was scanned FOR. Load-bearing, not
+  // bookkeeping: `state` is module-scoped and survives remounts, so
+  // without it a cached report could be rendered under a DIFFERENT
+  // domain's heading — a correctness bug strictly worse than the flicker
+  // the stale-while-revalidate below exists to remove.
+  healthSlug: null,
+  // True while a cached report is on screen and a rescan is running behind
+  // it. Purely a label; it never gates an action.
+  healthStale: false,
   healthError: null,
   healthSummary: {},      // slug -> total open issue count, populated as each domain is scanned (sidebar attention dot source — see report)
 
@@ -217,6 +227,10 @@ const state = {
 // (slug comparisons, `state.dismissedRecords = null` resets, etc.) is
 // unrelated and stays exactly as it was.
 let myMountToken = 0;
+
+// Delay-gated loading indicators for this view. Built in onEnter, cancelled
+// in the teardown. See shared/loading-gate.js.
+let loadGate = null;
 
 // MEDIUM-5 fix (re-audit): tracks domains with a destructive WRITE
 // genuinely in flight against the real backend. Deliberately survives this
@@ -433,24 +447,55 @@ function totalOpenIssues(report) {
 // ── Data loading ───────────────────────────────────────────────────────────
 
 async function loadDomainsList(token) {
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
   state.loaded = false;
   state.loadError = null;
   render(token);
+
+  // The state commit is captured rather than applied, so `state.loaded`
+  // flips at the moment we PAINT rather than the moment the response
+  // lands. That is what lets the min-visible clamp actually hold a loader
+  // that has been shown — flipping `loaded` early would let the very next
+  // render (this function continues on to loadHealth) paint through it.
+  let commit;
   try {
     const data = await fetchJSON('/api/domains/stats');
     if (!isCurrentMount(token)) return; // H1 fix
-    state.domains = Array.isArray(data.domains) ? data.domains : [];
-    state.readonlySet = new Set(data.readonlyDomains || []);
-    if (!state.activeSlug || !state.domains.some((d) => d.slug === state.activeSlug)) {
-      state.activeSlug = state.domains.length ? state.domains[0].slug : null;
-    }
-    state.loaded = true;
+    commit = () => {
+      state.domains = Array.isArray(data.domains) ? data.domains : [];
+      state.readonlySet = new Set(data.readonlyDomains || []);
+      if (!state.activeSlug || !state.domains.some((d) => d.slug === state.activeSlug)) {
+        state.activeSlug = state.domains.length ? state.domains[0].slug : null;
+      }
+      state.loaded = true;
+      // Measured: the domain card painted at ~15 ms and the health panel's
+      // loading state at ~18 ms, from TWO renders ~2 ms apart — a 113 px
+      // intermediate step in the entry staircase for no reason at all,
+      // since loadHealth() below runs synchronously up to its first await
+      // and would have set this a moment later anyway. Declaring the scan
+      // here folds both into a single paint. Harmless if loadHealth never
+      // runs (no active slug): renderHealthPanel is only reached from a
+      // selected domain's body.
+      if (state.activeSlug) state.healthLoading = true;
+    };
   } catch (err) {
     if (!isCurrentMount(token)) return;
-    state.loadError = err.message;
-    state.loaded = true;
+    commit = () => { state.loadError = err.message; state.loaded = true; };
   }
-  render(token);
+
+  // Measured at ~6 ms, so in practice this resolves in the same task and
+  // nothing is delayed. A torn-down gate never calls back at all, which
+  // deliberately abandons the rest of this function — the same outcome as
+  // the `if (!isCurrentMount(token)) return;` guards around it.
+  await new Promise((resolve) => {
+    settleGate(gate, () => { commit(); render(token); resolve(); });
+  });
+  if (!isCurrentMount(token)) return;
 
   // AI availability is a free, local, no-network check — safe to fetch
   // every time the view mounts.
@@ -474,6 +519,13 @@ async function loadDomainsList(token) {
     // pair list itself is kept.
     await loadHealth(state.activeSlug, token, {
       keepSemanticScan: shouldKeepSemanticScanOnReload(state.semanticScan, state.activeSlug),
+      // Same shape, same evaluation point, opposite subject. NOTE the
+      // asymmetry, which is deliberate: the semantic scan is cleared on
+      // every scan / switch / flip because it authorises a DESTRUCTIVE
+      // merge, while the health report is read-only and is kept across a
+      // same-domain re-entry. Both are slug-gated; only the health one is
+      // ever kept.
+      keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, state.activeSlug),
     });
   } else render(token);
 }
@@ -552,9 +604,52 @@ function shouldKeepSemanticScanOnReload(scan, slug) {
   return !!(scan && typeof scan === 'object' && slug && scan.slug === slug);
 }
 
+/** Stale-while-revalidate for the health report — LAYER 1 (re-entry).
+ *
+ *  Measured defect this fixes: `state` is module-scoped, so returning to
+ *  Domains still had a full health report in memory — and loadHealth threw
+ *  it away, collapsing the panel 540 px -> 89 px ("Scanning…") and
+ *  re-expanding it ~650 ms later. Two of the four jumps in the entry
+ *  staircase, for data we already had.
+ *
+ *  THE SLUG EQUALITY IS THE WHOLE POINT, not a detail. Showing domain A's
+ *  issue counts under domain B's heading is a correctness bug, strictly
+ *  worse than the flicker: the user would act on it. So the report is kept
+ *  ONLY when it was scanned for this exact domain — evaluated at the call
+ *  site, AFTER loadDomainsList has resolved state.activeSlug (which it can
+ *  change when the previously active domain no longer exists), exactly as
+ *  shouldKeepSemanticScanOnReload above is. LAYER 2 lives in
+ *  renderHealthPanel, which independently refuses to paint a report whose
+ *  recorded slug is not the domain it is rendering — the same two-layer
+ *  shape as the semantic gate, and for the same reason: neither layer may
+ *  depend on the other having been remembered.
+ */
+function shouldKeepHealthOnReload(report, reportSlug, slug) {
+  return !!(report && typeof report === 'object' && slug && reportSlug === slug);
+}
+
 async function loadHealth(slug, token, opts) {
   const silent = !!(opts && opts.silent);
-  if (!silent) { state.healthLoading = true; state.healthError = null; state.health = null; }
+  // Stale-while-revalidate — LAYER 1. The decision is made BY THE CALLER
+  // and handed in, exactly as `keepSemanticScan` above it is, and for the
+  // same two reasons: it must be evaluated after state.activeSlug has
+  // settled, and the DEFAULT must be the safe one. An absent flag clears,
+  // so any call site that has not thought about it — including
+  // selectDomain, i.e. every domain SWITCH — takes the clearing path.
+  //
+  // It is a plain boolean rather than a call to the shared predicate on
+  // purpose: scripts/test-next-semantic-gate.js executes this function in
+  // a sandbox built from a fixed list of lifted functions, so a new
+  // free identifier here makes loadHealth throw mid-clear and silently
+  // defeats the destructive-merge gate's own test. That suite's FNS list
+  // already carries a comment about the last time this happened.
+  const keepStale = !!(opts && opts.keepHealth);
+  if (!silent) {
+    state.healthLoading = true;
+    state.healthError = null;
+    if (!keepStale) { state.health = null; state.healthSlug = null; }
+    state.healthStale = keepStale;
+  }
   resetDomainScopedHealthState(opts);
   render(token);
 
@@ -562,10 +657,15 @@ async function loadHealth(slug, token, opts) {
     const report = await fetchJSON('/api/health/' + encodeURIComponent(slug));
     if (slug !== state.activeSlug || !isCurrentMount(token)) return; // user switched domains, or left the view, mid-fetch
     state.health = report;
+    state.healthSlug = slug;
+    state.healthStale = false;
     state.healthSummary[slug] = totalOpenIssues(report);
   } catch (err) {
     if (slug !== state.activeSlug || !isCurrentMount(token)) return;
     state.healthError = err.message;
+    // A stale report must never sit under a failed rescan implying it is
+    // current — renderHealthPanel shows the error card instead.
+    state.healthStale = false;
   } finally {
     // LOW-6 fix (re-audit): unlike busyKey, `healthLoading` IS keyed to a
     // specific domain+mount's own scan — a stale response (wrong slug, or
@@ -1127,7 +1227,7 @@ function renderSidebar(token) {
     '<button class="btn btn-primary dm-new-btn" id="dm-new-domain-btn">' + icon('grid', 13) + ' New domain</button>';
 
   if (!state.loaded) {
-    setSidebar('<div class="sidebar-title">Domains</div>' + newBtn + '<div class="sidebar-hint">Loading…</div>', token);
+    setSidebar('<div class="sidebar-title">Domains</div>' + newBtn + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
     bindNewDomainBtn();
     return;
   }
@@ -1219,7 +1319,10 @@ function selectDomain(slug) {
 function renderMain(token) {
   if (!isCurrentMount(token)) return;
   if (!state.loaded) {
-    setMain(eyebrow('your brain') + '<h1 class="view-title">Domains</h1><div class="view-body">Loading…</div>', token);
+    // Chrome (eyebrow + title) is known before the fetch and paints
+    // immediately, so the column never blanks; only the BODY waits, and
+    // only shows a loader if the gate fires.
+    setMain(eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' + gatedLoader(loadGate, 'Loading…'), token);
     return;
   }
   if (state.loadError) {
@@ -1371,7 +1474,14 @@ function filterBrowseEntries(entries, filter, folder) {
 }
 
 async function loadBrowse(slug, token) {
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
   state.browse = { slug, loading: true, error: null, entries: [], truncated: false, total: 0, filter: '', folder: 'all' };
+  if (gate) gate.begin();
   render(token);
   try {
     const data = await fetchJSON('/api/wiki/' + encodeURIComponent(slug) + '/list');
@@ -1388,8 +1498,13 @@ async function loadBrowse(slug, token) {
     if (!b || b.slug !== slug) return;
     b.loading = false;
     b.error = err.message;
+  } finally {
+    // MUST be a finally: the two `b.slug !== slug` early returns above
+    // (domain switched mid-fetch) would otherwise skip settle and leave
+    // the gate pending forever — a loader that appears at 200 ms and never
+    // leaves, which is worse than the flash this whole change removes.
+    settleGate(gate, () => render(token));
   }
-  render(token);
 }
 
 function renderBrowsePanel() {
@@ -1404,7 +1519,8 @@ function renderBrowsePanel() {
     );
   }
   if (b.loading) {
-    return '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div><div class="dm-browse-card"><div class="dm-browse-empty">Loading pages…</div></div>';
+    return '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div><div class="dm-browse-card">' +
+      gatedLoader(loadGate, 'Loading pages…', 'dm-browse-empty') + '</div>';
   }
   if (b.error) {
     return (
@@ -1690,7 +1806,18 @@ function bindBrowseListeners() {
 // ── Health panel ───────────────────────────────────────────────────────────
 
 function renderHealthPanel(domain, readonly) {
-  if (state.healthLoading) {
+  // Stale-while-revalidate — LAYER 2, independent of LAYER 1 in
+  // shouldKeepHealthOnReload. A report is usable here ONLY if it was
+  // scanned for the domain being rendered; anything else is treated as if
+  // there were no report at all. This layer is what makes it impossible to
+  // paint one domain's issue counts under another's heading, and it must
+  // keep working even if LAYER 1 is ever changed or forgotten.
+  const usable = shouldKeepHealthOnReload(state.health, state.healthSlug, domain.slug);
+  const revalidating = state.healthLoading && usable;
+
+  // Only collapse to "Scanning…" when there is genuinely nothing to show.
+  // A rescan behind a report we already have keeps that report on screen.
+  if (state.healthLoading && !usable) {
     return (
       '<div class="dm-health-card">' +
         '<div class="dm-health-top"><div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div></div>' +
@@ -1709,7 +1836,7 @@ function renderHealthPanel(domain, readonly) {
       '</div>'
     );
   }
-  const report = state.health;
+  const report = usable ? state.health : null;
   if (!report) return '';
 
   const total = totalOpenIssues(report);
@@ -1736,11 +1863,15 @@ function renderHealthPanel(domain, readonly) {
     '<div class="dm-health-card">' +
       '<div class="dm-health-top">' +
         '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
-        '<button class="btn btn-secondary" id="dm-rescan-btn"' + (busy ? ' disabled' : '') + '>' +
-          (busy === 'rescan' ? buttonRingHtml() + ' Scanning…' : icon('refresh', 13) + ' Rescan') +
+        '<button class="btn btn-secondary" id="dm-rescan-btn"' + ((busy || revalidating) ? ' disabled' : '') + '>' +
+          ((busy === 'rescan' || revalidating) ? buttonRingHtml() + ' Scanning…' : icon('refresh', 13) + ' Rescan') +
         '</button>' +
       '</div>' +
-      '<div class="dm-health-body">Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) +
+      // Honesty: while revalidating, these counts are the PREVIOUS scan's.
+      // Saying so is the price of not collapsing the panel — the figures
+      // stay useful, and nothing claims they are current.
+      '<div class="dm-health-body">' + (revalidating ? 'Re-scanning… showing the previous result. ' : '') +
+        'Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) +
         '. Structural repairs run locally and free; anything needing judgement stays review-only, and anything that spends tokens asks first.</div>' +
       '<div class="dm-health-meta mono">' + scanMeta + '</div>' +
       '<div class="dm-chip-row">' + chips + '</div>' +
@@ -2194,7 +2325,7 @@ function renderDismissedGroup(count) {
   if (!open) {
     body = '';
   } else if (state.dismissedRecords === null) {
-    body = '<div class="dm-issue-row"><span class="dm-issue-meta">Loading…</span></div>';
+    body = gatedLoader(loadGate, 'Loading…', 'dm-issue-row dm-issue-meta');
   } else {
     body = state.dismissedRecords.map((r) => (
       '<div class="dm-issue-row">' +
@@ -2325,7 +2456,14 @@ function bindHealthListeners(domain, readonly) {
   });
 }
 
-function rescan(slug) { loadHealth(slug, myMountToken).catch(reportAsyncActionFailure); }
+function rescan(slug) {
+  // Slug-gated like the re-entry path, never a hardcoded `true`: a rescan
+  // is the same domain by construction, but hardcoding that makes the
+  // guarantee depend on the caller staying correct forever.
+  loadHealth(slug, myMountToken, {
+    keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, slug),
+  }).catch(reportAsyncActionFailure);
+}
 
 // ── AI privacy disclosure (one-time, browser-local) ─────────────────────────
 // Shipping app.js (src/public/app.js) gates its single-row "✨ Ask AI"
@@ -3255,13 +3393,20 @@ async function undismissIssue(slug, record) {
 
 async function loadDismissedRecords(slug) {
   const token = myMountToken;
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
+  if (gate) gate.begin();
   try {
     const data = await fetchJSON('/api/health/' + encodeURIComponent(slug) + '/dismissed');
     if (slug === state.activeSlug && isCurrentMount(token)) state.dismissedRecords = data.records || [];
   } catch {
     if (slug === state.activeSlug && isCurrentMount(token)) state.dismissedRecords = [];
   }
-  render(token);
+  settleGate(gate, () => render(token));
 }
 
 // ── Render entry point ─────────────────────────────────────────────────────
@@ -3274,6 +3419,10 @@ function render(token) {
 registerView('domains', {
   onEnter(mountToken) {
     myMountToken = mountToken;
+    loadGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
+    loadGate.begin();
     loadDomainsList(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
     // M2 fix (re-audit finding): this view's `state` is DELIBERATELY
@@ -3311,6 +3460,9 @@ registerView('domains', {
       state.lifecycle = null;
       state.busyKey = null;
     state.aiProgress = null;
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (loadGate) { loadGate.cancel(); loadGate = null; }
     };
   },
 });

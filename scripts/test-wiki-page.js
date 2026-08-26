@@ -1254,9 +1254,18 @@ try {
     //     list (`countLinksToSlug`, `findSemanticCandidatePairs`,
     //     `previewSemanticDuplicateMerge`, `scanWiki`), none of which carry
     //     an §8b case either.
+    //
+    //     `SEMANTIC_SCAN_YIELD_CHUNK` is a plain numeric constant — the
+    //     event-loop yield budget for findSemanticCandidatePairs — in exactly
+    //     the same class as SEMANTIC_DUPE_DEFAULT_CAP and
+    //     SEMANTIC_DUPE_MAX_DOMAIN_PAGES above it. It is not a new way in and
+    //     needs no §8b case. It is exported so scripts/test-semantic-scan-yield.js
+    //     can pin the measured value (8000 was tried and rejected at 70.7 ms
+    //     worst-slice; see the constant's docblock).
     const exports = Object.keys(healthModule).sort();
     const KNOWN = [
       'AUTO_FIXABLE', 'SEMANTIC_DUPE_DEFAULT_CAP', 'SEMANTIC_DUPE_MAX_DOMAIN_PAGES',
+      'SEMANTIC_SCAN_YIELD_CHUNK',
       'applyBrokenLinkFixes', 'applyOrphanRescue', 'countLinksToSlug',
       'findSemanticCandidatePairs', 'fixAllSafe', 'fixIssue', 'fixSemanticDuplicatesBatch',
       'listMd', 'previewSemanticDuplicateMerge', 'scanWiki',

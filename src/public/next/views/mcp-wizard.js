@@ -104,6 +104,7 @@
 // shellHtml()/panel*() — fixed literals plus icon() — and one
 // `glyph.innerHTML = icon(...)`, which is likewise a fixed internal string.
 import { icon } from '../app.js';
+import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
 
 // ── Facts about the bridge, pinned against mcp/tools/index.js ────────────
 // Hardcoded here because the wizard must state them BEFORE any connection
@@ -138,6 +139,18 @@ function freshState() {
 }
 
 let state = freshState();
+
+// Delay-gated reveal of the "Checking your setup…" panel. The status read
+// was measured at ~2 ms, so the panel used to appear and vanish inside a
+// single frame while collapsing the overlay. It is now hidden in the static
+// markup below and revealed ONLY if the gate fires. Cancelled in
+// closeWizard(). See shared/loading-gate.js.
+//
+// SCOPE: delay half only — loadAll() paints its own terminal phase
+// (blocked / steps / failure) from several branches, so the min-visible
+// clamp is not enforced here. Named in the NOT ENFORCED block of
+// scripts/test-next-loading-gate.js.
+let loadGate = null;
 let wizardGen = 0;   // module-level, NEVER part of `state` — see the header
 let root = null;
 
@@ -508,8 +521,16 @@ export function openMcpWizard(opts) {
   bindStep3();
   bindBlocked();
 
-  showPhase('loading', myGen);
-  loadAll(myGen);
+  // Delay-gated: the overlay chrome is already on screen, so a status read
+  // that finishes in a few milliseconds shows no loading panel at all.
+  loadGate = createLoadingGate({
+    onChange: () => {
+      if (!isFresh(myGen) || !loadGate || !loadGate.visible) return;
+      showPhase('loading', myGen);
+    },
+  });
+  loadGate.begin();
+  Promise.resolve(loadAll(myGen)).finally(() => { settleGate(loadGate, () => {}); });
 }
 
 // Safe to call whether or not the wizard is open — views/settings.js's
@@ -540,6 +561,10 @@ function closeWizard(opts) {
   // a copy of the user's whole Claude Desktop config after close.
   const pre = byId('mcpw-payload-pre');
   if (pre) pre.textContent = '';
+
+  // Timer hygiene (load-bearing): an armed delay timer that outlives this
+  // overlay would call showPhase() against a detached (or re-opened) DOM.
+  if (loadGate) { loadGate.cancel(); loadGate = null; }
 
   document.removeEventListener('keydown', onWizardKeydown, true);
   const prevFocus = state.prevFocus;
@@ -789,7 +814,7 @@ function shellHtml() {
 
 function panelLoading() {
   return (
-    '<div id="mcpw-panel-loading" class="mcpw-panel">' +
+    '<div id="mcpw-panel-loading" class="mcpw-panel mcpw-hidden">' +
       '<h3>Checking your setup…</h3>' +
       '<p class="mcpw-hint">Reading where the bridge lives, where your knowledge folder is, and whether ' +
       'Claude Desktop already has a config file.</p>' +

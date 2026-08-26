@@ -160,6 +160,7 @@ import {
   beginDomainWrite, isDomainWriteBusy, getDomainWriteLabel, onWriteGateChange,
 } from '../app.js';
 import { openSharedBrainWizard, closeSharedBrainWizardIfOpen } from './shared-brain-wizard.js';
+import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 function freshState() {
   return {
@@ -183,6 +184,10 @@ let state = freshState();
 
 // Same discipline as sync.js/ingest.js — see the file-header comment above.
 let myMountToken = 0;
+
+// Delay-gated loading indicator for this view's entry load. Built in
+// onEnter, cancelled in the teardown. See shared/loading-gate.js.
+let loadGate = null;
 let unsubscribeWriteGate = null;
 
 function ensureCard(id) {
@@ -278,6 +283,10 @@ registerView('shared', {
   onEnter(mountToken) {
     state = freshState();
     myMountToken = mountToken;
+    loadGate = createLoadingGate({
+      onChange: () => { if (isCurrentMount(mountToken)) render(mountToken); },
+    });
+    loadGate.begin();
     render(mountToken);
     loadAll(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
@@ -289,6 +298,9 @@ registerView('shared', {
     });
 
     return () => {
+      // Timer hygiene (load-bearing): an armed delay timer that survives
+      // this teardown would paint a loader into whatever view comes next.
+      if (loadGate) { loadGate.cancel(); loadGate = null; }
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
       // Never leave a credential-holding overlay mounted behind the next
       // view — see the file-header comment above.
@@ -300,12 +312,20 @@ registerView('shared', {
 // ── Loading ──────────────────────────────────────────────────────────────
 
 async function loadAll(token) {
+  // Capture the gate for THIS call. `loadGate` is module-scoped and the
+  // next mount replaces it, so settling the module variable from a stale
+  // in-flight load would decrement the NEXT mount's counter and hide a
+  // loader that is legitimately up. A cancelled gate ignores settle(), so
+  // the stale path becomes a no-op instead.
+  const gate = loadGate;
   await loadFlag(token);
   if (!isCurrentMount(token)) return;
   if (state.enabled) await loadConnections(token);
   if (!isCurrentMount(token)) return;
-  state.loading = false;
-  render(token);
+  settleGate(gate, () => {
+    state.loading = false;
+    render(token);
+  });
 }
 
 async function loadFlag(token) {
@@ -367,7 +387,7 @@ function render(token) {
 function renderSidebar(token) {
   let body;
   if (state.loading) {
-    body = '<div class="sidebar-note">Loading…</div>';
+    body = gatedLoader(loadGate, 'Loading…', 'sidebar-note');
   } else if (!state.enabled) {
     body = '<div class="sidebar-note">Not enabled on this install.</div>';
   } else if (state.connections.length === 0) {
@@ -402,7 +422,7 @@ function renderSidebar(token) {
 function renderMain(token) {
   let body;
   if (state.loading) {
-    body = '<p class="view-body">Loading Shared Brain status…</p>';
+    body = gatedLoader(loadGate, 'Loading Shared Brain status…');
   } else if (state.flagError) {
     body = '<div class="settings-inline-error">Could not reach the Shared Brain feature flag: ' + escapeHtml(state.flagError) + '</div>';
   } else if (!state.enabled) {

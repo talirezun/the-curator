@@ -1100,6 +1100,61 @@ export const SEMANTIC_DUPE_MAX_DOMAIN_PAGES = 20000;
  */
 export const SEMANTIC_DUPE_DEFAULT_CAP = 500;
 
+/**
+ * How many inner comparisons the candidate pre-filter may perform between
+ * yields back to the event loop.
+ *
+ * WHY THIS EXISTS: `findSemanticCandidatePairs` is a synchronous O(N²)
+ * character-similarity sweep. Measured on a real 3,288-page domain it ran for
+ * **15.0 s as a single uninterrupted block**, during which a concurrent
+ * `GET /api/version` — normally 1 ms — took 13.7 s. The whole app was dead:
+ * rail, badges, every view, every other request. It is reachable in ONE click
+ * from the shipping UI ("✨ Find duplicate pages"). v3.2.0 removed this scan
+ * from automatic view-entry for exactly that reason but never made it
+ * non-blocking, so the freeze stayed one deliberate click away.
+ *
+ * The scan is still allowed to take ~15 s of wall clock — that is honest work
+ * and the UI reports it. What it may no longer do is monopolise the loop.
+ *
+ * VALUE DERIVED BY MEASUREMENT, NOT BY ARITHMETIC — and the arithmetic was
+ * wrong. Per-comparison cost is ~2.75 µs (5,404,428 comparisons in 14.84 s),
+ * which predicts 22 ms for an 8,000-unit slice. Measured, 8,000 gave a 70.7 ms
+ * worst slice: the prediction ignored GC, and this pass allocates two boolean
+ * arrays per comparison (~10.8 M allocations), so collection pauses land
+ * inside slices and widen them. Observed worst slice / count over 50 ms, same
+ * 3,288-page corpus:
+ *
+ *     32,000 → 199.9 ms   (135 slices over 50 ms)
+ *     16,000 → 126.9 ms   (136)
+ *      8,000 →  70.7 ms   (6)
+ *      4,000 →  28.5 ms p99, one 1,257 ms GC outlier
+ *      2,000 →  21.3 ms   (0 over 50 ms, 0 over 30 ms, 3 consecutive runs)
+ *      1,000 →  14.2 ms   (0) — 2× the yields for no user-visible gain
+ *
+ * 2,000 is the largest budget that put NOTHING over the 50 ms Long-Tasks
+ * threshold, with 3× headroom for a slower machine. It costs ~3,090 yields
+ * and no measurable wall clock: 14,923 / 15,045 / 14,936 ms against a
+ * 15,040 ms pre-change baseline — run-to-run noise is larger than the effect.
+ *
+ * THE BUDGET IS A SCHEDULE, NEVER A SEMANTIC. Changing it must not change
+ * which pairs are found or their order — the loops read only local state that
+ * nothing else can touch, so a yield cannot perturb them. That invariant is
+ * pinned by assertion in scripts/test-semantic-scan-yield.js, which runs the
+ * same corpus at several chunk sizes and requires byte-identical output.
+ */
+export const SEMANTIC_SCAN_YIELD_CHUNK = 2000;
+
+/**
+ * The token-overlap pass does strictly more work per unit than the pure-JW
+ * pass (`candidatePairScore` = 2× tokenizeSlug + jaroWinkler + a filter, vs a
+ * single jaroWinkler), so it gets a proportionally smaller budget. Measured
+ * at ~4× the per-unit cost, hence the divisor.
+ */
+const SEMANTIC_SCAN_TOKEN_PASS_DIVISOR = 4;
+
+/** Hand the event loop back so queued I/O and timers can run. */
+const yieldToEventLoop = () => new Promise(resolve => setImmediate(resolve));
+
 const STOPWORDS = new Set([
   'a','an','the','of','in','and','or','to','for','is','are','on','at',
   'by','with','from','as','it','this','that','be','was','were','has','have',
@@ -1179,11 +1234,21 @@ function candidatePairScore(slugA, slugB, sharedTokens) {
  * Exact-match cross-folder duplicates (entities/X + concepts/X) are omitted
  * because they are already caught by scanWiki's crossFolderDupes branch.
  *
+ * Both passes YIELD the event loop periodically (see
+ * SEMANTIC_SCAN_YIELD_CHUNK). This is a scheduling change only: the pair set
+ * and its ranking are byte-identical to the pre-yield implementation, because
+ * every structure the loops touch (`pairMap`, `slugTokens`, `allSlugs`) is a
+ * function-local that nothing outside this call can reach.
+ *
  * @param {string} domain
  * @param {number} maxPairs — cap on output pairs (default 500)
+ * @param {object} [opts] — TEST-ONLY seam. `opts.yieldChunk` overrides the
+ *   scheduling budget so a suite can prove output is invariant across chunk
+ *   sizes. Never set by production code; it cannot affect results by design,
+ *   and the suite exists to keep that true.
  * @returns {Promise<{pageCount, pairs, truncated}>}
  */
-export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP) {
+export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUPE_DEFAULT_CAP, opts = {}) {
   const wikiDir = wikiPath(domain);
   if (!existsSync(wikiDir)) throw new Error(`No wiki found for domain: ${domain}`);
 
@@ -1223,6 +1288,13 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
   // too high to burn LLM tokens on.
   const MIN_SCORE = 0.5;
   const pairMap = new Map(); // key "i|j" (i<j) → {a, b, score, shared}
+
+  // Scheduling budget, shared across both passes so it is one continuous
+  // allowance rather than two that can each individually starve the loop.
+  const yieldChunk = Math.max(1, Number(opts.yieldChunk) || SEMANTIC_SCAN_YIELD_CHUNK);
+  const tokenPassChunk = Math.max(1, Math.floor(yieldChunk / SEMANTIC_SCAN_TOKEN_PASS_DIVISOR));
+  let work = 0;
+
   for (let i = 0; i < allSlugs.length; i++) {
     const toks = slugTokens[i];
     if (toks.length === 0) continue;
@@ -1241,19 +1313,41 @@ export async function findSemanticCandidatePairs(domain, maxPairs = SEMANTIC_DUP
       if (score < MIN_SCORE) continue;
       pairMap.set(`${i}|${j}`, { i, j, score });
     }
+    // Yield accounting sits OUTSIDE the inner loop, so one slug's whole
+    // candidate set is processed atomically — the set is bounded by the
+    // token index and is orders of magnitude smaller than the budget.
+    work += candIndices.size;
+    if (work >= tokenPassChunk) { work = 0; await yieldToEventLoop(); }
   }
 
   // Also add prefix-subsequence candidates (e.g. "rag" vs "retrieval-augmented-generation"
   // share no tokens but one is an acronym of the other — handled via JW only
   // where JW ≥ 0.8 as a secondary pass.
-  for (let i = 0; i < allSlugs.length; i++) {
-    for (let j = i + 1; j < allSlugs.length; j++) {
-      if (pairMap.has(`${i}|${j}`)) continue;
-      if (allSlugs[i].slug === allSlugs[j].slug) continue;
-      const jw = jaroWinkler(allSlugs[i].slug, allSlugs[j].slug);
-      if (jw >= 0.85) {
-        pairMap.set(`${i}|${j}`, { i, j, score: 0.5 * jw + 0.5 }); // bias up
+  //
+  // This pass is 97 % of the runtime (14.8 s of 15.2 s measured on a real
+  // 3,288-page domain), so it is where the yielding has to bite. The inner
+  // loop is chunked against the REMAINING budget rather than restarted per
+  // outer iteration: with a per-outer-iteration budget, every outer iteration
+  // on a domain smaller than the chunk size would fit inside one budget and
+  // the loop would never yield at all — the tail of this triangle is
+  // thousands of short iterations that must still be accounted for.
+  const n = allSlugs.length;
+  for (let i = 0; i < n; i++) {
+    const slugI = allSlugs[i].slug;
+    let j = i + 1;
+    while (j < n) {
+      const stop = Math.min(n, j + Math.max(1, yieldChunk - work));
+      const from = j;
+      for (; j < stop; j++) {
+        if (pairMap.has(`${i}|${j}`)) continue;
+        if (slugI === allSlugs[j].slug) continue;
+        const jw = jaroWinkler(slugI, allSlugs[j].slug);
+        if (jw >= 0.85) {
+          pairMap.set(`${i}|${j}`, { i, j, score: 0.5 * jw + 0.5 }); // bias up
+        }
       }
+      work += (j - from);
+      if (work >= yieldChunk) { work = 0; await yieldToEventLoop(); }
     }
     // Note: outer loop capped by O(N²) only for the high-JW pass; for 20k
     // pages this is 200M ops — marginal. If it proves slow on real-world
