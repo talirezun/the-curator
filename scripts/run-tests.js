@@ -65,6 +65,7 @@ const OFFLINE = [
   'test-chat-style.js',            // Tier 2: concise/balanced/comprehensive response-style control
   'test-chat-markdown.js',         // chat Markdown renderer — XSS-safe, formatting
   'test-chat-model.js',            // per-chat model (provider) selector + getDefaultModel exposure
+  'test-offerable-models-route.js', // GET /api/config/api-keys exposes `offerable` ADDITIVELY: `models` must stay a provider->STRING map or /old renders the literal text [object Object] (app.js does escHtml(models[p])), and hasGeminiKey/hasAnthropicKey must survive or the 4-step onboarding overlay — no Escape, no Skip on step 1 — re-fires on every load for a configured user.
   'test-anthropic-content-blocks.js', // Anthropic text extraction at ANY block position. callProvider read content[0].text at BOTH extraction sites; a `thinking` block carries .thinking, never .text, so FALLBACK_CHAINS.anthropic[0] (claude-sonnet-5) threw on every realistic call — 3/3 measured live — while a trivial probe returned [text] and passed green, because omitting the thinking param means ADAPTIVE on sonnet-5 and NONE on sonnet-4-6/haiku-4-5. Class invariant over 2,000 generated content arrays (with coverage controls proving 562 put text somewhere other than first), not a case list.
   'test-chat-compile-card.js',     // compile result renders inline in the thread (no fixed panel)
   'test-css-tokens.js',            // every var(--x) CSS custom property is defined somewhere (the v3.0.12 --text-dim bug class)

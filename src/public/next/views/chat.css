@@ -350,7 +350,18 @@
   font-family: var(--font-sans);
   max-height: 220px;
 }
-.chat-input:focus { outline: none; }
+/* box-in-a-box (maintainer-reported): base.css's global `:focus-visible`
+   rule (tokens/base.css) puts a 3px accent ring + border-radius on EVERY
+   focusable element, including this textarea — so on focus it drew its
+   own rounded ring nested inside .chat-composer's own focus-within border,
+   the same failure shape the shipping app fixed in v3.0.12 for a plain
+   textarea:focus box-shadow. Here the source is :focus-visible specifically
+   (Chromium matches it on a click into a text field, not just Tab), so both
+   pseudo-classes are neutralised — outline was already off via :focus above,
+   box-shadow is the one that was leaking through. .chat-composer:focus-within
+   (line 340) remains the ONE visible focus affordance for this control. */
+.chat-input:focus,
+.chat-input:focus-visible { outline: none; box-shadow: none; }
 .chat-input::placeholder { color: var(--text-3); }
 .chat-input[disabled] { opacity: 0.6; }
 

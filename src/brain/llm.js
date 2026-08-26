@@ -65,9 +65,11 @@ export const ANTHROPIC_MAX_OUTPUT_TOKENS = 64000;
 /**
  * Per-model output ceilings, keyed by EXACT model id.
  *
- * Scope mirrors MODEL_PRICES_USD_PER_MTOK: DEFAULTS.anthropic plus every rung of
- * FALLBACK_CHAINS.anthropic, plus the dated snapshot each alias resolves to (a
- * user can pin one through the LLM_MODEL dev override).
+ * Scope mirrors MODEL_PRICES_USD_PER_MTOK: DEFAULTS.anthropic, every rung of
+ * FALLBACK_CHAINS.anthropic, every entry of OFFERABLE_MODELS.anthropic, plus the
+ * dated snapshot each alias resolves to (a user can pin one through the
+ * LLM_MODEL dev override). `defineOfferableModel` REFUSES to build an entry for
+ * an id absent from this map, so "offerable but uncapped" is unrepresentable.
  *
  * A flat 64000 constant was correct while Haiku was the only Anthropic model the
  * app could ever run. It is NOT correct now that the fallback chain lands on
@@ -89,8 +91,49 @@ const ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS = {
   'claude-sonnet-4-6':         128000,   // fallback rung 2
   'claude-sonnet-4-5':          64000,   // fallback rung 3 — NOT 128k, despite being Sonnet
   'claude-sonnet-4-5-20250929': 64000,   // dated snapshot the alias resolves to
+  // Offerable-only ids (never reached by the fallback chain, pickable by a user).
+  // The pattern here is GENERATIONAL, not chronological: everything in the "4.5
+  // generation" caps at 64,000 and everything 4.6-and-later at 128,000 — which is
+  // why claude-opus-4-5 sits at 64,000 while the numerically-adjacent
+  // claude-opus-4-8 doubles it. Verified against the provider's published caps
+  // 2026-08-26. Still keyed EXACTLY, never derived from the version word: the
+  // moment a cap is inferred from a family name it is a heuristic, and this repo
+  // has already been bitten twice by exactly that (the price-tier heuristic below,
+  // and the pre-2026-08-24 flat 64000 clamp that silently halved Sonnet's ceiling).
+  'claude-opus-5':             128000,
+  'claude-opus-4-8':           128000,
+  'claude-opus-4-5':            64000,   // NOT 128k — the 4.5 generation caps low
 };
 Object.freeze(ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS);
+
+/**
+ * Per-model output ceilings for Gemini.
+ *
+ * ⚠ READ THIS BEFORE WIRING IT INTO callProvider: it is DECLARATIVE DATA for the
+ * offerable-model catalogue only, and is deliberately NOT used to clamp a Gemini
+ * request. Gemini CLAMPS an over-large `maxOutputTokens` server-side rather than
+ * rejecting it (the Anthropic API returns a hard 400 — "max_tokens: 65536 >
+ * 64000" — which is the entire reason the Anthropic clamp exists). Adding a
+ * client-side Gemini clamp would be a behaviour change with no failure to fix,
+ * so this map exists so the UI can TELL a user what ceiling a model has, and for
+ * nothing else.
+ *
+ * Every Flash-line model probed on 2026-08-26 reported the same 65,536 ceiling.
+ * The map is still per-id rather than one shared constant for the same reason
+ * the Anthropic map is: the day a Gemini model ships with a different ceiling,
+ * a constant would be silently wrong for it while a missing key makes
+ * `defineOfferableModel` refuse the model outright.
+ */
+const GEMINI_MODEL_MAX_OUTPUT_TOKENS = {
+  'gemini-2.5-flash-lite': 65536,   // current default
+  'gemini-3.1-flash-lite': 65536,
+  'gemini-3.5-flash-lite': 65536,
+  'gemini-2.5-flash':      65536,
+  'gemini-3.7-flash':      65536,
+  'gemini-3.6-flash':      65536,
+  'gemini-3.5-flash':      65536,
+};
+Object.freeze(GEMINI_MODEL_MAX_OUTPUT_TOKENS);
 
 /**
  * The output ceiling to clamp to for a given Anthropic model id.
@@ -199,8 +242,14 @@ const FALLBACK_CHAINS = {
 /**
  * Published API prices, USD per 1M tokens, keyed by EXACT model id.
  *
- * Scope is deliberately tiny: the ~7 ids this app can actually run — DEFAULTS
- * plus every rung of FALLBACK_CHAINS. Those are ids WE choose and change
+ * ⚠ THESE ARE STANDARD PRICES. Where a model is currently on a promotional rate
+ * the STANDARD (post-promotional) number lives here and the discount lives in
+ * PROMOTIONAL_PRICES below, resolved by date. Never write a promotional price
+ * into this table — see the long note on PROMOTIONAL_PRICES for why.
+ *
+ * Scope is the ids this app can actually run — DEFAULTS, every rung of
+ * FALLBACK_CHAINS, and every entry of OFFERABLE_MODELS (the models a user may
+ * pick for themselves). Those are ids WE choose and change
  * deliberately, so staleness is bounded by our own release process (see the
  * release checklist in docs/model-lifecycle.md: adding a rung means adding its
  * price here). Symmetrically, REMOVING a rung means removing its price entry
@@ -217,22 +266,37 @@ const FALLBACK_CHAINS = {
  * silent on the exact rung the chain reaches FIRST. Only an exact-id table can
  * see a within-family price change.
  *
- * The numbers are used ONLY for ordering comparisons and are never displayed to
- * the user, so a stale absolute value is harmless as long as the ORDER is right.
+ * ⚠ THESE NUMBERS ARE NOW USER-VISIBLE. Until the multi-model work they fed only
+ * the fallback banner's costlier/similar/unknown ordering, so a stale absolute
+ * value was harmless. They now surface through OFFERABLE_MODELS into a picker
+ * whose entire purpose is showing a user what a model costs BEFORE they choose
+ * it, so an absolute value being right matters as much as the ordering does.
  *
- * Verified 2026-08-22 against ai.google.dev/gemini-api/docs/pricing and
- * platform.claude.com/docs/en/about-claude/pricing (standard tier, text).
+ * Verified 2026-08-26 against ai.google.dev/gemini-api/docs/pricing and
+ * platform.claude.com/docs/en/about-claude/pricing (standard tier, text) — the
+ * LIVE pages, never a cached table. That is a standing rule, not a formality:
+ * a cached copy asserting a scheduled Sonnet 5 price RISE that had in fact been
+ * cancelled would have inverted the Anthropic chain's cost ordering a week after
+ * shipping, silently (see the claude-sonnet-5 note below).
  */
 const MODEL_PRICES_USD_PER_MTOK = {
   // ── Gemini ──
   'gemini-2.5-flash-lite':     { input: 0.10, output: 0.40 },   // current default
   'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // 2.5x in / 3.75x out vs default
-  // gemini-3.5-flash-lite REMOVED 2026-08-26 together with its chain rung —
-  // see the removal note above FALLBACK_CHAINS.gemini. Do not re-add this
-  // price entry without re-adding (and re-justifying) the rung itself; an
-  // unshipped id's price is dead weight the §5 length-equality invariant
-  // exists to catch.
   'gemini-2.5-flash':          { input: 0.30, output: 2.50 },
+  // gemini-3.5-flash-lite is priced again as of 2026-08-26 — NOT a reversal of
+  // its removal from FALLBACK_CHAINS, which stands. It is priced because it is
+  // OFFERABLE (a user may pick it deliberately, with its measured JSON defect
+  // shown) while remaining banned from the chain (which picks FOR the user).
+  // Those are two different lists with two different rules; see DOMINATED_MODELS.
+  'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },
+  // ⚠ PROMOTIONAL — the numbers here are the STANDARD prices that take effect
+  // 2027-01-01. Both models bill at $0.75/$3.75 through 2026-12-31; that
+  // discount lives in PROMOTIONAL_PRICES and getModelPrice() switches over on
+  // the date by itself.
+  'gemini-3.7-flash':          { input: 1.50, output: 7.50 },
+  'gemini-3.6-flash':          { input: 1.50, output: 7.50 },
+  'gemini-3.5-flash':          { input: 1.50, output: 9.00 },
   // ── Anthropic ── (re-verified 2026-08-24; the four retired 3.x rungs and their
   // prices were removed together with the dead chain entries)
   'claude-haiku-4-5':          { input: 1.00, output: 5.00 },   // current default
@@ -251,6 +315,17 @@ const MODEL_PRICES_USD_PER_MTOK = {
   'claude-sonnet-5':           { input: 2.00, output: 10.00 },
   'claude-sonnet-4-6':         { input: 3.00, output: 15.00 },
   'claude-sonnet-4-5':         { input: 3.00, output: 15.00 },
+  // Offerable-only (never a fallback rung). ⚠ The headline $5 UNDERSTATES what
+  // these cost against a Haiku baseline for two of the three: claude-opus-5 and
+  // claude-opus-4-8 use a newer tokenizer measured at 1.329x more input tokens
+  // on real Curator prose, so $5/1M is really ~$6.65/1M of the same text. That
+  // multiplier is carried per-model as `tokenizerFactor` on the OFFERABLE_MODELS
+  // entry rather than folded into the price here, because it is a property of
+  // the TEXT-to-token conversion, not of the published rate — folding it in
+  // would make this table disagree with the provider's own invoice.
+  'claude-opus-5':             { input: 5.00, output: 25.00 },
+  'claude-opus-4-8':           { input: 5.00, output: 25.00 },
+  'claude-opus-4-5':           { input: 5.00, output: 25.00 },
 };
 
 // Frozen at definition: this table is exported through `__testing` for the
@@ -262,14 +337,527 @@ for (const price of Object.values(MODEL_PRICES_USD_PER_MTOK)) Object.freeze(pric
 Object.freeze(MODEL_PRICES_USD_PER_MTOK);
 
 /**
- * Published price for an exact model id, or null if we don't ship it.
+ * Time-limited promotional prices, keyed by EXACT model id.
+ *
+ * WHY THIS EXISTS AS A MECHANISM RATHER THAN A COMMENT. `gemini-3.6-flash` and
+ * `gemini-3.7-flash` bill at $0.75/$3.75 through 2026-12-31 and DOUBLE to
+ * $1.50/$7.50 on 2027-01-01. There were three ways to handle that and only one
+ * of them is safe:
+ *
+ *   • Hard-code $0.75/$3.75 as if permanent. REJECTED. This is v3.6.0's recorded
+ *     near-miss in the opposite direction — there, a cached table claimed a
+ *     Sonnet 5 price RISE that had actually been cancelled, and trusting it would
+ *     have inverted the fallback chain's cost ordering one week after shipping,
+ *     silently. A promotional number frozen into the standard table is the same
+ *     failure with the clock running the other way: on 2027-01-01 the picker
+ *     would quote every user HALF of what they are actually billed, on the one
+ *     surface whose entire job is cost honesty, and no ordering assertion would
+ *     notice (the array order happens to survive the doubling, so a
+ *     cheapest-first test stays green over a wrong number — this project's named
+ *     "green over a wrong number" shape).
+ *   • Don't offer the two models at all. REJECTED as over-correction: they are
+ *     the modern non-lite Flash tier at a genuinely good rate today, and
+ *     excluding them for four months only to add them back later trades a real
+ *     capability for a problem that is nine lines of code to solve properly.
+ *   • Resolve by DATE, and state the expiry in the record. CHOSEN, and both
+ *     halves are load-bearing: the date resolution means nobody has to remember
+ *     to ship a release on New Year's Day, and the stated expiry means a human
+ *     reading the entry cannot mistake $0.75 for a stable price.
+ *
+ * FAIL-SAFE DIRECTION. The standard (HIGHER) price is the one in
+ * MODEL_PRICES_USD_PER_MTOK, and a promotion is a narrowing exception applied on
+ * top. So every way this can break — a wrong system clock, this table being
+ * dropped, an id typo'd here — degrades to quoting the HIGHER price. That is
+ * deliberate and matches the direction this repo already takes on money
+ * (v3.9.0: an unrecognised cost tier resolves to 'unknown', never 'similar',
+ * "because the fail-safe direction on money is to warn"). A user who is quoted
+ * more than they are billed picks a cheaper model than they needed; a user
+ * quoted less than they are billed was lied to.
+ *
+ * `untilMs` is INCLUSIVE and pinned to UTC. A promotion is a published calendar
+ * fact, not a local-time one, so parsing it in the machine's timezone would make
+ * two users disagree about the price for up to a day.
+ */
+const PROMOTIONAL_PRICES = {
+  'gemini-3.7-flash': {
+    price: Object.freeze({ input: 0.75, output: 3.75 }),
+    untilIso: '2026-12-31',
+    untilMs: Date.parse('2026-12-31T23:59:59.999Z'),
+    standardFromIso: '2027-01-01',
+  },
+  'gemini-3.6-flash': {
+    price: Object.freeze({ input: 0.75, output: 3.75 }),
+    untilIso: '2026-12-31',
+    untilMs: Date.parse('2026-12-31T23:59:59.999Z'),
+    standardFromIso: '2027-01-01',
+  },
+};
+for (const promo of Object.values(PROMOTIONAL_PRICES)) Object.freeze(promo);
+Object.freeze(PROMOTIONAL_PRICES);
+
+/**
+ * Price for an exact model id AT A GIVEN INSTANT, or null if we don't ship it.
+ *
+ * Exported (rather than kept private behind getModelPrice) so the offline suite
+ * can assert BOTH sides of a promotional boundary today, instead of asserting
+ * one side and hoping someone re-reads the comment in January. A guard that can
+ * only be exercised on the day it matters is a comment, not a guard.
+ *
+ * @param {string} modelId
+ * @param {number} [atMs]  epoch ms; defaults to now. Non-finite input falls back
+ *   to now rather than throwing — a bad clock must not take down an LLM call.
+ * @returns {null | {input: number, output: number}}
+ */
+export function resolveModelPrice(modelId, atMs = Date.now()) {
+  if (typeof modelId !== 'string') return null;
+  if (!Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)) return null;
+  const standard = MODEL_PRICES_USD_PER_MTOK[modelId];
+  if (!Object.hasOwn(PROMOTIONAL_PRICES, modelId)) return standard;
+  const promo = PROMOTIONAL_PRICES[modelId];
+  const t = Number.isFinite(atMs) ? atMs : Date.now();
+  return t <= promo.untilMs ? promo.price : standard;
+}
+
+/**
+ * Published price for an exact model id RIGHT NOW, or null if we don't ship it.
+ * Signature and return shape unchanged from before promotional pricing existed,
+ * so all existing consumers (health-ai.js, ingest-queue.js, the fallback cost
+ * banner) keep working untouched and simply become date-correct for free.
  * @returns {null | {input: number, output: number}}
  */
 export function getModelPrice(modelId) {
-  if (typeof modelId !== 'string') return null;
-  return Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)
-    ? MODEL_PRICES_USD_PER_MTOK[modelId]
-    : null;
+  return resolveModelPrice(modelId, Date.now());
+}
+
+/**
+ * ── DOMINATED: alive, fairly priced, and measurably worse than a same-priced
+ *    sibling ────────────────────────────────────────────────────────────────
+ *
+ * The companion to the RETIRED list in test-chat-model.js §9, and deliberately a
+ * SEPARATE concept:
+ *
+ *   RETIRED   — the id 404s. Shipping it does nothing at all.
+ *   DOMINATED — the id works and is honestly priced, but another model at the
+ *               SAME price measured better on every axis we tested. Shipping it
+ *               works; it just costs the user quality for no saving.
+ *
+ * THE TWO LISTS THIS CONSTRAINS ARE NOT THE SAME LIST, and the distinction is
+ * the whole reason this exists rather than a single ban:
+ *
+ *   FALLBACK_CHAINS — the app picks FOR the user, silently, on the worst day
+ *     (their pinned default has just been retired). A dominated rung there is
+ *     indefensible: nobody chose it, nobody was told, and its documented promise
+ *     is "the cheapest model that still WORKS". A DOMINATED id must therefore
+ *     never appear in a chain — asserted in test-chat-model.js.
+ *   OFFERABLE_MODELS — the USER picks, deliberately, with the measured reason on
+ *     screen. Hiding a working model there would be deciding for someone what
+ *     they may spend their own API key on. The honest answer is to show it and
+ *     label it, which is what `suitability` + `note` + this list are for.
+ *
+ * So DOMINATED ∩ FALLBACK_CHAINS = ∅, while DOMINATED ⊆ OFFERABLE is fine.
+ *
+ * `gemini-3.5-flash-lite` is the founding entry: it was pulled from the Gemini
+ * chain on 2026-08-26 by an ad-hoc pair of assertions naming it specifically.
+ * Those assertions are folded into this list, so the next dominated model is
+ * caught by the same invariant instead of needing its own bespoke pair.
+ */
+export const DOMINATED_MODELS = Object.freeze({
+  'gemini-3.5-flash-lite': Object.freeze({
+    dominatedBy: 'gemini-2.5-flash',
+    reason:
+      'Identical published price ($0.30/$2.50) to gemini-2.5-flash, but 2 of 9 live runs against ' +
+      'this repo\'s REAL ingest outline prompt returned JSON that neither JSON.parse nor jsonrepair ' +
+      'could fix — a dropped object key, with finishReason STOP, so a generation defect rather than ' +
+      'truncation that the output-token-limit ladder could route around. gemini-2.5-flash was 3/3 ' +
+      'clean on the identical probe and plans wider outlines (17-19 pages vs 12-16).',
+  }),
+  'claude-opus-4-5': Object.freeze({
+    dominatedBy: 'claude-opus-5',
+    reason:
+      'Identical published price ($5/$25) to claude-opus-5 and behind it on all three measured axes: ' +
+      'half the output ceiling (64,000 vs 128,000), fenced JSON that only parses via jsonrepair ' +
+      '(3/3) where opus-5 returned bare JSON (3/3), and 12-13 outline pages against opus-5\'s 25-27. ' +
+      'It also plans more thinly than claude-sonnet-5 does at two-fifths of the price.',
+  }),
+});
+
+/**
+ * ── AWAITING MEASUREMENT: real models we deliberately do NOT offer ───────────
+ *
+ * Price and output ceiling for both were read off the provider's documentation,
+ * but neither has been probed live against this repo's real ingest outline
+ * prompt. That is disqualifying, not a formality — a model may not be offered
+ * for a feature it has never been measured against, and the sharpest evidence
+ * for that rule is in the data this table was built from:
+ *
+ *   THINKING BEHAVIOUR IS PER-MODEL, NOT PER-GENERATION. `claude-opus-5` was
+ *   released AFTER `claude-sonnet-5` and thinks 0/3, while sonnet-5 thinks 7/7.
+ *   Two models one release apart, opposite behaviour. So for any unprobed id the
+ *   `thinks` flag is genuinely UNKNOWN, and a guess there is a guess about
+ *   billed output tokens drawn from the same budget as the answer.
+ *
+ * These ids must not be offerable, must not be a default, must not be a fallback
+ * rung, and must carry no price entry — all four asserted in test-chat-model.js.
+ * To promote one: probe it live with the REAL prompt (a toy "return this JSON"
+ * probe will not reproduce the failures this table records), then add its price,
+ * cap and measured fields together.
+ */
+export const AWAITING_MEASUREMENT = Object.freeze({
+  'claude-opus-4-7': Object.freeze({
+    reason:
+      'Provider docs give $5/$25 and a 128,000 output ceiling, and describe the newer 1.329x ' +
+      'tokenizer — but it has never been run against the real ingest outline prompt, so its JSON ' +
+      'reliability, outline coverage and thinking behaviour are all unmeasured.',
+  }),
+  'claude-opus-4-6': Object.freeze({
+    reason:
+      'Provider docs give $5/$25 and a 128,000 output ceiling; never probed live. Same gap as ' +
+      'claude-opus-4-7 — nothing about its behaviour under a real ingest prompt is known.',
+  }),
+});
+
+/**
+ * The three suitability verdicts an offerable model can carry.
+ *
+ * These describe FITNESS FOR A FEATURE and nothing else. Cost lives in the price
+ * fields, and hidden reasoning spend lives in `thinks` — deliberately kept as
+ * separate axes, because folding "this is expensive" or "this thinks" into
+ * `caution` would put five of seven Gemini models in the same bucket and the
+ * label would stop meaning anything.
+ *
+ *   'general'   — measured clean for every feature, ingest included.
+ *   'chat-only' — measured UNFIT for ingest specifically. Ingest is JSON mode;
+ *                 chat is text mode and is unaffected by a JSON defect, so the
+ *                 model stays genuinely useful for chat rather than being hidden.
+ *   'caution'   — usable everywhere, but carries a measured downside (a scheduled
+ *                 price rise, thinner outlines than a cheaper model, a
+ *                 same-priced sibling that beat it) the user must see BEFORE
+ *                 choosing it.
+ */
+const OFFERABLE_SUITABILITY = Object.freeze(['general', 'chat-only', 'caution']);
+
+/**
+ * Build one frozen OFFERABLE_MODELS entry, or REFUSE to build it.
+ *
+ * This is the structural half of "a model may not be offerable unless it is
+ * fully specified". Every required field is checked here and a missing one
+ * throws AT MODULE LOAD — so an under-specified model does not merely fail a
+ * test, it fails to exist, and the app refuses to boot rather than shipping a
+ * picker entry with a blank price or an unknown output ceiling. The table is
+ * static, so this is unreachable in production by construction; it is a
+ * developer-time tripwire that cannot be forgotten the way a convention can.
+ *
+ * PRICE AND CEILING ARE DERIVED, NEVER RE-TYPED. `input`/`output` come from
+ * MODEL_PRICES_USD_PER_MTOK and `maxOutput` from the provider's cap map. Copying
+ * either number into the entry would create two hand-maintained copies of the
+ * same fact — this repo's named cause of the v3.2.0 CRITICAL — and the copies
+ * would drift silently, in a picker, on the numbers a user makes a spending
+ * decision from.
+ *
+ * `input`/`output` are GETTERS, not snapshots, so a promotional price that
+ * expires while the process is running resolves correctly on the next read
+ * rather than serving a stale number until the next restart. JSON.stringify
+ * invokes them, so the route serialises plain numbers to the wire exactly as if
+ * they were data properties.
+ */
+function defineOfferableModel(provider, spec) {
+  const id = spec && typeof spec.id === 'string' ? spec.id : '(no id)';
+  const where = `OFFERABLE_MODELS.${provider} entry "${id}"`;
+  const need = (cond, what) => {
+    if (!cond) throw new Error(`[llm] ${where} is not offerable: ${what}`);
+  };
+
+  need(spec && typeof spec === 'object', 'spec must be an object');
+  need(typeof spec.id === 'string' && spec.id.length > 0, 'missing `id`');
+  need(typeof spec.label === 'string' && spec.label.length > 0, 'missing `label`');
+  need(typeof spec.thinks === 'boolean',
+    'missing measured `thinks` — it is PER-MODEL and cannot be inferred from a family or a release date (claude-opus-5 is newer than claude-sonnet-5 and thinks 0/3 where sonnet-5 thinks 7/7)');
+  need(typeof spec.jsonRaw === 'boolean',
+    'missing measured `jsonRaw` — whether a raw JSON.parse of the ingest outline succeeds without the jsonrepair fallback');
+  need(typeof spec.tokenizerFactor === 'number' && Number.isFinite(spec.tokenizerFactor) && spec.tokenizerFactor >= 1,
+    'missing/invalid `tokenizerFactor` (>= 1; 1.0 means no measured premium over its provider baseline)');
+  need(OFFERABLE_SUITABILITY.includes(spec.suitability),
+    `\`suitability\` must be one of ${OFFERABLE_SUITABILITY.join(' | ')}`);
+  need(typeof spec.note === 'string' && spec.note.trim().length > 0,
+    'missing `note` — the measured reason shown to the user. A model nobody has measured must not be offered at all');
+
+  need(Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, spec.id),
+    'no entry in MODEL_PRICES_USD_PER_MTOK — a model may not be offerable unless it is priced');
+  const standard = MODEL_PRICES_USD_PER_MTOK[spec.id];
+
+  const caps = provider === 'gemini' ? GEMINI_MODEL_MAX_OUTPUT_TOKENS : ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS;
+  need(Object.hasOwn(caps, spec.id),
+    'no entry in the provider output-cap map — a model may not be offerable unless its output ceiling is known');
+  const maxOutput = caps[spec.id];
+
+  const promo = Object.hasOwn(PROMOTIONAL_PRICES, spec.id) ? PROMOTIONAL_PRICES[spec.id] : null;
+
+  const entry = {
+    id: spec.id,
+    provider,
+    label: spec.label,
+    /** Hard output ceiling for this model, in tokens. */
+    maxOutput,
+    /** Measured: does it spend hidden reasoning tokens (billed as OUTPUT, drawn from the same budget as the answer)? */
+    thinks: spec.thinks,
+    /** Measured: does a raw JSON.parse of the ingest outline succeed, or is the jsonrepair fallback load-bearing? */
+    jsonRaw: spec.jsonRaw,
+    /**
+     * Measured INPUT-side token multiplier against this provider's older
+     * tokenizer, on real Curator prose. 1.0 = no premium. It is deliberately NOT
+     * applied to `output` anywhere: the 1.329x figure was measured on prompt
+     * text, and silently extending an input measurement to output would be
+     * over-claiming. It is also PROVIDER-RELATIVE — it compares models within one
+     * provider and says nothing about Gemini-vs-Anthropic token counts.
+     */
+    tokenizerFactor: spec.tokenizerFactor,
+    /** 'general' | 'chat-only' | 'caution' — see OFFERABLE_SUITABILITY. */
+    suitability: spec.suitability,
+    /** The measured reason behind `suitability`, written to be shown verbatim to a user. */
+    note: spec.note,
+    /** Price after any promotion ends. Equal to input/output when there is no promotion. */
+    standardInput: standard.input,
+    standardOutput: standard.output,
+    /** Last day of the current promotional price (ISO date), or null. */
+    promotionUntilIso: promo ? promo.untilIso : null,
+    /** First day the standard price applies (ISO date), or null. */
+    standardPriceFromIso: promo ? promo.standardFromIso : null,
+    /** True when a same-priced sibling measured better — see DOMINATED_MODELS. */
+    dominated: Object.hasOwn(DOMINATED_MODELS, spec.id),
+  };
+
+  // Resolved at READ time, so a promotion expiring mid-process cannot serve a
+  // stale price. Enumerable + JSON-visible; see the docblock above.
+  Object.defineProperty(entry, 'input', {
+    enumerable: true, configurable: false,
+    get: () => resolveModelPrice(spec.id).input,
+  });
+  Object.defineProperty(entry, 'output', {
+    enumerable: true, configurable: false,
+    get: () => resolveModelPrice(spec.id).output,
+  });
+
+  return Object.freeze(entry);
+}
+
+/**
+ * ── OFFERABLE_MODELS: the models a user may pick with their own key ─────────
+ *
+ * Until this table existed The Curator could run exactly two models, one per
+ * provider, both the cheapest tier. That kept ingestion of large libraries
+ * affordable and it stays the DEFAULT — but it also meant a user who wanted more
+ * capability out of a big wiki, and was willing to pay for it on their own key,
+ * had no way to ask. This table is that ask: every model here was probed live on
+ * 2026-08-26 with this repo's REAL buildOutlinePrompt on real prose, and every
+ * entry carries what that probe measured so the cost and the trade-off are both
+ * visible at the moment of choosing.
+ *
+ * SHAPE IS A PUBLIC CONTRACT. `src/routes/config.js` serialises these entries
+ * VERBATIM onto `GET /api/config/api-keys` → `offerable`, so every field here is
+ * user-facing wire format. Add fields freely (additive); never rename or remove
+ * one without checking that route and its consumers.
+ *
+ * ORDER IS CHEAPEST-FIRST within each provider and is asserted, because a picker
+ * that leads with the priciest model is a cost trap. Ordering is on the STANDARD
+ * price so the array cannot silently re-order itself when a promotion expires;
+ * the suite additionally checks the order holds at the promotional price too.
+ * Ties are broken by suitability (general before caution before chat-only) and
+ * then newest-first — the same forward-in-time tie-break FALLBACK_CHAINS uses.
+ *
+ * WHAT IS DELIBERATELY ABSENT:
+ *   • Gemini Pro — the maintainer's call, and the measured picture agrees: it is
+ *     a different price class again and nothing in this list is coverage-starved.
+ *   • claude-opus-4-7 / claude-opus-4-6 — real, documented, never probed. See
+ *     AWAITING_MEASUREMENT.
+ *   • Every RETIRED id (test-chat-model.js §9) — those 404.
+ */
+export const OFFERABLE_MODELS = Object.freeze({
+  gemini: Object.freeze([
+    defineOfferableModel('gemini', {
+      id: 'gemini-2.5-flash-lite',
+      label: 'Flash Lite 2.5',
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'general',
+      note:
+        'The default, and the cheapest model on either provider. Measured 3/3 clean raw JSON, no ' +
+        'hidden reasoning tokens, and the widest outline coverage of any Gemini model probed ' +
+        '(18-20 pages on the reference source). Nothing here beats it on value for ingest.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-3.1-flash-lite',
+      label: 'Flash Lite 3.1',
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        '2.5x the input and 3.75x the output price of the default, and measured THINNER than it: ' +
+        '5-12 outline pages where the default plans 18-20 on the same source. Clean JSON (3/3) and ' +
+        'no hidden reasoning tokens, so it is safe — just a worse deal for ingest. It is here ' +
+        'because it is the closest live successor to the default and the first fallback rung.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-2.5-flash',
+      label: 'Flash 2.5',
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'general',
+      note:
+        'Clean raw JSON 3/3 and 17-19 outline pages — coverage on a par with the default at 3x the ' +
+        'input price. Spends 1,700-2,629 hidden reasoning tokens per call: those are billed as ' +
+        'OUTPUT and drawn from the SAME output budget as the answer, so leave headroom.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-3.5-flash-lite',
+      label: 'Flash Lite 3.5',
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
+      suitability: 'chat-only',
+      note:
+        'Not recommended for ingest. 2 of 9 live runs against the real ingest outline prompt ' +
+        'returned JSON that neither JSON.parse nor jsonrepair could repair (a dropped object key, ' +
+        'finishReason STOP — a generation defect, not truncation). Chat is text mode and is ' +
+        'unaffected, so it stays pickable there. gemini-2.5-flash costs exactly the same and was ' +
+        '3/3 clean on the identical probe.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-3.7-flash',
+      label: 'Flash 3.7',
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        'PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from ' +
+        '2027-01-01 — the standard price is what standardInput/standardOutput carry, and it applies ' +
+        'itself on the date. Measured 3/3 clean raw JSON and 12-16 outline pages (thinner than the ' +
+        'far cheaper default). Spends 915-1,066 hidden reasoning tokens per call, billed as output ' +
+        '— the least of any thinking model here.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-3.6-flash',
+      label: 'Flash 3.6',
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        'PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from ' +
+        '2027-01-01. Measured 3/3 clean raw JSON and 12-16 outline pages. Spends 1,293-1,573 hidden ' +
+        'reasoning tokens per call, billed as output — more than gemini-3.7-flash for the same ' +
+        'measured coverage and the same price.',
+    }),
+    defineOfferableModel('gemini', {
+      id: 'gemini-3.5-flash',
+      label: 'Flash 3.5',
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        'The most expensive Gemini model here and not the strongest: 15x the input and 22.5x the ' +
+        'output price of the default, yet measured THINNER than it at 8-14 outline pages against ' +
+        '18-20. Clean JSON 3/3, but it also spends 1,614-2,067 hidden reasoning tokens per call, ' +
+        'billed as output. Pick it only for a specific reason.',
+    }),
+  ]),
+  anthropic: Object.freeze([
+    defineOfferableModel('anthropic', {
+      id: 'claude-haiku-4-5',
+      label: 'Haiku 4.5',
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
+      suitability: 'general',
+      note:
+        'The default and the cheapest Anthropic model. No hidden reasoning tokens, but it wraps its ' +
+        'ingest-outline JSON in ```json fences 3/3, so every ingest on it depends on the jsonrepair ' +
+        'fence-stripping fallback (benign — that is what the fallback is for). Its outline coverage ' +
+        'is the MOST VARIABLE measured, 5 to 13 pages on the same source, so a long document may be ' +
+        'planned much more thinly on one run than the next. That variability is the single best ' +
+        'reason to reach for a stronger model on a big wiki.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-sonnet-5',
+      label: 'Sonnet 5',
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.329,
+      suitability: 'general',
+      note:
+        'The strongest value here: cheaper than both Sonnet 4.6 and 4.5 while measuring better than ' +
+        'either — 7/7 clean raw JSON, a steady 16-18 outline pages, and a 128,000 output ceiling. ' +
+        'Two costs the headline price hides: it is the only model measured running adaptive thinking ' +
+        'on every single call (7/7, billed as output), and its newer tokenizer produced 1.329x more ' +
+        'input tokens than Haiku 4.5 on the same prose — so $2 per 1M input is really ~$2.66 of the ' +
+        'same text.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-sonnet-4-6',
+      label: 'Sonnet 4.6',
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'general',
+      note:
+        'The most predictable model measured: 3/3 clean raw JSON, no hidden reasoning tokens at all, ' +
+        'a 128,000 output ceiling and a steady 17-page outline every run. At $3/$15 it is 50% dearer ' +
+        'than claude-sonnet-5, which measured stronger — choose this when you specifically want zero ' +
+        'thinking-token spend and no tokenizer premium.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-sonnet-4-5',
+      label: 'Sonnet 4.5',
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        'Same $3/$15 as claude-sonnet-4-6 but behind it on three measured axes: half the output ' +
+        'ceiling (64,000 vs 128,000), fenced JSON rather than raw, and 15-16 outline pages against ' +
+        '17. claude-sonnet-5 is cheaper AND measured stronger than both. It is here because it is ' +
+        'the last rung of the Anthropic fallback chain; there is no reason to choose it deliberately.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-opus-5',
+      label: 'Opus 5',
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
+      suitability: 'general',
+      note:
+        'The richest planner measured — 25-27 outline pages where the default plans 5-13 on the same ' +
+        'source — with 3/3 clean raw JSON, no hidden reasoning tokens and a 128,000 output ceiling. ' +
+        'Also the most expensive: $5/$25 headline, and its newer tokenizer produced 1.329x more input ' +
+        'tokens than Haiku 4.5 on the same prose, so the real input cost is ~$6.65 per 1M ' +
+        'Haiku-equivalent tokens — 6.6x the default, not the 5x the headline implies.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-opus-4-8',
+      label: 'Opus 4.8',
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
+      suitability: 'caution',
+      note:
+        'Priced identically to claude-opus-5 ($5/$25), same 128,000 ceiling, same clean raw JSON, no ' +
+        'thinking, same 1.329x tokenizer premium — but measured 19-20 outline pages against opus-5\'s ' +
+        '25-27 on the identical source. No axis measured better than opus-5. Flagged rather than ' +
+        'listed as dominated because that verdict rests on outline coverage alone from a small ' +
+        'sample, and an over-claimed domination is worth less than an honest number.',
+    }),
+    defineOfferableModel('anthropic', {
+      id: 'claude-opus-4-5',
+      label: 'Opus 4.5',
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
+      suitability: 'caution',
+      note:
+        'Dominated by claude-opus-5 at the identical $5/$25: half the output ceiling (64,000 vs ' +
+        '128,000), fenced JSON rather than raw, and 12-13 outline pages against 25-27 — thinner than ' +
+        'claude-sonnet-5 plans at two-fifths of the price. Offered because the choice is yours, but ' +
+        'nothing measured supports paying $5 per 1M for it.',
+    }),
+  ]),
+});
+
+/**
+ * Is this exact model id one the user is allowed to select on this provider?
+ *
+ * THE ALLOW-LIST LIVES HERE AND IS APPLIED IN getProviderInfo(), the single
+ * producer of the model string both SDKs receive — NOT at a route. There are
+ * seven other entry points into generateText (ingest, compile, chat, query,
+ * health-ai, shared-brain, diagnostics), so validating at one route would leave
+ * the rest open and create a second hand-maintained copy of the guard, which is
+ * exactly what produced the v3.2.0 CRITICAL.
+ *
+ * The lookup is an array scan comparing with `===`, so `'__proto__'`,
+ * `'constructor'` and `'toString'` are structurally unable to resolve to
+ * anything — there is no object indexed by the caller's string at any point
+ * (the v3.0.9 normalizeResponseStyle bug shape, closed by construction rather
+ * than by remembering to call Object.hasOwn).
+ */
+export function isOfferableModel(provider, modelId) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return false;
+  if (typeof modelId !== 'string' || modelId.length === 0) return false;
+  return OFFERABLE_MODELS[provider].some(entry => entry.id === modelId);
 }
 
 /**
@@ -347,12 +935,65 @@ export function getDefaultModel(provider) {
 }
 
 /**
+ * Apply a caller's per-call MODEL choice on top of the resolved provider default,
+ * enforcing the OFFERABLE_MODELS allow-list.
+ *
+ * REFUSAL IS A FALL-BACK, NOT A THROW, and the direction is chosen deliberately.
+ * A stored selection can outlive the model it names — a user picks Opus 4.8, we
+ * later pull it after a bad live probe, and their saved preference now points at
+ * an id we refuse. Throwing would hard-fail every chat and every ingest for that
+ * user until they noticed a picker somewhere; falling back to the provider's
+ * default keeps them working. It is also the safe direction on money: a refusal
+ * resolves to the CHEAPEST model on that provider, so the worst case is spending
+ * less than the user asked for, never more. This mirrors normalizeChatProvider
+ * (invalid provider -> null -> global) and anthropicMaxOutputTokens (unknown id
+ * -> conservative cap), both of which fail toward the safe outcome rather than
+ * toward an error.
+ *
+ * Callers who need to KNOW a refusal happened can see it directly: getProviderInfo
+ * returns the model it actually resolved, so `result.model !== requested` is the
+ * signal. The return shape is deliberately unchanged (no new field) because
+ * `{provider, model}` is destructured at ~15 call sites across src/ and mcp/.
+ */
+function applyModelOverride(provider, defaultModel, preferModel) {
+  if (preferModel === null || preferModel === undefined) return defaultModel;
+  if (isOfferableModel(provider, preferModel)) return preferModel;
+  // Bounded and newline-stripped: this string is caller-supplied and this repo
+  // has a recorded log-forgery finding (v3.0.1-beta.20, connection labels).
+  // stderr, never stdout — llm.js is imported by the MCP child process, which
+  // reserves stdout for JSON-RPC frames (v2.5.2/v3.9.1).
+  const shown = String(preferModel).replace(/[\r\n]+/g, ' ').slice(0, 80);
+  console.error(
+    `[llm] Refusing model "${shown}" for provider "${provider}" — not in OFFERABLE_MODELS. ` +
+    `Using the provider default "${defaultModel}" instead.`
+  );
+  return defaultModel;
+}
+
+/**
  * @param {('gemini'|'anthropic'|null)} preferProvider - optional per-call
  *   provider override (e.g. the chat model selector). Used ONLY if that
  *   provider has a usable key; otherwise falls through to the global active
- *   provider. The override always resolves the provider's DEFAULT model.
+ *   provider.
+ * @param {(string|null)} preferModel - optional per-call MODEL override (the
+ *   multi-model picker). Honoured ONLY if it is in OFFERABLE_MODELS for the
+ *   resolved provider; anything else falls back to that provider's default (see
+ *   applyModelOverride). It is applied LAST, so an explicit user choice also
+ *   outranks the LLM_MODEL dev override — a deliberate ordering: LLM_MODEL exists
+ *   to reshape the DEFAULT, and a developer who set it would be surprised to find
+ *   it silently overriding a selection made in the UI.
  */
-export function getProviderInfo(preferProvider = null) {
+export function getProviderInfo(preferProvider = null, preferModel = null) {
+  const base = resolveProviderDefault(preferProvider);
+  return { provider: base.provider, model: applyModelOverride(base.provider, base.model, preferModel) };
+}
+
+/**
+ * Provider + its DEFAULT model, with no model override applied. Split out of
+ * getProviderInfo verbatim so the allow-list has exactly one application point;
+ * the body below is unchanged, including which branch throws.
+ */
+function resolveProviderDefault(preferProvider) {
   // Per-call override (v3.0.11: chat model selector). Never honours a stale
   // override whose key is missing — falls through to the global logic below.
   if ((preferProvider === 'gemini' || preferProvider === 'anthropic') && getEffectiveKey(preferProvider)) {
@@ -509,6 +1150,11 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   // unless it names a provider with a usable key (getProviderInfo enforces this).
   const providerOverride = (opts && (opts.provider === 'gemini' || opts.provider === 'anthropic'))
     ? opts.provider : null;
+  // Per-call MODEL override (multi-model picker). Only a non-empty string is
+  // even a candidate; getProviderInfo then enforces the OFFERABLE_MODELS
+  // allow-list and falls back to the provider default if it does not pass.
+  const modelOverride = (opts && typeof opts.model === 'string' && opts.model.length > 0)
+    ? opts.model : null;
 
   // v3.0.16: observability + cost controls, both additive and both optional.
   //   onUsage          — real token counts, once per completed provider call
@@ -524,6 +1170,9 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
     // v3.3.x: optional AbortSignal. null when absent, so every branch below
     // behaves exactly as it did before for callers that pass no signal.
     signal: normalizeSignal(opts?.signal),
+    // Read by callLLM when it resolves the provider; ignored by callProvider,
+    // which is handed the already-resolved model id as a positional argument.
+    model: modelOverride,
   };
   const signal = callOpts.signal;
 
@@ -532,7 +1181,7 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   // "No LLM API key found" message — don't shadow it here.
   let providerName = 'AI provider';
   try {
-    const info = getProviderInfo(providerOverride);
+    const info = getProviderInfo(providerOverride, modelOverride);
     providerName = info.provider === 'gemini' ? 'Gemini' : info.provider === 'anthropic' ? 'Claude' : 'AI provider';
   } catch { /* surface real error from callLLM below */ }
 
@@ -1024,8 +1673,17 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
  * retry loop or caller can handle it appropriately.
  */
 async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride = null, opts = {}) {
-  const { provider, model } = getProviderInfo(providerOverride);
-  const chain = [model, ...(FALLBACK_CHAINS[provider] || [])];
+  // opts.model is the caller's per-call model choice, already narrowed to a
+  // non-empty string by generateText and allow-listed inside getProviderInfo.
+  // The fallback chain below is deliberately the PROVIDER's chain either way: if
+  // a user-picked model is retired mid-session, the right recovery is still the
+  // cheapest live model on that provider, not silence.
+  const { provider, model } = getProviderInfo(providerOverride, opts.model || null);
+  // Deduped: a user-picked model that is ALSO a fallback rung (e.g. a deliberate
+  // claude-sonnet-5) would otherwise be retried against its own 404 before the
+  // walk moved on. A no-op for the default path — no chain contains its own
+  // provider's default (asserted in test-chat-model.js §9).
+  const chain = [...new Set([model, ...(FALLBACK_CHAINS[provider] || [])])];
   let lastErr = null;
 
   for (let i = 0; i < chain.length; i++) {
@@ -1074,12 +1732,19 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
 }
 
 /**
- * Test-only surface. Lets an offline suite assert the standing invariant that
- * EVERY model id this app can run is present in the price table — so adding a
- * fallback rung without its price fails the suite instead of silently
- * downgrading the user's cost warning to 'unknown'.
+ * Test-only surface. Lets an offline suite assert the standing invariants that
+ * EVERY model id this app can run — default, fallback rung, or user-offerable —
+ * is present in the price table and the output-cap map, so adding one without
+ * its price fails the suite instead of silently downgrading the user's cost
+ * warning to 'unknown', and adding one without its cap fails instead of
+ * silently clamping to a conservative guess.
  */
 export const __testing = {
   DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK, reportUsage,
-  ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS,
+  ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, GEMINI_MODEL_MAX_OUTPUT_TOKENS,
+  PROMOTIONAL_PRICES, OFFERABLE_SUITABILITY,
+  // Exposed so the suite can attempt to build a deliberately under-specified
+  // entry and assert the factory REFUSES it — proving "a model may not be
+  // offerable unless it is fully specified" is structural, not a convention.
+  defineOfferableModel,
 };

@@ -1503,6 +1503,117 @@ at 500 chars) when it sent one.
 
 ---
 
+## GET /api/config/api-keys
+
+Returns masked API key status, the active provider, and the model-picker catalogue. No body.
+
+```json
+{
+  "geminiApiKey": "••••••••ab12",
+  "anthropicApiKey": "",
+  "hasGeminiKey": true,
+  "hasAnthropicKey": false,
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-flash-lite",
+  "models": {
+    "gemini": "gemini-2.5-flash-lite",
+    "anthropic": "claude-haiku-4-5"
+  },
+  "fallback": null,
+  "offerable": {
+    "gemini": [
+      {
+        "id": "gemini-2.5-flash-lite",
+        "provider": "gemini",
+        "label": "Flash Lite 2.5",
+        "maxOutput": 65536,
+        "thinks": false,
+        "jsonRaw": true,
+        "tokenizerFactor": 1.0,
+        "suitability": "general",
+        "note": "The default, and the cheapest model on either provider. Measured 3/3 clean raw JSON …",
+        "standardInput": 0.10,
+        "standardOutput": 0.40,
+        "promotionUntilIso": null,
+        "standardPriceFromIso": null,
+        "dominated": false,
+        "input": 0.10,
+        "output": 0.40
+      }
+    ],
+    "anthropic": []
+  }
+}
+```
+
+- `geminiApiKey` / `anthropicApiKey` — masked (`••••••••` + last 4 chars), or `""` if unset. The
+  raw key is never sent back over this endpoint.
+- `hasGeminiKey` / `hasAnthropicKey` — **config-scoped only** (from `getApiKeys()` /
+  `.curator-config.json`, never `.env`/`getEffectiveKey()`). A key that exists only in `.env` reports
+  `false` here — this is deliberate (v3.0.13): the per-chat model selector and the onboarding
+  first-run check both key off these two fields, and a provider the user has **Disconnected** in
+  Settings must not read as configured just because a developer `.env` fallback still has a key.
+- `activeProvider` / `activeModel` — the provider/model an LLM call would actually use right now
+  (`null` if no usable key at all). Can differ from `hasXKey` when a key is `.env`-only.
+- `models` — **stays a `{ gemini: "<id>", anthropic: "<id>" }` map of plain STRINGS.** This is
+  load-bearing, not incidental: the `/old` frontend's chat model-selector dropdown
+  (`src/public/app.js`) renders `escHtml(models[p] || '')`, and `escHtml` begins with
+  `String(str)` — so if this field were ever an object or array instead of a string, `/old`
+  would render the literal text `[object Object]` in that dropdown for every user still on the
+  pre-cutover UI. Do not fold `offerable` into this field or otherwise change its shape; add new
+  data as a new key instead (which is exactly what `offerable` below does).
+- `fallback` — `null` when the primary model is working; populated when the model-lifecycle
+  fallback chain kicked in (see `docs/model-lifecycle.md`).
+- `offerable` — **new, additive** (added alongside `models`, which is untouched). The full
+  pickable-model catalogue per provider, sourced from `OFFERABLE_MODELS` in `src/brain/llm.js`,
+  for a future model-picker UI. Each array is ordered **cheapest-first** by standard `input`
+  price. Gated the *same config-scoped way* as `hasGeminiKey`/`hasAnthropicKey`: a provider with
+  no **saved Settings key** reports `offerable.<provider>: []`, even if `.env` has a key for it —
+  a Disconnected provider must not appear pickable. `offerable.<provider>` is always an array
+  (possibly empty); the endpoint never throws or omits the field if `OFFERABLE_MODELS` is absent
+  or a provider has no shipped entries.
+  - `id` / `label` — model id and a short display label.
+  - `input` / `output` — current USD price per 1M tokens (reflects an active promotion if any).
+  - `standardInput` / `standardOutput` — the price once any promotion ends (equal to `input`/
+    `output` when there is no promotion); `promotionUntilIso` / `standardPriceFromIso` carry the
+    promotion window as ISO dates, or `null`.
+  - `maxOutput` — hard output-token ceiling for this model.
+  - `thinks` — measured: whether the model spends hidden reasoning tokens (billed as output).
+  - `jsonRaw` — measured: whether the ingest outline's JSON parses raw, without the `jsonrepair`
+    fallback.
+  - `tokenizerFactor` — measured input-token multiplier vs. that provider's baseline tokenizer.
+  - `suitability` — `'general' | 'chat-only' | 'caution'`.
+  - `note` — the measured reason behind `suitability`, written to be shown to the user verbatim.
+  - `dominated` — `true` when a same-priced sibling measured strictly better.
+
+## POST /api/config/api-keys
+
+Save API keys (partial update — only overwrites provided fields). Saving a non-empty key also
+makes that provider active ("last-saved-wins").
+
+```json
+// Request
+{ "geminiApiKey": "AIza…", "anthropicApiKey": "" }
+```
+
+```json
+// Response
+{ "ok": true, "activeProvider": "gemini", "activeModel": "gemini-2.5-flash-lite" }
+```
+
+## POST /api/config/api-keys/disconnect
+
+Clear one provider's stored key. Body: `{ "provider": "gemini" | "anthropic" }`. If the cleared
+key was active, active switches to the other provider (if it still has a key) or to `null`.
+
+## POST /api/config/api-keys/active
+
+Switch the active provider **without** re-saving its key. Body:
+`{ "provider": "gemini" | "anthropic" }`. Refuses with `400` if the requested provider has no
+stored key.
+
+---
+
 ## Static files
 
 The server also serves the web UI from `src/public/` at the root path.

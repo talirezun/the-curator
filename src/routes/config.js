@@ -6,6 +6,16 @@ import path from 'path';
 import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
+// Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
+// this route is being written concurrently with the llm.js change that adds
+// OFFERABLE_MODELS, so at any given moment the named export may not exist yet.
+// A static `import { OFFERABLE_MODELS } from ...` would throw a SyntaxError
+// ("does not provide an export named 'OFFERABLE_MODELS'") at module-load time
+// and take down every route in this file. `llmModule.OFFERABLE_MODELS` is
+// simply `undefined` until the export lands — resolveOfferableModels() below
+// already treats a missing/non-object table as "no offerable models" rather
+// than throwing.
+import * as llmModule from '../brain/llm.js';
 import {
   hasActiveWrites,
   conflictResponse,
@@ -300,6 +310,35 @@ function maskKey(key) {
   return '••••••••' + key.slice(-4);
 }
 
+/**
+ * Look up the offerable-model catalogue for one provider out of llm.js's
+ * `OFFERABLE_MODELS` table, as a hardened OWN-PROPERTY lookup.
+ *
+ * `provider` here is always one of the two literal strings this route passes
+ * in below — never client input — but the lookup is written as if it might
+ * not be, on purpose: a bare `table[provider]` would let a future caller that
+ * DOES thread user input through this function reach `__proto__` /
+ * `constructor` / `toString` and get back an Object.prototype or
+ * Function.prototype member instead of the empty-list refusal. `Object.hasOwn`
+ * closes that off at the source rather than relying on every future call site
+ * remembering to validate its input first.
+ *
+ * Also tolerant of `table` being `undefined` (the OFFERABLE_MODELS export not
+ * existing yet on whatever commit of llm.js is checked out) or malformed
+ * (missing provider key, or a non-array value) — always returns an array,
+ * never throws.
+ *
+ * Exported for direct unit testing against a synthetic table, independent of
+ * whatever llm.js ships.
+ */
+export function resolveOfferableModels(table, provider) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return [];
+  if (!table || typeof table !== 'object') return [];
+  if (!Object.hasOwn(table, provider)) return [];
+  const list = table[provider];
+  return Array.isArray(list) ? list : [];
+}
+
 /** GET /api/config/api-keys — returns masked keys + active provider info */
 router.get('/api-keys', (_req, res) => {
   const keys = getApiKeys();
@@ -307,6 +346,13 @@ router.get('/api-keys', (_req, res) => {
   try {
     provider = getProviderInfo();
   } catch { /* no key configured yet */ }
+
+  // llm.js's frozen { gemini: [...], anthropic: [...] } catalogue of models the
+  // UI may OFFER a user to pick, cheapest-first, each entry carrying pricing +
+  // capability + a measured per-feature suitability reason. Read via the
+  // namespace import so a not-yet-shipped export resolves to `undefined`
+  // (handled by resolveOfferableModels) instead of crashing module load.
+  const offerableTable = llmModule.OFFERABLE_MODELS;
 
   res.json({
     geminiApiKey:    maskKey(keys.geminiApiKey),
@@ -322,6 +368,14 @@ router.get('/api-keys', (_req, res) => {
     activeModel:     provider?.model || null,
     // Current default model id per provider, so the chat model selector's label
     // stays in sync with DEFAULTS automatically when we bump to a newer model.
+    //
+    // DELIBERATELY a { gemini: '<id>', anthropic: '<id>' } map of STRINGS ONLY —
+    // never touch this shape. The shipping /old frontend (src/public/app.js,
+    // `chat-dd-opt-desc` in the model-selector dropdown) renders it as
+    // `escHtml(models[p] || '')`, and `escHtml` starts with `String(str)` — so
+    // an object or array here renders the literal text "[object Object]" in
+    // production for every user still on /old. The new offerable catalogue
+    // below is deliberately a SEPARATE, additive field for exactly this reason.
     models: {
       gemini:    getDefaultModel('gemini'),
       anthropic: getDefaultModel('anthropic'),
@@ -329,6 +383,17 @@ router.get('/api-keys', (_req, res) => {
     // null if primary model is working; populated when the fallback chain kicked in
     // because the pinned default has been retired by the provider.
     fallback:        getFallbackStatus(),
+    // The full pickable-model catalogue per provider (cheapest first), for a
+    // future model-picker UI. ADDITIVE — `models` above is untouched.
+    //
+    // Gated the SAME config-scoped way as hasGeminiKey/hasAnthropicKey (i.e.
+    // off `keys.*Key` from getApiKeys(), never getEffectiveKey()/.env): a
+    // provider the user has Disconnected in Settings must not appear pickable
+    // here either, even if a stale .env key would otherwise let the app call it.
+    offerable: {
+      gemini:    keys.geminiApiKey    ? resolveOfferableModels(offerableTable, 'gemini')    : [],
+      anthropic: keys.anthropicApiKey ? resolveOfferableModels(offerableTable, 'anthropic') : [],
+    },
   });
 });
 

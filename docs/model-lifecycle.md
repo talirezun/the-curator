@@ -68,14 +68,21 @@ repo's real `buildOutlinePrompt` (not a toy prompt) over 9 runs each:
 
 In production this rung fired ingest's Phase-1 stricter-retry ladder on
 roughly 22% of the calls that reached it — silent extra latency and spend on
-a rung that was never the cheapest option at its price point. Its price entry
-was removed from `MODEL_PRICES_USD_PER_MTOK` in the same change (an unshipped
-id's price is dead weight the length-equality invariant in
-`test-chat-model.js` §5 exists to catch). **Do not re-add it without
-re-measuring live with the real ingest prompt** — a toy "return this JSON"
-probe will not reproduce the failure, the same lesson the Anthropic
-thinking-block note above teaches about prompt realism when probing a
-fallback rung.
+a rung that was never the cheapest option at its price point. **Do not re-add
+it as a rung without re-measuring live with the real ingest prompt** — a toy
+"return this JSON" probe will not reproduce the failure, the same lesson the
+Anthropic thinking-block note above teaches about prompt realism when probing
+a fallback rung.
+
+> **Update (multi-model work):** its price entry was originally deleted along
+> with the rung, on the rule that an unshipped id's price is dead weight. It is
+> **priced again** — not a reversal of the removal, which stands. It is priced
+> because it is now **offerable**: a user may pick it deliberately for chat with
+> its measured JSON defect shown, while it stays banned from the chain, which
+> picks *for* the user silently. Two lists, two rules — see
+> [DOMINATED](#dominated--alive-fairly-priced-and-beaten-by-a-same-priced-sibling).
+> The bespoke pair of assertions that used to name this model specifically is
+> now a class invariant over `DOMINATED_MODELS`.
 
 The first model that responds is the one used for that call. Subsequent calls retry the primary first — when the provider restores it (or when you update), the Curator silently goes back to primary.
 
@@ -115,23 +122,32 @@ Why it matters: without it, a retirement silently multiplies the user's per-inge
 | `similar` | Confirmed same-or-cheaper | no cost line |
 | `unknown` | We have no price for one of the two ids | ℹ️ "Pricing for this model may differ… check your provider's pricing page" |
 
-The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering only the ~7 ids we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung), with published per-1M-token prices. The values are used **only for ordering** and are never shown to the user, so a stale absolute price is harmless as long as the order is right. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
+The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering every id we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung + every `OFFERABLE_MODELS` entry), with published per-1M-token prices. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
+
+> ⚠ **These numbers used to be internal; they are user-visible now.** While the table fed only this banner's `costlier`/`similar`/`unknown` ordering, a stale *absolute* price was harmless as long as the *order* was right — and this doc said so. With the model picker they are quoted to a user who is deciding what to spend their own API key on, so an absolute value being right now matters as much as the ordering does. Verify prices against the **live** provider page, never a cached table.
 
 > **Why not infer the tier from the model family?** That was the first implementation and it was structurally wrong. The family word (`flash-lite`, `haiku`) is stable *across generations* while the price is not: it scored `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite` as "same tier" when that successor is **2.5× input / 3.75× output** — staying silent on the rung the chain reaches **first**, which defeated the entire feature. Only an exact-id table can see a within-family price change. The same table also correctly sees a within-family price *drop*: `claude-sonnet-5` is **cheaper** ($2/$10) than both `claude-sonnet-4-6` and `claude-sonnet-4-5` ($3/$15), so the newest Sonnet is also the cheapest — which no family-name heuristic could ever tell you.
 
 **Never imply parity when we don't know.** An id missing from the table yields `unknown`, not `similar`. Any fallback means the user is off the model they configured, so the honest line is "pricing may differ" — silence would be a claim we can't support.
 
-Prices verified 2026-08-22 against [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing) and [platform.claude.com pricing](https://platform.claude.com/docs/en/about-claude/pricing):
+Prices verified 2026-08-26 against [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing) and [platform.claude.com pricing](https://platform.claude.com/docs/en/about-claude/pricing). The table now covers every id the app can run — defaults, fallback rungs, and every model a user may pick for themselves (see [Choosing a model](#choosing-a-model-multi-model-support) below):
 
 | Model | Input / 1M | Output / 1M | vs its default |
 |---|---|---|---|
 | `gemini-2.5-flash-lite` *(default)* | $0.10 | $0.40 | — |
 | `gemini-3.1-flash-lite` | $0.25 | $1.50 | 2.5× / 3.75× |
 | `gemini-2.5-flash` | $0.30 | $2.50 | 3× / 6.25× |
+| `gemini-3.5-flash-lite` | $0.30 | $2.50 | 3× / 6.25× |
+| `gemini-3.7-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
+| `gemini-3.6-flash` | **$0.75** *(→ $1.50 on 2027-01-01)* | **$3.75** *(→ $7.50)* | 7.5× / 9.4× *(15× / 18.8× from 2027)* |
+| `gemini-3.5-flash` | $1.50 | $9.00 | 15× / 22.5× |
 | `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
-| `claude-sonnet-5` | $2.00 | $10.00 | 2× / 2× |
+| `claude-sonnet-5` | $2.00 | $10.00 | 2× / 2× *(≈2.66× input on real text — see tokenizer note)* |
 | `claude-sonnet-4-6` | $3.00 | $15.00 | 3× / 3× |
 | `claude-sonnet-4-5` | $3.00 | $15.00 | 3× / 3× |
+| `claude-opus-5` | $5.00 | $25.00 | 5× / 5× *(≈6.65× input on real text)* |
+| `claude-opus-4-8` | $5.00 | $25.00 | 5× / 5× *(≈6.65× input on real text)* |
+| `claude-opus-4-5` | $5.00 | $25.00 | 5× / 5× |
 
 What to do:
 1. Click **Check for Updates** in Settings → **App**.
@@ -150,6 +166,96 @@ You'd then update and get a fresh chain.
 
 ---
 
+## Choosing a model (multi-model support)
+
+For most of its life The Curator could run exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still the **default**. But it also meant a user who wanted more capability out of a big wiki, and was willing to pay for it on their own API key, had no way to ask.
+
+`OFFERABLE_MODELS` in [`llm.js`](../src/brain/llm.js) is that ask: the set of models the app will let you select, per provider, **cheapest first**. Every entry was probed live on 2026-08-26 against this repo's **real** ingest outline prompt on real prose — never a toy `return this JSON` probe — and carries what that probe measured, so the cost *and* the trade-off are visible at the moment of choosing.
+
+**The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned, and remain the cheapest thing on their provider. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
+
+### What each entry tells you
+
+| Field | Meaning |
+|---|---|
+| `input` / `output` | USD per 1M tokens, **as billed today**. Resolved at read time, so a promotional price that expires mid-session corrects itself. |
+| `standardInput` / `standardOutput` | The price after any promotion ends. Identical to `input`/`output` when there is no promotion. |
+| `promotionUntilIso` / `standardPriceFromIso` | The dates a promotion runs to and the standard price starts from, or `null`. |
+| `maxOutput` | Hard output ceiling, in tokens. |
+| `thinks` | Does it spend **hidden reasoning tokens**? Those are billed as *output* and drawn from the *same* budget as the answer. |
+| `jsonRaw` | Does a raw `JSON.parse` of the ingest outline succeed, or is the `jsonrepair` fence-stripping fallback load-bearing? |
+| `tokenizerFactor` | Measured **input-side** token multiplier against the provider's older tokenizer. `1.0` = no premium. |
+| `suitability` | `general` · `chat-only` · `caution` — see below. |
+| `note` | The measured reason behind `suitability`, written to be shown to a user verbatim. |
+
+`suitability` describes **fitness for a feature** and nothing else. Cost lives in the price fields and hidden reasoning spend lives in `thinks`; folding either into `caution` would put five of seven Gemini models in one bucket and the label would stop meaning anything.
+
+- **`general`** — measured clean for every feature, ingest included.
+- **`chat-only`** — measured *unfit for ingest specifically*. Ingest is JSON mode; chat is text mode and is unaffected by a JSON defect, so the model stays genuinely useful for chat instead of being hidden. `gemini-3.5-flash-lite` is the only current case.
+- **`caution`** — usable everywhere, but carries a measured downside (a scheduled price rise, thinner outlines than a *cheaper* model, a same-priced sibling that beat it) that the user must see before choosing it.
+
+### The three measured surprises worth knowing
+
+**1. Thinking behaviour is PER-MODEL, not per-generation.** `claude-opus-5` was released *after* `claude-sonnet-5` and ran no hidden reasoning at all (0/3), while `claude-sonnet-5` ran adaptive thinking on **every single call** (7/7). Two models one release apart, opposite behaviour. So for any model nobody has probed, `thinks` is genuinely **unknown** — not "probably like its neighbour". This is why unprobed models are refused outright (below).
+
+**2. The headline price understates the newest Anthropic models by ~33%.** `claude-sonnet-5`, `claude-opus-5` and `claude-opus-4-8` use a newer tokenizer that produced **1.329× more input tokens** than `claude-haiku-4-5` on the same Curator prose. So `claude-opus-5` at $5/1M input really costs **≈$6.65 per 1M Haiku-equivalent tokens — 6.6×, not the 5× the headline implies**. A cost estimate computed from *character count* under-reports these models by about a quarter unless the factor is applied. It is carried per-model as `tokenizerFactor` rather than folded into the price, because folding it in would make our table disagree with the provider's own invoice. It is deliberately **not** applied to output: the 1.329× figure was measured on prompt text, and extending an input measurement to output would be over-claiming. It is also **provider-relative** — it compares models within one provider and says nothing about Gemini-vs-Anthropic token counts.
+
+**3. More money does not buy a better plan.** `gemini-3.5-flash` costs **15× the input and 22.5× the output** of the default and planned *fewer* outline pages than it (8–14 against 18–20). `gemini-3.1-flash-lite` is 2.5× the price and thinner still (5–12). The strongest reason to reach for a bigger model is not the Flash ladder — it is `claude-haiku-4-5`'s **outline variability**: 5 to 13 pages on the *same source*, the widest spread measured, so a long document can be planned much more thinly on one run than the next. `claude-opus-5` planned 25–27 pages on that same source.
+
+### Two rules that keep the catalogue honest
+
+**A model may not be offered for a feature it has never been measured against.** `claude-opus-4-7` and `claude-opus-4-6` are real, documented, and have a published price and ceiling — and are **not offerable**, because neither has been run against the real ingest prompt. They sit in `AWAITING_MEASUREMENT` with the reason, and the suite asserts they carry no price, are not a default, are not a fallback rung, and are refused by `getProviderInfo`. To promote one: probe it live with the real prompt, then add its price, cap and measured fields together.
+
+**A model may not be offerable unless it is fully specified.** This is structural, not a convention: `OFFERABLE_MODELS` entries are built by a factory that **throws at module load** if any measured field is missing, if the id has no entry in `MODEL_PRICES_USD_PER_MTOK`, or if it has no entry in the provider's output-cap map. Price and ceiling are **derived** from those tables rather than re-typed into the entry, so there is no second copy to drift — two hand-maintained copies of one fact is this repo's named cause of the v3.2.0 CRITICAL, and here the fact is a number a user makes a spending decision from.
+
+### DOMINATED — alive, fairly priced, and beaten by a same-priced sibling
+
+`DOMINATED_MODELS` is the companion to the `RETIRED` list in `test-chat-model.js` §9, and deliberately a **separate** idea:
+
+| List | Meaning | Consequence |
+|---|---|---|
+| `RETIRED` | The id **404s**. | Shipping it does nothing at all. Banned everywhere. |
+| `DOMINATED` | The id **works** and is honestly priced, but another model at the **same price** measured better on every axis tested. | Banned from `FALLBACK_CHAINS`. **Allowed** in `OFFERABLE_MODELS`. |
+
+That split is the whole point. A **fallback chain** picks *for* the user, silently, on the worst possible day — their pinned default has just been retired. A dominated rung there is indefensible: nobody chose it, nobody was told, and the chain's documented promise is "the cheapest model that still *works*". The **offerable catalogue** is the opposite: the user picks, deliberately, with the measured reason on screen. Hiding a working model there would be deciding for someone what they may spend their own API key on. The honest answer is to show it and label it. So `DOMINATED ∩ FALLBACK_CHAINS = ∅`, while `DOMINATED ⊆ OFFERABLE` is fine.
+
+Current entries:
+
+- **`gemini-3.5-flash-lite`** — dominated by `gemini-2.5-flash`. Identical $0.30/$2.50, but 2 of 9 live runs against the real ingest prompt returned JSON that *neither* `JSON.parse` nor `jsonrepair` could fix (a dropped object key, `finishReason: STOP` — a generation defect, not truncation the output-token-limit ladder could route around). `gemini-2.5-flash` was 3/3 clean on the identical probe and plans wider outlines. It was pulled from the Gemini chain on 2026-08-26 by a bespoke pair of assertions naming it specifically; those are now folded into this list, so the *next* dominated model is caught by the same class invariant instead of needing its own pair.
+- **`claude-opus-4-5`** — dominated by `claude-opus-5`. Identical $5/$25 and behind on all three measured axes: half the output ceiling (64,000 vs 128,000), fenced JSON where opus-5 returns bare JSON, and 12–13 outline pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price.
+
+Two models were **considered and deliberately not listed**, because an over-claimed domination is worth less than an honest number:
+
+- **`claude-opus-4-8`** meets the definition on the data — same price and ceiling as `claude-opus-5`, no axis better, 19–20 outline pages against 25–27 — but that verdict rests on **outline coverage alone from a small sample**. It carries `suitability: 'caution'` with the measured number instead.
+- **`claude-sonnet-4-5`** is behind the same-priced `claude-sonnet-4-6` on three axes (64,000 vs 128,000 ceiling, fenced vs raw JSON, 15–16 vs 17 outline pages). It is **not** listed only because it is a live `FALLBACK_CHAINS` rung, and listing it would break the invariant that makes `DOMINATED` meaningful. Recorded here rather than quietly dropped: **if the Anthropic chain is ever revisited, `claude-sonnet-4-5` is the rung to re-examine.**
+
+### Promotional prices expire — the app handles the date itself
+
+`gemini-3.6-flash` and `gemini-3.7-flash` bill at **$0.75/$3.75 through 2026-12-31 and double to $1.50/$7.50 on 2027-01-01**. Three ways to handle that, and only one is safe:
+
+- ❌ **Hard-code $0.75/$3.75 as if permanent.** This is the [cached-price near-miss](#when-a-price-decides-chain-order-verify-it-against-the-live-provider-page) with the clock running the other way. On 2027-01-01 the picker would quote every user **half** what they are billed, on the one surface whose entire job is cost honesty — and **no ordering assertion would notice**, because the array order survives the doubling. Proven by mutation: encoding both promos as permanent leaves every cheapest-first assertion **green**.
+- ❌ **Don't offer the two models.** Over-correction — they are the modern non-lite Flash tier at a genuinely good rate today.
+- ✅ **Resolve by date, and state the expiry in the record.** Both halves matter: the date resolution means nobody has to remember to ship a release on New Year's Day, and the stated expiry means a human reading `$0.75` cannot mistake it for a stable price.
+
+Mechanically: `MODEL_PRICES_USD_PER_MTOK` holds the **standard (post-promotional)** price, and `PROMOTIONAL_PRICES` holds the discount with an inclusive, UTC-pinned expiry. `resolveModelPrice(id, atMs)` applies the discount only while it is live; `getModelPrice(id)` is that at `Date.now()`, so every existing consumer became date-correct for free with no signature change.
+
+**Every failure mode resolves to the higher price** — a wrong clock, a dropped promotional record, a typo'd id. That is deliberate, and it matches the direction this repo already takes on money (an unrecognised cost tier resolves to `unknown`, never `similar`). A user quoted *more* than they are billed picks a cheaper model than they needed; a user quoted *less* was lied to.
+
+The guard is exercised on **both sides of the boundary today**, not on the day it matters — a check that can only run in January is a comment, not a guard. `test-chat-model.js` §13 additionally requires a promotion to be *strictly* cheaper than the standard price it precedes, so writing the promo value into the standard table collapses the two and goes red.
+
+### Where the allow-list is enforced
+
+Inside **`getProviderInfo()`** — the single producer of the model string both SDKs receive — and nowhere else. Validating at a route would leave the other seven `generateText` entry points (ingest, compile, chat, query, health-AI, shared-brain, diagnostics) open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL.
+
+A model id that is not offerable for the resolved provider is **refused by falling back to that provider's default**, not by throwing. Two reasons, both about failing safe:
+
+1. A stored selection can outlive the model it names — a user picks a model, we later pull it after a bad live probe, and their saved preference now points at an id we refuse. Throwing would hard-fail every chat and every ingest for that user; falling back keeps them working.
+2. The default is the **cheapest** model on that provider, so a refusal can only ever spend *less* than the user asked for, never more.
+
+This mirrors `normalizeChatProvider` (invalid provider → `null` → global) and `anthropicMaxOutputTokens` (unknown id → conservative cap). A caller that needs to know a refusal happened can compare: `getProviderInfo` returns the model it actually resolved, so `result.model !== requested` is the signal. Prototype-pollution inputs (`__proto__`, `constructor`, `toString`) are refused **by construction** — `isOfferableModel` scans an array comparing with `===`, so no object is ever indexed by the caller's string.
+
+---
+
 ## For developers (release checklist)
 
 When releasing a new version that updates a model default:
@@ -157,11 +263,16 @@ When releasing a new version that updates a model default:
 1. **Update `DEFAULTS`** in [`src/brain/llm.js`](../src/brain/llm.js).
 2. **Update `FALLBACK_CHAINS`** — put the closest-priced live successor first, and **probe every rung against the live API before shipping** (a chain is untested by definition until it fires). Never add a rung that is older than the primary. Adding the *previous* primary is only right when it is still alive and still cheaper-or-equal.
    - A costlier rung is fine — it is the last resort — and the cost banner will tell the user.
-3. **Add the new model's published price to `MODEL_PRICES_USD_PER_MTOK`** in [`llm.js`](../src/brain/llm.js), for both the new default and every new rung. Without it the fallback degrades to the vaguer `unknown` wording. `test-chat-model.js` §5 asserts that **every** `DEFAULTS` + `FALLBACK_CHAINS` id is priced, so forgetting this fails `npm test` rather than shipping silently.
-4. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
-5. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
+3. **Add the new model's published price to `MODEL_PRICES_USD_PER_MTOK`** in [`llm.js`](../src/brain/llm.js), for the new default, every new rung, **and every new offerable model**. Without it the fallback degrades to the vaguer `unknown` wording — and an offerable model would show a blank price in the picker. `test-chat-model.js` §5 asserts that **every** `DEFAULTS` + `FALLBACK_CHAINS` + `OFFERABLE_MODELS` id is priced *and* that the table carries nothing beyond them, so both forgetting a price and leaving a dead-weight one fail `npm test` rather than shipping silently.
+   - If the price is **promotional**, put the **standard** price here and the discount in `PROMOTIONAL_PRICES` with its expiry. Never write a promotional number into the standard table — see [Promotional prices expire](#promotional-prices-expire--the-app-handles-the-date-itself).
+4. **Add its output ceiling** to `ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS` or `GEMINI_MODEL_MAX_OUTPUT_TOKENS`. Caps are **not** monotonic with recency — look it up, never infer it from a version word.
+5. **To make it user-selectable, add an `OFFERABLE_MODELS` entry** — but only after probing it live with the **real** ingest outline prompt. Record what you measured: `thinks`, `jsonRaw`, `tokenizerFactor`, a `suitability` verdict and the `note` explaining it. The factory refuses an incomplete entry at module load, so an under-specified model does not merely fail a test — the app refuses to boot. If you cannot probe it yet, add it to `AWAITING_MEASUREMENT` with the reason instead.
+6. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
+7. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
 
-> **The chat Model selector requires no change here.** It shows the provider (Gemini / Claude), and its version label reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`). Bumping `DEFAULTS` updates that label automatically — users never select a specific model version; that stays a global decision. (Pending example: Gemini `2.5-flash-lite` → its successor when Google retires it; the selector will reflect it the moment `DEFAULTS.gemini` is bumped.)
+> **The provider selector requires no change here.** The chat *provider* selector (Gemini / Claude) reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`), so bumping `DEFAULTS` updates its label automatically.
+>
+> **The model picker is different, and does need step 5.** It reads `OFFERABLE_MODELS` (served additively as `offerable` on the same endpoint), so a new model appears there only when you add a measured entry for it — deliberately, because that entry is where its price, its ceiling and its trade-off come from. Bumping `DEFAULTS` alone changes which model is *pre-selected*, not what is *available*.
 
 When a model is retired without a direct successor (rare):
 
