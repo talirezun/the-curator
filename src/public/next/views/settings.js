@@ -1266,23 +1266,30 @@ function renderProviderRow(p, k, crossBusy) {
 // listed and LABELLED, because hiding a working model decides for someone what
 // they may spend their own key on — see OFFERABLE_MODELS' docblock in llm.js.
 //
-// ── NOT A CONTROL, AND THAT IS DELIBERATE ─────────────────────────────────
-// There is no radio and no "Use this model" button, because there is nowhere
-// honest to put the answer. Verified end to end before writing this:
-//   · src/brain/config.js persists `activeProvider` and nothing about a MODEL.
-//   · src/routes/config.js exposes POST /api/config/api-keys/active (provider
-//     only). No model endpoint exists.
-//   · llm.js's resolveProviderDefault() reads DEFAULTS[provider]; it never
-//     consults config, so even a stored choice would not be read.
-// The Settings choice would have to govern INGEST and HEALTH SCANS, which the
-// server starts on its own — localStorage cannot reach them. A selection
-// stored in the browser and read by nobody is this repo's named dead-data
-// shape (v3.6.1 finding 5, v3.9.0 finding 7, v3.9.1 finding 9), landing here
-// on a spending decision: the user would see "selected: Opus 5", keep being
-// billed for and keep receiving Haiku 4.5, and have no symptom to notice.
-// So the list states plainly what is in force. `renderModelPickerScope()`
-// below is the single place that claim is made; when the backend lands, this
-// becomes a picker by replacing that line and making each <li> a radio.
+// ── IT IS NOW A CONTROL, AND THE WRITE IS NEVER OPTIMISTIC ────────────────
+// v3.13.0 landed the missing half of this feature: POST
+// /api/config/api-keys/model persists a per-provider model pick (server-side,
+// read by resolveProviderDefault on every LLM call — INGEST and HEALTH SCANS
+// included, both of which the server starts on its own with no browser in the
+// loop), and every non-selected row below renders a real "Use this" button
+// (`data-pick-model` / `data-pick-provider`, wired to `onPickModel`).
+// `renderModelPickerScope()` still carries the honesty line this section was
+// built around, because the underlying hazard it guards against did not go
+// away when the endpoint arrived — it only moved from "there is no control"
+// to "the control must never lie while a write is in flight":
+//   · `onPickModel` never writes an optimistic selection into `state.keys`.
+//     The rendered "your choice" / "in use" badges move ONLY after the POST
+//     resolves and `loadKeys()` has re-read the server's own answer — which
+//     is not necessarily the id just sent, since a stored pick that stops
+//     being offerable falls back server-side and the header must say so.
+//   · A picker showing "selected: Opus 5" while the wire still confirms
+//     Haiku 4.5 is billing is exactly the dead-data shape this repo keeps
+//     re-finding under a new name (v3.6.1 finding 5, v3.9.0 finding 7,
+//     v3.9.1 finding 9) — a selection nobody's server obeys, with no symptom
+//     to notice. The two-source display (`models[p.id]` = what actually
+//     runs, `selectedModels[p.id]` = what the user asked for, straight off
+//     the wire) is what keeps that claim honest now that it can be acted on.
+// See `renderModelPicker()` and `onPickModel()` below for the mechanics.
 const MODEL_SUITABILITY_BADGES = {
   'chat-only': 'chat only — not for ingest',
   caution: 'caution',

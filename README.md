@@ -147,6 +147,13 @@ This is the shift from a file cabinet to a neural network.
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
+- **Choose your model** — 14 models across the two providers (7 Gemini, 7 Anthropic). Pick one
+  durably in **Settings → Providers & keys** (it governs ingest, Health scans and Compile), or
+  per-chat from the composer's Model dropdown. Every model was probed live against the app's real
+  ingest prompt, and each row shows its price as billed today plus the measured trade-off — output
+  ceiling, hidden reasoning spend, and how thoroughly it plans a wiki — so the cost is visible at
+  the moment of choosing. **The defaults are unchanged and remain the cheapest on each provider**;
+  a user who picks nothing runs exactly what they ran before. See [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model)
 - Four AI-tuned domain templates to start from — Tech/AI, Business/Finance, Personal Growth, Generic — plus unlimited custom domains, no terminal or file editing required
 - Mac Dock app — double-click to launch, no terminal needed
 
@@ -403,6 +410,8 @@ The Curator itself is **free, open-source software**. The only paid component is
 |---|---|---|---|
 | **Google Gemini 2.5 Flash Lite** *(default, recommended)* | Yes — 15 RPM, 1,000 requests/day, 250k tokens/min ([details](https://ai.google.dev/gemini-api/docs/rate-limits)) | $0.10/M input · $0.40/M output | **~€5/month** at heavy use (50 articles × ~10 pages, plus daily chat) |
 | **Anthropic Claude Haiku 4.5** | No | $1/M input · $5/M output | ~10× the Gemini bill for the same workload |
+
+**Those two rows are the defaults, not the only options.** You can pick a different model per provider — 14 are offered — and the span across them is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
 
 **About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
 

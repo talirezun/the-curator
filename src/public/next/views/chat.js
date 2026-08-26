@@ -121,52 +121,41 @@ const LS_PROVIDER = 'curator-chat-model-provider';
 const LS_MODEL = 'curator-next-chat-model';
 
 /**
- * ── THE MODEL PICKER IS BUILT AND PROVEN BUT DELIBERATELY OFF ─────────────
+ * ── THE GATE IS OPEN: THE BACKEND LANDED IN v3.13.0 ────────────────────────
  *
- * Flip this to `true` in the SAME change that lands the backend plumbing
- * described below. Everything downstream of it is complete and covered by
- * scripts/test-next-composer-model.js, which drives the real renderers with
- * this gate FORCED ON — so the surface is tested today and flipping the
- * constant ships an already-proven feature rather than an unproven one.
+ * This constant was held at `false` for a real reason, recorded below because
+ * it is the reason any FUTURE gated feature in this file should be held the
+ * same way. It is now `true` because the three backend edits the gate was
+ * waiting on have all shipped, in the exact shape planned:
  *
- * WHY IT IS OFF. `POST /api/chat/:domain` (src/routes/chat.js) destructures
- * exactly `{ message, conversationId, responseStyle, provider }` — `model` is
- * never read. `sendMessage` (src/brain/chat.js) reads only `opts.responseStyle`
- * and `opts.provider`, and calls `generateText(..., { provider: chatProvider })`
- * with NO model. So a model id sent from here today is silently dropped and the
- * provider's DEFAULT answers.
+ *   1. `normalizeChatModel(provider, model)` (src/brain/chat.js) — mirrors
+ *      `normalizeChatProvider`: returns `model` only when
+ *      `isOfferableModel(provider, model)` (exported from src/brain/llm.js) is
+ *      true AND that provider has a key SAVED IN SETTINGS (`getApiKeys()`,
+ *      never `getEffectiveKey`/.env — the v3.0.13 rule). Anything else → `null`
+ *      → the provider default. Exported on `chat.js`'s `__testing`.
+ *   2. `sendMessage` (src/brain/chat.js) resolves `chatModel` via that
+ *      function and threads it into `generateText(..., { provider, model })`,
+ *      and returns the actually-served `model` alongside `provider`.
+ *   3. `POST /api/chat/:domain` (src/routes/chat.js) now destructures `model`
+ *      from the body and passes it straight through — deliberately with NO
+ *      validation at that layer; `normalizeChatModel` is the sole gate.
  *
- * That failure is not cosmetic, which is why this is gated rather than shipped
- * with a caveat: every row in this picker carries a PRICE. A user who picks
- * "Opus 5 · $5/$25" and is quietly served Haiku 4.5 at $1/$5 has been told a
- * falsehood about both capability and money. This repo has shipped inert
- * controls before and recorded them as defects (v3.7.0's five inert controls,
- * v3.9.0's hardcoded sync badge); an inert control that looks functional is
- * worse than no control, and worse still when it quotes a price.
+ * WHY IT WAS OFF, kept verbatim as the record of the hazard this constant
+ * existed to hold shut — every row in this picker carries a PRICE, and before
+ * the backend read `model` at all, a user picking "Opus 5 · $5/$25" would have
+ * been quietly served Haiku 4.5 at $1/$5: a falsehood about both capability
+ * and money, not a cosmetic gap. This repo has shipped inert controls before
+ * and recorded them as defects (v3.7.0's five inert controls, v3.9.0's
+ * hardcoded sync badge); an inert control that looks functional is worse than
+ * no control, and worse still when it quotes a price. That is why this was
+ * held behind a constant instead of shipped with a caveat, and it is the bar
+ * the next gated feature in this file should be held to as well.
  *
- * WHAT THE BACKEND MUST DO — three edits, no new endpoint, and the validation
- * primitive already exists:
- *
- *   1. src/brain/chat.js — add `normalizeChatModel(provider, model)` mirroring
- *      `normalizeChatProvider` exactly: return `model` only when
- *      `isOfferableModel(provider, model)` (already exported from
- *      src/brain/llm.js) is true AND that provider has a SAVED CONFIG key
- *      (`getApiKeys()`, never `getEffectiveKey`/.env — the v3.0.13 rule).
- *      Anything else → `null` → the provider default. Export it on `__testing`.
- *   2. src/brain/chat.js — `sendMessage` passes it through:
- *      `generateText(schema, prompt, maxTokens, 'text', null,
- *                    { provider: chatProvider, model: chatModel })`.
- *      `generateText` already accepts `opts.model` and re-validates it through
- *      `getProviderInfo(provider, model)` → `applyModelOverride`, which falls
- *      back to the provider default on a refusal rather than throwing. Add
- *      `model` to sendMessage's RETURN value beside `provider`, so the client
- *      can see which model actually answered.
- *   3. src/routes/chat.js — destructure `model` from the body and pass it in
- *      `opts`. No validation belongs here; `normalizeChatModel` owns it.
- *
- * While this is `false`, `state.chatModel` is pinned `null` and `model` is
- * never placed in the request body — the composer behaves EXACTLY as it did in
- * v3.0.11 (provider-only), which is why this change is user-invisible today.
+ * Everything downstream of the flag was already complete and covered by
+ * scripts/test-next-composer-model.js before the flip (it drove the real
+ * renderers with the gate FORCED ON), so turning this on shipped an
+ * already-proven surface rather than an unproven one.
  */
 const MODEL_PICKER_ENABLED = true;
 
@@ -1656,7 +1645,18 @@ function renderModelOptionHtml(provider, entry, selectedId) {
     badges.push('<span class="chat-mm-badge is-warn">' +
       escapeHtml(SUITABILITY_LABELS[entry.suitability] || entry.suitability) + '</span>');
   }
-  if (entry.dominated === true) badges.push('<span class="chat-mm-badge is-warn">dominated</span>');
+  // Label kept in sync with settings.js's MODEL_SUITABILITY_BADGES-adjacent
+  // `dominated` badge (search for "out-performed" there): same underlying
+  // `OFFERABLE_MODELS[].dominated` flag (src/brain/llm.js, not owned by this
+  // view), same user-facing word on both surfaces. "dominated" is measurement
+  // jargon a user does not think in; "out-performed" says the same fact in
+  // plain language. See scripts/test-next-composer-model.js /
+  // scripts/test-next-model-picker.js for the assertions pinning this string
+  // on both sides — there is no single shared JS constant the two views both
+  // import (they are independent modules with independent badge tables), so
+  // this comment is the enforcement point: if you change the word here,
+  // change it in settings.js's renderModelOption in the same commit.
+  if (entry.dominated === true) badges.push('<span class="chat-mm-badge is-warn">out-performed</span>');
   if (entry.thinks === true) badges.push('<span class="chat-mm-badge">thinks</span>');
 
   return (

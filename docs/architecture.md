@@ -401,18 +401,163 @@ wizard's trigger does not**: `checkFirstRun()` reads `hasGeminiKey`/`hasAnthropi
 which come from `getApiKeys()` — `.curator-config.json` only. A `.env`-only install
 therefore makes working LLM calls *and* shows the first-run wizard on every load.
 
-Chat additionally supports a **per-chat provider override** (v3.0.11+) — `getProviderInfo(preferProvider)` honours it only when that provider has a key saved in Settings, and the model id is always `DEFAULTS[provider]`, never client-supplied.
+Chat additionally supports a **per-chat provider override** (v3.0.11+) — `getProviderInfo(preferProvider)` honours it only when that provider has a key saved in Settings. Since v3.13.0 a per-chat **model** override rides alongside it (`getProviderInfo(preferProvider, preferModel)`), allow-listed the same way; see [Model selection](#model-selection-the-router-v3120--v3130) below.
 
-The optional `LLM_MODEL` env var overrides the default model for whichever provider is active.
+The optional `LLM_MODEL` env var overrides the default model for whichever provider is active. It sits between the per-call override and the user's stored Settings choice in the precedence chain — see below.
 
-`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` carries four additive, optional fields:
+`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` carries five additive, optional fields:
 
 - `onUsage(payload)` (v3.0.16) — fired once per completed provider call with normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, so a caller can track real spend without changing the function's bare-string return type.
 - `cachePrefixChars` (v3.0.16) — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
-- `provider` (v3.0.11) — a per-call provider override for the chat model selector, honoured only when that provider has a key **saved in Settings**; the model id is always `DEFAULTS[provider]`, never client-supplied.
+- `provider` (v3.0.11) — a per-call provider override for the chat model selector, honoured only when that provider has a key **saved in Settings**.
+- `model` (v3.13.0) — a per-call model override (the chat composer's model dropdown). Narrowed to a non-empty string here and then allow-listed inside `getProviderInfo()`; anything not in `OFFERABLE_MODELS` for the resolved provider falls back to that provider's default rather than throwing. See [Model selection](#model-selection-the-router-v3120--v3130).
 - `signal` (v3.4.0) — **an `AbortSignal`, and the entire mechanism behind "Cancel" on a batch ingest.** It is threaded queue → `ingestFile` → `generateText` → both provider SDKs; abort is checked *before* the retry ladder, the 429/503 backoff (`sleep()` is itself abortable) and the model-not-found fallback chain, so a cancel stops spending immediately rather than walking up to five more calls. Measured: 334 s → 63 ms. Omitting it leaves every code path byte-identical to the pre-v3.4.0 behaviour.
 
 For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's native `responseMimeType: 'application/json'` — this forces the model to produce structurally valid JSON even when the content contains markdown characters (backticks, quotes, backslashes) that would otherwise break parsing.
+
+---
+
+## Model selection: the router (v3.12.0 + v3.13.0)
+
+Until v3.12.0 the app could run exactly one model per provider. v3.12.0 added the data layer — a measured catalogue, persistence and validation — and v3.13.0 wired the two UI surfaces onto it. This section describes how the router is built.
+
+> **User-facing counterpart:** [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). **Catalogue contents, measurements and the release checklist:** [model-lifecycle.md](model-lifecycle.md). This section deliberately does not repeat either.
+
+### `OFFERABLE_MODELS` is a frozen capability record, and it cannot be incomplete
+
+`OFFERABLE_MODELS` (in [`llm.js`](../src/brain/llm.js)) is a frozen `{ gemini: [...], anthropic: [...] }` table, ordered cheapest-first on the **standard** price within each provider. Entries are not written as object literals — they are built by `defineOfferableModel(provider, spec)`, which **throws at module load** if:
+
+- any measured field is missing or the wrong type (`thinks`, `jsonRaw`, `tokenizerFactor`, `suitability`, `note`, `label`, `id`);
+- the id has no entry in `MODEL_PRICES_USD_PER_MTOK`;
+- the id has no entry in its provider's output-cap map (`ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS` / `GEMINI_MODEL_MAX_OUTPUT_TOKENS`).
+
+**A model that is not fully specified therefore does not merely fail a test — it fails to exist, and the app refuses to boot.** That is the structural half of "a model may not be offered for a feature it has never been measured against": a convention can be forgotten, a module-load throw cannot. The table is static, so the throw is unreachable in production by construction; it is a developer-time tripwire.
+
+Price and ceiling are **derived** from those two tables rather than re-typed into the entry, so there is no second copy to drift — two hand-maintained copies of one fact is this repo's named cause of the v3.2.0 CRITICAL, and here the fact is a number a user makes a spending decision from. `input`/`output` are defined as **getters**, not snapshots, so a promotional price that expires mid-process resolves correctly on the next read (`JSON.stringify` invokes them, so the route serialises plain numbers).
+
+The entry shape is a **public contract**: `src/routes/config.js` serialises entries verbatim onto `GET /api/config/api-keys` → `offerable`. Fields may be added; renaming or removing one is a wire-format change.
+
+### The allow-list has exactly one application point
+
+`isOfferableModel(provider, modelId)` is the predicate. It is applied **inside `getProviderInfo()`** — the single producer of the model string both SDKs receive — and nowhere else.
+
+That placement is deliberate and load-bearing. There are seven other entry points into `generateText` (ingest, compile, chat, query, health-AI, shared-brain, diagnostics); validating at a route would leave every other one open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL. The route (`POST /api/config/api-keys/model`) does call the predicate, but as a **read of the same function** to give the user an actionable 400 — not as a second implementation, and not as the only gate.
+
+The lookup is an array scan comparing with `===`, so `'__proto__'`, `'constructor'` and `'toString'` are structurally unable to resolve to anything: no object is ever indexed by the caller's string. `normalizeChatModel` in `chat.js` deliberately adds **no** object lookup of its own so it inherits that property by construction rather than by remembering an `Object.hasOwn` call.
+
+### Five model-producing sites, and they are not uniform
+
+`getProviderInfo(preferProvider, preferModel)` delegates the provider decision to `resolveProviderDefault(preferProvider)` and then applies `applyModelOverride` to the result. Between them, five sites produce a default model id:
+
+| Site | How it treats `LLM_MODEL` |
+|---|---|
+| `resolveProviderDefault` → `getDefaultModel(preferProvider)` (per-call provider override branch) | **Gated on the active provider** — `LLM_MODEL` is only used when `getActiveProvider() === provider`, so Gemini is never labelled with a Claude id. |
+| `resolveProviderDefault` → `defaultModelFor(provider, process.env.LLM_MODEL)` × 4 (active-Gemini, active-Anthropic, and the two defensive key-present fallbacks) | **Ungated** — the raw env value is passed through regardless of which provider resolved. |
+
+This asymmetry **pre-dates** the multi-model work and is deliberately *not* fixed by it. The entire safety claim of v3.12.0 is that nothing moves for a user with nothing stored, and `applyModelOverride` returns `defaultModel` on its first line when there is no stored selection — so every call site is byte-identical to the pre-v3.12.0 expression for such a user. Changing the `LLM_MODEL` semantics here would break that claim in the same change that makes it.
+
+### Resolution precedence
+
+```
+per-call preferModel  >  LLM_MODEL  >  stored selection  >  DEFAULTS[provider]
+```
+
+- **`preferModel` first** — it is applied by `applyModelOverride` *last* inside `getProviderInfo`, so an explicit user choice in the composer outranks everything. A developer who set `LLM_MODEL` would be surprised to find it silently overriding a selection just made in the UI.
+- **`LLM_MODEL` beats the stored selection** because the two occupy the *same slot*: both reshape the provider default. `LLM_MODEL` is the unrestricted developer escape hatch — it deliberately bypasses the allow-list — and letting a Settings click override it would remove the escape hatch and make it untestable.
+- **Stored selection beats `DEFAULTS`** — that is the whole feature.
+- **`DEFAULTS` last** — and `DEFAULTS[provider]` is the head of `OFFERABLE_MODELS[provider]`, i.e. the cheapest model on that provider. This is what makes every fallback direction below safe on money.
+
+### Refusal is a fall-back, never a throw
+
+`applyModelOverride` returns the provider default — never throws — when the requested id is not offerable. Three distinct cases resolve that way:
+
+| Case | Result |
+|---|---|
+| Stored selection names a model that is no longer offerable (we pulled it after a bad live probe) | Provider default. Throwing would hard-fail every chat *and* every ingest for that user until they noticed a picker somewhere. |
+| Stored selection belongs to a provider whose key is no longer **saved in config** | `storedSelection()` returns `null` before the allow-list is even consulted → provider default. |
+| Per-call override is invalid | **Falls back to the user's STORED selection**, not to `DEFAULTS` — because `applyModelOverride` is applied on top of the already-resolved provider default, which has the stored pick baked in. Dropping to `DEFAULTS` would silently demote a user who deliberately paid for a better model. |
+
+Every one of these resolves toward the **cheapest** model at worst, so a refusal can only ever spend *less* than the user asked for. This mirrors `normalizeChatProvider` (invalid provider → `null` → global) and `anthropicMaxOutputTokens` (unknown id → conservative cap). A caller that needs to know a refusal happened compares: `getProviderInfo` returns the model it actually resolved, so `result.model !== requested` is the signal. The return shape is unchanged — `{provider, model}` is destructured at roughly 15 call sites across `src/` and `mcp/`.
+
+`chat.js` goes one step further and reports the model that **answered** rather than the one requested, taken from the last `onUsage` payload. That covers both an allow-list refusal *and* a fallback-chain walk; re-resolving through `getProviderInfo` would see the first and be blind to the second, and the walk is where the number matters most because it can move the user onto a *costlier* model.
+
+### Three lists, three meanings
+
+| List | Meaning | Consequence |
+|---|---|---|
+| `RETIRED` (in `scripts/test-chat-model.js` §9) | The id **404s**. | Banned everywhere. Shipping it does nothing at all. |
+| `DOMINATED_MODELS` | The id **works** and is honestly priced, but a **same-priced** sibling measured better on every axis tested. | Banned from `FALLBACK_CHAINS`. **Allowed** in `OFFERABLE_MODELS`, flagged. |
+| `AWAITING_MEASUREMENT` | A real, documented, priced-by-the-provider model that has **never been probed** against the real ingest prompt. | Not offerable, not a default, not a rung, and carries **no** price entry. All four asserted. |
+
+`AWAITING_MEASUREMENT` exists because the measurements are genuinely not predictable from a model's lineage: `claude-opus-5` was released *after* `claude-sonnet-5` and runs no hidden reasoning at all (0/3), while `claude-sonnet-5` ran adaptive thinking on every call (7/7). Two models one release apart, opposite behaviour — so for any unprobed id, `thinks` is unknown, and guessing there is guessing about billed output tokens.
+
+### `FALLBACK_CHAINS` and `OFFERABLE_MODELS` are different lists with different rules
+
+This is the reason `DOMINATED_MODELS` exists as a separate concept rather than a single ban:
+
+- **A fallback chain picks *for* the user, silently, on the worst possible day** — their pinned default has just been retired. A dominated rung there is indefensible: nobody chose it, nobody was told, and the chain's documented promise is *"the cheapest model that still works"*.
+- **The offerable catalogue is the user choosing deliberately, with the measured reason on screen.** Hiding a working model there would be deciding for someone what they may spend their own API key on.
+
+So `DOMINATED ∩ FALLBACK_CHAINS = ∅` (asserted), while `DOMINATED ⊆ OFFERABLE` is fine. The founding entry, `gemini-3.5-flash-lite`, is *in* the catalogue (flagged `chat-only`) and *out* of the Gemini chain, for exactly this reason.
+
+### Promotional pricing: two tables, resolved by date
+
+`MODEL_PRICES_USD_PER_MTOK` holds the **standard (post-promotional)** price. `PROMOTIONAL_PRICES` holds the discount with an **inclusive, UTC-pinned** expiry (`untilMs`) — a promotion is a published calendar fact, not a local-time one, so parsing it in the machine's timezone would make two users disagree about the price for up to a day.
+
+`resolveModelPrice(id, atMs)` applies the discount only while it is live; `getModelPrice(id)` is that at `Date.now()`, so every pre-existing consumer (health-AI estimates, the ingest queue's spend arithmetic, the fallback cost banner) became date-correct with no signature change. `resolveModelPrice` is exported specifically so the offline suite can assert **both** sides of a boundary today — a guard that can only be exercised on the day it matters is a comment, not a guard.
+
+**The structure makes the standard price the base and a promotion a narrowing exception applied on top**, so the ways this can break degrade to the HIGHER figure: a dropped promotional record, an id typo'd in `PROMOTIONAL_PRICES`, or a clock that has run past the expiry all yield the standard price. (A non-finite `atMs` is the one input that resolves to *now* rather than to standard — deliberately, because a bad clock must not take down an LLM call.) This matches the direction the repo already takes on money (v3.9.0: an unrecognised cost tier resolves to `unknown`, never `similar`). A user quoted *more* than they are billed picks a cheaper model than they needed; a user quoted *less* was lied to.
+
+### Persistence: `selectedModels` in `.curator-config.json`
+
+`src/brain/config.js` owns storage and does **no** validation against `OFFERABLE_MODELS` — deliberately, and for two reasons. First, `llm.js` imports `config.js`, so importing back would be a cycle. Second, and more important: **a stored id can stop being offerable *after* it was validly written** (we pull a model after a bad live probe), so validating only at write time would leave the stale value honoured forever. The allow-list is applied on the **read** side, which is where it has to be anyway.
+
+- `getSelectedModel(provider)` → the stored id or `null`, read **fresh per call** through a sanitiser that drops non-string / prototype-shaped entries.
+- `setSelectedModel(provider, modelId)` → persists, or **clears** on empty/null. It rebuilds the stored map from the sanitised view rather than mutating what was on disk, and deletes the key entirely when nothing is selected — so a user who never picks a model keeps a config file byte-identical to before the feature existed. Writes through the same `writeFileAtomicSync` at mode `0600` that every other field in that file uses (it holds the API keys; a second writer that forgot the mode would silently widen them).
+
+**Nothing is snapshotted at module load.** `storedSelection()` in `llm.js` and `getSelectedModel()` in `config.js` both resolve per call, so a Settings change takes effect on the *next LLM call* without a restart — and a module-level snapshot would additionally defeat the `paths.js` test seams for anything importing the module early.
+
+### Config-scoped key gating, at both ends
+
+Both the read side (`storedSelection()` in `llm.js`) and the write side (`POST /api/config/api-keys/model`) gate on `getApiKeys()` — the **saved Settings keys** — and never on `getEffectiveKey()`, which also sees `.env`.
+
+This is the **v3.0.13 rule**, and it is not cosmetic here. `resolveProviderDefault` selects a *provider* off `getEffectiveKey`, so a provider whose key the user Disconnected in Settings can still resolve from a lingering `.env` key. Honouring the model they picked *before* Disconnecting would be the v3.0.13 bug in a new place — a setting the user believes they removed still steering their spend.
+
+Because both ends gate the same way, the contract is closed: you can only *store* a selection for a provider whose key is saved, and it is only *honoured* while that key remains saved. A Disconnect cannot leave a live orphaned selection. `GET /api/config/api-keys` applies the same gate to `offerable` and `selectedModels`, so a Disconnected provider reports an empty catalogue and a `null` selection — the UI must never show a selection the engine has stopped obeying.
+
+### `guardConcurrent` on the model route
+
+`POST /api/config/api-keys/model` carries `guardConcurrent('change the AI model')`. This is not symmetry with its `/active` sibling — it is the sharpest instance yet of v3.6.0's "config mutation mid-write" class. Because the stored selection is consulted **fresh on every LLM call**, and a multi-phase ingest makes 20+ calls over several minutes, an unguarded click mid-ingest would:
+
+1. plan the outline on one model and write Phase-2 batches 3..11 on another — v3.6.0's *"silently finish it on a different model"*, verbatim;
+2. **invalidate Anthropic's prompt cache mid-run** — a different model is a different cache namespace, so every cached prefix READ becomes a WRITE at 1.25×, inverting the v3.0.16 saving into a surcharge;
+3. make the ingest queue's per-item spend arithmetic wrong, since price is looked up per model.
+
+The `/next` Settings UI disables the pick buttons while any write is running, but that is the **second** layer — the 409 is the real guarantee. Note the chat composer's dropdown needs no guard at all: it writes no config, it only adds `model` to one request body.
+
+### The two surfaces
+
+| Surface | Mechanism | Scope |
+|---|---|---|
+| `views/settings.js` → `renderModelPicker` / `renderModelOption` | `POST /api/config/api-keys/model` | Durable, server-side. Governs ingest, Health AI, Compile and chat. |
+| `views/chat.js` → `renderModelMenuHtml` / `renderModelOptionHtml` | `model` field on the `POST /api/chat/:domain` body → `normalizeChatModel` → `generateText(..., { model })` | Chat only. Persisted in `localStorage` (`curator-next-chat-model`), so it is per-browser and sticky across conversations — **not** per-conversation. |
+
+Both render the server's `note` **verbatim** rather than paraphrasing it: `note` is the measured finding, and rewriting it into marketing copy would delete the only thing that makes an honest choice possible. Both escape every interpolated field — the payload originates in `llm.js` but arrives over HTTP, and "the payload is ours" is not a property a render function can verify.
+
+Both gate on the saved key **client-side as well**, via a lookup table rather than a `p.id === 'gemini' ? … : …` binary — that binary shape is what made a provider row render another provider's masked key in v3.10.1. An id absent from the table resolves to `undefined` and the whole list disappears, which is the safe direction.
+
+The chat composer's localStorage key is deliberately **not** shared with the provider key (`curator-chat-model-provider`): one holds `'gemini'|'anthropic'` and the other a model id like `'claude-sonnet-5'`, and two different value *formats* sharing one key is how a stale value from the other writer gets applied as if it were ours. A restored model implies its provider, so the two can never be sent disagreeing.
+
+### Coverage
+
+| Suite | What it pins |
+|---|---|
+| `scripts/test-chat-model.js` | Price/cap coverage for every shipped id and nothing beyond them; `RETIRED` ∩ everything = ∅; `DOMINATED` ∩ `FALLBACK_CHAINS` = ∅; `AWAITING_MEASUREMENT` unreachable four ways; cheapest-first ordering at both the promotional and the standard price; a promotion must be *strictly* cheaper than the standard price it precedes. |
+| `scripts/test-selected-model.js` | Storage round-trip, clearing, sanitising, and the byte-identical-with-nothing-stored claim. |
+| `scripts/test-offerable-models-route.js` | The wire shape of `offerable` / `selectedModels` and the config-only key gating. |
+| `scripts/test-next-model-picker.js` | The Settings surface, including the provider-lookup class invariant. |
+| `scripts/test-next-composer-model.js` | The chat composer surface. |
+| `scripts/test-next-model-fallback.js` | The fallback banner's three cost states. |
 
 ---
 
@@ -957,13 +1102,22 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 | `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
 | `setApiKeys({ geminiApiKey, anthropicApiKey })` | Saves API keys to the config file (partial update) |
 | `getEffectiveKey(provider)` | Returns the active key for a provider: config file takes priority over `.env` |
+| `getSelectedModel(provider)` | The user's stored model choice for a provider, or `null`. Read **fresh per call**; sanitised, and deliberately **not** validated against `OFFERABLE_MODELS` here (that happens on the read side in `llm.js` — see [Model selection](#model-selection-the-router-v3120--v3130)) |
+| `setSelectedModel(provider, modelId)` | Persists the choice, or clears it on empty/null. Deletes the key entirely when nothing is selected, so a user who never picks keeps a byte-identical config file |
 
 ### `src/brain/llm.js`
 
 | Export | Description |
 |--------|-------------|
-| `getProviderInfo()` | Returns `{ provider, model }` based on effective keys (via `config.js`) |
-| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles Gemini and Claude API differences, retry/fallback, and (v3.0.16) `opts.onUsage`/`opts.cachePrefixChars` |
+| `getProviderInfo(preferProvider?, preferModel?)` | Returns `{ provider, model }` based on effective keys (via `config.js`). **The single application point of the `OFFERABLE_MODELS` allow-list** — see [Model selection](#model-selection-the-router-v3120--v3130) |
+| `getDefaultModel(provider)` | The model id a provider resolves to right now (`LLM_MODEL` gated on the active provider, then the stored Settings choice, then `DEFAULTS`). Drives `models` on `GET /api/config/api-keys` |
+| `OFFERABLE_MODELS` | Frozen, cheapest-first catalogue of user-pickable models per provider. Entries are built by a factory that throws at module load on an incomplete spec (v3.12.0) |
+| `isOfferableModel(provider, modelId)` | The allow-list predicate. Array scan with `===`, so prototype keys resolve to nothing |
+| `DOMINATED_MODELS` / `AWAITING_MEASUREMENT` | Frozen records of models that work-but-are-beaten, and of real models never probed against the real ingest prompt. Different lists, different bans |
+| `resolveModelPrice(id, atMs)` / `getModelPrice(id)` | Published price per 1M tokens, promotion-resolved by date. `null` for an id we don't ship |
+| `anthropicMaxOutputTokens(modelId)` | Per-model output ceiling; unknown ids resolve to the conservative `ANTHROPIC_MAX_OUTPUT_TOKENS` (64,000) |
+| `getFallbackStatus()` | `null`, or the active fallback event plus a derived `costTier` (`costlier`/`similar`/`unknown`) |
+| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles Gemini and Claude API differences, retry/fallback, and `opts.onUsage`/`opts.cachePrefixChars` (v3.0.16), `opts.provider` (v3.0.11), `opts.model` (v3.13.0), `opts.signal` (v3.4.0) |
 
 ### `src/brain/files.js`
 
@@ -1097,8 +1251,19 @@ Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:dom
 ### `src/brain/chat.js`
 
 ```js
-sendMessage(domain, conversationId, userMessage)
-  → Promise<{ conversationId, isNew, title, answer, citations[] }>
+sendMessage(domain, conversationId, userMessage, opts = {})
+  // opts: { responseStyle, provider, model }
+  → Promise<{ conversationId, isNew, title, answer, citations[],
+              responseStyle, provider, model }>
+  // `model` is the model that ANSWERED (taken from the last onUsage payload),
+  // not the one requested — so it is correct across both an allow-list refusal
+  // and a fallback-chain walk.
+
+normalizeChatProvider(provider) → 'gemini' | 'anthropic' | null
+normalizeChatModel(provider, model) → '<id>' | null
+  // Two gates, both required: isOfferableModel(provider, model), AND that
+  // provider having a key SAVED IN SETTINGS (getApiKeys, never getEffectiveKey).
+  // Anything else → null → the provider's default model. Never throws.
 
 listConversations(domain)   → Promise<ConversationMeta[]>
 readConversation(domain, id) → Promise<Conversation | null>
@@ -1113,10 +1278,14 @@ Settings and configuration endpoints.
 GET  /api/config               → current app configuration
 POST /api/config/domains-path  → set domains folder path
 POST /api/config/pick-folder   → macOS native folder picker (osascript)
-GET  /api/config/api-keys      → masked keys + active provider info
+GET  /api/config/api-keys      → masked keys + active provider info, plus (v3.12.0+) `offerable`
+                                 (the per-provider model catalogue) and `selectedModels`
+                                 (the user's explicit pick per provider, or null)
 POST /api/config/api-keys      → save API keys (partial update)
 POST /api/config/api-keys/disconnect → clear one provider's saved key (v2.4.2+)
 POST /api/config/api-keys/active     → switch the active provider without re-saving a key (v3.0.1-beta.24+)
+POST /api/config/api-keys/model      → persist the user's model choice for one provider, or clear it (v3.12.0+).
+                                       guardConcurrent'd; config-only key gate; validates via isOfferableModel
 GET  /api/config/update-check  → compare local vs GitHub version
 POST /api/config/update        → git fetch + git reset --hard origin/main + npm install + rebuild .app (build-app.sh) (v2.3.2+)
 POST /api/restart               → spawn new server process, exit current one

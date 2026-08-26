@@ -23,6 +23,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
 16. [Settings](#16-settings)
+16b. [Choosing your AI model](#16b-choosing-your-ai-model)
 17. [Wiki Health](#17-wiki-health)
 18. [Troubleshooting](#18-troubleshooting)
 19. [API keys, cost & free tier (read this before serious use)](#19-api-keys-cost--free-tier)
@@ -183,7 +184,7 @@ If you'd rather pay Anthropic than Google (e.g. for privacy preference, or becau
 1. Go to **[console.anthropic.com](https://console.anthropic.com/)**
 2. Generate an API key under **Settings → API Keys**
 3. Anthropic has **no free tier** — you must add billing before any call works
-4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). For higher quality, set `LLM_MODEL=claude-sonnet-4-5` in `.env`.
+4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). If you want more capability, you can pick a different Anthropic model in **Settings → Providers & keys** — seven are offered, with the price and the measured trade-off shown next to each. See [§16b Choosing your AI model](#16b-choosing-your-ai-model).
 
 **Switching between providers when you have both keys.** The Curator uses *last-saved-wins*: whenever you save a key, that provider automatically becomes the active one. So if you've been on Anthropic and then paste a Gemini key, the app switches to Gemini on its own — that's expected. To flip back **without re-pasting or deleting anything**, open **Settings → Providers & keys** and click **Set active** on the row you want. That button appears on any provider that has a key saved and isn't already active; the switch is instant and applies to ingest, chat, and AI Wiki Health. The word `active` next to a row is always the truth about which provider is live. See [§16 → API keys](#api-keys).
 
@@ -509,7 +510,7 @@ Two kinds of entries are deliberately **never** grouped, even when they happen m
 | *"Source truncated to 80,000 chars (was X chars). Content past the cap not seen by the AI."* | ⚠ Attention | The source was longer than the 80k character cap. | Truncated the input and warned you. The pages it DID write are still good. | Split the source by chapter/section and re-ingest each part. Or wait for a future release with chunk-and-recombine support. |
 | *"Could not extract text from `<file>`"* | ⚠ Attention | The PDF is encrypted, scanned (image-only), or malformed. | Refused the ingest and rolled back the raw file so retry isn't blocked. | Run OCR on the PDF (macOS Preview → Tools → Adjust Text → OCR, or `ocrmypdf` on the command line). Or copy the article text into a `.md` file. |
 | *"Refused an unsafe/malformed page path '...' — nothing was written"* | ⚠ Attention | The AI returned a page path that can never be a valid wiki page (e.g. empty, a folder with no filename, or containing characters that aren't allowed). This is rare and is a hard safety refusal, not an auto-correction. | Refused to write that one page — every other page from the same ingest still wrote normally. | That one page's content was lost. Re-ingest the source; if it recurs on the same source, open an issue — this shouldn't normally happen. |
-| *"Claude / Gemini hit the output token limit (N tokens)"* | ⚠ Attention | The LLM's response was cut off mid-write and every automatic recovery attempt for that call was exhausted. Rare — most token-limit hits now recover automatically (see the batch and page entries below, and the planning-recovery entry further down). | Reported the failure honestly — this specific case is NOT transient, retrying the exact same call hits the same wall. | Split the source into smaller parts and ingest each separately. There is **no model picker in Settings** — the Settings → API Keys control switches *provider* (Gemini ↔ Claude), not model, and each provider's model is pinned by the app. Switching provider is still worth trying, since the two have different output ceilings. If you run from a git checkout, you can pin a larger-budget Anthropic model with `LLM_MODEL=claude-sonnet-4-6` in `.env` (Sonnet 4.6 and Sonnet 5 allow 128,000 output tokens; Haiku 4.5 and Sonnet 4.5 allow 64,000 — see [model-lifecycle.md](model-lifecycle.md)). |
+| *"Claude / Gemini hit the output token limit (N tokens)"* | ⚠ Attention | The LLM's response was cut off mid-write and every automatic recovery attempt for that call was exhausted. Rare — most token-limit hits now recover automatically (see the batch and page entries below, and the planning-recovery entry further down). | Reported the failure honestly — this specific case is NOT transient, retrying the exact same call hits the same wall. | Split the source into smaller parts and ingest each separately. You can also **pick a model with a bigger output ceiling** in **Settings → Providers & keys** — every model row shows its ceiling. On Anthropic, `claude-sonnet-4-6`, `claude-sonnet-5`, `claude-opus-5` and `claude-opus-4-8` allow 128,000 output tokens where the default `claude-haiku-4-5` allows 64,000; every Gemini model on offer allows 65,536. Switching *provider* is also worth trying for the same reason. See [§16b](#16b-choosing-your-ai-model). |
 | *"Batch N of M was too large for the AI's output limit — wrote those pages individually instead."* (v3.0.17) | ℹ Info | A group of up to 4 pages the AI was writing together didn't fit in one response. | Automatically retried the same pages one at a time instead of as a group. Nothing was lost. Different from the "hit the output token limit" entry above — that one is an unrecoverable failure; this one is a normal, successful recovery. | Nothing. This just means the ingest took a little longer than usual. |
 | *"N content batches were too large for the AI's output limit — those pages were written one at a time instead. Nothing was lost; the ingest just took longer than usual."* (v3.0.17, grouped form) | ℹ Info | Same as the row above, happening on 3 or more batches in this ingest. | Same per-batch recovery, grouped into one line. | Nothing. |
 | *"The AI returned a page with no path — it could not be written."* (v3.0.17) | ℹ Info | The AI's response for one planned page arrived with no file path attached, so there was nothing to write it to. | Skipped that one page. Nothing else in the ingest was affected. | That page's content did not make it into the wiki. Re-ingest the source, and check the result for anything that seems to be missing. |
@@ -651,11 +652,11 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** (shown only if you've configured **both** a Gemini and an Anthropic key) — pick **Gemini** or **Anthropic** for this chat. This lets you compare how each model answers the same question, without changing your active provider in Settings. If you have just one key, there's nothing to choose and the selector is hidden. The model version shown under each option (e.g. `gemini-2.5-flash-lite`) is whatever The Curator currently uses for that provider — you don't pick specific model versions; that's set globally, and the label updates automatically when The Curator moves to a newer model.
-- A **paperclip** button sits to the left of both. It is **disabled** — ingesting from chat isn't connected yet. Use **Ingest** in the rail.
+- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — that provider alone offers seven models. With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
+- There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
 - To the right, a small note reads *"cost varies with response length"*.
 
-Both dropdowns open **upward**. Both choices are remembered in your browser between questions.
+Both dropdowns open **upward**. Both choices are remembered in your browser between questions — the model you pick here stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one. It applies to **chat only**: ingest, Compile and Health scans keep using the model set in Settings ([§16b](#16b-choosing-your-ai-model) explains why the two are separate).
 
 ### Answer length — Concise · Balanced · Detailed
 
@@ -1016,7 +1017,7 @@ Use **Chat** in the rail when you want to:
 - Connect dots across multiple sources ("how does X relate to Y?")
 - Pick up a thread you started in a previous session
 
-The AI reads your wiki on every message, reasons across all of it, and saves the conversation. Powered by your configured low-cost provider (Gemini Flash Lite or Claude Haiku) — perfect for fast everyday Q&A.
+The AI reads your wiki on every message, reasons across all of it, and saves the conversation. Runs on whichever model you've chosen — by default the low-cost tier (Gemini Flash Lite or Claude Haiku), perfect for fast everyday Q&A, with a stronger model one dropdown away for a hard question ([§16b](#16b-choosing-your-ai-model)).
 
 ### Option B — Obsidian graph
 
@@ -1300,7 +1301,7 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 | Section | What's in it |
 |---|---|
 | **General** | Appearance (theme), System check, Show setup guide |
-| **Providers & keys** | Gemini, Anthropic — save, set active, disconnect |
+| **Providers & keys** | Gemini, Anthropic — save, set active, disconnect, **and choose which model each one runs** ([§16b](#16b-choosing-your-ai-model)) |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
@@ -1322,7 +1323,9 @@ Saving a key makes that provider active (*last-saved-wins*). Two more buttons ap
 - **Set active** — makes this the provider used for ingest, chat and health scans, without re-pasting anything. Shown only on a provider that has a key and isn't already active.
 - **Disconnect** — removes that key entirely. Use it only when you want to drop a provider, not just deactivate it.
 
-You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure.
+Under each connected provider's row there is a collapsible **model list** — that is where you choose which model that provider runs. It is covered in its own section: [§16b Choosing your AI model](#16b-choosing-your-ai-model).
+
+You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. OpenRouter is not supported either. The only two providers The Curator can call today are Gemini and Anthropic.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
 
@@ -1330,13 +1333,15 @@ You'll also see rows for **OpenAI** and **Local model** marked *"not available i
 
 AI providers retire models. When the model The Curator normally uses disappears, the app doesn't break — it automatically falls back to the next model on a short list, and everything (ingest, chat, Health, sync) keeps working.
 
-> **You will not currently be told in the redesigned interface.** The amber "Using fallback model" banner exists only in the previous interface at `/old` → Settings. The fallback itself works either way; the notice hasn't been ported yet. If a big ingest suddenly costs more than you expect, this is the first thing to check — open `/old` and look at Settings.
+**You are told about it.** An amber **"Using fallback model"** banner appears at the top of **Settings → Providers & keys**, above the provider rows and never behind a disclosure — a fallback silently changes what you are billed, so it is deliberately unmissable. It names the model that is unavailable and the one actually running.
 
-In `/old`, the banner names the model it switched to and usually carries a second line:
+The banner usually carries a second line:
 
 > 💰 This model costs more than your usual one — every ingest, compile and chat is billed at the higher rate until the default is restored.
 
-Take it seriously: with Gemini, **every** model the app can fall back to is more expensive than the default — the closest successor costs 2.5× more per input token and 3.75× more per output token, and a big ingest is where that shows up on your bill. (Claude users may land on a genuinely cheaper model, in which case no cost line appears at all.)
+Take it seriously: on Gemini, **every** model the app can fall back to is more expensive than the default — the closest successor costs 2.5× more per input token and 3.75× more per output token, and a big ingest is where that shows up on your bill. On Anthropic the same is true if you were on the default `claude-haiku-4-5`; if you had *pinned* a pricier model ([§16b](#16b-choosing-your-ai-model)) the fallback can land you on something genuinely cheaper, in which case no cost line appears at all. The line compares what you asked for against what is actually running, so it is right either way.
+
+**The fallback list is fixed and does not follow your pick.** It is a short per-provider list chosen for the app, not a search for the nearest match to your model. So if the model you pinned disappears, you land on that provider's fallback list rather than on something similar to your choice — one more reason the banner names both ids.
 
 You may instead see a softer note:
 
@@ -1394,6 +1399,129 @@ The same section holds the MCP setup wizard (**Set up Claude Desktop** / **Re-co
 **Settings → Knowledge base** shows where your `domains/` folder lives and lets you move it — **Choose folder** (macOS only; it opens Finder) or **Copy** the path to paste into Obsidian's *Open folder as vault*. Moving the folder loses nothing: point The Curator at the new location and the graph is picked up as-is.
 
 The **Choose folder** button greys out while anything is writing to your wiki. That's deliberate — changing the folder mid-ingest would scatter the rest of that document's pages into the new location.
+
+---
+
+## 16b. Choosing your AI model
+
+For most of its life The Curator ran exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still what you get if you never touch anything. But it also meant that if you wanted more capability out of a big wiki, and were willing to pay for it on your own key, there was no way to ask.
+
+Now there is. **Fourteen models** are on offer: seven Gemini and seven Anthropic.
+
+> **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
+
+### The two places you can pick — and why they're different
+
+| Where | Scope | Governs |
+|---|---|---|
+| **Settings → Providers & keys →** the model list under a provider | **Durable.** Saved on this machine, survives restarts, applies to everything. | **Ingest, Wiki Health AI scans, Compile to Wiki, and chat.** |
+| **Chat composer → Model dropdown** (next to Length) | **Chat only.** Remembered in this browser until you change it. | Only the chat messages you send. |
+
+That split is deliberate, and it's about money. Ingest is by far the biggest consumer of tokens — a batch of PDFs on Opus is a genuinely different bill from the same batch on Flash Lite. Chat is cheap and reversible: one question, one answer, and you can ask it again on another model to compare. So trying an expensive model on a single chat must not quietly change what your next ingest costs, and it doesn't — the composer choice never touches the Settings choice.
+
+Two consequences worth knowing:
+
+- The composer choice is **sticky per browser, not per conversation.** Pick Opus in the composer and every later chat message from that browser uses Opus, across conversations and across restarts, until you pick something else. There is no "back to default" row in the composer menu — to go back, pick the default model (the cheapest one, at the top of its provider group) explicitly.
+- The composer choice **overrides** the Settings choice for chat. If Settings says Sonnet 5 and the composer says Haiku 4.5, chat runs Haiku 4.5.
+
+### Picking, pinning, and following the default
+
+Under each connected provider in **Settings → Providers & keys** there is a collapsible list. Collapsed, it already answers the common question — it names the model that provider is running and shows a **your choice** marker if that model is yours rather than ours. Expanded, each model is a row with a **Use this** button; the one you're on reads **Selected** instead of offering a button that would do nothing.
+
+The line at the top of the list tells you which of two states you're in, and they are genuinely different:
+
+- **Following the app default** — you have picked nothing. A future Curator release can move you onto a newer model.
+- **Pinned** — you have picked something. App updates will not move you off it.
+
+**Picking today's default pins it.** If you click **Use this** on `gemini-2.5-flash-lite`, you are no longer following the default; you have chosen that exact model and it will stay that model. To go back to following, use the **Follow the app default** button, which only appears when there is something to clear.
+
+If a model you pinned is later withdrawn — a provider retires it, or we pull it after a bad measurement — nothing breaks. The app quietly falls back to that provider's default, which is its cheapest model. The worst case of any refusal is that you spend *less* than you asked for, never more.
+
+### Why you can't change the model during an ingest
+
+While anything is writing to your wiki, the **Use this** buttons grey out, and the server refuses the change even if you get a click in. That refusal is correct, for three separate reasons:
+
+1. **A half-and-half document.** The model is looked up fresh on every AI call, and a multi-phase ingest makes twenty or more calls over several minutes. A change mid-run would plan the document's structure on one model and write its pages on another.
+2. **A wasted cache.** On Anthropic, The Curator reuses a cached block of shared instructions across the calls of one ingest — a saving of roughly 50–70% on those calls. A different model is a different cache, so every cached read becomes a full-price write. The saving inverts into a surcharge.
+3. **Wrong arithmetic.** Cost is priced per model. Changing model mid-batch makes the spend figure — and any budget cap you set — wrong.
+
+Wait for the run to finish. The chat composer's dropdown is unaffected and stays usable throughout — it only remembers a preference in your browser and attaches it to your next chat message; it changes nothing on the server, so there is nothing that could land mid-run.
+
+### Why these fourteen — the selection criteria
+
+Every model on the list was **probed live against The Curator's real ingest prompt, on real prose** — not against a toy *"return this JSON"* test. That matters more than it sounds: several of the defects below only appear under a realistic prompt and would have passed a simple probe green. Prices were read off the providers' **live pricing pages**, never a cached copy, because a cached table once carried a scheduled price change that had already been cancelled.
+
+Five things were measured, and each row in the list shows what came back:
+
+| Criterion | What it means for you |
+|---|---|
+| **Price** | US dollars per million tokens, in and out, **as billed today**. This is the number on the row. |
+| **Maximum output tokens** | The hard ceiling on how much the model can write in one call. A bigger ceiling means a long document is less likely to be cut off mid-write. Anthropic ranges from 64,000 to 128,000 depending on the model; every Gemini model on offer is 65,536. |
+| **Thinking tokens** | Some models reason invisibly before answering. **Those hidden tokens are billed as output, and they come out of the same budget as the answer** — so a thinking model both costs more than the visible answer suggests and has less room left for the answer itself. Rows that do this are marked **thinks**. |
+| **JSON reliability** | Ingest asks the model for structured data. Some return clean data; some wrap it in formatting that has to be repaired first (harmless — the repair is routine); one returns data that *cannot* be repaired some of the time. |
+| **Outline coverage** | How many wiki pages the model plans from the same source document. More pages means a finer-grained, better-connected wiki. This is the axis where the price and the result diverge most sharply. |
+
+Two rules keep the list honest, and they're worth stating plainly:
+
+- **A model is not offered for a feature it has never been measured against.** Two real, documented, priced Anthropic models are deliberately *absent* because nobody has run them against the actual ingest prompt. Guessing would mean guessing about your bill.
+- **No working model is hidden.** If a model measured badly, it is shown **with the reason on screen** rather than quietly removed. Deciding for you what you may spend your own API key on isn't our call; telling you what we measured is.
+
+### What the badges mean
+
+In **Settings**, each row can carry any combination of:
+
+| Badge | Meaning | What to do |
+|---|---|---|
+| **cheapest** | The least expensive model on that provider. Always the first row. | Nothing. It's a reference point for the rows below it. |
+| **in use** | This is what the provider is actually running right now. | Nothing. |
+| **your choice** | You pinned this one. Without it, you're following the app default. | Nothing — but it tells you an update won't move you. |
+| **caution** | Usable everywhere, but carries a measured downside you should see before choosing: a scheduled price rise, thinner results than a *cheaper* model, or a same-priced sibling that beat it. | Expand the row and read the note. Then choose deliberately. |
+| **chat only — not for ingest** | Measured *unfit for ingest specifically.* Chat is unaffected. | Fine for chat. Don't make it your Settings model, because Settings governs ingest. |
+| **out-performed** | Another model at **exactly the same price** measured better on every axis tested. | Pick the sibling named in the note instead. You're paying the same either way. |
+
+The **chat composer** menu shows a shorter set on the same data: **caution**, **chat only**, **dominated** (the composer's word for *out-performed*), and **thinks**. It also shows the full measured note on any flagged model, so a warning is never a badge you can't interpret.
+
+### Why some models are flagged
+
+Two examples, because the principle matters more than the specifics:
+
+**`gemini-3.5-flash-lite` is offered but marked "chat only — not for ingest."** In 2 of 9 live runs against the real ingest prompt it returned structured data that neither the parser nor the repair pass could fix — a genuine generation defect, not a length problem the app could work around. Chat doesn't ask for structured data at all, so it's unaffected and the model stays genuinely useful there. It also happens to cost **exactly the same** as `gemini-2.5-flash`, which was clean on every run of the identical test and plans wider outlines. So it is flagged, and its cleaner twin is one row away.
+
+**`claude-opus-4-5` is offered but marked "out-performed."** At the identical $5 / $25 it is behind `claude-opus-5` on all three measured axes: half the output ceiling, formatting that needs repair, and 12–13 planned pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price. There is no measurement supporting the choice — but it is still on the list, labelled, because it is your key.
+
+### The two promotional prices
+
+`gemini-3.7-flash` and `gemini-3.6-flash` bill at **$0.75 in / $3.75 out per 1M tokens through 31 December 2026**, then **double to $1.50 / $7.50 on 1 January 2027**.
+
+The app shows the rise beside the price, and switches over on the date by itself — you don't have to do anything, and no release has to ship on New Year's Day. But it matters for a decision you're making now: **a pinned model stays pinned.** If you choose one of these because it looks cheap today, nothing will move you off it when the price doubles. If a low price is the reason you're picking it, put a note in your calendar.
+
+Everything about pricing here fails in the safe direction. A wrong clock, a missing record, anything at all — and you are quoted the **higher** price. Being quoted more than you're billed means you pick a cheaper model than you needed; being quoted less means you were lied to.
+
+### Cost, honestly
+
+Across the two catalogues, the span is roughly **50× on input and 62× on output** — from $0.10 / $0.40 per 1M tokens at the cheap end to $5 / $25 at the expensive one. Choosing blind can multiply your bill without you noticing, which is why every row carries its own price and no price is hidden behind an expand.
+
+One thing you could not possibly work out for yourself, so it belongs here:
+
+> **The headline price understates the newest Anthropic models by about a third.** `claude-sonnet-5`, `claude-opus-5` and `claude-opus-4-8` use a newer tokenizer that produced **1.33× more input tokens** than `claude-haiku-4-5` on the *same* Curator text. So Opus at $5 per 1M input tokens really costs about **$6.65 for the same page of prose — 6.6× the default, not the 5× the headline implies.** The rows show this as *"1.33× input tokens on the same text"*. It is not folded into the price, because then our table would disagree with your provider's invoice. It's measured on input only, and it compares Anthropic models to each other — it says nothing about Gemini.
+
+Also remember that a **thinks** model bills its invisible reasoning as output tokens, at the output rate. On Gemini the measured amounts ran from about 900 to 2,600 hidden tokens per call depending on the model; `claude-sonnet-5` ran adaptive reasoning on every single call measured.
+
+### What isn't available
+
+- **OpenRouter** — not supported. There is no way to route The Curator through it.
+- **Local models** — not supported for The Curator's own calls. The **Local model** row in Settings is a placeholder marked *"not available in this build."* (You *can* point a local model at your wiki through the MCP bridge — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252) — but that is the model reading your wiki, not The Curator calling it.)
+- **OpenAI** — the same: a placeholder row, nothing to configure.
+- **Gemini Pro** — a deliberate omission rather than an oversight. It is a different price class again, and nothing on the list was found short of coverage.
+
+### If you just want a recommendation
+
+These are measurements, not endorsements. Your documents are not the documents that were tested, and the numbers below come from a small number of live runs.
+
+- **The cheapest defaults are genuinely good.** `gemini-2.5-flash-lite` planned the widest outlines of any Gemini model measured — wider than models costing fifteen times more — with clean output and no hidden reasoning spend. On Gemini, paying more did not buy a better plan. If you have no specific reason to move, don't.
+- **On Anthropic, `claude-sonnet-5` was the strongest value measured.** It is cheaper than both Sonnet 4.6 and 4.5 while measuring better than either. Two costs its price hides: it thinks on every call (billed as output) and it carries the 1.33× tokenizer premium.
+- **`claude-opus-5` produced the richest outlines by a wide margin** — 25–27 pages against 5–13 for the Anthropic default on the same source — at a large multiple of the cost. If there is one reason to reach for it, it is that the Anthropic default's coverage was **the most variable of anything measured**: 5 to 13 pages from the *same* document run to run, so a long document can be planned much more thinly on one run than the next.
+- **A reasonable middle path:** leave Settings on a cheap default so bulk ingest stays affordable, and use the composer dropdown to ask your hardest questions of a stronger model. That is exactly the split the two controls exist for.
 
 ---
 
@@ -1678,7 +1806,7 @@ So when you see a bill, the dominant line item is **ingest**. Chat and Health As
 
 | | **Google Gemini 2.5 Flash Lite** | **Anthropic Claude Haiku 4.5** |
 |---|---|---|
-| Default in The Curator | ✅ Yes | Optional fallback |
+| Default in The Curator | ✅ Yes (overall default) | ✅ Yes (the Anthropic default) |
 | Free tier | 15 RPM · 1,000 RPD · 250k TPM | ❌ No free tier |
 | Paid input price | **$0.10 / 1M tokens** | $1.00 / 1M tokens |
 | Paid output price | **$0.40 / 1M tokens** | $5.00 / 1M tokens |
@@ -1687,6 +1815,8 @@ So when you see a bill, the dominant line item is **ingest**. Chat and Health As
 | Where to get a key | [aistudio.google.com](https://aistudio.google.com/app/apikey) | [console.anthropic.com](https://console.anthropic.com/) |
 
 > Gemini has a free tier *and* the cheapest paid tier *and* the largest context window. That is why it is the default. Claude Haiku 4.5 is the right choice if you specifically want Anthropic — for example because you already have a corporate Anthropic account, or you prefer Anthropic's privacy stance — but expect a roughly 10× higher bill for the same workload.
+
+> ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen models on offer the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
 
 ### What the Gemini free tier actually gives you
 
@@ -1807,7 +1937,7 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 🩺 [System Check](system-check.md) | Settings → General → System check — confirm the app setup is correct + an optional AI connection test |
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |
-| 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained |
+| 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained, plus the full measured catalogue behind [§16b](#16b-choosing-your-ai-model) |
 | 🍎 [Mac App Setup](mac-app.md) | Detailed Mac Dock launcher instructions |
 | 🛠 [API Reference](api-reference.md) | REST API endpoints (for developers) |
 | 🏗 [Architecture](architecture.md) | System design (for developers) |

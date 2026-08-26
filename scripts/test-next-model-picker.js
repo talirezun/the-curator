@@ -462,6 +462,19 @@ section('§4  Every FLAGGED model shows its measured note, verbatim (M2)');
         `"${m.id}" (${m.suitability}${m.dominated ? ', dominated' : ''}): renders its note VERBATIM`);
       ok(li.includes('model-badge-flag'),
         `"${m.id}": carries a flag badge, so the note has something to explain`);
+      // WORD-LEVEL PIN, not merely "a flag badge exists": the `dominated`
+      // field renders as the literal text "out-performed" on THIS surface,
+      // matching the word chat.js's renderModelOptionHtml uses for the
+      // identical `OFFERABLE_MODELS[].dominated` flag (src/brain/llm.js —
+      // not owned by either view). See scripts/test-next-composer-model.js
+      // for the chat.js half of this pin. There is no shared JS constant the
+      // two views both import (independent modules, independent badge
+      // tables), so these two assertions ARE the enforcement — keep both in
+      // sync by hand if the word ever changes.
+      if (m.dominated === true) {
+        ok(li.includes('>out-performed<'), `"${m.id}": dominated entry renders the word "out-performed" (matches chat.js)`);
+        ok(!li.includes('>dominated<'), `"${m.id}": dominated entry does NOT render the raw field name "dominated" as its label`);
+      }
     }
   }
   ok(flagged >= 4, `${flagged} flagged models enumerated — a collapse to 0 would make §4 vacuous`);

@@ -17,24 +17,29 @@
  * covered here the moment it lands, and this suite cannot silently drift into
  * testing a catalogue that no longer ships.
  *
- * ── WHAT THIS SURFACE IS, AND WHY IT IS GATED ────────────────────────────
+ * ── WHAT THIS SURFACE IS, AND THE GATE IT SHIPPED BEHIND ─────────────────
  * The composer has carried a per-chat PROVIDER dropdown since v3.0.11. This
  * change extends it to a per-chat MODEL choice, rendering each model's LIVE
  * (promotion-resolved) price and, for any model carrying a measured caveat,
  * that caveat verbatim.
  *
- * It ships behind `MODEL_PICKER_ENABLED = false` because the backend does not
- * yet honour a model on the chat path: `POST /api/chat/:domain` destructures
- * `{ message, conversationId, responseStyle, provider }` and never reads
- * `model`; `sendMessage` calls `generateText(..., { provider })` with no model.
- * A picker that quotes "$5/$25" and is silently served the $1/$5 default would
- * be a falsehood about capability AND money.
+ * `MODEL_PICKER_ENABLED` is `true` as of v3.13.0: the backend now honours a
+ * model on the chat path (`normalizeChatModel` in src/brain/chat.js, threaded
+ * through `sendMessage`/`generateText` and destructured by
+ * `POST /api/chat/:domain`). Before that landed, this constant was held at
+ * `false` for a real reason, kept here because it explains why this whole
+ * suite exists rather than a smaller one: a picker that quotes "$5/$25" and
+ * is silently served the $1/$5 default would be a falsehood about capability
+ * AND money, and this repo has shipped inert-looking controls before (see
+ * chat.js's own header comment on `MODEL_PICKER_ENABLED` for the fuller
+ * record).
  *
- * THIS SUITE THEREFORE FORCES THE GATE ON. The renderers are pure and take
- * every input as a parameter, so they are fully exercisable regardless of the
- * constant's value — which is the point: flipping the constant when the
- * backend lands ships a surface that is already proven, not one that has never
- * been run.
+ * THIS SUITE FORCES THE GATE ON regardless of the constant's live value — the
+ * renderers are pure and take every input as a parameter — which is exactly
+ * what let it certify the surface BEFORE the flip: the constant going from
+ * `false` to `true` in v3.13.0 shipped an already-proven feature, not one
+ * that had never been run. §9 below is the drift guard that would have
+ * failed loudly had the backend landed without the constant being flipped.
  *
  * ── WHAT IS ASSERTED, AND HOW ────────────────────────────────────────────
  * Everything below DRIVES the real extracted functions. Nothing here greps the
@@ -82,12 +87,17 @@
  *     (`resolveChatModel`) is what actually decides selectability, and it is
  *     driven directly in §4. The handler's re-validation at click time is
  *     covered only by the browser pass, not by this suite.
- *   - Nothing here proves the BACKEND honours a model — it does not, which is
- *     the whole reason for the gate. §9 detects the day it changes, but only
- *     via a naming convention (see its header); a backend that lands model
- *     support WITHOUT a model-named export on `__testing` would leave the gate
- *     shut and this suite green. That is the SAFE direction (no inert control),
- *     and it is recorded here rather than assumed away.
+ *   - This suite does not itself DRIVE `POST /api/chat/:domain` to prove the
+ *     backend honours a model end-to-end (no server, no network — see the
+ *     top of this file); it proves the render/selection surface is correct
+ *     and, via §9, that the gate constant tracks the backend's real
+ *     capability. §9 detects drift only via a naming convention (see its
+ *     own header); a backend that lands model support WITHOUT a
+ *     model-named export on `__testing` would leave the gate shut and this
+ *     suite green — that is the SAFE direction (no inert control), and it
+ *     is recorded here rather than assumed away. The live backend-to-UI
+ *     path is covered by `src/brain/chat.js`'s own suite plus manual/browser
+ *     verification, not by this file.
  *   - CSS, layout, focus rings, dark/light rendering and the outside-click /
  *     Escape behaviour are browser concerns, verified by hand, not here.
  */
@@ -481,6 +491,22 @@ section('§7  Measured notes — every flagged model shows its reason, verbatim'
   const { html } = menuFor(ALL_PROVIDERS);
   for (const { e } of flaggedEntries) {
     ok(html.includes('data-model-id="' + e.id + '"'), `${e.id}: flagged model is still selectable in the menu`);
+  }
+  // WORD-LEVEL PIN, not merely "a badge exists": the `dominated` flag renders
+  // as the literal text "out-performed" on THIS surface, matching the word
+  // settings.js's renderModelOption uses for the identical
+  // `OFFERABLE_MODELS[].dominated` flag (src/brain/llm.js). Before this
+  // assertion existed, nothing on either surface pinned the rendered WORD —
+  // only the `model-badge-flag` / `is-warn` CSS marker — so one surface could
+  // silently drift back to the raw field name "dominated" while every other
+  // assertion here stayed green. See scripts/test-next-model-picker.js for
+  // the settings.js half of this pin; there is no shared JS constant the two
+  // views both import (independent modules, independent badge tables), so
+  // these two assertions ARE the enforcement — keep both in sync by hand.
+  for (const { p, e } of dominatedEntries) {
+    const html2 = renderModelOptionHtml(p, e, null);
+    ok(html2.includes('>out-performed<'), `${e.id}: dominated entry renders the word "out-performed" (matches settings.js)`);
+    ok(!html2.includes('>dominated<'), `${e.id}: dominated entry does NOT render the raw field name "dominated" as its label`);
   }
   // The flag itself discriminates on BOTH inputs, independently.
   ok(isFlaggedModel({ suitability: 'caution', dominated: false }) === true, 'suitability "caution" alone flags');

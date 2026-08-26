@@ -25,7 +25,7 @@ const DEFAULTS = {
 };
 ```
 
-Both defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output can override via `LLM_MODEL=<model-id>` in `.env`.
+Both defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output pick a different model in **Settings → Providers & keys**, or per-chat from the composer — see [Choosing a model](#choosing-a-model-multi-model-support) below and [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). (Developers additionally have the unrestricted `LLM_MODEL` escape hatch; it bypasses the allow-list and outranks the stored Settings choice.)
 
 When a provider retires or supersedes one of these, we bump the constant in a new release and push. Users get the new default via **Settings → Check for Updates**.
 
@@ -174,6 +174,19 @@ For most of its life The Curator could run exactly **two** models — one per pr
 
 **The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned, and remain the cheapest thing on their provider. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
 
+The catalogue currently holds **14 models — 7 Gemini and 7 Anthropic**. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below).
+
+### Where a user picks, and what each choice governs (v3.13.0)
+
+| Surface | Persistence | Scope |
+|---|---|---|
+| **Settings → Providers & keys →** the collapsible model list under a connected provider | Server-side, in `selectedModels` in `.curator-config.json` | **Ingest, AI Health scans, Compile to Wiki, and chat** — everything |
+| **Chat composer → Model dropdown** | `localStorage` in that browser (`curator-next-chat-model`) — sticky across conversations and restarts, **not** per-conversation | **Chat only** |
+
+The split is about money and reversibility: ingest is the dominant token consumer, so trying an expensive model on one chat must not change what the next ingest costs. Note there is **no "follow the default" row in the composer menu** — to return, the user picks the default model explicitly. In Settings there *is* a **Follow the app default** button, and it is the only route back to the un-pinned state: picking today's default model by hand **pins** it, which is a different thing (a pinned choice survives a Curator release that bumps `DEFAULTS`; following does not).
+
+Resolution precedence is `per-call preferModel > LLM_MODEL > stored selection > DEFAULTS`, every refusal falls back rather than throwing, and the write route is `guardConcurrent`'d so a pick cannot land mid-ingest. The mechanics — the five model-producing sites, the config-only key gating at both ends, the persistence layer, and why `FALLBACK_CHAINS` and `OFFERABLE_MODELS` obey different rules — are in [architecture.md → Model selection](architecture.md#model-selection-the-router-v3120--v3130). The user-facing walkthrough is [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model).
+
 ### What each entry tells you
 
 | Field | Meaning |
@@ -272,7 +285,9 @@ When releasing a new version that updates a model default:
 
 > **The provider selector requires no change here.** The chat *provider* selector (Gemini / Claude) reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`), so bumping `DEFAULTS` updates its label automatically.
 >
-> **The model picker is different, and does need step 5.** It reads `OFFERABLE_MODELS` (served additively as `offerable` on the same endpoint), so a new model appears there only when you add a measured entry for it — deliberately, because that entry is where its price, its ceiling and its trade-off come from. Bumping `DEFAULTS` alone changes which model is *pre-selected*, not what is *available*.
+> **The model picker is different, and does need step 5.** It reads `OFFERABLE_MODELS` (served additively as `offerable` on the same endpoint), so a new model appears there only when you add a measured entry for it — deliberately, because that entry is where its price, its ceiling and its trade-off come from. Bumping `DEFAULTS` alone changes what a user who has picked **nothing** runs; it does not change what is *available*, and it does not move a user who has pinned a model.
+>
+> **Removing an `OFFERABLE_MODELS` entry silently un-pins everyone who chose it.** Their stored id stops passing `isOfferableModel`, so `applyModelOverride` drops them to `DEFAULTS[provider]` on the next call — no error, no banner, and `selectedModels` still reports the id they picked while `models` reports the default they are actually getting (the picker renders nothing as "your choice" in that state, which is the honest outcome). That is the deliberate fail-safe direction — it can only ever spend *less* — but it is a real user-visible consequence of a pull, so pull a model only for a measured reason and say so in the release notes.
 
 When a model is retired without a direct successor (rare):
 
@@ -282,7 +297,11 @@ When a model is retired without a direct successor (rare):
 
 ## Overriding the default locally (developers only)
 
-Set `LLM_MODEL=<model-id>` in `.env` to override for the running provider. The Curator treats this the same as a pinned default — fallback still activates if the override itself is rejected. Useful for:
+Set `LLM_MODEL=<model-id>` in `.env` to override for the running provider. The Curator treats this the same as a pinned default — fallback still activates if the override itself is rejected.
+
+**It is unrestricted and it outranks the user's Settings choice.** `LLM_MODEL` deliberately bypasses the `OFFERABLE_MODELS` allow-list — that is the whole point of an escape hatch, and it is how an unprobed model gets probed in the first place. It beats the stored selection because the two occupy the same slot (both reshape the provider default), and letting a Settings click silently override it would remove the escape hatch and make it untestable. It does **not** beat a per-call choice: the chat composer's model dropdown is applied last and wins, on the reasoning that a developer who set an env var would be more surprised to find it overriding a selection they just made in the UI than the reverse. Full precedence: [architecture.md → Model selection](architecture.md#model-selection-the-router-v3120--v3130).
+
+Useful for:
 
 - Testing against a new model before releasing.
 - Pinning to a known-good older model during a provider outage.
@@ -337,14 +356,17 @@ The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, c
 
    **Do not verify this path with a toy prompt.** Adaptive thinking is prompt-dependent: `Return {"ok":true}` comes back as `[text]` and passes green while a real ingest prompt fails. `scripts/test-anthropic-content-blocks.js` therefore asserts a class invariant over generated content arrays rather than a list of remembered shapes.
 
-If your usage patterns make Haiku's quality insufficient (rare for wiki ingest but possible for dense academic PDFs), you can opt into Sonnet via:
+If your usage patterns make Haiku's quality insufficient (rare for wiki ingest but possible for dense academic PDFs), the supported route is **Settings → Providers & keys**, which offers six Anthropic alternatives with their measured trade-offs on screen. `claude-sonnet-5` measured the strongest value of the seven; `claude-opus-5` the richest outlines, at a large multiple.
+
+Developers can still bypass the catalogue entirely:
 
 ```bash
-# in .env
+# in .env — unrestricted, bypasses the OFFERABLE_MODELS allow-list,
+# and outranks whatever the user picked in Settings.
 LLM_MODEL=claude-sonnet-4-5
 ```
 
-Or any other model ID Anthropic accepts. The fallback chain still applies on top of your override.
+Any model ID Anthropic accepts works there. The fallback chain still applies on top of the override.
 
 ---
 
@@ -393,9 +415,14 @@ While adding `claude-sonnet-5`, a cached pricing table stated its $2/$10 rate wa
 | `claude-sonnet-4-5` | 64,000 |
 | `claude-sonnet-4-6` | **128,000** |
 | `claude-sonnet-5` | **128,000** |
+| `claude-opus-4-5` | 64,000 |
+| `claude-opus-4-8` | **128,000** |
+| `claude-opus-5` | **128,000** |
 | *anything unrecognised* | 64,000 |
 
-Note the caps are **not monotonic with recency** — Sonnet 4.5 is 64k while the newer 4.6 is 128k — so a cap can never be inferred from a version number.
+Note the caps are **not monotonic with recency** — Sonnet 4.5 is 64k while the newer 4.6 is 128k — so a cap can never be inferred from a version number. The pattern that *does* hold across the table is **generational**: everything in the 4.5 generation caps at 64,000 and everything 4.6-and-later at 128,000, which is why `claude-opus-4-5` sits at 64,000 while the numerically-adjacent `claude-opus-4-8` doubles it. That is an observation about today's data, **not** a rule the code uses — every id is still keyed exactly, because the moment a cap is inferred from a family word it is a heuristic, and this repo has been bitten twice by exactly that (the retired price-tier heuristic, and the pre-2026-08-24 flat 64,000 clamp that silently halved Sonnet's ceiling).
+
+Gemini is not clamped at all. Its models each carry a **65,536** ceiling in `GEMINI_MODEL_MAX_OUTPUT_TOKENS`, but that map is **declarative data for the catalogue only** — Gemini clamps an over-large `maxOutputTokens` server-side rather than rejecting it, so a client-side clamp would be a behaviour change with no failure to fix. The map exists so the UI can tell a user what ceiling a model has, and so `defineOfferableModel` can refuse a Gemini model whose ceiling is unknown.
 
 An unknown id resolves to the **conservative** value on purpose: guessing high produces a hard API rejection, while guessing low merely truncates, and chat degrades gracefully on truncation (v3.0.7).
 
