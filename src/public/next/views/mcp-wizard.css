@@ -113,11 +113,23 @@
 
 /* ── Panels ───────────────────────────────────────────────────────────── */
 
-.mcpw-panel { animation: mcpwFadeIn 0.16s ease; }
+/* Duration comes from the token, not a hardcoded 0.16s: motion.css's own
+   header calls this class of transition ("things that enter or leave") 180ms,
+   which is exactly --dur-mid. Using the token is what lets the reduced-motion
+   block in tokens/motion.css (which zeroes --dur-* to 0ms) actually reach this
+   rule — a hardcoded literal bypasses that block entirely. The explicit
+   `animation: none` below is a second, belt-and-braces layer: a 0ms animation
+   still technically runs one cycle, and stating `none` makes the intent
+   unambiguous to the next reader (see views/chat.css .chat-spinner for the
+   same two-layer pattern). */
+.mcpw-panel { animation: mcpwFadeIn var(--dur-mid) var(--ease-out); }
 .mcpw-panel.mcpw-hidden { display: none; }
 .mcpw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
 .mcpw-panel h3:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
 @keyframes mcpwFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .mcpw-panel { animation: none; }
+}
 
 .mcpw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
 .mcpw-hint-tight { margin-top: -4px; font-size: var(--text-xs); }
