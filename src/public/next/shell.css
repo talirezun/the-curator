@@ -180,6 +180,107 @@ body {
   padding: 30px 28px 64px;
 }
 
+/* ── View enter motion ───────────────────────────────────────────────────
+   The rail was the only thing in this shell that moved. `.rail-btn` carries
+   a 120ms state transition; `#view-root`, `.main-inner` and `.sidebar-inner`
+   all computed `animation: none`, so a rail click swapped both columns with
+   a hard cut. This is the smallest honest fix for that: a short opacity +
+   slide on the two STABLE containers, fired once per navigation from
+   navigate() in app.js.
+
+   WHY #view-root AND NOT #main — the distinction is one word wide and has a
+   real defect on the wrong side. A CSS `transform` makes an element the
+   containing block for every `position: fixed` DESCENDANT. `#main` contains
+   `#reader-root`, whose `.reader-scrim` is `position: fixed` and is
+   deliberately viewport-anchored — that rule's own comment below already
+   says "`.main` has no transform/filter ... if `.main` ever gains one, this
+   needs to move to a non-transformed ancestor instead". Animating `#main`
+   would silently re-anchor the reader overlay to the main column: a bug
+   that looks cosmetic and behaves like the v3.8.0 click-swallower.
+   `#view-root` is a SIBLING of `#reader-root`, and every other fixed
+   surface in /next (the confirm dialog, the onboarding panel, the MCP and
+   Shared Brain wizards, the cutover bar) is `document.body.appendChild`ed,
+   so `#view-root` has no fixed descendants at all.
+
+   WHY THE STABLE CONTAINERS AND NOT `.main-inner` / `.sidebar-inner` —
+   setMain() replaces `#view-root`'s child with a fresh `.main-inner` on
+   every call, and the two most-used views call it TWICE per entry
+   (domains.js and chat.js each paint a "Loading…" placeholder, then replace
+   it with the loaded state). Animating the inner element would fade in
+   "Loading…", then fade in the content — a double-fire on exactly the
+   screens people use most. These two containers persist across both writes,
+   so firing on them from navigate() runs the motion exactly once.
+
+   WHY translateX AND NOT translateY — `.main` and `.sidebar` are both
+   `overflow-y: auto`, so a downward translate extends the scrollable box and
+   can flash a scrollbar for the length of the animation on any view whose
+   content sits within a few px of exactly filling the column. Both are
+   `overflow-x: hidden`, so a horizontal translate is STRUCTURALLY unable to
+   produce one — it is clipped, never scrolled. This was measured on the
+   vertical form first (scrollHeight vs clientHeight, sampled during the
+   animation at a boundary viewport height) rather than assumed.
+
+   Durations come from tokens, so tokens/motion.css's reduced-motion block
+   already zeroes them; the explicit `animation: none` escape below is the
+   second layer, and is the shape scripts/test-next-reduced-motion.js
+   recognises as coverage. */
+
+@keyframes shell-enter-main {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes shell-enter-sidebar {
+  from { opacity: 0; transform: translateX(5px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* NO animation-fill-mode, and that is a measured choice, not an omission.
+
+   The first cut used `backwards`, on the assumption it was needed to stop a
+   one-frame flash of the finished state before the animation's first tick.
+   Measured: it is not. Reading getComputedStyle synchronously in the same
+   task as the rail click already returns `opacity: 0` / `translateX(8px)`
+   with no fill mode at all — the animation resolves its start time and
+   enters its active phase before the next paint, so t=0 IS the from-state.
+   And on completion the animation removes itself entirely
+   (`el.getAnimations().length === 0`), leaving no residual transform or
+   opacity on a shell container. `forwards`/`both` would both leave one.
+
+   What `backwards` DID add was one more way for this container — which
+   wraps the ENTIRE main column — to be held at `opacity: 0`. It is worth
+   recording precisely, because the obvious reading of it is wrong: a frozen
+   animation timeline pins the from-state REGARDLESS of fill mode, since an
+   animation sitting at currentTime 0 is in its ACTIVE phase, not its before
+   phase. Reproduced in an offscreen embedding whose document reports
+   `visibilityState: "hidden"` — `document.timeline.currentTime` stays 0, the
+   animation reports playState "running" with currentTime 0 indefinitely, and
+   #view-root stays invisible for as long as that holds. Dropping the fill
+   mode does not fix that case and is not claimed to; it removes the
+   separate, before-phase exposure, for free.
+
+   That residual exposure is accepted deliberately: it needs a document that
+   has no rendering opportunities AND never regains them, which for a normal
+   browser tab means nobody is looking at it. The alternative — fading from a
+   non-zero opacity floor so a stalled timeline degrades to "dimmed" rather
+   than "invisible" — was considered and rejected as buying a case nobody can
+   observe at the cost of the effect itself. If this shell is ever embedded in
+   a persistently-hidden webview, revisit that trade here. */
+#view-root.view-enter {
+  animation: shell-enter-main var(--dur-mid) var(--ease-out);
+}
+/* Shorter and shallower: the sidebar is the smaller element and starts at
+   the same instant, so it settles first and the pair reads as one cascade —
+   without a delay, which would only make the main column feel slower to
+   arrive. */
+#sidebar.view-enter {
+  animation: shell-enter-sidebar var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #view-root.view-enter,
+  #sidebar.view-enter { animation: none; }
+}
+
 /* ── First-run guidance dock ─────────────────────────────────────────────
    views/onboarding.js's guidance panel is `position: fixed` over the
    top-right of this column. Fixed takes NO space, so before this rule the

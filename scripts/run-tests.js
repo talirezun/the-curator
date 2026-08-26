@@ -69,6 +69,7 @@ const OFFLINE = [
   'test-chat-compile-card.js',     // compile result renders inline in the thread (no fixed panel)
   'test-css-tokens.js',            // every var(--x) CSS custom property is defined somewhere (the v3.0.12 --text-dim bug class)
   'test-next-reduced-motion.js',   // no /next CSS animation may hardcode a duration unless a same-file prefers-reduced-motion:reduce rule for that SAME selector sets animation/animation-duration — motion.css's reduce block only zeroes --dur-*, so a literal like 0.16s bypasses it (the v3.9.2 .mcpw-panel/.sbw-panel bug)
+  'test-next-view-enter-motion.js', // navigate() fires the enter animation ONCE per navigation on the STABLE containers (#view-root/#sidebar) — not on .main-inner, which setMain replaces twice per entry on domains/chat, and not on #main, which would make the fixed reader overlay a descendant of a transformed element
   'test-domain-stats.js',           // getDomainStats per-type page counts + bulk GET /api/domains/stats
   'test-wiki-page.js',              // GET /api/wiki/:domain/page — single-page read + backlinks (health.js link-resolution parity, path-traversal defenses)
   'test-ingest-queue.js',           // Track 3 batch-ingest queue backend — sequential worker, crash resume, transient-error handling, cost estimate

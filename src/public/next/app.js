@@ -446,6 +446,54 @@ export function registerView(name, def) {
   registry.set(name, def || {});
 }
 
+// ── View enter motion ────────────────────────────────────────────────────
+// The class shell.css hangs the enter animation on. A named constant here
+// and a matching literal there is exactly the kind of pair that drifts: a
+// rename in one file and not the other kills the motion outright, with no
+// error, no console warning and nothing else able to see it. Pinned by
+// scripts/test-next-view-enter-motion.js.
+const VIEW_ENTER_CLASS = 'view-enter';
+
+// The two STABLE shell containers.
+//
+// NOT `.main-inner` / `.sidebar-inner`: setMain()/setSidebar() replace those
+// on every call, and the two most-used views call setMain TWICE per entry
+// (domains.js and chat.js each paint a "Loading…" placeholder, then replace
+// it with the loaded state), so animating the inner element would double-
+// fire on exactly those screens. These two ids persist across both writes.
+//
+// `view-root`, NOT `main`: a transform on #main becomes the containing block
+// for #reader-root's `position: fixed` scrim, silently re-anchoring the
+// reader overlay to the main column. #view-root is #reader-root's SIBLING.
+// See shell.css's "View enter motion" block for the full reasoning — the
+// wrong id here is a reader bug, not a cosmetic one.
+const VIEW_ENTER_TARGETS = ['view-root', 'sidebar'];
+
+/** Restart the shell's enter animation on both stable containers.
+ *
+ *  Purely cosmetic and deliberately inert: it touches no mount token, no
+ *  teardown, no view state and no persisted key, it never gates rendering
+ *  or changes pointer-events, and nothing it does is observable by a view.
+ *
+ *  Null-safe on every element — a missing shell container must never throw
+ *  out of navigate(). That is this file's standing module-scope discipline:
+ *  an unguarded dereference here used to ship a blank page to every user.
+ *
+ *  remove → forced reflow → add is the restart idiom. Removing and re-adding
+ *  a class within one task is otherwise coalesced by the style engine and
+ *  the animation never re-runs, so a rail click on the ALREADY-ACTIVE view
+ *  would produce no motion at all.
+ */
+function playViewEnter() {
+  for (const id of VIEW_ENTER_TARGETS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.classList.remove(VIEW_ENTER_CLASS);
+    void el.offsetWidth; // force reflow so the re-add restarts the animation
+    el.classList.add(VIEW_ENTER_CLASS);
+  }
+}
+
 export function navigate(name) {
   if (!registry || !registry.has(name)) return;
 
@@ -481,6 +529,12 @@ export function navigate(name) {
   const myToken = mountToken;
 
   renderRailActive();
+
+  // Enter motion for the two stable shell containers. Additive and inert —
+  // see playViewEnter() above. Fired HERE, once per navigation, rather than
+  // from setMain()/setSidebar(), which the busiest views call twice per
+  // entry.
+  playViewEnter();
 
   // Rail sync badge, refreshed on every view change. This is the /next
   // equivalent of the shipping app's "refresh on every tab click": the

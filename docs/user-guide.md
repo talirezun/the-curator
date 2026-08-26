@@ -1565,6 +1565,12 @@ No API key is configured. Open the app in your browser and use **Settings → Pr
 
 The server stopped or crashed. Go back to your terminal and run `node src/server.js` again.
 
+**The app animates when I switch sections, and I don't want motion**
+
+The Curator honours your operating system's **Reduce motion** setting. Turn it on (macOS: System Settings -> Accessibility -> Display -> Reduce motion) and every animation in the app stops: the section-change transition, the wizard panels, and the spinner in chat. The progress ring is the one deliberate exception -- it stops rotating, but keeps a slow fade so you can still tell that a long job is running rather than stuck.
+
+You do not need to restart the app; the change applies as soon as you switch the setting.
+
 **The interface looks completely different / I want the old one back**
 
 That's the redesign — it became the primary interface in v3.9.0. Nothing was migrated and nothing moved on disk: same domains, same wiki, same settings, same folder. [§7](#7-finding-your-way-around) has a table mapping every old tab to where it is now.
