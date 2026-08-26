@@ -56,8 +56,9 @@
  * Exit code 0 if all green; non-zero on any failure.
  */
 
-import { execSync } from 'child_process';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'fs/promises';
+import { execSync, spawn } from 'child_process';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'fs/promises';
+import { createHash } from 'crypto';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -70,8 +71,11 @@ import {
   __setSyncTestOverrides,
   push,
   pull,
+  sync,
+  getRemoteStatus,
   isConfigured,
   friendlyError,
+  remoteErrorMessage,
   __testing as syncTesting,
 } from '../src/brain/sync.js';
 import { __setDomainsDirOverride, getDomainsDir } from '../src/brain/config.js';
@@ -97,7 +101,42 @@ const {
   recoverHygieneMergeConflict,
   isHygieneJunkPath,
   extractUntrackedOverwritePaths,
+  countIncoming,
+  invalidateRemoteCache,
+  REMOTE_CHECK_TTL_MS,
+  REMOTE_CHECK_FAILURE_TTL_MS,
+  remoteCacheTtl,
 } = syncTesting;
+
+// ── Extracting the frontend's pure functions and RUNNING them ──────────────
+//
+// The v3.9.1 defects are both "what does the user actually SEE", so the
+// assertions below execute the real frontend functions over the real objects
+// the real backend produced, rather than regex-ing the source for a hopeful
+// substring. A source scan cannot tell the difference between a renderer that
+// reads a field and one that merely mentions it — which is exactly how this
+// codebase's recurring dead-data defect keeps surviving review.
+function extractFn(src, name, file) {
+  const start = src.search(new RegExp('(?:^|\\n)(?:export\\s+)?(?:async\\s+)?function\\s+' + name + '\\s*\\('));
+  if (start < 0) throw new Error(`${file}: function ${name}() not found — has it been renamed?`);
+  const open = src.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error(`${file}: unbalanced braces extracting ${name}()`);
+}
+
+function extractConst(src, name, file) {
+  const m = new RegExp('(?:^|\\n)const\\s+' + name + '\\s*=\\s*[^;\\n]+;').exec(src);
+  if (!m) throw new Error(`${file}: const ${name} not found`);
+  return m[0];
+}
 const { LOCK_STALE_MS } = registryTesting;
 
 let passed = 0;
@@ -1481,6 +1520,774 @@ try {
       // tempdir is abandoned (cleaned up in the top-level finally) rather
       // than repaired, since the whole point was to break it on purpose.
     }
+  }
+
+  // ── 17. Bidirectional sync REPORTS BOTH DIRECTIONS (v3.9.1 defect 1) ─────
+  //
+  // Until v3.9.1 the /next Sync view answered the primary "Sync now" action
+  // with the bare string 'Sync complete.' — no counts, no directions — while
+  // push-only and pull-only each reported theirs. The maintainer hit it on a
+  // real two-machine setup: "it is not clear what we pushed, how many files,
+  // and what we pulled".
+  //
+  // THE POINT OF DOING IT THIS WAY: the fix is one line of frontend copy, and
+  // a frontend-only test would prove nothing about whether the numbers it
+  // prints actually exist. So this drives the REAL sync() against REAL git
+  // repos and feeds its REAL return value into the REAL renderer. If the
+  // route or brain ever stops carrying a direction, this goes red on the
+  // rendered sentence — which is the failure the user would actually see.
+  console.log('\n17. sync() reports BOTH directions — real repos, real renderer\n');
+  {
+    const syncViewSrc = await readFile(path.join(ROOT, 'src/public/next/views/sync.js'), 'utf8');
+    const view = new Function(
+      extractConst(syncViewSrc, 'PRUNED_NAMES_SHOWN', 'views/sync.js') + '\n' +
+      extractFn(syncViewSrc, 'fileCount', 'views/sync.js') + '\n' +
+      extractFn(syncViewSrc, 'describePruned', 'views/sync.js') + '\n' +
+      extractFn(syncViewSrc, 'describeResult', 'views/sync.js') + '\n' +
+      'return { describeResult, describePruned };'
+    )();
+
+    const remoteDir = await makeBareRemote();
+
+    // Machine A: two domains, pushed.
+    const gitDirA = await mktempTracked('sh-gitdir-17a-');
+    const domainsA = await mktempTracked('sh-domains-17a-');
+    const configA = path.join(await mktempTracked('sh-cfg-17a-'), 'sync-config.json');
+    await initRepo(gitDirA, domainsA, remoteDir);
+    await writeConfig(configA, remoteDir);
+    await seedDomain(domainsA, 'articles');
+    await seedDomain(domainsA, 'ghost');
+    __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
+    __setDomainsDirOverride(domainsA);
+    await withGitLockRetry(() => push());
+
+    // Machine B: clone.
+    const gitDirB = await mktempTracked('sh-gitdir-17b-');
+    const domainsB = await mktempTracked('sh-domains-17b-');
+    const configB = path.join(await mktempTracked('sh-cfg-17b-'), 'sync-config.json');
+    await mkdir(domainsB, { recursive: true });
+    sh(gitDirB, domainsB, 'init -q -b main');
+    configureRepoIdentity(gitDirB, domainsB, { email: 't@t', name: 't' });
+    sh(gitDirB, domainsB, `remote add origin "${remoteDir}"`);
+    sh(gitDirB, domainsB, 'fetch origin -q');
+    sh(gitDirB, domainsB, 'checkout -q -b main origin/main');
+    await writeConfig(configB, remoteDir);
+
+    // A moves on: adds two pages AND deletes the whole `ghost` domain — the
+    // v2.3.4 sync-delete that pruneGhostDomainDirs() cleans up on the other
+    // machine, and that the old app named explicitly in its result copy.
+    __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
+    __setDomainsDirOverride(domainsA);
+    await writeFile(path.join(domainsA, 'articles', 'wiki', 'a1.md'), '# a1\n');
+    await writeFile(path.join(domainsA, 'articles', 'wiki', 'a2.md'), '# a2\n');
+    await rm(path.join(domainsA, 'ghost'), { recursive: true, force: true });
+    await withGitLockRetry(() => push());
+
+    // B makes its own local change, so this is a genuine BOTH-directions sync.
+    __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
+    __setDomainsDirOverride(domainsB);
+    await writeFile(path.join(domainsB, 'articles', 'wiki', 'b1.md'), '# b1\n');
+
+    // B also has a gitignored source file inside the doomed domain — which is
+    // WHY a ghost directory exists at all. The merge deletes every TRACKED
+    // file under `ghost/`, but git will not remove a directory that still
+    // holds untracked content, so `ghost/` survives as an empty-looking shell
+    // with no CLAUDE.md — invisible in the Domains list (the v2.3.4
+    // ghost-domain rule) until pruneGhostDomainDirs() clears it. `*/raw/` is
+    // gitignored, so this is the ordinary real-world case, not a contrivance.
+    await mkdir(path.join(domainsB, 'ghost', 'raw'), { recursive: true });
+    await writeFile(path.join(domainsB, 'ghost', 'raw', 'paper.pdf'), 'not really a pdf');
+
+    const result = await withGitLockRetry(() => sync());
+
+    // (a) The wire genuinely carries both directions.
+    assertTrue(result && result.pullResult && result.pushResult,
+      'POST /api/sync/sync payload carries BOTH pullResult and pushResult');
+    const pulledN = result.pullResult.filesChanged;
+    const pushedN = result.pushResult.filesChanged;
+    assertTrue(typeof pulledN === 'number' && pulledN > 0,
+      `pullResult.filesChanged is a real count (got ${pulledN})`);
+    assertTrue(typeof pushedN === 'number' && pushedN > 0,
+      `pushResult.filesChanged is a real count (got ${pushedN})`);
+    assertTrue(Array.isArray(result.pullResult.pruned) && result.pullResult.pruned.includes('ghost'),
+      'pullResult.pruned names the domain deleted on the other machine');
+
+    // (b) The renderer prints them. These are the assertions that would have
+    //     caught the regression: the old code returned a constant string, so
+    //     no count could ever appear in it.
+    const msg = view.describeResult('sync', result);
+    assertTrue(msg !== 'Sync complete.',
+      'the bidirectional message is no longer the countless constant "Sync complete."');
+    assertTrue(msg.includes('pulled ' + pulledN + ' file'),
+      `the message states the PULLED count (${pulledN}) — got: ${msg}`);
+    assertTrue(msg.includes('pushed ' + pushedN + ' file'),
+      `the message states the PUSHED count (${pushedN}) — got: ${msg}`);
+    assertTrue(msg.includes('removed 1 deleted domain (ghost)'),
+      `the message names the pruned domain — got: ${msg}`);
+
+    // (c) The two directions stay DISTINCT facts. A single combined total
+    //     would be meaningless (they describe different machines) and would
+    //     point the user at the wrong action.
+    assertTrue(pulledN !== pushedN,
+      `precondition: the two counts differ (${pulledN} vs ${pushedN}), so this check cannot pass by coincidence`);
+    assertTrue(!msg.includes(' ' + String(pulledN + pushedN) + ' file'),
+      `the summed total (${pulledN + pushedN}) never appears as a file count — got: ${msg}`);
+
+    // (d) A no-op sync must not invent activity.
+    const quiet = view.describeResult('sync', {
+      pullResult: { pulled: true, filesChanged: 0, pruned: [] },
+      pushResult: { pushed: false, filesChanged: 0 },
+    });
+    assertEq(quiet, 'Sync complete — everything was already up to date.',
+      'a sync with nothing to do says so plainly');
+
+    // (e) A push that never ran is never reported as a push, even if a stale
+    //     filesChanged came along with it.
+    const notPushed = view.describeResult('sync', {
+      pullResult: { pulled: true, filesChanged: 3, pruned: [] },
+      pushResult: { pushed: false, filesChanged: 7 },
+    });
+    assertTrue(notPushed.includes('pulled 3 files') && !notPushed.includes('pushed'),
+      'pushed:false suppresses the push clause even when filesChanged is non-zero');
+
+    // (f) Pull-only ALSO surfaces pruned domains (the shipping app did; /next
+    //     dropped it in the same function).
+    const pullMsg = view.describeResult('pull', { pulled: true, filesChanged: 4, pruned: ['old-domain'] });
+    assertTrue(pullMsg.includes('Pulled 4 files') && pullMsg.includes('removed 1 deleted domain (old-domain)'),
+      'pull-only names pruned domains as well as the file count');
+    assertEq(view.describeResult('pull', { pulled: true, filesChanged: 0, pruned: [] }),
+      'Already up to date — nothing new on GitHub.',
+      'a pull with nothing incoming says "already up to date", not "Pulled 0 files"');
+
+    // (g) Singular/plural, and the pruned-name cap.
+    assertTrue(view.describeResult('pull', { filesChanged: 1, pruned: [] }).includes('1 file from'),
+      'one file is singular');
+    const many = view.describePruned(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    assertTrue(many.includes('removed 7 deleted domains') && many.includes('and 2 more'),
+      'the pruned name list is capped and says how many more');
+  }
+
+  // ── 18. getRemoteStatus(): "what is waiting on GitHub" (v3.9.1 defect 2) ──
+  //
+  // NEW CAPABILITY, not a restoration — nothing in this codebase has ever
+  // computed "behind". The shipping badge and /next's both read
+  // `git status --porcelain`, which is local-only by construction.
+  //
+  // The assertions that matter are the dishonest-failure ones: a check we
+  // could not perform must resolve to null, never to a reassuring 0.
+  console.log('\n18. getRemoteStatus() — behind-count, failure honesty, and no tree mutation\n');
+  {
+    async function treeChecksum(dir) {
+      const h = createHash('sha256');
+      async function walk(d, rel) {
+        const entries = (await readdir(d, { withFileTypes: true }))
+          .sort((a, b) => (a.name < b.name ? -1 : 1));
+        for (const e of entries) {
+          const p = path.join(d, e.name);
+          const r = rel ? rel + '/' + e.name : e.name;
+          if (e.isDirectory()) { h.update('D:' + r + '\n'); await walk(p, r); }
+          else { h.update('F:' + r + '\n'); h.update(await readFile(p)); }
+        }
+      }
+      await walk(dir, '');
+      return h.digest('hex');
+    }
+
+    const remoteDir = await makeBareRemote();
+
+    const gitDirA = await mktempTracked('sh-gitdir-18a-');
+    const domainsA = await mktempTracked('sh-domains-18a-');
+    const configA = path.join(await mktempTracked('sh-cfg-18a-'), 'sync-config.json');
+    await initRepo(gitDirA, domainsA, remoteDir);
+    await writeConfig(configA, remoteDir);
+    await seedDomain(domainsA, 'articles');
+    __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
+    __setDomainsDirOverride(domainsA);
+    await withGitLockRetry(() => push());
+
+    const gitDirB = await mktempTracked('sh-gitdir-18b-');
+    const domainsB = await mktempTracked('sh-domains-18b-');
+    const configB = path.join(await mktempTracked('sh-cfg-18b-'), 'sync-config.json');
+    await mkdir(domainsB, { recursive: true });
+    sh(gitDirB, domainsB, 'init -q -b main');
+    configureRepoIdentity(gitDirB, domainsB, { email: 't@t', name: 't' });
+    sh(gitDirB, domainsB, `remote add origin "${remoteDir}"`);
+    sh(gitDirB, domainsB, 'fetch origin -q');
+    sh(gitDirB, domainsB, 'checkout -q -b main origin/main');
+    await writeConfig(configB, remoteDir);
+
+    __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
+    __setDomainsDirOverride(domainsB);
+
+    // (a) Fully in sync → a MEASURED zero (not null).
+    invalidateRemoteCache();
+    const rs0 = await getRemoteStatus();
+    assertEq(rs0.configured, true, 'configured repo reports configured:true');
+    assertEq(rs0.remoteChecked, true, 'an in-sync check completes');
+    assertEq(rs0.behindFiles, 0, 'nothing waiting on GitHub is a measured 0');
+
+    // (b) A pushes three files → B is behind by exactly three.
+    __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
+    __setDomainsDirOverride(domainsA);
+    for (const n of ['r1.md', 'r2.md', 'r3.md']) {
+      await writeFile(path.join(domainsA, 'articles', 'wiki', n), '# ' + n + '\n');
+    }
+    await withGitLockRetry(() => push());
+
+    __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
+    __setDomainsDirOverride(domainsB);
+
+    // (b) + (c) are ONE measured call, and that ordering is deliberate.
+    //
+    // They were originally two — count first, then a separate checksummed
+    // call. A mutation (fetch -> pull) proved that arrangement useless: the
+    // FIRST call had already pulled the files, so by the time the checksum
+    // ran there was nothing left to change and the tree-immutability
+    // assertion stayed GREEN against an implementation that demonstrably
+    // mutated the tree. It was measuring a state the mutation had already
+    // consumed.
+    //
+    // So the checksum now wraps the very first remote check taken while
+    // there IS something on the remote to wrongly pull, and the behind
+    // count is read from that same call.
+    const before = await treeChecksum(domainsB);
+    const dirtyBefore = execSync(
+      `git --git-dir="${gitDirB}" --work-tree="${domainsB}" status --porcelain`
+    ).toString('utf8');
+
+    invalidateRemoteCache();
+    const rs1 = await getRemoteStatus();
+
+    const after = await treeChecksum(domainsB);
+    const dirtyAfter = execSync(
+      `git --git-dir="${gitDirB}" --work-tree="${domainsB}" status --porcelain`
+    ).toString('utf8');
+
+    assertEq(rs1.remoteChecked, true, 'the behind check completes against a live remote');
+    assertEq(rs1.behindFiles, 3, 'behind count is the exact number of files waiting to pull');
+    assertTrue(rs1.behindCommits >= 1, 'behind commit count is populated too');
+
+    // THE FETCH MUST NOT TOUCH THE WORKING TREE. A badge that silently
+    // modified the user's files on a 10-minute background timer would be far
+    // worse than the missing number it exists to show.
+    assertEq(after, before, 'the working tree is byte-identical across a remote-status check');
+    assertEq(dirtyAfter, dirtyBefore, 'git status --porcelain is unchanged — nothing was merged or checked out');
+    assertTrue(!existsSync(path.join(domainsB, 'articles', 'wiki', 'r1.md')),
+      'a file only present on the remote is still NOT on disk — the check fetched, it did not pull');
+
+    // (d) The TTL cache serves a second call without going to the network.
+    //     Proven by making the network impossible between the two calls: if
+    //     the cached call had re-fetched, it would fail.
+    invalidateRemoteCache();
+    const fresh = await getRemoteStatus();
+    assertEq(fresh.cached, false, 'the first call after invalidation is a real check');
+    const savedRemote = remoteDir + '-moved';
+    execSync(`mv "${remoteDir}" "${savedRemote}"`);
+    const cached = await getRemoteStatus();
+    assertEq(cached.cached, true, 'a second call inside the TTL is served from cache');
+    assertEq(cached.behindFiles, fresh.behindFiles, 'the cached answer matches the measured one');
+
+    // (e) FAILURE HONESTY — with the remote gone and the cache expired, the
+    //     check cannot run. It must report "unknown", NEVER a confident 0.
+    const failed = await getRemoteStatus({ maxAgeMs: 0 });
+    assertEq(failed.remoteChecked, false, 'an unreachable remote reports remoteChecked:false');
+    assertEq(failed.behindFiles, null, 'a FAILED check is null — never 0, which would mean "nothing waiting"');
+    assertEq(failed.behindCommits, null, 'the commit count is null on failure too');
+    assertTrue(typeof failed.remoteError === 'string' && failed.remoteError.length > 0,
+      'the failure carries an explanation');
+    assertTrue(!/[A-Za-z0-9_]{20,}@/.test(failed.remoteError),
+      'the failure message carries no credential-shaped token');
+    // This endpoint is polled in the background, so its error field is on the
+    // wire continuously. A live run against an unreachable remote originally
+    // leaked TWO absolute paths here (git echoes its own --git-dir/--work-tree
+    // arguments) — the v3.3.0 path-leak shape.
+    assertTrue(!failed.remoteError.includes('/'),
+      `the failure message carries no filesystem path — got: ${failed.remoteError}`);
+    assertTrue(!/--git-dir|--work-tree|Command failed/.test(failed.remoteError),
+      'the failure message is a written sentence, not a raw git invocation');
+    assertTrue(failed.remoteError.length < 200,
+      'the failure message is bounded, not an unbounded git transcript');
+
+    execSync(`mv "${savedRemote}" "${remoteDir}"`);
+
+    // (f) After a real pull, nothing is waiting any more — and the cache was
+    //     invalidated by pull() itself, so this is a fresh measurement.
+    invalidateRemoteCache();
+    assertEq((await getRemoteStatus()).behindFiles, 3, 'precondition: still 3 waiting before the pull');
+    await withGitLockRetry(() => pull());
+    const afterPull = await getRemoteStatus();
+    assertEq(afterPull.cached, false, 'pull() invalidated the cache, so this is a fresh check');
+    assertEq(afterPull.behindFiles, 0, 'after pulling, nothing is waiting on GitHub');
+    assertTrue(existsSync(path.join(domainsB, 'articles', 'wiki', 'r1.md')),
+      'the pull genuinely brought the files down');
+
+    // (g) SINGLE DERIVATION: the badge count and pull()'s own report come
+    //     from the same countIncoming(), so they cannot disagree.
+    __setSyncTestOverrides({ gitDir: gitDirA, configFile: configA });
+    __setDomainsDirOverride(domainsA);
+    await writeFile(path.join(domainsA, 'articles', 'wiki', 'r4.md'), '# r4\n');
+    await withGitLockRetry(() => push());
+    __setSyncTestOverrides({ gitDir: gitDirB, configFile: configB });
+    __setDomainsDirOverride(domainsB);
+    invalidateRemoteCache();
+    const predicted = (await getRemoteStatus()).behindFiles;
+    const actual = (await withGitLockRetry(() => pull())).filesChanged;
+    assertEq(predicted, actual,
+      'the number the badge promises is exactly the number the pull then reports');
+
+    // (h) An unconfigured install never reaches the network at all.
+    __setSyncTestOverrides({ gitDir: path.join(await mktempTracked('sh-nogit-18-'), 'nope'), configFile: path.join(await mktempTracked('sh-nocfg-18-'), 'nope.json') });
+    invalidateRemoteCache();
+    const unconf = await getRemoteStatus();
+    assertEq(unconf.configured, false, 'an unconfigured install returns configured:false');
+    assertTrue(!('behindFiles' in unconf), 'and carries no behind count to misread');
+
+    assertTrue(REMOTE_CHECK_TTL_MS >= 60_000,
+      'the server-side TTL is at least a minute, so a chatty client cannot hammer GitHub');
+    assertTrue(REMOTE_CHECK_FAILURE_TTL_MS < REMOTE_CHECK_TTL_MS,
+      'a FAILED check is retried sooner than a successful one is refreshed');
+    assertTrue(REMOTE_CHECK_FAILURE_TTL_MS >= 30_000,
+      'but a failure is still cached long enough that a flapping network cannot hammer GitHub');
+
+    // (i) A failure must not pin "unknown" for the whole success TTL. The
+    //     network conditions that break a fetch (lid closed, VPN dropped,
+    //     captive portal) clear in seconds; a five-minute stale "could not
+    //     check" reads as a broken feature.
+    // The asymmetry is asserted on the pure TTL decision, NOT by waiting a
+    // real minute for a cache to expire. A timing-based assertion here would
+    // be the flaky-under-load kind v3.9.0 deleted; this is deterministic and
+    // says exactly the same thing.
+    assertEq(remoteCacheTtl({ remoteChecked: true }, REMOTE_CHECK_TTL_MS), REMOTE_CHECK_TTL_MS,
+      'a SUCCESSFUL check is cached for the full TTL');
+    assertEq(remoteCacheTtl({ remoteChecked: false }, REMOTE_CHECK_TTL_MS), REMOTE_CHECK_FAILURE_TTL_MS,
+      'a FAILED check is cached only for the much shorter failure TTL, so it recovers quickly');
+    assertEq(remoteCacheTtl({ remoteChecked: false }, 5_000), 5_000,
+      'a caller asking for fresher data than the failure TTL still gets it (min, never max)');
+    assertEq(remoteCacheTtl({ remoteChecked: true }, 0), 0,
+      'maxAgeMs 0 forces a refresh even for a success');
+    assertEq(remoteCacheTtl(null, REMOTE_CHECK_TTL_MS), REMOTE_CHECK_FAILURE_TTL_MS,
+      'a malformed cached payload is treated as a failure, never cached for the long TTL');
+  }
+
+  // ── 18b. The two fetch sites, and the race between them (v3.9.1 blocker) ─
+  //
+  // v3.9.1 added getRemoteStatus(), giving this module a SECOND `git fetch`
+  // site alongside the one pull() has always had. Both write
+  // refs/remotes/origin/main, so concurrently they are a compare-and-swap
+  // race on that ref — and pull()'s fetch sat OUTSIDE its try/catch, so the
+  // loser was the USER'S PULL: it threw before the merge and the sync
+  // silently did not happen. Reproduced against real git with a bare local
+  // remote at 11 failures in 12 before the fix.
+  //
+  // Every assertion below is on an OUTCOME — did the pull succeed, did the
+  // page land on disk, how many real fetch subprocesses ran — never on a
+  // duration or a ratio. v3.9.0 deleted a timing assertion that failed 73%
+  // of the time under CI load while the code under it was provably correct;
+  // a race is exactly where that temptation is strongest and exactly where
+  // it teaches people to ignore the guard.
+  console.log('\n18b. fetch serialisation, coalescing, cache keying, and the pull-vs-badge race\n');
+  {
+    // (a) THE CLASS INVARIANT. Exactly one raw fetch invocation of the git()
+    //     helper exists in sync.js — the one inside gitFetch(). This is
+    //     deliberately not "each known site is wrapped": this project's
+    //     named recurring defect is a guard applied to the instance in front
+    //     of its author while a sibling doing identical work stays
+    //     unprotected (v3.6.0 shipped four in one release). Written as a
+    //     count so a FOURTH site added later goes red on its own.
+    //
+    //     Comment lines are dropped first, by a filter that can only ever
+    //     UNDER-strip (a block comment's continuation lines start with `*`,
+    //     which is covered; anything it misses leaves a comment in and
+    //     produces a false POSITIVE). That direction is chosen on purpose —
+    //     a false positive is a red test someone reads, a false negative is
+    //     this bug shipping again. No hand-rolled lexer: v3.1.0 shipped two
+    //     of those and both were silently blind.
+    const syncSrc = await readFile(path.join(ROOT, 'src/brain/sync.js'), 'utf8');
+    const codeLines = syncSrc.split('\n').filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith('//') || t.startsWith('*') || t.startsWith('/*'));
+    });
+    const rawFetchSites = codeLines.filter((l) => /\bgit\(\s*[`'"]fetch\b/.test(l));
+    assertEq(rawFetchSites.length, 1,
+      'sync.js contains EXACTLY ONE raw git fetch invocation (inside gitFetch) — every other site must go through the gate');
+    const gateBody = syncSrc.slice(syncSrc.indexOf('function gitFetch('));
+    assertTrue(/\bgit\(\s*`fetch \$\{args\}`/.test(gateBody.slice(0, 500)),
+      'and that one invocation is gitFetch\'s own');
+    // Every caller reaches fetch through the gate, so the callers are named
+    // here too — a site could otherwise "pass" (a) by not fetching at all.
+    const gateCalls = codeLines
+      .filter((l) => !/function gitFetch\(/.test(l))
+      .join('\n').match(/\bgitFetch\(/g) || [];
+    assertEq(gateCalls.length, 3,
+      'all three fetch callers (getRemoteStatus, setup, pull) go through gitFetch');
+
+    // (b) THE BLOCKER ITSELF, end to end against real git. A background
+    //     badge check runs concurrently with the user's pull, exactly as the
+    //     Sync view produced it: click Push, buttons re-enable, click Sync
+    //     now. Asserted on whether the user's sync actually HAPPENED, not
+    //     merely on whether an error was raised — a fix that made pull()
+    //     stop throwing while also not merging would pass the weaker check.
+    const remote19 = await makeBareRemote();
+    const gitA19 = await mktempTracked('sh-gitdir-19a-');
+    const domA19 = await mktempTracked('sh-domains-19a-');
+    await initRepo(gitA19, domA19, remote19);
+    await seedDomain(domA19, 'd1');
+    sh(gitA19, domA19, 'add -A'); sh(gitA19, domA19, 'commit -q -m base'); sh(gitA19, domA19, 'push -q -u origin main');
+
+    const gitB19 = await mktempTracked('sh-gitdir-19b-');
+    const domB19 = await mktempTracked('sh-domains-19b-');
+    const cfgB19 = path.join(await mktempTracked('sh-cfg-19b-'), 'sync-config.json');
+    await initRepo(gitB19, domB19, remote19);
+    sh(gitB19, domB19, 'fetch -q origin main'); sh(gitB19, domB19, 'reset -q --hard origin/main');
+    await writeConfig(cfgB19, remote19);
+    __setSyncTestOverrides({ gitDir: gitB19, configFile: cfgB19 });
+    __setDomainsDirOverride(domB19);
+
+    const ROUNDS = 12;
+    let pullOk = 0; let pullFailed = 0; let landed = 0; let zeroCount = 0;
+    let firstErr = '';
+    for (let i = 0; i < ROUNDS; i++) {
+      // Advance the remote so origin/main MUST move — a fetch that has
+      // nothing to update takes no ref lock and races nothing, so without
+      // this the scenario would silently never be exercised.
+      await writeFile(path.join(domA19, 'd1', 'wiki', `p${i}.md`), `# page ${i}\n`);
+      sh(gitA19, domA19, 'add -A'); sh(gitA19, domA19, `commit -q -m adv${i}`); sh(gitA19, domA19, 'push -q origin main');
+
+      invalidateRemoteCache();
+      const background = getRemoteStatus({ maxAgeMs: 0 }).catch(() => null);
+      try {
+        const r = await pull();
+        pullOk++;
+        if ((r.filesChanged || 0) === 0) zeroCount++;
+      } catch (err) {
+        pullFailed++;
+        if (!firstErr) firstErr = err.message;
+      }
+      await background;
+      if (existsSync(path.join(domB19, 'd1', 'wiki', `p${i}.md`))) landed++;
+    }
+    assertEq(pullFailed, 0,
+      `the user's pull survives a concurrent background remote check, ${ROUNDS}/${ROUNDS}` +
+      (firstErr ? ` — first failure: ${firstErr.slice(0, 120)}` : ''));
+    assertEq(pullOk, ROUNDS, 'every pull returned a result');
+    assertEq(landed, ROUNDS,
+      'and every pull ACTUALLY MERGED — the incoming page is on disk, not merely un-errored');
+    assertEq(zeroCount, 0,
+      'and none reported filesChanged:0 for a pull that really moved a file (a wrong number is worse than an error)');
+
+    // (b2) THE CROSS-PROCESS CASE — and this is the assertion that keeps
+    //      pull()'s own tolerance from being decorative. gitFetch()'s gate
+    //      is per-PROCESS: it cannot see the MCP server Claude Desktop
+    //      spawns against the same git dir, or a second app instance. With
+    //      the gate in place but pull()'s fetch moved back outside its try
+    //      (the shipped defect), scenario (b) above stays fully GREEN —
+    //      measured — because the gate alone prevents the in-process
+    //      collision. Only a genuinely EXTERNAL fetch exercises the second
+    //      layer, so that is what this spawns: a real `git fetch`
+    //      subprocess, not a stub. Under that same mutation this scenario
+    //      goes red at 11 failures in 12 with just 1 of 12 pages merged.
+    //
+    //      Stability: the assertion is that the user's pull SUCCEEDS, which
+    //      is deterministic with the fix — `git pull` runs its own fetch and
+    //      merges FETCH_HEAD, so a lost ref race cannot affect it (verified
+    //      60/60 across five runs). Nothing here asserts a duration, and
+    //      nothing depends on the race actually firing on any given round.
+    let xOk = 0; let xFailed = 0; let xLanded = 0; let xFirstErr = '';
+    for (let i = 0; i < ROUNDS; i++) {
+      await writeFile(path.join(domA19, 'd1', 'wiki', `x${i}.md`), `# external ${i}\n`);
+      sh(gitA19, domA19, 'add -A'); sh(gitA19, domA19, `commit -q -m ext${i}`); sh(gitA19, domA19, 'push -q origin main');
+
+      const external = spawn('git',
+        [`--git-dir=${gitB19}`, `--work-tree=${domB19}`, 'fetch', 'origin', 'main'],
+        { stdio: 'ignore' });
+      const externalDone = new Promise((r) => external.on('close', r));
+      try { await pull(); xOk++; } catch (err) { xFailed++; if (!xFirstErr) xFirstErr = err.message; }
+      await externalDone;
+      if (existsSync(path.join(domB19, 'd1', 'wiki', `x${i}.md`))) xLanded++;
+    }
+    assertEq(xFailed, 0,
+      `the user's pull survives a fetch from a SEPARATE process, ${ROUNDS}/${ROUNDS}` +
+      (xFirstErr ? ` — first failure: ${xFirstErr.split('\n').pop().slice(0, 110)}` : ''));
+    assertEq(xOk, ROUNDS, 'every cross-process pull returned a result');
+    assertEq(xLanded, ROUNDS,
+      'and every one ACTUALLY MERGED — this is the assertion pull()\'s try/catch is load-bearing for');
+
+    // (c) COALESCING. The TTL cache is read before the await and written
+    //     after it, so it never bounded CONCURRENT callers: measured at 40
+    //     concurrent calls it produced 40 real fetch subprocesses and zero
+    //     hits. The in-flight memo is what makes the docblock's "at most
+    //     once per TTL per process" true. Counted on the call itself, so
+    //     this asserts what actually ran.
+    invalidateRemoteCache();
+    syncTesting.resetFetchCount();
+    const burst = await Promise.all(Array.from({ length: 40 }, () => getRemoteStatus({ maxAgeMs: 0 })));
+    assertEq(syncTesting.fetchCount(), 1,
+      '40 concurrent remote checks issue exactly ONE real git fetch subprocess');
+    assertEq(new Set(burst.map((b) => b.behindFiles)).size, 1,
+      'and every coalesced caller receives the same answer');
+    assertTrue(burst.every((b) => b.remoteChecked === true),
+      'and not one of them is degraded to "could not check" by racing a sibling');
+
+    // The N=2 case is called out separately because it is not a stress
+    // test — it is two browser tabs booting, and before the memo one of the
+    // two checks failed outright.
+    invalidateRemoteCache();
+    syncTesting.resetFetchCount();
+    const twoTabs = await Promise.all([getRemoteStatus({ maxAgeMs: 0 }), getRemoteStatus({ maxAgeMs: 0 })]);
+    assertEq(syncTesting.fetchCount(), 1, 'two tabs booting together issue ONE fetch, not two');
+    assertTrue(twoTabs.every((b) => b.remoteChecked === true), 'and both get a real answer');
+
+    // (d) THE GATE MUST SURVIVE A REJECTION. It chains promises; chaining
+    //     the un-caught promise instead of its settled form would wedge
+    //     every later fetch in the process after the first failure — a
+    //     permanently dead badge, and a permanently mis-counted pull.
+    const deadCfg = path.join(await mktempTracked('sh-cfg-19dead-'), 'sync-config.json');
+    await writeConfig(deadCfg, '/nonexistent-remote-for-gate-test');
+    const deadGit = await mktempTracked('sh-gitdir-19dead-');
+    const deadDom = await mktempTracked('sh-domains-19dead-');
+    await initRepo(deadGit, deadDom, '/nonexistent-remote-for-gate-test');
+    __setSyncTestOverrides({ gitDir: deadGit, configFile: deadCfg });
+    __setDomainsDirOverride(deadDom);
+    invalidateRemoteCache();
+    const broke = await getRemoteStatus({ maxAgeMs: 0 });
+    assertEq(broke.remoteChecked, false, 'precondition: a fetch against a nonexistent remote fails');
+    // Back to the working repo — the gate must not still be poisoned.
+    __setSyncTestOverrides({ gitDir: gitB19, configFile: cfgB19 });
+    __setDomainsDirOverride(domB19);
+    invalidateRemoteCache();
+    const recovered = await getRemoteStatus({ maxAgeMs: 0 });
+    assertEq(recovered.remoteChecked, true,
+      'a FAILED fetch does not wedge the gate — the next fetch still runs');
+
+    // (e) THE CACHE IS KEYED ON THE REPOSITORY. invalidateRemoteCache() is
+    //     called by push()/pull() but NOT by setup()/disconnect(), so the
+    //     ordinary "wrong repo, let me redo it" flow used to keep answering
+    //     with the OLD repo's number for a full TTL — measured, the rail
+    //     showed "waiting to pull" for a repo with nothing waiting. No
+    //     invalidate() call is issued between the two reads below, on
+    //     purpose: that is the whole point.
+    // (b) above pulled repo1 empty, so give it something to be behind by
+    // again — the property under test is the CACHE KEY, and it can only be
+    // exercised from a non-zero starting number.
+    await writeFile(path.join(domA19, 'd1', 'wiki', 'keytest.md'), '# key test\n');
+    sh(gitA19, domA19, 'add -A'); sh(gitA19, domA19, 'commit -q -m keytest'); sh(gitA19, domA19, 'push -q origin main');
+    invalidateRemoteCache();
+    const onRepo1 = await getRemoteStatus({});
+    assertTrue(onRepo1.behindFiles > 0, `precondition: repo1 has changes waiting (got ${onRepo1.behindFiles})`);
+
+    const remote19b = await makeBareRemote();
+    const gitC19 = await mktempTracked('sh-gitdir-19c-');
+    const domC19 = await mktempTracked('sh-domains-19c-');
+    const cfgC19 = path.join(await mktempTracked('sh-cfg-19c-'), 'sync-config.json');
+    await initRepo(gitC19, domC19, remote19b);
+    await seedDomain(domC19, 'd2');
+    sh(gitC19, domC19, 'add -A'); sh(gitC19, domC19, 'commit -q -m base2'); sh(gitC19, domC19, 'push -q -u origin main');
+    await writeConfig(cfgC19, remote19b);
+    __setSyncTestOverrides({ gitDir: gitC19, configFile: cfgC19 });
+    __setDomainsDirOverride(domC19);
+
+    const onRepo2 = await getRemoteStatus({});
+    assertEq(onRepo2.behindFiles, 0,
+      'repointing at a different repo does NOT serve the previous repo\'s behind-count');
+    assertEq(onRepo2.cached, false,
+      'and the answer is reported as a live check, not as a cache hit');
+
+    // (f) A losing ref race must never reach a user as raw git text. The
+    //     gate covers this process; a separate process against the same git
+    //     dir (the MCP server Claude Desktop spawns, a second app instance)
+    //     is outside it, and the raw message carries absolute filesystem
+    //     paths. This is the verbatim shape git emits, captured from the
+    //     live reproduction.
+    const refRace =
+      'Command failed: git --git-dir="/Users/someone/second-brain/.knowledge-git" ' +
+      '--work-tree="/Users/someone/second-brain/domains" fetch origin main\n' +
+      'From /Users/someone/knowledge\n * branch main -> FETCH_HEAD\n' +
+      "error: cannot lock ref 'refs/remotes/origin/main': is at 67137e158298 but expected 8ad8978e2b63\n" +
+      ' ! 8ad8978..67137e1  main -> origin/main  (unable to update local ref)';
+    const mappedRace = String(friendlyError(new Error(refRace)) || '');
+    assertTrue(mappedRace.includes('Another sync check was running'),
+      'a losing ref compare-and-swap maps to a written sentence');
+    assertTrue(!/\/Users\//.test(mappedRace) && !/--git-dir/.test(mappedRace),
+      'and that sentence leaks no absolute path and no git command line');
+    assertTrue(!mappedRace.includes('GitHub rejected the token'),
+      'and the 40-char SHAs in it do not shadow into the auth branch');
+    // The polled endpoint is the one that must never carry raw git text.
+    assertTrue(!/\/Users\//.test(String(remoteErrorMessage(new Error(refRace)))),
+      'and the background-poll error helper leaks no absolute path either');
+
+    //      And the same property proven on the WHOLE serialised payload
+    //      rather than on one field, across four REAL git failures — this
+    //      endpoint is polled in the background, so anything it carries is
+    //      on the wire continuously rather than in response to a click.
+    //      Scanning the serialised object (not `remoteError` alone) is the
+    //      point: a future field added to the payload is covered by this
+    //      without anyone remembering to extend the assertion.
+    const leakCases = [
+      ['a remote directory that does not exist', '/var/folders/curator-nonexistent-remote-xyz'],
+      ['a remote path that is not a repository', await mktempTracked('sh-notrepo-19-')],
+      ['an unresolvable host', 'https://no-such-host.invalid/o/r.git'],
+      // Deliberately NOT shaped like a real provider token: this repo's
+      // pre-commit secret guard matches `ghp_`/`github_pat_` + 20 chars,
+      // and a test fixture must never need an allow-list entry to be
+      // committable. A long opaque userinfo segment is the shape that
+      // matters here anyway — it is what the assertion's `{20,}@` rule
+      // detects, and it is provider-agnostic.
+      ['a credential-bearing remote URL', 'https://AAAAAAAAAAAAAAAAAAAAAAAAAA@github.invalid/o/r.git'],
+    ];
+    for (const [label, remoteUrl] of leakCases) {
+      const lg = await mktempTracked('sh-gitdir-19leak-');
+      const lw = await mktempTracked('sh-domains-19leak-');
+      const lc = path.join(await mktempTracked('sh-cfg-19leak-'), 'sync-config.json');
+      await initRepo(lg, lw, remoteUrl);
+      await writeConfig(lc, remoteUrl);
+      __setSyncTestOverrides({ gitDir: lg, configFile: lc });
+      __setDomainsDirOverride(lw);
+      invalidateRemoteCache();
+      const payload = await getRemoteStatus({ maxAgeMs: 0 });
+      const blob = JSON.stringify(payload);
+      assertEq(payload.remoteChecked, false, `precondition: the check fails for ${label}`);
+      assertEq(payload.behindFiles, null, `and reports null, never a reassuring 0, for ${label}`);
+      assertTrue(!/"[^"]*\/(Users|var|tmp|home|private)\//.test(blob),
+        `the polled payload carries NO absolute path for ${label}`);
+      assertTrue(!/--git-dir|--work-tree|Command failed|fatal:|error:/.test(blob),
+        `and no raw git text for ${label}`);
+      assertTrue(!/ghp_|github_pat_|[A-Za-z0-9_]{20,}@/.test(blob),
+        `and no credential for ${label}`);
+    }
+
+    // (g) FRONTEND ORDERING. The Sync view used to re-enable its buttons and
+    //     THEN fire the badge's fetch, unawaited — putting the user's own
+    //     next click inside the window this section exists to close. Source
+    //     guard rather than a browser drive, and scoped to the one ordering
+    //     property: the awaited badge refresh must PRECEDE the line that
+    //     re-enables the controls.
+    const viewSrc = await readFile(path.join(ROOT, 'src/public/next/views/sync.js'), 'utf8');
+    const awaitAt = viewSrc.indexOf('await refreshSyncRemoteBadge()');
+    const enableAt = viewSrc.indexOf('state.acting = null;', viewSrc.indexOf('async function onAction'));
+    assertTrue(awaitAt > 0, 'the Sync view AWAITS the remote badge refresh');
+    assertTrue(enableAt > 0 && awaitAt < enableAt,
+      'and does so BEFORE clearing `acting`, so no button is live while our own fetch runs');
+    assertTrue(!/^\s*refreshSyncRemoteBadge\(\);/m.test(viewSrc),
+      'no un-awaited remote badge refresh remains in the view');
+  }
+
+
+  // ── 19. The rail badge's decision functions, executed (v3.9.1 defect 2) ───
+  console.log('\n19. Rail badge — tri-state behind count, never summed, never a false zero\n');
+  {
+    const appSrc = await readFile(path.join(ROOT, 'src/public/next/app.js'), 'utf8');
+    const syncViewSrcForWiring = await readFile(path.join(ROOT, 'src/public/next/views/sync.js'), 'utf8');
+    const badge = new Function(
+      'const VIEW_META = { sync: { title: "Sync" } };\n' +
+      extractFn(appSrc, 'syncBadgeTitle', 'next/app.js') + '\n' +
+      extractFn(appSrc, 'syncBehindFromRemote', 'next/app.js') + '\n' +
+      extractFn(appSrc, 'syncBadgeLabel', 'next/app.js') + '\n' +
+      'return { syncBadgeTitle, syncBehindFromRemote, syncBadgeLabel };'
+    )();
+
+    // ── syncBehindFromRemote: the tri-state ──
+    // undefined = no remote concept at all; null = tried and failed;
+    // number = measured. Collapsing null into 0 is the defect.
+    assertEq(badge.syncBehindFromRemote({ configured: false }), undefined,
+      'sync not configured -> undefined (no remote information exists)');
+    assertEq(badge.syncBehindFromRemote(null), undefined, 'a null payload -> undefined');
+    assertEq(badge.syncBehindFromRemote({ configured: true, remoteChecked: true, behindFiles: 0 }), 0,
+      'a MEASURED zero stays 0');
+    assertEq(badge.syncBehindFromRemote({ configured: true, remoteChecked: true, behindFiles: 5 }), 5,
+      'a measured five is 5');
+    assertEq(badge.syncBehindFromRemote({ configured: true, remoteChecked: false, behindFiles: null }), null,
+      'a FAILED check -> null, not 0');
+    assertEq(badge.syncBehindFromRemote({ configured: true, remoteChecked: false, behindFiles: 0 }), null,
+      'remoteChecked:false wins even if a 0 came along in the payload');
+    for (const bad of ['7', null, NaN, Infinity, -2, undefined]) {
+      assertEq(badge.syncBehindFromRemote({ configured: true, remoteChecked: true, behindFiles: bad }), null,
+        `an unusable behindFiles (${String(bad)}) -> null, never a guessed 0`);
+    }
+
+    // ── syncBadgeLabel: the two numbers are NEVER added ──
+    assertEq(badge.syncBadgeLabel(0, 0), '', 'nothing pending anywhere -> no badge');
+    assertEq(badge.syncBadgeLabel(0, undefined), '', 'no local work and no remote info -> no badge');
+    assertEq(badge.syncBadgeLabel(3, undefined), '3', 'local only -> the local number alone');
+    assertEq(badge.syncBadgeLabel(0, 5), '↓5', 'incoming only -> the down-arrow form (the two-machine case)');
+    assertEq(badge.syncBadgeLabel(3, 5), '3↓5', 'both -> both numbers, separately readable');
+    assertTrue(badge.syncBadgeLabel(3, 5) !== '8', 'the two counts are NEVER summed into one number');
+    assertEq(badge.syncBadgeLabel(3, null), '3', 'a failed remote check adds nothing to the badge text');
+    assertEq(badge.syncBadgeLabel(0, null), '', 'a failed check alone shows no badge (the tooltip carries it)');
+
+    // ── syncBadgeTitle: the tooltip is where the honesty lives ──
+    // Single-argument behaviour must stay byte-identical — test-next-recovery-
+    // and-badge.js pins these exact strings.
+    assertEq(badge.syncBadgeTitle(0), 'Sync', 'one-arg zero is still the plain title');
+    assertEq(badge.syncBadgeTitle(1), 'Sync — 1 local change not yet pushed to GitHub',
+      'one-arg singular sentence is unchanged');
+    assertEq(badge.syncBadgeTitle(2), 'Sync — 2 local changes not yet pushed to GitHub',
+      'one-arg plural sentence is unchanged');
+    assertEq(badge.syncBadgeTitle(0, undefined), 'Sync', 'explicit undefined behaves like the one-arg call');
+
+    assertEq(badge.syncBadgeTitle(0, 5), 'Sync — 5 files waiting to pull from GitHub',
+      'incoming-only tooltip names the pull direction');
+    assertEq(badge.syncBadgeTitle(0, 1), 'Sync — 1 file waiting to pull from GitHub',
+      'one incoming file is singular');
+    assertEq(badge.syncBadgeTitle(2, 5),
+      'Sync — 2 local changes not yet pushed to GitHub; 5 files waiting to pull from GitHub',
+      'both directions are named separately in the tooltip');
+    assertEq(badge.syncBadgeTitle(0, 0), 'Sync', 'a measured zero incoming adds no clause');
+    assertEq(badge.syncBadgeTitle(0, null), 'Sync — could not check GitHub for incoming changes',
+      'a FAILED check says so — it never renders as "you are up to date"');
+    assertEq(badge.syncBadgeTitle(2, null),
+      'Sync — 2 local changes not yet pushed to GitHub; could not check GitHub for incoming changes',
+      'a failed check is reported alongside the local count, not instead of it');
+
+    for (const [l, b] of [[0, 5], [2, 5], [0, null], [2, null], [1, 1]]) {
+      assertTrue(!/["]/.test(badge.syncBadgeTitle(l, b)),
+        `the title never emits a double quote (it is interpolated into title="…"): (${l}, ${String(b)})`);
+    }
+
+    // ── Wiring: the cost decision, pinned ──
+    // The remote check must NOT be on navigate()'s hot path. If someone
+    // later wires it there, every rail click becomes a GitHub round-trip.
+    const navFn = extractFn(appSrc, 'navigate', 'next/app.js');
+    assertTrue(!/refreshSyncRemoteBadge/.test(navFn),
+      'navigate() does NOT trigger a network fetch — the remote check stays off the hot path');
+    assertTrue(/refreshSyncBadge\(\)/.test(navFn),
+      'navigate() still refreshes the free, local-only badge half');
+    const bootFn = extractFn(appSrc, 'boot', 'next/app.js');
+    assertTrue(/setInterval\(refreshSyncRemoteBadge, SYNC_REMOTE_REFRESH_MS\)/.test(bootFn),
+      'boot() arms the slow remote interval');
+    assertTrue(/SYNC_REMOTE_REFRESH_MS = 10 \* 60_000/.test(appSrc),
+      'the remote cadence is 10 minutes — an order of magnitude slower than the local one');
+    const remoteFn = extractFn(appSrc, 'refreshSyncRemoteBadge', 'next/app.js');
+    assertTrue(/try \{[\s\S]*?\} catch/.test(remoteFn),
+      'refreshSyncRemoteBadge() wraps its fetch in try/catch (it runs inside boot())');
+    assertTrue(!/\bthrow\b/.test(remoteFn), 'refreshSyncRemoteBadge() never throws');
+    assertTrue(/next = null/.test(remoteFn),
+      'a failed fetch resolves to null (tried and failed), not undefined or 0');
+    // The local status endpoint keeps exactly one fetch site in the shell —
+    // the remote check is a DIFFERENT endpoint on a different cadence, not a
+    // second poll of the same one.
+    assertEq((appSrc.match(/fetch\('\/api\/sync\/status'\)/g) || []).length, 1,
+      'still exactly ONE /api/sync/status fetch site in the shell');
+    assertEq((appSrc.match(/fetch\('\/api\/sync\/remote-status'\)/g) || []).length, 1,
+      'exactly ONE /api/sync/remote-status fetch site in the shell');
+
+    // A push/pull/sync is the one moment BOTH badge halves are known to be
+    // wrong, and the remote half is only re-checked every 10 minutes — so
+    // without this the rail can keep advertising "↓5 waiting to pull" long
+    // after the user pulled it.
+    //
+    // SOURCE SCAN, and labelled as one rather than dressed up: driving the
+    // real click would need a DOM, a mounted view and a live server. This
+    // asserts the calls are present in onAction's finally, NOT that they
+    // fire — a call made unreachable by some future early return would still
+    // pass. Added because a mutation deleting both lines left this suite
+    // fully GREEN, i.e. the wiring had no coverage at all.
+    const onActionFn = extractFn(syncViewSrcForWiring, 'onAction', 'views/sync.js');
+    assertTrue(/refreshSyncBadge\(\)/.test(onActionFn),
+      'views/sync.js repaints the LOCAL badge half after a completed sync action');
+    assertTrue(/refreshSyncRemoteBadge\(\)/.test(onActionFn),
+      'views/sync.js repaints the REMOTE badge half after a completed sync action');
+    assertTrue(/refreshSyncBadge,\s*refreshSyncRemoteBadge/.test(syncViewSrcForWiring),
+      'both refreshers are imported from the shell, not re-implemented as a second fetch path');
   }
 
 } finally {

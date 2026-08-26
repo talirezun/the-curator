@@ -191,7 +191,7 @@ Shared Brain supports two `data_handling_terms` modes, set by the admin at brain
 > By clicking Save & Connect you agree:
 > - Only pages from the domains you selected will be pushed to the Shared Brain.
 > - **You retain copyright in your original content.** The cohort owns the synthesised collective output.
-> - You can disconnect anytime from the Sync tab — your local wiki is unaffected.
+> - You can disconnect anytime — your local wiki is unaffected.
 > - Your access token is stored locally on this computer only.
 
 **What this means in practice:**
@@ -209,7 +209,7 @@ Shared Brain supports two `data_handling_terms` modes, set by the admin at brain
 > By clicking Save & Connect you agree:
 > - Only pages from the domains you selected will be pushed to the Shared Brain.
 > - **By contributing, you assign copyright in contributed pages to the organisation per your employment agreement.**
-> - You can disconnect anytime from the Sync tab — your local wiki is unaffected.
+> - You can disconnect anytime — your local wiki is unaffected.
 > - Your access token is stored locally on this computer only.
 
 **What this means in practice:**
@@ -293,7 +293,7 @@ Before deploying Shared Brain for a real cohort or team, answer these five yes/n
 | 1 | **Do you understand which contributors will write what data into their personal wikis?** Your contributors' personal wikis are private — only their explicitly opted-in domains push to the shared brain. But contributors control what they write into their own opted-in domains. If they write PII (real names, emails, sensitive personal data) into wiki pages they then opt-in to contribute, that PII lands in the shared repo. Train your contributors on this. |
 | 2 | **Is US data residency acceptable for this deployment?** It has to be. Every working Shared Brain stores its data in the US, because the adapter can only reach `api.github.com` — see §4. If you are in the EU, UK, or any region with a residency requirement, the honest answer to this question is "no" and there is no configuration that changes it. |
 | 3 | **Have you chosen the right `data_handling_terms` mode?** §3 covers the two modes. Pick deliberately at brain setup — it's encoded in the invite token. |
-| 4 | **Do you have an admin procedure for revocation requests?** When a contributor leaves (graduates, changes jobs, requests removal), someone needs to run the revoke operation. The Curator UI surfaces this on the **Sync** tab → the connection's card → **Advanced** → **"Revoke a contributor…"** (visible only when the connection holds an admin token). Document who in your org has the `admin_token` and the procedure. |
+| 4 | **Do you have an admin procedure for revocation requests?** When a contributor leaves (graduates, changes jobs, requests removal), someone needs to run the revoke operation. The Curator UI surfaces this in the **Shared Brain** rail view → the connection's card → **"Admin controls — admin token & contributor revocation"** (visible only when the connection holds an admin token). Document who in your org has the `admin_token` and the procedure. |
 | 5 | **Do you understand the absolute-erasure procedure?** Standard revocation removes the contributor's data from the live brain but git history retains it. For absolute erasure see §2d. If your contributors might invoke this right, make sure someone in your org knows how. |
 
 If any answer is "no" — pause the deployment and resolve the gap before inviting contributors.

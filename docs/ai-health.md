@@ -22,7 +22,9 @@ Issues that the algorithm solves perfectly (missing backlinks, folder-prefix lin
 
 ## How it works (Phase 1 — broken links)
 
-When Wiki Health finds a broken link it could not match algorithmically, the row is tagged **Review** and a new **✨ Ask AI** button appears (only if you have an API key configured in Settings).
+> **Interface note — the per-row ✨ Ask AI button exists only at `/old`.** Phases 1 and 2 below describe a button on an individual broken-link or orphan row. That control was never ported to the redesigned interface, which since the v3.9.0 cutover is what you get at `/`. There, the LLM-backed actions are the three **✨** buttons in the **Quick maintenance** bar — *Fix broken links*, *Rescue orphans*, *Find duplicate pages* — which do the same work in a reviewed batch with a preview, and are described in the bulk sections further down. Read Phases 1 and 2 for what the AI is asked and what leaves your machine; that part is identical.
+
+When Wiki Health finds a broken link it could not match algorithmically, the row is tagged **Review** and — in the `/old` interface — a **✨ Ask AI** button appears (only if you have an API key configured in Settings).
 
 Clicking **✨ Ask AI**:
 
@@ -40,7 +42,7 @@ If the model answers `target: null` or `confidence: low`, no **Apply** button is
 
 ## How it works (Phase 2 — orphan rescue)
 
-An **orphan** is an entity or concept page with zero incoming `[[wikilinks]]` — content you captured that the graph doesn't yet know about. The Health scan has always listed orphans as review-only. From v2.4.4, each orphan row gets a **✨ Ask AI** button (when an API key is configured).
+An **orphan** is an entity or concept page with zero incoming `[[wikilinks]]` — content you captured that the graph doesn't yet know about. The Health scan has always listed orphans as review-only. From v2.4.4, each orphan row in the `/old` interface gets a **✨ Ask AI** button (when an API key is configured); the current interface offers the batch **✨ Rescue orphans** action instead.
 
 Clicking **✨ Ask AI** on an orphan:
 
@@ -63,7 +65,7 @@ Entities and concepts, by contrast, accumulate relationships over time — a new
 
 ## Bulk broken-link fix (v3.0.1-beta.16)
 
-The per-link **✨ Ask AI** button (Phase 1) is perfect for a handful of broken links, but a mature domain can accumulate **hundreds or thousands** — clicking each one is impractical. The **✨ Fix broken links with AI** card (it appears in the Health tab when AI is configured and the domain actually has broken links) resolves them in bulk.
+The per-link **✨ Ask AI** button (Phase 1) is perfect for a handful of broken links, but a mature domain can accumulate **hundreds or thousands** — clicking each one is impractical. The **✨ Fix broken links** button (in the **Quick maintenance** bar of a domain's Wiki health panel, when AI is configured and the domain actually has broken links) resolves them in bulk.
 
 It's a two-tier resolver with a preview-then-confirm flow, so you always see the plan before anything is written:
 
@@ -71,14 +73,42 @@ It's a two-tier resolver with a preview-then-confirm flow, so you always see the
 2. **Free pass.** Pure formatting fixes run with no LLM cost — slugifying spaces (`[[artificial intelligence]]` → `[[artificial-intelligence]]`), stripping `.md` (`[[tali-rezun.md]]` → `[[tali-rezun]]`), removing folder prefixes, hyphen-normalising — matched against your real page names.
 3. **AI pass.** The remaining unique targets go to the LLM in batches with your full page-name inventory. For each, it picks the existing page the writer meant, or says "no real match."
 4. **The lexical-variant gate (the safety net).** An AI suggestion is only accepted as a **retarget** when the broken link and the target genuinely share words — a spelling/ordering variant, an acronym, or one containing the other (`rezun-tali` → `tali-rezun`, `mcp` → `model-context-protocol-mcp`, `iot` → `iot-and-ai`). When the AI reaches for a merely *related* page (`context-window` → `agent-memory`, `big-data` → `ai-and-weather-forecasting`, `healthcare` → `ai-in-medicine`), that's a different concept — it would be a **wrong** graph connection — so it falls through to **strip** instead. This keeps the AI from inventing false links.
+
+   **Versions and negations are refused outright (v3.9.1).** The gate counts *how many* words differ, not *which* ones — and for slugs of three or more words, "differs by exactly one word" was accepted whatever that word was. Two classes of word flip the meaning rather than shading it, and both used to sail through:
+
+   | Broken link | AI's target | Was | Now |
+   |---|---|---|---|
+   | `[[claude-sonnet-4.5]]` | `claude-sonnet-3.5` | accepted | **refused** |
+   | `[[q1-2025-results]]` | `q1-2024-results` | accepted | **refused** |
+   | `[[data-retained]]` | `data-not-retained` | accepted | **refused** |
+
+   In a wiki *about* AI models that first row is not a cosmetic slip — it silently rewrites every mention of one model into a different model. So the gate now refuses any pair whose differing words include a **digit** (a version, a year, a quarter, a model number) or a **negation** (`not`/`non`/`no`/`never`/`without`/`anti`, morphological forms like `secure`/`insecure`, or a listed opposite pair such as `input`/`output`, `enabled`/`disabled`, `retained`/`deleted`). The two error directions are not symmetric — a wrong retarget writes a false fact into every page that referenced it, while a wrongly-refused one merely strips the brackets and leaves the words readable — so the gate leans hard towards refusing.
+
+   Also fixed in the same release: a related pair where one slug's words are entirely contained in the other's is now **decided** by that relationship rather than falling through to the word-overlap score when it was rejected. That fall-through had made the "too generic to be a variant" guard (added in v3.0.1-beta.17 to stop `ai` and `ml` swallowing links) ineffective for eight releases — `[[whisper-ai]]` → `ai` was being accepted.
+
+   **What this does *not* fix, stated plainly.** The dominant real-world failure is a **specific** concept retargeted onto its **generic parent** — `[[agent-memory]]` → `memory`, `[[human-amplification]]` → `human`, `[[pilot-light-model]]` → `model`. Measured across six real domains, **33 of 57 gate-approved retargets were of that shape, and they still pass**. They are structurally identical to `iot` ⊂ `iot-and-ai`, which is a legitimate fix, so separating them is a change to what the gate *means* rather than a bug fix, and it is deliberately left for its own release. So v3.9.1 narrows this problem; it does not close it — more than half of what the gate lets through is still the generic-parent shape. If you are reviewing a plan, the preview's "repointed to a real page" column is still where your attention is best spent, and a retarget onto a noticeably broader page is the pattern to look for.
+
+   One more honest limitation: the *correct* repair of a punctuation variant — `[[claude-sonnet-4.5]]` → `claude-sonnet-4-5` — is refused too. The slug normaliser deletes the dot, so the version reads as `45` on one side and `4`,`5` on the other, and the digit rule cannot tell a rewrite from a change. That link is stripped rather than repaired. Safe, but not fixed.
 5. **Preview.** When planning finishes you see two columns — **repointed to a real page** and **brackets removed (no real page)** — with sample lists and counts. Nothing has been written yet.
 6. **Apply.** Click **Apply** and the plan is written: retargeted links point to the real page (alias display text preserved); stripped links lose only their brackets, keeping the readable words (a `[[big-data|Big Data]]` becomes plain `Big Data`). Health then auto-re-scans so you can confirm the count dropped.
 
+   **The gate runs again on the server at this point (v3.9.1).** It used to run only while planning, but the plan you approve is held in the browser and arrives back as a request body — so a plan that never met the gate, or met an older and weaker one, was applied verbatim. Any retarget the gate refuses is now **downgraded to a strip** rather than applied, and rather than being dropped (dropping it would leave a broken link the report claimed it had handled). Deterministic fixes from step 2 are exempt and still apply: repairs like `[[e-mail]]` → `email` share no whole word with their target and the gate alone would refuse every one of them. The exemption is re-derived server-side from the same resolver, so a plan cannot claim it.
+
 **Removing the brackets vs. leaving a broken link.** A link to a page that doesn't exist isn't helping you — it's a dead end in the graph. Removing the brackets keeps the words readable in your notes while clearing the broken-link clutter. (If you'd rather a missing concept *became* a page, write it up and re-link — the bulk fixer never invents pages.)
 
-**Safety.** Like every Health fix, this is git-tracked. If a batch result looks wrong, revert it from the **Sync** tab before pushing. The apply is registered as a write operation, so a concurrent sync/update/delete is refused with a clear message until it finishes. The planning step is strictly read-only — it makes the AI calls but writes nothing; only **Apply** touches your files.
+**Safety.** Like every Health fix, this is git-tracked, so a batch result that looks wrong is recoverable — see the box at the end of this section for how, because it is not a button in the app. The apply is registered as a write operation, so a concurrent sync/update/delete is refused with a clear message until it finishes. The planning step is strictly read-only — it makes the AI calls but writes nothing; only **Apply** touches your files.
 
 **Cost.** The dominant cost is re-sending your page-name inventory in each batch, so large batches (100 targets/call) keep it low. On a real 3,300-page domain with 1,000+ broken links the full plan cost about **$0.014** on Gemini Flash Lite. You see the estimate before confirming.
+
+**Both interfaces now report this.** The apply result counts how many retargets the
+server-side gate refused and downgraded to strips, and as of v3.9.1 both frontends say
+so: *"N links had a proposed target that did not pass the safety check, so the brackets
+were removed instead of pointing at the wrong page."* The sentence appears only when the
+count is non-zero. Note what the number measures: `downgraded` counts **links**, while
+`retargeted` and `stripped` count **occurrences** — and a downgraded link's occurrences
+are already inside the strip total, so it is a qualifier on that total and never a third
+number to add. Before v3.9.1 the count reached the browser and nothing rendered it, so a
+link the app declined to trust was indistinguishable from one that never had a candidate.
 
 ---
 
@@ -92,7 +122,7 @@ For each orphan, the AI picks the ONE existing page that should most naturally l
 
 **Summaries are never homes.** Per the wiki convention, summaries reference entities at ingest time, not retroactively — so only entity and concept pages are candidate homes (the same rule as the per-orphan Phase 2 rescue).
 
-**Safety.** Read-only planning; the apply is write-locked and git-tracked (revert from Sync). Every plan entry is re-validated on apply: the orphan slug and the target must both exist on disk, the description is stripped of any `[[ ]]` so it can't fabricate links, and a malformed/crafted entry is skipped rather than written.
+**Safety.** Read-only planning; the apply is write-locked and git-tracked (recoverable — see *How to actually undo a Health fix* below). Every plan entry is re-validated on apply: the orphan slug and the target must both exist on disk, the description is stripped of any `[[ ]]` so it can't fabricate links, and a malformed/crafted entry is skipped rather than written.
 
 ---
 
@@ -106,7 +136,7 @@ The **🛠 Fix N safe issues** button runs every *deterministic* fix at once —
 
 Some duplicates can't be caught by string matching. `email.md` + `e-mail.md` look different to a hyphen-collapse algorithm. `rag.md` + `retrieval-augmented-generation.md` share no characters. These pages **fragment the knowledge graph** — queries return partial results, Obsidian shows separate nodes for the same idea.
 
-Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** in the Health tab, click **Scan** first, then click the **✨ Find duplicate pages** button in the **⚡ Quick maintenance** bar at the top of the results. (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
+Phase 3 adds a dedicated scan for these cases. Unlike Phases 1 and 2, this scan is **opt-in** and runs only when you launch it. **To launch it:** open **Domains**, pick a domain, and in its **Wiki health** panel click **Scan** first, then click the **✨ Find duplicate pages** button in the **⚡ Quick maintenance** bar at the top of the results. (At `/old` the same flow starts from the top-level **Health** tab.) (Before v3.0.1-beta.17 this was a standalone "Scan for semantic duplicates" card; it now lives in the maintenance bar. The button appears whenever an API key is configured — including on a wiki that's otherwise structurally clean, since semantic duplicates are independent of broken links/orphans; this clean-wiki case was fixed in v3.0.1-beta.22.) It's gated by a cost preview and a cost ceiling.
 
 ### The pipeline
 
@@ -123,7 +153,7 @@ When a scan returns a long list (e.g. 245 pairs), reviewing each one by hand is 
 
 Clicking it shows a confirm step naming exactly how many pages will be deleted, then merges them one after another with a live progress bar (each card flips to ✓ Merged or ⊘ Skipped as it goes). Merges run sequentially server-side, so a pair whose file was already consumed by an earlier merge is safely skipped rather than erroring.
 
-**Undo:** the entire wiki is git-tracked, so a batch merge you regret can be reverted from the **Sync** tab (it shows the pending changes; you can discard them before pushing).
+**Undo:** the entire wiki is git-tracked, so a batch merge you regret is recoverable — but **not from inside the app**. See *How to actually undo a Health fix* below.
 
 ### Scale caps (baked into the code)
 
@@ -135,7 +165,7 @@ Clicking it shows a confirm step naming exactly how many pages will be deleted, 
 | Batch merge | High-confidence only, confirm-gated | per-pair Preview still required for medium/low |
 | Max pairs per batch merge | 2,000 | hard-coded |
 
-The batch merge is restricted to high-confidence pairs and guarded by an explicit confirm step; medium/low pairs keep the per-pair preview gate. Because the wiki is git-tracked, any batch merge is revertable from the Sync tab — that's the safety net that makes a bulk operation acceptable here.
+The batch merge is restricted to high-confidence pairs and guarded by an explicit confirm step; medium/low pairs keep the per-pair preview gate. Because the wiki is git-tracked, any batch merge is recoverable from a terminal (see *How to actually undo a Health fix* below) — that, plus the confirm step, is what makes a bulk operation acceptable here. Note the recovery is a git command, not an in-app button.
 
 ### Cost
 
@@ -156,7 +186,7 @@ If the active model genuinely has no published price (for example, an `LLM_MODEL
 
 - Merge pairs that are related-but-distinct (e.g. `gpt-4` vs `gpt-4-turbo`). The LLM is instructed to err toward non-dupe when ambiguous.
 - Touch `summaries/` as a merge target. A summary can never be the kept or removed page in a merge; link rewrites still go through summary pages (because summaries may link to the old slug and need to point to the new one), but the summary itself is never deleted or structurally modified.
-- Batch-merge **medium- or low-confidence pairs**. Those are always one pair at a time, behind the Preview → Merge gate, however many are found. (High-confidence pairs *can* be batch-merged since v3.0.1-beta.15 — see [Merge all high-confidence duplicates](#merge-all-high-confidence-duplicates-v301-beta15) above — behind an explicit confirm step naming the page count, capped at 2,000 pairs per run, and revertable from the Sync tab.)
+- Batch-merge **medium- or low-confidence pairs**. Those are always one pair at a time, behind the Preview → Merge gate, however many are found. (High-confidence pairs *can* be batch-merged since v3.0.1-beta.15 — see [Merge all high-confidence duplicates](#merge-all-high-confidence-duplicates-v301-beta15) above — behind an explicit confirm step naming the page count, capped at 2,000 pairs per run, and recoverable via git — see *How to actually undo a Health fix*.)
 - Run without your explicit click. This is the only AI Health feature with a cost preview + cost ceiling, because it's the only one that scans the whole domain.
 
 ---
@@ -195,7 +225,7 @@ When you rename a slug or merge two pages, dismissals that referenced the old na
 
 ### Why this matters
 
-A 2000-page domain typically produces 70–500 semantic-duplicate candidate pairs. Reviewing them once is reasonable; reviewing the same false positives every month is not. Persistent dismissals turn the Health tab into a true to-do list — once you've dispositioned an issue, it stops competing for your attention.
+A 2000-page domain typically produces 70–500 semantic-duplicate candidate pairs. Reviewing them once is reasonable; reviewing the same false positives every month is not. Persistent dismissals turn the Wiki health panel into a true to-do list — once you've dispositioned an issue, it stops competing for your attention.
 
 ---
 
@@ -219,7 +249,7 @@ The provider's privacy policy applies to the excerpt and slug list you send. See
 - [Google Gemini API Terms](https://ai.google.dev/terms)
 - [Anthropic Usage Policies](https://www.anthropic.com/legal/usage-policy)
 
-A one-time disclosure modal summarises this the first time you click **✨ Ask AI** in a browser. Accepting it stores the acknowledgement in `localStorage` under the key `curator-ai-health-disclosure-seen-v1`.
+A one-time disclosure modal summarises this the first time you launch an ✨ AI action in a browser (per-row **Ask AI** at `/old`, or a Quick maintenance button in the current interface — both read the same acknowledgement key, so you are never asked twice). Accepting it stores the acknowledgement in `localStorage` under the key `curator-ai-health-disclosure-seen-v1`.
 
 ---
 
@@ -235,9 +265,29 @@ Orphan rescue is slightly larger because it asks for up to 5 candidates with des
 - Input tokens ≈ the same shape as broken-link (orphan page content + entity/concept inventory).
 - Response ≈ **600–1000 output tokens** (5 × candidate block).
 
-On the default low-cost models (Gemini 2.5 Flash Lite or Claude Haiku 4.5), each Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent.
+On the default low-cost models (Gemini 2.5 Flash Lite or Claude Haiku 4.5), each per-row Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent.
 
 The Curator does not aggregate or cache suggestions — each click is an independent call.
+
+## How to actually undo a Health fix
+
+> **⚠ How to actually undo a Health fix — there is no Undo button, in either interface.**
+>
+> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js`) — there is no revert or discard endpoint, the redesigned Sync view says as much (*"Commit history & revert are coming soon"*), and the `/old` Sync tab has no discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
+>
+> If you have Personal Sync configured, and **before you push**:
+>
+> ```bash
+> # See what changed
+> git --git-dir="$HOME/the-curator/.knowledge-git" \
+>     --work-tree="<your Knowledge Base Location>" status
+>
+> # Throw the uncommitted changes away
+> git --git-dir="$HOME/the-curator/.knowledge-git" \
+>     --work-tree="<your Knowledge Base Location>" checkout -- .
+> ```
+>
+> Your Knowledge Base Location is shown in **Settings → Knowledge base**. If you have already pushed, the change is a commit in your GitHub repo and `git revert` is the tool. If you have **not** set up Personal Sync at all, there is no history to go back to — take a copy of your domains folder before running a bulk AI fix.
 
 ---
 
@@ -245,7 +295,7 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 
 There is no global toggle. AI Health is gated purely on whether an API key is configured:
 
-- **Remove both keys** in Settings → Disconnect. The ✨ Ask AI button disappears from the Health tab on the next scan.
+- **Remove both keys** in Settings → Disconnect. The ✨ AI actions disappear from the Wiki health panel (and the `/old` Health tab) on the next scan.
 - **Remove the `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`** values from `.env` if you only use the developer fallback.
 
 The existing algorithmic Health fixes continue to work without any API key.
@@ -272,9 +322,21 @@ Before returning a suggestion to the UI, `suggestBrokenLinkTarget()`:
 
 This defence sits ABOVE the existing v2.4.0 model fallback chain, so a confused fallback model cannot leak a bad suggestion into the UI.
 
+### The write path validates independently (v3.9.1)
+
+The check above runs in the *suggestion* layer. Two write paths do not go through it, and both are now guarded in `health.js` itself:
+
+- **`fixIssue(domain, 'brokenLinks', issue)`** — reached by the per-issue Fix button and by the MCP `fix_wiki_issue` tool. Until v3.9.1 its only test was `if (!issue.suggestedTarget)`, a plain truthiness check. The MCP path hands this function an object composed by a language model, so a model could retarget a link across the whole domain to a page that does not exist — manufacturing the very defect the tool exists to repair. `suggestedTarget` must now name a page that is actually on disk (a bare entity/concept slug, or `summaries/<slug>`); anything else is a no-op. The inventory is built once per fix-all run rather than per issue.
+
+  It deliberately does **not** run the lexical-variant gate. A scan-emitted `suggestedTarget` comes from the scanner's own hyphen and prefix normalisation, which legitimately produces pairs the gate refuses — `[[e-mail]]` → `email` shares no whole word with its target. The gate exists to judge the AI planner's free-form guesses, not deterministic repairs.
+
+- **`applyBrokenLinkFixes(domain, plan)`** — the bulk apply. Re-runs the lexical gate server-side; see the bulk section above.
+
+`health.js` **imports** `isLexicalVariant` from `health-ai.js` rather than keeping a second copy. Two hand-maintained copies of one safety guard is what produced the v3.2.0 CRITICAL, so the gate has exactly one implementation reached from both sides. The READ-ONLY invariant above is unaffected — the import direction is `health.js` → `health-ai.js` for a pure predicate; `health-ai.js` still writes nothing.
+
 ### Provider-agnostic
 
-`health-ai.js` calls `generateText()` from [src/brain/llm.js](../src/brain/llm.js), which dispatches to whichever provider the user has activated (Gemini or Anthropic) with the full v2.4.0 fallback safety net. Swapping providers in Settings is picked up on the next Ask AI click — no special code.
+`health-ai.js` calls `generateText()` from [src/brain/llm.js](../src/brain/llm.js), which dispatches to whichever provider the user has activated (Gemini or Anthropic) with the full v2.4.0 fallback safety net. Swapping providers in Settings is picked up on the next AI action — no special code.
 
 ### Endpoint surface
 
@@ -303,6 +365,6 @@ No existing endpoint was modified. The `orphanLink` and `semanticDupe` fix types
 
 If you've joined a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. Health **scanning** works normally on these mirrors — you can run a scan, see broken links / orphans / duplicates, and review them.
 
-**Health fixing does NOT work on mirror domains.** Direct fixes via `POST /api/health/:domain/fix` would not propagate to other contributors and would be overwritten on the next pull. To resolve a health issue in the collective wiki, fix it upstream in your **personal opted-in domain**, then **Push contributions** from the Sync tab. The fix gets pushed as a Delta and incorporated into the next synthesis.
+**Health fixing does NOT work on mirror domains.** Direct fixes via `POST /api/health/:domain/fix` would not propagate to other contributors and would be overwritten on the next pull. To resolve a health issue in the collective wiki, fix it upstream in your **personal opted-in domain**, then **Push contributions** in the Shared Brain view. The fix gets pushed as a Delta and incorporated into the next synthesis.
 
 This is the same read/write contract that the MCP write tools enforce — see [`docs/mcp-user-guide.md`](mcp-user-guide.md).

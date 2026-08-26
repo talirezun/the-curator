@@ -186,13 +186,152 @@ tool" baked in; it inherits whatever tools the user's MCP configuration
 exposes. The Curator's "My Curator" MCP server is one example among
 hundreds.
 
-## 10. Synthesis — which architecture wins?
+## 10. The evaluator agent
+
+By 2025 the bottleneck in agent development had moved from "can it do the
+task" to "can we tell whether it did the task". The evaluator agent — an
+LLM asked to grade another model's output against a rubric — became the
+default answer, and it brought its own pathologies.
+
+The best-documented is self-preference: a model grading its own output
+scores it higher than a blind human would. The second is rubric drift,
+where an evaluator asked for a 1-5 score gradually compresses toward 4
+across a long batch. The third, and the one that costs teams the most
+money, is that an evaluator is only as good as the reference it is given;
+a rubric written from three cherry-picked examples generalises about as
+well as a regex.
+
+The practical countermeasures that survived contact with production are
+narrow: pairwise comparison instead of absolute scoring, a different
+model family for the evaluator than for the generator, and a held-out
+human-graded set used to calibrate the evaluator itself rather than the
+system under test. Braintrust, LangSmith and Anthropic's own eval tooling
+all converged on roughly this shape independently, which is usually a
+sign that the shape is forced by the problem rather than chosen.
+
+The deeper point is architectural. An evaluator agent is not a testing
+tool bolted onto an agent system; it is a second agent with its own
+failure modes, its own cost curve, and its own need for evaluation. Teams
+that treat it as infrastructure rather than as a component ship
+confidently broken systems.
+
+## 11. Memory architectures
+
+Every architecture above has to answer the same question: what does the
+agent remember between turns, between sessions, and between users? Four
+answers shipped in volume.
+
+Scratchpad memory keeps the reasoning trace inside the context window and
+discards it at session end. It is free, it is what ReAct does, and it
+loses everything the moment the window rolls.
+
+Vector memory embeds past turns and retrieves the nearest neighbours.
+MemGPT popularised the pattern and Letta productised it. It scales, but
+it inherits every RAG weakness: retrieval misses are invisible, and the
+agent cannot tell the difference between "I never knew that" and "I
+failed to retrieve it".
+
+Compiled memory writes durable structured artefacts — notes, wiki pages,
+a knowledge graph — and reads them back as ordinary context. It is
+slower to write and far cheaper to read, and it has the property no other
+scheme has: a human can open the memory, read it, and correct it. The
+Curator is built on this thesis; so, in a different register, is
+Obsidian's own graph.
+
+Parametric memory fine-tunes the weights on the interaction history. It
+is the only scheme where recall costs nothing at inference time, and the
+only one where a mistake is effectively unfixable without retraining.
+
+The 2026 consensus, to the extent one exists, is that these are layers
+rather than alternatives. Scratchpad for the turn, compiled for the
+project, vector for the archive, parametric for nothing anyone wants to
+be responsible for.
+
+## 12. The economics nobody puts on the slide
+
+An agent architecture is a cost curve wearing a diagram. The single-turn
+classifier costs one short call. The ReAct agent costs one call per step
+and re-sends the entire trace each time, so a ten-step task costs
+quadratically more input tokens than a one-step task, not ten times more.
+Multi-agent teams multiply that by the number of agents and then add the
+coordination traffic between them.
+
+Prompt caching changed the shape of this curve more than any model
+release did. When a stable prefix — instructions, tool definitions, the
+source document — can be cached and re-read at roughly a tenth of base
+input price, the quadratic term stops dominating. The engineering
+consequence is specific and unglamorous: put everything stable first and
+everything variable last, and never let a timestamp or a counter leak
+into the prefix.
+
+The second economic fact is that recovery ladders are unbounded. A
+pipeline that retries a failed batch page-by-page turns one failure into
+O(pages) calls. That is the right trade for correctness and the wrong
+trade for a budget cap, and the only honest way to present it is to say
+so rather than to quote an average.
+
+## 13. Failure modes in the wild
+
+Four failure modes recur across every architecture surveyed here.
+
+Silent truncation: the model hits its output limit mid-JSON, the caller
+parses what it got, and the missing half is never reported. The fix is a
+finish-reason check at the single call site every request passes through,
+not a try/catch at each caller.
+
+Runaway generation: a repetitive source pushes the model into a
+degeneration loop that fills the entire output budget with near-identical
+entries. Notably this correlates with enumerable content, not with
+document size — small, list-shaped documents overflow while much larger
+prose documents do not.
+
+Confident hallucinated references: the agent invents an identifier that
+looks exactly like a real one. In a knowledge system this is the most
+expensive failure of all, because the artefact it produces is
+indistinguishable from a correct one until someone follows the link.
+
+Guard decay: a safety check is written for one call site, a sibling call
+site is added later, and the guard is never extended. The countermeasure
+is to enumerate the class mechanically rather than to inspect the
+instances by hand.
+
+## 13b. Observability and the trace problem
+
+Debugging an agent is not debugging a program. A program that misbehaves
+leaves a stack trace; an agent that misbehaves leaves a plausible
+paragraph. The industry response was the trace: a structured record of
+every prompt, every tool call, every intermediate output, stitched into
+a tree that a human can walk.
+
+LangSmith shipped this first at scale, Weights and Biases followed with
+Weave, Arize added Phoenix for the open-source tier, and OpenTelemetry
+eventually grew semantic conventions for LLM spans so the whole thing
+could ride existing infrastructure. The convergence on OpenTelemetry
+matters more than any individual vendor: it means an agent trace can sit
+in the same store as the HTTP spans around it, and the question "why was
+this request slow" stops having two separate answers.
+
+What traces do not solve is attribution. A ten-step trace tells you what
+happened; it does not tell you which step caused the wrong answer. The
+current best practice is counterfactual replay — re-run the trace with
+one step's output replaced by a known-good value and see whether the
+outcome changes. It is expensive, it is manual, and it is the only
+technique that reliably distinguishes a bad plan from a bad execution of
+a good plan.
+
+The uncomfortable implication for architecture is that observability is
+not free to retrofit. An agent that streams its output and discards its
+intermediate state cannot be traced after the fact. The decision to
+persist intermediate state is made on day one, usually by someone who
+has not yet had to debug the system.
+
+## 14. Synthesis — which architecture wins?
 
 The honest answer is: none of them, in isolation. The frontier of 2026
 is COMPOSED systems. Claude Code is a planner-executor with tool use
 and elastic context. Cursor is RAG-augmented at the codebase level
 with tool use on top. The Curator is compiled-memory built ON TOP OF a
-tool-using agent.
+tool-using agent, with an evaluator agent watching the seams.
 
 The era of "the AI agent" — singular, monolithic, mythological — is
 over. The era of "AI agents" — plural, specialized, composed — has
@@ -200,16 +339,14 @@ begun. The interesting engineering work in 2026 is at the seams
 between architectures, not inside any one of them.
 
 Tags: agent-architecture, react, planner-executor, multi-agent,
-coding-agent, browser-agent, mcp
+coding-agent, browser-agent, mcp, evaluator-agent, compiled-memory
 
 ---
 
-This source is deliberately >15k chars to force the multi-phase ingest
-pipeline. Expected entities: Yao, Karpathy, Han Xiao, OpenAI, Anthropic,
-Microsoft, Google, Pinecone, Weaviate, Chroma, Qdrant, Perplexity,
-Glean, Mendable, LangChain, AutoGen, AutoGPT, CrewAI, Claude Code,
-Codex CLI, Augment Code, Devin, Manus, Computer Use, Playwright-MCP,
-Operator, Multion, Adept, ACT-1, Chrome DevTools Protocol, MCP, The
-Curator, Dr. Tali Rezun. Expected concepts: agent-architecture,
-react, retrieval-augmented-generation, multi-agent, coding-agent,
-browser-agent, model-context-protocol.
+FIXTURE NOTE — this file is deliberately sized ABOVE
+MULTI_PHASE_INPUT_THRESHOLD (15,000 chars, src/brain/ingest.js) so the
+ingest takes the Phase-1 outline + Phase-2 batched path. It was 10,256
+chars until v3.9.1 and therefore took the single-pass path, which made
+SYN-4's "multi-phase" label decorative. If you edit this file, re-check
+its length; test-ingest-deep.js asserts the threshold is exceeded and
+asserts from the progress stream that more than one Phase-2 batch ran.

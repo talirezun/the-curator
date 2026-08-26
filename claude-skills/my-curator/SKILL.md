@@ -41,6 +41,8 @@ concepts/agentic-workflows.md →  [[agentic-workflows]]
 summaries/<title>-<hash>.md   →  [[summaries/<title>-<hash>]]
 ```
 
+Slugs may also contain **interior dots** and underscores — `entities/claude-sonnet-3.5.md` → `[[claude-sonnet-3.5]]`, `entities/express.js.md` → `[[express.js]]`. Version numbers and hostnames are ordinary page names; do not strip or rewrite the dot when calling `get_node`, `get_backlinks`, `get_summary` or `get_raw_source`, and do not silently retarget one version to another. (A leading dot, a trailing dot, `..`, spaces and accented characters are refused — if a slug from `search_wiki` comes back as "Invalid slug", that is why, and the answer is to tell the user, not to guess a nearby slug.)
+
 `[[wikilinks]]` use **bare slugs** (no folder prefix) for entities and concepts. Summaries are the **one exception** — they keep their `summaries/` prefix because they live in a sibling folder Obsidian needs for routing. So: `[[openai]]` not `[[entities/openai]]`. But: `[[summaries/foo]]` not `[[foo]]` for summaries.
 
 ## §3 — Domain awareness
@@ -272,18 +274,49 @@ When the user asks to "check my wiki" or "clean up", use the Health tools. There
 
 | Tier | Issue types | Action |
 |---|---|---|
-| **Auto-fix without asking** | `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `brokenLinks` *with* `suggestedTarget` | These have one clear right answer. Call `fix_wiki_issue` for each, no confirmation needed. |
-| **Confirm with user first** | `orphans`, `brokenLinks` *without* a target | Show the user, accept "fix" / "dismiss" / "leave for later", then act. |
+| **Auto-fix without asking** | `folderPrefixLinks`, `missingBacklinks`, `brokenLinks` *carrying a scanner-supplied* `suggestedTarget` | These have one clear right answer and remove no page. Call `fix_wiki_issue` for each, no confirmation needed. |
+| **Say what disappears, then fix** | `crossFolderDupes`, `hyphenVariants` | These are **not** cosmetic: they merge two pages and **DELETE one of them** (inbound links are repointed to the survivor). Name the page that will disappear before you call. You do not need a preview round-trip, but the user must not learn a page was deleted afterwards. |
+| **Confirm with user first** | `brokenLinks` *without* a scanner target; orphans (via `orphanLink` — see below) | Show the user, accept "fix" / "dismiss" / "leave for later", then act. See both rules below before you consider supplying a target yourself. |
 | **ALWAYS preview, then confirm** | `semanticDupe` (destructive — deletes a file, rewrites links) | Call `fix_wiki_issue` with `preview: true` to get the diff plan; show the user; only on explicit confirmation call again with `preview: false`. |
+
+**`orphans` is NOT a `fix_wiki_issue` type.** It is a scan category and a `dismiss_wiki_issue` type, and those are the only two places the word is accepted. `fix_wiki_issue` takes exactly seven types — `brokenLinks`, `folderPrefixLinks`, `crossFolderDupes`, `hyphenVariants`, `missingBacklinks`, `orphanLink`, `semanticDupe` — and passing `"orphans"` is rejected outright.
+
+`orphanLink` is the one fixable type whose issue you must **compose rather than pass through**, and it is worth knowing exactly why: the scanner emits an orphan as `{path, type, slug}`, but the fixer needs `{orphanSlug, targetSlug, description}`. Forwarding the scan object unchanged is refused, because the scanner cannot know which page *ought* to link to the orphan — only you and the user can.
+
+```
+scan gives you:   { path: "concepts/lonely.md", type: "concept", slug: "lonely" }
+the fixer needs:  { orphanSlug: "lonely", targetSlug: "<an existing page>", description: "<one clause>" }
+
+fix_wiki_issue(domain, type="orphanLink", issue={
+  orphanSlug:  "lonely",              # the scan entry's `slug`, verbatim
+  targetSlug:  "knowledge-graphs",    # an EXISTING entity or concept — never a summary, never itself
+  description: "a related idea",      # short prose for the bullet
+})
+```
+
+Because `targetSlug` is your judgement and not the scanner's, treat it exactly like an invented `suggestedTarget`: **propose it to the user and get agreement before calling.** It writes `- [[orphanSlug]] — description` into the target's Related section. If no existing page is a genuine home, say so and leave the orphan alone — the app's bulk **✨ Rescue orphans** flow (Domains → the domain → Wiki health → Quick maintenance) plans them in one batch and previews before writing.
+
+**Never invent a `suggestedTarget`.** Pass back the issue object `scan_wiki_health` gave you, unchanged. The scanner's `suggestedTarget` comes from deterministic slug normalisation; a target you reason your way to is a guess, and a wrong retarget writes a factually wrong link into **every** page that referenced it. Two traps that look convincing and are not:
+
+- **Version numbers.** `[[claude-sonnet-4.5]]` is not `claude-sonnet-3.5`. `[[q1-2025-results]]` is not `q1-2024-results`. These read as near-identical and are different things.
+- **Negations and opposites.** `[[data-retained]]` is not `data-not-retained`. `[[sync-write]]` is not `async-write`.
+
+A `suggestedTarget` you compose is rejected outright unless it names a page that exists — and even then it is your guess, not the scanner's. For a broken link with no scanner target, the right move is to say so and leave the link alone, or tell the user about the app's bulk **✨ Fix broken links** flow (Domains → the domain → Wiki health → Quick maintenance), which plans the whole domain, previews it, and applies its own version/polarity safety gate before writing.
 
 ### The standard "clean up" dialogue
 
 ```
 1. scan_wiki_health(domain)
-2. Loop the auto-fixable ones via fix_wiki_issue (count successes)
+2. Loop the auto-fixable ones via fix_wiki_issue
+   — count a call as a success ONLY when it returns fixed: 1
 3. List the review-only ones; ask the user one by one (or in batch)
 4. For each user-approved fix → fix_wiki_issue
+   — brokenLinks / folderPrefixLinks / crossFolderDupes / hyphenVariants /
+     missingBacklinks: pass the scan object through unchanged
+   — an ORPHAN: type="orphanLink" with a composed
+     {orphanSlug, targetSlug, description}, target agreed with the user
 5. For each user dismissal → dismiss_wiki_issue (persists across scans + machines)
+   — this IS where type="orphans" is the correct value
 ```
 
 **`type` is the scan CATEGORY, not a field on the issue.** `scan_wiki_health` returns issues grouped
@@ -294,7 +327,19 @@ the page kind — `"entity"` / `"concept"` — which is not a fixable issue type
 found the issue under, and pass the issue object through unchanged:
 `fix_wiki_issue(domain, type="folderPrefixLinks", issue=<the object>)`.
 
-Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the user's machines. Items dismissed in a Claude Desktop conversation also disappear from the in-app Health tab; same store. Use `get_health_dismissed` to list previously skipped issues if the user asks.
+**The one exception is orphans**, per the block above: the scan category `orphans` is not a fixable
+type, and the fixable type `orphanLink` takes a different object. Every other category is
+pass-through.
+
+**Never read `fixed: 0` as "already fine".** It has several causes and the response tells you which
+one in a `reason` field, with the prose in `report`. Only `link-not-present` and
+`link-already-present` mean the issue really had already been resolved. Everything else —
+`target-not-found`, `orphan-fields-missing`, `no-suggested-target`, `orphan-not-found`, `self-link`,
+`slug-shape-invalid`, `source-file-not-found` — means **nothing was written and the issue is still
+there**; the `report` names the next action. Do not count such a call as a success, and do not
+report a clean sweep to the user on the strength of it.
+
+Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the user's machines. Items dismissed in a Claude Desktop conversation also disappear from the app's Wiki health panel; same store. Use `get_health_dismissed` to list previously skipped issues if the user asks.
 
 ### Semantic-duplicate scanning is paid
 

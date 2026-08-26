@@ -53,6 +53,64 @@ const SUBPROCESS_ENV = { ...process.env, PATH: SUBPROCESS_PATH };
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// ── The single fetch chokepoint ───────────────────────────────────────────────
+//
+// EVERY `git fetch` this module issues goes through gitFetch(), and the
+// source guard in test-sync-hygiene.js asserts there is exactly ONE raw
+// fetch invocation in this file — the one inside gitFetch's own body. That
+// is deliberately a CLASS invariant rather than a per-call-site one: this
+// project's named recurring defect is a guard applied to the instance in
+// front of its author while a sibling doing identical work stays
+// unprotected (v3.6.0 shipped four of those in one release). A future
+// fourth fetch site written as a bare invocation of the git() helper goes
+// RED instead of silently re-arming what follows.
+//
+// WHY A GATE AT ALL — reproduced against real git, 11 of 12 runs:
+// getRemoteStatus()'s background fetch and pull()'s reporting fetch both
+// write `refs/remotes/origin/main`. Two concurrent fetches are a
+// compare-and-swap race on that ref, and the LOSER dies with
+//
+//   error: cannot lock ref 'refs/remotes/origin/main': is at <a> but
+//   expected <b>  ! <b>..<a>  main -> origin/main (unable to update local ref)
+//
+// Before this gate, that landed on the USER'S PULL (see pull()) and the
+// sync silently did not happen. Serialising in-process removes the
+// collision at its source rather than teaching each caller to survive it.
+//
+// NOT A REPLACEMENT for pull()'s own tolerance of a failed reporting fetch.
+// This gate is per-PROCESS, and the MCP server Claude Desktop spawns is a
+// separate process against the same git dir, as is a second app instance.
+// Two layers, and pull()'s comment says which one it is not allowed to
+// lean on.
+let _fetchGate = Promise.resolve();
+
+// Real `git fetch` subprocesses issued by this module. The invariant these
+// fixes exist to hold is "how many actually ran", so it is asserted where
+// it means it — on the call itself — rather than inferred from a timestamp
+// or a duration. Same instrument, and the same reasoning, as v3.3.0's
+// independent in-flight counter around the one ingestFileImpl call.
+let _fetchCount = 0;
+
+function gitFetch(args, opts) {
+  // ONE raw fetch invocation in this whole file — see the class invariant
+  // above. Both arms of the .then() below share it, so a rejected
+  // predecessor does not become a second literal call site the guard would
+  // have to learn about.
+  const runOne = () => { _fetchCount++; return git(`fetch ${args}`, opts); };
+  // TWO LAYERS, and NEITHER IS INDIVIDUALLY LOAD-BEARING — stated that way
+  // because it was measured, not assumed. The gate must survive a
+  // rejection: one failed fetch must not wedge every later one for the
+  // process lifetime (a permanently dead badge and a permanently
+  // mis-counted pull). Both the rejection arm of the .then() below and the
+  // SETTLED chain after it achieve that independently, so mutating either
+  // one alone leaves the suite fully green; removing BOTH turns it red in
+  // 14 places. Recorded here rather than presented as one guard doing the
+  // work, which is what the v3.4.0 pairing rule exists to prevent.
+  const run = _fetchGate.then(runOne, runOne);
+  _fetchGate = run.then(() => {}, () => {});
+  return run;
+}
+
 function sanitize(str) {
   return String(str)
     .replace(/https?:\/\/[^:@\s]+:[^@\s]*@/g, 'https://***@')
@@ -119,6 +177,20 @@ function friendlyError(err) {
   if (msg.includes('automatic merge failed') || msg.includes('fix conflicts and then commit')) {
     return 'Pull hit a real content conflict that couldn\'t be resolved automatically. Back up your ' +
            'domains folder, then ask for help before syncing again — this needs a manual look.';
+  }
+  // A losing ref compare-and-swap between two concurrent fetches. gitFetch()
+  // serialises this process's own fetches and pull() no longer dies on it,
+  // so a user should never see this — but a SEPARATE process against the
+  // same git dir (the MCP server Claude Desktop spawns; a second app
+  // instance) is outside that gate, and the raw git text carries three
+  // absolute filesystem paths. Mapped, and kept ABOVE the auth branch for
+  // the v3.0.16 reason the two branches above it are: this message embeds
+  // full 40-char SHAs, so a bare `401`/`403` substring test against it fires
+  // at random. The phrase below is long and specific and cannot shadow in
+  // the other direction.
+  if (msg.includes('cannot lock ref') || msg.includes('unable to update local ref')) {
+    return 'Another sync check was running at the same time, so this one stopped early. ' +
+           'Nothing was changed — wait a moment and try again.';
   }
   if (msg.includes('authentication failed') || /\b(?:401|403)\b/.test(msg) ||
       msg.includes('could not read username')) {
@@ -523,6 +595,214 @@ export async function getStatus() {
   }
 }
 
+// ── Remote status: "how much is waiting on GitHub" ───────────────────────────
+//
+// getStatus() above answers "what have I changed locally" from `git status
+// --porcelain` — no network, and it must STAY that way: it is on the rail
+// badge's hot path (a 60s timer plus every view change), and every other
+// consumer in both frontends already depends on it being instant.
+//
+// Knowing what is waiting to be PULLED is a different question and it cannot
+// be answered locally: it REQUIRES a `git fetch`. That is a real cost —
+// latency, GitHub rate limit, battery — so it lives here behind its own
+// endpoint, on its own deliberately slow cadence, and is never folded into
+// getStatus().
+//
+// THREE independent bounds on that cost, because one is not enough:
+//   1. The caller's cadence (see refreshSyncRemoteBadge in next/app.js).
+//   2. This TTL cache — but read the correction below before trusting it.
+//   3. An in-flight memo (_remoteInFlight), which is what actually bounds
+//      CONCURRENT callers.
+//
+// CORRECTION, because this comment used to claim a guarantee the code did
+// not have and that is exactly what stops the next reviewer looking. It
+// read "the network call happens at most once per REMOTE_CHECK_TTL_MS per
+// process", offered as protection against "a second browser tab". It was
+// true only of STRICTLY SEQUENTIAL callers. The cache is read before the
+// await and written after it, so every caller that arrives while a check is
+// running misses: measured, a burst of 40 concurrent calls produced 40 real
+// `git fetch` subprocesses and ZERO cache hits — and at N=2, two browser
+// tabs booting, one of the two checks failed outright on the ref race
+// described at gitFetch(). The memo at (3) is what makes the sentence true;
+// the TTL bounds REPEATED checks over time, which is a different claim.
+//
+// This is the same reasoning as the ingest budget cap: bound the spend in
+// the module that does the spending, not only at the call site. It matters
+// more than a rate limit here, because server.js's cross-origin guard
+// covers mutating methods only — this is a GET, so a page in another tab
+// can drive it. It cannot read the response, but it could otherwise have
+// spawned unbounded authenticated fetches on the user's PAT. (2) and (3)
+// bound that to one in-flight check per TTL.
+//
+// HONESTY RULE, and it is the whole point of the null. A failed check
+// resolves to `behindFiles: null`, NEVER 0. "We could not ask" and "there is
+// nothing waiting" are different facts, and rendering the first as the
+// second is exactly the failure v3.9.0's ring rule names — never show a
+// reassuring number you have not measured. Callers must branch on null.
+//
+// A FETCH MUST NEVER TOUCH THE WORKING TREE. `git fetch` writes
+// remote-tracking refs and FETCH_HEAD inside the git dir; it does not merge,
+// check out, or modify a single file under the domains folder. That is what
+// makes this safe to run on a timer while the user is working, and the
+// offline suite asserts it by checksumming the tree across a call.
+//
+// Deliberately NOT wrapped in guardConcurrent at the route: a fetch does not
+// take index.lock and cannot race a write the way pull()'s merge can.
+//
+// CORRECTION — this paragraph used to end "If it does collide with a
+// concurrent pull over a ref lock, git fails, and the honesty rule above
+// turns that into 'unknown' rather than a wrong number." That described the
+// wrong victim, and reassuringly. Measured, the collision landed on the
+// USER'S PULL, not on this check: pull()'s fetch was the one with no catch,
+// so a background badge refresh ABORTED the user's sync 11 times in 12
+// before the merge. The honesty rule below is real and still applies to
+// THIS function's own failures; it never protected the other side of the
+// race. Fixed in two places rather than by rewording: gitFetch() serialises
+// every fetch in this process, and pull() now treats its own reporting
+// fetch as non-fatal.
+const REMOTE_CHECK_TTL_MS = 5 * 60 * 1000;
+
+// A FAILED check is cached far more briefly than a successful one, and the
+// asymmetry is deliberate. Both still bound the network cost, but they are
+// answering different questions. A success is a fact that stays true until
+// someone pushes; caching it for minutes is free. A failure usually means a
+// closed laptop lid, a dropped VPN, a captive portal — conditions that clear
+// in seconds — and caching THAT for five minutes would leave the badge
+// stuck on "could not check GitHub" long after the network came back, which
+// reads as a broken feature. Found while testing the recovery path live.
+const REMOTE_CHECK_FAILURE_TTL_MS = 60 * 1000;
+
+let _remoteCache = null; // { at: epochMs, payload }
+
+// PURE. How long a given cached answer stays good. Extracted so the
+// success/failure asymmetry can be asserted directly: proving it through
+// getRemoteStatus() would need real elapsed time (a minute of it), and a
+// timing-based assertion is precisely the kind this project deleted in
+// v3.9.0 for flaking under CI load.
+//
+// The caller's own maxAgeMs always wins when it is SHORTER — a caller asking
+// for fresher data than the default must never be handed staler data.
+function remoteCacheTtl(payload, maxAgeMs) {
+  if (payload && payload.remoteChecked) return maxAgeMs;
+  return Math.min(maxAgeMs, REMOTE_CHECK_FAILURE_TTL_MS);
+}
+
+// A safe, bounded explanation for a failed remote check — see the call site.
+export function remoteErrorMessage(err) {
+  const mapped = friendlyError(err);
+  if (mapped && mapped !== sanitize(err.message)) return mapped;
+  return 'Could not reach GitHub to check for incoming changes.';
+}
+
+// Any operation that moves HEAD or origin/main makes a cached answer stale.
+// Called by push() and pull() so the badge reflects reality immediately after
+// a sync instead of showing a number up to a TTL old.
+function invalidateRemoteCache() {
+  _remoteCache = null;
+}
+
+// Coalescing memo for a check that is already running. See the docblock
+// above REMOTE_CHECK_TTL_MS for why the TTL cache alone was never the
+// concurrency bound its own comment claimed.
+let _remoteInFlight = null;
+
+export async function getRemoteStatus({ maxAgeMs = REMOTE_CHECK_TTL_MS } = {}) {
+  if (!isConfigured()) return { configured: false };
+
+  // THE CACHE IS KEYED ON THE REPOSITORY, not merely on time, and that is
+  // load-bearing rather than tidiness. invalidateRemoteCache() is called by
+  // push() and pull() — NOT by setup() or disconnect() — so on the ordinary
+  // "wrong repo, let me redo it" flow a freshly-repointed connection kept
+  // answering with the OLD repo's number for up to a full TTL: measured,
+  // priming against a repo 3 behind and then repointing config at a repo
+  // with nothing waiting still returned {behindFiles:3, cached:true}, and
+  // the rail showed "↓3" for a repo with nothing to pull. Keying makes that
+  // unrepresentable instead of relying on every future mutating path
+  // REMEMBERING to invalidate — which is precisely the guard-on-an-instance
+  // shape that produced the bug. Deliberately no invalidate() calls added
+  // to setup()/disconnect(): with the key they would be redundant, and a
+  // redundant guard reads to the next reviewer as the one doing the work.
+  const config = await loadConfig();
+  const repoKey = (config && config.repoUrl) || null;
+
+  const now = Date.now();
+  if (_remoteCache && _remoteCache.repoKey === repoKey &&
+      (now - _remoteCache.at) < remoteCacheTtl(_remoteCache.payload, maxAgeMs)) {
+    return { ..._remoteCache.payload, cached: true };
+  }
+
+  // Concurrent callers share the one in-flight check. `cached` stays false
+  // for all of them and that is accurate: a coalesced caller receives the
+  // result of a real check that had not finished when it asked, which is
+  // not the same fact as a TTL hit on a completed one.
+  if (_remoteInFlight && _remoteInFlight.repoKey === repoKey) {
+    return { ...(await _remoteInFlight.promise), cached: false };
+  }
+
+  const promise = runRemoteCheck(now, repoKey);
+  _remoteInFlight = { repoKey, promise };
+  try {
+    return { ...(await promise), cached: false };
+  } finally {
+    // Only clear OUR entry: a later caller that already installed its own
+    // must not have it wiped out from under it.
+    if (_remoteInFlight && _remoteInFlight.promise === promise) _remoteInFlight = null;
+  }
+}
+
+async function runRemoteCheck(now, repoKey) {
+  let payload;
+  try {
+    // Timeout is deliberately shorter than pull()'s 120s: this runs
+    // unattended on a timer, so a hanging network must degrade to "unknown"
+    // quickly rather than pin an open request for two minutes.
+    await gitFetch('origin main', { timeout: 30000 });
+    const incoming = await countIncoming();
+    payload = {
+      configured: true,
+      remoteChecked: true,
+      behindFiles: incoming.files,
+      behindCommits: incoming.commits,
+      files: incoming.preview,
+      checkedAt: new Date(now).toISOString(),
+      remoteError: null,
+    };
+  } catch (err) {
+    // null, not 0 — see the honesty rule above.
+    payload = {
+      configured: true,
+      remoteChecked: false,
+      behindFiles: null,
+      behindCommits: null,
+      files: [],
+      checkedAt: new Date(now).toISOString(),
+      // NEVER the raw error. sanitize() strips credentials out of a remote
+      // URL, but not the absolute filesystem paths git puts in its own
+      // messages — `git --git-dir="/Users/<name>/..." fetch origin main` —
+      // and this endpoint is POLLED IN THE BACKGROUND, so anything here is
+      // on the wire continuously rather than in response to a click. That is
+      // the v3.3.0 path-leak shape (an error field carrying absolute paths
+      // straight to the frontend), and there is nothing to trade for it:
+      // friendlyError() already maps every failure a user can act on
+      // (auth, network, no-repo) to a fixed sentence, and the rest are not
+      // actionable anyway. Confirmed necessary by a live run against an
+      // unreachable remote, which leaked two absolute paths.
+      //
+      // friendlyError() cannot simply be `|| `-ed with a default: its own
+      // fallback is `sanitize(err.message)`, so it NEVER returns null for an
+      // unrecognised error and the default would be dead code. (That fallback
+      // is right for the sibling routes — a user who just clicked Push is
+      // better served by the real git text — but wrong for a background poll.)
+      // So compare against that exact fallback to tell "mapped to a written
+      // sentence" from "handed the raw message straight back".
+      remoteError: remoteErrorMessage(err),
+    };
+  }
+
+  _remoteCache = { at: now, repoKey, payload };
+  return payload;
+}
+
 export async function setup(repoUrl, token, mode) {
   await ensureDomainsGitignore();
   await mkdir(currentGitDir(), { recursive: true });
@@ -553,7 +833,7 @@ export async function setup(repoUrl, token, mode) {
     await git('push -u origin main', { timeout: 120000 });
 
   } else { // pull
-    await git('fetch origin', { timeout: 120000 });
+    await gitFetch('origin', { timeout: 120000 });
     try {
       await git('checkout -b main origin/main');
     } catch {
@@ -678,6 +958,9 @@ export async function push() {
 
   await git('push -u origin main', { timeout: 120000 });
 
+  // origin/main just moved — a cached "waiting to pull" answer is now stale.
+  invalidateRemoteCache();
+
   return {
     pushed: true,
     filesChanged: filesToPush,
@@ -686,6 +969,44 @@ export async function push() {
     // Back-compat: `changesCount` was the field the UI used before v2.3.7
     changesCount: filesToPush,
   };
+}
+
+/**
+ * How much origin has that we do not — the SINGLE derivation of "incoming",
+ * shared by pull() and getRemoteStatus().
+ *
+ * ONE COPY, DELIBERATELY. The rail badge's "waiting to pull" number and the
+ * number pull() reports afterwards are the same fact stated at two moments;
+ * two hand-maintained copies of this arithmetic is precisely the shape that
+ * produced the v3.2.0 CRITICAL (a guard duplicated, then drifted). Because
+ * both callers run this identical code against `origin/main`, the badge can
+ * never promise a count that the pull then contradicts.
+ *
+ * CALLER MUST HAVE FETCHED FIRST. This reads remote-tracking refs only; it
+ * issues no network call of its own, so a caller that skips the fetch gets a
+ * stale answer rather than a wrong one.
+ *
+ * Naive `diff HEAD..origin/main` is symmetric — it counts files differing in
+ * EITHER direction, including files we changed locally, which is what
+ * produced the "pulled 206 / pushed 206" report for one set of 206 files
+ * (v3.0.1-beta.6). `merge-base` restricts the count to what origin actually
+ * advanced beyond the common ancestor.
+ *
+ * Throws if there is no origin/main yet (first sync) — both callers treat
+ * that as "nothing known to be incoming", never as an error to surface.
+ */
+async function countIncoming() {
+  const { stdout: cnt } = await git('rev-list --count HEAD..origin/main');
+  const commits = parseInt(cnt.trim(), 10) || 0;
+  if (commits <= 0) return { commits: 0, files: 0, preview: [] };
+
+  const { stdout: baseOut } = await git('merge-base HEAD origin/main');
+  const base = baseOut.trim();
+  if (!base) return { commits, files: 0, preview: [] };
+
+  const { stdout: names } = await git(`diff --name-only ${base}..origin/main`);
+  const list = names.split('\n').filter(Boolean);
+  return { commits, files: list.length, preview: list.slice(0, 20) };
 }
 
 export async function pull() {
@@ -708,9 +1029,43 @@ export async function pull() {
     }
   }
 
-  // Fetch remote state without merging yet, so we can count what's incoming.
-  await git('fetch origin main', { timeout: 120000 });
-
+  // ── THIS FETCH IS FOR REPORTING ONLY, AND ITS FAILURE MUST NOT ABORT THE
+  // SYNC (RELEASE-BLOCKER fix) ────────────────────────────────────────────
+  // It used to sit OUTSIDE this try, one bare `await` with nothing to catch
+  // it, and that was a silent-no-sync bug the moment v3.9.1 added a SECOND
+  // fetch site (getRemoteStatus's background badge check). Both write
+  // `refs/remotes/origin/main`; concurrently they are a compare-and-swap
+  // race, and the loser dies with "cannot lock ref … is at <a> but expected
+  // <b>". Reproduced against real git with a bare local remote: the user's
+  // pull failed 11 of 12 times, before the merge, showing a raw git
+  // transcript containing three absolute filesystem paths. The v3.9.1 UI
+  // made it self-inflicted — the Sync view re-enabled its buttons and THEN
+  // fired the badge check, so the user's own next click landed inside the
+  // window.
+  //
+  // WHY TOLERATING IT IS NOT "WIDENING A CATCH UNTIL THE ERROR GOES AWAY",
+  // which is the failure mode this could easily have been. Verified against
+  // real git, both directions: `git pull --no-rebase -X theirs origin main`
+  // three lines below RUNS ITS OWN FETCH and merges FETCH_HEAD. It does not
+  // read `refs/remotes/origin/main` and does not care whether that ref
+  // moved. Driven from a deliberately stale origin/main it fetched, merged,
+  // produced the correct file content, and left origin/main correct — exit
+  // 0. So this fetch is a prerequisite for countIncoming()'s NUMBER, never
+  // for the sync itself, and a failure here is exactly the same class of
+  // event as a countIncoming() failure, which this catch has always
+  // degraded rather than raised.
+  //
+  // THE PULL STILL FAILS LOUDLY WHEN IT SHOULD. Nothing is being swallowed:
+  // a real cause (bad token, no network, repo gone) fails the merge below
+  // too, and THAT error is unguarded except by recoverHygieneMergeConflict,
+  // which re-throws anything not provably one of our own hygiene junk
+  // files. Moving the error surface onto the merge means one authority for
+  // "did the sync happen", and it is the operation that actually decides.
+  // Honest cost, stated rather than hidden: a fetch that HANGS to its
+  // timeout now costs its 120s before the merge spends its own, where it
+  // previously aborted at 120s. That path is a hang, not the common
+  // failure (a dead network or a rejected token fails in seconds).
+  //
   // Count files actually coming FROM remote. Naive `diff HEAD..origin/main`
   // is symmetric — it counts files differing in EITHER direction, including
   // files we modified locally in the auto-save commit above. That produces
@@ -721,19 +1076,12 @@ export async function pull() {
   let commitsPulled = 0;
   let filePreview = [];
   try {
-    const { stdout: cnt } = await git('rev-list --count HEAD..origin/main');
-    commitsPulled = parseInt(cnt.trim(), 10) || 0;
-    if (commitsPulled > 0) {
-      const { stdout: baseOut } = await git('merge-base HEAD origin/main');
-      const base = baseOut.trim();
-      if (base) {
-        const { stdout: names } = await git(`diff --name-only ${base}..origin/main`);
-        const list = names.split('\n').filter(Boolean);
-        filesPulled = list.length;
-        filePreview = list.slice(0, 20);
-      }
-    }
-  } catch { /* no remote yet — first sync, pull will do the right thing */ }
+    await gitFetch('origin main', { timeout: 120000 });
+    const incoming = await countIncoming();
+    commitsPulled = incoming.commits;
+    filesPulled   = incoming.files;
+    filePreview   = incoming.preview;
+  } catch { /* no remote yet, or a losing ref race — the merge below decides */ }
 
   // ── ORDERING IS LOAD-BEARING (HIGH-severity adversarial-audit finding,
   // fixed here) ──────────────────────────────────────────────────────────
@@ -811,6 +1159,10 @@ export async function pull() {
   // pull removes every tracked file, but empty dirs are left behind because git
   // doesn't track them.
   const pruned = await pruneGhostDomainDirs();
+
+  // We just merged everything origin had — anything cached about "waiting to
+  // pull" describes a state that no longer exists.
+  invalidateRemoteCache();
 
   return {
     pulled: true,
@@ -991,6 +1343,12 @@ export { friendlyError };
 // point. Production code never imports this. Mirrors the __testing pattern
 // already used by atomic-write.js and write-registry.js.
 export const __testing = {
+  // Real `git fetch` subprocesses this module has issued. Read by the
+  // concurrency assertions — see _fetchCount's declaration for why the
+  // invariant is measured here and not inferred from a duration.
+  fetchCount: () => _fetchCount,
+  resetFetchCount: () => { _fetchCount = 0; },
+  gitFetch,
   isSafePathSegment,
   isSafeTrackedPath,
   isSafeTrackedPathSuffix,
@@ -1006,4 +1364,9 @@ export const __testing = {
   recoverHygieneMergeConflict,
   isHygieneJunkPath,
   extractUntrackedOverwritePaths,
+  countIncoming,
+  invalidateRemoteCache,
+  REMOTE_CHECK_TTL_MS,
+  REMOTE_CHECK_FAILURE_TTL_MS,
+  remoteCacheTtl,
 };

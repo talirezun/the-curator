@@ -25,7 +25,7 @@ Compared to alternatives:
 | Wiki pages (`wiki/`) | Yes | This is your knowledge — the whole point |
 | Chat conversations (`conversations/`) | Yes | So you can continue threads on any machine |
 | Domain schemas (`CLAUDE.md`) | Yes | So the AI behaves consistently everywhere |
-| Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed. A per-domain manifest of what was ingested (filename, size, ingest date) DOES sync inside `wiki/`, so on a second machine a summary page can still tell you what its source was called and when it arrived, even though the file itself isn't there — see the Wiki tab's "Reveal in Finder" panel or [mcp-user-guide.md](mcp-user-guide.md)'s `get_raw_source` section |
+| Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed. A per-domain manifest of what was ingested (filename, size, ingest date) DOES sync inside `wiki/`, so on a second machine a summary page can still tell you what its source was called and when it arrived, even though the file itself isn't there — see the reader overlay's "Reveal in Finder" bar or [mcp-user-guide.md](mcp-user-guide.md)'s `get_raw_source` section |
 | API keys (`.env`) | No | Never synced — stays on each machine only |
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
@@ -54,32 +54,34 @@ That's it. No developer tools, no command line, no extra software.
 
 ## First-time setup (about 3 minutes)
 
-The Sync tab has a built-in wizard that walks you through everything. Here's what to expect at each step.
+The **Sync** view has a setup form that collects everything at once. Here's what to expect.
+
+> **This section was rewritten for the v3.9.0 interface.** It previously described a multi-step wizard with a *Get started* welcome screen and **Next** / **Finish** buttons — that is the `/old` interface, and if you are following these steps there you will get a wizard rather than one form. The information you need is identical either way; only the number of clicks differs.
 
 > 🤖 **Using a coding agent?** If you have Claude Code, Cursor, opencode, Aider, or a similar agent wired to your machine and GitHub, you can skip the manual steps entirely — paste one prompt and it does all of this for you. See **[sync-via-coding-agent.md](sync-via-coding-agent.md)**.
 
-### Step 1 — Open the Sync tab
+### Step 1 — Open Sync
 
-Start your server (`node src/server.js`) and open `http://localhost:3333`. Click the **Sync** tab. You'll see a welcome screen explaining what sync does. Click **Get started**.
+Start your server (`node src/server.js`) and open `http://localhost:3333`. Click **Sync** in the left rail (it sits in the footer, below the main rail items). Because nothing is connected yet you'll see a **Connect a GitHub repository** card with three things to fill in — repository URL, access token, and a starting direction. Steps 2–5 below are how to fill them.
 
 ### Step 2 — Create a private GitHub repository
 
-Before the wizard can continue, you need to create a repository on GitHub to store your knowledge. Do this now:
+Before you can fill that in, you need to create a repository on GitHub to store your knowledge. Do this now:
 
 1. Go to [github.com/new](https://github.com/new)
 2. Give it a name — something like `my-curator-brain` or `curator-knowledge`
 3. Set visibility to **Private** (this is important — keeps your notes private)
-4. Leave "Initialize this repository" unchecked (the wizard will do this)
+4. Leave "Initialize this repository" unchecked (The Curator will do this)
 5. Click **Create repository**
 6. Copy the repository URL — it looks like `https://github.com/yourusername/my-curator-brain.git`
 
-Now go back to the wizard.
+Now go back to The Curator.
 
-### Step 3 — Enter the repository URL (Wizard Step 1)
+### Step 3 — Enter the repository URL
 
-Paste the URL you just copied into the field and click **Next**.
+Paste the URL you just copied into the **Repository URL** field.
 
-### Step 4 — Create and enter a Personal Access Token (Wizard Step 2)
+### Step 4 — Create and enter a Personal Access Token
 
 GitHub needs to verify that you have permission to read and write your repository. It does this using a **Personal Access Token (PAT)** — think of it as a password specifically for this app.
 
@@ -118,16 +120,18 @@ If you're unsure, use a **fine-grained token** — it's safer because it can onl
 > - **You cannot limit a classic token to one repository.** Ticking `repo` grants access to *all* your repositories — there is no per-repo option on the classic page. That's the inherent tradeoff, and the reason fine-grained is the safer choice. It's not a bug, and it doesn't stop sync from working.
 > - **You do not need the `workflow` scope** (or any other scope). The Curator only reads and writes ordinary files — it never touches GitHub Actions. Tick `repo` and nothing else.
 
-Paste whichever token you created into the wizard and click **Next**.
+Paste whichever token you created into the **Personal access token** field.
 
 > Your token is stored in a file called `.sync-config.json` in your project folder. This file is gitignored — it never leaves your computer.
 
-### Step 5 — Choose your starting mode (Wizard Step 3)
+### Step 5 — Choose your starting direction
 
-- Choose **Push** if this is the first computer you're setting up (this will send your existing knowledge up to GitHub)
-- Choose **Pull** if you've already set up another computer and want to download its knowledge
+Under **Starting direction**, pick one:
 
-Click **Finish**. The wizard processes the connection, initialises the repository, and performs the first sync. You'll see a success screen when it's done.
+- **Push my wiki** — if this is the first computer you're setting up (this sends your existing knowledge up to GitHub)
+- **Pull an existing wiki** — if you've already set up another computer and want to download its knowledge
+
+Click **Connect**. The app initialises the repository and performs the first sync, then the card is replaced by the connected view showing your repository, when you last synced, and how many local changes are waiting.
 
 ---
 
@@ -136,11 +140,11 @@ Click **Finish**. The wizard processes the connection, initialises the repositor
 Once sync is working on your first computer, adding a second one takes about 2 minutes.
 
 1. Install the The Curator app on the second computer (follow the [User Guide](user-guide.md) steps 1–6)
-2. Open `http://localhost:3333` and go to the **Sync** tab
-3. Run through the wizard — same repo URL, same PAT (or create a new one if you lost the original)
+2. Open `http://localhost:3333` and go to **Sync**
+3. Fill in the setup card — same repo URL, same PAT (or create a new one if you lost the original)
 4. At Step 3, choose **Pull** to download the knowledge from GitHub
 
-After the wizard completes, all your wiki pages and conversations will appear on the new computer.
+Once it connects, all your wiki pages and conversations will appear on the new computer.
 
 ---
 
@@ -158,14 +162,16 @@ The **Sync now** button is what you use 95% of the time. It pulls anything new f
 
 ### Advanced — one-way operations
 
-The Sync tab has a collapsible **Advanced** section containing two one-way buttons. Use these only when you're certain about direction:
+**Push only** and **Pull only** sit beside **Sync now**. Use them only when you're certain about direction:
 
 - **Push only** — uploads your local changes to GitHub without pulling first. Use when you're sure no other machine has new changes.
 - **Pull only** — downloads remote changes to this computer without pushing yours. Use when you're sure this computer has nothing new to share.
 
 For everyday use, prefer **Sync now**.
 
-> **Note for users updating from v2.5.x:** the previous Sync tab had three coequal buttons labelled *Sync Up*, *Sync Down*, and *Sync*. In v2.6.0 these are renamed and reorganised: *Sync* is now **Sync now** (the primary action), and *Sync Up* / *Sync Down* are now **Push only** / **Pull only** inside the collapsible Advanced section. The underlying behaviour is unchanged.
+> **Where these buttons sit has changed twice.** In v2.5.x the Sync tab had three coequal buttons labelled *Sync Up*, *Sync Down* and *Sync*. v2.6.0 renamed them to **Sync now** / **Push only** / **Pull only** and tucked the two one-way buttons into a collapsible **Advanced** section — which is what you still see at `/old`. In the current interface all three are inline, with **Sync now** as the primary. The underlying behaviour has never changed.
+
+> **There is no revert or discard control**, in either interface. Every sync is a real git commit, so your history exists on disk — but listing or reverting individual commits from the app is not built, and the Sync view says so. To undo local changes before pushing, use git directly; [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix) has the exact commands, and they apply to any local change, not just Health fixes.
 
 ---
 
@@ -220,14 +226,14 @@ The repository URL is wrong, or the repository doesn't exist yet.
 
 The app can't reach GitHub. Check your internet connection. If you're on a university network, try a different connection or hotspot — some networks block git operations.
 
-### The wizard says "Something went wrong" / "Failed to fetch" with no other detail
+### Setup says "Something went wrong" / "Failed to fetch" with no other detail
 
 This means the browser couldn't get a reply from The Curator — almost always because **the server process stopped or crashed during setup**, not because of GitHub.
 
 1. Check that The Curator is still running. The window/terminal that launched it (on Windows, the PowerShell window running `node src/server.js`; on Mac, the Dock app) should still be open. If it closed or shows an error, that's the cause.
-2. Restart The Curator, reload `http://localhost:3333`, and run the wizard again.
+2. Restart The Curator, reload `http://localhost:3333`, and try connecting again.
 3. If it keeps happening, start the server in a visible terminal so you can read the crash:
-   - **Windows:** `cd` into the project folder, then `node src/server.js` — watch the window when the wizard fails; the real error prints there.
+   - **Windows:** `cd` into the project folder, then `node src/server.js` — watch the window when setup fails; the real error prints there.
    - **Mac/Linux:** `node src/server.js` in Terminal.
 
 ### Setup keeps failing at the commit step — "Command failed: git … commit -m 'Initial The Curator sync'"
@@ -247,7 +253,7 @@ Remove-Item -Force .sync-config.json -ErrorAction SilentlyContinue
 
 > This is safe — it only removes sync bookkeeping. Your actual notes live in the `domains/` folder and are untouched.
 
-Then create a **fresh, empty** private repo (no README/.gitignore/license) and re-run the wizard in **Push** mode.
+Then create a **fresh, empty** private repo (no README/.gitignore/license) and connect again with **Push my wiki** as the starting direction.
 
 ### Windows: a GitHub sign-in window pops up, or sync hangs forever
 

@@ -1127,6 +1127,12 @@ function renderRail() {
   document.getElementById('rail-theme-toggle').addEventListener('click', toggleTheme);
   renderThemeToggleIcon();
   renderRailActive();
+  // The innerHTML above paints the LOCAL count only (syncBadgeMarkup takes
+  // just that number). Repaint through the one function that knows about
+  // both halves, so a rail rebuild never briefly drops the "waiting to
+  // pull" part. Cheap and binds nothing — it touches one span and one
+  // title attribute.
+  applySyncBadge();
 }
 
 function renderRailActive() {
@@ -1177,6 +1183,40 @@ function renderRailActive() {
 const SYNC_BADGE_REFRESH_MS = 60_000;
 let _syncPendingCount = 0;
 
+// ── The other half of the badge: what is waiting on GITHUB ──────────────
+//
+// The count above is `git status --porcelain` — this machine only. It
+// cannot answer the two-machine question ("I pushed from the laptop; does
+// the desktop know?"), because nothing local changes when someone else
+// pushes. Answering that needs a `git fetch`, which is a network call.
+//
+// SO IT GETS ITS OWN, MUCH SLOWER CADENCE — this is the cost decision.
+// refreshSyncBadge() above runs on a 60s timer AND on every view change;
+// putting a GitHub round-trip on that path would mean a network call every
+// time the user clicks anything in the rail. Instead:
+//
+//   - once at boot,
+//   - every 10 minutes,
+//   - immediately after a push/pull/sync completes (views/sync.js calls
+//     the exported refresher, because those are the moments the answer is
+//     known to have changed),
+//   - and NOT on navigate().
+//
+// brain/sync.js adds a second, independent bound: a 5-minute server-side
+// TTL cache, so a second tab or a future caller that ignores this cadence
+// still cannot hammer GitHub.
+//
+// This is a genuinely separate endpoint, not a second poll of /api/sync/
+// status — that route stays local-only and instant, and the guard in
+// test-next-recovery-and-badge.js pinning exactly one fetch site for it
+// remains true and remains meaningful.
+const SYNC_REMOTE_REFRESH_MS = 10 * 60_000;
+
+// Tri-state, matching syncBehindFromRemote(): undefined until the first
+// check completes — NOT 0, which would assert "nothing waiting" before we
+// have asked anyone.
+let _syncBehindCount;
+
 // PURE. Given whatever GET /api/sync/status produced (or null, meaning the
 // request did not usably complete), return the number to render. 0 = hide.
 function syncPendingFromStatus(status) {
@@ -1194,12 +1234,68 @@ function syncPendingFromStatus(status) {
 function syncBadgeMarkup(count) {
   return count > 0 ? '<span class="rail-badge">' + count + '</span>' : '';
 }
-function syncBadgeTitle(count) {
+// `behind` is TRI-STATE and every caller must respect all three, because
+// collapsing them is the exact defect this feature exists not to have:
+//
+//   undefined — no remote information at all (never checked yet, or sync is
+//               not configured). Say nothing about the remote.
+//   null      — we TRIED and could not find out (offline, auth, rate limit,
+//               a ref-lock collision). Say that, out loud.
+//   a number  — a measured count. 0 is a real, measured "nothing waiting".
+//
+// A failed check must never render as 0. "We could not ask GitHub" and
+// "GitHub has nothing for you" are different facts, and showing the first
+// as the second is a confident all-clear we did not earn — the same shape
+// as ringValueFromCounts(null, 10) returning 0 because Number(null) is 0.
+//
+// Called with ONE argument this is byte-identical to the pre-v3.9.1
+// function, which is what keeps test-next-recovery-and-badge.js's exact
+// string assertions (syncBadgeTitle(0) === 'Sync', and the singular/plural
+// local sentences) true. It is also deliberately self-contained — that
+// suite extracts this function's source and runs it in a sandbox holding
+// only VIEW_META, so calling any helper from here would break it.
+function syncBadgeTitle(count, behind) {
+  const parts = [];
   if (count > 0) {
-    return 'Sync — ' + count + ' local change' + (count === 1 ? '' : 's')
-      + ' not yet pushed to GitHub';
+    parts.push(count + ' local change' + (count === 1 ? '' : 's') + ' not yet pushed to GitHub');
   }
-  return VIEW_META.sync.title;
+  if (typeof behind === 'number' && behind > 0) {
+    parts.push(behind + ' file' + (behind === 1 ? '' : 's') + ' waiting to pull from GitHub');
+  } else if (behind === null) {
+    parts.push('could not check GitHub for incoming changes');
+  }
+  if (!parts.length) return VIEW_META.sync.title;
+  return 'Sync — ' + parts.join('; ');
+}
+
+// PURE. Turns whatever GET /api/sync/remote-status produced into the
+// tri-state above. Distinguishing "not configured" (undefined — the user
+// does not use sync, so there is nothing to warn about) from "check failed"
+// (null — they do use it and we owe them the truth) is the whole job.
+function syncBehindFromRemote(payload) {
+  if (!payload || payload.configured !== true) return undefined;
+  if (payload.remoteChecked !== true) return null;
+  const n = payload.behindFiles;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+// PURE. The badge's visible text.
+//
+// THE TWO NUMBERS ARE NEVER ADDED. "3 local changes not pushed" and
+// "5 files waiting to pull" are different facts about different machines;
+// a single "8" would be meaningless and would tell the user to do the wrong
+// thing. The down-arrow marks the pull direction and keeps each number
+// separately readable in a 15px pill.
+//
+// A null (failed) or 0 behind adds nothing here — the tooltip carries the
+// "could not check" wording, because a badge is too small to be honest in.
+function syncBadgeLabel(local, behind) {
+  const incoming = (typeof behind === 'number' && behind > 0) ? behind : 0;
+  if (local > 0 && incoming > 0) return local + '↓' + incoming;
+  if (local > 0) return String(local);
+  if (incoming > 0) return '↓' + incoming;
+  return '';
 }
 
 // Surgical DOM update — deliberately NOT a renderRail() call.
@@ -1215,14 +1311,15 @@ function applySyncBadge() {
   // _syncPendingCount for itself and paints the badge from it.
   if (!btn) return;
   const existing = btn.querySelector('.rail-badge');
-  btn.title = syncBadgeTitle(_syncPendingCount);
-  if (_syncPendingCount > 0) {
+  btn.title = syncBadgeTitle(_syncPendingCount, _syncBehindCount);
+  const label = syncBadgeLabel(_syncPendingCount, _syncBehindCount);
+  if (label) {
     if (existing) {
-      existing.textContent = String(_syncPendingCount);
+      existing.textContent = label;
     } else {
       const span = document.createElement('span');
       span.className = 'rail-badge';
-      span.textContent = String(_syncPendingCount);
+      span.textContent = label;
       btn.appendChild(span);
     }
   } else if (existing) {
@@ -1243,6 +1340,25 @@ export async function refreshSyncBadge() {
     next = 0; // rule 3: fail quiet, never a stale or guessed number
   }
   _syncPendingCount = next;
+  try { applySyncBadge(); } catch { /* rail missing/detached — nothing to show */ }
+}
+
+// Fire-and-forget, and NEVER throws — same contract and same reason as
+// refreshSyncBadge() above: boot() calls it without awaiting, and a throw
+// there would stop markBooted() and paint the recovery panel for everyone.
+//
+// The catch resolves to null, not undefined: reaching it means the request
+// itself failed, which is "we tried and could not find out" — the state the
+// tooltip reports honestly — and not "we have not looked yet".
+export async function refreshSyncRemoteBadge() {
+  let next = null;
+  try {
+    const res = await fetch('/api/sync/remote-status');
+    if (res.ok) next = syncBehindFromRemote(await res.json());
+  } catch {
+    next = null;
+  }
+  _syncBehindCount = next;
   try { applySyncBadge(); } catch { /* rail missing/detached — nothing to show */ }
 }
 
@@ -1767,6 +1883,13 @@ function boot() {
   // the same cadence src/public/app.js has used since v3.0.1-beta.5. Both
   // are fire-and-forget for the same markBooted() reason documented below.
   setInterval(refreshSyncBadge, SYNC_BADGE_REFRESH_MS);
+
+  // The remote half of the badge — one check now, then every 10 minutes.
+  // Deliberately NOT wired into navigate(): see SYNC_REMOTE_REFRESH_MS for
+  // why this one is not allowed on the hot path. Fire-and-forget, and the
+  // function never throws, for the markBooted() reason documented below.
+  refreshSyncRemoteBadge();
+  setInterval(refreshSyncRemoteBadge, SYNC_REMOTE_REFRESH_MS);
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs

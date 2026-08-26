@@ -66,6 +66,8 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
 
+> That refusal message is quoted verbatim from the code, and its last few words are now out of date: since the v3.9.0 cutover, **Push contributions** lives in the **Shared Brain** rail view, not in Sync. The refusal itself is correct — only the signpost at the end of it is stale.
+
 Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. So do the three read-only members of the health/authoring group (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`): scanning a mirror to answer *"is the collective wiki healthy?"* is supported, and it is only *applying* a fix that is refused. The MCP skill at `claude-skills/my-curator/SKILL.md` documents this in §3.1.
 
 ### Write tools while the Curator app is running an ingest (`v3.0.1-beta.8+`)
@@ -97,7 +99,7 @@ A frontier model can always get the full picture — it just has to ask in piece
 
 ## Setup (under 2 minutes)
 
-1. Open The Curator → **Settings** tab → **My Curator — Private MCP Bridge** section.
+1. Open The Curator → **Settings** (rail footer) → **MCP bridge**. (At `/old` the section is in the Settings tab and headed *My Curator — Private MCP Bridge*.)
 2. Click **Copy snippet** — a JSON block is now in your clipboard.
 3. Click **Reveal in Finder** — Finder opens the folder containing `claude_desktop_config.json`.
 4. Open that file in any text editor (TextEdit, VS Code). If it doesn't exist, create one containing just `{}`.
@@ -395,15 +397,18 @@ Health checks and repairs are also available through the MCP. Three tiers, encod
 
 | Tier | Issue types | Behaviour |
 |---|---|---|
-| **Auto-fix** | broken links *with* a suggested target, folder-prefix violations, cross-folder dupes, hyphen variants, missing backlinks | Claude applies these without asking — they have one clear right answer. |
-| **Confirm first** | orphans, broken links *without* a target | Claude shows you the issue, you say fix / dismiss / leave, Claude calls the tool. |
+| **Auto-fix** | folder-prefix violations, missing backlinks, and broken links that the *scanner* already matched to a target | Claude applies these without asking — they have one clear right answer, and no page is removed. |
+| **Say what disappears first** | cross-folder duplicates, hyphen variants | These **merge two pages and delete one of them** (links pointing at the deleted page are repointed to the survivor). Since v3.9.1 the tool description tells Claude to name the page that disappears before calling. |
+| **Confirm first** | orphans, broken links *without* a scanner target | Claude shows you the issue, you say fix / dismiss / leave, Claude calls the tool. |
 | **Always preview** | semantic-duplicate merges (DESTRUCTIVE — deletes a file, rewrites links domain-wide) | Claude calls `fix_wiki_issue` with `preview: true` first to show the diff plan; only after your explicit yes can it call again with `preview: false` to commit. |
+
+**A broken link Claude *thinks* it can place is not the same as one the scanner matched (v3.9.1).** `fix_wiki_issue` is for handing back the issue object `scan_wiki_health` gave you. The scanner's `suggestedTarget` comes from deterministic slug normalisation; a target Claude reasons its way to is a guess, and a wrong retarget writes a factually wrong link into every page that referenced it. The tool now refuses any `suggestedTarget` that does not name a page actually on disk, and its description tells Claude to leave an unmatched broken link alone rather than invent one — or to point you at the app's bulk AI broken-link fixer (Domains → the domain → Wiki health), which previews the whole plan and applies its own safety gate before writing anything.
 
 ### Sample dialogue
 
 > **You:** *"Claude, clean up my `articles` second brain."*
 >
-> **Claude:** [calls `scan_wiki_health`] *"Found 14 issues. 8 are auto-fixable — folder-prefix violations, hyphen variants, missing backlinks. I'll fix those now."* [calls `fix_wiki_issue` 8 times]. *"Done with the safe ones — 8 issues fixed across 12 files."*
+> **Claude:** [calls `scan_wiki_health`] *"Found 14 issues. 6 are safe to fix outright — folder-prefix violations and missing backlinks. I'll do those now."* [calls `fix_wiki_issue` 6 times]. *"Done — 6 issues fixed across 12 files. Two more are hyphen variants: fixing those merges `dr-tali-rezun` into `tali-rezun` and deletes the first page, repointing its links. Want me to?"*
 >
 > **Claude:** *"Six remaining need your judgement: 4 broken links without good targets, 2 orphan pages. Want to review them?"*
 >
@@ -426,7 +431,7 @@ Health checks and repairs are also available through the MCP. Three tiers, encod
 
 ### Where dismissals live
 
-The MCP and the in-app Health tab share the **same** dismissal store (`domains/<d>/wiki/.health-dismissed.jsonl`, git-tracked, syncs across machines via your existing GitHub sync). Skip a 70-pair semantic scan in Claude Desktop, sync, and the same false positives stay skipped on your other computers and in the in-app Health tab.
+The MCP and the app's Wiki health panel share the **same** dismissal store (`domains/<d>/wiki/.health-dismissed.jsonl`, git-tracked, syncs across machines via your existing GitHub sync). Skip a 70-pair semantic scan in Claude Desktop, sync, and the same false positives stay skipped on your other computers and in the app.
 
 ### Cost note
 
@@ -464,7 +469,7 @@ Composing every answer from raw source text instead of the compiled wiki would q
 
 ## Things to know
 
-**If you move your domains folder, MCP stops working.** The config file has an absolute path baked in. When you change the Knowledge Base Location in the Domains tab (or move the Curator install), come back to Settings → My Curator, click **Regenerate**, paste the new snippet, and restart Claude Desktop. The wizard detects staleness and shows a warning banner when it happens.
+**If you move your domains folder, MCP stops working.** The config file has an absolute path baked in. When you change the Knowledge Base Location in **Settings → Knowledge base** (or move the Curator install), come back to **Settings → MCP bridge**, click **Regenerate**, paste the new snippet, and restart Claude Desktop. The wizard detects staleness and shows a warning banner when it happens.
 
 **The MCP and the app now agree on `DOMAINS_PATH` vs Settings.** If you've set a `DOMAINS_PATH` environment variable (the developer-oriented `.env` fallback described in [user-guide.md](user-guide.md)) *and* a different Knowledge Base Location in Settings, the Settings value wins — in both the app and in Claude Desktop, identically. That particular disagreement can no longer happen.
 
@@ -476,7 +481,13 @@ The one way they can still drift apart is the one described just above: the `--d
 
 **Privacy.** Everything stays on your machine. There is no network component. No telemetry.
 
-**Security.** Every tool validates its `domain` and `slug` arguments against a strict alphanum-plus-hyphen/underscore pattern, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The eleven graph-reading tools are strictly read-only, as are three of the seven health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — fourteen of the eighteen never change anything on disk. Of the four that do (v2.5.2+), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all four refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
+**Security.** Every tool validates its `domain` and `slug` arguments before touching disk, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The eleven graph-reading tools are strictly read-only, as are three of the seven health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — fourteen of the eighteen never change anything on disk. Of the four that do (v2.5.2+), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all four refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
+
+**What a slug is allowed to contain (widened in v3.9.1).** Lowercase letters, digits, hyphens, underscores, and **interior dots** — so `claude-sonnet-3.5`, `gemini-2.5-flash`, `industry-5.0`, `apache-2.0-license` and `express.js` are all addressable. Before v3.9.1 every dot was refused, and the effect was silently self-contradictory: `search_wiki` and `get_index` would happily *show* you those pages, and then `get_node`, `get_backlinks`, `get_connected_nodes`, `get_summary` and `get_raw_source` would all answer *"Invalid slug"* for the exact slug they had just advertised. Across the six real domains it was measured on, that made **73 of 4,751 pages discoverable but unreadable**, and `get_raw_source` unusable for every summary whose source file was actually present.
+
+A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotfile can never be named), a trailing dot, and every path separator remain refused, and the real containment check in the filesystem adapter is unchanged. Domain names stayed strict on purpose and were split into their own validator — a domain is the outer folder of every path, and the app cannot create a dotted one anyway, since it reduces a display name to letters, digits and hyphens before making the folder.
+
+**Eight slugs are still unreachable, and this is stated rather than glossed.** Of the same 4,751, eight remain refused after the widening and none of them is dot-related: three carry non-ASCII accented characters (widening to non-ASCII raises its own normalisation and look-alike-character questions and was not decided here), three contain literal spaces, and two exceed the 200-character limit — both of those are runaway AI-generated page titles of around 230 characters, where the limit is doing its job.
 
 ---
 
@@ -486,9 +497,10 @@ The one way they can still drift apart is the one described just above: the `--d
 |---|---|---|
 | Claude Desktop shows no `my-curator` tools | Snippet pasted incorrectly, or Claude Desktop not restarted | Double-check the "After" preview in the wizard, then ⌘Q and reopen Claude Desktop |
 | "Stale config" banner in Settings | Knowledge Base Location changed since you last generated the snippet | Click **Regenerate**, paste the new snippet, restart Claude Desktop |
-| Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in the Domains tab, then **Regenerate** the snippet and re-paste it. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
+| Self-test reports the bridge is fine but says your knowledge folder is missing | Knowledge Base Location points somewhere that no longer exists | Set a valid path in **Settings → Knowledge base**, then **Regenerate** the snippet and re-paste it. Note the self-test deliberately still **passes** here: `ok` means "the bridge speaks MCP", and a working bridge with an empty or missing folder is a real, distinguishable state rather than a broken install. Since v3.6.1 it says which one — the folder being genuinely empty and the folder not existing at all no longer look the same |
 | Tools show but return "no domains" | You haven't created any domains yet | Open the Curator, create a domain, ingest a source |
-| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | The self-test only checks the bridge, never your config file — a syntax error there cannot fail it. The wizard detects it separately: the Settings panel's status call (`GET /api/mcp/config`) returns `claude_config_parse_error: true`, and the merged "After" preview then shows **no merge at all** rather than a misleading one, because a file that can't be parsed can't be safely merged into. Fix the JSON syntax in `claude_desktop_config.json` first, then reload the Settings tab |
+| Claude finds a page in search but gets "Invalid slug" when it tries to open it | The slug contains a character the MCP refused. Before v3.9.1 that was any dot (`claude-sonnet-3.5`) | Update to v3.9.1 or later. If it persists, the slug likely has an accented character or a space — rename the file to plain lowercase-and-hyphens, or open the page in the Curator app instead |
+| Self-test passes but Claude Desktop still doesn't see the tool | Config file has a JSON syntax error | The self-test only checks the bridge, never your config file — a syntax error there cannot fail it. The wizard detects it separately: the Settings panel's status call (`GET /api/mcp/config`) returns `claude_config_parse_error: true`, and the merged "After" preview then shows **no merge at all** rather than a misleading one, because a file that can't be parsed can't be safely merged into. Fix the JSON syntax in `claude_desktop_config.json` first, then reopen Settings |
 
 ---
 

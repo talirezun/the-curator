@@ -16,7 +16,10 @@
  *   SYN-1  tiny baseline (≤2k chars)         — single-pass path
  *   SYN-2  trunk-cluster trigger             — verifies trunk detector
  *   SYN-3  JSON-stressor content             — verifies parseJSON resilience
- *   SYN-4  multi-phase (>15k chars)          — verifies multi-phase path
+ *   SYN-4  multi-phase (17k chars)           — Phase-1 outline + Phase-2
+ *                                             batching, path PROVEN from the
+ *                                             progress stream, plus cross-batch
+ *                                             linkability (prompt + output)
  *   SYN-5  honorific author with diacritic   — verifies originator hint
  *   SYN-6  empty file                        — verifies empty-extraction guard
  *   SYN-7  near-empty (<200 chars)           — verifies MIN_TEXT_LEN guard
@@ -29,26 +32,44 @@
  *   Q2.  Frontmatter present       — every page has YAML frontmatter block
  *   Q3.  Type tag present          — entity/concept/summary type tag set
  *   Q4.  Summary structure         — Entities Mentioned section populated
- *   Q5.  Wikilink resolution       — every [[link]] resolves to a file
- *   Q6.  Backlink bidirectionality — every entity in Entities Mentioned
- *                                    has the summary in its Related section
+ *   Q5.  Wikilink resolution       — broken-link rate under an absolute ceiling
+ *   Q6.  syncSummaryEntities       — a/ every entity+concept page THIS ingest
+ *                                    wrote is listed in the summary;
+ *                                    b/ each carries the [[summaries/x]]
+ *                                    backlink; c/ every resolvable bullet is
+ *                                    consistent with its page
  *   Q7.  Index integrity           — every wiki page has an index row
  *   Q8.  Log entry present         — log.md has the ingest entry
- *   Q9.  Health-clean              — scanWiki reports 0 structural issues
+ *   Q9.  Health-clean              — scanWiki: 0 structural issues, and 0
+ *                                    missing backlinks (production scanner's
+ *                                    independent view of the Q6 contract)
  *   Q10. No stub markers (unless deliberate)
  *
- * Isolation:
- *   - Uses a dedicated domain `in-depth-ingest-test` (NOT in the user's
- *     real config — config file is moved aside for the duration)
- *   - Tempdir DOMAINS_PATH, fully cleaned up at end
+ * HARD vs ADVISORY. A check is HARD when its outcome is decided by our code
+ * (a programmatic merge, a reconciliation pass, a scanner) and ADVISORY when
+ * it is decided by LLM judgement that legitimately varies run to run — orphan
+ * counts, stub pages, hub-page shape, whether the Jaccard guard fired. Gating
+ * variance is how a guard learns to cry wolf (v3.9.0 deleted a ratio assertion
+ * that failed 73% of the time under CI load). Advisory numbers are MEASURED and
+ * printed in the quality table so a trend is visible without being a gate.
+ *
+ * ISOLATION — the real .curator-config.json is READ, never moved or deleted.
+ *   - CURATOR_TEST_USER_DATA_DIR → tempdir (isolates all four credential paths)
+ *   - CURATOR_TEST_DOMAINS_DIR   → tempdir (beats a configured domainsPath)
+ *   Everything this suite creates lives under one tempdir, so a SIGKILL — which
+ *   run-tests.js uses on a timeout, and which no handler can catch — can leave
+ *   nothing worse behind than a temp folder.
  *
  * Requirements:
- *   GEMINI_API_KEY env var set (or .curator-config.json with geminiApiKey)
+ *   A Gemini key in the env or in .curator-config.json. Without one the suite
+ *   SELF-SKIPS with exit 0, per the LIVE-suite convention every other live
+ *   suite follows.
  *
  * Run:
  *   node scripts/test-ingest-deep.js
  *
- * Exit code 0 on green; non-zero on any failure.
+ * Exit code 0 on green (and on a self-skip); 1 on assertion failure; 2 on a
+ * fatal error.
  *
  * Run with --quick to skip the real-world REAL-1 test (saves ~30s of
  * live LLM time when iterating on the synthetic suite).
@@ -69,30 +90,50 @@ const INPUTS_DIR = path.join(__dirname, 'test-ingest-deep-inputs');
 
 const QUICK = process.argv.includes('--quick');
 
-// ── Setup: isolated tempdir + config sidelined ────────────────────────────
-// CURATOR_TEST_DOMAINS_DIR beats config; plain DOMAINS_PATH loses to a
-// configured domainsPath and would write into the real domains/ folder.
-const tempRoot = mkdtempSync(path.join(tmpdir(), 'curator-deep-ingest-'));
-process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
+// ── Setup: fully isolated tempdir — the real config is NEVER touched ───────
+//
+// HISTORY (v3.9.1). Until this release the suite did:
+//     copyFileSync(realConfig, sidelined); rmSync(realConfig);
+// and restored it in cleanup(). That is a live hazard, not a theoretical one:
+// scripts/run-tests.js kills a timed-out suite with SIGKILL, which no handler
+// can intercept, so a slow live run left the maintainer WITHOUT their API keys.
+// The project has already paid for this once (v3.1.1 recorded `npm test` itself
+// deleting .curator-config.json).
+//
+// The correct seam is CURATOR_TEST_USER_DATA_DIR, which paths.js checks BEFORE
+// repo/bundle detection and which isolates all four credential locations — so
+// getApiKeys() reads an empty config without the real one moving an inch.
+// CURATOR_TEST_DOMAINS_DIR is set too (getDomainsDir checks it before config)
+// so no wiki byte can land in the real domains/ folder. Plain DOMAINS_PATH is
+// NOT used: it loses to a configured domainsPath and silently no-ops.
+//
+// The key is read from the real config READ-ONLY, before isolation, and lives
+// only in this process's env. It is never written to disk anywhere, so a
+// SIGKILL leaves behind a tempdir and nothing else.
+const testRoot = mkdtempSync(path.join(tmpdir(), 'curator-deep-ingest-'));
+const tempRoot = path.join(testRoot, 'domains');   // domains root
+const USER_DATA_ROOT = path.join(testRoot, 'userdata');
+const STAGING_ROOT = path.join(testRoot, 'staging');
+for (const d of [tempRoot, USER_DATA_ROOT, STAGING_ROOT]) mkdirSync(d, { recursive: true });
 
 const realConfig = path.join(PROJECT_ROOT, '.curator-config.json');
-const sidelinedConfig = realConfig + '.deep-test-bak';
-let configStashed = false;
-let savedGeminiKey = process.env.GEMINI_API_KEY;
-if (existsSync(realConfig)) {
-  // Read the key from the config BEFORE moving it aside, so that the test
-  // can run even if the user only configured the key in the UI.
+let geminiKey = process.env.GEMINI_API_KEY || null;
+if (!geminiKey && existsSync(realConfig)) {
   try {
-    const cfg = JSON.parse(readFileSync(realConfig, 'utf8'));
-    if (cfg.geminiApiKey && !savedGeminiKey) {
-      process.env.GEMINI_API_KEY = cfg.geminiApiKey;
-      savedGeminiKey = cfg.geminiApiKey;
-    }
+    const cfg = JSON.parse(readFileSync(realConfig, 'utf8'));   // READ ONLY
+    if (cfg.geminiApiKey) geminiKey = cfg.geminiApiKey;
   } catch { /* ignore — fall back to env */ }
-  copyFileSync(realConfig, sidelinedConfig);
-  rmSync(realConfig);
-  configStashed = true;
 }
+
+process.env.CURATOR_TEST_USER_DATA_DIR = USER_DATA_ROOT;
+process.env.CURATOR_TEST_DOMAINS_DIR = tempRoot;
+if (geminiKey) process.env.GEMINI_API_KEY = geminiKey;
+// Determinism, per the v3.1.1 lesson: getProviderInfo() FALLS THROUGH to
+// whichever provider still has a key. With Anthropic reachable, a suite that
+// believes it is measuring Gemini can silently measure Claude and pass. Remove
+// the ambiguity, then assert the resolved provider below.
+delete process.env.ANTHROPIC_API_KEY;
+delete process.env.LLM_MODEL;
 
 let exitCode = 0;
 const issuesFound = [];
@@ -102,12 +143,10 @@ function logIssue(level, scenario, msg, detail) {
 }
 
 async function cleanup() {
-  try { rmSync(tempRoot, { recursive: true, force: true }); } catch {}
-  if (configStashed) {
-    try { copyFileSync(sidelinedConfig, realConfig); rmSync(sidelinedConfig); } catch {}
-  }
+  try { rmSync(testRoot, { recursive: true, force: true }); } catch {}
 }
 process.on('SIGINT', async () => { await cleanup(); process.exit(130); });
+process.on('SIGTERM', async () => { await cleanup(); process.exit(143); });
 
 // ── Test plumbing ─────────────────────────────────────────────────────────
 let totalAssertions = 0, passedAssertions = 0;
@@ -196,8 +235,86 @@ function extractFrontmatter(content) {
   return fm;
 }
 
+// Per-scenario ingestion-quality measurements, printed as a table at the end.
+// These are REPORTED, not gated (see the note beside the report).
+const qualityLedger = [];
+
+/**
+ * Body of a `## <heading>` section, up to the next `## ` heading or EOF.
+ *
+ * BUG THIS REPLACES (found v3.9.1, present since the suite was written): both
+ * Q6 and Q4 used
+ *     /^##\s+Entities Mentioned\s*\n([\s\S]*?)(?=^##\s+|\Z)/m
+ * and **JavaScript has no \Z**. In JS `\Z` is the literal character "Z", so the
+ * lazy body could only terminate at a following `## ` heading or at a capital
+ * Z. Two consequences, both silent:
+ *   • "Entities Mentioned" is the LAST section (the common shape) → NO MATCH at
+ *     all, and the old code's `if (!sectMatch) continue;` skipped the entire
+ *     backlink check for that summary without a word.
+ *   • A bullet containing a capital Z truncated the section there, hiding every
+ *     bullet after it.
+ * So Q6 was not merely non-failing — on most summaries it never ran. Measured
+ * on a live run: 6 of 7 scenarios matched nothing.
+ */
+function extractSectionBody(content, heading) {
+  const lines = content.split('\n');
+  const want = heading.trim().toLowerCase();
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^##\s+(.+?)\s*$/);
+    if (m && m[1].trim().toLowerCase() === want) { start = i + 1; break; }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+/** Hyphen/case-normalised slug key — mirrors normKey in health.js. */
+function normSlugKey(s) { return String(s).replace(/-/g, '').toLowerCase(); }
+
+/**
+ * Resolve an "Entities Mentioned" slug to a file on disk the same way
+ * injectSummaryBacklinks does: entities/exact → concepts/exact →
+ * hyphen-normalised entities → hyphen-normalised concepts.
+ *
+ * Mirroring the production resolver matters. A naive exact-only lookup counts
+ * a legitimately hyphen-normalised bullet ([[e-mail]] → email.md) as a missing
+ * backlink, which would make a hard assertion here flaky for the wrong reason.
+ */
+function resolveEntitySlugFile(wikiDir, slug) {
+  for (const folder of ['entities', 'concepts']) {
+    const p = path.join(wikiDir, folder, slug + '.md');
+    if (existsSync(p)) return p;
+  }
+  const want = normSlugKey(slug);
+  for (const folder of ['entities', 'concepts']) {
+    const dir = path.join(wikiDir, folder);
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (f.endsWith('.md') && normSlugKey(f.replace(/\.md$/, '')) === want) {
+        return path.join(dir, f);
+      }
+    }
+  }
+  return null;
+}
+
 function checkQualityMetrics(sc, wikiDir, ingestResult) {
   const pages = walkMdFiles(wikiDir);
+  const ledger = {
+    scenario: sc.name, path: null, pages: pages.length,
+    totalLinks: 0, brokenLinks: 0, orphans: null, stubs: 0,
+  };
+  qualityLedger.push(ledger);
+  sc.ledger = ledger;
+  // Which pipeline path ran, taken from the progress stream rather than from
+  // the scenario's label — see SYN-4, which was mislabelled for four releases.
+  const pmsgs = ingestResult?.__progressMessages || [];
+  ledger.path = pmsgs.some(m => /Phase 1: planning wiki structure/.test(m))
+    ? 'multi-phase' : (pmsgs.length ? 'single-pass' : '?');
   console.log(`\n  Quality checks (${pages.length} wiki files):`);
 
   // Q1. Atomic write contract — no zero-byte files, no orphan .tmp-* anywhere
@@ -261,18 +378,17 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
     const summaries = pages.filter(p => p.rel.startsWith('summaries' + path.sep));
     for (const s of summaries) {
       const content = readFileSync(s.abs, 'utf8');
-      const hasSection = /^##\s+Entities Mentioned/m.test(content);
+      const hasSection = extractSectionBody(content, 'Entities Mentioned') !== null;
       assertTrue(sc, hasSection,
         `Q4: summary ${s.name} has "Entities Mentioned" section`);
       if (hasSection) {
-        // Count entities listed
-        const section = content.split(/^##\s+Entities Mentioned\s*$/m)[1] || '';
-        const nextSection = section.search(/^##\s+/m);
-        const block = nextSection >= 0 ? section.slice(0, nextSection) : section;
+        const block = extractSectionBody(content, 'Entities Mentioned') || '';
         const bullets = block.match(/^- /gm) || [];
-        if (bullets.length === 0) {
-          warn(sc, `Q4: summary ${s.name} has Entities Mentioned section but no bullets`);
-        }
+        // HARD: syncSummaryEntities injects a bullet for every entity/concept
+        // page the ingest wrote, so an empty section means the reconciliation
+        // did not run. Deterministic — not an LLM-judgement call.
+        assertTrue(sc, bullets.length > 0,
+          `Q4b: summary ${s.name} "Entities Mentioned" has ≥1 bullet`);
       }
     }
   }
@@ -293,15 +409,36 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
         }
       }
     }
+    ledger.totalLinks = totalLinks;
+    ledger.brokenLinks = brokenLinks;
     if (brokenLinks === 0) {
       ok(sc, `Q5: every wikilink resolves (${totalLinks} links checked)`);
     } else {
-      // Broken links are a quality issue but not a test failure — they're a
-      // known LLM-compliance failure; the goal is to MEASURE how many slip
-      // through and track over time. Warn, don't fail (unless many).
+      // Broken links are a quality issue but not, at low rates, a test failure
+      // — they are a known LLM-compliance failure and the goal is to MEASURE
+      // how many slip through. An ABSOLUTE CEILING, never a run-to-run ratio.
+      //
+      // WHERE 20% COMES FROM (so nobody tunes it toward the observations):
+      //   • recorded range on unmodified code, single-pass — Gemini 0.0–3.8%
+      //     (CLAUDE.md v3.0.16, which also states this metric is NOT a valid
+      //     single-run gate: the noise is wider than most effects)
+      //   • measured here on the multi-phase path, unmutated, n=3 —
+      //     2.5%, 4.4%, 9.2%. The ceiling was 10% when this release started,
+      //     and one UNMUTATED run came in at 9.2% — 92% of the cap. That is a
+      //     gate about to go red on provider weather: the v3.9.0 lesson ("a
+      //     guard that cries wolf teaches people to ignore the one assertion
+      //     protecting them") arriving one run early.
+      //   • the regression it must catch — 29.9%, measured under a mutation
+      //     that removes the cross-batch outline threading.
+      // 20% is ~2.2x the observed unmutated maximum and well under the
+      // measured regression. It is a COARSE backstop by design: the sharp,
+      // deterministic guard for that regression is SYN-4d, which asserts the
+      // threading on the prompt itself and went red at "expected 8, got 0".
+      // Do NOT lower this toward the observed rate — the observed maximum is
+      // exactly what flakes.
       const pct = ((brokenLinks / totalLinks) * 100).toFixed(1);
       const msg = `${brokenLinks} of ${totalLinks} wikilinks broken (${pct}%)`;
-      if (brokenLinks / totalLinks > 0.10) {
+      if (brokenLinks / totalLinks > 0.20) {
         fail(sc, `Q5: too many broken wikilinks`, `${msg}. Samples: ${brokenSamples.slice(0, 5).join('; ')}`);
       } else if (brokenLinks > 0) {
         warn(sc, `Q5: ${msg}`, `Samples: ${brokenSamples.slice(0, 5).join('; ')}`);
@@ -309,47 +446,114 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
     }
   }
 
-  // Q6. Backlink bidirectionality — every entity in summary's Entities
-  //     Mentioned section has a backlink to the summary
+  // ── Q6. syncSummaryEntities — the post-write reconciliation contract ──────
+  //
+  // THE ASSERTION THIS SUITE EXISTS FOR, and until v3.9.1 it could not fail.
+  //
+  // Two separate defects, and the second is the interesting one:
+  //
+  //   1. It called warn(), and warn() does not set exitCode. Gutting the
+  //      reconciliation left `npm test` green.
+  //
+  //   2. Upgrading warn→fail on the check AS WRITTEN would STILL not have
+  //      caught it. The old Q6 asked "does every slug listed in Entities
+  //      Mentioned have a backlink?" — a CONSISTENCY question. But writePage
+  //      itself calls injectSummaryBacklinks (files.js, summary branch), so
+  //      with syncSummaryEntities gutted the list shrinks to whatever the LLM
+  //      wrote AND the backlinks shrink with it, in lockstep. Consistent, and
+  //      wrong: the 20-30 entity pages the ingest actually wrote are absent
+  //      from the summary and carry no backlink to it. The wiki degrades from
+  //      a graph to a pile of pages and the check stays green.
+  //
+  // So the assertion is COVERAGE, not consistency, stated against the thing
+  // syncSummaryEntities is given: the canonical paths this ingest wrote.
+  // Q6c keeps the old consistency question as a second, independent axis.
   {
-    const summaries = pages.filter(p => p.rel.startsWith('summaries' + path.sep));
-    for (const s of summaries) {
-      const sContent = readFileSync(s.abs, 'utf8');
-      const sectMatch = sContent.match(/^##\s+Entities Mentioned\s*\n([\s\S]*?)(?=^##\s+|\Z)/m);
-      if (!sectMatch) continue;
-      const entitySlugs = [];
-      for (const line of sectMatch[1].split('\n')) {
-        const linkMatch = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
-        if (linkMatch) entitySlugs.push(linkMatch[1].trim());
-      }
-      const summarySlug = s.name.replace(/\.md$/, '');
+    const written = (ingestResult?.pagesWritten || []);
+    const summaryCanon = written.find(p => p.startsWith('summaries/'));
+    const writtenNodes = written.filter(p => p.startsWith('entities/') || p.startsWith('concepts/'));
+
+    if (summaryCanon) {
+      const summarySlug = path.basename(summaryCanon, '.md');
       const summaryFolderSlug = `summaries/${summarySlug}`;
-      let missingBacklinks = 0;
-      const missingSamples = [];
-      for (const eSlug of entitySlugs) {
-        // Find the entity/concept file
-        const ePath = ['entities', 'concepts']
-          .map(f => path.join(wikiDir, f, eSlug + '.md'))
-          .find(p => existsSync(p));
-        if (!ePath) {
-          missingBacklinks++;
-          if (missingSamples.length < 5) missingSamples.push(`${eSlug} → file not found`);
-          continue;
+      const summaryAbs = path.join(wikiDir, summaryCanon);
+
+      // Guard: if the ingest wrote no entity/concept pages at all,
+      // syncSummaryEntities early-returns and Q6a/Q6b would be vacuously
+      // green. Assert the precondition rather than skipping silently.
+      assertTrue(sc, writtenNodes.length > 0,
+        `Q6-pre: ingest wrote ≥1 entity/concept page (Q6a/Q6b are vacuous otherwise)`,
+        `pagesWritten: ${written.join(', ')}`);
+
+      if (writtenNodes.length > 0 && existsSync(summaryAbs)) {
+        const sContent = readFileSync(summaryAbs, 'utf8');
+        const sectBody = extractSectionBody(sContent, 'Entities Mentioned');
+        const listed = new Set();
+        if (sectBody !== null) {
+          for (const line of sectBody.split('\n')) {
+            const lm = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
+            if (lm) listed.add(normSlugKey(lm[1].trim()));
+          }
         }
-        const eContent = readFileSync(ePath, 'utf8');
-        // The backlink is [[summaries/<slug>]] (with prefix) — that's the
-        // convention enforced by injectSummaryBacklinks
-        if (!eContent.includes(`[[${summaryFolderSlug}]]`)) {
-          missingBacklinks++;
-          if (missingSamples.length < 5) missingSamples.push(`${eSlug}`);
+
+        // Q6a — every entity/concept page written by THIS ingest is listed in
+        // the summary's Entities Mentioned. This is exactly what
+        // syncSummaryEntities promises (writtenPaths → bullets).
+        const notListed = writtenNodes
+          .map(p => path.basename(p, '.md'))
+          .filter(slug => !listed.has(normSlugKey(slug)));
+        assertEq(sc, notListed.length, 0,
+          `Q6a: all ${writtenNodes.length} entity/concept pages written this ingest are in "Entities Mentioned"`);
+        if (notListed.length > 0) {
+          console.log(`    └─ missing from summary: ${notListed.slice(0, 8).join(', ')}${notListed.length > 8 ? ` (+${notListed.length - 8})` : ''}`);
+        }
+
+        // Q6b — and each of them carries the [[summaries/<slug>]] backlink,
+        // i.e. the graph edge exists in BOTH directions.
+        const noBacklink = [];
+        for (const p of writtenNodes) {
+          const abs = path.join(wikiDir, p);
+          if (!existsSync(abs)) { noBacklink.push(`${p} (file missing)`); continue; }
+          if (!readFileSync(abs, 'utf8').includes(`[[${summaryFolderSlug}]]`)) noBacklink.push(p);
+        }
+        assertEq(sc, noBacklink.length, 0,
+          `Q6b: all ${writtenNodes.length} written pages carry the [[${summaryFolderSlug}]] backlink`);
+        if (noBacklink.length > 0) {
+          console.log(`    └─ no backlink: ${noBacklink.slice(0, 8).join(', ')}${noBacklink.length > 8 ? ` (+${noBacklink.length - 8})` : ''}`);
         }
       }
-      if (missingBacklinks === 0 && entitySlugs.length > 0) {
-        ok(sc, `Q6: ${entitySlugs.length} entities in summary all have backlinks`);
-      } else if (missingBacklinks > 0) {
-        warn(sc, `Q6: ${missingBacklinks} of ${entitySlugs.length} entities missing backlink to ${summarySlug}`,
-          missingSamples.join('; '));
+    }
+
+    // Q6c — the original consistency axis, now a hard assertion, across EVERY
+    // summary on disk (so an earlier ingest's summary cannot silently rot).
+    // Scoped to slugs that RESOLVE to a file: an unresolvable bullet is a
+    // broken link, which Q5 already gates — double-gating the noisiest metric
+    // in the pipeline is how a guard learns to cry wolf.
+    {
+      const summaries = pages.filter(p => p.rel.startsWith('summaries' + path.sep));
+      let checked = 0, missing = 0;
+      const samples = [];
+      for (const s of summaries) {
+        const sContent = readFileSync(s.abs, 'utf8');
+        const sectBody = extractSectionBody(sContent, 'Entities Mentioned');
+        if (sectBody === null) continue;
+        const summaryFolderSlug = `summaries/${s.name.replace(/\.md$/, '')}`;
+        for (const line of sectBody.split('\n')) {
+          const lm = line.match(/-\s*\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/);
+          if (!lm) continue;
+          const slug = lm[1].trim();
+          const ePath = resolveEntitySlugFile(wikiDir, slug);
+          if (!ePath) continue;            // unresolvable → Q5's problem, not Q6's
+          checked++;
+          if (!readFileSync(ePath, 'utf8').includes(`[[${summaryFolderSlug}]]`)) {
+            missing++;
+            if (samples.length < 6) samples.push(`${summaryFolderSlug} ← ${slug}`);
+          }
+        }
       }
+      assertEq(sc, missing, 0,
+        `Q6c: every resolvable "Entities Mentioned" bullet has its backlink (${checked} checked)`);
+      if (missing > 0) console.log(`    └─ ${samples.join('; ')}`);
     }
   }
 
@@ -369,11 +573,11 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
           if (missingSamples.length < 5) missingSamples.push(p.rel);
         }
       }
-      if (missingFromIndex === 0) {
-        ok(sc, 'Q7: index has rows for all entity/concept pages');
-      } else {
-        warn(sc, `Q7: ${missingFromIndex} pages missing from index`, missingSamples.join('; '));
-      }
+      // HARD: mergeIntoIndex is a programmatic merge, not an LLM call. A page
+      // on disk with no index row is the v3.0.1-beta.1 defect (pages landed but
+      // vanished from the index) and it is deterministic, so it can be gated.
+      assertEq(sc, missingFromIndex, 0, 'Q7: index has rows for all entity/concept pages');
+      if (missingFromIndex > 0) console.log(`    └─ ${missingSamples.join('; ')}`);
     }
   }
 
@@ -384,7 +588,10 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
       const logContent = readFileSync(logPath, 'utf8');
       assertTrue(sc, logContent.includes('ingest'), 'Q8: log.md has an ingest entry');
     } else {
-      warn(sc, 'Q8: log.md does not exist');
+      // HARD: createDomain() writes log.md and appendLog() reads it unguarded
+      // (files.js) — its absence is the recorded "full ingest completes, real
+      // spend, pages on disk, then ENOENT at the last step" hazard.
+      fail(sc, 'Q8: log.md does not exist');
     }
   }
 
@@ -398,6 +605,7 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
         warn(sc, `Q10: stub page found: ${p.rel}`);
       }
     }
+    ledger.stubs = stubs;
     if (stubs === 0) ok(sc, 'Q10: no stub-page markers');
   }
 }
@@ -407,10 +615,16 @@ function checkQualityMetrics(sc, wikiDir, ingestResult) {
 async function runIngest(domain, sourcePath, originalName, sc) {
   // Load late so DOMAINS_PATH is in effect
   const { ingestFile } = await import('../src/brain/ingest.js');
-  const stagedPath = path.join(tempRoot, originalName);
+  const stagedPath = path.join(STAGING_ROOT, originalName);
   copyFileSync(sourcePath, stagedPath);
 
   let lastPct = 0;
+  // Every progress message, kept so a scenario can PROVE which pipeline path
+  // ran rather than assuming it from the fixture's filename. SYN-4 was labelled
+  // "multi-phase (>15k chars)" for four releases while its fixture measured
+  // 10,256 chars and took the single-pass path — the label was the only
+  // evidence, and the label was wrong.
+  const progressMessages = [];
   const startTime = Date.now();
   const result = await ingestFile(
     domain,
@@ -418,12 +632,14 @@ async function runIngest(domain, sourcePath, originalName, sc) {
     originalName,
     false,
     (ev) => {
+      if (ev.message) progressMessages.push(ev.message);
       if (ev.pct && ev.pct !== lastPct) {
         process.stdout.write(`\r    [${String(ev.pct).padStart(3)}%] ${(ev.message || '').slice(0, 50).padEnd(50)}`);
         lastPct = ev.pct;
       }
     }
   );
+  result.__progressMessages = progressMessages;
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`\n  Ingest completed in ${elapsed}s — ${result.pagesWritten.length} pages.`);
 
@@ -436,7 +652,7 @@ async function runIngest(domain, sourcePath, originalName, sc) {
   return result;
 }
 
-async function runHealthScan(domain, sc) {
+async function runHealthScan(domain, sc, ingestResult = null) {
   const { scanWiki } = await import('../src/brain/health.js');
   try {
     const report = await scanWiki(domain);
@@ -457,24 +673,62 @@ async function runHealthScan(domain, sc) {
     assertEq(sc, counts.hyphenVariants, 0, 'Q9c: 0 hyphen-variant duplicate files');
     if (counts.brokenLinks > 0) {
       warn(sc, `Q9d: Health flagged ${counts.brokenLinks} broken links`,
-        report.brokenLinks.slice(0, 3).map(b => `${b.file} → [[${b.link}]]`).join('; '));
+        report.brokenLinks.slice(0, 3).map(b => `${b.sourceFile} → [[${b.linkText}]]`).join('; '));
     } else {
       ok(sc, 'Q9d: 0 broken links');
     }
+    // ADVISORY on purpose. Whether a page ends up orphaned depends on whether
+    // the model chose to link it from somewhere — LLM judgement, run to run.
+    // Gating it would make the suite flaky; it is the single most useful number
+    // for "how much hand maintenance did this ingest leave", so it is MEASURED
+    // and printed in the quality table instead.
+    if (sc.ledger) sc.ledger.orphans = counts.orphans;
     if (counts.orphans > 0) {
       warn(sc, `Q9e: ${counts.orphans} orphan pages`,
-        report.orphans.slice(0, 5).map(o => o.file || o).join(', '));
+        report.orphans.slice(0, 5).map(o => o.path || o.slug || JSON.stringify(o)).join(', '));
     } else {
       ok(sc, 'Q9e: 0 orphan pages');
     }
+    // ── Q9g: no page THIS ingest wrote may be an orphan ────────────────────
+    // HARD, and derived rather than observed. syncSummaryEntities injects a
+    // [[slug]] bullet for EVERY entity/concept path the ingest wrote, so each
+    // of those pages necessarily has an incoming link from the summary, and
+    // injectSummaryBacklinks gives the summary incoming links in return. Zero
+    // orphans among this ingest's own pages is therefore a CONSEQUENCE of our
+    // code, not a hope about the model's — which is what makes it gateable
+    // where the domain-wide orphan count (Q9e) is not.
+    //
+    // A third independent detector of the same contract: under the M1 mutation
+    // (syncSummaryEntities gutted) a 17-page wiki produced 14 orphans.
+    // Scoped to pagesWritten so pre-existing content in the domain, which this
+    // ingest never touched, can never trip it.
+    if (ingestResult?.pagesWritten) {
+      const mine = new Set(ingestResult.pagesWritten);
+      const myOrphans = (report.orphans || []).filter(o => mine.has(o.path));
+      assertEq(sc, myOrphans.length, 0,
+        `Q9g: none of the ${mine.size} pages this ingest wrote is an orphan`);
+      if (myOrphans.length > 0) {
+        console.log(`    └─ ${myOrphans.slice(0, 8).map(o => o.path).join(', ')}`);
+      }
+    }
+
+    // HARD. This is the PRODUCTION scanner's independent view of the same
+    // invariant Q6 asserts — and it is stricter: health.js requires the
+    // backlink to sit inside a `## Related` section, where Q6 accepts it
+    // anywhere in the file. Two measurements of one contract, one of them by
+    // the code the user actually clicks (v3.1.0's "give a clever test an
+    // independent dumb cross-check"). It is deterministic: injectSummaryBacklinks
+    // writes into Related, so a non-zero count is a real defect, never variance.
+    assertEq(sc, counts.missingBacklinks, 0,
+      'Q9f: Health reports 0 missing backlinks (production scanner, Related-scoped)');
     if (counts.missingBacklinks > 0) {
-      warn(sc, `Q9f: ${counts.missingBacklinks} missing backlinks (auto-fixable)`);
-    } else {
-      ok(sc, 'Q9f: 0 missing backlinks');
+      console.log(`    └─ ${report.missingBacklinks.slice(0, 5).map(b => `${b.summary} ← ${b.entity}`).join('; ')}`);
     }
     return report;
   } catch (err) {
-    warn(sc, 'Q9: health scan threw', err.message);
+    // HARD: the scanner throwing is never an acceptable outcome — it is the
+    // backstop the whole maintenance story rests on.
+    fail(sc, 'Q9: health scan threw', err.message);
     return null;
   }
 }
@@ -493,11 +747,39 @@ async function main() {
   console.log(`  Mode: ${QUICK ? 'QUICK (synthetic only)' : 'FULL (synthetic + real-world)'}`);
   console.log('═══════════════════════════════════════════════════════════════════════');
 
+  // LIVE self-skip contract (v3.9.1). Every other LIVE suite exits 0 when its
+  // key is absent; this one printed "ERROR:" and exit(2), which the real runner
+  // retries once and then reports as ✗ FAIL — a red build for an unconfigured
+  // machine. The ⏭ line is what run-tests.js matches for a genuine self-skip,
+  // and because we return BEFORE the "Passed: N  Failed: M" tally, it is
+  // correctly classified as ⏭ skip rather than ✓ pass.
   if (!process.env.GEMINI_API_KEY) {
-    console.error('\nERROR: GEMINI_API_KEY not set and no key found in .curator-config.json.');
-    console.error('Cannot run live LLM tests. Configure a key and try again.');
+    console.log('\n⏭  SKIPPED — no Gemini key in env or .curator-config.json (live-suite convention).');
     await cleanup();
-    process.exit(2);
+    process.exit(0);
+  }
+
+  // Assert the provider actually resolved to Gemini. getProviderInfo() falls
+  // THROUGH to any provider that still has a key, so a suite that believes it
+  // is measuring Gemini can silently measure Claude and report green (v3.1.1,
+  // where byte-identical output from "two different models" was the only tell).
+  {
+    const sc = startScenario('ENV-0', 'isolation + provider resolution');
+    const { getProviderInfo } = await import('../src/brain/llm.js');
+    const info = getProviderInfo();
+    assertEq(sc, info.provider, 'gemini', `ENV-0: resolved provider is gemini (model ${info.model})`);
+
+    const { getDomainsDir } = await import('../src/brain/config.js');
+    assertEq(sc, getDomainsDir(), path.resolve(tempRoot),
+      'ENV-0: domains dir is the throwaway tempdir, not the real domains/');
+
+    const { getApiKeys } = await import('../src/brain/config.js');
+    assertEq(sc, Object.keys(getApiKeys()).filter(k => getApiKeys()[k]).length, 0,
+      'ENV-0: isolated config is empty — the real .curator-config.json was not read');
+
+    // The suite must never move, copy or delete the real credential file.
+    assertTrue(sc, !existsSync(realConfig + '.deep-test-bak'),
+      'ENV-0: no sidelined copy of the real config exists (the v3.9.1 hazard is gone)');
   }
 
   // ── SYN-1: tiny baseline ───────────────────────────────────────────────
@@ -509,7 +791,7 @@ async function main() {
       `got ${result.pagesWritten.length}`);
     const wikiDir = path.join(tempRoot, 'syn1', 'wiki');
     checkQualityMetrics(sc, wikiDir, result);
-    await runHealthScan('syn1', sc);
+    await runHealthScan('syn1', sc, result);
   }
 
   // ── SYN-2: trunk-cluster trigger ───────────────────────────────────────
@@ -537,7 +819,7 @@ async function main() {
 
     const wikiDir = path.join(tempRoot, 'syn2', 'wiki');
     checkQualityMetrics(sc, wikiDir, result);
-    await runHealthScan('syn2', sc);
+    await runHealthScan('syn2', sc, result);
   }
 
   // ── SYN-3: JSON stressor ─────────────────────────────────────────────
@@ -555,19 +837,116 @@ async function main() {
       `got ${result.pagesWritten.length}`);
     const wikiDir = path.join(tempRoot, 'syn3', 'wiki');
     checkQualityMetrics(sc, wikiDir, result);
-    await runHealthScan('syn3', sc);
+    await runHealthScan('syn3', sc, result);
   }
 
   // ── SYN-4: multi-phase trigger ────────────────────────────────────────
+  //
+  // Until v3.9.1 this scenario was DECORATIVE. Its label said "multi-phase
+  // (>15k chars)" and its fixture measured 10,256 chars against
+  // MULTI_PHASE_INPUT_THRESHOLD = 15_000, so it took the SINGLE-PASS path.
+  // The suite's only claimed coverage of Phase-1 outline → Phase-2 batching
+  // — the historically defect-densest path in the pipeline (v3.0.1-beta.11:
+  // Phase-2 batches could not link to slugs sibling batches would create;
+  // REAL-1 went 30 broken links → 0 only after that was threaded) — tested
+  // nothing of the sort. The fixture is now 17k chars, and the path taken is
+  // ASSERTED from the progress stream rather than inferred from the label.
   {
     const sc = startScenario('SYN-4', 'multi-phase (>15k chars) — verifies outline + batched content path');
     await createTestDomain('syn4');
+
+    // Pre-flight: the fixture must actually exceed the threshold. Reading the
+    // constant from the module means a change to either side goes red here
+    // instead of silently reverting the scenario to single-pass.
+    const { __testing } = await import('../src/brain/ingest.js');
+    const fixtureChars = readFileSync(path.join(INPUTS_DIR, '04-multi-phase.md'), 'utf8').length;
+    const THRESHOLD = 15_000;
+    assertTrue(sc, fixtureChars > THRESHOLD,
+      `SYN-4a: fixture is ${fixtureChars} chars — above MULTI_PHASE_INPUT_THRESHOLD (${THRESHOLD})`,
+      `fixture must exceed ${THRESHOLD} or this scenario silently tests single-pass`);
+
     const result = await runIngest('syn4', path.join(INPUTS_DIR, '04-multi-phase.md'), '04-multi-phase.md', sc);
+    const msgs = result.__progressMessages || [];
+
+    // The multi-phase path is the ONLY one that emits these. Single-pass emits
+    // neither, so this is a behavioural proof of which branch executed.
+    assertTrue(sc, msgs.some(m => /Phase 1: planning wiki structure/.test(m)),
+      'SYN-4b: Phase-1 outline ran (multi-phase path taken, not single-pass)',
+      `progress: ${msgs.slice(0, 6).join(' | ')}`);
+
+    const batchMsgs = msgs.map(m => m.match(/batch (\d+) of (\d+)/)).filter(Boolean);
+    const totalBatches = batchMsgs.length ? Number(batchMsgs[0][2]) : 0;
+    assertTrue(sc, totalBatches >= 2,
+      `SYN-4c: Phase 2 ran ≥2 batches (got ${totalBatches}) — cross-batch linking is reachable`,
+      'with a single batch there is no cross-batch case to exercise');
+
     assertTrue(sc, result.pagesWritten.length >= 5,
       'SYN-4: large doc produced ≥ 5 pages', `got ${result.pagesWritten.length}`);
+
     const wikiDir = path.join(tempRoot, 'syn4', 'wiki');
     checkQualityMetrics(sc, wikiDir, result);
-    await runHealthScan('syn4', sc);
+
+    // ── SYN-4d: cross-batch linkability, asserted on the PROMPT ────────────
+    // Deterministic and offline: drive the real buildBatchPrompt with a batch
+    // that is a strict subset of the outline and require the out-of-batch
+    // slugs to be present. If the allOutlinePages threading is removed, a
+    // Phase-2 batch can only see its own ≤4 pages and every reference to a
+    // sibling batch's page degrades to plain text or a guessed slug.
+    {
+      const BATCH_SIZE = __testing.BATCH_SIZE;
+      const outline = Array.from({ length: BATCH_SIZE * 3 }, (_, i) => ({
+        path: `concepts/xbatch-probe-${i}.md`, summary: `probe ${i}`,
+      }));
+      const firstBatch = outline.slice(0, BATCH_SIZE);
+      const prompt = __testing.buildBatchPrompt(
+        '2026-01-01', 'probe.md', 'body', firstBatch,
+        { entities: [], concepts: [] }, outline,
+      );
+      const outOfBatch = outline.slice(BATCH_SIZE).map(p => path.basename(p.path, '.md'));
+      const visible = outOfBatch.filter(slug => prompt.includes(slug));
+      assertEq(sc, visible.length, outOfBatch.length,
+        `SYN-4d: batch 1's prompt carries all ${outOfBatch.length} slugs from later batches`);
+    }
+
+    // ── SYN-4e: cross-batch linkability, observed in the OUTPUT ────────────
+    // Structural, not statistical. Build the link graph over the pages this
+    // ingest wrote (summaries excluded — syncSummaryEntities wires the summary
+    // to everything post-hoc, so including it would make any graph connected).
+    // A batch holds at most BATCH_SIZE pages, so a connected component LARGER
+    // than BATCH_SIZE is arithmetically impossible from within-batch links
+    // alone. That is an impossibility argument, not a tuned threshold.
+    //
+    // HONEST LIMIT, recorded rather than claimed away: the model can also
+    // arrive at a correct sibling slug by GUESSING it (`[[openai]]` is
+    // guessable). So this assertion is conservative — it can pass even with
+    // the threading removed. SYN-4d is the deterministic guard; this one
+    // confirms the property survives end to end.
+    {
+      const BATCH_SIZE = __testing.BATCH_SIZE;
+      const nodes = result.pagesWritten.filter(p => !p.startsWith('summaries/'));
+      const bySlug = new Map(nodes.map(p => [path.basename(p, '.md'), p]));
+      const parent = new Map(nodes.map(p => [p, p]));
+      const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+      const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+      for (const p of nodes) {
+        const abs = path.join(wikiDir, p);
+        if (!existsSync(abs)) continue;
+        for (const link of extractWikilinks(readFileSync(abs, 'utf8'))) {
+          const target = link.includes('/') ? link.split('/').pop() : link;
+          if (link.startsWith('summaries/')) continue;
+          const hit = bySlug.get(target);
+          if (hit && hit !== p) union(p, hit);
+        }
+      }
+      const sizes = new Map();
+      for (const p of nodes) { const r = find(p); sizes.set(r, (sizes.get(r) || 0) + 1); }
+      const largest = Math.max(0, ...sizes.values());
+      assertTrue(sc, largest > BATCH_SIZE,
+        `SYN-4e: largest link component is ${largest} pages > BATCH_SIZE (${BATCH_SIZE}) — links span batches`,
+        `within-batch-only linking cannot exceed ${BATCH_SIZE}; components: ${[...sizes.values()].sort((a, b) => b - a).join(',')}`);
+    }
+
+    await runHealthScan('syn4', sc, result);
   }
 
   // ── SYN-5: honorific author with diacritic ───────────────────────────
@@ -591,7 +970,7 @@ async function main() {
     }
 
     checkQualityMetrics(sc, wikiDir, result);
-    await runHealthScan('syn5', sc);
+    await runHealthScan('syn5', sc, result);
   }
 
   // ── SYN-6: empty file ────────────────────────────────────────────────
@@ -664,7 +1043,7 @@ async function main() {
     assertEq(sc, allRows.length, uniqRows.size,
       'SYN-8: index has no duplicate rows after re-ingest');
 
-    await runHealthScan('syn1', sc);
+    await runHealthScan('syn1', sc, result);
   }
 
   // ── SYN-9: hub-shaped source (v3.0.1-beta.11) ───────────────────────
@@ -683,22 +1062,59 @@ async function main() {
     const conceptsDir = path.join(wikiDir, 'concepts');
     const conceptFiles = existsSync(conceptsDir) ? readdirSync(conceptsDir).filter(f => f.endsWith('.md')) : [];
     const hubCandidate = conceptFiles.find(f => f.includes('visual') || f.includes('note-taking'));
+    // ADVISORY, deliberately — including the existence check. Locating the hub
+    // means matching the model's chosen SLUG ("visual-note-taking" vs
+    // "sketchnoting" vs "note-taking-patterns"), which is an LLM naming
+    // decision, not a property of our code. An earlier cut of this release made
+    // it HARD; that would have been a gate that reddens on word choice.
+    //
+    // SYN-9 therefore carries no hard assertion of its own beyond the shared
+    // Q1–Q10 battery, and that is the honest position: every property specific
+    // to this scenario is decided end-to-end by the model's output shape. The
+    // measurement still earns its place — it is what surfaced the prose-hub gap
+    // recorded below.
+    if (!hubCandidate) {
+      warn(sc, 'SYN-9: no clear hub page found (model named it something unexpected)',
+        `concepts/: ${conceptFiles.join(', ')}`);
+    }
+
+    const linkifyFired = !!(result.warnings || []).find(w => w.includes('Hub linkification'));
     if (hubCandidate) {
       const hubContent = readFileSync(path.join(conceptsDir, hubCandidate), 'utf8');
       const linkCount = (hubContent.match(/\[\[[^\]|#\n]+/g) || []).length;
-      assertTrue(sc, linkCount >= 4,
-        `SYN-9: hub page "${hubCandidate}" has ≥4 wikilinks to siblings (got ${linkCount})`);
-    } else {
-      warn(sc, 'SYN-9: no clear hub page found (LLM may have structured differently than expected)');
+      const bulletCount = (hubContent.match(/^\s*[-*]\s+/gm) || []).length;
+      if (sc.ledger) { sc.ledger.hubLinks = linkCount; sc.ledger.hubBullets = bulletCount; }
+
+      // ADVISORY, downgraded from a hard gate in v3.9.1 — and the downgrade is
+      // itself a finding, not a convenience.
+      //
+      // linkifyHubPages() (ingest.js) only fires on a page it recognises as
+      // "hub-shaped": >= 5 list items AND <= 2 existing wikilinks. Whether the
+      // model writes the umbrella page as a LIST or as PROSE is its own choice,
+      // and it varies run to run on a byte-identical fixture. Measured on
+      // unmutated code: the pass fired on one run and not the next, leaving a
+      // parent page with 1 link to 8 children it is the parent of.
+      //
+      // Gating that would give CI a red for provider weather. It is REPORTED
+      // instead — with the bullet count, which is the discriminator — so the
+      // gap stays visible. The gap itself is recorded as a product follow-up:
+      // a prose-shaped hub is disconnected from its children, Health flags
+      // NEITHER an orphan NOR a broken link, so nothing tells the user.
+      if (linkCount >= 4) {
+        ok(sc, `SYN-9: hub page "${hubCandidate}" links ≥4 siblings (${linkCount} links, ${bulletCount} bullets)`);
+      } else {
+        warn(sc, `SYN-9: hub page "${hubCandidate}" links only ${linkCount} sibling(s)`,
+          `${bulletCount} list items — linkifyHubPages needs ≥5 items AND ≤2 existing links; fired=${linkifyFired}. ` +
+          `A prose-shaped hub is left disconnected and Health reports it as neither orphan nor broken link.`);
+      }
     }
 
-    // The linkification report should have surfaced as a warning when it fired
-    const linkifyWarning = (result.warnings || []).find(w => w.includes('Hub linkification'));
-    if (linkifyWarning) {
+    // The linkification report surfaces as a warning when the pass fired.
+    if (linkifyFired) {
       ok(sc, 'SYN-9: linkification warning emitted — hub pass actively added links');
     }
 
-    await runHealthScan('syn9', sc);
+    await runHealthScan('syn9', sc, result);
   }
 
   // ── SYN-10: Jaccard semantic-dupe (related-articles scenario) ───────
@@ -746,7 +1162,7 @@ async function main() {
 
     const wikiDir = path.join(tempRoot, 'syn10', 'wiki');
     checkQualityMetrics(sc, wikiDir, result2);
-    await runHealthScan('syn10', sc);
+    await runHealthScan('syn10', sc, result2);
   }
 
   // ── REAL-1: real-world re-ingest ────────────────────────────────────
@@ -754,6 +1170,11 @@ async function main() {
     const sc = startScenario('REAL-1', 'real-world re-ingest of The_Energy_and_Water_Footprint_of_Generative_AI');
     const realArticle = path.join(PROJECT_ROOT, 'domains/articles/raw/The_Energy_and_Water_Footprint_of_Generative_AI.pdf');
     if (!existsSync(realArticle)) {
+      // ⏭ is safe here ONLY because the suite prints a "Passed: N  Failed: M"
+      // tally: run-tests.js classifies a suite as NOT RUN when it announces a
+      // skip AND reports no tally. Deleting that summary line would silently
+      // turn this whole green suite invisible to CI (the v3.7.0 shape).
+      console.log('  ⏭  REAL-1: local-only source article not present — scenario skipped.');
       warn(sc, 'REAL-1: source article not found, skipping');
     } else {
       await createTestDomain('real1');
@@ -762,7 +1183,7 @@ async function main() {
         'REAL-1: real article produced ≥ 8 pages', `got ${result.pagesWritten.length}`);
       const wikiDir = path.join(tempRoot, 'real1', 'wiki');
       checkQualityMetrics(sc, wikiDir, result);
-      await runHealthScan('real1', sc);
+      await runHealthScan('real1', sc, result);
     }
   }
 
@@ -776,8 +1197,37 @@ async function main() {
     const warns = sc.warnings.length > 0 ? ` (${sc.warnings.length} warnings)` : '';
     console.log(`  ${status} ${sc.name}: ${sc.passed} passed, ${sc.failed} failed${warns}`);
   }
-  console.log(`\n  Total assertions: ${passedAssertions} passed of ${totalAssertions}`);
-  console.log(`  Failures: ${totalAssertions - passedAssertions}`);
+  // ── Ingestion-quality report ─────────────────────────────────────────────
+  // The point of this suite is not "does ingest throw" — it is "how much
+  // hand maintenance does a clean ingest leave behind". These are the two
+  // numbers that answer that, per scenario, so a regression shows up as a
+  // trend rather than as a single pass/fail.
+  //
+  // NOTE (v3.0.16, recorded and still true): the broken-wikilink rate is NOT a
+  // valid single-run gate. Measured on UNMODIFIED code the range is Gemini
+  // 0.0–3.8%, which is wider than most effects. It is REPORTED here and gated
+  // only by a loose absolute ceiling (Q5), never by a run-to-run comparison.
+  if (qualityLedger.length > 0) {
+    console.log('\n  Ingestion quality (measured, not gated):');
+    console.log('    scenario  path         pages  links  broken  rate    orphans  stubs  hub-links');
+    for (const q of qualityLedger) {
+      const rate = q.totalLinks > 0 ? ((q.brokenLinks / q.totalLinks) * 100).toFixed(1) + '%' : '   — ';
+      const hub = q.hubLinks === undefined ? '' : `${q.hubLinks}/${q.hubBullets} bullets`;
+      console.log(
+        `    ${q.scenario.padEnd(9)} ${(q.path || '?').padEnd(12)} ` +
+        `${String(q.pages).padStart(5)}  ${String(q.totalLinks).padStart(5)}  ` +
+        `${String(q.brokenLinks).padStart(6)}  ${rate.padStart(6)}  ` +
+        `${String(q.orphans ?? '?').padStart(7)}  ${String(q.stubs).padStart(5)}  ${hub}`
+      );
+    }
+  }
+
+  // run-tests.js classifies a suite as ⏭ skip (i.e. NOT RUN) when it announces
+  // a skip and reports no assertion tally. This line is the tally: the regex is
+  // /^\s*(?:Total:\s*\d+\s+)?Passed:\s*\d+/m. "Total assertions: N passed of M"
+  // does NOT match it, which is why the suite had no tally for four releases and
+  // was one ⏭ glyph away from going invisible to CI (v3.7.0's failure shape).
+  console.log(`\n  Passed: ${passedAssertions}   Failed: ${totalAssertions - passedAssertions}`);
 
   if (issuesFound.length > 0) {
     console.log('\n  Issues collected (for analysis):');

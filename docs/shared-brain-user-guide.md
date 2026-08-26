@@ -27,16 +27,21 @@ Before any of these, you need a working Curator install on your computer (Mac/Wi
 Shared Brain is an **opt-in beta feature** (introduced in v3.0.0-beta.1). New installs don't see it until you enable it.
 
 1. Open The Curator in your browser (http://localhost:3333).
-2. Click the **Settings** tab.
-3. Scroll to the **"Shared Brain (beta)"** section and click **"Enable Shared Brain (beta)"**.
-4. Open the **Sync** tab (the confirmation links straight to it).
+2. Click **Shared Brain** in the left rail.
+3. Click **"Enable Shared Brain (beta)"**.
 
-> Since v3.0.2 the enable toggle lives in **Settings** (it's a one-time
-> configuration choice); the day-to-day operations stay in the **Sync** tab next
-> to Personal Sync. On older versions (v3.0.0-beta.1 → v3.0.1-beta.27) the
-> enable button was at the bottom of the Sync tab instead.
+> **Where this lives has moved twice — this guide describes the current interface.**
+> Since the v3.9.0 cutover, Shared Brain is its own rail item and **everything**
+> — enabling, joining, setting up, pushing, pulling, synthesis and admin actions
+> — happens there. The **Sync** view covers Personal Sync only; it reports Shared
+> Brain activity but no longer hosts any of its controls.
+>
+> In the previous interface (still at `/old` for a release or two) the layout is
+> different: the enable toggle is in **Settings → Shared Brain (beta)** and the
+> day-to-day operations are a **"Shared Brains"** block in the **Sync** tab. If
+> you are following these steps at `/old`, translate accordingly.
 
-Once enabled, the Sync tab shows a **"Shared Brains"** block with two cards:
+Once enabled, the Shared Brain view shows two cards:
 
 - **📨 I have an invite token** — *From my cohort, team, or research group.* — `[Join →]` button
 - **⚙ I'm starting a new Shared Brain** — *Set one up for my cohort or team.* — `[Set up →]` button
@@ -61,7 +66,7 @@ You CANNOT proceed without accepting the GitHub collaborator invitation. The Cur
 
 ### Step-by-step wizard
 
-In the Sync tab → Shared Brains section → on the **📨 I have an invite token** card → click **Join →**. A modal wizard appears with a 5-step progress bar (Token → Access → PAT → Domains → Save).
+In the **Shared Brain** rail view, on the **📨 I have an invite token** card, click **Join →**. A modal wizard appears with a 5-step progress bar (Token → Access → PAT → Domains → Save).
 
 #### Step 1 — Token
 
@@ -114,13 +119,13 @@ If the consent doesn't match your understanding of the cohort, **stop and check 
 
 Tick the consent checkbox → **Save & Connect** activates → click it.
 
-The wizard closes. You'll see a new connection card in the Sync tab showing:
+The wizard closes. You'll see a new connection card in the **Shared Brain** view showing:
 
 - 🧠 **Brain name** with link to the GitHub repo (read-only members get a **read-only member** pill)
 - Last pushed: never · Last pulled: never · **Last synthesis** (v3.0.4+ — "never — ask your admin to run synthesis" until the first one) · Domains: (your selection)
 - A **pending line** when you have pages waiting to push ("⏳ N pages ready to push")
 - **Push contributions** · **Pull updates** buttons (read-only members see only Pull)
-- A note telling you pulled content appears as the `shared-<slug>` domain in the Domains tab
+- A note telling you pulled content appears as the `shared-<slug>` domain in **Domains**
 - An "Advanced" disclosure with: Run synthesis (with a confirm step, v3.0.5+) · Show invite token (re-display any time) · Generate/Rotate admin token · your fellow-ID pill · Revoke a contributor… (admins with an admin token) · Disconnect
 
 You're done. Skip to [§4 Daily workflow](#4--daily-workflow).
@@ -159,7 +164,7 @@ You can do this before OR after running the admin wizard. Order doesn't matter �
 
 ### Step C — Run the admin wizard
 
-In the Curator → Sync tab → Shared Brains → on the **⚙ I'm starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → PAT → Domains → Save**.
+In the Curator → **Shared Brain** rail view → on the **⚙ I'm starting a new Shared Brain** card → click **Set up →**. The same 5-step wizard appears, but the progress bar labels change to admin mode: **Setup → Invite → PAT → Domains → Save**.
 
 #### Step 1 — Setup
 
@@ -203,7 +208,7 @@ You're done with setup. Daily ongoing operations are in [`docs/shared-brain-admi
 
 ### For contributors
 
-After setup, the Sync tab → Shared Brains → connection card has two main buttons:
+After setup, the **Shared Brain** view's connection card has two main buttons:
 
 | Action | When to use it |
 |---|---|
@@ -241,7 +246,7 @@ Detailed admin operations (synthesis cadence, contributor management, admin-toke
 
 Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curator alongside your personal domains. You can:
 
-- **Read** it in the Wiki tab
+- **Read** it from **Domains** — pick the `shared-<slug>` domain and open a page (the reader opens as an overlay; Esc closes it)
 - **Chat** with it in the Chat tab (it's a domain like any other)
 - **Explore** it in Obsidian (open `domains/shared-<slug>/wiki/` as a vault folder)
 - **Search** it from Claude Desktop via the My Curator MCP
@@ -310,7 +315,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 - They don't. Each contributor creates their own PAT and pastes it into their own Curator. Never share PATs. See [`shared-brain.md` §4](shared-brain.md#4--the-two-primitives--invite-token-vs-pat).
 
 **Conflicting facts in the collective wiki**
-- After synthesis, look for `## CONFLICTING SOURCES` markers in the Wiki tab. Since v3.0.4 the synthesis summary on the connection card names the affected pages directly ("2 unresolved contradictions flagged in concepts/x.md, entities/y.md"). Each marker shows the contributors who disagreed (UUIDs or names). To resolve: discuss with the cohort. The contributor whose fact is correct edits their personal opted-in domain, then Push + Run synthesis again. The marker disappears once consensus is reached.
+- After synthesis, look for `## CONFLICTING SOURCES` markers when reading the mirror's pages from **Domains**. Since v3.0.4 the synthesis summary on the connection card names the affected pages directly ("2 unresolved contradictions flagged in concepts/x.md, entities/y.md"). Each marker shows the contributors who disagreed (UUIDs or names). To resolve: discuss with the cohort. The contributor whose fact is correct edits their personal opted-in domain, then Push + Run synthesis again. The marker disappears once consensus is reached.
 
 **Want to remove a contributor**
 - See [`docs/shared-brain-admin.md` §6](shared-brain-admin.md#6--removing-a-contributor-without-revoking) — typically remove them as GitHub collaborator (stops future pushes but keeps past contributions). For full GDPR Article 17 erasure, see [§3 Revoking a contributor](shared-brain-admin.md#3--revoking-a-contributor-article-17).
@@ -321,14 +326,16 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 | Action | Where in the Curator app |
 |---|---|
-| Enable Shared Brain (beta) | Settings tab → "Shared Brain (beta)" section → Enable button (v3.0.2+; previously at the bottom of the Sync tab) |
-| Join a cohort (contributor) | Sync tab → **📨 I have an invite token** → Join → paste invite token |
-| Start a new cohort (admin) | Sync tab → **⚙ I'm starting a new Shared Brain** → Set up |
-| Push your contributions | Sync tab → connection card → "Push contributions" |
-| Pull collective updates | Sync tab → connection card → "Pull updates" |
-| Run synthesis (admin) | Sync tab → connection card → Advanced → "Run synthesis" |
-| Revoke a contributor (admin) | Sync tab → connection card → Advanced → **"Revoke a contributor…"** (v3.0.5+; shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
-| Disconnect this machine | Sync tab → connection card → Advanced → "Disconnect" |
+| Enable Shared Brain (beta) | **Shared Brain** rail view → Enable button |
+| Join a cohort (contributor) | **Shared Brain** → **📨 I have an invite token** → Join → paste invite token |
+| Start a new cohort (admin) | **Shared Brain** → **⚙ I'm starting a new Shared Brain** → Set up |
+| Push your contributions | **Shared Brain** → connection card → "Push contributions" |
+| Pull collective updates | **Shared Brain** → connection card → "Pull updates" |
+| Run synthesis (admin) | **Shared Brain** → connection card → admin controls → "Run synthesis" |
+| Revoke a contributor (admin) | **Shared Brain** → connection card → **"Admin controls — admin token & contributor revocation"** (shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
+| Disconnect this machine | **Shared Brain** → connection card → Disconnect |
+
+> At `/old` the same actions live in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else).
 
 ## 7 — Related documentation
 

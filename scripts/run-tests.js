@@ -65,6 +65,7 @@ const OFFLINE = [
   'test-chat-style.js',            // Tier 2: concise/balanced/comprehensive response-style control
   'test-chat-markdown.js',         // chat Markdown renderer — XSS-safe, formatting
   'test-chat-model.js',            // per-chat model (provider) selector + getDefaultModel exposure
+  'test-anthropic-content-blocks.js', // Anthropic text extraction at ANY block position. callProvider read content[0].text at BOTH extraction sites; a `thinking` block carries .thinking, never .text, so FALLBACK_CHAINS.anthropic[0] (claude-sonnet-5) threw on every realistic call — 3/3 measured live — while a trivial probe returned [text] and passed green, because omitting the thinking param means ADAPTIVE on sonnet-5 and NONE on sonnet-4-6/haiku-4-5. Class invariant over 2,000 generated content arrays (with coverage controls proving 562 put text somewhere other than first), not a case list.
   'test-chat-compile-card.js',     // compile result renders inline in the thread (no fixed panel)
   'test-css-tokens.js',            // every var(--x) CSS custom property is defined somewhere (the v3.0.12 --text-dim bug class)
   'test-domain-stats.js',           // getDomainStats per-type page counts + bulk GET /api/domains/stats
@@ -78,6 +79,7 @@ const OFFLINE = [
   'test-health-ai-pricing.js',      // Health cost estimates delegate to llm.js's single authoritative price table (the v3.6.2 drifted-duplicate fix) + honest reporting when a model has no listed price
   'test-health-cost-readouts.js',  // the honest unpriced cost signal actually REACHES the rendered output in both frontends (the v3.6.1 'new API fields were dead data' shape), plus revoke's server-owned summary wording
   'test-mcp-setup-contract.js',      // write-registry guard on mutating /api/config + /api/sync/setup + domain-rename routes — fires during a write, and (the half people forget) does NOT fire when idle
+  'test-mcp-e2e.js',                 // the MCP contract spoken over REAL stdio JSON-RPC. Two properties NOTHING else checked. (1) STDOUT PURITY — a stray console.log anywhere on the 33-file transitive import graph corrupts the stream (the v2.5.3 bug) and npm test stayed 68/68 green; the one suite that already spawned the server SWALLOWED the evidence with `try { JSON.parse(line) } catch {}`. (2) mcp/graph.js had ZERO coverage of any kind — gutting extractOutgoingLinks() reported every page an orphan, still 68/68 green. Plus the dot-slug regression, the 400 KB budget bracketed from both sides, and the read-only-mirror refusal driven through the wire. OFFLINE deliberately: 17 of 18 tools make no LLM call, so it needs no key and gates every fork PR, where a live job gates only push-to-main.
   'test-next-ingest-logic-drift.js', // TEMPORARY — delete alongside app.js at /next cutover. Byte-identity tripwire between app.js's batch-ingest pure helpers and their src/public/next/shared/ingest-queue-logic.js copy, so a bug fixed in one frontend and not the other goes RED instead of silently re-shipping.
   'test-next-mcp-wizard.js',        // /next MCP setup wizard — pure decision logic + escaping/CSS/HTML seams. NOT temporary: it outlives cutover.
   'test-wiki-list.js',                // GET /api/wiki/:domain/list — readdir-only inventory built on health.js's listMd (imported, never copied), set-equal to what /page will open
@@ -100,6 +102,7 @@ const OFFLINE = [
   'check-doc-suite-counts.js',
   'test-repair-wiki-args.js',
   'test-wiki-script-args.js',
+  'test-summary-backlink-sync.js', // syncSummaryEntities — "THE KEY POST-WRITE STEP", reached by FOUR write paths (ingest, compile, MCP compile, Shared Brain pull) and previously covered by nothing offline: replacing its entire body with `return;` left npm test byte-identical. More LIVE gating would NOT have closed it either — test-ingest-deep's Q6 reports through warn(), which does not set exitCode. Pins the graph invariant as SET EQUALITY BOTH WAYS (entitiesMentioned == backlinkers), because containment-only stays green when the sync drops the concepts half or is fed original LLM paths instead of writePage's canonPath.
 ];
 
 // LIVE suites hit real Gemini/Anthropic/GitHub. Each self-skips when its key is
@@ -125,6 +128,21 @@ const LIVE_CI = [
   'test-sharedbrain-github-live.js', // self-skips without GITHUB_TEST_*; unique slugs per run; exhaustive cleanup
   'test-sharedbrain-routes.js',      // spawns a server on 3334; isolated via CURATOR_TEST_USER_DATA_DIR (all four credential files) + a read-only guard asserting the real ones are untouched; no network unless GITHUB_TEST_* set
   'test-sharedbrain-llm-live.js',    // real delta+conflict prompts on every configured provider; GitHub storage when secrets present, local otherwise
+  // v3.9.1 — PROMOTED from LIVE_LOCAL. Ingestion quality is the product, so the
+  // suite that guards it belongs on the gate. The three blockers that kept it
+  // local are gone: it self-skips at exit 0 without a key (it used to exit 2 →
+  // hard FAIL), it no longer sidelines the real .curator-config.json (SIGKILL on
+  // timeout never reached its cleanup()), and it now prints an assertion tally
+  // (without one, any future ⏭ line silently reclassifies the whole suite as
+  // NOT RUN — the v3.7.0 invisible-to-CI shape). The one assertion that failed on
+  // UNMUTATED code (SYN-9's hub-link count) is now advisory, and Q5's broken-link
+  // ceiling was widened 10%→20% after an unmutated run measured 9.2% — a gate
+  // sitting at 92% of its cap is a gate about to cry wolf. Measured: $0.0325 and
+  // 155-208s per run. HONEST CAVEAT: n=3 on the real tree — enough to say the
+  // gates are sound, not enough to say they never flake. If it flakes, the
+  // retry-once + transient-marker machinery bounds the damage; if it flakes for a
+  // QUALITY reason, move it back rather than widening the ceiling again.
+  'test-ingest-deep.js',             // 10-scenario ingest-quality harness; self-skips without a Gemini key
 ];
 
 // LIVE_LOCAL — run locally (full `npm run test:live`) but EXCLUDED on CI:
@@ -139,7 +157,6 @@ const LIVE_CI = [
 //     carries (extractAuthorHints/slugifyName), or skip gracefully if it has
 //     none. Stays local-only because CI has no article to point it at, not
 //     because of anything personal in the test itself anymore.
-//   - test-ingest-deep: strict LLM-output quality thresholds (flaky as a gate).
 //   - test-beta15-production: MOVED OUT OF CI (was LIVE_CI). Not flaky output —
 //     flaky RUNTIME, and bimodally so. It drives large multi-phase ingests on
 //     BOTH providers, and ingest's Phase-2 recovery ladder turns a single
@@ -166,7 +183,6 @@ const LIVE_CI = [
 const LIVE_LOCAL = [
   'test-beta13-chat-live.js',
   'test-ingest-real-llm.js',     // needs CURATOR_LIVE_SCHEMA + CURATOR_LIVE_ARTICLE supplied locally; self-skips otherwise
-  'test-ingest-deep.js',
   'test-beta15-production.js',   // bimodal runtime — see the note above; a cap cannot bound the fallback ladder
 ];
 
@@ -212,6 +228,10 @@ const LIVE_TIMEOUT_MS = 600_000;     // 10 min — most live suites
 // observed maximum: the maximum is what fails.
 const LIVE_SUITE_TIMEOUT_MS = {
   'test-beta15-production.js': 1_200_000,   // 20 min
+  // Measured 155-208s, but SYN-4 now genuinely takes the multi-phase path and
+  // plans 47-66 pages; Phase 2's page-by-page fallback is O(pages), so a bad
+  // run has far more headroom to consume than the default 600s allows.
+  'test-ingest-deep.js': 900_000,           // 15 min
 };
 
 // ── Args ────────────────────────────────────────────────────────────────────
@@ -327,7 +347,20 @@ function runSuite(file, { stripCreds, timeoutMs }) {
       // verified against the tree, not a claim of completeness.
       const announcesSkip = /^\s*⏭/m.test(out) || /^\s*SKIPPED\b/m.test(out)
         || /^SKIP:/m.test(out) || /^\s*⊘/m.test(out) || /^\s*Self-skipping\b/m.test(out);
-      const reportedAssertions = /^\s*(?:Total:\s*\d+\s+)?Passed:\s*\d+/m.test(out);
+      // v3.9.1: this tested ONLY the capitalised `Passed: N` form and was therefore
+      // blind to 16 suites that print the lowercase tally (`beta.16 offline: 243
+      // passed, 0 failed`; `346 passed, 0 failed (346 total)`) — including the two
+      // largest in that release. Injecting one realistic partial-skip line into
+      // test-beta16-broken-links.js produced `⏭ skip` while 243 assertions actually
+      // ran. That is the v3.7.0 shape verbatim: a 95/95-green suite reported to CI
+      // as NOT RUN because a label contained a skip word. The runner's own
+      // failMarker below already knew both formats existed, which is what makes
+      // this an oversight rather than an unknown. Harm was bounded — `ok` is
+      // computed independently, so a FAILING suite still fails the build — but a
+      // suite that silently reads as "not run" invites "those are the keyless
+      // ones, ignore them", which is exactly how real coverage goes unnoticed.
+      const reportedAssertions = /^\s*(?:Total:\s*\d+\s+)?Passed:\s*\d+/m.test(out)
+        || /^[^\n]*\b\d+\s+passed\b/m.test(out);
       const skipped = announcesSkip && !reportedAssertions;
       const ok = code === 0 && !failMarker;
       resolve({ file, ok, ms, code, skipped, out });

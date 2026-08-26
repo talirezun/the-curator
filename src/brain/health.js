@@ -24,6 +24,16 @@ import { writeFileAtomic } from './atomic-write.js';
 // not re-implemented: this module and wiki-read.js each had their own copy,
 // and only one of them ever got hardened (v3.2.0 audit finding H1).
 import { resolveInsideWiki } from './wiki-read.js';
+// The lexical-variant gate, IMPORTED rather than re-implemented (v3.9.1). It
+// used to run only in the planner, so `applyBrokenLinkFixes` — which takes its
+// plan from the client — applied whatever retarget it was handed. A second
+// hand-maintained copy of a safety gate is the v3.2.0 CRITICAL, so this is the
+// one implementation, reached from both sides. health-ai.js already imports
+// this module, so the cycle is not new: wiki-read.js ↔ health.js has shipped
+// the same shape for several releases. Nothing here runs at module scope, and
+// `isLexicalVariant` is a hoisted function declaration, so neither entry order
+// can observe a partially-initialised binding.
+import { isLexicalVariant, buildLinkResolver } from './health-ai.js';
 
 const ARTICLE_PREFIX_RE = /^(the|a|an)-/;
 // Honorific prefixes — same set writePage's Pass A and the ingest validator
@@ -570,19 +580,66 @@ export const AUTO_FIXABLE = new Set([
   'semanticDupe',
 ]);
 
-async function fixBrokenLink(wikiDir, issue) {
-  if (!issue.suggestedTarget) return false;
+/**
+ * The on-disk page inventory, in the exact shapes a `[[wikilink]]` uses.
+ *
+ * `valid` is the set of legal link targets — a bare entity/concept slug, or
+ * `summaries/<slug>`. The three raw slug lists come back too, because
+ * `applyBrokenLinkFixes` also needs them to rebuild the deterministic resolver.
+ *
+ * Built from the gated `listMd`, and shared by `fixBrokenLink` and
+ * `applyBrokenLinkFixes` so "does this page exist" has ONE definition. Both
+ * used to derive it separately and only one of them checked at all.
+ */
+async function buildTargetInventory(wikiDir) {
+  const listSlugs = async (folder) => (await listMd(wikiDir, folder)).map(f => f.slice(0, -3));
+  const [ents, cons, sums] = await Promise.all([listSlugs('entities'), listSlugs('concepts'), listSlugs('summaries')]);
+  return { ents, cons, sums, valid: new Set([...ents, ...cons, ...sums.map(s => `summaries/${s}`)]) };
+}
+
+/**
+ * Retarget one broken `[[link]]` to `issue.suggestedTarget`.
+ *
+ * `issue` is NOT necessarily scan-emitted: the MCP `fix_wiki_issue` tool hands
+ * this an object composed by an LLM. Until v3.9.1 the only check was
+ * `if (!issue.suggestedTarget)` — a truthiness test — so a model could retarget
+ * links wiki-wide to a page that does not exist, manufacturing the very defect
+ * the tool exists to repair. The target must now name a real page.
+ *
+ * It deliberately does NOT run `isLexicalVariant`. A scan-emitted
+ * `suggestedTarget` comes from the scanner's own hyphen/prefix normalisation,
+ * which legitimately produces pairs the lexical gate refuses (`[[e-mail]]` →
+ * `email` scores Jaccard 0 — no shared token). The gate guards the AI planner's
+ * free-form guesses; this path's targets are already deterministic.
+ *
+ * `validTargets` is an optional prebuilt inventory so the fix-all loop does not
+ * re-read the three folders once per issue.
+ *
+ * RETURNS `{ ok, reason }`, NOT a bare boolean — see the REFUSAL REASONS block
+ * above `fixIssue`. The existence check this release added was correct and its
+ * signal was not: `false` for "you invented a page that does not exist" was
+ * indistinguishable from `false` for "there was nothing left to change", and
+ * the MCP rendered both as "the issue may already have been resolved" — telling
+ * a model the wiki was fine while the broken link was still on disk.
+ */
+async function fixBrokenLink(wikiDir, issue, validTargets = null) {
+  if (!issue.suggestedTarget) return { ok: false, reason: 'no-suggested-target' };
+  const known = validTargets || (await buildTargetInventory(wikiDir)).valid;
+  const wanted = String(issue.suggestedTarget).replace(/^(entities|concepts)\//, '');
+  if (!known.has(wanted)) return { ok: false, reason: 'target-not-found' };
   const full = wikiFile(wikiDir, issue.sourceFile);
-  if (!full || !existsSync(full)) return false;
+  if (!full || !existsSync(full)) return { ok: false, reason: 'source-file-not-found' };
   const before = await readFile(full, 'utf8');
   const esc = issue.linkText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   // Allow whitespace inside [[ ... ]] — the scanner trims linkText but the source
   // file may have `[[ Cline]]` or `[[Cline ]]` with stray spaces from LLM output.
   const re = new RegExp(`\\[\\[\\s*${esc}\\s*(\\|[^\\]]+)?\\]\\]`, 'g');
   const after = before.replace(re, (_m, alias) => `[[${issue.suggestedTarget}${alias || ''}]]`);
-  if (after === before) return false;
+  // The ONE reason that genuinely means "already resolved": the target exists,
+  // the source file exists, and the link is simply not in it any more.
+  if (after === before) return { ok: false, reason: 'link-not-present' };
   await writeFileAtomic(full, after, 'utf8');
-  return true;
+  return { ok: true, reason: null };
 }
 
 async function fixFolderPrefixLink(wikiDir, issue) {
@@ -870,13 +927,21 @@ async function fixHyphenVariant(wikiDir, issue) {
  *   2. The orphan slug must actually exist on disk in entities/ or concepts/.
  *   3. Target must be an entities/ or concepts/ file — never a summary
  *      (summaries are not valid orphan-rescue targets; see docs/ai-health.md).
+ *
+ * RETURNS `{ ok, reason }` for the same purpose as `fixBrokenLink`, and the
+ * FIRST reason below is the one that matters most in practice. `scanWiki` emits
+ * an orphan as `{path, type, slug}`; this handler needs `{orphanSlug,
+ * targetSlug}`. A model that follows the general rule "pass the scan issue
+ * through unchanged" therefore lands here with neither field, and used to get
+ * `fixed: 0` rendered as "may already have been resolved" — so a whole run of
+ * orphans reports clean while not one of them was touched.
  */
 async function fixOrphanLink(wikiDir, issue) {
-  if (!issue || !issue.orphanSlug || !issue.targetSlug) return false;
+  if (!issue || !issue.orphanSlug || !issue.targetSlug) return { ok: false, reason: 'orphan-fields-missing' };
 
   const { orphanSlug, targetSlug } = issue;
   const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
-  if (!SLUG_RE.test(orphanSlug) || !SLUG_RE.test(targetSlug)) return false;
+  if (!SLUG_RE.test(orphanSlug) || !SLUG_RE.test(targetSlug)) return { ok: false, reason: 'slug-shape-invalid' };
 
   // `abs`, not `p`: a name that reaches a syscall must be single-purpose in
   // this module. The §8c provenance guard is name-scoped, not scope-aware —
@@ -892,16 +957,19 @@ async function fixOrphanLink(wikiDir, issue) {
   };
 
   // Defence 1: orphan must exist on disk (entity or concept)
-  if (!at('entities', orphanSlug) && !at('concepts', orphanSlug)) return false;
+  if (!at('entities', orphanSlug) && !at('concepts', orphanSlug)) return { ok: false, reason: 'orphan-not-found' };
 
   // Defence 2: target must exist and be an entity or concept (never a summary)
   const targetPath = at('entities', targetSlug) || at('concepts', targetSlug);
-  if (!targetPath) return false;
+  if (!targetPath) return { ok: false, reason: 'target-not-found' };
 
   // Defence 3: don't link a page to itself
-  if (orphanSlug === targetSlug) return false;
+  if (orphanSlug === targetSlug) return { ok: false, reason: 'self-link' };
 
-  return await injectRelatedLink(targetPath, orphanSlug, issue.description || '');
+  const wrote = await injectRelatedLink(targetPath, orphanSlug, issue.description || '');
+  // `injectRelatedLink` is dedup-aware, so a false here means the link was
+  // already in the target's Related section — genuinely "already resolved".
+  return wrote ? { ok: true, reason: null } : { ok: false, reason: 'link-already-present' };
 }
 
 async function fixMissingBacklink(wikiDir, issue) {
@@ -924,13 +992,40 @@ async function fixMissingBacklink(wikiDir, issue) {
 }
 
 /**
+ * REFUSAL REASONS — why `fixed: 0` is not one fact but several.
+ *
+ * The two handlers below that accept an LLM-COMPOSED issue object return
+ * `{ok, reason}`; the handlers that only ever see a scan-emitted object keep
+ * their bare boolean. That split is deliberate rather than half-done: a scanner
+ * object is well-formed by construction, so "it did nothing" really does mean
+ * "already resolved", whereas `fix_wiki_issue` hands `fixBrokenLink` a target a
+ * model chose and `fixOrphanLink` a pair of slugs a model chose, and there
+ * "already resolved" is one outcome among five.
+ *
+ * NOT ENFORCED: nothing stops a future handler being added to AUTO_FIXABLE with
+ * a bare boolean and an LLM-composed issue shape. `normaliseFixOutcome` accepts
+ * booleans precisely so that stays safe rather than throwing — the cost is that
+ * such a handler reports `reason: null` and falls back to the generic message.
+ *
+ * @param {boolean|{ok: boolean, reason: string|null}} r
+ */
+function normaliseFixOutcome(r) {
+  if (typeof r === 'boolean') return { ok: r, reason: null };
+  return { ok: !!r?.ok, reason: r?.reason ?? null };
+}
+
+/**
  * Apply one fix for a specific issue object, OR all fixes of a given type
  * when `issue` is not provided.
  *
  * @param {string} domain
  * @param {string} type       — one of AUTO_FIXABLE
  * @param {object|null} issue — if null, fix all issues of this type
- * @returns {{ fixed: number, total: number }}
+ * @returns {{ fixed: number, total: number, reason?: string }} `reason` is
+ *   present only on the single-issue branch and only when nothing was written.
+ *   It is ADDITIVE: every existing caller reads `fixed`/`total` and is
+ *   unaffected (src/routes/health.js spreads the object into its JSON body,
+ *   mcp/tools/health.js reads `fixed`, and the suites assert on `fixed`).
  */
 export async function fixIssue(domain, type, issue = null) {
   if (!AUTO_FIXABLE.has(type)) {
@@ -940,15 +1035,16 @@ export async function fixIssue(domain, type, issue = null) {
 
   // Fix one specific issue
   if (issue) {
-    let ok = false;
-    if (type === 'brokenLinks')       ok = await fixBrokenLink(wikiDir, issue);
-    if (type === 'folderPrefixLinks') ok = await fixFolderPrefixLink(wikiDir, issue);
-    if (type === 'crossFolderDupes')  ok = await fixCrossFolderDupe(wikiDir, issue);
-    if (type === 'hyphenVariants')    ok = await fixHyphenVariant(wikiDir, issue);
-    if (type === 'missingBacklinks')  ok = await fixMissingBacklink(wikiDir, issue);
-    if (type === 'orphanLink')        ok = await fixOrphanLink(wikiDir, issue);
-    if (type === 'semanticDupe')      ok = await fixSemanticDuplicate(wikiDir, issue);
-    return { fixed: ok ? 1 : 0, total: 1 };
+    let raw = false;
+    if (type === 'brokenLinks')       raw = await fixBrokenLink(wikiDir, issue);
+    if (type === 'folderPrefixLinks') raw = await fixFolderPrefixLink(wikiDir, issue);
+    if (type === 'crossFolderDupes')  raw = await fixCrossFolderDupe(wikiDir, issue);
+    if (type === 'hyphenVariants')    raw = await fixHyphenVariant(wikiDir, issue);
+    if (type === 'missingBacklinks')  raw = await fixMissingBacklink(wikiDir, issue);
+    if (type === 'orphanLink')        raw = await fixOrphanLink(wikiDir, issue);
+    if (type === 'semanticDupe')      raw = await fixSemanticDuplicate(wikiDir, issue);
+    const { ok, reason } = normaliseFixOutcome(raw);
+    return { fixed: ok ? 1 : 0, total: 1, ...(ok || !reason ? {} : { reason }) };
   }
 
   // Fix all of type: re-scan and apply each. For brokenLinks, only issues
@@ -961,19 +1057,28 @@ export async function fixIssue(domain, type, issue = null) {
   const report = await scanWiki(domain);
   let issues = report[type] || [];
   if (type === 'brokenLinks') issues = issues.filter(i => i.suggestedTarget);
+  // Built once for the whole loop rather than per issue — fixBrokenLink's
+  // existence check would otherwise re-read three folders for every link, and
+  // a mature domain reaches here with hundreds.
+  const knownTargets = type === 'brokenLinks' ? (await buildTargetInventory(wikiDir)).valid : null;
   let fixed = 0;
   for (const it of issues) {
-    let ok = false;
+    let raw = false;
     try {
-      if (type === 'brokenLinks')       ok = await fixBrokenLink(wikiDir, it);
-      if (type === 'folderPrefixLinks') ok = await fixFolderPrefixLink(wikiDir, it);
-      if (type === 'crossFolderDupes')  ok = await fixCrossFolderDupe(wikiDir, it);
-      if (type === 'hyphenVariants')    ok = await fixHyphenVariant(wikiDir, it);
-      if (type === 'missingBacklinks')  ok = await fixMissingBacklink(wikiDir, it);
+      if (type === 'brokenLinks')       raw = await fixBrokenLink(wikiDir, it, knownTargets);
+      if (type === 'folderPrefixLinks') raw = await fixFolderPrefixLink(wikiDir, it);
+      if (type === 'crossFolderDupes')  raw = await fixCrossFolderDupe(wikiDir, it);
+      if (type === 'hyphenVariants')    raw = await fixHyphenVariant(wikiDir, it);
+      if (type === 'missingBacklinks')  raw = await fixMissingBacklink(wikiDir, it);
     } catch (err) {
       console.warn(`[fixIssue] ${type} failed:`, err.message);
     }
-    if (ok) fixed++;
+    // MUST go through normaliseFixOutcome. `fixBrokenLink` now returns an
+    // OBJECT, and `{ok: false}` is truthy — a bare `if (raw)` here would count
+    // every refused link as fixed and report a clean sweep over an untouched
+    // wiki. That is the same class of defect this whole change is repairing,
+    // so it is pinned behaviourally in test-mcp-e2e.js §9.
+    if (normaliseFixOutcome(raw).ok) fixed++;
   }
   return { fixed, total: issues.length };
 }
@@ -1430,7 +1535,7 @@ export async function fixSemanticDuplicatesBatch(domain, pairs, onProgress = () 
  * from the client, so every retarget target is re-checked against the on-disk
  * slug inventory — an unknown target is dropped (no-op) rather than written.
  *
- * @returns {Promise<{retargeted, stripped, filesChanged, occurrencesReplaced, totalActions}>}
+ * @returns {Promise<{retargeted, stripped, filesChanged, occurrencesReplaced, totalActions, downgraded}>}
  */
 export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) {
   const wikiDir = wikiPath(domain);
@@ -1438,17 +1543,42 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
 
   // Reuses the gated `listMd` rather than its own readdir: the two used to be
   // written out separately, and only one of them was containment-checked.
-  const listSlugs = async (d) => (await listMd(wikiDir, d)).map(f => f.slice(0, -3));
-  const [ents, cons, sums] = await Promise.all([listSlugs('entities'), listSlugs('concepts'), listSlugs('summaries')]);
-  const valid = new Set([...ents, ...cons, ...sums.map(s => `summaries/${s}`)]);
+  const { ents, cons, sums, valid } = await buildTargetInventory(wikiDir);
+  // The deterministic (free) tier's own resolver, rebuilt from the SAME
+  // inventory. Its output is re-derived here rather than trusted from the
+  // plan's `source` field, which arrives in the request body and can say
+  // anything. See the exemption note in the loop below.
+  const resolveDeterministic = buildLinkResolver(ents, cons, sums);
 
   // linkText → { action, target } — last entry wins on duplicate linkText.
   const actions = new Map();
+  let downgraded = 0;
   for (const p of (Array.isArray(plan) ? plan : [])) {
     if (!p || typeof p !== 'object' || !p.linkText) continue;
     if (p.action === 'retarget') {
       const target = String(p.target || '').replace(/^(entities|concepts)\//, '');
       if (!target || !valid.has(target)) continue;   // drop unknown / hallucinated targets
+      // Re-run the lexical-variant gate SERVER-SIDE (v3.9.1). It used to run
+      // only inside planBrokenLinkFixes, and this function's plan arrives in a
+      // POST body: the preview the user approved is client-side and is not the
+      // thing being applied. A refused pair is DOWNGRADED to strip — never
+      // silently applied, and never silently dropped, because dropping it
+      // leaves a broken link the report claimed was handled.
+      //
+      // EXEMPTION, and it is load-bearing: the gate judges the AI's free-form
+      // guesses, and it is WRONG for the deterministic tier's output. Pure
+      // formatting repairs share no whole token with their target and score
+      // Jaccard 0 — `[[r-a-g]]` → `rag`, `[[e-mail]]` → `email` — so gating
+      // them blindly downgrades every free fix to `strip`. The first cut of
+      // this change did exactly that and section 8d of test-wiki-page.js
+      // caught it. The exemption is safe because it is RE-DERIVED, not
+      // asserted: a client can only reach it by naming the target the
+      // resolver itself produces, which is by construction the right one.
+      if (resolveDeterministic(p.linkText) !== target && !isLexicalVariant(p.linkText, target)) {
+        actions.set(p.linkText, { action: 'strip' });
+        downgraded++;
+        continue;
+      }
       actions.set(p.linkText, { action: 'retarget', target });
     } else if (p.action === 'strip') {
       actions.set(p.linkText, { action: 'strip' });
@@ -1457,7 +1587,7 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
 
   const totalActions = actions.size;
   if (totalActions === 0) {
-    return { retargeted: 0, stripped: 0, filesChanged: 0, occurrencesReplaced: 0, totalActions: 0 };
+    return { retargeted: 0, stripped: 0, filesChanged: 0, occurrencesReplaced: 0, totalActions: 0, downgraded };
   }
 
   const linkRe = /\[\[([^\]|#\n]+?)(\|[^\]]+)?\]\]/g;
@@ -1488,7 +1618,7 @@ export async function applyBrokenLinkFixes(domain, plan, onProgress = () => {}) 
   }
   try { onProgress({ done: allFiles.length, total: allFiles.length }); } catch { /* best-effort */ }
 
-  return { retargeted, stripped, filesChanged, occurrencesReplaced, totalActions };
+  return { retargeted, stripped, filesChanged, occurrencesReplaced, totalActions, downgraded };
 }
 
 /**

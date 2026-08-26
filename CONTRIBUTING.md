@@ -35,8 +35,8 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (85 suites total — 68 OFFLINE
-+ 13 LIVE_CI + 4 LIVE_LOCAL — thousands of assertions). One command runs them
+The Curator has an extensive battle-test suite (88 suites total — 71 OFFLINE
++ 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
 `OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the top of
@@ -615,6 +615,40 @@ two — even one line — fails loudly with both lists printed. The dumb check
 doesn't need to be *right* in some absolute sense; it needs to be *wrong in a
 different way* than the clever one, so the two disagreeing is itself the
 signal.
+
+### Tempdir hygiene (v3.9.1)
+
+A suite that creates a temp directory **per section** and tracks it in a single
+variable cleans up **only the last one**. That is not hypothetical: it left
+**37,353** stale directories on the maintainer's machine. `test-ingest-queue.js`
+called `freshEnv()` 34 times per run and remembered **0 of 34** (no cleanup at
+all); `test-ingest-abort.js` called it 6 times and remembered **1 of 6** — it
+*had* a cleanup line, but the pointer had already been overwritten five times.
+A bare pointer used as a cleanup mechanism forgets everything except what it
+currently points to.
+
+If your suite creates more than one temp root per run:
+
+- Track **every** root in a `Set` registry, added at the same site that creates
+  it, so a future section gets cleanup for free. Do **not** add an `rm` at each
+  call site — that is the guard-applied-to-a-site-not-a-class shape this
+  codebase keeps re-learning.
+- Wrap the whole run in `try { … } finally { await cleanup(); }` so cleanup runs
+  before `process.exit()`, **and** add a `process.on('exit', …)` fallback using
+  **`rmSync`** — an exit handler cannot await, so an async cleanup there is a
+  no-op.
+- Before removing anything, assert the path is exactly one segment below
+  `os.tmpdir()` and carries your suite's own prefix. A cleanup routine with a
+  path bug is far worse than a leak.
+- Prove it: force a throw immediately after you create a root, and confirm the
+  directory is still gone. Cleanup that only runs on the success path is the
+  common case, not the rare one.
+
+Two smaller instances are recorded and unfixed: `curator-cfgguard-*`
+(`test-route-write-guards.js`) cleans up in a bare top-level statement rather
+than a `finally`, and `curator-wikilist-*` (`test-wiki-list.js`) is correctly
+guarded but had one stale dir from a killed process. Same class, blast radius of
+1–3 directories rather than tens of thousands.
 
 ### CSS custom-property hygiene (`scripts/test-css-tokens.js`)
 

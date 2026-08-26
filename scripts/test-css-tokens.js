@@ -549,16 +549,38 @@ function expandWithImports(initialFiles) {
  *  next/views/*.js) and silently never looked at next/shared/**.
  */
 function walkJsFiles(dir) {
+  return walkFilesByExt(dir, '.js');
+}
+
+/** The one recursive walker both `walkJsFiles` (section 8) and
+ *  `walkCssFiles` (section 9) delegate to. Deliberately ONE implementation:
+ *  two hand-maintained copies of a discovery routine is this repo's named
+ *  anti-pattern (v3.2.0's CRITICAL came from exactly that shape), and the
+ *  §3f self-tests below therefore prove recursion for BOTH callers at once
+ *  rather than covering one and leaving the other to be assumed.
+ */
+function walkFilesByExt(dir, ext) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(...walkJsFiles(abs));
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+      out.push(...walkFilesByExt(abs, ext));
+    } else if (entry.isFile() && entry.name.endsWith(ext)) {
       out.push(abs);
     }
   }
   return out;
+}
+
+/** Recursively list every `.css` file under `dir`. Section 9's whole point is
+ *  that this list is derived by WALKING THE TREE — never from a hardcoded
+ *  set of expected filenames. A hardcoded list is what let a 4th declarer
+ *  slip past the v3.8.0 single-copy guard whose comment claimed it checked
+ *  "anywhere in /next", and a hardcoded list here could not have caught the
+ *  v3.9.0 defect either, because the whole defect was a file NOT being named.
+ */
+function walkCssFiles(dir) {
+  return walkFilesByExt(dir, '.css');
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1572,6 +1594,160 @@ ok(nextJsRealOffenders.length === 0,
 );
 
 console.log(`  → /next JS files reference ${nextJsTotalRefs} var() usage(s) across ${nextJsDistinctNames.size} distinct token(s): ${[...nextJsDistinctNames].sort().join(', ')}`);
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9. Every /next stylesheet on disk is actually REACHABLE from the shell
+// ─────────────────────────────────────────────────────────────────────────
+// THE GAP THIS CLOSES (v3.9.1). shared/progress-ring.css shipped in v3.9.0
+// written, correct, and NEVER <link>ed. Both views that render the ring
+// (views/ingest.js and views/domains.js) therefore painted raw markup for a
+// whole release: SVG `stroke` defaults to `none` and `fill` to black, so
+// browser-measured the live result was track stroke none, fill stroke none,
+// orbit animation `none / 0s`, and the only painted element a black dot,
+// invisible on the dark surface — with `.pring`/`.pring-text` falling back
+// to `display: inline` so label and sublabel glued into one run. A user
+// reported it. No guard caught it, and the reason is the important part:
+//
+//   - Section 5 above discovers /next stylesheets ONLY from index.html's
+//     <link> tags, so a file that is never linked is never scanned. Its own
+//     comment called that blind spot correct ("one that's added but never
+//     linked is (correctly) invisible here too") — true for section 5's
+//     token-scanning purpose, but it meant NOTHING in the tree asked the
+//     other question: should it have been linked?
+//   - test-next-asset-paths.js greps index.html and validates the refs that
+//     ARE present. It cannot see one that is ABSENT. Same blind spot as the
+//     19th asset ref v3.9.0 recorded, pointed the other way.
+//
+// Both guards validated PRESENT things. This one is a DIFF, so it can fail
+// on an ABSENCE, which is the only shape that catches this class.
+//
+// The on-disk set is WALKED (walkCssFiles), never hardcoded — a hardcoded
+// list cannot detect a file nobody remembered to name. The reachable set is
+// `nextFiles` from section 6, i.e. linked-from-index.html PLUS everything
+// transitively @imported, so a stylesheet pulled in by an @import counts as
+// reachable and is not falsely reported.
+section('9. Every /next stylesheet on disk is reachable from next/index.html');
+
+// The ONLY permitted unreachable stylesheets. Every entry needs a reason,
+// and both directions are asserted below: an entry that no longer exists,
+// or that has since become reachable, FAILS — so this list cannot quietly
+// rot into a licence for the next unlinked file.
+const NEXT_ALLOWED_UNLINKED = new Map([
+  ['src/public/next/tokens/fonts.css',
+    'deliberately unlinked since v3.1.3 — it @imports Google Fonts and this ' +
+    'local-first app does not phone home on page load; tokens/fonts-local.css ' +
+    'stands in until the webfonts are self-hosted. Kept on disk so nothing ' +
+    'from the design bundle is lost.'],
+]);
+
+const nextCssOnDisk = walkCssFiles(nextRootDir)
+  .map(abs => path.relative(ROOT, abs).split(path.sep).join('/'))
+  .sort();
+const nextReachable = new Set(nextFiles.map(f => f.relPath));
+
+ok(nextCssOnDisk.length > 1,
+  `walked the /next tree and found ${nextCssOnDisk.length} stylesheet(s) on disk`);
+// Positive control: the walk must actually reach the non-views subdirectory
+// the v3.9.0 defect lived in. Without this, a walker that silently only
+// looked at views/ would report "0 unreachable" and look green.
+ok(nextCssOnDisk.includes('src/public/next/shared/progress-ring.css'),
+  'the /next CSS walk reaches shared/progress-ring.css (not just tokens/ + views/)');
+
+const nextUnreachable = nextCssOnDisk.filter(rel => !nextReachable.has(rel));
+const nextUnexpectedUnlinked = nextUnreachable.filter(rel => !NEXT_ALLOWED_UNLINKED.has(rel));
+
+ok(nextUnexpectedUnlinked.length === 0,
+  nextUnexpectedUnlinked.length === 0
+    ? `every /next stylesheet on disk is reachable from next/index.html (${nextReachable.size} reachable; ` +
+      `${nextUnreachable.length} deliberately unlinked and allow-listed)`
+    : `${nextUnexpectedUnlinked.length} /next stylesheet(s) exist on disk but are NEVER LOADED by the shell — ` +
+      `any rule they contain is dead, and any element depending on them renders unstyled in the browser ` +
+      `(this is exactly the v3.9.0 progress-ring defect). Add a <link> to src/public/next/index.html, or, ` +
+      `if the file is deliberately unlinked, add it to NEXT_ALLOWED_UNLINKED with a reason:\n` +
+      nextUnexpectedUnlinked.map(f => `        ${f}`).join('\n'));
+
+// The allow-list must stay honest in BOTH directions.
+const nextStaleAllowEntries = [...NEXT_ALLOWED_UNLINKED.keys()]
+  .filter(rel => !nextCssOnDisk.includes(rel));
+ok(nextStaleAllowEntries.length === 0,
+  nextStaleAllowEntries.length === 0
+    ? 'every NEXT_ALLOWED_UNLINKED entry still exists on disk (no stale exemptions)'
+    : `NEXT_ALLOWED_UNLINKED names ${nextStaleAllowEntries.length} file(s) that no longer exist — ` +
+      `delete the entry: ${nextStaleAllowEntries.join(', ')}`);
+
+const nextRedundantAllowEntries = [...NEXT_ALLOWED_UNLINKED.keys()]
+  .filter(rel => nextReachable.has(rel));
+ok(nextRedundantAllowEntries.length === 0,
+  nextRedundantAllowEntries.length === 0
+    ? 'no NEXT_ALLOWED_UNLINKED entry is actually linked (the exemption list grants nothing it need not)'
+    : `NEXT_ALLOWED_UNLINKED exempts ${nextRedundantAllowEntries.length} file(s) that ARE now linked — ` +
+      `delete the entry so the exemption cannot mask a future unlink: ${nextRedundantAllowEntries.join(', ')}`);
+
+// Named regression assertion for the exact file this section was written
+// for. The generic diff above already covers it, but a dedicated failure
+// message means a future unlink reports the ring by name rather than
+// landing in an anonymous bucket — the same treatment section 3 gives
+// --font-mono / --text-1.
+ok(nextReachable.has('src/public/next/shared/progress-ring.css'),
+  'REGRESSION GUARD (v3.9.1): shared/progress-ring.css is loaded by next/index.html — ' +
+  'without it the two-layer progress ring renders as unstyled SVG (no strokes, no orbit ' +
+  'animation, label and sublabel glued together) in BOTH views/ingest.js and views/domains.js');
+
+// Report the two kinds of unreachable SEPARATELY. An earlier version of this
+// line printed nextUnreachable.length as "allow-listed", which on the
+// mutation run announced "2 allow-listed unlinked" while one of the two was
+// the unexplained failure — a summary line that understates the problem it
+// sits next to is the same shape as the v3.9.0 confirm dialog that said
+// "1 page will be deleted" and deleted 2.
+{
+  const allowed = nextUnreachable.filter(rel => NEXT_ALLOWED_UNLINKED.has(rel));
+  console.log(`  → /next stylesheets: ${nextCssOnDisk.length} on disk, ${nextReachable.size} reachable, ` +
+    `${allowed.length} allow-listed unlinked${allowed.length ? ` (${allowed.join(', ')})` : ''}` +
+    (nextUnexpectedUnlinked.length
+      ? `, ${nextUnexpectedUnlinked.length} UNEXPLAINED (${nextUnexpectedUnlinked.join(', ')})`
+      : ''));
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9b. Self-test — the reachability diff can actually FAIL
+// ─────────────────────────────────────────────────────────────────────────
+// Section 9 reports a count of zero when things are healthy, which is
+// indistinguishable from a check that never looked. This drives the SAME
+// two functions section 9 uses (discoverStylesheetLinks + walkCssFiles)
+// over a synthetic tree that contains a deliberately-unlinked stylesheet,
+// and asserts it is found — an over-bound control proving the corpus CAN
+// go red, per this repo's standing rule after v3.0.15's baseline incident.
+section('9b. Self-test — the unreachable-stylesheet diff can actually fail');
+
+{
+  const dir = mkdtempSync(path.join(tmpdir(), 'cssreach-'));
+  try {
+    mkdirSync(path.join(dir, 'shared'));
+    mkdirSync(path.join(dir, 'views'));
+    writeFileSync(path.join(dir, 'linked.css'), '.a{color:red}\n');
+    writeFileSync(path.join(dir, 'views', 'view.css'), '.b{color:red}\n');
+    // The defect shape: present on disk, never linked, in a subdirectory.
+    writeFileSync(path.join(dir, 'shared', 'orphan.css'), '.c{color:red}\n');
+    writeFileSync(path.join(dir, 'index.html'),
+      '<link rel="stylesheet" href="/next/linked.css">' +
+      '<link rel="stylesheet" href="/next/views/view.css">');
+
+    const walked = walkCssFiles(dir).map(p => path.relative(dir, p).split(path.sep).join('/')).sort();
+    const linked = discoverStylesheetLinks(readFileSync(path.join(dir, 'index.html'), 'utf8'))
+      .local.map(nextHrefToRel);
+    const unreachable = walked.filter(rel => !linked.includes(rel));
+
+    ok(walked.length === 3, `self-test: the walk finds all 3 stylesheets on disk (found ${walked.length})`);
+    ok(unreachable.length === 1,
+      `self-test: exactly 1 stylesheet is detected as unreachable (found ${unreachable.length}) — the diff is NOT a no-op`);
+    ok(unreachable[0] === 'shared/orphan.css',
+      'self-test: the unreachable file is correctly identified as shared/orphan.css');
+    ok(!unreachable.includes('views/view.css') && !unreachable.includes('linked.css'),
+      'self-test: linked stylesheets are NOT falsely reported as unreachable');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);

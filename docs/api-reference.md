@@ -653,7 +653,7 @@ Reads are allowed on read-only Shared Brain mirror domains — this route never 
 }
 ```
 
-`backlinks` uses **exactly** the same "does this `[[link]]` point at that page" rule `health.js`'s `scanWiki()` uses to decide whether a link is broken, so the reader can never disagree with the Health tab about whether a link resolves — a bare `[[slug]]` resolves only against `entities/`/`concepts/` (never `summaries/`, which always needs its prefix), and `[[folder/slug]]` needs an exact folder+slug match.
+`backlinks` uses **exactly** the same "does this `[[link]]` point at that page" rule `health.js`'s `scanWiki()` uses to decide whether a link is broken, so the reader can never disagree with the Wiki health panel about whether a link resolves — a bare `[[slug]]` resolves only against `entities/`/`concepts/` (never `summaries/`, which always needs its prefix), and `[[folder/slug]]` needs an exact folder+slug match.
 
 `resolvableTarget` is `false` for a page nested below the canonical folder's first level (e.g. `entities/companies/nested-corp.md` — `writePage` never produces these, but a hand-edited or migrated wiki can have them). Such a page is still readable and its `backlinks` array is truthfully empty: *nothing in this wiki can resolve a link to it*, not merely "nothing does".
 
@@ -1290,9 +1290,9 @@ v3.0.1-beta.16. DESTRUCTIVE. SSE stream. Applies a plan (from `/plan`) to disk. 
 { "plan": [ { "linkText": "rezun-tali", "action": "retarget", "target": "tali-rezun" }, { "linkText": "transportation", "action": "strip" } ] }
 ```
 
-**SSE events**: `start { actions }`, `progress { done, total }`, `done { retargeted, stripped, filesChanged, occurrencesReplaced, totalActions }`, `error { error }`.
+**SSE events**: `start { actions }`, `progress { done, total }`, `done { retargeted, stripped, downgraded, filesChanged, occurrencesReplaced, totalActions }`, `error { error }`.
 
-Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so revertable from the Sync tab.
+Retargets preserve alias text (`[[X|Label]]` → `[[target|Label]]`); strips keep the readable text (`[[X|Label]]` → `Label`, `[[X]]` → `X`). Git-tracked, so recoverable — but via git on the command line, **not** from the Sync view: there is no revert or discard endpoint (`src/routes/sync.js` exposes status/setup/push/pull/sync/disconnect only). See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
 
 ---
 
@@ -1353,7 +1353,7 @@ v3.0.1-beta.15. DESTRUCTIVE. SSE stream. Merges a caller-supplied list of semant
 | `done` | `{ merged, skipped, errors, total, results }` — `results` is `[{keepSlug, removeSlug, status}]`. |
 | `error` | `{ error }` |
 
-Because the whole wiki is git-tracked, a regretted batch is revertable from the Sync tab.
+Because the whole wiki is git-tracked, a regretted batch is recoverable with git — there is no in-app revert. See [ai-health.md § How to actually undo a Health fix](ai-health.md#how-to-actually-undo-a-health-fix).
 
 ---
 
@@ -1395,7 +1395,7 @@ The existing `/fix` endpoint accepts a new pseudo-type `semanticDupe` in v2.4.5.
 
 ## Shared Brain endpoints (`v3.0.0-beta+`)
 
-Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in **Settings → Shared Brain (beta)** (moved there from the Sync tab in v3.0.2).
+Mounted at `/api/sharedbrain/`. All routes except `/feature-flag` and `/enable-flag` require `sharedBrainEnabled: true` in `.curator-config.json`; otherwise they return **404** with `error: "Shared Brain is not enabled..."`. The flag is `false` by default for v2.x-installed users; flipping it requires an explicit POST to `/enable-flag` or clicking the "Enable Shared Brain (beta)" button in the **Shared Brain** rail view (it lives in Settings in the `/old` frontend, where it moved from the Sync tab in v3.0.2).
 
 Endpoints marked **SSE** stream `text/event-stream` progress events (`{type, message, ...meta}`) ending in `{type: "done", result: {...}}` or `{type: "error", message}`.
 

@@ -661,10 +661,85 @@ function slugifyText(t) {
     .replace(/^-|-$/g, '');
 }
 
+// ── Polarity / version discriminators (v3.9.1) ──────────────────────────────
+//
+// `isLexicalVariant` below is a TOKEN-COUNT filter, not a semantic one. For two
+// slugs of n tokens sharing k, Jaccard is k/(2n−k), so "differ by exactly one
+// token" is accepted whenever n ≥ 3 and "differ by two" whenever n ≥ 6 —
+// REGARDLESS OF WHICH token differs. Versions and negations are the two token
+// classes where a single differing token flips the MEANING rather than shading
+// it, so they are refused up front, before either branch runs.
+//
+// Measured examples that used to be accepted (see test §2b/§2c):
+//   claude-sonnet-4.5 → claude-sonnet-3.5   J=0.500  (the dot is deleted by
+//                                                     slugify, so 4.5 → "45")
+//   q1-2025-results   → q1-2024-results     J=0.500
+//   data-retained     → data-not-retained   SUBSET   (no threshold reaches it)
+// A wrong retarget is a factually wrong edge in a wiki about AI models. A false
+// REJECT only strips the brackets and keeps the readable text, so the two error
+// directions are not remotely symmetric and these gates lean hard toward refuse.
+
+/** A token carrying a digit is a version/number, not a synonym: 4, 45, 2025, q1, v3, 4o. */
+const hasDigit = (t) => /\d/.test(t);
+
+// Standalone negation words. `un` and `dis` are deliberately ABSENT: English
+// does not hyphenate them ("unsafe", "disabled" are ONE token, handled by the
+// morphological rule below), so a bare `un` token is far more likely to be the
+// United Nations than a negation. `in` is absent for the opposite reason — it is
+// a preposition ("ai-in-medicine") and would false-reject constantly.
+const NEGATION_MARKERS = new Set(['not', 'non', 'no', 'never', 'without', 'anti']);
+
+// Morphological negation: `secure` vs `insecure`, `valid` vs `invalid`,
+// `deterministic` vs `nondeterministic`. A RULE, not a list, so it generalises.
+// `de` is excluded on purpose — `debug`/`bug`, `design`/`sign`, `deploy`/`ploy`
+// are not negations, and a gate whose comment claims "negation" must not quietly
+// be doing something else.
+const NEGATION_PREFIXES = ['un', 'non', 'in', 'im', 'ir', 'il', 'dis', 'anti'];
+const MIN_NEGATION_STEM = 4;
+
+// Polarity pairs morphology cannot derive. Deliberately short and evidence-shaped;
+// it is NOT a complete antonym dictionary and is not claimed to be (see the
+// NOT ENFORCED block on isLexicalVariant).
+const POLARITY_PAIRS = [
+  ['enabled', 'disabled'], ['enable', 'disable'], ['allow', 'deny'],
+  ['allowed', 'blocked'], ['include', 'exclude'], ['included', 'excluded'],
+  ['on', 'off'], ['true', 'false'], ['open', 'closed'], ['before', 'after'],
+  ['pre', 'post'], ['input', 'output'], ['read', 'write'],
+  ['public', 'private'], ['local', 'remote'], ['sync', 'async'],
+  ['success', 'failure'], ['added', 'removed'], ['retained', 'deleted'],
+];
+const POLARITY_PAIR_KEYS = new Set(POLARITY_PAIRS.map(([x, y]) => [x, y].sort().join('|')));
+
+function isMorphologicalNegation(stem, candidate) {
+  if (stem.length < MIN_NEGATION_STEM) return false;
+  return NEGATION_PREFIXES.some(p => candidate === p + stem);
+}
+
 /**
- * Lexical-variant gate (v3.0.1-beta.16). The LLM happily maps a generic broken
- * link to the "nearest" page even when it's a DIFFERENT concept (e.g.
- * "context-window" → "agent-memory", "big-data" → "ai-and-weather-forecasting").
+ * True when the two token lists differ on a VERSION or a POLARITY token — i.e.
+ * they name opposite or differently-numbered things, however much other
+ * vocabulary they share. Compares only the symmetric difference: a version or a
+ * negation present on BOTH sides is shared context, not a discriminator.
+ */
+function differsOnVersionOrPolarity(aTok, bTok) {
+  const aSet = new Set(aTok), bSet = new Set(bTok);
+  const onlyA = aTok.filter(t => !bSet.has(t));
+  const onlyB = bTok.filter(t => !aSet.has(t));
+  if (onlyA.some(hasDigit) || onlyB.some(hasDigit)) return true;
+  if (onlyA.some(t => NEGATION_MARKERS.has(t)) || onlyB.some(t => NEGATION_MARKERS.has(t))) return true;
+  for (const x of onlyA) {
+    for (const y of onlyB) {
+      if (isMorphologicalNegation(x, y) || isMorphologicalNegation(y, x)) return true;
+      if (POLARITY_PAIR_KEYS.has([x, y].sort().join('|'))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Lexical-variant gate (v3.0.1-beta.16, hardened v3.9.1). The LLM happily maps a
+ * generic broken link to the "nearest" page even when it's a DIFFERENT concept
+ * (e.g. "context-window" → "agent-memory", "big-data" → "ai-and-weather-…").
  * Those create wrong graph edges — worse than a broken link. We only ACCEPT an
  * AI retarget when the broken slug and the target slug share enough word-level
  * evidence to be the SAME thing (a spelling/ordering variant, an acronym
@@ -672,9 +747,39 @@ function slugifyText(t) {
  * "iot" ⊂ "iot-and-ai"). Anything weaker falls through to "strip" — which is
  * exactly the user's chosen behaviour for genuinely-missing pages.
  *
+ * ENFORCED — a retarget is refused when:
+ *   • the slugs differ on a token containing a DIGIT (version/year/number), so
+ *     claude-sonnet-4.5 → claude-sonnet-3.5 and q1-2025 → q1-2024 cannot pass;
+ *   • the slugs differ on a negation marker, a morphological negation
+ *     (`secure`/`insecure`), or a listed polarity pair (`input`/`output`), so
+ *     data-retained → data-not-retained cannot pass — including via the SUBSET
+ *     branch, which no threshold change can reach;
+ *   • one side is a token-subset of the other but that side is a single generic
+ *     token under 3 chars. This was the v3.0.1-beta.17 "M4" guard; it was
+ *     DECORATIVE for eight releases because it merely skipped the subset branch
+ *     and the Jaccard line below then accepted anyway at exactly 0.5 whenever
+ *     the other slug had two tokens (`whisper-ai` → `ai`, `ml` → `ml-ops`). A
+ *     subset relation is now DECIDED here and never falls through.
+ *
+ * NOT ENFORCED — say which half is guarded, or the next reviewer stops looking:
+ *   • A SPECIFIC concept retargeted onto its GENERIC PARENT still passes, and is
+ *     the DOMINANT real-world failure — measured at 33 of 57 gate-approved
+ *     targets across the maintainer's six domains: [[agent-memory]] → `memory`,
+ *     [[human-amplification]] → `human`, [[pilot-light-model]] → `model`. These
+ *     are subset relations with a ≥3-char parent token, and the SAME shape as
+ *     `iot` ⊂ `iot-and-ai`, which this suite asserts as a legitimate PASS.
+ *     Narrowing it changes intended semantics and is a product decision, not a
+ *     bug fix; the known cases are listed in test-beta16-broken-links.js §2e.
+ *   • A punctuation-vs-hyphen version variant (`claude-sonnet-4.5` →
+ *     `claude-sonnet-4-5`, the CORRECT retarget) is refused too: slugify deletes
+ *     the dot, so the version tokens read "45" vs "4","5" and the digit rule
+ *     cannot tell a rewrite from a change. It strips instead — the safe
+ *     direction, but it does mean the gate cannot repair that link.
+ *   • POLARITY_PAIRS is not a complete antonym dictionary, and never will be.
+ *
  * Returns true if `targetSlug` is a plausible same-thing variant of `brokenSlug`.
  */
-function isLexicalVariant(brokenSlug, targetSlug) {
+export function isLexicalVariant(brokenSlug, targetSlug) {
   const a = slugifyText(String(brokenSlug || '').replace(/^summaries\//, ''));
   const b = slugifyText(String(targetSlug || '').replace(/^summaries\//, ''));
   if (!a || !b) return false;
@@ -682,6 +787,9 @@ function isLexicalVariant(brokenSlug, targetSlug) {
   const aTok = a.split('-').filter(Boolean);
   const bTok = b.split('-').filter(Boolean);
   if (!aTok.length || !bTok.length) return false;
+  // Pre-gate, ahead of BOTH branches: a version or polarity difference means
+  // these are different things no matter how much vocabulary they share.
+  if (differsOnVersionOrPolarity(aTok, bTok)) return false;
   const aSet = new Set(aTok), bSet = new Set(bTok);
   // One side is a token-subset of the other: "iot" ⊂ "iot-and-ai",
   // "software-development-efficiency" ⊂ "...-enhancement", reorderings, etc.
@@ -689,8 +797,16 @@ function isLexicalVariant(brokenSlug, targetSlug) {
   // "ai-and-weather-forecasting" is a different concept, not a variant. Require a
   // 1-token subset side to be ≥3 chars (keeps "iot"/"mcp"/"gpt", rejects "ai"/"ml").
   const subsetOk = (subTok) => subTok.length >= 2 || (subTok[0] && subTok[0].length >= 3);
-  if (aTok.every(t => bSet.has(t)) && subsetOk(aTok)) return true;
-  if (bTok.every(t => aSet.has(t)) && subsetOk(bTok)) return true;
+  const aIsSubset = aTok.every(t => bSet.has(t));
+  const bIsSubset = bTok.every(t => aSet.has(t));
+  if (aIsSubset || bIsSubset) {
+    // A subset relation DECIDES the verdict. Returning here rather than falling
+    // through is the whole of the M4 fix: the old code skipped the branch when
+    // subsetOk refused and let Jaccard say yes anyway.
+    if (aIsSubset && subsetOk(aTok)) return true;
+    if (bIsSubset && subsetOk(bTok)) return true;
+    return false;
+  }
   // Otherwise require substantial token overlap (Jaccard ≥ 0.5).
   const inter = aTok.filter(t => bSet.has(t)).length;
   const union = new Set([...aTok, ...bTok]).size;
@@ -703,7 +819,7 @@ function isLexicalVariant(brokenSlug, targetSlug) {
  * have normalised on a fresh ingest is resolved here for an existing wiki.
  * Returns a slug (bare, or "summaries/<slug>") or null.
  */
-function buildLinkResolver(entitySlugs, conceptSlugs, summarySlugs) {
+export function buildLinkResolver(entitySlugs, conceptSlugs, summarySlugs) {
   const exact = new Set([...entitySlugs, ...conceptSlugs]);   // bare entity/concept slugs
   const summarySet = new Set(summarySlugs);
   const norm = s => s.replace(ARTICLE_PREFIX_RE, '').replace(/-/g, '').toLowerCase();

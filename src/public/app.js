@@ -1,3 +1,31 @@
+// ── Recovery copy (v3.9.1) ────────────────────────────────────────────────────
+//
+// Seven strings in this file promised a mistaken Health fix was "revertable from
+// the Sync tab". THAT CONTROL DOES NOT EXIST AND NEVER HAS: src/routes/sync.js
+// exposes exactly status / setup / push / pull / sync / disconnect — no revert,
+// no discard, no restore — and neither this shell nor /next has such a button.
+// The app was offering a safety net it does not have, on the panel that launches
+// its most destructive operations.
+//
+// The part underneath IS true: the wiki folder is a git working tree, so the
+// change really is recoverable — from a git client, not from the app. But only
+// if Personal Sync is configured, because `.knowledge-git` is created by sync
+// setup and by nothing else. Hence the copy is CONDITIONAL, not just softened.
+// Kept consistent with docs/ai-health.md's "How to actually undo a Health fix"
+// and with /next's identically-named constants in views/domains.js.
+//
+// SINGLE-SOURCED DELIBERATELY, and this is the point rather than tidiness: the
+// FALSE claim reached seven places by being copy-pasted between neighbouring
+// hints. Replacing it with seven copies of a true sentence guarantees the next
+// drift and the next reviewer who stops looking. Two module-scope string
+// literals are the one shape that cannot participate in this file's documented
+// blank-page failure (that hazard is a top-level DOM dereference throwing during
+// module evaluation; a string literal has nothing to dereference and cannot
+// throw), and test-frontend-null-safety.js scans only element-bound
+// declarations, so nothing here is placed at module scope that carries risk.
+const GIT_UNDO_NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
+const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+
 // ── Version badge ─────────────────────────────────────────────────────────────
 fetch('/api/version')
   .then(r => r.json())
@@ -6807,7 +6835,7 @@ function renderHealthReport(report) {
     ? `<div class="health-maintenance-bar">
          <div class="health-maintenance-label">⚡ Quick maintenance${_aiAvailable ? '' : ' <span class="hint">— add an API key in Settings to unlock AI tools</span>'}</div>
          ${maintBtns.length ? `<div class="health-maintenance-actions">${maintBtns.join('')}</div>` : ''}
-         ${maintBtns.length ? `<div class="hint" style="margin-top:6px">AI tools show a preview before writing. Everything is git-tracked — revert from the Sync tab if needed.</div>` : ''}
+         ${maintBtns.length ? `<div class="hint" style="margin-top:6px">AI tools show a preview before writing. ${GIT_UNDO_NOTE}</div>` : ''}
        </div>`
     : '';
 
@@ -7644,7 +7672,8 @@ function handleSemanticEvent(event, ui) {
 // — brutal at 245 pairs. This adds a single "Merge all high-confidence" action
 // with an explicit confirm step. Only HIGH-confidence pairs (clear near-
 // identical duplicates) are eligible; medium/low stay manual. The whole wiki is
-// git-tracked, so a mistaken batch is revertable from the Sync tab.
+// git-tracked, so a mistaken batch is recoverable with a git client (there is
+// no in-app Undo — see GIT_UNDO_NOTE/GIT_UNDO_WARN).
 
 // Derive the batch list from the LIVE cards in the DOM, not a frozen scan-time
 // array (audit fix). This makes the batch respect every per-card action the
@@ -7680,7 +7709,7 @@ function renderBatchMergeBar() {
   bar.className = 'semantic-batch-bar';
   bar.innerHTML = `
     <button class="btn btn-primary semantic-merge-all-btn">✨ Merge all ${highConf.length} high-confidence duplicate${highConf.length === 1 ? '' : 's'}</button>
-    <span class="hint">Merges every green “high confidence” pair at once. The duplicate page is deleted and its links repointed. If you use GitHub Sync, this is revertable from the Sync tab.</span>
+    <span class="hint">Merges every green “high confidence” pair at once. The duplicate page is deleted and its links repointed. ${GIT_UNDO_WARN}</span>
   `;
   // Insert as the first element so it sits above the pair cards.
   semResults.insertBefore(bar, semResults.firstChild);
@@ -7694,7 +7723,7 @@ function confirmBatchMerge(bar) {
     <div class="semantic-batch-confirm">
       <strong>Merge ${highConf.length} high-confidence duplicate${highConf.length === 1 ? '' : 's'}?</strong>
       This deletes ${highConf.length} duplicate page${highConf.length === 1 ? '' : 's'} and rewrites their links across the wiki.
-      If you use GitHub Sync, you can undo it from the <strong>Sync</strong> tab if anything looks wrong.
+      ${GIT_UNDO_WARN}
       <div class="semantic-batch-confirm-actions">
         <button class="btn btn-primary semantic-batch-go">Yes, merge all ${highConf.length}</button>
         <button class="btn semantic-batch-cancel">Cancel</button>
@@ -7773,7 +7802,7 @@ async function runSemanticBatchMerge(bar, pairs) {
       const parts = [`${summary.merged} merged`];
       if (summary.skipped) parts.push(`${summary.skipped} skipped`);
       if (summary.errors) parts.push(`${summary.errors} errored`);
-      bar.innerHTML = `<div class="hint">✓ Done — ${parts.join(' · ')}. Go to <strong>Sync</strong> to push the cleanup (or to revert it).</div>`;
+      bar.innerHTML = `<div class="hint">✓ Done — ${parts.join(' · ')}. Go to <strong>Sync</strong> to push the cleanup. ${GIT_UNDO_NOTE}</div>`;
       showStatus(healthStatusEl, 'success', `Merged ${summary.merged} duplicate${summary.merged === 1 ? '' : 's'}.`);
       refreshSyncPendingBadge?.();
     } else {
@@ -7964,7 +7993,8 @@ function openMergeConfirm(card, pair) {
 
 // ── Bulk AI broken-link fix (v3.0.1-beta.16) ──────────────────────────────────
 // Flow: button → confirm (cost estimate) → plan (SSE, read-only) → preview
-// summary → Apply (SSE, writes). Revertable from the Sync tab.
+// summary → Apply (SSE, writes). Recoverable with a git client, NOT from the
+// Sync tab — there is no revert endpoint (see GIT_UNDO_NOTE).
 
 const blBtn         = document.getElementById('broken-links-ai-btn');
 const blStatus      = document.getElementById('broken-links-ai-status');
@@ -8026,6 +8056,7 @@ async function runBrokenLinkPlan() {
   fill.style.width = '2%';
   text.textContent = 'Planning…';
   blBtn.disabled = true;
+  let blBatchErrors = 0;   // v3.9.1 — function-scoped; nothing new at module scope.
 
   try {
     const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/broken-links/plan`, {
@@ -8052,13 +8083,18 @@ async function runBrokenLinkPlan() {
           fill.style.width = `${Math.max(2, Math.round(pct))}%`;
           text.textContent = `${ev.processed} / ${ev.total} links analysed…`;
         } else if (ev.type === 'batch-error') {
+          // v3.9.1 — counted, not just logged. A run where EVERY batch errored
+          // produces an empty plan for a completely different reason than a run
+          // where the AI answered and declined every link; the empty-plan notice
+          // below has to be able to tell the user which one happened.
+          blBatchErrors++;
           console.warn('[broken-links plan] batch error:', ev.error);
         } else if (ev.type === 'error') {
           throw new Error(ev.error || 'Plan error');
         } else if (ev.type === 'done') {
           fill.style.width = '100%';
-          _blPlan = ev.plan;
-          renderBrokenLinkPreview(ev.summary, ev.cost);
+          _blPlan = Array.isArray(ev.plan) ? ev.plan : [];
+          renderBrokenLinkPreview(ev.summary, ev.cost, blBatchErrors);
         }
       }
     }
@@ -8071,8 +8107,27 @@ async function runBrokenLinkPlan() {
   }
 }
 
-function renderBrokenLinkPreview(summary, cost) {
+function renderBrokenLinkPreview(summary, cost, batchErrors = 0) {
   blProgress.classList.add('hidden');
+  // v3.9.1 — an EMPTY plan is a normal outcome, and until now this renderer had
+  // no branch for it. It drew "Plan ready. 0 links will be repointed… 0 will
+  // have their brackets removed" above a live "Apply — fix 0 broken links"
+  // button, and clicking that button hit `if (!_blPlan.length) return` — a
+  // SILENT no-op: no error, no message, no state change, nothing to distinguish
+  // it from a click that failed to register. (Its sibling renderOrphanPreview
+  // has had the correct branch since v3.0.1-beta.17; this is the parity gap
+  // inside /old, and /next had neither.)
+  //
+  // An empty plan here means every AI batch either declined every link or
+  // failed outright — those are different facts, hence batchErrors.
+  if (!_blPlan || _blPlan.length === 0) {
+    blResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">${
+      batchErrors > 0
+        ? `Nothing was planned and nothing was written — the AI did not answer for ${batchErrors} batch${batchErrors === 1 ? '' : 'es'}. Your wiki is unchanged; try again in a moment.`
+        : 'No broken link could be resolved, so nothing was written and your wiki is unchanged.'
+    }</div></div>`;
+    return;
+  }
   const usd = formatHealthCost(cost);
   const retargetSamples = (_blPlan || []).filter(p => p.action === 'retarget').slice(0, 12);
   const stripSamples = (_blPlan || []).filter(p => p.action === 'strip').slice(0, 12);
@@ -8102,7 +8157,7 @@ function renderBrokenLinkPreview(summary, cost) {
         <button class="btn primary broken-links-apply-btn">Apply — fix ${(summary.retargetOccurrences + summary.stripOccurrences).toLocaleString()} broken links</button>
         <button class="btn broken-links-cancel-btn">Cancel</button>
       </div>
-      <span class="hint">All changes are git-tracked — if anything looks wrong, revert from the Sync tab before pushing.</span>
+      <span class="hint">${GIT_UNDO_NOTE}</span>
     </div>
   `;
   blResults.querySelector('.broken-links-apply-btn').addEventListener('click', () => applyBrokenLinkPlan());
@@ -8143,8 +8198,27 @@ async function applyBrokenLinkPlan() {
       }
     }
     if (summary) {
-      blResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">✓ Done — ${summary.retargeted.toLocaleString()} repointed, ${summary.stripped.toLocaleString()} brackets removed across ${summary.filesChanged.toLocaleString()} pages. Re-scan to confirm, then push from the <strong>Sync</strong> tab.</div></div>`;
-      showStatus(healthStatusEl, 'success', `Fixed ${summary.retargeted + summary.stripped} broken links.`);
+      // v3.9.1 — surface the server-side gate's refusals. `downgraded` counts
+      // LINKS (plan entries) whose AI-proposed target the lexical gate refused,
+      // degrading the retarget to a strip; their occurrences are ALREADY inside
+      // `stripped`, so this is a qualifier on the strip count, never a third
+      // addend (measured: one refused link with three occurrences returns
+      // { stripped: 3, downgraded: 1 }). Omitted entirely at 0 — a permanent
+      // "0 refused" clause is visual noise, not honesty.
+      //
+      // Every value below is forced through Number() before interpolation, so
+      // nothing off the wire can carry markup into innerHTML; that is why these
+      // are not wrapped in escapeHtml, which would imply a string sink that
+      // cannot exist here.
+      const blRetargeted = Number(summary.retargeted) || 0;
+      const blStripped = Number(summary.stripped) || 0;
+      const blFiles = Number(summary.filesChanged) || 0;
+      const blDowngraded = Number(summary.downgraded) || 0;
+      const blGateNote = blDowngraded > 0
+        ? ` ${blDowngraded.toLocaleString()} ${blDowngraded === 1 ? 'link' : 'links'} had a proposed target that did not pass the safety check, so the brackets were removed instead of pointing at the wrong page.`
+        : '';
+      blResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">✓ Done — ${blRetargeted.toLocaleString()} repointed, ${blStripped.toLocaleString()} brackets removed across ${blFiles.toLocaleString()} pages.${blGateNote} Re-scan to confirm, then push from the <strong>Sync</strong> tab.</div></div>`;
+      showStatus(healthStatusEl, 'success', `Fixed ${blRetargeted + blStripped} broken links.`);
       refreshSyncPendingBadge?.();
       // Auto re-scan so the broken-link count updates (reads the domain dropdown).
       setTimeout(() => runHealthScan(), 400);
@@ -8240,6 +8314,7 @@ async function runOrphanPlan() {
   const text = orphProgress.querySelector('.semantic-dupes-progress-text');
   fill.style.width = '2%';
   text.textContent = 'Planning…';
+  let orphBatchErrors = 0;   // v3.9.1 — function-scoped; nothing new at module scope.
   try {
     const r = await fetch(`/api/health/${encodeURIComponent(_healthDomain)}/orphans/plan`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
@@ -8260,8 +8335,13 @@ async function runOrphanPlan() {
         let ev; try { ev = JSON.parse(dl.slice(6)); } catch { continue; }
         if (ev.type === 'start') text.textContent = `Finding homes for ${ev.orphans} orphans in ${ev.batches} batches…`;
         else if (ev.type === 'progress') { const pct = ev.total > 0 ? (ev.processed / ev.total) * 100 : 100; fill.style.width = `${Math.max(2, Math.round(pct))}%`; text.textContent = `${ev.processed} / ${ev.total} orphans analysed…`; }
+        // v3.9.1 — the orphan planner emits batch-error too, and this flow was
+        // dropping it on the floor. Without the count, a run in which the AI was
+        // never reached rendered the message below as "The AI found no confident
+        // home…", which asserts a judgement the AI never made.
+        else if (ev.type === 'batch-error') { orphBatchErrors++; console.warn('[orphans plan] batch error:', ev.error); }
         else if (ev.type === 'error') throw new Error(ev.error || 'Plan error');
-        else if (ev.type === 'done') { fill.style.width = '100%'; _orphPlan = ev.plan; renderOrphanPreview(ev.summary, ev.cost); }
+        else if (ev.type === 'done') { fill.style.width = '100%'; _orphPlan = Array.isArray(ev.plan) ? ev.plan : []; renderOrphanPreview(ev.summary, ev.cost, orphBatchErrors); }
       }
     }
   } catch (err) {
@@ -8272,13 +8352,23 @@ async function runOrphanPlan() {
   }
 }
 
-function renderOrphanPreview(summary, cost) {
+function renderOrphanPreview(summary, cost, batchErrors = 0) {
   orphProgress.classList.add('hidden');
   const usd = formatHealthCost(cost);
   const samples = (_orphPlan || []).slice(0, 18);
   const row = (p) => `<li><code>[[${escapeHtml(p.orphanSlug)}]]</code> → linked from <code>[[${escapeHtml(p.target)}]]</code> <span class="hint">${escapeHtml(p.description || '')}</span></li>`;
-  if (!summary.rescuable) {
-    orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">The AI found no confident home for any of the ${summary.orphans} orphans. They're left as-is for manual review (try the per-orphan <strong>✨ Ask AI</strong> in the Orphans section below).</div></div>`;
+  // The "no confident home" branch below has been correct since
+  // v3.0.1-beta.17 — it is the behaviour /next was missing entirely. v3.9.1
+  // adds only the case it could not distinguish: an empty plan because the AI
+  // never answered. Claiming "the AI found no confident home" when no batch
+  // completed asserts a judgement that was never made, and would send the user
+  // to review orphans by hand instead of simply retrying.
+  if (!summary || !summary.rescuable) {
+    if (batchErrors > 0) {
+      orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">Nothing was planned and nothing was written — the AI did not answer for ${batchErrors} batch${batchErrors === 1 ? '' : 'es'}. Your wiki is unchanged; try again in a moment.</div></div>`;
+      return;
+    }
+    orphResults.innerHTML = `<div class="semantic-batch-bar"><div class="hint">The AI found no confident home for any of the ${Number(summary && summary.orphans) || 0} orphans. They're left as-is for manual review (try the per-orphan <strong>✨ Ask AI</strong> in the Orphans section below).</div></div>`;
     return;
   }
   orphResults.innerHTML = `
@@ -8289,7 +8379,7 @@ function renderOrphanPreview(summary, cost) {
         <button class="btn primary orph-apply-btn">Apply — rescue ${summary.rescuable} orphan${summary.rescuable === 1 ? '' : 's'}</button>
         <button class="btn orph-cancel-btn">Cancel</button>
       </div>
-      <span class="hint">Git-tracked — revert from the Sync tab if anything looks wrong.</span>
+      <span class="hint">${GIT_UNDO_NOTE}</span>
     </div>
   `;
   orphResults.querySelector('.orph-apply-btn').addEventListener('click', () => applyOrphanPlan());

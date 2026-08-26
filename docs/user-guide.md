@@ -145,7 +145,7 @@ Open **http://localhost:3333** in your browser. The Getting started panel will g
 
 - Set `CURATOR_NO_OPEN=1` to skip the macOS-only `open` browser-launch on startup (the server still binds to `localhost:3333`; just open it manually).
 - Set `DOMAINS_PATH=/path/to/your/knowledge` if you want your wiki folder somewhere other than `~/the-curator/domains`. The folder-picker UI button is macOS-only (uses AppleScript), but the env var works on every OS. If you've also set a folder in **Settings → Knowledge base**, that value takes priority over `DOMAINS_PATH`, and the My Curator MCP now resolves it the same way. (If you use the MCP, re-run its setup wizard after changing the knowledge base folder so Claude Desktop picks up the new location too — see [mcp-user-guide.md](mcp-user-guide.md).)
-- Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. See [§16 → Version and updates](#version-and-updates) for how updating works on macOS — it currently has to be started from the previous interface at `/old`.
+- Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. See [§16 → Version and updates](#version-and-updates) for how updating works on macOS, where it is a button in Settings.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
 
@@ -313,7 +313,7 @@ The first time you open the app after updating, a one-time bar appears at the to
 
 > **`/old` is temporary.** It's kept for two or three releases to give you a way back while you settle in, then it goes. Learn the rail; don't build a workflow that depends on `/old`.
 >
-> **Two things you currently still need `/old` for**, both noted where they come up in this guide: **applying an app update** ([§16](#version-and-updates)), and the **Reveal in Finder** bar for a summary's original source file ([§11](#finding-the-original-document-behind-a-summary)).
+> **You do not need `/old` for anything.** Earlier drafts of this guide said applying an app update and the *Reveal in Finder* source bar still required it. Both work in the redesigned interface and have since v3.9.0 — those notes were written before the cutover and were wrong. If you find a page in this guide still sending you to `/old` for a feature, that is a documentation bug worth reporting.
 
 ### Agent memory is an honest placeholder
 
@@ -872,7 +872,7 @@ Every summary page is a lossy rendering — the AI kept what it judged important
 
 **From Claude, via the MCP bridge.** Say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file. This works today and is the better route — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252).
 
-**In the app — currently only in the previous interface at `/old`.** Open `/old` → the **Wiki** tab → a summary page, and a small bar appears above the content showing the original filename, its size, and a **Reveal in Finder** button that opens your file browser with the file selected. The new reader overlay does not have this bar yet; it is a known gap, not a removed feature.
+**In the app.** Open a summary page — from a domain's page list, or by clicking a citation chip in a chat answer — and a small bar appears above the content showing the original filename, its size, and a **Reveal in Finder** button that opens your file browser with the file selected. (An earlier version of this guide said this bar existed only at `/old`. That was written before the v3.9.0 cutover and is wrong: the reader overlay has it.)
 
 **Seeing "the original file isn't on this machine" is normal, not a problem.** Raw source files (the PDFs, `.txt`, and `.md` files you originally dropped in) are deliberately never synced — only your wiki pages are. So on any machine other than the one you ingested a document on — including right after a Personal Sync pull, or on a Shared Brain mirror — this is the expected state, not a sign anything is broken or lost: your wiki page and everything it says are completely unaffected. The Curator still tells you what it knows — the filename, size, and when it was ingested — so you can go find the file again if you need it, even though it can't open it from here.
 
@@ -1186,7 +1186,7 @@ After **Sync now**, domain stats and page lists update automatically. Open **Cha
 
 **How to tell whether you have anything to push.** The Sync view shows a **Connected** pill, your repository URL, when you last synced, and — beside the buttons — a plain count: *"7 local changes not pushed"*. That count is the signal to look at.
 
-> There is no badge on the Sync rail icon in the redesigned interface. If you want a pending count, open Sync and read it there.
+> The **Sync** rail icon also carries a small badge with that same pending count, refreshed in the background, so you can see there is something to push without opening the view. (An earlier version of this guide said there was no such badge — that predates the cutover and is wrong.)
 
 **If a button is greyed out**, something else is writing to your wiki right now — an ingest, a Health fix, a Shared Brain push. Hover it and it tells you what. Wait for that to finish; the buttons re-enable on their own. This is deliberate: a sync mid-write would commit a half-written wiki.
 
@@ -1369,9 +1369,11 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** compares your version against the latest release on GitHub and tells you whether one is available.
 
-> **Updates can only be *applied* from the previous interface today.** The **Updates** button in the redesigned Settings *checks* and reports; it deliberately does not run the update, and it says so. Applying an update rewrites your actual checkout (`git reset --hard` + `npm install` + a rebuild of the Dock app), and that path is still wired only in the old interface.
+> **Updates are checked *and applied* right here.** (An earlier version of this guide said applying an update still required `/old`. That was written before the v3.9.0 cutover and is wrong.)
 >
-> **To install an update on macOS:** open **`http://localhost:3333/old`** → **Settings** tab → **Check for Updates** → **Update Now**. The app pulls the latest code, reinstalls dependencies, rebuilds the Dock app, and restarts; the browser reloads on its own and lands you back on the redesigned interface.
+> **To install an update on macOS:** **Settings → General → Check for updates**. If one is available, an install button appears and a confirmation dialog names the versions — *"The Curator will replace its own program files with the published version, reinstall dependencies and restart. Your knowledge base, API keys and sync settings are untouched. Don't quit until it finishes."* Confirm with **Install and restart**; the browser reloads on its own when the new server comes up.
+>
+> **If your local build is *newer* than the published one** — which happens if you're working on the code — no install button is offered at all. That is deliberate: applying the update would run `git reset --hard origin/main` and throw your newer commit away.
 >
 > **On Linux/Windows,** or if you prefer the terminal: `cd ~/the-curator && git pull && npm install`, then restart the server.
 >
@@ -1433,7 +1435,7 @@ This is the recommended way to maintain a wiki, and it's what makes health usabl
 | **✨ Rescue N orphans** | For each orphan (a page nothing links to), the AI finds the existing page that should most naturally link to it and writes a short relationship note into that page's *Related* section. Orphans with no confident match are left for manual review. **You review the plan before it's applied.** | Yes | shown on the button |
 | **✨ Find duplicate pages** | The semantic-duplicate scan (see below). Always offered when a key is configured — there's no free count to gate it on, so the cost is fetched when you open it. | Yes | shown when you open it |
 
-**The pattern is always the same:** click → a confirm card names exactly what will happen and what it costs → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki re-scans so you watch the counts drop. The panel itself says so: *"Every AI action shows its cost before it runs. All changes are git-tracked and revertable from Sync."*
+**The pattern is always the same:** click → a confirm card names exactly what will happen and what it costs → confirm → the AI plans (with a progress bar) → **you see a preview** (what will be retargeted vs. removed, or which orphans get which home) → click **Apply** → the wiki re-scans so you watch the counts drop. The panel itself says so: *"Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet."*
 
 This is the difference between maintaining a 50-page personal wiki and a 3,000-page shared brain: you set the direction, the AI does the per-item judgement, and you approve the batch — instead of clicking a thousand times.
 
@@ -1486,7 +1488,7 @@ All four cases collapse to the same canonical slug after the scanner's normalisa
 
 **Merges now repoint links, and the confirm dialog says how many pages will be deleted.** This changed: a merge used to delete a page and leave every `[[link]]` to it dangling, so the Hyphen-variants fix had to be followed by a Broken-links pass to clean up after itself. It doesn't any more. Both destructive fix types — **Hyphen variants** and **Cross-folder duplicates** — now rewrite inbound links before deleting anything, and their confirmation spells out the damage before you commit:
 
-> *"This MERGES each group and DELETES the duplicate pages, then repoints every `[[link]]` that pointed at them. **3 pages will be deleted.** Every change is git-tracked and can be reverted from Sync."*
+> *"This MERGES each group and DELETES the duplicate pages, then repoints every `[[link]]` that pointed at them. **3 pages will be deleted.** There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone."*
 
 The button on those two says **Merge and delete**, not "Fix now" — the wording tells you which kind of action you're about to take. Non-destructive fixes keep the plain **Fix now**.
 
@@ -1571,17 +1573,30 @@ If you'd rather use the old one for a while, it's at **`http://localhost:3333/ol
 
 **The app opens to a blank page, or a panel says "could not finish loading"**
 
-Rare, but it can happen after an update if a file didn't download completely. Instead of an empty window you'll get a panel headed **"The Curator (preview) could not finish loading"**, with the technical error at the bottom.
+Rare, but it can happen after an update if a file didn't download completely. Instead of an empty window you'll get a panel headed **"The Curator could not finish loading"**, with the technical error at the bottom.
 
 **Your knowledge is not affected.** Every wiki page is a plain markdown file on your disk; a startup failure in the browser interface cannot touch them, and you can open your domains folder in Obsidian or a text editor while the app is broken.
 
 Reload the page first — a partly-downloaded file usually fixes itself. If that keeps happening, go to **`http://localhost:3333/old`**, which is a completely separate interface and will load even when this one won't. Then quit The Curator (right-click the Dock icon → **Quit**) and relaunch. If it still fails, reinstall — and please paste the technical detail from the panel into a [GitHub issue](https://github.com/talirezun/the-curator/issues) so it can be fixed for everyone.
 
-> The panel's own wording still calls itself "the preview shell" and tells you to *"go back to the shipping app at /"* — that text predates the cutover and is wrong now, because `/` is this interface. **`/old` is the address you want.**
+> The panel points you at `/old`, which is correct: it is a completely separate interface reading the same files, so it loads even when this one won't. (Earlier releases of that panel called itself "the preview shell" and sent you to `/` — the shell that had just failed. That was fixed in v3.9.0.)
 
-**"Updates" says there's a new version but nothing installs it**
+**"Updates" says there's a new version but no install button appears**
 
-That's expected right now. The **Updates** button in Settings only *checks*. To actually apply an update on macOS, open **`http://localhost:3333/old`** → **Settings** → **Check for Updates** → **Update Now**. On Linux/Windows, `git pull && npm install` in the project folder. Full explanation in [§16 → Version and updates](#version-and-updates).
+Two different causes, and they look the same:
+
+- **Your local build is newer than the published one.** If you have pulled or committed ahead of `main`, no install button is offered on purpose — installing would run `git reset --hard origin/main` and discard your newer commit.
+- **You're not on macOS.** The in-app installer rebuilds the macOS Dock app. On Linux/Windows, run `git pull && npm install` in the project folder and restart the server.
+
+Otherwise, **Settings → General → Check for updates** both checks and installs. Full explanation in [§16 → Version and updates](#version-and-updates).
+
+**Claude says "returned no text content … usually transient — try again", and retrying never helps**
+
+Update to v3.9.1 or later. This was a real bug, not a provider hiccup, and the error message was wrong about it being transient.
+
+Claude can reply in several pieces, and one of them can be the model's own reasoning. The Curator was only ever reading the *first* piece — so if the model thought before answering, the app found no answer and reported one. Whether that happened depended on the model: it did not happen on the default `claude-haiku-4-5`, which is why most users never saw it, but it happened every time on `claude-sonnet-5` — the first model The Curator falls back to when your usual one is retired. In other words the failure was most likely to appear on the day the safety net was supposed to save you.
+
+If you cannot update yet, switching the active provider to Gemini in **Settings → Providers & keys** is a working stopgap.
 
 **Ingest spins for a very long time then fails**
 

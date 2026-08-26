@@ -177,7 +177,7 @@ This is the most common case. Steps are entirely no-code unless you want to opti
 
 Follow the [admin setup walkthrough](shared-brain-user-guide.md#3--admin-setup-start-a-new-shared-brain):
 1. Create a **private** GitHub repo (e.g. `your-username/ai-safety-brain`)
-2. In the Curator's Sync tab, run the **⚙ I'm starting a new Shared Brain** wizard
+2. In the Curator's **Shared Brain** rail view, run the **⚙ I'm starting a new Shared Brain** wizard
 3. Pick **organisational** data handling terms if you're selling to businesses (IP transfer to you), or **contributor_retains** if buyers' contributions should remain their own
 4. Generate the invite token — save it somewhere accessible
 
@@ -232,7 +232,7 @@ Welcome! Three things to get you started:
    https://github.com/talirezun/the-curator#quick-start
 
 3. In the Curator, open Settings → "Shared Brain (beta)" and click
-   "Enable Shared Brain (beta)". Then open the Sync tab and click the
+   "Enable Shared Brain (beta)". Then, in that same view, click the
    "📨 I have an invite token → Join" card. Paste this invite token:
 
    sbi_xxxxxxxxxxxxxxxxxx
@@ -412,7 +412,7 @@ If you have a white-label case that seems reasonable, ask — [open an issue](ht
 |---|---|---|
 | 1. Build the brain | The Curator | 2-4 weeks |
 | 2. Create private GitHub repo | github.com/new | 2 min |
-| 3. Run admin wizard | The Curator → Sync tab → ⚙ Set up | 5 min |
+| 3. Run admin wizard | The Curator → Shared Brain → ⚙ Set up | 5 min |
 | 4. Sales page | Gumroad / Lemon Squeezy / Stripe | 1-2 hr |
 | 5. Onboard each buyer | Manual GitHub collaborator + email | 3 min/buyer |
 | 6. Weekly synthesis | The Curator → Push + Synthesize | 30 min/week |

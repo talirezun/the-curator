@@ -30,7 +30,7 @@
  */
 
 import { mkdtemp, writeFile, readFile, mkdir, stat, rm, chmod, readdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import crypto from 'crypto';
@@ -112,6 +112,73 @@ async function section(title, fn) {
 let _tmpRoot;
 
 /**
+ * EVERY tempdir this suite has ever created, so it can all be removed on
+ * every exit path — not just the one `freshEnv()` call a developer happened
+ * to be looking at. `freshEnv()` is called 30+ times per run (once per
+ * section); a design that tracks only the CURRENT root (a bare `_tmpRoot`
+ * variable) forgets every earlier one the instant the next section replaces
+ * it — that is the actual defect that left 35,000+ directories on this
+ * machine. A registry + one removal routine means forgetting is structurally
+ * impossible: nothing new can leak without going through `freshEnv()`, and
+ * `freshEnv()` always registers what it creates.
+ * @type {Set<string>}
+ */
+const _tmpRoots = new Set();
+
+/**
+ * True only for a path that is unambiguously one of THIS suite's own tempdirs
+ * — inside the OS temp dir, one path segment down, and named with this
+ * suite's own mkdtemp prefix. Cleanup must never be able to remove anything
+ * else; a cleanup routine with a path bug is worse than the leak it fixes.
+ */
+function isOwnTempDir(dir) {
+  if (!dir) return false;
+  const base = path.resolve(tmpdir());
+  const resolved = path.resolve(dir);
+  const rel = path.relative(base, resolved);
+  return (
+    rel !== '' &&
+    !rel.startsWith('..') &&
+    !path.isAbsolute(rel) &&
+    rel === path.basename(resolved) && // exactly one segment below tmpdir()
+    path.basename(resolved).startsWith('curator-queue-test-')
+  );
+}
+
+/** Async, best-effort removal of every registered tempdir. Never throws. */
+async function cleanupTmpRoots() {
+  const dirs = Array.from(_tmpRoots);
+  _tmpRoots.clear();
+  for (const dir of dirs) {
+    if (!isOwnTempDir(dir)) {
+      console.error(`  (cleanup: refused to remove a path outside this suite's own tempdirs: ${dir})`);
+      continue;
+    }
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3 });
+    } catch (err) {
+      console.error(`  (cleanup: failed to remove ${dir}: ${err && err.message})`);
+    }
+  }
+}
+
+/**
+ * Synchronous last-resort fallback. `process.exit()` does not run pending
+ * `finally` blocks or awaited async cleanup, so the primary `cleanupTmpRoots`
+ * call (awaited before this suite ever calls `process.exit`) is what runs on
+ * every normal exit path — this `process.on('exit', ...)` handler exists only
+ * to catch anything unanticipated (e.g. an unhandled rejection that bypasses
+ * the try/finally below). It is idempotent: if the primary cleanup already
+ * ran, `_tmpRoots` is empty and this is a no-op.
+ */
+process.on('exit', () => {
+  for (const dir of _tmpRoots) {
+    if (!isOwnTempDir(dir)) continue;
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best-effort */ }
+  }
+});
+
+/**
  * @param {{withProviderKey?: boolean, model?: string}} [opts]
  *   `withProviderKey` seeds a FAKE api key into the ISOLATED
  *   .curator-config.json so `getProviderInfo()` resolves to a real, PRICED
@@ -124,6 +191,7 @@ let _tmpRoot;
  */
 async function freshEnv({ withProviderKey = false, model = null } = {}) {
   _tmpRoot = await mkdtemp(path.join(tmpdir(), 'curator-queue-test-'));
+  _tmpRoots.add(_tmpRoot);
   const userDataDir = path.join(_tmpRoot, 'userdata');
   const domainsDir = path.join(_tmpRoot, 'domains');
   await mkdir(userDataDir, { recursive: true });
@@ -1125,10 +1193,10 @@ async function testWireRepresentation() {
   const LEAK_CASES = [
     ["ENOENT: no such file or directory, open '/private/tmp/curator-x/domains/testdom/wiki/log.md'",
       ['/private/tmp', 'curator-x', 'testdom'], 'log.md', 'space-free POSIX path (the case that always worked)'],
-    ["ENOENT: no such file or directory, open '/Users/tali rezun/Google Drive/My Drive/wiki/log.md'",
-      ['tali rezun', 'Google Drive', 'My Drive', '/Users/'], 'log.md', 'SPACES in the user name and folder names'],
-    ["EACCES: permission denied, open 'C:\\Users\\Tali Rezun\\AppData\\Curator\\x.md'",
-      ['Tali Rezun', 'AppData', 'Curator', 'Users'], 'x.md', 'Windows drive path with a spaced user name'],
+    ["ENOENT: no such file or directory, open '/Users/alice smith/Google Drive/My Drive/wiki/log.md'",
+      ['alice smith', 'Google Drive', 'My Drive', '/Users/'], 'log.md', 'SPACES in the user name and folder names'],
+    ["EACCES: permission denied, open 'C:\\Users\\Alice Smith\\AppData\\Curator\\x.md'",
+      ['Alice Smith', 'AppData', 'Curator', 'Users'], 'x.md', 'Windows drive path with a spaced user name'],
     ["ENOENT: open '/Users/t/Dropbox (Personal)/notes/a.md'",
       ['Dropbox', 'Personal', 'notes'], 'a.md', 'parenthesised folder (Dropbox (Personal))'],
     ["ENOENT: open '/Volumes/My Book/archive/b.md'",
@@ -1137,12 +1205,12 @@ async function testWireRepresentation() {
       ['OneDrive', 'Company'], 'c.md', 'dash-separated folder (OneDrive - Company)'],
     ["ENAMETOOLONG: name too long, copyfile '/var/folders/aa/T/af fe224' -> '/Users/some one/queue/files/0-x.pdf'",
       ['/Users/', 'some one', '/var/folders', 'queue'], '0-x.pdf', 'BOTH paths of a copyfile error, each with spaces'],
-    ['/Users/tali rezun/Documents/x.md is missing',
-      ['tali rezun', 'Documents', '/Users/'], 'x.md', 'UNQUOTED spaced path'],
-    ['C:\\Users\\Tali Rezun\\AppData\\x.md could not be read',
-      ['Tali Rezun', 'AppData'], 'x.md', 'UNQUOTED Windows path'],
-    ["open '/Users/tali rezun/Docs/x.md",
-      ['tali rezun', 'Docs', '/Users/'], 'x.md', 'UNTERMINATED quote (falls through to the bare pass)'],
+    ['/Users/alice smith/Documents/x.md is missing',
+      ['alice smith', 'Documents', '/Users/'], 'x.md', 'UNQUOTED spaced path'],
+    ['C:\\Users\\Alice Smith\\AppData\\x.md could not be read',
+      ['Alice Smith', 'AppData'], 'x.md', 'UNQUOTED Windows path'],
+    ["open '/Users/alice smith/Docs/x.md",
+      ['alice smith', 'Docs', '/Users/'], 'x.md', 'UNTERMINATED quote (falls through to the bare pass)'],
     ['/Users/t/A B C D E F/x.md',
       ['A B C D E F'], 'x.md', 'unquoted path with a six-word folder name'],
   ];
@@ -1228,12 +1296,12 @@ async function testWireRepresentation() {
     // that the first scrubber echoed verbatim rather than the space-free ones
     // it happened to handle.
     const pathy = JSON.parse(JSON.stringify(done));
-    pathy.items[0].error = "ENOENT: no such file or directory, open '/Users/tali rezun/Google Drive/My Drive/wiki/log.md'";
+    pathy.items[0].error = "ENOENT: no such file or directory, open '/Users/alice smith/Google Drive/My Drive/wiki/log.md'";
     pathy.pausedMessage = "ENAMETOOLONG: copyfile '/var/folders/aa/T/af fe' -> '/Users/some one/queue/files/0-x.pdf'";
-    pathy.failReason = "EACCES: permission denied, open 'C:\\Users\\Tali Rezun\\AppData\\Curator\\x.md'";
+    pathy.failReason = "EACCES: permission denied, open 'C:\\Users\\Alice Smith\\AppData\\Curator\\x.md'";
     const pathyWire = toWire(pathy);
     const asJson = JSON.stringify(pathyWire);
-    for (const secret of ['/Users/', '/var/folders', 'tali rezun', 'Google Drive', 'My Drive', 'some one', 'Tali Rezun', 'AppData']) {
+    for (const secret of ['/Users/', '/var/folders', 'alice smith', 'Google Drive', 'My Drive', 'some one', 'Alice Smith', 'AppData']) {
       assert(!asJson.includes(secret), `no filesystem detail survives toWire(): "${secret}"`);
     }
     assert(asJson.includes('log.md') && asJson.includes('0-x.pdf') && asJson.includes('x.md'),
@@ -2006,6 +2074,7 @@ async function testAccountingUnderRandomSequences() {
 // ── Run ──────────────────────────────────────────────────────────────────────
 
 (async () => {
+ try {
   await section('1. Sequential execution (never two items at once)', testSequential);
   await section('1b. FOUR simultaneous starts run exactly ONE worker (C1)', testConcurrentStartsRunOneWorker);
   await section('1c. Starts against an already-running job never fork a second worker', testConcurrentStartsWhileRunning);
@@ -2067,6 +2136,16 @@ async function testAccountingUnderRandomSequences() {
         hit ? `offending line: ${hit.trim().slice(0, 120)}` : undefined);
     }
   }
+ } finally {
+  // Runs on EVERY path through the try block above: full completion, or a
+  // throw that somehow escapes `section()`'s own catch (none currently does,
+  // but this suite must not depend on that staying true forever). This is
+  // the primary cleanup — it runs BEFORE either `process.exit()` call below,
+  // so the temp dirs are gone before the process ever asks to exit. See the
+  // `process.on('exit', ...)` handler above `freshEnv()` for the synchronous
+  // fallback that covers anything unanticipated.
+  await cleanupTmpRoots();
+ }
 
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`Passed: ${passed}   Failed: ${failed}`);

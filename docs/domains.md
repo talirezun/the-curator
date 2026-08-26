@@ -76,7 +76,7 @@ printf '# Ingest Log — My Domain\n\n' > domains/$SLUG/wiki/log.md
 # Then write the schema (see § 3)
 ```
 
-The app discovers domains on every request — no restart needed. Open Domains tab and check that your new domain appears.
+The app discovers domains on every request — no restart needed. Open **Domains** and check that your new domain appears.
 
 To delete or rename manually:
 
@@ -341,7 +341,7 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 **Do not hand-edit a mirror.** Since v3.0.3 a Pull *replaces* each page rather than merging into it, and prunes local pages the collective no longer has — which is what makes deletions and GDPR erasure propagate. Any local edit to a `shared-<slug>` page is therefore overwritten on the next Pull.
 
-To contribute to a Shared Brain, write to your **personal opted-in domain** (e.g. `work-ai/`), then click **Push contributions** from the Sync tab. The synthesised collective wiki comes back to `shared-<slug>/` on the next Pull.
+To contribute to a Shared Brain, write to your **personal opted-in domain** (e.g. `work-ai/`), then click **Push contributions** in the Shared Brain view. The synthesised collective wiki comes back to `shared-<slug>/` on the next Pull.
 
 ---
 
@@ -405,7 +405,7 @@ Entity page additions:
 
 ## See also
 
-- **[User Guide § 10](user-guide.md#10-manage-your-domains)** — short walkthrough of the Domains tab
+- **[User Guide § 10](user-guide.md#10-manage-your-domains)** — short walkthrough of the Domains view
 - **[Sync Guide](sync.md)** — how domains travel between computers via GitHub
 - **[MCP User Guide § Writing to your wiki](mcp-user-guide.md#writing-to-your-wiki-from-claude-desktop-v252)** — how `compile_to_wiki` chooses a domain and what defaultDomain does
 - **[Architecture § Data flow: Ingest](architecture.md#data-flow-ingest)** — the technical pipeline that consumes the schema

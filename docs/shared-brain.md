@@ -31,7 +31,7 @@ Personal Sync (the existing feature in v2.x) and Shared Brain (new in v3.0.0-bet
 | Visible in Curator | Pages are part of your personal wiki | Pages appear as a separate `shared-<slug>/` domain in your local app |
 | Required infrastructure | A private GitHub repo + your own PAT | A private GitHub repo + per-contributor PATs + an admin's PAT |
 
-Both features live in the **Sync** tab of the Curator app, in separate sections.
+The two features are separate rail items: **Sync** covers Personal Sync only, and **Shared Brain** has its own view. (At `/old` both live in the Sync tab, in separate sections.)
 
 ---
 

@@ -108,7 +108,7 @@ The agent does **not** need access to your API keys, your `domains/` content, or
 - **`gh auth token` is broad.** The token the GitHub CLI hands out has the CLI's full scope, not a repo-scoped fine-grained token. It works fine for sync, but if you want the tightest security, have the agent stop at step 3 and create a **fine-grained** token (Contents: Read and write, single repo) instead — see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token-wizard-step-2).
 - **The token is stored locally.** `.sync-config.json` is gitignored and never leaves your machine — same as the wizard.
 - **One write path.** The agent calls the same `/api/sync/setup` endpoint the wizard uses, so there's no parallel or untested logic — the git init/commit/push happens inside The Curator exactly as designed.
-- **After setup, daily use is unchanged.** Click **Sync now** in the Sync tab (or have your agent `POST /api/sync/sync`). See [sync.md → Daily workflow](sync.md#daily-workflow).
+- **After setup, daily use is unchanged.** Click **Sync now** in the Sync view (or have your agent `POST /api/sync/sync`). See [sync.md → Daily workflow](sync.md#daily-workflow).
 
 ---
 

@@ -129,7 +129,10 @@ export const fixWikiIssueDefinition = {
   name: 'fix_wiki_issue',
   description:
     "Apply ONE fix to the user's second brain wiki. Use after scan_wiki_health to repair an issue you've decided to act on. " +
-    "Auto-fixable types are SAFE to apply without asking the user: brokenLinks (with a suggestedTarget), folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks. " +
+    "PASS BACK THE ISSUE OBJECT SCAN_WIKI_HEALTH GAVE YOU. Do not compose one, and do not substitute your own idea of the right target — the scanner's suggestions come from deterministic slug normalisation, yours would be a guess, and a wrong retarget writes a factually wrong link into every page that referenced it. " +
+    "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, and brokenLinks that already carry a suggestedTarget. " +
+    "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the Health tab's AI broken-link fixer, which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
+    "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed): tell the user which page disappears before you call them. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
     "REQUIRED: call once with preview: true first to receive the diff plan; show the user what will change; then call again with preview: false to commit. " +
@@ -149,7 +152,7 @@ export const fixWikiIssueDefinition = {
         type: 'object',
         description:
           "The issue object as returned by scan_wiki_health. Field shape depends on type:\n" +
-          " - brokenLinks: { sourceFile, linkText, suggestedTarget }\n" +
+          " - brokenLinks: { sourceFile, linkText, suggestedTarget } — suggestedTarget must name a page that EXISTS (a bare entity/concept slug, or summaries/<slug>); anything else is refused\n" +
           " - folderPrefixLinks: { sourceFile, linkText }\n" +
           " - crossFolderDupes: { keep, remove }\n" +
           " - hyphenVariants: { files: [...], suggestedSlug }\n" +
@@ -237,7 +240,7 @@ export async function fixWikiIssueHandler(args, storage) {
       tool: 'fix_wiki_issue',
       type,
       issue,
-      result_summary: result?.fixed ? 'applied' : 'no-op',
+      result_summary: result?.fixed ? 'applied' : (result?.reason ? `no-op:${result.reason}` : 'no-op'),
     });
   } catch { /* best-effort */ }
 
@@ -246,11 +249,60 @@ export async function fixWikiIssueHandler(args, storage) {
     domain: domain.value,
     type,
     fixed: result?.fixed || 0,
+    // Machine-readable twin of the prose in `report`, so a caller can branch
+    // without string-matching. Absent when the fix applied.
+    ...(result?.reason ? { reason: result.reason } : {}),
     details: result || null,
     report: result?.fixed
       ? `Fixed 1 ${type} issue in '${domain.value}'.`
-      : `No changes applied (the issue may already have been resolved).`,
+      : noOpReport(type, result?.reason, domain.value),
   };
+}
+
+/**
+ * `fixed: 0` is not one outcome, so it must not render as one sentence.
+ *
+ * This used to be the single line "No changes applied (the issue may already
+ * have been resolved)." — which a model correctly reads as "nothing to do here"
+ * and moves on. It was returned verbatim for a `suggestedTarget` naming a page
+ * that does not exist, and for an orphan issue passed in the scanner's shape
+ * that this tool cannot consume: in both cases the wiki was NOT fixed and the
+ * report said it may as well have been. Repeated across a scan of 47 orphans
+ * that is a clean-sweep report over an entirely untouched domain.
+ *
+ * Each branch therefore states what was refused AND the next action, because a
+ * refusal without a next step leaves "retry with another guess" as the model's
+ * most available move — and on a corpus where `claude-sonnet-4.5` and
+ * `claude-sonnet-3.5` are different pages, a retried guess is how a wrong link
+ * gets written into every page that referenced it.
+ */
+function noOpReport(type, reason, domainName) {
+  switch (reason) {
+    case 'target-not-found':
+      return `REFUSED — nothing was written. The suggestedTarget you supplied does not name a page that exists in '${domainName}', so retargeting to it would replace one broken link with another. Do NOT retry with a different guess: confirm the real slug with get_index or search_wiki, and if no page genuinely covers it, leave the link alone and tell the user (or point them at the app's bulk "Fix broken links" flow, which previews the whole plan). The broken link is still there.`;
+    case 'no-suggested-target':
+      return `REFUSED — nothing was written. This brokenLinks issue carries no suggestedTarget, and the scanner did not produce one because no deterministic match exists. Report it to the user as review-only rather than inventing a target. The broken link is still there.`;
+    case 'source-file-not-found':
+      return `REFUSED — nothing was written. sourceFile did not resolve to a page inside '${domainName}'. Pass the issue object exactly as scan_wiki_health returned it.`;
+    case 'orphan-fields-missing':
+      return `REFUSED — nothing was written. type="orphanLink" needs an issue of {orphanSlug, targetSlug, description}, which is NOT the shape scan_wiki_health emits for an orphan ({path, type, slug}). This is the one fixable type you must compose rather than pass through: orphanSlug is the orphan's slug, and targetSlug is an EXISTING entity or concept page that should link to it (never a summary). Choosing that target is your judgement, not the scanner's, so confirm it with the user first. The orphan is still unlinked.`;
+    case 'slug-shape-invalid':
+      return `REFUSED — nothing was written. orphanSlug and targetSlug must each be a bare slug (letters, digits, hyphens) with no folder prefix and no ".md". The orphan is still unlinked.`;
+    case 'orphan-not-found':
+      return `REFUSED — nothing was written. orphanSlug does not name a page in '${domainName}'. Use the "slug" field from the scan's orphan entry verbatim.`;
+    case 'self-link':
+      return `REFUSED — nothing was written. orphanSlug and targetSlug are the same page; a page cannot rescue itself. Pick a different existing page to link FROM.`;
+    case 'link-already-present':
+      return `No changes applied — the target page already links to that orphan, so this issue really was already resolved. Re-run scan_wiki_health to confirm it has cleared.`;
+    case 'link-not-present':
+      return `No changes applied — the target exists and the source file exists, but that [[link]] is no longer in it, so this issue really was already resolved. Re-run scan_wiki_health to confirm it has cleared.`;
+    default:
+      // Reached only by handlers that still return a bare boolean (the
+      // scanner-only ones). The wording stays cautious rather than cheerful:
+      // v3.6.1 finding 5's lesson is that a default arm must not fall into the
+      // reassuring branch.
+      return `No changes applied, and the reason was not reported. Do not assume the issue is resolved — re-run scan_wiki_health and check whether it is still listed.`;
+  }
 }
 
 // ── scan_semantic_duplicates ─────────────────────────────────────────────────

@@ -38,6 +38,34 @@
 
 <link rel="stylesheet" href="/next/shell.css">
 
+<!-- Shared components — a cascade layer BETWEEN the shell and the views.
+     shared/progress-ring.css owns the whole `pring-` prefix and carries
+     the ring's entire visual role: every stroke colour, the flex layout,
+     and the orbit animation. It is deliberately linked ABOVE the views so
+     a view can still override placement at equal specificity (views/
+     ingest.css and views/domains.css both position the ring by their own
+     `.ing-progress-ring` / `.dm-ai-progress-ring` class and defer the look
+     to this file, in comments that say so).
+
+     THIS LINK IS LOAD-BEARING, and its absence is what v3.9.1 fixed. The
+     ring shipped in v3.9.0 with this file written, correct, and NEVER
+     LINKED — so `progressRingHtml`'s markup rendered raw in both views for
+     an entire release. SVG `stroke` defaults to `none` and `fill` defaults
+     to black, so browser-measured, the live result was: track stroke none,
+     fill stroke none, orbit animation `none / 0s`, and the only painted
+     element a BLACK dot that is invisible on the dark surface. `.pring`
+     and `.pring-text` fell back to `display: inline`, gluing label and
+     sublabel into one unseparated run ("…batch 4 of 8…stage 4 of 5 · 0s ·
+     49%") that spilled down a 53px-wide column. A user reported it as a
+     broken progress display; no guard caught it, because
+     test-css-tokens.js discovers /next stylesheets only from THIS file's
+     <link> tags — so a stylesheet that is never linked was never scanned,
+     and test-next-asset-paths.js validates the refs that ARE here and
+     cannot see one that is absent. Section 9 of test-css-tokens.js now
+     walks the whole /next tree and fails on any unreachable stylesheet,
+     which is the assertion that would have caught this. -->
+<link rel="stylesheet" href="/next/shared/progress-ring.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

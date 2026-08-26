@@ -5,7 +5,10 @@
  * ── Why this exists ──────────────────────────────────────────────────────
  *
  * Until v3.6.1 every asset in next/index.html was referenced RELATIVELY
- * (`src="app.js"`, `href="tokens/color.css"`, …) — 18 of them. That is
+ * (`src="app.js"`, `href="tokens/color.css"`, …) — 18 of them AT THAT TIME
+ * (the file carries more now; this scanner never hardcodes the count, it
+ * reports whatever it finds, so the number below is history, not a target).
+ * That is
  * correct while the shell is served at /next/, and catastrophic the moment
  * cutover serves it at /, because:
  *

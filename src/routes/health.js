@@ -329,7 +329,22 @@ router.post('/:domain/broken-links/apply', async (req, res) => {
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
 
   const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
-  if (!plan || plan.length === 0) return res.status(400).json({ error: 'Missing plan[] to apply' });
+  // v3.9.1 — the EMPTY case is split from the MISSING case, and both messages
+  // are written to be read by a person.
+  //
+  // An empty plan is not a malformed request: `planBrokenLinkFixes` legitimately
+  // returns `plan: []` when every AI batch errored (each one hits `continue`
+  // without pushing, deliberately, so a flaky provider can never bias the plan
+  // toward stripping brackets). The 400 is KEPT as a backstop — the route can do
+  // no work, and letting it through would mean taking the file lock and the
+  // write registration to emit a "done" frame of zeros, which both frontends
+  // would then render as a successful fix that never happened. But the refusal
+  // is no longer the client's problem to explain: both frontends now recognise
+  // an empty plan themselves and never send one (see runBrokenLinksPlan /
+  // renderBrokenLinkPreview), so if this text ever reaches a screen it is a bug
+  // report, and it should read like English rather than an internal assertion.
+  if (!plan) return res.status(400).json({ error: 'This request carried no plan to apply. Build a plan first, then apply it.' });
+  if (plan.length === 0) return res.status(400).json({ error: 'This plan is empty, so there is nothing to apply. Nothing was written.' });
   if (plan.length > MAX_BROKEN_LINK_PLAN) return res.status(400).json({ error: `Plan too large (${plan.length}); cap is ${MAX_BROKEN_LINK_PLAN}.` });
 
   if (isUpdateInProgress()) {
@@ -407,7 +422,15 @@ router.post('/:domain/orphans/apply', async (req, res) => {
   catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
 
   const plan = (req.body && Array.isArray(req.body.plan)) ? req.body.plan : null;
-  if (!plan || plan.length === 0) return res.status(400).json({ error: 'Missing plan[] to apply' });
+  // v3.9.1 — same split, same reasoning as /broken-links/apply above. The
+  // orphan rescuer is CONSERVATIVE BY DESIGN: it returns no home unless there
+  // is a genuine relationship, so `plan: []` is its most common outcome on a
+  // domain whose last few orphans really have nowhere to go (measured on the
+  // maintainer's own wiki in v3.0.1-beta.17: 391 of 604 placed, 213 left for
+  // manual review). That is a correct result, not a failure — and it is the one
+  // this refusal used to be reported to the user as "Missing plan[] to apply".
+  if (!plan) return res.status(400).json({ error: 'This request carried no plan to apply. Build a plan first, then apply it.' });
+  if (plan.length === 0) return res.status(400).json({ error: 'This plan is empty, so there is nothing to apply. Nothing was written.' });
   if (plan.length > MAX_ORPHAN_PLAN) return res.status(400).json({ error: `Plan too large (${plan.length}); cap is ${MAX_ORPHAN_PLAN}.` });
 
   if (isUpdateInProgress()) {
@@ -485,9 +508,24 @@ router.post('/:domain/semantic-dupes/merge-batch', async (req, res) => {
     return res.status(err.status || 500).json({ error: err.message });
   }
 
+  // v3.9.1 — the THIRD route with the plan→apply shape, found by enumerating
+  // every `Array.isArray(req.body.*)` read across src/routes rather than by
+  // fixing the two the bug report named. Same split, same reasoning as the two
+  // apply routes above.
+  //
+  // Measured difference from those two, and the reason this is a message change
+  // and not a behaviour change: an EMPTY collection is not reachable here from
+  // either frontend. /next re-derives the pair list at confirm time and shows
+  // "Nothing left to merge…" without issuing a request; /old freezes a list its
+  // own `highConfidencePairs()` guard has already proven non-empty. So this text
+  // is a backstop for scripted clients — which is exactly why it should read as
+  // English rather than as an internal assertion.
   const rawPairs = (req.body && Array.isArray(req.body.pairs)) ? req.body.pairs : null;
-  if (!rawPairs || rawPairs.length === 0) {
-    return res.status(400).json({ error: 'Missing pairs[] to merge' });
+  if (!rawPairs) {
+    return res.status(400).json({ error: 'This request carried no pairs to merge. Scan for duplicates first, then merge.' });
+  }
+  if (rawPairs.length === 0) {
+    return res.status(400).json({ error: 'No duplicate pairs were sent, so there is nothing to merge. Nothing was written.' });
   }
   if (rawPairs.length > MAX_BATCH_MERGE_PAIRS) {
     return res.status(400).json({ error: `Too many pairs (${rawPairs.length}); cap is ${MAX_BATCH_MERGE_PAIRS}.` });

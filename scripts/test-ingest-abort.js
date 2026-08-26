@@ -35,7 +35,7 @@
  */
 
 import { mkdtemp, writeFile, mkdir, readdir, rm, stat } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import crypto from 'crypto';
@@ -94,8 +94,73 @@ async function waitFor(predicate, { timeoutMs = 8000, intervalMs = 10 } = {}) {
 }
 
 let _tmpRoot;
+
+/**
+ * EVERY tempdir this suite has ever created, so all of them are removed on
+ * every exit path. The pre-existing cleanup at the bottom of this file
+ * removed only the LAST `_tmpRoot` — a single-variable design that forgets
+ * every earlier root the instant `freshEnv()` is called again. This suite
+ * calls `freshEnv()` 6 times per run, so 5 of every 6 tempdirs it created
+ * were never removed; that is the actual mechanism behind the 1,600+
+ * `curator-abort-test-*` directories found on this machine. A registry plus
+ * one removal routine means forgetting a root is structurally impossible.
+ * @type {Set<string>}
+ */
+const _tmpRoots = new Set();
+
+/**
+ * True only for a path that is unambiguously one of THIS suite's own tempdirs
+ * — inside the OS temp dir, one path segment down, named with this suite's
+ * own mkdtemp prefix. Cleanup must never be able to remove anything else.
+ */
+function isOwnTempDir(dir) {
+  if (!dir) return false;
+  const base = path.resolve(tmpdir());
+  const resolved = path.resolve(dir);
+  const rel = path.relative(base, resolved);
+  return (
+    rel !== '' &&
+    !rel.startsWith('..') &&
+    !path.isAbsolute(rel) &&
+    rel === path.basename(resolved) && // exactly one segment below tmpdir()
+    path.basename(resolved).startsWith('curator-abort-test-')
+  );
+}
+
+/** Async, best-effort removal of every registered tempdir. Never throws. */
+async function cleanupTmpRoots() {
+  const dirs = Array.from(_tmpRoots);
+  _tmpRoots.clear();
+  for (const dir of dirs) {
+    if (!isOwnTempDir(dir)) {
+      console.error(`  (cleanup: refused to remove a path outside this suite's own tempdirs: ${dir})`);
+      continue;
+    }
+    try {
+      await rm(dir, { recursive: true, force: true, maxRetries: 3 });
+    } catch (err) {
+      console.error(`  (cleanup: failed to remove ${dir}: ${err && err.message})`);
+    }
+  }
+}
+
+/**
+ * Synchronous last-resort fallback — `process.exit()` skips pending `finally`
+ * blocks and awaited async cleanup, so this `process.on('exit', ...)` handler
+ * catches anything unanticipated that bypasses the awaited `cleanupTmpRoots()`
+ * call at the bottom of this file. Idempotent: a no-op once the primary
+ * cleanup has already emptied `_tmpRoots`.
+ */
+process.on('exit', () => {
+  for (const dir of _tmpRoots) {
+    if (!isOwnTempDir(dir)) continue;
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best-effort */ }
+  }
+});
+
 async function freshEnv({ providerKey = null } = {}) {
   _tmpRoot = await mkdtemp(path.join(tmpdir(), 'curator-abort-test-'));
+  _tmpRoots.add(_tmpRoot);
   const userDataDir = path.join(_tmpRoot, 'userdata');
   const domainsDir = path.join(_tmpRoot, 'domains');
   await mkdir(userDataDir, { recursive: true });
@@ -652,7 +717,12 @@ await section('8. This suite is visible to `npm test` (not misread as self-skipp
 });
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
-try { if (_tmpRoot) await rm(_tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
+// Removes EVERY tempdir this run created (see `_tmpRoots` above `freshEnv`),
+// not just the one from the final `freshEnv()` call. Runs before either
+// `process.exit()` call below, so cleanup always completes before the
+// process asks to exit; `process.on('exit', ...)` is the synchronous
+// fallback for anything that bypasses this line entirely.
+await cleanupTmpRoots();
 __setUserDataDirOverride(null);
 __setDomainsDirOverride(null);
 

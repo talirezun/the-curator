@@ -379,7 +379,44 @@ const pkgVersion = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf
 const cutoverHeading = /═+ THE CUTOVER \(v([0-9]+\.[0-9]+\.[0-9]+)\)/.exec(serverJs);
 ok(!!cutoverHeading, 'the cutover block still carries a version stamp');
 eq(cutoverHeading && cutoverHeading[1], '3.9.0', 'cutover block is stamped v3.9.0 (the release it shipped in)');
-eq(pkgVersion, '3.9.0', 'package.json agrees — the stamp is not a second, drifting source of truth');
+
+// v3.9.1: this assertion used to read `eq(pkgVersion, '3.9.0', …)`, which
+// pinned package.json to a LITERAL and therefore went red on the very next
+// version bump — it would have blocked every future release. Its own stated
+// purpose ("not a second, drifting source of truth") is about AGREEMENT, but
+// equality-with-a-literal cannot express that, and it contradicted the
+// assertion directly above it: the stamp names the release the cutover
+// SHIPPED IN, which is history and must never move, while package.json
+// advances every release. Two assertions, opposite intents, same constant.
+//
+// The real invariant is ORDERING: the stamp may never claim a release that
+// has not happened yet. That catches someone "helpfully" bumping the stamp
+// alongside the version — the actual drift this section exists to prevent —
+// and stays true for every release after this one.
+const cmpSemver = (a, b) => {
+  const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) { if (pa[i] !== pb[i]) return pa[i] - pb[i]; }
+  return 0;
+};
+ok(/^[0-9]+\.[0-9]+\.[0-9]+$/.test(pkgVersion), `package.json carries a plain semver (got "${pkgVersion}")`);
+ok(cmpSemver(cutoverHeading ? cutoverHeading[1] : '0.0.0', pkgVersion) <= 0,
+  `the cutover stamp (v${cutoverHeading && cutoverHeading[1]}) is at or before package.json (v${pkgVersion}) — a stamp naming an unreleased version is the drift this guards`);
+
+// The ordering check above is necessary but NOT sufficient, and the adversarial
+// audit of v3.9.1 was right to say so: the stamp-moved-with-the-version case it
+// claimed to catch is already caught by the literal assertion two lines up, and
+// the ordering check alone cannot see `package.json` advancing to 4.7.0 with the
+// stamp untouched — which the deleted literal DID catch. So restore a real
+// agreement invariant, on the pair that must genuinely agree and that nothing
+// else cross-checks: CLAUDE.md carries its own `**Version:**` line, hand-edited
+// every release, and a release that bumps one and forgets the other ships a dev
+// guide that misreports what is running. Unlike the literal it replaces, this
+// never blocks a legitimate bump — it only requires the two move together.
+const claudeMd = readFileSync(path.join(ROOT, 'CLAUDE.md'), 'utf8');
+const claudeVersion = /^- \*\*Version:\*\* ([0-9]+\.[0-9]+\.[0-9]+)\s*$/m.exec(claudeMd);
+ok(!!claudeVersion, 'CLAUDE.md still carries a `- **Version:** X.Y.Z` line');
+eq(claudeVersion && claudeVersion[1], pkgVersion,
+  `CLAUDE.md's version line agrees with package.json (this is AGREEMENT, not a pinned literal — the pinned literal it replaced would have gone red on every future release)`);
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

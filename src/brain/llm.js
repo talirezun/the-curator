@@ -747,6 +747,75 @@ export function handleOutputTokenLimit(providerName, maxTokens, responseFormat, 
 }
 
 /**
+ * Extract the assistant's answer text from an Anthropic `Message.content` array.
+ *
+ * THE BUG THIS EXISTS TO CLOSE (v3.9.1). Both call sites used to read
+ * `content[0].text`. That is only correct while the FIRST block is the text
+ * block — and on `claude-sonnet-5` it routinely is not:
+ *
+ *   • The Curator never sends a `thinking` parameter. On Sonnet 5 (and the
+ *     Opus 4.7+/Fable family) omitting it runs ADAPTIVE thinking, so the model
+ *     decides per-prompt whether to think. On `claude-sonnet-4-6` and
+ *     `claude-haiku-4-5` omitting it means no thinking at all. That asymmetry
+ *     is the whole defect: measured over 3 trials with an ingest-shaped JSON
+ *     prompt, sonnet-5 returned [thinking, text] 3/3 while 4-6 and haiku-4-5
+ *     returned [text] 3/3.
+ *   • A `thinking` block carries `.thinking`, never `.text`, so `content[0].text`
+ *     was `undefined` and EVERY call threw the "returned no text content" error.
+ *   • `claude-sonnet-5` is FALLBACK_CHAINS.anthropic[0]. The chain exists to keep
+ *     users working the day the default is retired; rung 1 was dead on arrival.
+ *   • It went uncaught because adaptive thinking is PROMPT-DEPENDENT: a trivial
+ *     `Return {"ok":true}` smoke probe returns [text] and passes green while a
+ *     real ingest prompt fails. Do not "verify" this path with a toy prompt.
+ *
+ * WHY IT CONCATENATES rather than taking the first text block. One response can
+ * legitimately carry SEVERAL text blocks — citations split a reply into multiple
+ * text blocks, and a server-side refusal fallback interleaves a `fallback` block
+ * between them. Taking only the first would silently truncate: unparseable JSON
+ * in json mode, and a partial prose answer presented as complete in text mode —
+ * i.e. paid-for content dropped with a green result, this project's recorded
+ * silent-data-loss shape. Blocks are contiguous pieces of one string, so they
+ * join with '' (a separator would corrupt JSON). With a single text block this
+ * is byte-identical to picking that block, so the common path is unchanged.
+ *
+ * Matching is on `type === 'text'`, the documented discriminant of the content
+ * union — NOT on "has a .text string". A future block type that happens to carry
+ * a `.text` field would otherwise be spliced into the answer.
+ *
+ * @param {unknown} content  `message.content`
+ * @returns {string|null}  concatenated text, or null when there is NO text-typed
+ *   block at all. null is the caller's signal to throw: a tool-use-only or empty
+ *   response is a real failure and must never degrade to a silent empty string.
+ *   A present-but-empty text block returns '' — matching the pre-fix behaviour
+ *   for that shape, which is a genuine (if odd) model output, not an absence.
+ */
+export function extractAnthropicText(content) {
+  if (!Array.isArray(content)) return null;
+  const parts = [];
+  for (const block of content) {
+    if (block && block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+  }
+  return parts.length === 0 ? null : parts.join('');
+}
+
+/**
+ * TEST-ONLY seam. Replaces the Anthropic client constructor so an OFFLINE suite
+ * can drive the real generateText → callLLM → callProvider path (retry loop and
+ * fallback chain included) against synthetic `finalMessage()` shapes, with no
+ * network and no spend. Null in production, where `new Anthropic(...)` is used
+ * exactly as before — same pattern and rationale as config.js's
+ * `__setDomainsDirOverride` and compile.js's `opts.generateText`.
+ *
+ * Resolved PER CALL, never snapshotted at module load: a top-level
+ * `const client = ...` would make the override silently import-order dependent
+ * (the v3.1.0 finding).
+ */
+let _anthropicClientFactoryOverride = null;
+export function __setAnthropicClientFactory(factory) {
+  _anthropicClientFactoryOverride = typeof factory === 'function' ? factory : null;
+}
+
+/**
  * Invoke a specific provider+model. No retry/fallback here — pure dispatch.
  * Called by `callLLM` which handles fallback, and by the retry loop in `generateText`.
  *
@@ -818,7 +887,10 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // Note: Anthropic's API has no native JSON mode equivalent. Prompts that ask
   // for JSON rely on the "Return ONLY valid JSON" directive in the system prompt
   // plus the jsonrepair fallback in parseJSON (see src/brain/ingest.js).
-  const client = new Anthropic({ apiKey: getEffectiveKey('anthropic') });
+  const anthropicOptions = { apiKey: getEffectiveKey('anthropic') };
+  const client = _anthropicClientFactoryOverride
+    ? _anthropicClientFactoryOverride(anthropicOptions)
+    : new Anthropic(anthropicOptions);
 
   // Clamp to THIS model's hard output cap. Call sites pass 65536 (right for
   // Gemini), which the Anthropic API rejects outright as "max_tokens: 65536 >
@@ -873,22 +945,26 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // so ingest/compile fallbacks recover), but TEXT mode (chat, query) returns
   // the partial answer with a note instead of a misleading ingest error.
   if (message.stop_reason === 'max_tokens') {
-    const firstBlock = message?.content?.[0];
-    const partial = firstBlock && typeof firstBlock.text === 'string' ? firstBlock.text : '';
+    // Position-independent: a truncated Sonnet 5 response is [thinking, text],
+    // so first-block indexing handed handleOutputTokenLimit an EMPTY partial and
+    // a cut-off-but-useful chat answer arrived as nothing but the truncation note.
+    const partial = extractAnthropicText(message?.content) ?? '';
     return handleOutputTokenLimit('Claude', effectiveMaxTokens, responseFormat, partial);
   }
-  // Defensive: text field can be missing if the assistant produced only
+  // Defensive: there may be no text block at all if the assistant produced only
   // tool-use blocks (shouldn't happen for these prompts, but better to
-  // surface a clear error than to throw an obscure "undefined.text").
-  const firstBlock = message?.content?.[0];
-  if (!firstBlock || typeof firstBlock.text !== 'string') {
+  // surface a clear error than to throw an obscure "undefined.text"). This is
+  // the ONLY remaining throw case — a text block that is merely not first is a
+  // normal response and now extracts correctly.
+  const answerText = extractAnthropicText(message?.content);
+  if (answerText === null) {
     throw new Error(
       `⚠ Claude returned no text content (stop_reason: ${message.stop_reason || 'unknown'}). ` +
       `This is rare and usually transient — try again. If it persists, switch ` +
       `provider in Settings.`
     );
   }
-  return firstBlock.text;
+  return answerText;
 }
 
 /**

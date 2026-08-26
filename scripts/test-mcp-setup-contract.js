@@ -252,13 +252,21 @@ function runListDomains(args, envOverride) {
     let buf = '';
     let stderr = '';
     const frames = [];
+    // Every non-empty stdout line, VERBATIM, recorded BEFORE any parse attempt.
+    // The `catch {}` below is correct for frame assembly and was silently
+    // destroying the only evidence of a stdout-purity break: under a stray
+    // module-scope console.log the poison line was dropped here and this suite
+    // stayed green. Keeping the raw list means the two suites that spawn a real
+    // MCP child (this one and test-mcp-e2e.js) each carry an independent purity
+    // gate, so a refactor of either leaves one standing.
+    const rawStdoutLines = [];
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       try { proc.kill(); } catch {}
-      resolve({ frames, stderr });
+      resolve({ frames, stderr, rawStdoutLines });
     };
     const timer = setTimeout(finish, 8000);
     proc.on('error', finish);
@@ -270,6 +278,7 @@ function runListDomains(args, envOverride) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
         if (!line) continue;
+        rawStdoutLines.push(line);
         try { frames.push(JSON.parse(line)); } catch {}
       }
       if (frames.some(f => f.id === 3)) finish();
@@ -306,6 +315,25 @@ check(`e2e: WITHOUT args → the FALLBACK dir is used, i.e. the arg is load-bear
   JSON.stringify(withoutArgsDomains) === JSON.stringify(['zz-fallback-domain']));
 check('e2e: the two spawns genuinely differ (the test can distinguish them)',
   JSON.stringify(withArgsDomains) !== JSON.stringify(withoutArgsDomains));
+
+// STDOUT PURITY — the v2.5.3 gate, asserted on both real spawns above.
+// The MCP protocol reserves stdout for JSON-RPC frames; a stray console.log
+// anywhere on the transitive import graph reaches Claude Desktop as
+// `Unexpected token ... is not valid JSON` and kills the session. This is a
+// deliberate SECOND, independent gate — test-mcp-e2e.js §0 is the primary one
+// and exercises a far wider slice of the graph (every read tool plus all four
+// mutating tools). Two suites, so a refactor of either leaves one standing.
+for (const [label, res] of [['WITH --domains-path', withArgs], ['WITHOUT --domains-path', withoutArgs]]) {
+  const poison = res.rawStdoutLines.filter((l) => {
+    try { JSON.parse(l); return false; } catch { return true; }
+  });
+  check(`e2e: the ${label} spawn actually spoke on stdout (${res.rawStdoutLines.length} lines — otherwise the purity check below is vacuous)`,
+    res.rawStdoutLines.length > 0);
+  check(poison.length === 0
+    ? `e2e: STDOUT PURITY — all ${res.rawStdoutLines.length} stdout lines from the ${label} spawn parse as JSON-RPC`
+    : `e2e: STDOUT PURITY BROKEN on the ${label} spawn — the v2.5.3 bug. ${poison.length} non-JSON line(s); first: ${JSON.stringify(poison[0].slice(0, 160))}. Diagnostics on the MCP import graph must use console.error, never console.log.`,
+    poison.length === 0);
+}
 
 rmSync(tmpRoot, { recursive: true, force: true });
 

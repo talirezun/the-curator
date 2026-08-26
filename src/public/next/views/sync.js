@@ -74,6 +74,7 @@ import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
+  refreshSyncBadge, refreshSyncRemoteBadge,
 } from '../app.js';
 
 function freshState() {
@@ -580,6 +581,38 @@ async function onAction(kind, token) {
     // mid-action) mount's own state object and wrongly clear its
     // genuinely-in-flight `acting` flag. A fresh mount already starts
     // with `acting: null` via freshState() regardless.
+    // Repaint the RAIL badge, and do it BEFORE this view's buttons come
+    // back — the ordering is the fix, not an aesthetic choice. A push/pull/
+    // sync is exactly the moment both halves of the badge become wrong: the
+    // local count just dropped, and a pull just consumed whatever was
+    // waiting on GitHub. Without this the rail could keep showing "↓5
+    // waiting to pull" for up to the 10-minute remote interval AFTER the
+    // user pulled it — telling them to do work they have already done.
+    //
+    // WHY IT MOVED ABOVE `state.acting = null` (release-blocker fix). It
+    // used to run at the END of this block, unawaited, AFTER render() had
+    // already re-enabled every button. refreshSyncRemoteBadge() issues a
+    // real `git fetch`, so that left a live fetch running against controls
+    // the user could click: Push → buttons re-enable → Sync now → the
+    // user's own pull raced our own background fetch over
+    // refs/remotes/origin/main and died before merging (reproduced against
+    // real git, 11 failures in 12). brain/sync.js now serialises its
+    // fetches and pull() survives a lost race, so this is the second of two
+    // layers — but a UI that hands the user a button while it is still
+    // working is worth removing on its own merits, and relying on the
+    // backend to absorb a window we deliberately opened is how the next
+    // one gets opened.
+    //
+    // Awaiting is safe by contract: refreshSyncRemoteBadge() NEVER throws
+    // and never rejects (see its definition — boot() depends on that).
+    // Ungated on the mount token, deliberately: both update module-level
+    // shell state and the rail, which outlive this view, so there is no
+    // stale-mount hazard. refreshSyncBadge() is local-only and instant, so
+    // it stays fire-and-forget.
+    if (isCurrentMount(token)) {
+      refreshSyncBadge();
+      await refreshSyncRemoteBadge();
+    }
     if (isCurrentMount(token)) {
       state.acting = null;
       // HIGH-1 fix (third re-audit round): this used to `await loadStatus()`
@@ -598,15 +631,90 @@ async function onAction(kind, token) {
   }
 }
 
+// ── Result copy ─────────────────────────────────────────────────────────
+//
+// PARITY, and this is the reason it is written out rather than shortened.
+// "Sync now" is the primary action on this screen, and until v3.9.1 the
+// bidirectional branch returned the bare string 'Sync complete.' — no
+// counts, no direction, nothing. Push-only and pull-only each reported
+// their number, so the ONE action the design makes prominent was the one
+// that told the user least.
+//
+// The data was never missing. POST /api/sync/sync returns
+// `{pullResult, pushResult}` — brain/sync.js's sync() awaits pull() then
+// push() and returns both, and routes/sync.js passes that through
+// untouched. Both counts were arriving on the wire and being discarded
+// here. (Worth stating plainly, because the opposite shape — a plausible
+// sentence rendered over data that never arrives — is this codebase's
+// named dead-data defect, and the fix for that one would have been in the
+// backend. This one genuinely was the string.)
+//
+// The shipping app has rendered all of this since v2.3.7
+// (src/public/app.js, the #sync-both-btn handler): both directions, and
+// the pruned-domain list that tells you a delete propagated from another
+// machine. v2.3.7 exists because push once claimed "6 files synced" when
+// ~200 had moved, so under-reporting here is a regression twice over.
+//
+// Every string below is rendered through escapeHtml() by renderConfigured.
+
+function fileCount(n) {
+  return n + ' file' + (n === 1 ? '' : 's');
+}
+
+// The v2.3.4 sync-delete signal: another machine deleted a domain, the pull
+// removed its files, and pruneGhostDomainDirs() cleaned up the empty shell
+// git left behind. Silence here reads as "nothing happened" for what is
+// actually the most consequential thing a pull can do.
+//
+// Named list capped at 5 — the shipping app joins all of them, which is
+// fine for the realistic 1-2 but would build an unbounded sentence from
+// remote-controlled names. Cap, then say how many more.
+const PRUNED_NAMES_SHOWN = 5;
+
+function describePruned(pruned) {
+  if (!pruned || !pruned.length) return null;
+  const shown = pruned.slice(0, PRUNED_NAMES_SHOWN);
+  const rest = pruned.length - shown.length;
+  const names = shown.join(', ') + (rest > 0 ? ', and ' + rest + ' more' : '');
+  return 'removed ' + pruned.length + ' deleted domain'
+    + (pruned.length === 1 ? '' : 's') + ' (' + names + ')';
+}
+
 function describeResult(kind, data) {
   if (kind === 'push') {
     if (data.pushed === false) return data.message || 'Everything is already up to date.';
-    return 'Pushed ' + (data.filesChanged || 0) + ' file' + (data.filesChanged === 1 ? '' : 's') + ' to GitHub.';
+    return 'Pushed ' + fileCount(data.filesChanged || 0) + ' to GitHub.';
   }
+
   if (kind === 'pull') {
-    return 'Pulled ' + (data.filesChanged || 0) + ' file' + (data.filesChanged === 1 ? '' : 's') + ' from GitHub.';
+    const n = data.filesChanged || 0;
+    const pruned = describePruned(data.pruned);
+    if (n === 0 && !pruned) return 'Already up to date — nothing new on GitHub.';
+    const parts = [];
+    if (n > 0) parts.push('Pulled ' + fileCount(n) + ' from GitHub');
+    if (pruned) parts.push(pruned);
+    return parts.join(', ') + '.';
   }
-  return 'Sync complete.';
+
+  // Bidirectional. sync() runs pull() FIRST, then push(), and both results
+  // are reported in that order so the sentence matches what happened.
+  const pullResult = data.pullResult || {};
+  const pushResult = data.pushResult || {};
+  const pulled = pullResult.filesChanged || 0;
+  const pushed = pushResult.filesChanged || 0;
+
+  const parts = [];
+  if (pulled > 0) parts.push('pulled ' + fileCount(pulled) + ' from GitHub');
+  // `pushed === true` is checked as well as the count: push() reports
+  // filesChanged 0 with pushed:false when there was nothing to send, and
+  // claiming a push that never ran is the same class of dishonesty as the
+  // count that is missing entirely.
+  if (pushResult.pushed && pushed > 0) parts.push('pushed ' + fileCount(pushed) + ' to GitHub');
+  const pruned = describePruned(pullResult.pruned);
+  if (pruned) parts.push(pruned);
+
+  if (!parts.length) return 'Sync complete — everything was already up to date.';
+  return 'Sync complete — ' + parts.join(', ') + '.';
 }
 
 async function onDisconnect(token) {

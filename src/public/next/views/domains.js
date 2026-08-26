@@ -105,6 +105,33 @@ const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolder
 // that have no suggestedTarget (the only two review-only shapes scanWiki
 // emits); every other type stays un-dismissible by construction.
 
+// ── Recovery copy (v3.9.1) ─────────────────────────────────────────────────
+//
+// Every one of these surfaces used to promise the change was "revertable from
+// Sync". THAT CONTROL DOES NOT EXIST AND NEVER HAS. The backend exposes exactly
+// status / setup / push / pull / sync / disconnect (src/routes/sync.js) — no
+// revert, no discard, no restore — and neither frontend has such a button. The
+// Sync view in this very build says so two clicks away ("Commit history & revert
+// are coming soon"). So the app was offering a safety net it does not have, on
+// the panel that launches its most destructive operations.
+//
+// What IS true is the part underneath: the wiki folder is a git working tree, so
+// the change is genuinely recoverable — from a git client, not from the app. But
+// only if Personal Sync is configured, because `.knowledge-git` is created by
+// sync setup and by nothing else; a user who has never set it up has no history
+// to go back to. The copy is therefore CONDITIONAL, not merely softened.
+//
+// Two variants, because the honest thing to say differs by stakes:
+//   NOTE — informational surfaces (an action bar hint, a non-deleting confirm).
+//   WARN — confirms for operations that DELETE a page. There, "otherwise this
+//          cannot be undone" is the load-bearing half of the sentence.
+// Single-sourced so the two cannot drift into disagreeing about what recovery
+// exists, and so the next person to add a Health action inherits the true
+// wording instead of copying the old promise from a neighbouring string.
+// Kept consistent with docs/ai-health.md's "How to actually undo a Health fix".
+const GIT_UNDO_NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
+const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+
 // ── Module state ───────────────────────────────────────────────────────────
 // Kept at module scope (not reset on every onEnter) so switching away to
 // another view and back preserves which domain was open — matches how
@@ -1884,7 +1911,7 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
       // made, which reads as if something is already wrong.
       (crossMountBusy && !busy
         ? '<div class="dm-quick-note dm-quick-note-busy">' + icon('alertTriangle', 12) + ' An earlier fix on this domain is still running — please wait for it to finish before starting another.</div>'
-        : '<div class="dm-quick-note">Every AI action shows its cost before it runs. All changes are git-tracked and revertable from Sync.</div>') +
+        : '<div class="dm-quick-note">Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE + '</div>') +
     '</div>'
   );
 }
@@ -1987,7 +2014,7 @@ function renderSemanticScanResult(readonly, crossMountBusy) {
       '<div class="dm-plan-title">' + pluralize(s.pairs.length, 'candidate pair') + ' found</div>' +
       '<div class="dm-plan-summary">Each merge deletes one page and repoints every [[wikilink]] to it across the domain. ' +
       'Preview a pair to enable its Merge button; Flip swaps which side survives; Skip dismisses the pair so it stops ' +
-      'coming back on future scans. Everything here is git-tracked and revertable from Sync.</div>' +
+      'coming back on future scans. ' + GIT_UNDO_WARN + '</div>' +
       batchBar +
       '<div class="dm-sem-list">' + cards + '</div>' +
       (handledRows ? ('<div class="dm-plan-detail mono">Already handled in this scan:</div>' + handledRows) : '') +
@@ -2421,7 +2448,7 @@ function confirmFixSafe(slug) {
     title: 'Fix ' + pluralize(total, 'safe issue') + '?',
     body: 'Applies deterministic repairs only — cross-folder duplicates, hyphen variants, folder-prefix links, ' +
       'missing backlinks, and broken links that already have a known target. Nothing here spends AI tokens. ' +
-      'Every change is git-tracked and can be reverted from Sync.',
+      GIT_UNDO_NOTE,
     confirmLabel: 'Fix now',
     run: () => runFixSafe(slug),
   };
@@ -2538,10 +2565,9 @@ function confirmFixAllOfType(slug, type) {
     ? 'This MERGES each group and DELETES the duplicate pages, then repoints every '
       + '[[link]] that pointed at them. ' + pluralize(deletedPageCount(type, issues), 'page')
       + ' will be deleted. '
-      + 'Every change is git-tracked and can be reverted from Sync.'
+      + GIT_UNDO_WARN
     : 'Applies the deterministic repair to every ' + label.replace(/s$/, '')
-      + ' listed here. No AI tokens are spent. Every change is git-tracked and can be '
-      + 'reverted from Sync.';
+      + ' listed here. No AI tokens are spent. ' + GIT_UNDO_NOTE;
 
   state.confirm = {
     title: 'Fix all ' + count + ' ' + label + '?',
@@ -2602,6 +2628,54 @@ function confirmBrokenLinksPlan(slug) {
   render(myMountToken);
 }
 
+// v3.9.1 — an EMPTY plan is a normal outcome, and this is where that is decided.
+//
+// THE DEFECT: `if (!result) throw` caught a missing done-frame but not an empty
+// `result.plan`, so a zero-entry plan was stored as a pending plan, rendered with
+// a live "Apply this plan" button, and POSTed — earning a 400 whose body the
+// catch below rendered verbatim in a RED banner: "Could not apply the plan —
+// Missing plan[] to apply". The app took its own correct, deliberately
+// conservative behaviour and presented it as a failure the user could not act on.
+//
+// WHY THE PLAN CAN LEGITIMATELY BE EMPTY, per planner (src/brain/health-ai.js):
+//   • orphans      — the rescuer only proposes a home when there is a GENUINE
+//                    relationship, and drops anything below medium confidence,
+//                    hallucinated, or self-linking. On a domain with three
+//                    stubborn orphans left, "none of them has a home" is the
+//                    EXPECTED answer.
+//   • broken links — every AI batch that throws or fails to parse hits
+//                    `continue` WITHOUT pushing, so a provider outage can never
+//                    bias the plan toward stripping brackets. All batches
+//                    failing therefore yields [] with the links left untouched.
+// Those two are different facts about the world and must not be reported with
+// the same sentence, which is why `batchErrors` is counted below rather than
+// assumed to be zero: telling a user "the AI found nothing to fix" when the AI
+// was never reached would be the same class of untruth as the red banner.
+//
+// `batch-error` frames were already on the wire and read by NOTHING in /next —
+// this repo's named dead-data shape, and the reason the honest message was not
+// available to write before now.
+function emptyPlanNotice(kind, summary, batchErrors) {
+  if (batchErrors > 0) {
+    // NOT pluralize(): this file's pluralize is a bare + 's' and yields
+    // "2 batchs". Caught by §8 of test-beta16-broken-links.js, whose sandbox
+    // uses the same naive implementation the real view does — which is the
+    // point of stubbing it faithfully rather than "correctly".
+    return 'Nothing was planned and nothing was written — the AI did not answer for '
+      + batchErrors + ' batch' + (batchErrors === 1 ? '' : 'es')
+      + '. Your wiki is unchanged; try again in a moment.';
+  }
+  if (kind === 'orphans') {
+    const n = Number(summary && summary.orphans) || 0;
+    // Pronoun-free on purpose: the sentence has to read correctly at n = 1 and
+    // at n = 213 without a second template.
+    return 'No confident home was found for ' + (n ? pluralize(n, 'orphan page') : 'any orphan page')
+      + ', so nothing was written. The rescuer only proposes a link where there is a genuine '
+      + 'relationship, so this is it working as intended — left for manual review.';
+  }
+  return 'No broken link could be resolved, so nothing was written and your wiki is unchanged.';
+}
+
 async function runBrokenLinksPlan(slug) {
   const token = myMountToken;
   state.busyKey = 'brokenLinksPlan';
@@ -2610,13 +2684,30 @@ async function runBrokenLinksPlan(slug) {
   render(token);
   try {
     let result = null;
+    let batchErrors = 0;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/broken-links/plan', {}, (type, ev) => {
       if (type === 'progress') { noteAiProgress('brokenLinksPlan', ev); render(token); }
+      if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
     if (!result) throw new Error('No plan returned');
-    if (isCurrentMount(token)) state.pendingPlan = { kind: 'brokenLinks', plan: result.plan, summary: result.summary };
+    // Deliberately NOT `!result.plan.length` on a bare read: a done frame whose
+    // `plan` is absent or not an array is also "nothing to apply", and must take
+    // the same branch rather than throwing on `.length` of undefined.
+    //
+    // No early `return` here: the trailing `render(token)` sits AFTER the
+    // try/catch/finally, so returning out of the try would reset busyKey in the
+    // finally and then never repaint — the banner would be set and invisible
+    // until some unrelated event re-rendered the view.
+    const plan = Array.isArray(result.plan) ? result.plan : [];
+    if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
+    else if (plan.length === 0) {
+      state.pendingPlan = null;
+      state.banner = { tone: 'info', text: emptyPlanNotice('brokenLinks', result.summary, batchErrors) };
+    } else {
+      state.pendingPlan = { kind: 'brokenLinks', plan, summary: result.summary };
+    }
   } catch (err) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build a broken-link plan — ' + err.message };
   } finally {
@@ -2651,13 +2742,26 @@ async function runOrphansPlan(slug) {
   render(token);
   try {
     let result = null;
+    let batchErrors = 0;
     await streamSSE('/api/health/' + encodeURIComponent(slug) + '/orphans/plan', {}, (type, ev) => {
       if (type === 'progress') { noteAiProgress('orphansPlan', ev); render(token); }
+      if (type === 'batch-error') batchErrors++;
       if (type === 'done') result = ev;
       if (type === 'error') throw new Error(ev.error || 'Plan failed');
     });
     if (!result) throw new Error('No plan returned');
-    if (isCurrentMount(token)) state.pendingPlan = { kind: 'orphans', plan: result.plan, summary: result.summary };
+    // v3.9.1 — see runBrokenLinksPlan above for the whole reasoning. This is the
+    // flow the maintainer actually hit: "Rescue 3 orphans $0.0026" → three
+    // orphans with no genuine home → red "Could not apply the plan — Missing
+    // plan[] to apply". Same branch, same no-early-return rule.
+    const plan = Array.isArray(result.plan) ? result.plan : [];
+    if (!isCurrentMount(token)) { /* a later mount owns the view; drop the result */ }
+    else if (plan.length === 0) {
+      state.pendingPlan = null;
+      state.banner = { tone: 'info', text: emptyPlanNotice('orphans', result.summary, batchErrors) };
+    } else {
+      state.pendingPlan = { kind: 'orphans', plan, summary: result.summary };
+    }
   } catch (err) {
     if (isCurrentMount(token)) state.banner = { tone: 'error', text: 'Could not build an orphan-rescue plan — ' + err.message };
   } finally {
@@ -2671,6 +2775,22 @@ async function applyPendingPlan(slug) {
   const token = myMountToken;
   const p = state.pendingPlan;
   if (!p) return;
+  // v3.9.1 — SECOND, INDEPENDENT layer. The plan runners above already refuse to
+  // store an empty plan, so this should be unreachable; it is here because the
+  // cost of being wrong is asymmetric. `state` is module-scoped and survives
+  // leaving the view, so a pendingPlan can outlive the run that produced it, and
+  // an empty one arriving here would spend a POST, take the domain's file lock,
+  // and hand the user a 400 — the exact defect. It fails LOUDLY-but-calmly (an
+  // info banner, the plan discarded) rather than silently: `/old`'s equivalent
+  // guard is a bare `return`, which turns the Apply button into a dead control
+  // that reports nothing at all, and that is the wrong half of this trade.
+  const pendingCount = Array.isArray(p.plan) ? p.plan.length : 0;
+  if (pendingCount === 0) {
+    state.pendingPlan = null;
+    state.banner = { tone: 'info', text: emptyPlanNotice(p.kind, p.summary, 0) };
+    render(token);
+    return;
+  }
   const kind = p.kind;
   state.busyKey = kind + 'Apply';
   state.aiProgress = null;
@@ -2693,7 +2813,36 @@ async function applyPendingPlan(slug) {
     });
     if (isCurrentMount(token)) {
       if (kind === 'brokenLinks') {
-        state.banner = { tone: 'success', text: 'Repointed ' + (result.occurrencesReplaced || 0) + ' link occurrences across ' + pluralize(result.filesChanged || 0, 'file') + '.' };
+        // v3.9.1 — report the THREE outcomes this endpoint can produce, not one.
+        //
+        // It used to render `occurrencesReplaced`, which is the SUM of repointed
+        // and stripped occurrences, under the single label "Repointed" — so a run
+        // that repointed nothing and removed every bracket still reported them all
+        // as repoints. Measured: a plan whose one retarget is refused returns
+        // { retargeted: 0, stripped: 3, occurrencesReplaced: 3 } and read
+        // "Repointed 3 link occurrences".
+        //
+        // `downgraded` is the count the server-side lexical gate produces when it
+        // REFUSES a proposed retarget and degrades it to a strip. Two properties
+        // decide the wording, and both are measured rather than assumed:
+        //   • it counts LINKS (plan entries), while retargeted/stripped count
+        //     OCCURRENCES — so it is never rendered as an occurrence count;
+        //   • those occurrences are ALREADY inside `stripped`, so it is a
+        //     qualifier on the strip count, never a third addend.
+        // Absent (an older server mid-update) it reads 0 and the sentence is
+        // omitted entirely — a permanent "0 refused" row is noise, not honesty.
+        const rt = Number(result.retargeted) || 0;
+        const st = Number(result.stripped) || 0;
+        const dg = Number(result.downgraded) || 0;
+        let text = 'Repointed ' + pluralize(rt, 'occurrence')
+          + ', removed the brackets from ' + pluralize(st, 'occurrence')
+          + ', across ' + pluralize(Number(result.filesChanged) || 0, 'file') + '.';
+        if (dg > 0) {
+          text += ' ' + pluralize(dg, 'link')
+            + ' had a proposed target that did not pass the safety check, so the brackets'
+            + ' were removed instead of pointing at the wrong page.';
+        }
+        state.banner = { tone: 'success', text };
       } else {
         state.banner = { tone: 'success', text: 'Rescued ' + (result.rescued || 0) + ' orphans (' + (result.skipped || 0) + ' skipped).' };
       }
@@ -2835,8 +2984,17 @@ function mergeSemanticDuplicates(slug) {
   if (high.length === 0) return;
   state.confirm = {
     title: 'Merge ' + pluralize(high.length, 'high-confidence duplicate') + '?',
+    // DELIBERATELY INLINE, and must stay inline — do not "tidy" this into
+    // GIT_UNDO_WARN. test-next-semantic-gate.js builds a sandbox from this
+    // file's source with a FIXED const allow-list it extracts (`CONSTS`), and
+    // that suite is owned elsewhere; referencing the module constant here throws
+    // ReferenceError inside its sandbox and reds the suite. The copy is not
+    // unguarded: §8 of test-beta16-broken-links.js asserts that neither frontend
+    // contains a revert-from-Sync claim anywhere, and that this exact sentence
+    // is byte-identical to GIT_UNDO_WARN — so a drift between the two goes RED.
     body: 'Combines each pair’s bullet sections onto the kept page, retargets every [[wikilink]] across the ' +
-      'domain to it, and deletes the removed file. Nothing else changes. Every change is git-tracked and revertable from Sync.',
+      'domain to it, and deletes the removed file. Nothing else changes. ' +
+      'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.',
     confirmLabel: 'Merge now',
     // NOTE the missing argument: the pair list is NOT captured here. The
     // confirm card renders inline, so Flip / Skip / single-Merge stay

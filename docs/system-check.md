@@ -5,17 +5,19 @@ correctly — your API key works, your knowledge folder is writable, your
 credentials are secured, and (optionally) your AI provider is actually
 responding right now.
 
-It lives in **Settings → System Check**.
+It lives in **Settings → General → System check**.
 
 > **Three "health"-ish surfaces, three jobs** — don't mix them up:
 >
 > | Surface | Where | Checks |
 > |---|---|---|
-> | **Health** tab | top navigation | your **wiki content** (broken links, orphans, duplicate pages) |
-> | **Wiki Health — Scan Limits** | Settings | the **cost limits** for the Health tab's AI scans |
-> | **System Check** | Settings | the **app & your setup** (key, folder, credentials, sync, connectivity) |
+> | **Wiki health** | inside a domain (Domains → pick a domain) | your **wiki content** (broken links, orphans, duplicate pages) |
+> | **Health & scan limits** | Settings | the **cost limits** for the AI scans that Wiki health runs |
+> | **System check** | Settings → General | the **app & your setup** (key, folder, credentials, sync, connectivity) |
 >
-> Rule of thumb: **System Check = is the app working?** · **Health tab = is my wiki clean?**
+> Rule of thumb: **System check = is the app working?** · **Wiki health = is my wiki clean?**
+>
+> (At `/old` these are a top-level **Health** tab and a Settings section named *Wiki Health — Scan Limits*.)
 
 ---
 
@@ -90,7 +92,7 @@ click whether your key is fine and the provider is just busy.
 ## Related
 
 - [user-guide.md](user-guide.md) — the master guide.
-- [ai-health.md](ai-health.md) — the **Health tab** (wiki content cleanup) and
+- [ai-health.md](ai-health.md) — **Wiki health** (wiki content cleanup) and
   its **Wiki Health — Scan Limits** settings.
 - [model-lifecycle.md](model-lifecycle.md) — what happens when a model is retired
   and how fallback models work.

@@ -195,7 +195,12 @@ for issue in scan["brokenLinks"]:
         fix_wiki_issue(domain="articles", type="brokenLinks", issue=issue)
 ```
 
-Track successes. Report to the user: *"Fixed 42 issues automatically across 38 files."*
+Count a call as a success **only when it comes back `fixed: 1`**. A `fixed: 0` response carries a
+`reason`, and most reasons mean nothing was written and the issue is still there — only
+`link-not-present` / `link-already-present` mean it had genuinely been resolved already. Reporting
+refusals as fixes is how a "clean sweep" gets announced over an untouched wiki.
+
+Then report to the user: *"Fixed 42 issues automatically across 38 files."*
 
 **Step 3 — Review-only items: ask the user.**
 
@@ -207,11 +212,26 @@ The user replies. For broken links without targets, you can also try:
 ai-suggest path  // (existing in-app feature; equivalent here is offering to call list_domains/search to find a likely target manually)
 ```
 
-For orphans, you can offer the v2.4.4 Phase 2 AI suggestion flow if available — but here that's an in-app feature, not exposed via MCP. Tell the user honestly: *"For orphan rescue suggestions, the in-app Health tab has an ✨ Ask AI button per orphan. From here, I can dismiss the ones you tell me to skip, or note them for you to review later."*
+For orphans, the *batch* AI rescue is an in-app feature, not exposed over MCP. Tell the user honestly: *"For bulk orphan rescue, the app has a ✨ Rescue orphans action in a domain's Wiki health panel — it plans all 47 in one batch and previews the plan before writing. From here I can link them one at a time if you tell me where each belongs, dismiss the ones you want skipped, or note them for later."*
+
+Linking one orphan by hand goes through `fix_wiki_issue` with **`type="orphanLink"`** — not `"orphans"`, which is a scan category and a dismissal type but not a fixable type. It is the one case where you compose the issue instead of forwarding the scan object, because the scanner emits `{path, type, slug}` and the fixer needs a target it cannot know:
+
+```
+# scan gave you: { path: "concepts/lonely.md", type: "concept", slug: "lonely" }
+# you ask the user: "Should [[lonely]] be linked from [[knowledge-graphs]]?"  → they agree
+
+fix_wiki_issue(domain="articles", type="orphanLink", issue={
+    "orphanSlug":  "lonely",             # the scan entry's `slug`, verbatim
+    "targetSlug":  "knowledge-graphs",   # an EXISTING entity/concept, never a summary
+    "description": "a related idea",
+})
+```
+
+Forwarding the scan object unchanged here returns `fixed: 0` with `reason: "orphan-fields-missing"` — a refusal, not a fix. Never batch this without asking: `targetSlug` is your judgement, and 47 unasked guesses is 47 wrong edges.
 
 **Step 4 — Process user decisions.** For each:
-- *"fix it"* → `fix_wiki_issue`
-- *"dismiss it"* → `dismiss_wiki_issue` (syncs across machines + in-app Health tab)
+- *"fix it"* → `fix_wiki_issue` — pass the scan object through for every type **except** an orphan, which needs the composed `orphanLink` shape above
+- *"dismiss it"* → `dismiss_wiki_issue` (syncs across machines + the app's Wiki health panel) — here `type="orphans"` **is** correct, with the scan object unchanged
 - *"leave for later"* → no action, will resurface on next scan
 
 **Step 5 — Optional: semantic duplicates.**

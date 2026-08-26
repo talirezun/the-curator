@@ -369,12 +369,12 @@ function round6(n) { return Math.round(n * 1e6) / 1e6; }
  * The first implementation was ONE regex whose character class excluded
  * whitespace, so a match stopped dead at the first space and echoed the rest
  * verbatim. That is not a corner case: it is the COMMON case. Measured:
- *   /Users/tali rezun/Google Drive/My Drive/wiki/log.md
- *     -> '.../tali rezun/Google Drive/My Drive.../log.md'
+ *   /Users/alice smith/Google Drive/My Drive/wiki/log.md
+ *     -> '.../alice smith/Google Drive/My Drive.../log.md'
  * The user's name and their entire cloud-storage layout survived a function
  * whose stated purpose was hiding exactly that, and its docblock asserted
  * "a false negative leaks the user's filesystem" while shipping one. Windows
- * was worse (`C:\Users\Tali Rezun\...` kept everything after the drive
+ * was worse (`C:\Users\Alice Smith\...` kept everything after the drive
  * letter), and `Dropbox (Personal)`, `/Volumes/My Book` and
  * `OneDrive - Company` all leaked. The test only exercised space-free paths,
  * so it was green on precisely the inputs that already worked.
