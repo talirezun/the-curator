@@ -188,9 +188,11 @@ section('6. compareModelCost — every rung of every shipped chain');
   // Verified 2026-08-24 against the providers' published pricing pages.
   const expected = {
     // Gemini: EVERY rung is costlier than the default — the exact case the old
-    // family heuristic got wrong on the first two.
+    // family heuristic got wrong on the first two. (gemini-3.5-flash-lite was
+    // removed from the chain 2026-08-26 — strictly dominated by
+    // gemini-2.5-flash on price AND JSON reliability — so it has no entry
+    // here; this map is looked up only for rungs actually in the chain.)
     'gemini-3.1-flash-lite':     'costlier',   // $0.25/$1.50 vs $0.10/$0.40
-    'gemini-3.5-flash-lite':     'costlier',   // $0.30/$2.50
     'gemini-2.5-flash':          'costlier',   // $0.30/$2.50
     // Anthropic: the entire Haiku 3.5 family is retired (404), so every live
     // rung is now Sonnet and all three are costlier than the Haiku 4.5 default.
@@ -302,6 +304,22 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
     ok(!shippedIds.includes(dead), `retired id "${dead}" is not shipped`);
     eq(getModelPrice(dead), null, `retired id "${dead}" carries no dead-weight price entry`);
   }
+
+  // Regression guard, distinct from RETIRED above: `gemini-3.5-flash-lite`
+  // was removed 2026-08-26 not because it 404s (it doesn't — it's live) but
+  // because it is STRICTLY DOMINATED by gemini-2.5-flash: identical price
+  // ($0.30/$2.50 on both) while measurably less reliable (2 of 9 live probes
+  // against the real ingest outline prompt produced JSON neither JSON.parse
+  // nor jsonrepair could fix — a dropped object key, finishReason STOP, not
+  // truncation) and no wider outline coverage than its neighbours. Re-adding
+  // it as a rung with NO price would already fail the length/coverage
+  // invariants above; this assertion additionally catches the case where
+  // someone re-adds BOTH the rung and a price without re-reading why it was
+  // pulled — nothing else in this file would object to that on its own.
+  ok(!shippedIds.includes('gemini-3.5-flash-lite'),
+    'gemini-3.5-flash-lite (dominated by gemini-2.5-flash — not re-added without re-measuring) is not shipped');
+  eq(getModelPrice('gemini-3.5-flash-lite'), null,
+    'gemini-3.5-flash-lite carries no dead-weight price entry');
 }
 
 // ── 10. Per-model Anthropic output caps ─────────────────────────────────────

@@ -1073,8 +1073,22 @@ function renderProviderRow(p, k, crossBusy) {
     );
   }
 
-  const hasKeyField = p.id === 'gemini' ? k.geminiApiKey : k.anthropicApiKey;
-  const hasKey = p.id === 'gemini' ? k.hasGeminiKey : k.hasAnthropicKey;
+  // Keyed by p.id via a lookup table, NOT a binary gemini/anthropic ternary.
+  // The prior form (`p.id === 'gemini' ? A : B`) had only two arms, so ANY
+  // third provider row fell into the `else` and rendered ANTHROPIC's masked
+  // key + "configured"/"active" state next to that other provider's name —
+  // a real misrepresentation on a credentials screen. It was latent only
+  // because openai/local both have `available: false` and return early
+  // above; it arms the moment a third provider is flipped available. A
+  // provider id absent from this table fails SAFE (undefined reads as "no
+  // key" below) rather than falling through to someone else's credentials.
+  const KEY_INFO_BY_PROVIDER = {
+    gemini: { field: k.geminiApiKey, has: k.hasGeminiKey },
+    anthropic: { field: k.anthropicApiKey, has: k.hasAnthropicKey },
+  };
+  const keyInfo = KEY_INFO_BY_PROVIDER[p.id] || {};
+  const hasKeyField = keyInfo.field;
+  const hasKey = keyInfo.has;
   const model = (k.models && k.models[p.id]) || '—';
   const isActive = k.activeProvider === p.id;
   const isReplacing = state.replacing === p.id;
@@ -1686,7 +1700,25 @@ async function onSaveKey(provider, token) {
   state.keysActionError = null;
   render(token);
   try {
-    const body = provider === 'gemini' ? { geminiApiKey: value } : { anthropicApiKey: value };
+    // Keyed by provider via a lookup table, NOT a binary gemini/anthropic
+    // ternary — the render-side half of this exact defect shape is fixed
+    // above in renderProviderRow (see its KEY_INFO_BY_PROVIDER comment).
+    // Here the stakes are worse: this branch WRITES. The old form
+    // (`provider === 'gemini' ? A : B`) POSTed ANY third provider's key
+    // under `anthropicApiKey`, which would silently OVERWRITE the user's
+    // real Anthropic credential with a key for a different service —
+    // credential corruption, not just a misleading render, on the one
+    // screen where users hand us secrets. An id absent from this table
+    // REFUSES to save (thrown, caught below, surfaced as an error) rather
+    // than guessing a field: under-saving is recoverable; writing into the
+    // wrong provider's slot may go unnoticed until that other service
+    // starts failing.
+    const SAVE_BODY_KEY_BY_PROVIDER = { gemini: 'geminiApiKey', anthropic: 'anthropicApiKey' };
+    const bodyKey = SAVE_BODY_KEY_BY_PROVIDER[provider];
+    if (!bodyKey) {
+      throw new Error(`Cannot save a key for provider "${provider}" — no known credential field for it.`);
+    }
+    const body = { [bodyKey]: value };
     const res = await fetch('/api/config/api-keys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

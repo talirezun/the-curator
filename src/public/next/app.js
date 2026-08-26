@@ -458,7 +458,9 @@ const VIEW_ENTER_CLASS = 'view-enter';
 //
 // NOT `.main-inner` / `.sidebar-inner`: setMain()/setSidebar() replace those
 // on every call, and the two most-used views call setMain TWICE per entry
-// (domains.js and chat.js each paint a "Loading…" placeholder, then replace
+// (domains.js paints a "Loading…" placeholder and chat.js paints its own
+// first frame — VERIFIED 2026-08-26: chat.js contains no "Loading" string,
+// so do not go hunting for one — then each replaces
 // it with the loaded state), so animating the inner element would double-
 // fire on exactly those screens. These two ids persist across both writes.
 //

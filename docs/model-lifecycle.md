@@ -35,7 +35,6 @@ When a provider retires or supersedes one of these, we bump the constant in a ne
 const FALLBACK_CHAINS = {
   gemini: [
     'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
-    'gemini-3.5-flash-lite',        // next flash-lite generation — 3x in / 6.25x out
     'gemini-2.5-flash',             // higher (costlier) tier — last resort
   ],
   anthropic: [
@@ -45,6 +44,38 @@ const FALLBACK_CHAINS = {
   ],
 };
 ```
+
+**`gemini-3.5-flash-lite` was removed from the Gemini chain on 2026-08-26** — a
+deletion, not a reorder, so the chain stays cheapest-first ($0.25 → $0.30). It
+was **strictly dominated** by `gemini-2.5-flash`, the rung now directly after
+it: identical published price ($0.30/$2.50 on both), but measurably worse on
+the two axes that matter for a fallback rung. Measured live against this
+repo's real `buildOutlinePrompt` (not a toy prompt) over 9 runs each:
+
+- **JSON reliability:** 2 of 9 `gemini-3.5-flash-lite` runs produced JSON that
+  neither `JSON.parse` nor the `jsonrepair` fallback could fix — a dropped
+  object key (`{ "concepts/knowledge-graph.md", "summary": "..." }`, missing
+  its `"path":` key), unrecoverable because repair would have to invent the
+  key. `finishReason` was `STOP` both times, so this was **not** truncation —
+  a genuine generation defect, not a budget problem the output-token-limit
+  handling could route around. `gemini-3.1-flash-lite` and `gemini-2.5-flash`
+  were 3/3 and 3/3 clean on the identical probe.
+- **Outline coverage** on an identical source: `gemini-3.1-flash-lite` planned
+  5–12 pages, `gemini-2.5-flash` planned 17–19 pages, and
+  `gemini-3.5-flash-lite` sat in between at 12–16 — so it didn't even fill a
+  coverage gap between its neighbours that would have justified keeping it
+  despite the reliability cost.
+
+In production this rung fired ingest's Phase-1 stricter-retry ladder on
+roughly 22% of the calls that reached it — silent extra latency and spend on
+a rung that was never the cheapest option at its price point. Its price entry
+was removed from `MODEL_PRICES_USD_PER_MTOK` in the same change (an unshipped
+id's price is dead weight the length-equality invariant in
+`test-chat-model.js` §5 exists to catch). **Do not re-add it without
+re-measuring live with the real ingest prompt** — a toy "return this JSON"
+probe will not reproduce the failure, the same lesson the Anthropic
+thinking-block note above teaches about prompt realism when probing a
+fallback rung.
 
 The first model that responds is the one used for that call. Subsequent calls retry the primary first — when the provider restores it (or when you update), the Curator silently goes back to primary.
 
@@ -84,7 +115,7 @@ Why it matters: without it, a retirement silently multiplies the user's per-inge
 | `similar` | Confirmed same-or-cheaper | no cost line |
 | `unknown` | We have no price for one of the two ids | ℹ️ "Pricing for this model may differ… check your provider's pricing page" |
 
-The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering only the ~10 ids we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung), with published per-1M-token prices. The values are used **only for ordering** and are never shown to the user, so a stale absolute price is harmless as long as the order is right. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
+The comparison uses `MODEL_PRICES_USD_PER_MTOK` in [`llm.js`](../src/brain/llm.js) — an **exact-model-id** table covering only the ~7 ids we can actually run (`DEFAULTS` + every `FALLBACK_CHAINS` rung), with published per-1M-token prices. The values are used **only for ordering** and are never shown to the user, so a stale absolute price is harmless as long as the order is right. A legacy `costlier` boolean is still returned for compatibility, but the banner drives off `costTier` so `unknown` isn't collapsed into a misleading "no warning".
 
 > **Why not infer the tier from the model family?** That was the first implementation and it was structurally wrong. The family word (`flash-lite`, `haiku`) is stable *across generations* while the price is not: it scored `gemini-2.5-flash-lite` → `gemini-3.1-flash-lite` as "same tier" when that successor is **2.5× input / 3.75× output** — staying silent on the rung the chain reaches **first**, which defeated the entire feature. Only an exact-id table can see a within-family price change. The same table also correctly sees a within-family price *drop*: `claude-sonnet-5` is **cheaper** ($2/$10) than both `claude-sonnet-4-6` and `claude-sonnet-4-5` ($3/$15), so the newest Sonnet is also the cheapest — which no family-name heuristic could ever tell you.
 
@@ -96,7 +127,6 @@ Prices verified 2026-08-22 against [ai.google.dev/gemini-api/docs/pricing](https
 |---|---|---|---|
 | `gemini-2.5-flash-lite` *(default)* | $0.10 | $0.40 | — |
 | `gemini-3.1-flash-lite` | $0.25 | $1.50 | 2.5× / 3.75× |
-| `gemini-3.5-flash-lite` | $0.30 | $2.50 | 3× / 6.25× |
 | `gemini-2.5-flash` | $0.30 | $2.50 | 3× / 6.25× |
 | `claude-haiku-4-5` *(default)* | $1.00 | $5.00 | — |
 | `claude-sonnet-5` | $2.00 | $10.00 | 2× / 2× |
@@ -160,6 +190,8 @@ LLM_MODEL=gemini-2.5-pro npm start
 The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, chosen to mirror the cost profile of Gemini's `gemini-2.5-flash-lite`. Two known differences relative to the Gemini path:
 
 1. **No native JSON response mode.** Gemini supports `responseMimeType: 'application/json'`, which forces structurally-valid JSON output. Anthropic does not expose an equivalent, so JSON-producing code paths (primarily `src/brain/ingest.js`) rely on the system prompt instruction *"Return ONLY valid JSON"* combined with the `jsonrepair`-based fallback parser. Empirically this works, but expect slightly more retries on large ingests than Gemini produces.
+
+   **Measured 2026-08-26** (real `buildOutlinePrompt`, 3 live runs per model): `claude-haiku-4-5` — the pinned default — wraps its ingest-outline response in ` ```json ` fences 3/3, so raw `JSON.parse` fails 3/3 and every ingest on this default depends on the `jsonrepair` fallback to strip the fence before parsing. `claude-sonnet-4-5` and `claude-opus-4-5` showed the same 3/3 fenced behaviour. Everything 4.6-and-later (`claude-sonnet-4-6`, `claude-sonnet-5`) returned bare JSON and parsed raw 3/3. This is benign today — `parseJSON` is deliberately lenient for exactly this reason — but it means the fence-stripping path is the *normal* case for the default, not a rare edge case; see the comment above `DEFAULTS.anthropic` in `llm.js`.
 
 2. **Model ID format.** Anthropic's SDK v0.39.0 recognises up to `claude-3-7-sonnet-latest` / `claude-3-5-haiku-latest` in its TypeScript types; newer model IDs like `claude-haiku-4-5` and `claude-sonnet-4-5` are accepted as opaque strings but not validated at build time. If your primary model rejects with `404`, the fallback chain escalates straight to Sonnet — as of the 2026-08-24 live probe there is **no live Haiku other than the default**, so there is no same-tier rung to walk. The first rung (`claude-sonnet-5`) is both the newest and the cheapest of the three — and until v3.9.1 it was **dead on arrival**, for the reason in note 4 below.
 

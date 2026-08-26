@@ -24,9 +24,21 @@ import { getEffectiveKey, getActiveProvider } from './config.js';
 // justified cost/quality decision.
 const DEFAULTS = {
   gemini:    'gemini-2.5-flash-lite',
-  anthropic: 'claude-haiku-4-5',         // Haiku is the low-cost tier, matching the
-                                         // cost profile of gemini-2.5-flash-lite.
-                                         // See docs/model-lifecycle.md for rationale.
+  // Haiku is the low-cost tier, matching the cost profile of
+  // gemini-2.5-flash-lite. See docs/model-lifecycle.md for rationale.
+  //
+  // ⚠ JSON FENCING (measured 2026-08-26 with the real buildOutlinePrompt via
+  // ingest.js's __testing export): claude-haiku-4-5 wraps its ingest-outline
+  // response in ```json fences 3/3 live runs, so raw JSON.parse fails 3/3 and
+  // every ingest on this default depends on parseJSON's jsonrepair fallback to
+  // strip the fence. claude-sonnet-4-5 and claude-opus-4-5 showed the same 3/3
+  // fenced behaviour; everything 4.6-and-later (claude-sonnet-4-6,
+  // claude-sonnet-5) returned bare JSON and parsed raw 3/3. This is benign
+  // today — parseJSON is deliberately lenient for exactly this reason — but it
+  // means the fence-stripping path is not a rare edge case on Anthropic, it is
+  // the normal case for the pinned default. Do not "simplify" parseJSON to a
+  // bare JSON.parse without re-measuring this.
+  anthropic: 'claude-haiku-4-5',
 };
 
 /**
@@ -122,15 +134,40 @@ const FALLBACK_CHAINS = {
   // call shape (JSON mode + maxOutputTokens: 65536). The previous chain's
   // `gemini-1.5-flash` and `gemini-1.5-flash-latest` rungs both 404 — two of
   // three rungs were already dead — and have been removed.
+  //
+  // ⚠ `gemini-3.5-flash-lite` was REMOVED here on 2026-08-26 — not a reorder,
+  // a deletion, so the chain stays cheapest-first ($0.25 → $0.30). It is
+  // STRICTLY DOMINATED by `gemini-2.5-flash`, the rung that now follows it
+  // directly: identical price ($0.30/$2.50 on both), but measurably worse on
+  // both axes that matter for a fallback rung. Measured live against this
+  // repo's REAL buildOutlinePrompt (src/brain/ingest.js __testing export, not
+  // a toy prompt) over 9 runs each:
+  //   - JSON reliability: 2 of 9 runs produced JSON that neither JSON.parse
+  //     NOR jsonrepair can fix (a dropped object key —
+  //     `{ "concepts/knowledge-graph.md", "summary": "..." }` — unrecoverable
+  //     because repair would have to invent the "path": key). finishReason
+  //     was STOP both times, i.e. NOT truncation — a genuine generation
+  //     defect, not a budget problem `isOutputTokenLimit` could route around.
+  //     3.1-flash-lite and 2.5-flash were 3/3 and 3/3 clean on the same probe.
+  //   - Outline coverage on an identical source: 3.1-flash-lite planned 5-12
+  //     pages, 2.5-flash planned 17-19 pages, and 3.5-flash-lite sat in
+  //     between at 12-16 — so it does not even fill a coverage gap between
+  //     its neighbours.
+  // In production this rung fired ingest's Phase-1 stricter-retry ladder on
+  // ~22% of the runs that reached it — silent extra latency and cost on a
+  // rung that was never the cheapest option available at its price point.
+  // Do NOT re-add it without re-measuring live with the real ingest prompt —
+  // a toy "return this JSON" probe will not reproduce the failure (see the
+  // Anthropic thinking-block lesson in docs/model-lifecycle.md for why prompt
+  // realism matters when probing a fallback rung).
   gemini: [
     'gemini-3.1-flash-lite',        // closest live successor — verified drop-in, but 2.5x in / 3.75x out
-    'gemini-3.5-flash-lite',        // next flash-lite generation — 3x in / 6.25x out
     // ⚠ THINKING TOKENS: gemini-2.5-flash spends hidden reasoning tokens out of
     // the SAME maxOutputTokens budget, and they are billed as output. Probed
     // 2026-08-24: at maxOutputTokens 30 it returned finishReason MAX_TOKENS with
     // ZERO visible tokens and 26 thoughtsTokenCount — the entire budget consumed
     // before a single character of answer; at 64 it produced 2 visible against 58
-    // thoughts. The flash-lite rungs and the default showed 0-2 thought tokens on
+    // thoughts. The flash-lite rung and the default showed 0-2 thought tokens on
     // the same prompts, so this rung alone behaves differently. Nothing here
     // compensates for it (a budget nudge would be guesswork), but a caller
     // debugging "MAX_TOKENS with an empty response on the last fallback rung"
@@ -162,11 +199,15 @@ const FALLBACK_CHAINS = {
 /**
  * Published API prices, USD per 1M tokens, keyed by EXACT model id.
  *
- * Scope is deliberately tiny: the ~10 ids this app can actually run — DEFAULTS
+ * Scope is deliberately tiny: the ~7 ids this app can actually run — DEFAULTS
  * plus every rung of FALLBACK_CHAINS. Those are ids WE choose and change
  * deliberately, so staleness is bounded by our own release process (see the
  * release checklist in docs/model-lifecycle.md: adding a rung means adding its
- * price here).
+ * price here). Symmetrically, REMOVING a rung means removing its price entry
+ * too — the offline invariant in test-chat-model.js §5 asserts this table has
+ * no entries beyond the ids currently shipped, precisely so a dead-weight
+ * price for a model we no longer run can't linger unnoticed (see the
+ * `gemini-3.5-flash-lite` removal below).
  *
  * This replaced a family-name heuristic (flash-lite/flash, haiku/sonnet) that
  * looked reasonable and was structurally wrong: the family word is stable
@@ -186,7 +227,11 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // ── Gemini ──
   'gemini-2.5-flash-lite':     { input: 0.10, output: 0.40 },   // current default
   'gemini-3.1-flash-lite':     { input: 0.25, output: 1.50 },   // 2.5x in / 3.75x out vs default
-  'gemini-3.5-flash-lite':     { input: 0.30, output: 2.50 },   // 3x in / 6.25x out vs default
+  // gemini-3.5-flash-lite REMOVED 2026-08-26 together with its chain rung —
+  // see the removal note above FALLBACK_CHAINS.gemini. Do not re-add this
+  // price entry without re-adding (and re-justifying) the rung itself; an
+  // unshipped id's price is dead weight the §5 length-equality invariant
+  // exists to catch.
   'gemini-2.5-flash':          { input: 0.30, output: 2.50 },
   // ── Anthropic ── (re-verified 2026-08-24; the four retired 3.x rungs and their
   // prices were removed together with the dead chain entries)

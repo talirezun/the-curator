@@ -99,6 +99,7 @@ const OFFLINE = [
   'test-next-recovery-and-badge.js', // Boot-recovery copy must name /old and NEVER "/" (post-cutover "/" IS the broken shell — the old advice looped), plus the rail sync badge, fail-quiet: a badge that lies about unpushed work is worse than none.
   'test-next-progress-ring.js',      // The two-layer ring. Pins the honesty invariant: a live stage at stageProgress 0 has ZERO fill, and nothing in the outer ring derives from elapsed time or the orbit.
   'test-next-model-fallback.js',     // The fallback-cost banner. An unrecognised cost tier resolves to 'unknown', NEVER 'similar' — `costlier:false` cannot tell parity from ignorance, and the fail-safe direction on money is to warn.
+  'test-next-provider-rows.js',    // class invariant: a provider row may render — and onSaveKey may POST — ONLY its own provider's credential. The binary `p.id === 'gemini' ? A : B` form rendered Anthropic's mask on any third row and POSTed a third provider's key as anthropicApiKey; both were latent only because openai/local are available:false
   'test-next-raw-source.js',         // The reader's RAW bar, 4 states. An external-source URL is inert text, proven behaviourally: exactly ONE request, to our own endpoint, and the declared host never contacted.
   'test-next-invite-and-inert.js',   // Shared Brain invite re-display, verified BYTE-FOR-BYTE against the route's real encodeInviteToken, plus the class invariant that no user-visible string says "preview shell"/"this phase".
   'check-doc-suite-counts.js',

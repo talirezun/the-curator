@@ -205,7 +205,9 @@ body {
    WHY THE STABLE CONTAINERS AND NOT `.main-inner` / `.sidebar-inner` —
    setMain() replaces `#view-root`'s child with a fresh `.main-inner` on
    every call, and the two most-used views call it TWICE per entry
-   (domains.js and chat.js each paint a "Loading…" placeholder, then replace
+   (domains.js paints a "Loading…" placeholder and chat.js paints its own
+   first frame — VERIFIED 2026-08-26: chat.js contains no "Loading" string,
+   so do not go hunting for one — then each replaces
    it with the loaded state). Animating the inner element would fade in
    "Loading…", then fade in the content — a double-fire on exactly the
    screens people use most. These two containers persist across both writes,

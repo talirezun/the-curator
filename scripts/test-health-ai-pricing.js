@@ -127,7 +127,7 @@ section('4. Regression guard — stale ~25%-low Gemini-default pricing cannot co
 }
 
 // ── 5. Previously-uncovered models now price ─────────────────────────────────
-// These five ids (the entire fallback-chain surface plus the documented
+// These four ids (the current fallback-chain surface plus the documented
 // LLM_MODEL=claude-sonnet-4-5 opt-in) were ABSENT from health-ai's old
 // 3-entry table. This is the literal "shows nothing at all after a
 // fallback-chain walk" defect: getProviderInfo() can return any of these as
@@ -135,10 +135,17 @@ section('4. Regression guard — stale ~25%-low Gemini-default pricing cannot co
 // different requested/using pair, or via a user pinning one directly through
 // LLM_MODEL — both surface identically to health-ai as `model`), and none of
 // them existed in the old local table.
+//
+// `gemini-3.5-flash-lite` was on this list until 2026-08-26, when it was
+// REMOVED from FALLBACK_CHAINS.gemini in llm.js (strictly dominated by
+// gemini-2.5-flash — same price, worse JSON reliability; see the removal note
+// above that chain). It no longer ships, so llm.js correctly returns no price
+// for it and asserting one here would fail for the right reason — do not
+// re-add it to this list without also re-adding the chain rung + its price.
 section('5. Fallback-chain rungs + claude-sonnet-4-5 — the specific "shows nothing" models');
 {
   const previouslyMissing = [
-    'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
     'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5',
   ];
   for (const id of previouslyMissing) {
