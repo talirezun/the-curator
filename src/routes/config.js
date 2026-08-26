@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -380,6 +380,22 @@ router.get('/api-keys', (_req, res) => {
       gemini:    getDefaultModel('gemini'),
       anthropic: getDefaultModel('anthropic'),
     },
+    // The user's EXPLICIT stored pick per provider, or null where they have not
+    // chosen. Additive, and deliberately separate from `models` above: `models`
+    // is what the app will actually USE (and now already reflects a stored pick,
+    // with no frontend change needed), while this distinguishes "the user chose
+    // the default" from "the user chose nothing" — which a picker needs in order
+    // to render a selected state honestly. Strings or null only; same shape
+    // discipline as `models`.
+    //
+    // Gated config-only, like `offerable` and hasGeminiKey/hasAnthropicKey: a
+    // Disconnected provider reports null here because llm.js will not honour its
+    // stored selection either (storedSelection()). The UI must never show a
+    // selection the engine has stopped obeying.
+    selectedModels: {
+      gemini:    keys.geminiApiKey    ? getSelectedModel('gemini')    : null,
+      anthropic: keys.anthropicApiKey ? getSelectedModel('anthropic') : null,
+    },
     // null if primary model is working; populated when the fallback chain kicked in
     // because the pinned default has been retired by the provider.
     fallback:        getFallbackStatus(),
@@ -468,6 +484,86 @@ router.post('/api-keys/active', guardConcurrent('switch the AI provider'), (req,
     try { info = getProviderInfo(); } catch {}
     res.json({
       ok: true,
+      activeProvider: info?.provider || null,
+      activeModel:    info?.model || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/config/api-keys/model — persist the user's model choice for one
+ *  provider, WITHOUT changing which provider is active.
+ *  Body: { provider: 'gemini' | 'anthropic', model: '<id>' | '' | null }
+ *  An empty/null model CLEARS the selection (back to the provider default).
+ *  Refuses (400) if the provider has no key SAVED IN SETTINGS, or if the model
+ *  is not in OFFERABLE_MODELS for that provider.
+ *
+ * ── guardConcurrent is load-bearing here, not copied for symmetry ────────────
+ * This is the v3.6.0 "config mutation mid-write" class, and the sharpest
+ * instance of it yet. resolveProviderDefault consults the stored selection
+ * FRESH ON EVERY CALL (it must — a Settings change has to take effect without a
+ * restart), and a multi-phase ingest makes 20+ LLM calls over several minutes.
+ * Unguarded, a click here mid-ingest would plan the outline on one model and
+ * write Phase-2 batches 3..11 on another — v3.6.0's "silently finish it on a
+ * different model", verbatim. It would also invalidate Anthropic's prompt cache
+ * mid-run (a different model is a different cache namespace, so every cached
+ * prefix READ becomes a WRITE at 1.25x — the v3.0.16 saving inverted into a
+ * surcharge) and make the queue's per-item spend arithmetic wrong, since price
+ * is looked up per model. Its sibling /api-keys/active is guarded for the
+ * provider-shaped version of exactly this; leaving the model-shaped one open
+ * would be this repo's named "guard applied to a ROUTE rather than a CLASS"
+ * pattern for the fifth time.
+ *
+ * The gate is CONFIG-ONLY (getApiKeys(), never getEffectiveKey/.env), matching
+ * `offerable` on GET /api-keys above and storedSelection() in llm.js: a user can
+ * only store a choice for a provider they have actually connected in Settings,
+ * and llm.js only honours it while that key remains connected. Both ends of the
+ * contract agree, so a Disconnect cannot leave a live orphaned selection.
+ *
+ * Validation is a READ of the single allow-list predicate (isOfferableModel),
+ * not a second copy of it — and it is deliberately not the only gate: llm.js
+ * re-checks on read, because a stored id can stop being offerable AFTER it was
+ * validly written (we pull a model after a bad live probe). Write-time
+ * validation exists to give the user a 400 they can act on; read-time
+ * validation is what keeps them safe later.
+ */
+router.post('/api-keys/model', guardConcurrent('change the AI model'), (req, res) => {
+  const { provider, model } = req.body || {};
+  if (provider !== 'gemini' && provider !== 'anthropic') {
+    return res.status(400).json({ error: 'provider must be "gemini" or "anthropic"' });
+  }
+  // Absent / empty / null clears the selection. Anything else must be a string.
+  const clearing = model === undefined || model === null || model === '';
+  if (!clearing && typeof model !== 'string') {
+    return res.status(400).json({ error: 'model must be a string' });
+  }
+  try {
+    const keys = getApiKeys();
+    const savedKey = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
+    if (!savedKey) {
+      return res.status(400).json({
+        error: `No ${provider} key is saved in Settings — connect one before choosing a model for it.`,
+      });
+    }
+    if (!clearing && !llmModule.isOfferableModel(provider, model)) {
+      // Never echo the caller's string back: this repo has a recorded
+      // log-forgery / injected-instruction finding from echoing an
+      // attacker-controlled value into a user-facing refusal (v3.0.1-beta.20).
+      return res.status(400).json({
+        error: `That model is not available for ${provider}. Pick one from the list in Settings.`,
+      });
+    }
+    const stored = setSelectedModel(provider, clearing ? '' : model);
+    let info = null;
+    try { info = getProviderInfo(); } catch {}
+    res.json({
+      ok: true,
+      provider,
+      selectedModel: stored,
+      // What the app will ACTUALLY use for this provider now — so the UI renders
+      // the resolved truth rather than assuming the write took effect verbatim.
+      effectiveModel: getDefaultModel(provider),
       activeProvider: info?.provider || null,
       activeModel:    info?.model || null,
     });

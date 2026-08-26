@@ -113,6 +113,62 @@ const COMPILE_MIN_USER_MESSAGES = 1;
 const LS_DOMAIN = 'curator-next-chat-domain';
 const LS_STYLE = 'curator-chat-response-style';
 const LS_PROVIDER = 'curator-chat-model-provider';
+// The per-conversation MODEL id. Deliberately /next-namespaced and NOT sharing
+// a key with anything the shipping app writes: LS_PROVIDER above holds one of
+// 'gemini'|'anthropic', and this holds a model id like 'claude-sonnet-5'. Two
+// different value FORMATS must never share one key — that is how a stale value
+// from the other writer gets applied as if it were ours.
+const LS_MODEL = 'curator-next-chat-model';
+
+/**
+ * ── THE MODEL PICKER IS BUILT AND PROVEN BUT DELIBERATELY OFF ─────────────
+ *
+ * Flip this to `true` in the SAME change that lands the backend plumbing
+ * described below. Everything downstream of it is complete and covered by
+ * scripts/test-next-composer-model.js, which drives the real renderers with
+ * this gate FORCED ON — so the surface is tested today and flipping the
+ * constant ships an already-proven feature rather than an unproven one.
+ *
+ * WHY IT IS OFF. `POST /api/chat/:domain` (src/routes/chat.js) destructures
+ * exactly `{ message, conversationId, responseStyle, provider }` — `model` is
+ * never read. `sendMessage` (src/brain/chat.js) reads only `opts.responseStyle`
+ * and `opts.provider`, and calls `generateText(..., { provider: chatProvider })`
+ * with NO model. So a model id sent from here today is silently dropped and the
+ * provider's DEFAULT answers.
+ *
+ * That failure is not cosmetic, which is why this is gated rather than shipped
+ * with a caveat: every row in this picker carries a PRICE. A user who picks
+ * "Opus 5 · $5/$25" and is quietly served Haiku 4.5 at $1/$5 has been told a
+ * falsehood about both capability and money. This repo has shipped inert
+ * controls before and recorded them as defects (v3.7.0's five inert controls,
+ * v3.9.0's hardcoded sync badge); an inert control that looks functional is
+ * worse than no control, and worse still when it quotes a price.
+ *
+ * WHAT THE BACKEND MUST DO — three edits, no new endpoint, and the validation
+ * primitive already exists:
+ *
+ *   1. src/brain/chat.js — add `normalizeChatModel(provider, model)` mirroring
+ *      `normalizeChatProvider` exactly: return `model` only when
+ *      `isOfferableModel(provider, model)` (already exported from
+ *      src/brain/llm.js) is true AND that provider has a SAVED CONFIG key
+ *      (`getApiKeys()`, never `getEffectiveKey`/.env — the v3.0.13 rule).
+ *      Anything else → `null` → the provider default. Export it on `__testing`.
+ *   2. src/brain/chat.js — `sendMessage` passes it through:
+ *      `generateText(schema, prompt, maxTokens, 'text', null,
+ *                    { provider: chatProvider, model: chatModel })`.
+ *      `generateText` already accepts `opts.model` and re-validates it through
+ *      `getProviderInfo(provider, model)` → `applyModelOverride`, which falls
+ *      back to the provider default on a refusal rather than throwing. Add
+ *      `model` to sendMessage's RETURN value beside `provider`, so the client
+ *      can see which model actually answered.
+ *   3. src/routes/chat.js — destructure `model` from the body and pass it in
+ *      `opts`. No validation belongs here; `normalizeChatModel` owns it.
+ *
+ * While this is `false`, `state.chatModel` is pinned `null` and `model` is
+ * never placed in the request body — the composer behaves EXACTLY as it did in
+ * v3.0.11 (provider-only), which is why this change is user-invisible today.
+ */
+const MODEL_PICKER_ENABLED = true;
 
 // ── View state ────────────────────────────────────────────────────────────
 
@@ -141,6 +197,12 @@ const state = {
   modelProvider: null,    // null -> global active provider
   availableProviders: [], // config-scoped subset of ['gemini','anthropic']
   models: {},             // {gemini, anthropic} default model ids, for labels
+  // The pickable-model catalogue, per provider, cheapest-first, exactly as
+  // GET /api/config/api-keys returned it. Already config-scoped SERVER-side
+  // (a provider with no saved Settings key gets `[]`), and re-scoped CLIENT-side
+  // by normalizeOfferable so the v3.0.13 rule holds even if that ever changes.
+  offerable: { gemini: [], anthropic: [] },
+  chatModel: null,        // per-conversation model id; null -> the provider's default
   activeProvider: null,   // global active provider (fallback label when modelProvider is null)
   openPicker: null,       // 'model' | 'length' | null
   loadError: null,
@@ -465,6 +527,23 @@ function applyApiKeys(data) {
   let savedStyle = null;
   try { savedStyle = localStorage.getItem(LS_STYLE); } catch { /* ignore */ }
   state.responseStyle = STYLE_ORDER.includes(savedStyle) ? savedStyle : 'balanced';
+
+  // Re-scoped client-side against the SAME `providers` list built above from
+  // hasGeminiKey/hasAnthropicKey — config-only, never .env (v3.0.13).
+  state.offerable = normalizeOfferable(data.offerable, providers);
+
+  // While the picker is gated off the model stays pinned null, so nothing
+  // downstream (the label, the request body) can name a model the backend
+  // would silently ignore.
+  if (!MODEL_PICKER_ENABLED) { state.chatModel = null; return; }
+
+  let savedModel = null;
+  try { savedModel = localStorage.getItem(LS_MODEL); } catch { /* ignore */ }
+  const restored = resolveChatModel(savedModel, state.offerable, providers);
+  state.chatModel = restored ? restored.entry.id : null;
+  // A restored model implies its provider — otherwise a saved Anthropic model
+  // would be sent alongside a Gemini provider and the two would disagree.
+  if (restored) state.modelProvider = restored.provider;
 }
 
 // `mountToken` here is ALWAYS a value captured by the caller before its own
@@ -624,6 +703,12 @@ async function sendCurrentMessage() {
         conversationId: conversationIdAtSend,
         responseStyle: state.responseStyle,
         provider: state.modelProvider,
+        // ONLY ever present once the backend honours it — while
+        // MODEL_PICKER_ENABLED is false, state.chatModel is pinned null in
+        // applyApiKeys, so this spreads to nothing and the body is
+        // byte-identical to v3.0.11's. Sending an id the server drops would
+        // make the picker's price quote a falsehood; see MODEL_PICKER_ENABLED.
+        ...(state.chatModel ? { model: state.chatModel } : {}),
       }),
     });
     const data = await res.json();
@@ -1409,7 +1494,14 @@ function renderCompileButtonHtml() {
 
 function renderComposerHtml(active) {
   const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
-  const showModelPicker = state.availableProviders.length >= 2;
+  // Provider mode (v3.0.11): 2+ keyed providers, otherwise there is nothing to
+  // choose between. Model mode: ONE keyed provider is enough, because that
+  // provider alone offers several models — but still nothing at all with zero
+  // keys, since `offerable` is empty for an unkeyed provider.
+  const showModelPicker = MODEL_PICKER_ENABLED
+    ? (state.availableProviders.length >= 2
+        || offerableEntries(state.offerable, state.availableProviders).length > 0)
+    : state.availableProviders.length >= 2;
 
   return (
     '<div class="chat-composer-wrap">' +
@@ -1434,6 +1526,173 @@ function renderComposerHtml(active) {
       '<div class="chat-foot-hint mono">Answers cite the pages they came from. Click a citation to read the page.</div>' +
     '</div>'
   );
+}
+
+// ── Model picker: pure helpers ────────────────────────────────────────────
+// Everything below is DOM-free and side-effect-free so the whole surface is
+// executable offline (scripts/test-next-composer-model.js extracts and runs
+// these directly). Nothing here reads module state — every input is a
+// parameter — which is what makes "an unkeyed provider is not selectable"
+// provable rather than asserted about source text.
+
+const SUITABILITY_LABELS = Object.assign(Object.create(null), {
+  'chat-only': 'chat only',
+  caution: 'caution',
+});
+
+/**
+ * Re-scope the server's `offerable` map to the providers that actually have a
+ * SAVED Settings key, into a null-prototype object.
+ *
+ * The server already gates this the same way, so this is a SECOND, independent
+ * layer — deliberately, because this is the exact v3.0.13 bug's shape: a
+ * provider the user Disconnected in Settings must not be reachable from chat,
+ * and a client that trusts one gate has no defence if that gate regresses.
+ * Null-prototype because the keys are server-supplied strings, so a bare
+ * `map[provider]` would otherwise resolve `__proto__`/`constructor` to an
+ * Object.prototype member instead of "no models" (same hazard PROVIDER_LABELS
+ * closes above).
+ */
+function normalizeOfferable(raw, availableProviders) {
+  const out = Object.create(null);
+  out.gemini = [];
+  out.anthropic = [];
+  if (!raw || typeof raw !== 'object') return out;
+  for (const p of ['gemini', 'anthropic']) {
+    if (!Array.isArray(availableProviders) || !availableProviders.includes(p)) continue;
+    if (!Object.hasOwn(raw, p)) continue;
+    const list = raw[p];
+    if (!Array.isArray(list)) continue;
+    // Keep only entries that carry the two fields every row is keyed on. A
+    // half-formed entry is dropped rather than rendered with blanks: this
+    // catalogue is the reason a user can trust the prices beside it.
+    out[p] = list.filter(e => e && typeof e === 'object'
+      && typeof e.id === 'string' && e.id.length > 0
+      && (e.provider === p || e.provider === undefined));
+  }
+  return out;
+}
+
+/** Flat, provider-ordered list of every entry the user may actually pick. */
+function offerableEntries(offerable, availableProviders) {
+  const providers = Array.isArray(availableProviders) ? availableProviders : [];
+  const list = [];
+  for (const p of providers) {
+    const rows = offerable && Object.hasOwn(offerable, p) ? offerable[p] : null;
+    if (Array.isArray(rows)) for (const e of rows) list.push({ provider: p, entry: e });
+  }
+  return list;
+}
+
+/**
+ * Validate a stored/clicked model id against the LIVE, key-scoped catalogue.
+ * Returns `{ provider, entry }` or null. This is the single selection gate:
+ * an id belonging to a provider with no saved key resolves to null, so a
+ * stale localStorage value from before a Disconnect can never be applied.
+ */
+function resolveChatModel(modelId, offerable, availableProviders) {
+  if (typeof modelId !== 'string' || !modelId) return null;
+  for (const row of offerableEntries(offerable, availableProviders)) {
+    if (row.entry.id === modelId) return row;
+  }
+  return null;
+}
+
+/**
+ * A price per 1M tokens as a display string, or null when the value is not a
+ * finite number. NEVER substitutes a placeholder number — an unknown price is
+ * rendered as "price unavailable", because a fabricated 0 on a spend surface is
+ * the honesty defect this whole catalogue exists to remove.
+ */
+function formatPricePerM(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
+  return '$' + n.toFixed(2).replace(/\.00$/, '');
+}
+
+/** "$1 in / $5 out per 1M" from the LIVE (promotion-resolved) fields. */
+function formatLivePrice(entry) {
+  const inp = formatPricePerM(entry && entry.input);
+  const out = formatPricePerM(entry && entry.output);
+  if (inp === null || out === null) return 'price unavailable';
+  return inp + ' in / ' + out + ' out per 1M';
+}
+
+/**
+ * The coming rise, when `input`/`output` are a promotion rather than the
+ * standing price. Returns '' when there is no promotion — so a caller that
+ * renders this unconditionally shows nothing extra for a normally-priced model.
+ * A promoted price shown with no mention of the rise reads as permanent, which
+ * is the same class of misstatement as showing the standard price as current.
+ */
+function formatPromotionRise(entry) {
+  if (!entry || !entry.promotionUntilIso) return '';
+  const inp = formatPricePerM(entry.standardInput);
+  const out = formatPricePerM(entry.standardOutput);
+  const from = typeof entry.standardPriceFromIso === 'string' && entry.standardPriceFromIso
+    ? entry.standardPriceFromIso
+    : entry.promotionUntilIso;
+  if (inp === null || out === null) return 'promotional price — rises after ' + entry.promotionUntilIso;
+  return 'promotional price — rises to ' + inp + ' / ' + out + ' on ' + from;
+}
+
+/**
+ * Does this entry carry a measured caveat the user must see before picking it?
+ * `suitability !== 'general'` OR `dominated` — both come straight from the
+ * server's measured catalogue. Flagged models are SHOWN, never filtered out:
+ * the contract is an honest label, not a curated-down list.
+ */
+function isFlaggedModel(entry) {
+  if (!entry) return false;
+  return entry.dominated === true || (entry.suitability !== undefined && entry.suitability !== 'general');
+}
+
+/** One selectable row. Every interpolated value is server-supplied → escaped. */
+function renderModelOptionHtml(provider, entry, selectedId) {
+  const isActive = entry.id === selectedId;
+  const flagged = isFlaggedModel(entry);
+  const rise = formatPromotionRise(entry);
+  const badges = [];
+  if (entry.suitability !== undefined && entry.suitability !== 'general') {
+    badges.push('<span class="chat-mm-badge is-warn">' +
+      escapeHtml(SUITABILITY_LABELS[entry.suitability] || entry.suitability) + '</span>');
+  }
+  if (entry.dominated === true) badges.push('<span class="chat-mm-badge is-warn">dominated</span>');
+  if (entry.thinks === true) badges.push('<span class="chat-mm-badge">thinks</span>');
+
+  return (
+    '<button type="button" class="chat-dd-opt chat-mm-opt' + (isActive ? ' is-active' : '') +
+      '" role="option" aria-selected="' + (isActive ? 'true' : 'false') +
+      '" data-model-id="' + escapeHtml(entry.id) + '" data-model-provider="' + escapeHtml(provider) + '">' +
+      '<span class="chat-mm-head">' +
+        '<span class="chat-dd-opt-title">' + escapeHtml(entry.label || entry.id) + '</span>' +
+        badges.join('') +
+      '</span>' +
+      '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
+      '<span class="chat-mm-price mono">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
+      (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
+      (flagged && typeof entry.note === 'string' && entry.note
+        ? '<span class="chat-mm-note">' + escapeHtml(entry.note) + '</span>'
+        : '') +
+    '</button>'
+  );
+}
+
+/**
+ * The whole menu: one group per KEYED provider, each cheapest-first exactly as
+ * the server ordered it. Returns '' when nothing is pickable, so the caller can
+ * decide not to render a dropdown at all rather than render an empty one.
+ */
+function renderModelMenuHtml(offerable, availableProviders, selectedId) {
+  const providers = Array.isArray(availableProviders) ? availableProviders : [];
+  let html = '';
+  let rows = 0;
+  for (const p of providers) {
+    const list = offerable && Object.hasOwn(offerable, p) && Array.isArray(offerable[p]) ? offerable[p] : [];
+    if (!list.length) continue;
+    html += '<div class="chat-mm-group">' + escapeHtml(PROVIDER_LABELS[p] || p) + '</div>';
+    for (const entry of list) { html += renderModelOptionHtml(p, entry, selectedId); rows++; }
+  }
+  return rows ? html : '';
 }
 
 function renderModelDropdownHtml() {
@@ -1487,8 +1746,48 @@ function renderComposerPickers() {
   const modelMenu = document.getElementById('chat-model-menu');
   const modelBtn = document.getElementById('chat-model-btn');
   if (modelValue && modelMenu && modelBtn) {
-    const shown = state.modelProvider || state.activeProvider || state.availableProviders[0] || 'gemini';
+    const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || 'gemini';
+
+    // MODEL mode (gated — see MODEL_PICKER_ENABLED). Falls through to the
+    // v3.0.11 PROVIDER menu below whenever the gate is off OR nothing is
+    // actually pickable, so a catalogue that arrives empty (an older backend,
+    // a provider list we do not recognise) degrades to the shipped behaviour
+    // rather than to an empty menu.
+    const modelMenuHtml = MODEL_PICKER_ENABLED
+      ? renderModelMenuHtml(state.offerable, state.availableProviders, state.chatModel)
+      : '';
+    if (modelMenuHtml) {
+      const chosen = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
+      modelValue.textContent = chosen
+        ? (chosen.entry.label || chosen.entry.id)
+        : ((PROVIDER_LABELS[shownProvider] || shownProvider) + ' default');
+      modelMenu.innerHTML = modelMenuHtml;
+      modelMenu.classList.add('chat-mm-menu');
+      modelMenu.hidden = state.openPicker !== 'model';
+      modelBtn.setAttribute('aria-expanded', state.openPicker === 'model' ? 'true' : 'false');
+      modelMenu.querySelectorAll('[data-model-id]').forEach(opt => {
+        opt.addEventListener('click', () => {
+          const id = opt.dataset.modelId;
+          // Re-validated against the LIVE catalogue at click time, not trusted
+          // from the markup: this is the gate that makes an unkeyed provider's
+          // model unselectable even if a row for it somehow reached the DOM.
+          const picked = resolveChatModel(id, state.offerable, state.availableProviders);
+          if (!picked) return;
+          state.chatModel = picked.entry.id;
+          state.modelProvider = picked.provider;
+          try { localStorage.setItem(LS_MODEL, picked.entry.id); } catch { /* ignore */ }
+          try { localStorage.setItem(LS_PROVIDER, picked.provider); } catch { /* ignore */ }
+          state.openPicker = null;
+          renderComposerPickers();
+        });
+      });
+      renderLengthPicker();
+      return;
+    }
+
+    const shown = shownProvider;
     modelValue.textContent = PROVIDER_LABELS[shown] || shown;
+    modelMenu.classList.remove('chat-mm-menu');
     modelMenu.innerHTML = state.availableProviders.map(p => (
       '<button type="button" class="chat-dd-opt' + (p === shown ? ' is-active' : '') + '" role="option" data-provider="' + p + '">' +
         '<span class="chat-dd-opt-title">' + (PROVIDER_LABELS[p] || p) + '</span>' +
@@ -1509,6 +1808,10 @@ function renderComposerPickers() {
     });
   }
 
+  renderLengthPicker();
+}
+
+function renderLengthPicker() {
   // Length dropdown
   const lengthValue = document.getElementById('chat-length-value');
   const lengthMenu = document.getElementById('chat-length-menu');
@@ -1571,8 +1874,13 @@ function renderThreadOnly(token) {
     return;
   }
 
-  const modelLabel = state.modelProvider ? (PROVIDER_LABELS[state.modelProvider] || state.modelProvider)
-    : (state.activeProvider ? (PROVIDER_LABELS[state.activeProvider] || state.activeProvider) : 'The Curator');
+  // Names the MODEL when one is deliberately chosen (it is the more specific
+  // truth), otherwise the provider exactly as before.
+  const chosenModel = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
+  const modelLabel = chosenModel
+    ? (chosenModel.entry.label || chosenModel.entry.id)
+    : (state.modelProvider ? (PROVIDER_LABELS[state.modelProvider] || state.modelProvider)
+      : (state.activeProvider ? (PROVIDER_LABELS[state.activeProvider] || state.activeProvider) : 'The Curator'));
 
   el.innerHTML = state.thread.map(m => {
     // Compile-to-Wiki outcome cards (see the "Compile to Wiki" section

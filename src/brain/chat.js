@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { generateText } from './llm.js';
+import { generateText, isOfferableModel } from './llm.js';
 import { getApiKeys } from './config.js';
 import { tokenize } from './sharedbrain-delta.js';
 import {
@@ -631,9 +631,45 @@ export function normalizeChatProvider(provider) {
   return saved ? provider : null;
 }
 
+// Validate a per-chat MODEL override. TWO independent gates, both required:
+//
+//   1. isOfferableModel(provider, model) — the OFFERABLE_MODELS allow-list, the
+//      same predicate getProviderInfo applies. Its lookup is an array scan
+//      comparing with `===`, so '__proto__' / 'constructor' / 'toString' cannot
+//      resolve to anything. This wrapper deliberately adds NO object lookup of
+//      its own, so that property is inherited by construction rather than by
+//      remembering an Object.hasOwn call (the v3.0.9 normalizeResponseStyle bug
+//      shape, closed structurally).
+//   2. The provider has a key SAVED IN SETTINGS — getApiKeys(), never
+//      getEffectiveKey. This is the v3.0.13 rule: a provider the user has
+//      Disconnected in Settings must not be reachable from chat even if its key
+//      still lingers in .env. A model is a strictly NARROWER choice than the
+//      provider that serves it, so it must inherit the stricter of the two
+//      gates — it can never be a way back in.
+//
+// Anything else → null → the provider's default model. Refusal FALLS BACK rather
+// than throwing, matching normalizeChatProvider and applyModelOverride: a saved
+// selection can outlive the model it names, and the default is the CHEAPEST
+// model on that provider, so a refusal can only ever spend LESS than asked.
+//
+// KNOWN AND DELIBERATE: `provider` is the provider the CALLER asked for, not
+// necessarily the one that ends up serving the request. A body carrying a model
+// but NO provider therefore resolves to the provider default even where the
+// model would have been valid for the global active provider. The shipping
+// client never produces that shape — /next sends the two together and treats a
+// restored model as implying its provider — and refusing is the safe direction
+// on both money and correctness, so this is not widened speculatively.
+export function normalizeChatModel(provider, model) {
+  if (!isOfferableModel(provider, model)) return null;
+  const keys = getApiKeys();
+  const saved = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
+  return saved ? model : null;
+}
+
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
   const responseStyle = normalizeResponseStyle(opts.responseStyle);
   const chatProvider = normalizeChatProvider(opts.provider);   // null → global active provider
+  const chatModel = normalizeChatModel(opts.provider, opts.model); // null → provider default model
   const schema = await readSchema(domain);
   const pages = await readWikiPages(domain);
 
@@ -676,7 +712,29 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const maxTokens = RESPONSE_STYLES[responseStyle].maxTokens;
   // v3.0.11: honour the chat model selector via the provider override (null →
   // global active provider). generateText re-validates the key defensively.
-  const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, { provider: chatProvider });
+  // v3.12.x: the model override rides alongside it. Passing null for either is
+  // byte-identical to omitting it — generateText narrows a non-string to null
+  // before getProviderInfo sees it — so a caller that never picks a model is on
+  // exactly the pre-picker path.
+  //
+  // onUsage tells us which model ACTUALLY answered, rather than which one was
+  // asked for. It fires inside callProvider once per COMPLETED provider call
+  // carrying the real model id, so the last payload names the rung that produced
+  // this text. That covers BOTH ways the request can diverge from the outcome:
+  // an allow-list refusal (→ provider default) and a fallback-chain WALK (the
+  // picked model 404s and the next rung answers). Re-resolving through
+  // getProviderInfo here would see the first and be blind to the second — and
+  // the walk is where the number matters most, because it can move the user ONTO
+  // a costlier model (claude-sonnet-5 $2/$10 → claude-sonnet-4-6 $3/$15). A
+  // reported model that names the request would then be a falsehood about money,
+  // which is the v3.9.0 dead-flag shape. A throwing callback cannot break the
+  // call: llm.js's reportUsage try/catches it.
+  let usedModel = null;
+  const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, {
+    provider: chatProvider,
+    model: chatModel,
+    onUsage: (u) => { if (u && typeof u.model === 'string' && u.model) usedModel = u.model; },
+  });
   // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
   // the saved history. Citations are extracted from the CLEANED answer so a
   // stripped bare-path run never counts as a citation.
@@ -697,8 +755,15 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     citations: uniqueCitations,
     responseStyle,
     provider: chatProvider,   // null → global active provider was used
+    // The model that ANSWERED — measured, never the request. Differs from
+    // opts.model whenever the allow-list refused it or a fallback rung served
+    // the call. Null only if a completed provider call reported no usage at
+    // all, which neither shipping branch can do (both call reportUsage before
+    // returning); it is left null rather than back-filled with a guess, because
+    // "we could not tell" and "it was the default" are different facts.
+    model: usedModel,
   };
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel };

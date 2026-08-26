@@ -159,6 +159,10 @@ import { openOnboardingPanel } from './onboarding.js';
 // Closed unconditionally by this view's teardown, exactly like the wizard.
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// The ONE honest USD renderer for /next — imported, never copied. Prices in
+// the model list are money the user will be billed; a local formatter here
+// would be a second hand-maintained copy of that rule. See format-usd.js.
+import { formatUsdHonest } from '../shared/format-usd.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -424,6 +428,36 @@ function freshState() {
     liveLoading: false,
 
     // Providers & keys
+    // Which provider model lists are expanded. Kept in state because
+    // render() replaces the section wholesale — a native <details open>
+    // attribute would be discarded on the next repaint, and this section
+    // repaints on things the user did not do (the cross-view write gate
+    // fires whenever an ingest starts or finishes anywhere). A list that
+    // snapped shut mid-read, for no visible reason, would look like a bug.
+    // Reset per mount along with the rest of this object, so leaving and
+    // returning collapses it — the same rule every other transient control
+    // in this view follows.
+    modelPickerOpen: {},
+    // The model-pick request currently in flight, as '<provider>::<modelId>'
+    // ('<provider>::' when clearing back to the app default), or null.
+    //
+    // DELIBERATELY NOT an optimistic copy of the new selection. The rendered
+    // selection is read from state.keys — i.e. from the server's own
+    // `selectedModels`, refetched after the POST resolves — so a refused
+    // request cannot leave the UI claiming a model is in force that the
+    // engine has never been told about. A model choice is a SPENDING
+    // decision: showing it as applied when the write failed is this repo's
+    // named dead-data shape on the one screen where it costs money.
+    modelPickBusy: null,
+    // A model-pick refusal, keyed by provider: { <provider>: '<message>' }.
+    // Rendered INSIDE that provider's expanded list, immediately above the
+    // rows — the surface the user was looking at when they clicked, and one
+    // that is guaranteed to be on screen because the list has to be open for
+    // the control to be reachable at all. v3.6.0 shipped a refusal that
+    // rendered somewhere the user could not see, and the observed result was
+    // that they read the reset button as "my click didn't register" and
+    // retried a refused write.
+    modelPickError: {},
     keys: null,             // GET /api/config/api-keys response
     keysError: null,        // the section FAILED TO LOAD — renderProviders shows this INSTEAD of the list (state.keys is also null in this case, so there's nothing to show anyway)
     keysActionError: null,  // a save/disconnect/set-active ACTION failed — rendered INLINE, list stays visible (found live while verifying MEDIUM-1: reusing keysError here hid the entire provider list — including the Cancel button — behind a bare error message the instant a save failed)
@@ -1036,7 +1070,11 @@ function renderProviders() {
   // anywhere depends on getProviderInfo() resolving consistently for the
   // rest of its run — Save/Disconnect/Set-active can change that mid-write.
   const crossBusy = crossWriteBusy();
-  const rows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy)).join('');
+  // Each provider's model catalogue is appended DIRECTLY AFTER its own row so
+  // the prices sit under the key they are billed against. renderProviderRow
+  // is left byte-identical — scripts/test-next-provider-rows.js extracts and
+  // executes it, and this change must not perturb what it renders.
+  const rows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy) + renderModelPicker(p, k, state.modelPickerOpen[p.id] === true, crossBusy)).join('');
 
   return (
     '<p class="view-body">At least one key is required. Saving a key makes that provider available in the chat model ' +
@@ -1197,6 +1235,399 @@ function renderProviderRow(p, k, crossBusy) {
       '</span>' +
       fieldHtml +
     '</div>'
+  );
+}
+
+
+// ── The per-provider MODEL LIST ─────────────────────────────────────────────
+//
+// WHY THIS EXISTS. Until v3.12.0 The Curator ran exactly one model per
+// provider — the cheapest tier — and a user who wanted more capability out of
+// a large wiki, on their own key, had no way to ask and no way to see what
+// asking would cost. `GET /api/config/api-keys` now carries an `offerable`
+// catalogue: every model probed live against this repo's REAL ingest outline
+// prompt, ordered cheapest-first, each entry carrying the MEASURED reason
+// behind its verdict. This renders that catalogue.
+//
+// THE SPAN IS 50x ON INPUT AND 62x ON OUTPUT across the two catalogues, so a
+// user choosing blind can multiply their bill without noticing. Every row
+// therefore carries its own price, and the price is the LIVE `input`/`output`
+// the route resolved — never `standardInput`/`standardOutput`, which are the
+// post-promotion figures and are NOT what anyone is billed today. Two of the
+// Gemini models are on a promotion that doubles on 2027-01-01; a promo shown
+// as if it were permanent is the exact trap the backend's promotional-price
+// table was built to avoid, so the rise is rendered beside the price.
+//
+// NOTES ARE SHOWN VERBATIM, NOT PARAPHRASED. `note` is the measured finding
+// (JSON reliability, outline coverage, hidden reasoning spend, tokenizer
+// premium) written upstream to be read by a user. Rewriting it into marketing
+// copy would delete the only thing that makes an honest choice possible. Nor
+// is any model hidden: `chat-only`, `caution` and `dominated` entries are all
+// listed and LABELLED, because hiding a working model decides for someone what
+// they may spend their own key on — see OFFERABLE_MODELS' docblock in llm.js.
+//
+// ── NOT A CONTROL, AND THAT IS DELIBERATE ─────────────────────────────────
+// There is no radio and no "Use this model" button, because there is nowhere
+// honest to put the answer. Verified end to end before writing this:
+//   · src/brain/config.js persists `activeProvider` and nothing about a MODEL.
+//   · src/routes/config.js exposes POST /api/config/api-keys/active (provider
+//     only). No model endpoint exists.
+//   · llm.js's resolveProviderDefault() reads DEFAULTS[provider]; it never
+//     consults config, so even a stored choice would not be read.
+// The Settings choice would have to govern INGEST and HEALTH SCANS, which the
+// server starts on its own — localStorage cannot reach them. A selection
+// stored in the browser and read by nobody is this repo's named dead-data
+// shape (v3.6.1 finding 5, v3.9.0 finding 7, v3.9.1 finding 9), landing here
+// on a spending decision: the user would see "selected: Opus 5", keep being
+// billed for and keep receiving Haiku 4.5, and have no symptom to notice.
+// So the list states plainly what is in force. `renderModelPickerScope()`
+// below is the single place that claim is made; when the backend lands, this
+// becomes a picker by replacing that line and making each <li> a radio.
+const MODEL_SUITABILITY_BADGES = {
+  'chat-only': 'chat only — not for ingest',
+  caution: 'caution',
+};
+
+/** '2027-01-01' -> '1 Jan 2027'. Parsed from the ISO COMPONENTS, never via
+ *  `new Date(iso)` + toLocaleDateString: that reads the string as UTC midnight
+ *  and then renders it in the viewer's zone, so anyone west of Greenwich would
+ *  be told a price rises on 31 Dec 2026. An off-by-one on a price date is a
+ *  small lie about money. Unparseable input returns the raw string rather than
+ *  inventing a date. */
+function formatIsoDay(iso) {
+  if (typeof iso !== 'string') return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return iso;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthIdx = Number(m[2]) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return iso;
+  return String(Number(m[3])) + ' ' + MONTHS[monthIdx] + ' ' + m[1];
+}
+
+/** 128000 -> '128,000'. Grouped manually rather than with toLocaleString so
+ *  the output does not change under a different locale (a German viewer would
+ *  otherwise read '128.000', which in a price-adjacent list reads as a
+ *  decimal). */
+function formatTokenCount(n) {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return '';
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** One model's price, as billed RIGHT NOW. Both figures go through the shared
+ *  formatUsdHonest so a non-zero cost can never render as $0.00 — see
+ *  shared/format-usd.js. Returns '' when either figure is missing, so a
+ *  half-priced row renders no price at all rather than an authoritative-looking
+ *  half-truth. */
+function formatModelPrice(input, output) {
+  const inStr = formatUsdHonest(input);
+  const outStr = formatUsdHonest(output);
+  if (!inStr || !outStr) return '';
+  return inStr + ' in · ' + outStr + ' out';
+}
+
+/**
+ * The honesty line at the top of every model list. See the block comment
+ * above for why it says what it says. `defaultId` is the model this provider
+ * actually runs today (`k.models[provider]`, i.e. llm.js's getDefaultModel).
+ */
+function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled) {
+  const running = defaultId
+    ? 'The Curator runs <code class="mono">' + escapeHtml(defaultId) + '</code> on this provider.'
+    : 'The Curator runs this provider’s default model.';
+
+  // Two genuinely different states, and conflating them is the reason this
+  // sentence exists. "Following the default" means a future release can bump
+  // you onto a newer model; "pinned" means it cannot. A user deciding what to
+  // spend needs to know which of those they are in.
+  const pinned = selectedId
+    ? ' You have pinned this choice, so app updates will not move you off it.'
+    : ' You have not picked one, so this follows the app default and can change when The Curator updates.';
+
+  // The ONLY way back to "follow the default" — picking the default model by
+  // hand pins it, which is a different thing. Offered only when there is
+  // something to clear, so the control never appears as a no-op.
+  const clear = selectedId
+    // btn-secondary, not btn-ghost: a ghost button inside this tinted
+    // paragraph rendered as plain prose in the browser, so the one route back
+    // to the un-pinned state did not read as a control at all.
+    ? ' <button type="button" class="btn btn-secondary btn-xs model-pick-clear"' +
+        ' data-pick-clear="' + escapeHtml(String(provider === undefined || provider === null ? '' : provider)) + '"' +
+        (pickDisabled ? ' disabled' : '') +
+        '>Follow the app default</button>'
+    : '';
+
+  return (
+    '<p class="model-picker-scope">' + running + pinned +
+    ' Prices are per 1M tokens, as billed today.' + clear + '</p>'
+  );
+}
+
+/**
+ * Render one provider's model catalogue, or '' when it must not appear.
+ *
+ * GATED ON THE SAVED KEY, not on `.env`. A provider the user Disconnected in
+ * Settings must not be pickable anywhere — that is v3.0.13's rule, and it
+ * exists because a user Disconnected a key and the app went on using it. The
+ * route already applies the same gate server-side (a provider with no SAVED
+ * key gets `offerable: []`), so this is the second of two independent layers
+ * rather than the only one.
+ *
+ * The gate is a LOOKUP, never `p.id === 'gemini' ? … : …`. That binary shape
+ * is what made renderProviderRow render Anthropic's masked key beside a third
+ * provider's name (v3.10.1); an id absent from the table resolves to
+ * `undefined` here and the whole list disappears, which is the safe direction.
+ * Note that scripts/test-next-provider-rows.js's class invariant is
+ * FUNCTION-scoped — it extracts renderProviderRow and onSaveKey — so it could
+ * not have caught the shape reappearing in a NEW function.
+ * scripts/test-next-model-picker.js carries the same invariant for this one.
+ */
+function renderModelPicker(p, k, isOpen, crossBusy) {
+  if (!p || !p.available || !k) return '';
+
+  const HAS_KEY_BY_PROVIDER = {
+    gemini: k.hasGeminiKey,
+    anthropic: k.hasAnthropicKey,
+    // A future provider (OpenRouter, a local runtime) adds ONE line here and
+    // one entry to PROVIDER_ROWS. Nothing else in this file needs to change:
+    // the section, its header and its list are all derived from the
+    // catalogue the route sends for that id.
+  };
+  if (!HAS_KEY_BY_PROVIDER[p.id]) return '';
+
+  const list = (k.offerable && Array.isArray(k.offerable[p.id])) ? k.offerable[p.id] : [];
+  if (list.length === 0) return '';
+
+  const defaultId = (k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '';
+
+  // The user's EXPLICIT stored pick, straight off the wire — never a local
+  // optimistic copy. `models[p.id]` above is what the app will actually RUN
+  // (already resolved through the stored pick server-side); this is what the
+  // user CHOSE. They are usually the same string and are two different facts:
+  // a stored id that has since stopped being offerable is reported here while
+  // `models` shows the fallback the engine really uses. In that case nothing
+  // in the list matches, so nothing gets badged as the choice — which is the
+  // honest outcome, and the safe direction.
+  const selectedId = (k.selectedModels && typeof k.selectedModels[p.id] === 'string')
+    ? k.selectedModels[p.id]
+    : '';
+
+  // A pick is a config WRITE that resolveProviderDefault reads fresh on every
+  // LLM call, so it must not land mid-ingest. The route refuses with 409
+  // (guardConcurrent) and that refusal is the real guarantee; this is the
+  // second layer, disabling the control so the common case never produces a
+  // refusal at all. Same two-layer shape as the Install-update button above.
+  const busyId = typeof state.modelPickBusy === 'string' ? state.modelPickBusy : '';
+  const pickDisabled = !!crossBusy || busyId !== '';
+
+  // Rendered in DELIVERED ORDER. The route ships them cheapest-first and that
+  // ordering is asserted upstream; re-sorting here would create a second
+  // opinion about which model is cheapest, and a picker that leads with the
+  // priciest model is a cost trap.
+  const ctx = { provider: p.id, selectedId, busyId, pickDisabled, crossBusy: !!crossBusy };
+  const items = list.map((m, i) => renderModelOption(m, i, defaultId, ctx)).join('');
+
+  const errText = (state.modelPickError && typeof state.modelPickError[p.id] === 'string')
+    ? state.modelPickError[p.id]
+    : '';
+  const errHtml = errText
+    ? '<div class="settings-inline-error model-pick-error" role="alert">' + escapeHtml(errText) + '</div>'
+    : '';
+
+  // THE COLLAPSED HEADER ANSWERS THE COMMON QUESTION WITHOUT AN EXPAND.
+  // "What am I running on this provider?" is asked far more often than "show
+  // me the whole catalogue", so the model in force is in the summary. Note
+  // there is deliberately NO CONTROL in this summary — only text and the
+  // disclosure marker. An interactive element inside <summary> toggles the
+  // section when clicked (v3.0.1-beta.18: Health's "Fix all" needed
+  // preventDefault + stopPropagation for exactly this), and a control that
+  // collapses the thing it acts on is a trap not worth accepting for a row
+  // that has nothing to act on yet.
+  //
+  // AND IT NAMES THE STORED PICK, not merely the model in force. Those read
+  // the same most of the time, which is exactly why the distinction has to be
+  // drawn here rather than left to inference: "using X" alone cannot tell a
+  // user whether X is theirs (pinned, and it will stay X) or ours (a default,
+  // and a future release may move it). The marker is the only thing on the
+  // collapsed header that answers that, and it updates when the POST resolves
+  // because the whole header is derived from the refetched payload.
+  const current = defaultId
+    ? '<span class="mono model-picker-current">using ' + escapeHtml(defaultId) + '</span>'
+    : '';
+  const chosen = selectedId
+    ? '<span class="model-picker-chosen">your choice</span>'
+    : '';
+
+  return (
+    '<details class="model-picker"' + (isOpen === true ? ' open' : '') +
+      ' data-model-picker="' + escapeHtml(p.id) + '">' +
+      '<summary class="model-picker-summary">' +
+        icon('chevronRight', 12) +
+        '<span class="model-picker-title">' + escapeHtml(p.name) + '</span>' +
+        current +
+        chosen +
+        '<span class="mono model-picker-count">' + escapeHtml(String(list.length)) + ' models</span>' +
+      '</summary>' +
+      '<div class="model-picker-body">' +
+        renderModelPickerScope(defaultId, selectedId, p.id, pickDisabled) +
+        errHtml +
+        '<ul class="model-list">' + items + '</ul>' +
+      '</div>' +
+    '</details>'
+  );
+}
+
+/**
+ * One model row. Every interpolated value originates in llm.js but arrives
+ * over an HTTP response, so all of it — label, id, note, suitability — goes
+ * through escapeHtml. "The payload is ours" is not a property this function
+ * can verify, and `note` is multi-sentence prose: exactly the field where a
+ * metacharacter is least likely to be noticed by eye.
+ */
+function renderModelOption(m, index, defaultId, ctx) {
+  if (!m || typeof m !== 'object') return '';
+  const c = ctx || {};
+
+  const isDefault = !!(defaultId && m.id === defaultId);
+  // THREE INDEPENDENT AXES, all shown at once and never collapsed into one
+  // marker. "in use" is what the app runs; "your choice" is what the user
+  // pinned; "cheapest" is what costs least. A user comparing spend needs to
+  // see their own pick and the cheapest option in the same glance — merging
+  // "in use" and "your choice" into a single badge would hide precisely the
+  // question this screen exists to answer (am I paying more than I need to,
+  // and did I ask for that?).
+  const isSelected = !!(c.selectedId && m.id === c.selectedId);
+  const badges = [];
+  if (isDefault) badges.push('<span class="model-badge model-badge-default">in use</span>');
+  if (isSelected) badges.push('<span class="model-badge model-badge-chosen">your choice</span>');
+  if (index === 0) badges.push('<span class="model-badge model-badge-cheapest">cheapest</span>');
+  // A non-'general' verdict and a `dominated` flag are INDEPENDENT axes and
+  // both are shown: a model can be honestly priced and fully usable while a
+  // same-priced sibling measured better (claude-opus-4-5), and that is a
+  // different fact from "measured unfit for ingest".
+  const suitabilityBadge = MODEL_SUITABILITY_BADGES[m.suitability];
+  if (suitabilityBadge) {
+    badges.push('<span class="model-badge model-badge-flag">' + escapeHtml(suitabilityBadge) + '</span>');
+  }
+  if (m.dominated) {
+    badges.push('<span class="model-badge model-badge-flag">out-performed</span>');
+  }
+
+  const price = formatModelPrice(m.input, m.output);
+  const priceHtml = price
+    ? '<span class="mono model-price">' + escapeHtml(price) +
+        '<span class="model-price-unit"> /1M tokens</span></span>'
+    : '';
+
+  // Only claim a rise when the live price is ACTUALLY below the standard one.
+  // `promotionUntilIso` stays populated after a promotion expires, at which
+  // point input/output already equal the standard figures and there is no
+  // rise left to announce — saying otherwise would be a warning about a price
+  // change that has already happened.
+  const promoActive = !!m.promotionUntilIso &&
+    (m.input !== m.standardInput || m.output !== m.standardOutput);
+  const standard = promoActive ? formatModelPrice(m.standardInput, m.standardOutput) : '';
+  const riseHtml = (promoActive && standard)
+    ? '<span class="model-promo">rises to ' + escapeHtml(standard) +
+        (m.standardPriceFromIso ? ' on ' + escapeHtml(formatIsoDay(m.standardPriceFromIso)) : '') +
+        '</span>'
+    : '';
+
+  const facts = [];
+  const cap = formatTokenCount(m.maxOutput);
+  if (cap) facts.push(cap + ' max output');
+  // Thinking tokens are billed as OUTPUT and drawn from the SAME budget as the
+  // answer, so this is a cost fact, not a capability note.
+  if (m.thinks) facts.push('thinks — hidden tokens billed as output');
+  if (typeof m.tokenizerFactor === 'number' && m.tokenizerFactor > 1) {
+    facts.push(m.tokenizerFactor.toFixed(2) + '× input tokens on the same text');
+  }
+  const factsHtml = facts.length
+    ? '<span class="mono model-facts">' + escapeHtml(facts.join(' · ')) + '</span>'
+    : '';
+
+  const noteHtml = (typeof m.note === 'string' && m.note.trim())
+    ? '<p class="model-note">' + escapeHtml(m.note) + '</p>'
+    : '';
+
+  // ── DENSITY: one row per model, its evidence one click inside ──────────
+  // Fourteen models with a four-line note each measured 3,938px — 4.6
+  // screens — and the maintainer's report was the scroll. So each model is
+  // its own nested <details>: the row carries everything a SPENDING decision
+  // needs without any expand (name, id, price billed today, the promotional
+  // rise, and every badge), and the expand carries the measured evidence
+  // behind those badges.
+  //
+  // WHAT IS DELIBERATELY NOT FOLDED AWAY: the price, the rise, and the flag
+  // badges. Folding a price would defeat the entire feature; folding a badge
+  // would leave the user no signal that there is anything to read. The note
+  // is folded because it is the ARGUMENT for a badge already on screen, and
+  // the row itself is the control that opens it — so there is no separate
+  // affordance to miss and none to mis-click.
+  //
+  // The nested <details> lives in the OUTER section's body, never in its
+  // <summary>, so the v3.0.1-beta.18 control-inside-summary hazard does not
+  // apply: clicking a model row toggles that model, not its provider.
+  const expandable = factsHtml || noteHtml;
+  const summaryInner = (
+    '<span class="model-row-line">' +
+      icon('chevronRight', 11) +
+      '<span class="model-name">' + escapeHtml(m.label || m.id || '') + '</span>' +
+      '<code class="mono model-id">' + escapeHtml(m.id || '') + '</code>' +
+      badges.join('') +
+    '</span>' +
+    '<span class="model-row-line model-row-cost">' + priceHtml + riseHtml + '</span>'
+  );
+
+  const inner = expandable
+    ? '<details class="model-row">' +
+        '<summary class="model-row-summary">' + summaryInner + '</summary>' +
+        '<div class="model-row-body">' + factsHtml + noteHtml + '</div>' +
+      '</details>'
+    // No evidence to show — render the same row WITHOUT a disclosure rather
+    // than an expander that opens onto nothing.
+    : '<div class="model-row model-row-flat">' + summaryInner + '</div>';
+
+  // ── THE CONTROL SITS OUTSIDE THE <details>, DELIBERATELY ────────────────
+  // A <button> inside a <summary> toggles that <summary>'s section when
+  // clicked — v3.0.1-beta.18, where Health's "Fix all" needed preventDefault
+  // + stopPropagation to survive living there. Rather than accept that hazard
+  // and paper over it with two event calls that a later edit can drop, the
+  // pick control is a SIBLING of the row's disclosure inside the <li>. There
+  // is no propagation path from it to any <summary>, so no suppression is
+  // needed and none can be forgotten. It is also always visible: folding the
+  // one control that spends money behind an expander would be the opposite of
+  // the density trade this list already makes (evidence folds, decisions do
+  // not).
+  const idAttr = escapeHtml(String(m.id === undefined || m.id === null ? '' : m.id));
+  const isPending = !!(c.busyId && c.busyId === c.provider + '::' + m.id);
+  let control;
+  if (isSelected) {
+    // No button at all on the model already pinned. A control whose only
+    // outcome is re-writing the value it already has invites a click that
+    // does nothing, and — while a write is running — a click that is refused
+    // for no reason the user can act on.
+    control = '<span class="model-pick-state">Selected</span>';
+  } else {
+    const label = isPending ? 'Saving…' : 'Use this';
+    const disabledAttr = (c.pickDisabled || isPending) ? ' disabled' : '';
+    const titleAttr = (c.crossBusy && !isPending)
+      ? ' title="' + escapeHtml(crossWriteTitle('changing the model mid-run would plan on one model and write on another, and would invalidate the prompt cache.')) + '"'
+      : '';
+    control = (
+      '<button type="button" class="btn btn-secondary btn-xs model-pick-btn"' +
+        ' data-pick-model="' + idAttr + '"' +
+        ' data-pick-provider="' + escapeHtml(String(c.provider === undefined || c.provider === null ? '' : c.provider)) + '"' +
+        disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>'
+    );
+  }
+
+  return (
+    '<li class="model-option' + (isDefault ? ' model-option-default' : '') +
+      (isSelected ? ' model-option-chosen' : '') +
+      '" data-model-id="' + idAttr + '">' +
+      '<div class="model-option-main">' + inner + '</div>' +
+      '<div class="model-option-pick">' + control + '</div>' +
+    '</li>'
   );
 }
 
@@ -1432,6 +1863,15 @@ function wireProviderListeners() {
       render(myMountToken);
     });
   });
+  document.querySelectorAll('[data-model-picker]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      // Deliberately NO render() call: <details> has already applied the
+      // change itself, so repainting here would only throw away the DOM
+      // the user is looking at. This records it for the NEXT repaint.
+      if (el.open) state.modelPickerOpen[el.dataset.modelPicker] = true;
+      else delete state.modelPickerOpen[el.dataset.modelPicker];
+    });
+  });
   document.querySelectorAll('[data-save-key]').forEach((btn) => {
     btn.addEventListener('click', () => onSaveKey(btn.dataset.saveKey, myMountToken));
   });
@@ -1440,6 +1880,20 @@ function wireProviderListeners() {
   });
   document.querySelectorAll('[data-set-active]').forEach((btn) => {
     btn.addEventListener('click', () => onSetActive(btn.dataset.setActive, myMountToken));
+  });
+  // The provider comes off the BUTTON, not from the enclosing section — the
+  // same reason renderProviderRow keys its fields off a lookup table rather
+  // than position. Both attributes are emitted together by renderModelOption,
+  // so a control that carries one without the other is a bug, not an input to
+  // guess around: onPickModel refuses an unknown provider outright.
+  document.querySelectorAll('[data-pick-model]').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      onPickModel(btn.dataset.pickProvider, btn.dataset.pickModel, myMountToken));
+  });
+  // Clearing is the SAME endpoint with an empty model — never a second write
+  // path with its own idea of what "no selection" means.
+  document.querySelectorAll('[data-pick-clear]').forEach((btn) => {
+    btn.addEventListener('click', () => onPickModel(btn.dataset.pickClear, '', myMountToken));
   });
 
   // MEDIUM-2 fix: restore the live DOM `.value` from state on EVERY render
@@ -1821,6 +2275,104 @@ async function onSetActive(provider, token) {
     if (isCurrentMount(token)) {
       state.keysBusy = null;
       state.keysActionError = err.message;
+      render(token);
+    }
+  }
+}
+
+/**
+ * Compose the user-facing refusal for a failed model pick.
+ *
+ * SPLIT OUT so the 409 wording is one string with one owner. The route's own
+ * message already names the running operation ("…while a write operation is
+ * running: articles (ingest)"), which is better information than anything
+ * this file could invent, so it is used verbatim where present — but it stops
+ * short of the fact the user most needs, which is that NOTHING CHANGED. A
+ * refusal that only says "try again later" leaves them unsure whether the
+ * click half-applied, and the observed consequence of an ambiguous refusal on
+ * a write is a retry (v3.6.0). The fallbacks exist because a 409 can also
+ * arrive from a proxy or a non-JSON body, and a blank error box is the
+ * invisible-refusal failure again in a smaller font.
+ */
+function modelPickErrorMessage(status, data) {
+  const fromServer = (data && typeof data.error === 'string' && data.error.trim())
+    ? data.error.trim()
+    : '';
+  const isConflict = status === 409 || (data && data.conflict === 'write_in_progress');
+  if (isConflict) {
+    const base = fromServer ||
+      'Cannot change the AI model while a write operation is running.';
+    return base + ' Your model choice was NOT saved — the model is unchanged. ' +
+      'Changing it mid-run would plan on one model and write on another.';
+  }
+  return fromServer || 'Could not save that model choice — the model is unchanged.';
+}
+
+/**
+ * Persist one provider's model choice. `modelId` of '' CLEARS it.
+ *
+ * The invariant this function exists to hold: the UI does not show the new
+ * model as in force until the server says it is. There is no optimistic
+ * write into state.keys anywhere below — the only thing that moves the
+ * rendered selection is loadKeys(), on the success path, after `res.ok`. On
+ * every failure path state.keys is untouched, so the previous selection is
+ * still what renders. That is the whole reason this is not "set it, then
+ * revert on error": a revert is a second code path that can be forgotten,
+ * and the window in between is a lie about money.
+ */
+async function onPickModel(provider, modelId, token) {
+  // Same refuse-rather-than-guess rule as onSaveKey's SAVE_BODY_KEY_BY_PROVIDER:
+  // an id we do not recognise must not be POSTed. Under-writing is
+  // recoverable; writing a selection into some other provider's slot is not
+  // noticed until that provider starts billing differently.
+  const KNOWN = { gemini: true, anthropic: true };
+  const model = typeof modelId === 'string' ? modelId : '';
+  if (!KNOWN[provider]) {
+    state.modelPickError = Object.assign({}, state.modelPickError, {
+      [provider]: 'Cannot choose a model for an unknown provider.',
+    });
+    render(token);
+    return;
+  }
+  state.modelPickBusy = provider + '::' + model;
+  // Clear only THIS provider's stale refusal. A per-provider map rather than
+  // one shared string, so a refusal on Anthropic does not silently vanish
+  // because the user then clicked something under Gemini.
+  state.modelPickError = Object.assign({}, state.modelPickError, { [provider]: '' });
+  render(token);
+  try {
+    const res = await fetch('/api/config/api-keys/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    });
+    if (!res.ok) {
+      // Read the body defensively: a 409 from a proxy, or any non-JSON
+      // response, must still produce a legible refusal rather than an
+      // "Unexpected token '<'" — the class this repo has fixed twice
+      // (v2.3.3, v3.6.0) by never putting `await res.json()` inside a throw.
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      const message = modelPickErrorMessage(res.status, data);
+      if (!isCurrentMount(token)) return;
+      state.modelPickBusy = null;
+      state.modelPickError = Object.assign({}, state.modelPickError, { [provider]: message });
+      render(token);
+      return;
+    }
+    if (!isCurrentMount(token)) return;
+    state.modelPickBusy = null;
+    // The ONLY place the rendered selection moves. Refetching (rather than
+    // trusting the POST's echo) also picks up `models[provider]`, i.e. what
+    // llm.js will now actually resolve — which is not necessarily the id we
+    // just sent, and the header claims to show the truth.
+    await loadKeys(token);
+  } catch (err) {
+    if (isCurrentMount(token)) {
+      state.modelPickBusy = null;
+      state.modelPickError = Object.assign({}, state.modelPickError, {
+        [provider]: modelPickErrorMessage(0, { error: err && err.message }),
+      });
       render(token);
     }
   }

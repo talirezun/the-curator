@@ -466,3 +466,221 @@
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+
+/* ── Per-provider model sections ─────────────────────────────────────────
+   Two levels of native <details>: a PROVIDER section, and one row per model
+   inside it. Both collapsed by default. The structure follows the Health
+   tab's .dm-group precedent in views/domains.js — same chevron-rotate
+   marker, same data-attribute + toggle-listener state recording — rather
+   than inventing a widget: <details> is keyboard-operable and
+   screen-reader-announced for free.
+
+   Nothing here animates, so there is no prefers-reduced-motion obligation
+   to discharge. The chevron rotate and the two hover colours are
+   TRANSITIONS on the shared --t-state token, which tokens/motion.css
+   already zeroes under reduce; a hardcoded duration would have to be
+   neutralised here and there is none. Every colour is a semantic token, so
+   both themes come from color.css's [data-theme] blocks and there is no
+   prefers-color-scheme query here (nor may there be one). */
+
+.model-picker {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  /* Pulls the section up against the provider row it belongs to, so the
+     prices read as that provider's rather than as a free-floating block. */
+  margin-top: -4px;
+}
+.model-picker-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 10px 13px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  transition: color var(--t-state);
+}
+.model-picker-summary::-webkit-details-marker { display: none; }
+.model-picker-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.model-picker[open] > .model-picker-summary svg { transform: rotate(90deg); }
+.model-picker-summary:hover { color: var(--text); }
+.model-picker-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+  border-radius: 10px;
+}
+.model-picker-title { font-weight: var(--weight-medium); color: var(--text); }
+/* The answer to "what am I running?", readable without expanding anything. */
+.model-picker-current { color: var(--text-2); font-size: var(--text-2xs); overflow-wrap: anywhere; }
+.model-picker-chosen {
+  font-size: var(--text-2xs);
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.model-picker-count { color: var(--text-3); font-size: var(--text-2xs); margin-left: auto; }
+
+.model-picker-body { padding: 0 13px 13px; }
+
+/* The one place the app states what a selection does and does not do.
+   Amber rather than grey deliberately: it is a limitation, not a footnote. */
+.model-picker-scope {
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.model-picker-scope code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-inset);
+  color: var(--text);
+}
+
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* The row and its pick control are SIBLINGS, not nested: the control must
+   never live inside the row's <summary>, or clicking it would toggle the
+   disclosure it sits in (v3.0.1-beta.18). Laying them out as a flex pair is
+   what buys that separation without an event-suppression call that a later
+   edit could drop. */
+.model-option {
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+}
+.model-option-main { flex: 1 1 auto; min-width: 0; }
+/* flex: none so a long model id can never squeeze the control to zero width;
+   the padding-top matches .model-row-summary's so the button sits on the
+   name's baseline row rather than floating against an expanded body. */
+.model-option-pick {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 7px 8px 7px 4px;
+}
+.model-option-default { border-color: var(--success-text); background: var(--success-tint); }
+/* The user's own pick reads in the accent, deliberately NOT the success
+   green that marks "in use": on the common row where a model is both, the
+   two facts must stay separately legible. Border only — a second tinted
+   background would fight the in-use tint on exactly that row. */
+.model-option-chosen { border-color: var(--accent); }
+.model-option-chosen.model-option-default { border-color: var(--accent); }
+
+.model-pick-state {
+  font-size: var(--text-2xs);
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  padding: 0 4px;
+}
+.model-pick-btn { white-space: nowrap; }
+.model-pick-clear { margin-left: 4px; vertical-align: baseline; }
+/* Sits between the honesty line and the rows, inside the list the user just
+   clicked in — the one surface guaranteed to be on screen at that moment. */
+.model-pick-error { margin-bottom: 9px; }
+
+.model-row-summary, .model-row-flat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  list-style: none;
+  min-width: 0;
+}
+.model-row-summary { cursor: pointer; }
+.model-row-summary::-webkit-details-marker { display: none; }
+.model-row-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.model-row-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.model-row[open] > .model-row-summary svg { transform: rotate(90deg); }
+/* The flat variant has no disclosure, so its row must not reserve the
+   chevron's slot — it renders none. */
+.model-row-flat svg { display: none; }
+
+.model-row-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+/* The cost line is indented to the text column so it reads as belonging to
+   the name above it rather than as a new item. */
+.model-row-cost { padding-left: 18px; }
+
+.model-name { font-size: 13px; font-weight: var(--weight-medium); color: var(--text); }
+.model-id { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+
+.model-badge {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.model-badge-default { background: var(--success-tint); color: var(--success-text); border: 1px solid var(--success-text); }
+.model-badge-cheapest { background: var(--surface-inset); color: var(--text-2); border: 1px solid var(--border); }
+/* Accent, matching .model-option-chosen — the pinned-choice colour is one
+   decision used in three places (badge, row border, collapsed header). */
+.model-badge-chosen { background: var(--accent-tint); color: var(--accent); border: 1px solid var(--accent); }
+/* Every flag is one colour on purpose. `chat only`, `caution` and
+   `out-performed` are different findings but the same instruction to the
+   reader — read the note before you pick this — and three colours would
+   invite ranking them against each other. */
+.model-badge-flag { background: var(--attention-tint); color: var(--attention-text); border: 1px solid var(--attention-text); }
+
+.model-price { font-size: var(--text-sm); color: var(--text); font-weight: var(--weight-medium); }
+.model-price-unit { color: var(--text-3); font-weight: var(--weight-regular); font-size: var(--text-2xs); }
+/* A price that is going to change reads in the warning colour, not the calm
+   one — the whole point is that today's figure is temporary. */
+.model-promo { font-size: var(--text-2xs); color: var(--attention-text); overflow-wrap: anywhere; }
+
+.model-row-body {
+  padding: 2px 10px 10px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.model-facts { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+/* The note is the single most important content on this surface — it is the
+   measured evidence behind a badge, and the only thing that makes an honest
+   choice possible. Measured at --text-xs (11px) it read as a footnote next
+   to the price it is meant to qualify, so it steps up to --text-sm with
+   relaxed leading. Multi-sentence prose, not a caption. */
+.model-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}

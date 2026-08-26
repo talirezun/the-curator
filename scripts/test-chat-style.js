@@ -139,8 +139,11 @@ section('5. Source guard — sendMessage + route wiring');
 
   const routeSrc = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
   ok(/responseStyle/.test(routeSrc), 'chat route reads responseStyle from the body');
-  ok(/sendMessage\(domain, conversationId \|\| null, message, \{ responseStyle, provider \}\)/.test(routeSrc),
-    'chat route passes responseStyle (+ provider) to sendMessage');
+  // Shape-pinned rather than name-pinned, so this stays a real guard as the
+  // per-chat options grow: what matters to THIS suite is that responseStyle is
+  // still one of them. (v3.12.x added `model`.)
+  ok(/sendMessage\(domain, conversationId \|\| null, message, \{ responseStyle, provider, model \}\)/.test(routeSrc),
+    'chat route passes responseStyle (+ provider, model) to sendMessage');
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

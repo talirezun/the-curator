@@ -1023,7 +1023,32 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/config.js', {
     label: 'config.js',
-    expectedMutatingCount: 7, // default-domain, domains-path, pick-folder, api-keys, api-keys/disconnect, api-keys/active, update
+    // default-domain, domains-path, pick-folder, api-keys, api-keys/disconnect,
+    // api-keys/active, api-keys/model, update.
+    //
+    // 8th (api-keys/model, v3.12.x): persists the user's per-provider MODEL
+    // choice. It is in the concurrency class and NOT exempt, and the reason is
+    // the sharpest instance of this file's own founding hazard. v3.6.0 guarded
+    // the five routes above it because getProviderInfo() resolves FRESH PER
+    // CALL, so a provider switch mid-ingest could silently finish a run on a
+    // different model. This route changes WHICH MODEL answers, and llm.js's
+    // resolveProviderDefault now consults the stored choice on every single LLM
+    // call — so unguarded, a click during a 40-minute multi-phase ingest plans
+    // the outline on one model and writes Phase-2 batches on another, producing
+    // a wiki nobody chose, with nothing downstream to flag it. It would also
+    // invalidate Anthropic's prompt cache mid-run (a different model is a
+    // different cache namespace, so every cached prefix READ becomes a WRITE at
+    // 1.25x — the v3.0.16 saving inverted into a surcharge) and make the ingest
+    // queue's per-item spend arithmetic wrong, since price is looked up per
+    // model.
+    //
+    // It carries guardConcurrent (hasActiveWrites), matching its provider-shaped
+    // sibling api-keys/active exactly. Deliberately NOT isUpdateInProgress:
+    // that token guards the OTHER direction — a domain write checking whether an
+    // app update is running (health.js's use) — whereas this is a config
+    // mutation being protected FROM an in-flight write. /update already refuses
+    // while writes are active, so the pair is closed from both sides.
+    expectedMutatingCount: 8,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also

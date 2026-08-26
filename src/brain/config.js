@@ -183,6 +183,97 @@ export function getActiveProvider() {
   return null;
 }
 
+// ── Selected model per provider ──────────────────────────────────────────────
+
+/**
+ * The two providers a model may be stored for. A hardcoded pair, not a derived
+ * list: every read and write below is gated on membership BEFORE the string is
+ * ever used to index anything, so `'__proto__'`, `'constructor'` and
+ * `'toString'` cannot reach an object lookup (the v3.0.9 shape, closed by
+ * construction rather than by remembering to call Object.hasOwn).
+ */
+const MODEL_PROVIDERS = ['gemini', 'anthropic'];
+
+/**
+ * Sanitise whatever `.curator-config.json` holds under `selectedModels` into a
+ * fresh NULL-PROTOTYPE map carrying only non-empty strings under the two known
+ * provider keys.
+ *
+ * This file is user-editable and hand-editing it is a documented recovery path,
+ * so every degenerate shape has to degrade to "nothing stored" rather than
+ * throw: a string, `null`, an array, a nested object, a number, a boolean, or a
+ * `__proto__` entry that JSON.parse materialises as an OWN data property. A
+ * throw here would take the server down at the first LLM call — this value is
+ * consulted by ingest, Health, compile and chat alike.
+ *
+ * The result is Object.create(null) so that even a caller who somehow reached
+ * this with an unvalidated key cannot pull `toString`/`constructor` off
+ * Object.prototype.
+ *
+ * ONE implementation, shared by the getter and the setter — a second
+ * hand-maintained sanitiser is the v3.2.0 CRITICAL shape.
+ */
+function sanitizeSelectedModels(raw) {
+  const out = Object.create(null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const p of MODEL_PROVIDERS) {
+    if (!Object.prototype.hasOwnProperty.call(raw, p)) continue;
+    const v = raw[p];
+    if (typeof v === 'string' && v) out[p] = v;
+  }
+  return out;
+}
+
+/**
+ * The model id this user picked for `provider` in Settings, or null.
+ *
+ * NOT validated against OFFERABLE_MODELS here, deliberately — config.js is the
+ * storage layer and llm.js imports IT, so importing llm.js back would be a
+ * cycle. The allow-list is applied on the READ side in llm.js, which is where
+ * it has to be anyway: a stored id can stop being offerable AFTER it was
+ * validly written (we pull a model after a bad live probe), so validating only
+ * at write time would leave the stale value honoured forever.
+ *
+ * Read FRESH per call. A module-level snapshot would be taken at import time
+ * and would mean a Settings change could not take effect until restart — and,
+ * worse, would defeat the paths.js test seams for anything importing this
+ * module early (see §7 of test-paths.js).
+ */
+export function getSelectedModel(provider) {
+  if (!MODEL_PROVIDERS.includes(provider)) return null;
+  return sanitizeSelectedModels(readRaw().selectedModels)[provider] || null;
+}
+
+/**
+ * Persist the user's model choice for one provider. Pass an empty string or
+ * null to CLEAR it (back to the provider default).
+ *
+ * Writes through writeRaw → writeFileAtomicSync with mode 0600, the same single
+ * writer every other field in this file uses — this file holds the API keys, so
+ * a second writer that forgot the mode would silently widen them.
+ *
+ * Rebuilds the stored map from the SANITISED view rather than mutating what was
+ * on disk, so a hand-edited `__proto__` / array / junk entry is dropped on the
+ * next write instead of being carried forward. Deletes the key entirely when
+ * nothing is selected, so a user who never picks a model keeps a config file
+ * byte-identical to today's.
+ *
+ * Returns the stored id (or null) so a caller can echo back what actually took.
+ */
+export function setSelectedModel(provider, modelId) {
+  if (!MODEL_PROVIDERS.includes(provider)) return null;
+  const cfg = readRaw();
+  const clean = sanitizeSelectedModels(cfg.selectedModels);
+  const next = {};
+  for (const p of MODEL_PROVIDERS) if (clean[p]) next[p] = clean[p];
+  if (typeof modelId === 'string' && modelId) next[provider] = modelId;
+  else delete next[provider];
+  if (Object.keys(next).length) cfg.selectedModels = next;
+  else delete cfg.selectedModels;
+  writeRaw(cfg);
+  return next[provider] || null;
+}
+
 // ── AI Health settings (v2.4.5+) ─────────────────────────────────────────────
 
 const DEFAULT_AI_HEALTH = {

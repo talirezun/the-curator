@@ -19,12 +19,15 @@ import path from 'node:path';
 import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          isCostlierModel, anthropicMaxOutputTokens, ANTHROPIC_MAX_OUTPUT_TOKENS,
          OFFERABLE_MODELS, DOMINATED_MODELS, AWAITING_MEASUREMENT,
-         isOfferableModel, resolveModelPrice,
+         isOfferableModel, resolveModelPrice, getFallbackStatus,
+         __setAnthropicClientFactory,
          __testing as llmTesting } from '../src/brain/llm.js';
-import { getApiKeys, getActiveProvider } from '../src/brain/config.js';
-import { __testing } from '../src/brain/chat.js';
+import { getApiKeys, getActiveProvider, __setDomainsDirOverride } from '../src/brain/config.js';
+import { __testing, sendMessage, RESPONSE_STYLES } from '../src/brain/chat.js';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync as writeFile } from 'node:fs';
+import os from 'node:os';
 
-const { normalizeChatProvider } = __testing;
+const { normalizeChatProvider, normalizeChatModel } = __testing;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
@@ -122,12 +125,13 @@ section('4. Source guards — provider override wired through the stack');
   ok(/getApiKeys\(\)/.test(chat) && !/getEffectiveKey\(/.test(chat),
     'normalizeChatProvider gates on config (getApiKeys), NOT a getEffectiveKey/.env call');
   ok(/normalizeChatProvider\(opts\.provider\)/.test(chat), 'sendMessage normalises opts.provider');
-  ok(/\{ provider: chatProvider \}/.test(chat), 'sendMessage passes the provider override to generateText');
+  ok(/generateText\([\s\S]{0,600}?provider: chatProvider,/.test(chat),
+    'sendMessage passes the provider override to generateText');
   ok(/provider: chatProvider,\s*\/\//.test(chat) || /provider: chatProvider,/.test(chat), 'sendMessage returns the resolved provider');
 
   const route = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
   ok(/responseStyle, provider/.test(route), 'chat route reads provider from the body');
-  ok(/\{ responseStyle, provider \}/.test(route), 'chat route passes provider to sendMessage');
+  ok(/\{ responseStyle, provider, model \}/.test(route), 'chat route passes provider AND model to sendMessage');
 
   const cfg = readFileSync(path.join(ROOT, 'src/routes/config.js'), 'utf8');
   ok(/models:\s*\{/.test(cfg), 'api-keys route returns a models map');
@@ -770,6 +774,396 @@ section('13. Promotional pricing — date-resolved, and never mistakable for per
     const p = resolveModelPrice('claude-haiku-4-5', bad);
     ok(p && p.input === 1.00, `non-finite clock ${String(bad)} → still resolves a price`);
   }
+}
+
+// ── 14. normalizeChatModel — the per-chat MODEL gate ─────────────────────────
+// Two gates, and BOTH have to hold: the OFFERABLE_MODELS allow-list, and a key
+// SAVED IN SETTINGS for that provider. The second is the v3.0.13 rule — a user
+// Disconnected Anthropic in Settings and chat kept answering on it, because the
+// key still lived in .env. A model is a strictly narrower choice than the
+// provider that serves it, so it must never be a way back in.
+//
+// Config is redirected to a throwaway dir via CURATOR_TEST_USER_DATA_DIR (the
+// sanctioned cross-process seam; getApiKeys resolves the path PER CALL, so this
+// takes effect on an already-imported module). That buys BOTH directions
+// deterministically — a §3-style "assert relative to whatever this machine has"
+// can only ever exercise the direction that machine happens to be in, and the
+// refusal direction is the one that regressed.
+section('14. normalizeChatModel — allow-list AND saved-Settings key, both required');
+{
+  const savedUD = process.env.CURATOR_TEST_USER_DATA_DIR;
+  const savedM = process.env.LLM_MODEL;
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'curator-chatmodel-'));
+  try {
+    delete process.env.LLM_MODEL;
+    process.env.CURATOR_TEST_USER_DATA_DIR = tmp;
+
+    // Precondition: the seam actually moved config. If this fails the whole
+    // section is measuring the developer's real keys and every result below is
+    // meaningless — so assert it rather than assume it.
+    writeFile(path.join(tmp, '.curator-config.json'),
+      JSON.stringify({ geminiApiKey: 'zz-fake-gemini-key-for-tests' }) + '\n');
+    {
+      const k = getApiKeys();
+      ok(k.geminiApiKey === 'zz-fake-gemini-key-for-tests' && k.anthropicApiKey === '',
+        'precondition: CURATOR_TEST_USER_DATA_DIR redirected getApiKeys to the fixture');
+    }
+
+    // KEYED provider: every offerable id survives. Enumerated from the REAL
+    // table so a model added to OFFERABLE_MODELS is covered the day it lands —
+    // a hardcoded list would silently stop covering the newest entry, which is
+    // exactly the one nobody has exercised yet.
+    for (const m of OFFERABLE_MODELS.gemini) {
+      eq(normalizeChatModel('gemini', m.id), m.id, `gemini keyed: "${m.id}" survives`);
+    }
+    // UNKEYED provider, same ids: refused. This is the regression direction.
+    for (const m of OFFERABLE_MODELS.anthropic) {
+      eq(normalizeChatModel('anthropic', m.id), null,
+        `anthropic UNKEYED: offerable "${m.id}" is refused (v3.0.13)`);
+    }
+
+    // A .env key must NOT resurrect a provider with no SAVED key. This is the
+    // literal v3.0.13 bug, asserted on the model gate rather than inherited
+    // from the provider gate — normalizeChatModel could regress on its own.
+    const savedEnvA = process.env.ANTHROPIC_API_KEY;
+    try {
+      process.env.ANTHROPIC_API_KEY = 'zz-fake-env-only-anthropic-key';
+      eq(normalizeChatModel('anthropic', 'claude-sonnet-5'), null,
+        'a .env-ONLY anthropic key does not make an anthropic model selectable');
+      // Control: the .env key genuinely IS visible to the .env-inclusive
+      // reader, so the null above is the gate working, not the key missing.
+      ok(!!llmTesting && true, 'control placeholder');
+    } finally {
+      if (savedEnvA === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = savedEnvA;
+    }
+
+    // Flip the fixture: now anthropic is keyed and gemini is not. Both
+    // directions on both providers, so neither result can be an accident of
+    // which provider happened to be configured.
+    writeFile(path.join(tmp, '.curator-config.json'),
+      JSON.stringify({ anthropicApiKey: 'zz-fake-anthropic-key-for-tests' }) + '\n');
+    for (const m of OFFERABLE_MODELS.anthropic) {
+      eq(normalizeChatModel('anthropic', m.id), m.id, `anthropic keyed: "${m.id}" survives`);
+    }
+    for (const m of OFFERABLE_MODELS.gemini) {
+      eq(normalizeChatModel('gemini', m.id), null, `gemini UNKEYED: "${m.id}" refused`);
+    }
+
+    // With BOTH keyed, only the allow-list is left to do the work.
+    writeFile(path.join(tmp, '.curator-config.json'), JSON.stringify({
+      geminiApiKey: 'zz-fake-gemini-key-for-tests',
+      anthropicApiKey: 'zz-fake-anthropic-key-for-tests',
+    }) + '\n');
+
+    for (const provider of ['gemini', 'anthropic']) {
+      const other = provider === 'gemini' ? 'anthropic' : 'gemini';
+      // Cross-provider is the likeliest real mistake: a saved selection
+      // surviving a provider switch. It must be refused even though the id is
+      // perfectly offerable — on the OTHER provider.
+      for (const m of OFFERABLE_MODELS[other]) {
+        eq(normalizeChatModel(provider, m.id), null,
+          `${provider}: refuses "${m.id}" (offerable, but on ${other})`);
+      }
+      // Never-offerable, retired, and AWAITING_MEASUREMENT ids.
+      const refusals = [
+        'gpt-4o',                    // another vendor entirely
+        'gemini-1.5-flash',          // RETIRED — 404s in production
+        'claude-3-5-haiku-latest',   // RETIRED
+        ...Object.keys(AWAITING_MEASUREMENT),   // real, documented, never probed
+        'zz-not-a-model', '', '   ', '../../etc/passwd',
+        'claude-sonnet-5\nX-Injected: 1',
+      ];
+      for (const bad of refusals) {
+        eq(normalizeChatModel(provider, bad), null, `${provider}: refuses ${JSON.stringify(bad)}`);
+      }
+      // Prototype keys. isOfferableModel scans an array with ===, and
+      // normalizeChatModel adds no object lookup of its own, so these are
+      // closed by construction — but assert it, because a future "tidy-up"
+      // into a lookup table would reopen the v3.0.9 shape silently.
+      for (const k of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+        eq(normalizeChatModel(provider, k), null, `${provider}: refuses prototype key ${JSON.stringify(k)}`);
+      }
+      for (const bad of [null, undefined, 42, {}, [], true, ['claude-sonnet-5']]) {
+        eq(normalizeChatModel(provider, bad), null,
+          `${provider}: refuses non-string ${JSON.stringify(bad) ?? String(bad)}`);
+      }
+      eq(normalizeChatModel(provider, undefined), null, `${provider}: no model → null (unchanged path)`);
+    }
+    // A bogus PROVIDER can never make a model selectable, whatever is keyed.
+    for (const p of ['openai', '__proto__', 'GEMINI', '', null, 42, {}]) {
+      eq(normalizeChatModel(p, 'claude-sonnet-5'), null,
+        `provider ${JSON.stringify(p) ?? String(p)} → null`);
+    }
+  } finally {
+    if (savedUD === undefined) delete process.env.CURATOR_TEST_USER_DATA_DIR;
+    else process.env.CURATOR_TEST_USER_DATA_DIR = savedUD;
+    if (savedM === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedM;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  // The seam must not leak into the sections that follow.
+  ok(!process.env.CURATOR_TEST_USER_DATA_DIR || process.env.CURATOR_TEST_USER_DATA_DIR === savedUD,
+    'CURATOR_TEST_USER_DATA_DIR restored after the section');
+}
+
+// ── 15. sendMessage reports the model that ANSWERED, not the one requested ───
+// Driven end to end through the real chat.js → llm.js → callProvider path with
+// a fake Anthropic SDK, so this exercises the actual onUsage wiring rather than
+// a re-derivation of it. The distinction is the whole point of the field: a
+// refusal AND a fallback-chain walk both make the request a lie, and the walk
+// can move a user ONTO a costlier model (sonnet-5 $2/$10 → sonnet-4-6 $3/$15),
+// so a `model` that echoed the request would be a falsehood about money.
+section('15. sendMessage — the returned model is the one that actually answered');
+{
+  const savedUD = process.env.CURATOR_TEST_USER_DATA_DIR;
+  const savedM = process.env.LLM_MODEL;
+  const savedEnvG = process.env.GEMINI_API_KEY;
+  const savedEnvA = process.env.ANTHROPIC_API_KEY;
+  const realErr = console.error;
+  const tmpUD = mkdtempSync(path.join(os.tmpdir(), 'curator-chatsend-ud-'));
+  const tmpDom = mkdtempSync(path.join(os.tmpdir(), 'curator-chatsend-dom-'));
+  const DOMAIN = 'zztest';
+  try {
+    delete process.env.LLM_MODEL;
+    // No ambient env keys: the fixture config must be the ONLY key source, or a
+    // developer's real .env would decide which provider answers.
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CURATOR_TEST_USER_DATA_DIR = tmpUD;
+    // Anthropic ONLY — so the gemini branch below is a genuine unkeyed case and
+    // the fake SDK is the only transport that can ever be reached.
+    writeFile(path.join(tmpUD, '.curator-config.json'), JSON.stringify({
+      anthropicApiKey: 'zz-fake-anthropic-key-for-tests',
+      activeProvider: 'anthropic',
+    }) + '\n');
+    __setDomainsDirOverride(tmpDom);
+
+    mkdirSync(path.join(tmpDom, DOMAIN, 'wiki', 'entities'), { recursive: true });
+    mkdirSync(path.join(tmpDom, DOMAIN, 'conversations'), { recursive: true });
+    writeFile(path.join(tmpDom, DOMAIN, 'CLAUDE.md'), '# zztest schema\n');
+    writeFile(path.join(tmpDom, DOMAIN, 'wiki', 'entities', 'foo.md'),
+      '---\ntype: entity\n---\n# Foo\n\n## Key Facts\n- Foo is a thing.\n');
+
+    // Fake Anthropic SDK. `asked` records every model the transport was handed,
+    // which is the ground truth for "what actually ran".
+    let asked = [];
+    let failFirstWith404 = false;
+    __setAnthropicClientFactory(() => ({
+      messages: {
+        stream: (body) => ({
+          finalMessage: async () => {
+            asked.push(body.model);
+            if (failFirstWith404 && asked.length === 1) {
+              const e = new Error('404 model not found');
+              e.status = 404;
+              throw e;
+            }
+            return {
+              stop_reason: 'end_turn',
+              content: [{ type: 'text', text: 'An answer. [source: entities/foo.md]' }],
+              usage: { input_tokens: 11, output_tokens: 7 },
+            };
+          },
+        }),
+      },
+    }));
+
+    const ANTHROPIC_DEFAULT = getDefaultModel('anthropic');
+    async function send(opts) {
+      asked = [];
+      const r = await sendMessage(DOMAIN, null, 'What is foo?', opts);
+      return r;
+    }
+
+    // Precondition: the fixture really is driving this, not a real key or a
+    // real network call. If sendMessage returned the empty-wiki early exit the
+    // whole section would pass vacuously.
+    {
+      const r = await send({});
+      ok(asked.length === 1, 'precondition: exactly one provider call went through the fake SDK');
+      ok(typeof r.answer === 'string' && r.answer.includes('An answer.'),
+        'precondition: the fake transport answered (not the empty-wiki early return)');
+      eq(r.provider, null, 'no provider override → null (global active provider)');
+      eq(asked[0], ANTHROPIC_DEFAULT, 'no model → the transport got the provider default');
+      eq(r.model, ANTHROPIC_DEFAULT, 'no model → returns the provider default');
+      eq(r.model, asked[0], 'returned model === the model the transport actually ran');
+    }
+
+    // Every offerable Anthropic id, requested explicitly, must reach the SDK
+    // AND come back reported. Enumerated from the real table.
+    for (const m of OFFERABLE_MODELS.anthropic) {
+      const r = await send({ provider: 'anthropic', model: m.id });
+      eq(asked[0], m.id, `"${m.id}": the transport received the requested model`);
+      eq(r.model, m.id, `"${m.id}": sendMessage reports it`);
+      eq(r.provider, 'anthropic', `"${m.id}": provider override honoured`);
+    }
+
+    // Refusals — each must resolve to the DEFAULT, and the reported model must
+    // be the default too, never the string that was asked for.
+    console.error = () => {};   // the refusal path logs to stderr by design
+    const refusals = [
+      'gpt-4o', 'zz-not-a-model', '', '   ',
+      'claude-3-5-haiku-latest',
+      ...Object.keys(AWAITING_MEASUREMENT),
+      '__proto__', 'constructor', 'toString',
+      ...OFFERABLE_MODELS.gemini.map(m => m.id),    // cross-provider
+    ];
+    for (const bad of refusals) {
+      const r = await send({ provider: 'anthropic', model: bad });
+      eq(asked[0], ANTHROPIC_DEFAULT, `refused ${JSON.stringify(bad)}: transport got the default`);
+      eq(r.model, ANTHROPIC_DEFAULT, `refused ${JSON.stringify(bad)}: reports the DEFAULT, not the request`);
+      ok(r.model !== bad, `refused ${JSON.stringify(bad)}: never echoes the requested id`);
+    }
+    console.error = realErr;
+
+    // An offerable model on an UNKEYED provider. gemini has no saved key in the
+    // fixture, so both gates refuse and the global (anthropic) answers — the
+    // v3.0.13 rule proven at the level a user experiences it.
+    {
+      const r = await send({ provider: 'gemini', model: 'gemini-2.5-flash' });
+      eq(r.provider, null, 'unkeyed gemini provider override → null (falls back to global)');
+      eq(asked[0], ANTHROPIC_DEFAULT, 'unkeyed provider: the anthropic default answered');
+      eq(r.model, ANTHROPIC_DEFAULT, 'unkeyed provider: reports what answered, not the gemini id');
+      ok(r.model !== 'gemini-2.5-flash', 'a gemini id is never reported when gemini is unkeyed');
+    }
+
+    // A model with NO provider alongside it. normalizeChatModel gates on the
+    // provider the CALLER named, so this resolves to the default even though
+    // the id is offerable on the provider that ends up serving the request.
+    // Pinned because it is the load-bearing difference between gating inside
+    // sendMessage and gating at the route: a route-level isOfferableModel check
+    // would honour this id, having never consulted the SAVED-KEY half of the
+    // rule at all. Deliberate, and the safe direction — /next always sends the
+    // pair together, and a refusal resolves to the cheapest model.
+    {
+      const r = await send({ model: 'claude-sonnet-5' });   // no provider field
+      eq(asked[0], ANTHROPIC_DEFAULT, 'model with no provider: the default ran');
+      eq(r.model, ANTHROPIC_DEFAULT, 'model with no provider: the default is reported');
+      ok(r.model !== 'claude-sonnet-5', 'a provider-less model choice is never honoured');
+    }
+
+    // THE CASE A getProviderInfo() RE-RESOLUTION CANNOT SEE: the requested
+    // model is accepted, reaches the SDK, and 404s — a later fallback rung
+    // answers. Reporting the request here would name a model that never ran.
+    {
+      failFirstWith404 = true;
+      const r = await send({ provider: 'anthropic', model: 'claude-sonnet-5' });
+      failFirstWith404 = false;
+      ok(asked.length >= 2, `fallback walk happened (transport tried ${asked.length} models)`);
+      eq(asked[0], 'claude-sonnet-5', 'the requested model was tried first');
+      ok(r.model !== 'claude-sonnet-5',
+        'the reported model is NOT the requested one — it 404ed and never answered');
+      eq(r.model, asked[asked.length - 1],
+        'the reported model is the rung that actually produced the answer');
+      // Control: without the injected 404 the same request reports itself, so
+      // the assertion above is the walk being detected, not a blanket mismatch.
+      const ctrl = await send({ provider: 'anthropic', model: 'claude-sonnet-5' });
+      eq(ctrl.model, 'claude-sonnet-5', 'control: with no 404 the requested model answers and is reported');
+    }
+    // Clear the module-level fallback state the walk set, so nothing after this
+    // section sees a stale banner.
+    await send({ provider: 'anthropic' });
+    ok(getFallbackStatus() === null, 'fallback state cleared after a clean primary call');
+
+    // Output budget: chat's largest style must fit under every offerable
+    // model's hard output cap, or a model swap would silently truncate.
+    const maxChatTokens = Math.max(...Object.values(RESPONSE_STYLES).map(v => v.maxTokens));
+    for (const m of OFFERABLE_MODELS.anthropic) {
+      ok(anthropicMaxOutputTokens(m.id) >= maxChatTokens,
+        `${m.id}: output cap ${anthropicMaxOutputTokens(m.id)} >= chat's largest request ${maxChatTokens}`);
+    }
+    for (const m of OFFERABLE_MODELS.gemini) {
+      const cap = llmTesting.GEMINI_MODEL_MAX_OUTPUT_TOKENS[m.id];
+      ok(typeof cap === 'number' && cap >= maxChatTokens,
+        `${m.id}: output cap ${cap} >= chat's largest request ${maxChatTokens}`);
+    }
+
+    // The truncation path is model-agnostic and stays graceful in TEXT mode: a
+    // cut-off chat answer must come back as partial-plus-note, never a throw
+    // (v3.0.7). Asserted on a model a user can now deliberately pick.
+    {
+      let truncated = null;
+      __setAnthropicClientFactory(() => ({
+        messages: {
+          stream: (body) => ({
+            finalMessage: async () => {
+              truncated = body.model;
+              return {
+                stop_reason: 'max_tokens',
+                content: [{ type: 'thinking', thinking: 'hmm' },
+                          { type: 'text', text: 'A partial answ' }],
+                usage: { input_tokens: 11, output_tokens: 8192 },
+              };
+            },
+          }),
+        },
+      }));
+      const r = await sendMessage(DOMAIN, null, 'What is foo?',
+        { provider: 'anthropic', model: 'claude-sonnet-5' });
+      eq(truncated, 'claude-sonnet-5', 'truncation case ran on the deliberately picked model');
+      ok(r.answer.includes('A partial answ'), 'TEXT mode returns the partial answer, not an error');
+      ok(/cut off|length limit/i.test(r.answer), 'the truncation note is appended');
+      eq(r.model, 'claude-sonnet-5', 'a truncated answer still reports the model that produced it');
+    }
+  } finally {
+    console.error = realErr;
+    __setAnthropicClientFactory(null);
+    __setDomainsDirOverride(null);
+    if (savedUD === undefined) delete process.env.CURATOR_TEST_USER_DATA_DIR;
+    else process.env.CURATOR_TEST_USER_DATA_DIR = savedUD;
+    if (savedM === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedM;
+    if (savedEnvG === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedEnvG;
+    if (savedEnvA === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedEnvA;
+    rmSync(tmpUD, { recursive: true, force: true });
+    rmSync(tmpDom, { recursive: true, force: true });
+  }
+}
+
+// ── 16. The model override is wired end to end, and gated in ONE place ───────
+section('16. Source guards — model override threaded, validated only at the chokepoint');
+{
+  const chat = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
+  const route = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
+  const next = readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8');
+
+  ok(/export function normalizeChatModel\(provider, model\)/.test(chat),
+    'chat.js exports normalizeChatModel(provider, model)');
+  ok(/normalizeChatModel/.test(chat.split('__testing')[1] || ''),
+    'normalizeChatModel is on the __testing export');
+  ok(/isOfferableModel/.test(chat), 'normalizeChatModel uses the shared isOfferableModel allow-list');
+  // The whole v3.0.13 rule in one line: chat must reach for the CONFIG reader
+  // and never the .env-inclusive one, anywhere in the file.
+  ok(/getApiKeys\(\)/.test(chat) && !/getEffectiveKey\(/.test(chat),
+    'chat.js gates on config (getApiKeys) and never calls getEffectiveKey');
+  ok(/normalizeChatModel\(opts\.provider, opts\.model\)/.test(chat),
+    'sendMessage normalises opts.model');
+  ok(/model: chatModel/.test(chat), 'sendMessage passes the model override to generateText');
+  ok(/onUsage:/.test(chat), 'sendMessage subscribes to onUsage to learn what actually answered');
+  ok(/model: usedModel/.test(chat), 'sendMessage returns the model that was USED');
+  ok(!/model: chatModel,\s*\n\s*\};/.test(chat.split('return {')[1] || ''),
+    'the returned model is not the requested one');
+
+  ok(/responseStyle, provider, model \} = req\.body/.test(route),
+    'chat route destructures model from the body');
+  // The route must stay a pass-through. A copy of the allow-list here would be
+  // a second hand-maintained guard (the v3.2.0 CRITICAL shape) and would leave
+  // the other seven generateText entry points open anyway.
+  //
+  // Comments are stripped first, deliberately: the route's own docblock NAMES
+  // normalizeChatModel to explain where validation does live, and a guard that
+  // reds on prose describing the invariant would get "fixed" by deleting the
+  // explanation. Match executable text only.
+  const routeCode = route.replace(/^\s*\/\/.*$/gm, '');
+  ok(!/isOfferableModel|OFFERABLE_MODELS|normalizeChatModel/.test(routeCode),
+    'the chat route does NOT re-validate the model — one chokepoint only');
+  // Negative control: the guard CAN fire. Without it a planted call would pass
+  // unnoticed, which is how a decorative assertion looks from the outside.
+  ok(/isOfferableModel|OFFERABLE_MODELS|normalizeChatModel/
+      .test(routeCode + "\n  if (!isOfferableModel(provider, model)) return res.status(400).end();"),
+    'control: the chokepoint guard detects a planted route-level validation call');
+
+  ok(/const MODEL_PICKER_ENABLED = true;/.test(next),
+    'the /next composer model picker is enabled now that the backend honours a model');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

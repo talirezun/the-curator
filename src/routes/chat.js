@@ -42,7 +42,7 @@ router.get('/:domain/:id', async (req, res) => {
 router.post('/:domain', async (req, res) => {
   try {
     const { domain } = req.params;
-    const { message, conversationId, responseStyle, provider } = req.body;
+    const { message, conversationId, responseStyle, provider, model } = req.body;
 
     if (!message) return res.status(400).json({ error: 'message is required' });
 
@@ -51,10 +51,19 @@ router.post('/:domain', async (req, res) => {
       return res.status(400).json({ error: `Unknown domain: ${domain}` });
     }
 
-    // responseStyle + provider are optional; sendMessage normalises both
-    // (unknown responseStyle → 'balanced'; a provider without a key → the global
-    // active provider), so an absent/garbage value is always safe.
-    const result = await sendMessage(domain, conversationId || null, message, { responseStyle, provider });
+    // responseStyle + provider + model are all optional; sendMessage normalises
+    // each one (unknown responseStyle → 'balanced'; a provider without a SAVED
+    // Settings key → the global active provider; a model that is not offerable
+    // on that provider, or whose provider has no saved key → that provider's
+    // default), so an absent or garbage value is always safe.
+    //
+    // DELIBERATELY NOT VALIDATED HERE. The model allow-list is applied at
+    // getProviderInfo(), the single producer of the string both SDKs receive,
+    // with normalizeChatModel as chat's own key gate in front of it. Adding a
+    // check at this route would leave the other seven generateText entry points
+    // open and create a second hand-maintained copy of the guard — the shape
+    // that produced the v3.2.0 CRITICAL.
+    const result = await sendMessage(domain, conversationId || null, message, { responseStyle, provider, model });
     res.json(result);
   } catch (err) {
     console.error('Chat error:', err);

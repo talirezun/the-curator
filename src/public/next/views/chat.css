@@ -455,6 +455,53 @@
 .chat-dd-opt-title { font-size: 13px; }
 .chat-dd-opt-desc { font-size: 10px; color: var(--text-3); }
 
+/* ── Model picker (gated: see MODEL_PICKER_ENABLED in chat.js) ─────────────
+   A model menu carries far more per row than the provider menu it replaces —
+   an id, a live price, a promotion clause and a measured note — so it needs a
+   wider, scroll-capped box. The cap is on the MENU, never on a row: truncating
+   a row would hide the caveat the row exists to show. */
+.chat-mm-menu {
+  min-width: 340px;
+  max-width: 420px;
+  max-height: 62vh;
+  overflow-y: auto;
+  gap: 2px;
+}
+.chat-mm-group {
+  padding: 6px 9px 2px;
+  font-size: 10px;
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.chat-mm-opt { gap: 3px; width: 100%; }
+.chat-mm-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chat-mm-badge {
+  font-size: 9.5px;
+  line-height: 1.6;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.chat-mm-badge.is-warn {
+  border-color: var(--attention);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+}
+.chat-mm-price { font-size: 11px; color: var(--text-2); }
+.chat-mm-rise { font-size: 10px; color: var(--attention-text); }
+/* The measured reason, VERBATIM from the server catalogue — deliberately
+   wrapped in full rather than clamped. */
+.chat-mm-note {
+  font-size: 10.5px;
+  line-height: var(--leading-snug);
+  color: var(--text-3);
+  white-space: normal;
+  text-wrap: pretty;
+}
+
 /* ── SHARED MARKDOWN RENDERER — reader body content ───────────────────
    The reader overlay's chrome (loading/error/tags/backlinks) is rendered by
    the shell — see app.js's openReader() content contract and shell.css's

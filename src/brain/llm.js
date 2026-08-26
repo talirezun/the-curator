@@ -12,7 +12,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getEffectiveKey, getActiveProvider } from './config.js';
+import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel } from './config.js';
 
 // DELIBERATELY UNCHANGED in the 2026-08-24 chain repair. Both ids were probed
 // live that day and both remain the CHEAPEST working model on their provider
@@ -921,17 +921,85 @@ export function getFallbackStatus() {
 }
 
 /**
+ * ── The user's PERSISTED model choice (Settings) ─────────────────────────────
+ *
+ * The stored id, or null. Two gates, both load-bearing, both applied on every
+ * read because a config change must take effect without a restart.
+ *
+ * GATE 1 — the key must be SAVED IN CONFIG, read via getApiKeys() and NEVER
+ * getEffectiveKey(). This is the v3.0.13 rule and it is not cosmetic here.
+ * resolveProviderDefault selects a PROVIDER off getEffectiveKey (config OR
+ * .env), so a provider whose key the user Disconnected in Settings can still
+ * resolve from a lingering .env key. Honouring the model they picked *before*
+ * Disconnecting would be exactly the v3.0.13 bug in a new place — a setting the
+ * user believes they removed still steering their spend. The write side (the
+ * /api-keys/model route) gates the same config-only way, so the contract is
+ * closed at both ends: you can only store a selection for a provider whose key
+ * is saved, and it is only honoured while that key remains saved.
+ *
+ * GATE 2 — the allow-list, applied by the caller via applyModelOverride (see
+ * defaultModelFor). Not re-implemented here: isOfferableModel has exactly one
+ * application point and two hand-maintained copies of a guard is what produced
+ * the v3.2.0 CRITICAL.
+ */
+function storedSelection(provider) {
+  if (provider !== 'gemini' && provider !== 'anthropic') return null;
+  const keys = getApiKeys();
+  const savedKey = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
+  if (!savedKey) return null;
+  return getSelectedModel(provider);
+}
+
+/**
+ * The model a provider should DEFAULT to, with the user's stored Settings
+ * choice applied.
+ *
+ * PRECEDENCE, and why. `envModel` is the LLM_MODEL value THIS call site would
+ * have used, passed in rather than re-derived, so each site keeps its exact
+ * pre-existing LLM_MODEL semantics (getDefaultModel gates LLM_MODEL on the
+ * active provider; resolveProviderDefault's branches do not — a pre-existing
+ * asymmetry this change deliberately does NOT "fix", because the whole safety
+ * claim here is that nothing moves for a user with nothing stored).
+ *
+ *   per-call preferModel  >  LLM_MODEL  >  stored selection  >  DEFAULTS
+ *
+ * LLM_MODEL beats the stored selection because they occupy the SAME slot: both
+ * reshape the provider default. LLM_MODEL is the unrestricted developer escape
+ * hatch (it deliberately bypasses the allow-list); letting a Settings click
+ * silently override it would remove the escape hatch and make it untestable.
+ * The per-call picker still beats both, because applyModelOverride runs last in
+ * getProviderInfo — that ordering is unchanged and already documented there.
+ *
+ * A stale or non-offerable stored id resolves to DEFAULTS[provider] — the
+ * CHEAPEST model on that provider (OFFERABLE_MODELS is cheapest-first and its
+ * head IS the default), so the worst case of any refusal is spending less than
+ * the user asked for, never more.
+ *
+ * With NOTHING stored, storedSelection returns null and applyModelOverride
+ * returns `defaultModel` on its first line — so this is byte-identical to the
+ * pre-v3.12.x expression at every call site. That is the assertion protecting
+ * every existing user, and the suite pins it explicitly.
+ */
+function defaultModelFor(provider, envModel) {
+  if (envModel) return envModel;
+  return applyModelOverride(provider, DEFAULTS[provider], storedSelection(provider));
+}
+
+/**
  * The default model id for a provider (respecting a global LLM_MODEL override
- * only for the currently-active provider). Exported so the UI can display the
- * CURRENT model per provider — when we bump DEFAULTS to a newer model, the
- * chat model selector's label updates automatically with no frontend change.
+ * only for the currently-active provider, then the user's stored Settings
+ * choice). Exported so the UI can display the CURRENT model per provider — when
+ * we bump DEFAULTS to a newer model, the chat model selector's label updates
+ * automatically with no frontend change.
  */
 export function getDefaultModel(provider) {
   if (provider !== 'gemini' && provider !== 'anthropic') return null;
   // LLM_MODEL is a single global dev override tied to the active provider; only
   // surface it for that provider so we never label Gemini with a Claude id.
-  if (process.env.LLM_MODEL && getActiveProvider() === provider) return process.env.LLM_MODEL;
-  return DEFAULTS[provider];
+  const envModel = (process.env.LLM_MODEL && getActiveProvider() === provider)
+    ? process.env.LLM_MODEL
+    : null;
+  return defaultModelFor(provider, envModel);
 }
 
 /**
@@ -1003,18 +1071,18 @@ function resolveProviderDefault(preferProvider) {
   // Gemini-first-if-both behaviour for legacy configs via getActiveProvider().
   const active = getActiveProvider();
   if (active === 'gemini' && getEffectiveKey('gemini')) {
-    return { provider: 'gemini', model: process.env.LLM_MODEL || DEFAULTS.gemini };
+    return { provider: 'gemini', model: defaultModelFor('gemini', process.env.LLM_MODEL) };
   }
   if (active === 'anthropic' && getEffectiveKey('anthropic')) {
-    return { provider: 'anthropic', model: process.env.LLM_MODEL || DEFAULTS.anthropic };
+    return { provider: 'anthropic', model: defaultModelFor('anthropic', process.env.LLM_MODEL) };
   }
   // Defensive fallback: active provider is stored but its key is missing.
   // Prefer whichever provider still has a usable key.
   if (getEffectiveKey('gemini')) {
-    return { provider: 'gemini', model: process.env.LLM_MODEL || DEFAULTS.gemini };
+    return { provider: 'gemini', model: defaultModelFor('gemini', process.env.LLM_MODEL) };
   }
   if (getEffectiveKey('anthropic')) {
-    return { provider: 'anthropic', model: process.env.LLM_MODEL || DEFAULTS.anthropic };
+    return { provider: 'anthropic', model: defaultModelFor('anthropic', process.env.LLM_MODEL) };
   }
   throw new Error(
     'No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'
