@@ -1058,8 +1058,8 @@ function renderLiveResult() {
 
 function renderProviders() {
   if (state.keysError) {
-    return '<p class="view-body">At least one key is required. Saving a key makes that provider available in the ' +
-      'chat model picker; the active provider is used for ingest and health scans.</p>' +
+    return '<p class="view-body">At least one key is required. One provider is <strong>active</strong>: its model builds your ' +
+      'wiki (ingest, Health scans and Compile). Every provider with a key stays available in the chat model picker.</p>' +
       '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
   }
   if (!state.keys) {
@@ -1077,8 +1077,8 @@ function renderProviders() {
   const rows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy) + renderModelPicker(p, k, state.modelPickerOpen[p.id] === true, crossBusy)).join('');
 
   return (
-    '<p class="view-body">At least one key is required. Saving a key makes that provider available in the chat model ' +
-    'picker; the active provider is used for ingest and health scans.</p>' +
+    '<p class="view-body">At least one key is required. One provider is <strong>active</strong>: its model builds your ' +
+    'wiki (ingest, Health scans and Compile). Every provider with a key stays available in the chat model picker.</p>' +
     renderCrossWriteBanner('wait for it to finish before changing keys or the active provider — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
     // Deliberately ABOVE the provider list and never behind a disclosure:
@@ -1336,11 +1336,58 @@ function formatModelPrice(input, output) {
  * The honesty line at the top of every model list. See the block comment
  * above for why it says what it says. `defaultId` is the model this provider
  * actually runs today (`k.models[provider]`, i.e. llm.js's getDefaultModel).
+ *
+ * ── WHY THE FIRST SENTENCE IS ABOUT THE ACTIVE PROVIDER ────────────────────
+ * The maintainer hit this himself: he pinned a model under one provider, had
+ * the OTHER provider active, and asked whether his next ingest would use the
+ * model he had just picked. It would not. Every section on this screen looked
+ * equally in force, and only the ACTIVE provider's pin reaches ingest.
+ *
+ * The chain, verified rather than assumed: ingest, Health scans and Compile
+ * all call `generateText` with NO override, so each resolves
+ * getProviderInfo() -> getActiveProvider() -> defaultModelFor(provider) ->
+ * applyModelOverride(provider, DEFAULTS[provider], storedSelection(provider)).
+ * The governing pair is therefore (ACTIVE provider, that provider's pin).
+ *
+ * ── AND WHY IT IS ONE LANE, NOT THREE FEATURES ─────────────────────────────
+ * Naming ingest, Health and Compile as three things invites the reader to ask
+ * which of them they could set separately. None of them. It is not a missing
+ * feature, it is the shape of the code: `generateText`'s provider/model live
+ * in its SIXTH argument (`opts`), and every one of health-ai.js's five calls
+ * is FOUR-argument while compile.js's is five — so on those two surfaces an
+ * override is not merely unused, it is INEXPRESSIBLE. ingest.js does pass an
+ * opts object but carries only `{onUsage, signal}`. One model builds the
+ * wiki; there is no second knob to look for.
+ *
+ * So the copy leads with the lane ("this model builds your wiki") and keeps
+ * the three names as the parenthetical that answers "does this affect my
+ * Health scan?" — demoted, never dropped. Chat is stated as the separate
+ * lane it genuinely is: the only surface that passes a per-call override.
+ *
+ * `isActive` and `activeLabel` come from the caller, which computes them as
+ * `k.activeProvider === p.id` — an identity test against the row's own id,
+ * never a two-armed `p.id === 'gemini' ? … : …` (see §28's class invariant
+ * and the v3.10.1 finding that shape caused).
  */
-function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled) {
-  const running = defaultId
-    ? 'The Curator runs <code class="mono">' + escapeHtml(defaultId) + '</code> on this provider.'
-    : 'The Curator runs this provider’s default model.';
+function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled, scope) {
+  const s = scope || {};
+  const idCode = defaultId ? '<code class="mono">' + escapeHtml(defaultId) + '</code>' : 'this model';
+
+  // Names the active provider when we can, and degrades to "the active
+  // provider" when activeProvider is absent or unknown rather than inventing
+  // one. providerLabel echoes an unknown id back and never substitutes a
+  // different provider's identity (v3.10.1), so the worst case is vaguer
+  // wording, never a wrong attribution.
+  const other = s.activeLabel ? escapeHtml(s.activeLabel) : 'the active provider';
+  const self = s.providerLabel ? escapeHtml(s.providerLabel) : 'this provider';
+
+  const lane = s.isActive
+    ? '<strong>This model builds your wiki.</strong> Ingest, Health scans and Compile all run on ' +
+      idCode + ' — they always share one model, so there is nothing separate to set. ' +
+      'Chat is the one place you choose per message, and choosing there does not change this.'
+    : '<strong>This model does not build your wiki.</strong> Ingest, Health scans and Compile all run on ' +
+      other + ', the active provider. Make ' + self + ' active and this choice takes over all three. ' +
+      'Until then chat can still use ' + idCode + ' any time you pick it in the composer.';
 
   // Two genuinely different states, and conflating them is the reason this
   // sentence exists. "Following the default" means a future release can bump
@@ -1363,8 +1410,14 @@ function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled) {
         '>Follow the app default</button>'
     : '';
 
+  // Tinted amber only on the ACTIVE section. The inactive one is a plain
+  // recessed note: amber there would read as a warning about a provider that
+  // is simply not selected, and would give both sections the same visual
+  // weight — which is the confusion being fixed.
+  const cls = s.isActive ? 'model-picker-scope model-picker-scope-live' : 'model-picker-scope';
+
   return (
-    '<p class="model-picker-scope">' + running + pinned +
+    '<p class="' + cls + '">' + lane + pinned +
     ' Prices are per 1M tokens, as billed today.' + clear + '</p>'
   );
 }
@@ -1464,18 +1517,38 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
     ? '<span class="model-picker-chosen">your choice</span>'
     : '';
 
+  // ── THE LANE MARKER, ON THE COLLAPSED HEADER ───────────────────────────
+  // These sections are collapsed by default, so for most users the summary
+  // is the ONLY thing they will read. The fact that decides what an ingest
+  // costs therefore cannot live behind the expand — that is exactly how the
+  // maintainer came to pin a model under one provider and expect his next
+  // ingest to use it. The body carries the full sentence; this carries the
+  // one-glance answer.
+  //
+  // Identity test against this row's own id, so it is symmetric for any
+  // provider and a third one cannot fall into another's arm.
+  const isActive = !!(k.activeProvider && k.activeProvider === p.id);
+  const scopeBadge = isActive
+    ? '<span class="model-picker-lane model-picker-lane-live">builds your wiki</span>'
+    : '<span class="model-picker-lane model-picker-lane-idle">not active — chat can still use it</span>';
+
   return (
     '<details class="model-picker"' + (isOpen === true ? ' open' : '') +
       ' data-model-picker="' + escapeHtml(p.id) + '">' +
       '<summary class="model-picker-summary">' +
         icon('chevronRight', 12) +
         '<span class="model-picker-title">' + escapeHtml(p.name) + '</span>' +
+        scopeBadge +
         current +
         chosen +
         '<span class="mono model-picker-count">' + escapeHtml(String(list.length)) + ' models</span>' +
       '</summary>' +
       '<div class="model-picker-body">' +
-        renderModelPickerScope(defaultId, selectedId, p.id, pickDisabled) +
+        renderModelPickerScope(defaultId, selectedId, p.id, pickDisabled, {
+          isActive,
+          providerLabel: p.name,
+          activeLabel: providerLabel(k.activeProvider),
+        }) +
         errHtml +
         '<ul class="model-list">' + items + '</ul>' +
       '</div>' +

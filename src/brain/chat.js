@@ -677,8 +677,19 @@ export function normalizeChatModel(provider, model) {
  * answer. A maintainer who picked claude-sonnet-5 and wanted to confirm Sonnet 5
  * had actually run had nothing in the app to check against.
  *
- * THE RULE: servedProvider / servedModel are what the PROVIDER REPORTED in its
- * own usage payload (llm.js reportUsage), never what the caller requested. The
+ * `servedUsage` extends the SAME record with the four token counts that answer
+ * "what did this answer cost". It is the LOAD-BEARING half of that feature, not
+ * a convenience: a cost derived only from the live `sendMessage` return would
+ * appear beside an answer and then vanish the moment the conversation is
+ * reloaded from disk — the same figure present and absent for the same message
+ * depending on how you arrived at it, which is a worse surface than no figure at
+ * all. Persisting the counts (not a computed dollar amount — see
+ * normalizeReportedUsage, and the price-at-render-time note in the /next chat
+ * view) makes the reloaded thread and the live thread render from one input.
+ *
+ * THE RULE: servedProvider / servedModel / servedUsage are what the PROVIDER
+ * REPORTED in its own usage payload (llm.js reportUsage), never what the caller
+ * requested. The
  * two diverge on two real paths:
  *
  *   • an allow-list refusal — normalizeChatModel returns null and the provider
@@ -709,11 +720,74 @@ export function normalizeChatModel(provider, model) {
  * scale. The new keys are appended AFTER the existing ones so an untouched
  * message serialises byte-identically to before.
  */
-export function buildAssistantMessage(content, citations, servedProvider, servedModel) {
+export function buildAssistantMessage(content, citations, servedProvider, servedModel, servedUsage) {
   const msg = { role: 'assistant', content, citations };
   if (typeof servedProvider === 'string' && servedProvider) msg.provider = servedProvider;
   if (typeof servedModel === 'string' && servedModel) msg.model = servedModel;
+  const usage = normalizeReportedUsage(servedUsage);
+  if (usage) msg.usage = usage;
   return msg;
+}
+
+/**
+ * The four token counts from a provider's usage payload, or null.
+ *
+ * ── ALL FOUR OR NOTHING, AND THAT IS THE HONESTY RULE ────────────────────
+ * This is a MONEY input: the four fields are multiplied by four different
+ * per-token rates (full price, output price, the cached-read discount, the
+ * cache-write premium). A record carrying three of them would produce a cost
+ * that is confidently wrong and indistinguishable from a correct one, which is
+ * strictly worse than showing nothing. So a partial payload yields null and the
+ * reader shows no cost at all — the same "reported or absent, never inferred"
+ * rule the `model` field above already follows, applied to the numbers.
+ *
+ * Zero is a REPORT, not an absence: `{in: 0, out: 0, ...}` is a legitimate thing
+ * for a provider to say, so the discriminator is `Number.isFinite`, never
+ * truthiness. Negative values are refused — no provider emits one, and a
+ * negative would subtract from a bill.
+ *
+ * Both shipping branches (normalizeGeminiUsage / normalizeAnthropicUsage in
+ * llm.js) always emit all four as finite numbers, so the null path here is
+ * defensive rather than expected. It is written anyway because the payload
+ * arrives through a callback contract, not a type system.
+ *
+ * The returned object is a FRESH literal with the four keys in a fixed order —
+ * never the caller's object — so nothing else riding on the usage payload
+ * (provider, model, or anything llm.js adds later) can leak into a persisted
+ * conversation record and out over the wire.
+ */
+function normalizeReportedUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  const fields = ['inputTokens', 'outputTokens', 'cachedReadTokens', 'cacheWriteTokens'];
+  const out = {};
+  for (const f of fields) {
+    const v = u[f];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+    out[f] = v;
+  }
+  // ── ZERO IN AND ZERO OUT IS A SENTINEL, NOT A MEASUREMENT ───────────────
+  // Found by the offline suite, not reasoned about in advance: llm.js's
+  // normalizers coerce EVERY missing field to 0 (`num()`), so a provider that
+  // returns no usage block at all arrives here as {0,0,0,0} — indistinguishable
+  // from a report of zero. Recording it would price a paid answer at exactly
+  // $0.00 on the one surface whose job is to say what something cost, which is
+  // the defect shared/format-usd.js exists to prevent, arriving through a
+  // different door.
+  //
+  // Refusing it is not an inference. A COMPLETED chat turn cannot have consumed
+  // zero input: the prompt carries the domain schema plus thousands of
+  // characters of selected wiki pages before the user's message. So zero-in AND
+  // zero-out is physically impossible for a turn that produced text, and the
+  // only thing it can mean is "the provider told us nothing".
+  //
+  // Deliberately narrow: zero-in-and-zero-out only. `inputTokens > 0` with
+  // `outputTokens === 0` stays a legitimate report and still prices above zero.
+  // And it is fixed HERE rather than in llm.js's normalizers — those feed the
+  // ingest queue's running spend total, where a 0 is the correct neutral
+  // element and changing it would move real money arithmetic in a release about
+  // a chat label.
+  if (out.inputTokens === 0 && out.outputTokens === 0) return null;
+  return out;
 }
 
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
@@ -785,8 +859,17 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // chatProvider. chatProvider is what was ASKED for (null meaning "whatever
   // the global active provider is"), which is precisely the thing a persisted
   // record must not claim.
+  //
+  // usedUsage carries the same payload's four TOKEN COUNTS, under the same rule
+  // and for the same reason: they are the only evidence of what this turn cost,
+  // and they belong to the model that actually ran. Overwritten (not summed) on
+  // each report, exactly like usedModel — a chat turn is ONE provider call, and
+  // when the fallback chain walks, the earlier rungs THREW rather than
+  // completing, so no usage was reported for them at all. Summing would mean a
+  // 404ed rung could still add tokens to the bill.
   let usedModel = null;
   let usedProvider = null;
+  let usedUsage = null;
   const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, {
     provider: chatProvider,
     model: chatModel,
@@ -794,6 +877,8 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
       if (!u) return;
       if (typeof u.model === 'string' && u.model) usedModel = u.model;
       if (typeof u.provider === 'string' && u.provider) usedProvider = u.provider;
+      const usage = normalizeReportedUsage(u);
+      if (usage) usedUsage = usage;
     },
   });
   // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
@@ -805,7 +890,7 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const uniqueCitations = [...new Set(citations)];
 
   conversation.messages.push({ role: 'user', content: userMessage });
-  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel));
+  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage));
   await writeConversation(domain, conversation);
 
   return {
@@ -823,8 +908,32 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     // returning); it is left null rather than back-filled with a guess, because
     // "we could not tell" and "it was the default" are different facts.
     model: usedModel,
+    // The four token counts the provider reported for THIS turn, or null when
+    // it reported none (or reported them incompletely — see
+    // normalizeReportedUsage: a partial payload is refused rather than
+    // part-filled, because three of four numbers priced as if they were four is
+    // a confident wrong answer about money).
+    //
+    // DELIBERATELY TOKENS, NOT A DOLLAR FIGURE. The price of a model is a
+    // property of the catalogue and of the date (two models here are on
+    // promotional pricing that ends on a stated day), so the arithmetic belongs
+    // wherever the catalogue is — not frozen into a conversation record written
+    // months earlier. The consumer multiplies these by the SERVED model's live
+    // price. The trade-off is stated rather than hidden: an answer produced
+    // during a promotion and re-read after it ends will price at the standing
+    // rate, i.e. HIGHER than it actually cost. That direction is deliberate —
+    // it matches this repo's rule that every price failure resolves upward — but
+    // it is an approximation, and it is the reason a persisted `costUsd` is a
+    // reasonable future change rather than an obviously wrong one.
+    //
+    // Route-side: src/routes/chat.js returns this object with `res.json(result)`
+    // — it names no fields and spreads nothing, so this reaches the wire with no
+    // route change. That was verified, not assumed; a route that enumerated
+    // fields would have made this the third dead-data field in the app's
+    // history (v3.9.0 finding 7).
+    usage: usedUsage,
   };
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage, normalizeReportedUsage };

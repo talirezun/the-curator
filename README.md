@@ -147,9 +147,12 @@ This is the shift from a file cabinet to a neural network.
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
-- **Choose your model** — 14 models across the two providers (7 Gemini, 7 Anthropic). Pick one
-  durably in **Settings → Providers & keys** (it governs ingest, Health scans and Compile), or
-  per-chat from the composer's Model dropdown. Every model was probed live against the app's real
+- **Choose your model** — 14 models across the two providers (7 Gemini, 7 Anthropic).
+  **One model builds your brain; you choose freely when talking to it.** A single durable choice in
+  **Settings → Providers & keys** governs everything that *writes* to your wiki — ingest, Health
+  scans and Compile — deliberately as one setting rather than three, while the chat composer's
+  Model dropdown picks per message and leaves what your next ingest costs untouched.
+  Every model was probed live against the app's real
   ingest prompt, and each row shows its price as billed today plus the measured trade-off — output
   ceiling, hidden reasoning spend, and how thoroughly it plans a wiki — so the cost is visible at
   the moment of choosing. **The defaults are unchanged and remain the cheapest on each provider**;

@@ -275,6 +275,11 @@ const sandbox = new Function(
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   extractConst(settings, 'PROVIDER_ROWS') + '\n' +
   extractConst(settings, 'MODEL_SUITABILITY_BADGES') + '\n' +
+  // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
+  // inactive section's sentence, and a stub would prove something about the
+  // stub. It echoes an unknown id back rather than substituting another
+  // provider's identity (v3.10.1) — §30 depends on that being the real one.
+  extractFunction(settings, 'providerLabel', 'settings.js') + '\n' +
   extractFunction(settings, 'formatIsoDay', 'settings.js') + '\n' +
   extractFunction(settings, 'formatTokenCount', 'settings.js') + '\n' +
   extractFunction(settings, 'formatModelPrice', 'settings.js') + '\n' +
@@ -286,7 +291,7 @@ const sandbox = new Function(
   // site would prove a line exists, not what it does.
   extractFunction(settings, 'renderProviderRow', 'settings.js') + '\n' +
   extractFunction(settings, 'renderProviders', 'settings.js') + '\n' +
-  'return { escapeHtml, PROVIDER_ROWS, MODEL_SUITABILITY_BADGES, formatIsoDay, ' +
+  'return { escapeHtml, PROVIDER_ROWS, MODEL_SUITABILITY_BADGES, providerLabel, formatIsoDay, ' +
   'formatTokenCount, formatModelPrice, renderModelPickerScope, renderModelOption, ' +
   'renderModelPicker, renderProviders };'
 )(
@@ -303,8 +308,9 @@ const sandbox = new Function(
 );
 
 const {
-  escapeHtml, PROVIDER_ROWS, formatIsoDay, formatTokenCount,
-  formatModelPrice, renderModelPicker, renderModelOption, renderProviders,
+  escapeHtml, PROVIDER_ROWS, providerLabel, formatIsoDay, formatTokenCount,
+  formatModelPrice, renderModelPicker, renderModelPickerScope, renderModelOption,
+  renderProviders,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -350,6 +356,31 @@ function headlinePrice(li) {
 }
 const idsInOrder = (html) =>
   [...html.matchAll(/data-model-id="([^"]*)"/g)].map((m) => m[1]);
+
+// ── The lane copy, read off the RENDERED markup ────────────────────────────
+// Deliberately matched on the sentence the user actually reads, not on a
+// class name: a section that kept the styling and lost the claim would still
+// be the defect. The two phrases are disjoint ("builds" vs "does not build"),
+// so a section cannot satisfy both and a mutation cannot satisfy neither by
+// accident.
+const summaryOf = (html) => {
+  const m = /<summary class="model-picker-summary">([\s\S]*?)<\/summary>/.exec(html);
+  return m ? m[1] : '';
+};
+const scopeOf = (html) => {
+  const m = /<p class="model-picker-scope[^"]*">([\s\S]*?)<\/p>/.exec(html);
+  return m ? m[1] : '';
+};
+const claimsBuild = (s) => /this model builds your wiki/i.test(s);
+const disclaimsBuild = (s) => /this model does not build your wiki/i.test(s);
+const laneIsLive = (head) => /model-picker-lane-live/.test(head);
+/** Whole-word presence in the VISIBLE text, so a class name or an attribute
+ *  can never be mistaken for prose naming a provider. */
+const wordIn = (html, word) => {
+  if (!word) return false;
+  const text = html.replace(/<[^>]*>/g, ' ');
+  return new RegExp('\\b' + String(word).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i').test(text);
+};
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§1  Extraction sanity + the real catalogue is non-trivial');
@@ -1524,6 +1555,201 @@ section('§28  CLASS INVARIANT — no binary provider ternary in the pick path (
     'a provider absent from the key lookup renders NOTHING — never another provider’s list');
   ok(!third.includes('data-pick-model'),
     'and exposes no control that could write a choice for it');
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§29  THE LANE — the ACTIVE provider’s section says its model builds the wiki');
+// ═════════════════════════════════════════════════════════════════════════
+// The defect this closes was the maintainer's own: he pinned a model under
+// one provider, had the OTHER active, and asked whether his next ingest
+// would use the model he had just picked. It would not — ingest, Health and
+// Compile all resolve through getActiveProvider(). Nothing on the screen
+// said so, and every section looked equally in force.
+//
+// Enumerated over the REAL provider catalogue, never a hardcoded id, and run
+// with EACH provider taking its turn as the active one — so an
+// implementation that hardcodes "gemini is the one that builds" cannot pass
+// (that is §31's job to prove explicitly, and this section's data feeds it).
+{
+  for (const prov of PROVIDERS) {
+    const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+    const scope = scopeOf(html);
+    ok(scope !== '', `${prov}: the active section renders its scope line at all`);
+    ok(claimsBuild(scope),
+      `${prov} ACTIVE: states plainly that this model builds the wiki`);
+    ok(!disclaimsBuild(scope),
+      `${prov} ACTIVE: and does not simultaneously deny it`);
+
+    // ── M5 ────────────────────────────────────────────────────────────────
+    // The claim must cover the WHOLE lane. Naming only ingest would let a
+    // reader infer that Health runs on something else — a wrong inference
+    // this screen would then have caused rather than prevented. All three
+    // resolve identically: health-ai.js's five generateText calls are all
+    // FOUR-argument and compile.js's is five, while provider/model live in
+    // argument SIX, so an override is not merely unused there — it cannot
+    // be expressed.
+    ok(/\bingest\b/i.test(scope), `${prov} ACTIVE: names ingest`);
+    ok(/health scan/i.test(scope), `${prov} ACTIVE: names Health scans (M5)`);
+    ok(/\bcompile\b/i.test(scope), `${prov} ACTIVE: names Compile (M5)`);
+
+    // The second lane, stated as a choice rather than as an exception.
+    ok(/\bchat\b/i.test(scope),
+      `${prov} ACTIVE: names chat as the separately-chosen lane`);
+    ok(!/not active/i.test(scope),
+      `${prov} ACTIVE: never describes itself as not active`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§30  THE OTHER LANE — the INACTIVE section disclaims it WITHOUT going dead');
+// ═════════════════════════════════════════════════════════════════════════
+// Two failure directions, and the section must avoid both. Saying nothing
+// leaves the original ambiguity. Saying only "not active" implies the pin is
+// useless — which is false: it takes over the moment the provider is made
+// active, and chat can reach the model today.
+{
+  for (const prov of PROVIDERS) {
+    for (const active of PROVIDERS) {
+      if (active === prov) continue;
+      const html = renderModelPicker(rowFor(prov), keysFor(prov, { activeProvider: active }), true, false);
+      const scope = scopeOf(html);
+
+      ok(disclaimsBuild(scope),
+        `${prov} (active=${active}): says this model does NOT build the wiki`);
+      ok(!claimsBuild(scope),
+        `${prov} (active=${active}): and makes no build claim of its own`);
+
+      // Names WHO does instead, through the REAL providerLabel. Without this
+      // the user is told what is not happening and never where to look.
+      const label = providerLabel(active);
+      ok(scope.includes(escapeHtml(label)),
+        `${prov} (active=${active}): names ${label} as the provider that does`);
+
+      // The pin is not useless — both halves asserted.
+      ok(/make .* active/i.test(scope) && /takes over/i.test(scope),
+        `${prov} (active=${active}): says this pin takes over on activation`);
+      ok(/chat can still use/i.test(scope),
+        `${prov} (active=${active}): says chat can still use it today`);
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§31  SWITCHING the active provider MOVES the claim — asserted both ways');
+// ═════════════════════════════════════════════════════════════════════════
+// The assertion a hardcoded "gemini builds the wiki" cannot survive. For
+// every ordered pair, render BOTH sections under one active provider and
+// require exactly one claimant; then flip the active provider and require
+// the claim to have moved to the other section.
+{
+  for (const a of PROVIDERS) {
+    for (const b of PROVIDERS) {
+      if (a === b) continue;
+
+      const underA = PROVIDERS.map((p) =>
+        scopeOf(renderModelPicker(rowFor(p), keysFor(p, { activeProvider: a }), true, false)));
+      const claimantsA = PROVIDERS.filter((p, i) => claimsBuild(underA[i]));
+      ok(claimantsA.length === 1 && claimantsA[0] === a,
+        `active=${a}: exactly one section claims the build path, and it is ${a}`);
+
+      const underB = PROVIDERS.map((p) =>
+        scopeOf(renderModelPicker(rowFor(p), keysFor(p, { activeProvider: b }), true, false)));
+      const claimantsB = PROVIDERS.filter((p, i) => claimsBuild(underB[i]));
+      ok(claimantsB.length === 1 && claimantsB[0] === b,
+        `active=${b}: the claim MOVED to ${b} — nothing is hardcoded to one provider`);
+
+      // And the collapsed headers move with it, since that is the surface
+      // most users actually read.
+      const headA = summaryOf(renderModelPicker(rowFor(a), keysFor(a, { activeProvider: a }), false, false));
+      const headB = summaryOf(renderModelPicker(rowFor(a), keysFor(a, { activeProvider: b }), false, false));
+      ok(laneIsLive(headA) && !laneIsLive(headB),
+        `${a}'s collapsed header marks the build lane only while ${a} is active`);
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§32  The lane marker is on the COLLAPSED header, and is not a control');
+// ═════════════════════════════════════════════════════════════════════════
+// These sections are collapsed by default (§16 proves that through the real
+// renderProviders), so the summary is the only thing most users will read —
+// which is why the fact that decides what an ingest costs has to live there
+// rather than behind the expand.
+//
+// And it is TEXT. An interactive element inside <summary> toggles its own
+// section when clicked (v3.0.1-beta.18, where Health's "Fix all" needed
+// preventDefault + stopPropagation to survive exactly that). §14 and §24
+// already hold this line; the new markup must not breach it.
+{
+  for (const prov of PROVIDERS) {
+    for (const active of PROVIDERS) {
+      const head = summaryOf(renderModelPicker(rowFor(prov), keysFor(prov, { activeProvider: active }), false, false));
+      ok(head !== '', `${prov} (active=${active}): collapsed header renders`);
+      ok(/model-picker-lane/.test(head),
+        `${prov} (active=${active}): the lane marker is ON the collapsed header`);
+      ok(laneIsLive(head) === (prov === active),
+        `${prov} (active=${active}): the marker matches who is actually active`);
+
+      for (const tag of ['<button', '<input', '<select', '<textarea', '<a ', 'data-pick-model', 'data-pick-clear']) {
+        ok(!head.includes(tag),
+          `${prov} (active=${active}): no ${tag.trim()} inside <summary> — nothing that could toggle its own section`);
+      }
+    }
+  }
+
+  // The two markers must differ in WORDS, not only in colour — colour alone
+  // is not a channel every user has.
+  const live = summaryOf(renderModelPicker(rowFor(PROVIDERS[0]), keysFor(PROVIDERS[0]), false, false));
+  const idle = summaryOf(renderModelPicker(rowFor(PROVIDERS[0]), keysFor(PROVIDERS[0], { activeProvider: PROVIDERS[1] }), false, false));
+  const strip = (h) => h.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  ok(strip(live) !== strip(idle),
+    'the active and inactive headers differ in TEXT, not only in styling');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§33  An unknown active provider degrades honestly, never to a wrong name');
+// ═════════════════════════════════════════════════════════════════════════
+// `activeProvider` arrives over the wire. Whatever it says, no section may
+// end up claiming the build path it does not have, and none may attribute it
+// to a DIFFERENT known provider — the fail-safe direction renderProviderRow's
+// key lookup was rebuilt around in v3.10.1.
+{
+  // Absent entirely: stop naming anyone rather than inventing a name.
+  for (const bad of [null, undefined, '']) {
+    for (const prov of PROVIDERS) {
+      const scope = scopeOf(renderModelPicker(rowFor(prov), keysFor(prov, { activeProvider: bad }), true, false));
+      ok(!claimsBuild(scope),
+        `activeProvider=${JSON.stringify(bad)}: ${prov} claims no build path it cannot have`);
+      ok(scope.includes('the active provider'),
+        `activeProvider=${JSON.stringify(bad)}: ${prov} falls back to the generic phrase`);
+      for (const other of PROVIDERS) {
+        if (other === prov) continue;
+        ok(!wordIn(scope, providerLabel(other)),
+          `activeProvider=${JSON.stringify(bad)}: ${prov} does not attribute the build path to ${other}`);
+      }
+    }
+  }
+
+  // Present but not a provider this build knows. providerLabel echoes the id
+  // back rather than substituting a known provider's identity, so the page
+  // stays truthful about what the config says; the invariant that matters is
+  // that no KNOWN provider is named in its place, and that nothing claims to
+  // be active.
+  for (const bad of ['openrouter', '__proto__', 'constructor']) {
+    for (const prov of PROVIDERS) {
+      const scope = scopeOf(renderModelPicker(rowFor(prov), keysFor(prov, { activeProvider: bad }), true, false));
+      ok(!claimsBuild(scope) && disclaimsBuild(scope),
+        `activeProvider=${bad}: ${prov} correctly reports it is not the active provider`);
+      for (const other of PROVIDERS) {
+        if (other === prov) continue;
+        ok(!wordIn(scope, providerLabel(other)),
+          `activeProvider=${bad}: ${prov} never names ${other} as the one that builds`);
+      }
+      ok(!/<script|onerror=/i.test(scope),
+        `activeProvider=${bad}: the echoed id is escaped, not injected`);
+    }
+  }
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

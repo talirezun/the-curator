@@ -71,6 +71,15 @@
  *       metacharacters cannot break out of the markup, with a positive control
  *       proving the harness's escaper would otherwise let them through.
  *   §9  BACKEND-CAPABILITY DRIFT GUARD — see its own header.
+ *   §10 THE ANSWER LABEL — which model actually wrote each message.
+ *   §11 THE ANSWER COST — what each message cost, priced from its OWN recorded
+ *       tokens and the SERVED model's live price. §11.1 proves the view's
+ *       arithmetic against the REAL `chargeForItem` lifted out of
+ *       src/brain/ingest-queue.js, so the deliberate mirror of a money formula
+ *       is MEASURED rather than promised.
+ *   §0  FN_NAMES COMPLETENESS — the harness's own blind spot, closed. A helper
+ *       missing from FN_NAMES used to CRASH this suite with a ReferenceError
+ *       instead of failing it (the v3.11.0 shape); it is now a named red.
  *
  * ── ENFORCED ─────────────────────────────────────────────────────────────
  *   - Key scoping in BOTH directions, over the real catalogue.
@@ -79,7 +88,22 @@
  *   - Measured note rendered on every flagged entry; flagged models shown.
  *   - Every server-supplied string escaped before it enters markup.
  *
+ *   - The per-answer COST is silent whenever any component is missing (§11.3,
+ *     §11.4), uses today's promotion-resolved price (§11.5), never renders a
+ *     non-zero charge as $0.0000 (§11.6), and comes from the shared formatter
+ *     rather than a local one (§11.7).
+ *
  * ── NOT ENFORCED (stated rather than implied away) ───────────────────────
+ *   - The per-answer cost prices at RENDER time, so a turn served during a
+ *     promotion and re-read after it expires prices at the standing (higher)
+ *     rate. That direction is deliberate — every price failure in this repo
+ *     resolves upward — but it is an approximation and nothing here asserts
+ *     the historical rate, because the record does not carry one.
+ *   - The Anthropic 0.1x cached-read multiplier is applied to Gemini's
+ *     implicit-cache reads too. Inherited unchanged from `chargeForItem` (see
+ *     messageCostUsd's docblock); §11.1 pins the two together, which means it
+ *     also pins the approximation. Fixing it is a change to the server formula,
+ *     not to this view.
  *   - The click handler, the localStorage round-trip and `applyApiKeys` are
  *     NOT executed here: they read module state and `document`/`localStorage`
  *     directly rather than taking them as parameters, so extracting them would
@@ -103,9 +127,14 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { OFFERABLE_MODELS } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice } from '../src/brain/llm.js';
+// The REAL shared formatter the view imports, driven directly — not a stub. A
+// stub would let a bespoke re-implementation in the view pass unnoticed, which
+// is mutation M4.
+import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -213,28 +242,113 @@ function scanTags(html) {
 
 const FN_NAMES = [
   'normalizeOfferable', 'offerableEntries', 'resolveChatModel',
-  'formatPricePerM', 'formatLivePrice', 'formatPromotionRise',
+  'formatPricePerM', 'formatLivePrice', 'formatIsoDay', 'formatPromotionRise',
   'isFlaggedModel', 'renderModelOptionHtml', 'renderModelMenuHtml',
   // §10 — the ANSWER label (which model actually wrote a message).
   'modelDisplayLabel', 'neutralProviderLabel', 'describeAnswerModel',
   'assistantEyebrowHtml',
+  // §11 — the ANSWER cost (what that message cost, from its own tokens).
+  'messageUsageTokens', 'messageCostUsd', 'assistantCostHtml',
 ];
 
+/** Bindings the sandbox supplies to the extracted code, in call order. */
+const INJECTED = ['escapeHtml', 'formatUsdHonest'];
+
 const sandbox = new Function(
-  'escapeHtml',
+  ...INJECTED,
   extractConst(chatSrc, 'PROVIDER_LABELS') + '\n' +
   extractConst(chatSrc, 'SUITABILITY_LABELS') + '\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
-  'return { ' + FN_NAMES.join(', ') + ' };'
-)(escapeHtmlStub);
+  'return { SUITABILITY_LABELS, ' + FN_NAMES.join(', ') + ' };'
+)(escapeHtmlStub, formatUsdHonest);
 
 const {
+  SUITABILITY_LABELS,
   normalizeOfferable, offerableEntries, resolveChatModel,
-  formatPricePerM, formatLivePrice, formatPromotionRise,
+  formatPricePerM, formatLivePrice, formatIsoDay, formatPromotionRise,
   isFlaggedModel, renderModelOptionHtml, renderModelMenuHtml,
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
+  messageUsageTokens, messageCostUsd, assistantCostHtml,
 } = sandbox;
+
+// ── The FN_NAMES completeness guard — see §0 ─────────────────────────────
+/**
+ * Strip comments and string/template literals so a name mentioned in prose
+ * ("see `foo()` above") is not read as a call.
+ *
+ * Deliberately simple and sound in the SAFE direction: it can over-report (a
+ * regex literal containing `word(` reads as a call), and an over-report costs a
+ * maintainer one entry in FN_NAMES. It cannot under-report a plain `name(`
+ * call, which is the failure that matters.
+ */
+function stripCommentsAndLiterals(src, keepLiterals = false) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (two === '//') { while (i < src.length && src[i] !== '\n') i++; continue; }
+    if (two === '/*') { i += 2; while (i < src.length && src.slice(i, i + 2) !== '*/') i++; i += 2; continue; }
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const start = i;
+      i++;
+      while (i < src.length && src[i] !== c) { if (src[i] === '\\') i++; i++; }
+      i++;
+      out += keepLiterals ? src.slice(start, i) : '""';
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Comments removed, string literals KEPT.
+ *
+ * Needed by §11.7, whose target pattern (`'$' + x.toFixed(4)`) contains a
+ * string literal — so the literal-stripping variant above cannot see it — while
+ * a PROSE mention of that same pattern in a docblock (there is one, explaining
+ * why the shared formatter is imported) would otherwise read as a live
+ * re-implementation. Found by this suite reporting exactly that false positive
+ * against its own explanatory comment.
+ */
+function stripComments(src) { return stripCommentsAndLiterals(src, true); }
+
+/** Every `function NAME(` declared at column 0 in chat.js. */
+function topLevelFunctionNames(src) {
+  const names = new Set();
+  const re = /(?:^|\n)(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+  let m;
+  while ((m = re.exec(src)) !== null) names.add(m[1]);
+  return names;
+}
+
+/** Names bound by an `import { a, b as c }` / `import d` in chat.js. */
+function importedNames(src) {
+  const names = new Set();
+  const re = /import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*['"]/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    if (m[1]) names.add(m[1]);
+    if (m[2]) for (const part of m[2].split(',')) {
+      const t = part.trim();
+      if (!t) continue;
+      const as = /\bas\s+([A-Za-z_$][\w$]*)$/.exec(t);
+      names.add(as ? as[1] : t);
+    }
+  }
+  return names;
+}
+
+/** Standard globals an extracted function may legitimately call. */
+const SAFE_GLOBALS = new Set([
+  'Object', 'Array', 'String', 'Number', 'Boolean', 'Math', 'JSON', 'RegExp',
+  'Date', 'Error', 'Set', 'Map', 'Symbol', 'Promise', 'parseInt', 'parseFloat',
+  'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'BigInt',
+  'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function',
+]);
 
 // ── The REAL, live catalogue, and a raw server-shaped payload built from it ─
 const REAL = OFFERABLE_MODELS;
@@ -271,6 +385,102 @@ function serverOfferable(keyed) {
 function menuFor(keyed, selectedId = null) {
   const norm = normalizeOfferable(rawFull(), keyed);
   return { norm, html: renderModelMenuHtml(norm, keyed, selectedId) };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§0  FN_NAMES COMPLETENESS — the harness cannot go blind by omission');
+// ═════════════════════════════════════════════════════════════════════════
+/*
+ * ── THE BLIND SPOT THIS CLOSES, AND WHY IT IS A CLASS ────────────────────
+ * `FN_NAMES` is a hardcoded list. An extracted function that CALLS a helper
+ * not on that list throws `ReferenceError` at call time — so the suite CRASHES
+ * with a stack trace instead of failing with a tally. That is strictly worse
+ * than a red: the runner classifies suites by their assertion count, so a
+ * crash can read as "did not run" rather than "is broken", and the developer
+ * who added the helper sees a harness error rather than a statement about
+ * their code.
+ *
+ * This is the v3.11.0 shape verbatim. `test-next-semantic-gate.js` lifted a
+ * hardcoded list of functions out of domains.js; a new module-level helper was
+ * not in it, `loadHealth` threw ReferenceError MID-CLEAR, and the suite's red
+ * was diagnosed as a state-lifetime bug that did not exist. That suite's own
+ * comment already recorded the same thing happening once before it.
+ *
+ * ── CLOSED GENERALLY, NOT JUST FOR THIS RELEASE'S HELPERS ────────────────
+ * The obvious fix is "add the three new names to FN_NAMES", which fixes the
+ * INSTANCE and leaves the class open for the next helper. So instead: every
+ * identifier CALLED by an extracted function is resolved against (a) the other
+ * extracted functions, (b) the bindings the sandbox injects, (c) the constants
+ * it extracts, (d) standard globals. Anything left over is named in a failing
+ * assertion, BEFORE any of it is executed — a clean red naming both functions,
+ * with a tally, instead of a crash.
+ *
+ * ── NOT ENFORCED (stated rather than implied away) ───────────────────────
+ *   - INDIRECT calls. `const f = helper; f();` or `[helper].map(g => g())`
+ *     bind the name without a following `(`, so they are invisible here and
+ *     still crash. The direct `name(` form is what this file's extraction
+ *     actually produces and what every helper in chat.js uses today.
+ *   - Property calls (`obj.method()`) are deliberately ignored — they are
+ *     resolved at runtime against a value, not against module scope.
+ *   - Comment/literal stripping is approximate (see stripCommentsAndLiterals);
+ *     it errs toward over-reporting, whose cost is one FN_NAMES entry.
+ *   - This guard covers THIS suite's sandbox only. Every other suite in the
+ *     repo that lifts functions by a hardcoded list has the same blind spot,
+ *     and the technique here is portable but has not been ported. Recorded so
+ *     "the class is closed" is not read more widely than it is true.
+ */
+{
+  const topLevel = topLevelFunctionNames(chatSrc);
+  const imported = importedNames(chatSrc);
+  const extractedConsts = new Set(['PROVIDER_LABELS', 'SUITABILITY_LABELS']);
+  ok(topLevel.size > 20,
+    `§0 the top-level function scanner sees chat.js's helpers (found ${topLevel.size})`);
+  for (const n of FN_NAMES) {
+    ok(topLevel.has(n), `§0 FN_NAMES entry "${n}" is a real top-level function in chat.js`);
+  }
+  const unresolved = [];
+  for (const name of FN_NAMES) {
+    const body = stripCommentsAndLiterals(extractFunction(chatSrc, name));
+    const callRe = /(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+    let m;
+    while ((m = callRe.exec(body)) !== null) {
+      const called = m[2];
+      if (called === name) continue;
+      if (FN_NAMES.includes(called)) continue;
+      if (INJECTED.includes(called)) continue;
+      if (extractedConsts.has(called)) continue;
+      if (SAFE_GLOBALS.has(called)) continue;
+      unresolved.push(`${name} → ${called}()`);
+    }
+  }
+  ok(unresolved.length === 0,
+    `§0 every function an extracted helper calls is itself extracted, injected or a standard global` +
+    (unresolved.length ? ` — UNRESOLVED: ${[...new Set(unresolved)].join(', ')}. ` +
+      `Add the callee to FN_NAMES (if it is a chat.js helper) or to INJECTED (if it is an import), ` +
+      `or this suite will CRASH with a ReferenceError instead of failing.` : ''));
+  // Positive control: the detector can actually see a missing name. Drop one
+  // real entry from the list and the helpers that call it must be reported.
+  {
+    const without = FN_NAMES.filter(n => n !== 'resolveChatModel');
+    const found = [];
+    for (const name of without) {
+      const body = stripCommentsAndLiterals(extractFunction(chatSrc, name));
+      if (/(^|[^.\w$])resolveChatModel\s*\(/.test(body)) found.push(name);
+    }
+    ok(found.length > 0,
+      `§0 control — removing a real helper from the list IS detected (callers: ${found.join(', ')})`);
+  }
+  // And that an imported binding the sandbox does NOT inject would be caught:
+  // formatUsdHonest is imported by chat.js and injected here, so the guard
+  // above passes; drop it from INJECTED and it must be reported.
+  {
+    ok(imported.has('formatUsdHonest'),
+      '§0 chat.js imports formatUsdHonest (so the injected-binding path is exercised, not vacuous)');
+    const found = FN_NAMES.filter(n =>
+      /(^|[^.\w$])formatUsdHonest\s*\(/.test(stripCommentsAndLiterals(extractFunction(chatSrc, n))));
+    ok(found.length > 0,
+      `§0 control — an IMPORTED callee is visible to the same scanner (callers: ${found.join(', ')})`);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -467,8 +677,16 @@ section('§6  Promotion disclosure — the coming rise is stated');
       `${e.id}: the rise element names the standard input price ${e.standardInput}`);
     ok(riseText.includes(escapeHtmlStub(formatPricePerM(e.standardOutput))),
       `${e.id}: the rise element names the standard output price ${e.standardOutput}`);
+    // CLAIM UPDATED, NOT ASSERTION WEAKENED. This pinned the RAW ISO string
+    // and went red the moment the composer adopted Settings' humanised form —
+    // the guard working. The date must still be named; it is now named the way
+    // a person reads a date, and the raw ISO must NOT survive alongside it, or
+    // the drift this fixed would simply have gained a second rendering.
     const date = e.standardPriceFromIso || e.promotionUntilIso;
-    ok(riseText.includes(escapeHtmlStub(date)), `${e.id}: the rise element names the date it applies (${date})`);
+    const human = formatIsoDay(date);
+    ok(human !== date, `${e.id}: ${date} humanises to something different ("${human}")`);
+    ok(riseText.includes(escapeHtmlStub(human)), `${e.id}: the rise element names the date it applies ("${human}")`);
+    ok(!riseText.includes(date), `${e.id}: the rise element does NOT also carry the raw ISO ${date}`);
   }
   // Control: a NON-promoted entry adds no rise clause, so the assertion above
   // is discriminating rather than always-true.
@@ -477,8 +695,161 @@ section('§6  Promotion disclosure — the coming rise is stated');
     ok(formatPromotionRise(e) === '', `${e.id}: no promotion → no rise clause`);
     ok(!renderModelOptionHtml(p, e, null).includes('chat-mm-rise'), `${e.id}: no rise element rendered`);
   }
-  ok(formatPromotionRise({ promotionUntilIso: '2027-01-01' }).includes('2027-01-01'),
-    'a promotion with unknown standard prices still discloses that a rise is coming');
+  ok(formatPromotionRise({ promotionUntilIso: '2027-01-01' }).includes('1 Jan 2027'),
+    'a promotion with unknown standard prices still discloses that a rise is coming, humanised');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§6b  Promotion date is humanised, and an EXPIRED promotion claims nothing');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Two separate facts, both about money, both previously wrong on this surface
+// while RIGHT on Settings:
+//
+//   1. VOCABULARY. The composer rendered the rise date as a raw ISO string
+//      ("on 2027-01-01") where Settings rendered "on 1 Jan 2027". One date,
+//      two renderings, one app.
+//   2. CORRECTNESS. `promotionUntilIso` stays populated after a promotion
+//      expires, so a truthiness-only check keeps announcing a rise that has
+//      already happened — beside a price line that already shows the risen
+//      figure. Settings guards this; the composer did not.
+//
+// NOT ENFORCED, stated rather than implied: settings.js's `formatIsoDay` and
+// `MODEL_SUITABILITY_BADGES` are independent copies in an independent module.
+// This suite pins the composer's output and scripts/test-next-model-picker.js
+// pins Settings' — two mirrored assertions, NOT one shared source of truth.
+{
+  // ── formatIsoDay: the unit contract ────────────────────────────────────
+  ok(formatIsoDay('2027-01-01') === '1 Jan 2027', 'formatIsoDay: 2027-01-01 → "1 Jan 2027"');
+  ok(formatIsoDay('2026-12-31') === '31 Dec 2026', 'formatIsoDay: 2026-12-31 → "31 Dec 2026"');
+  ok(formatIsoDay('2026-08-09') === '9 Aug 2026', 'formatIsoDay: a leading zero in the day is dropped');
+  // Never invent a date out of input it cannot parse.
+  ok(formatIsoDay('tomorrow') === 'tomorrow', 'formatIsoDay: unparseable input is returned verbatim, never guessed');
+  ok(formatIsoDay('2027-13-01') === '2027-13-01', 'formatIsoDay: an impossible month is returned verbatim');
+  for (const bad of [null, undefined, 0, {}, []]) {
+    ok(formatIsoDay(bad) === '', `formatIsoDay: non-string ${JSON.stringify(bad)} → "" (no text at all)`);
+  }
+
+  // ── EXPIRED promotion: the live price has caught up with the standard ──
+  // Exactly the shape llm.js's getters produce on 2027-01-02: the promo record
+  // is still on the entry, but input/output already resolve to the standard.
+  const expired = {
+    id: 'x-expired', label: 'X', input: 1.5, output: 7.5,
+    standardInput: 1.5, standardOutput: 7.5,
+    promotionUntilIso: '2026-12-31', standardPriceFromIso: '2027-01-01',
+  };
+  ok(formatPromotionRise(expired) === '',
+    'an EXPIRED promotion claims no rise — the change it would warn about has already happened');
+  ok(!renderModelOptionHtml('gemini', expired, null).includes('chat-mm-rise'),
+    'and no rise element is rendered for it');
+  // Control: the SAME entry while the promotion is still live does disclose,
+  // so the assertion above is discriminating rather than always-true.
+  const live = { ...expired, input: 0.75, output: 3.75 };
+  ok(formatPromotionRise(live).includes('1 Jan 2027'),
+    'control: the same entry while still promoted DOES disclose the rise');
+  ok(renderModelOptionHtml('gemini', live, null).includes('chat-mm-rise'),
+    'control: and renders a rise element');
+  // Half-expired (only one axis has caught up) is NOT expired — still disclose.
+  ok(formatPromotionRise({ ...expired, input: 0.75 }) !== '',
+    'a promotion where only the OUTPUT axis has risen still discloses');
+  ok(formatPromotionRise({ ...expired, output: 3.75 }) !== '',
+    'a promotion where only the INPUT axis has risen still discloses');
+  // Missing figures ⇒ we cannot establish expiry ⇒ WARN, never go silent.
+  ok(formatPromotionRise({ promotionUntilIso: '2026-12-31' }) !== '',
+    'unknown prices cannot prove expiry, so the rise is still disclosed (fail-safe = warn)');
+  ok(formatPromotionRise({ promotionUntilIso: '2026-12-31', input: 0.75, standardInput: 1.5 }) !== '',
+    'a partially-known entry is likewise disclosed rather than silently dropped');
+
+  // ── Every REAL promoted entry: humanised date, no raw ISO ─────────────
+  for (const { e } of promotedEntries) {
+    const rise = formatPromotionRise(e);
+    ok(!/\d{4}-\d{2}-\d{2}/.test(rise),
+      `${e.id}: the rise clause carries no raw ISO date at all`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§6d  The rise date is timezone-proof — asserted, not merely commented');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// formatIsoDay's docblock claims it parses the ISO COMPONENTS rather than
+// going through `new Date(iso)` + toLocaleDateString, because the latter reads
+// the string as UTC midnight and renders it in the VIEWER's zone — so anyone
+// west of Greenwich is told a price rises the day before it does.
+//
+// That claim cannot be tested in this process: the dev machine and CI both sit
+// EAST of Greenwich (Europe/*, UTC), where the buggy implementation returns the
+// right answer and a same-process assertion passes over it. So the check is
+// re-run in a CHILD with TZ pinned to a negative-offset zone, against the very
+// same extracted source. A rewrite to the Date-based form goes green here and
+// RED there, which is the only place the defect is observable.
+{
+  const src = extractFunction(chatSrc, 'formatIsoDay');
+  const probe = src + '\nprocess.stdout.write(JSON.stringify([' +
+    'formatIsoDay("2027-01-01"), formatIsoDay("2026-12-31"), formatIsoDay("2026-03-01")' +
+    ']));';
+  const EXPECTED = ['1 Jan 2027', '31 Dec 2026', '1 Mar 2026'];
+
+  // Control first: the harness itself must work, or a green below is vacuous.
+  const here = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8' });
+  ok(here.status === 0, '§6d the child probe runs at all (harness control)');
+  ok(here.stdout === JSON.stringify(EXPECTED),
+    `§6d control: in this machine's own zone the dates are ${EXPECTED.join(', ')}`);
+
+  for (const TZ of ['America/Los_Angeles', 'Pacific/Midway', 'America/Sao_Paulo']) {
+    const r = spawnSync(process.execPath, ['-e', probe], {
+      encoding: 'utf8', env: { ...process.env, TZ },
+    });
+    ok(r.status === 0, `§6d probe runs under TZ=${TZ}`);
+    ok(r.stdout === JSON.stringify(EXPECTED),
+      `§6d under TZ=${TZ} the rise dates are unchanged (no UTC-midnight slip)`);
+  }
+  // Positive control: the BUGGY implementation this guard exists to reject
+  // really does slip a day west of Greenwich — so the greens above are load-bearing.
+  const buggy = 'function f(iso){return new Date(iso).toLocaleDateString("en-GB",' +
+    '{day:"numeric",month:"short",year:"numeric"});}' +
+    'process.stdout.write(f("2027-01-01"));';
+  const slipped = spawnSync(process.execPath, ['-e', buggy], {
+    encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles' },
+  });
+  ok(slipped.stdout.trim() !== '1 Jan 2027',
+    `§6d positive control: the Date-based form really does slip west of Greenwich (got "${slipped.stdout.trim()}")`);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§6c  Suitability vocabulary matches Settings, word for word');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// The v3.13.1 finding, applied to the second label: the same measured field
+// rendered in two vocabularies across two surfaces, and NO assertion on either
+// side checked the literal WORD — only the CSS marker class — so the two could
+// have disagreed forever and stayed green. "chat only" understates what was
+// measured; "chat only — not for ingest" is the fact.
+{
+  ok(SUITABILITY_LABELS['chat-only'] === 'chat only — not for ingest',
+    'the chat-only label is Settings\' full phrasing, not the composer\'s old short form');
+
+  const chatOnly = [];
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    if (e.suitability === 'chat-only') chatOnly.push({ p, e });
+  }
+  ok(chatOnly.length > 0, 'the live catalogue still contains a chat-only model (this section is not vacuous)');
+  for (const { p, e } of chatOnly) {
+    const html = renderModelOptionHtml(p, e, null);
+    ok(html.includes('>chat only — not for ingest<'),
+      `${e.id}: renders the full phrase "chat only — not for ingest" (matches settings.js)`);
+    // The RAW FIELD NAME must never reach the user as a label. It legitimately
+    // appears nowhere else in a row, so this is a clean rejection.
+    ok(!html.includes('>chat-only<'),
+      `${e.id}: the raw field name "chat-only" is never shown as a label`);
+  }
+  // Control: a model with no suitability caveat gains no such badge, so the
+  // assertions above discriminate rather than matching everything.
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
+    if (e.suitability === 'chat-only') continue;
+    ok(!renderModelOptionHtml(p, e, null).includes('chat only'),
+      `${e.id}: a non-chat-only model carries no chat-only wording`);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -809,6 +1180,371 @@ section('§10  THE ANSWER LABEL — the model that ANSWERED, per message');
       ok(modelDisplayLabel(e.id, ctx.offerable, ALL_PROVIDERS) === labelOf(e),
         `§10.6 ${e.id} → "${labelOf(e)}"`);
     }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
+// ═════════════════════════════════════════════════════════════════════════
+/*
+ * The chat thread now says what each answer cost. Three properties matter, in
+ * this order:
+ *
+ *   1. It is computed from the SERVED model's live price and the message's own
+ *      recorded tokens — never the requested model, never the standard price,
+ *      never an estimate from message length.
+ *   2. When ANY component is missing it renders NOTHING. Not $0.00, not a dash,
+ *      not a guess. Every conversation written before this feature is that case.
+ *   3. The arithmetic is `chargeForItem` from src/brain/ingest-queue.js. That
+ *      module cannot be imported into a browser, so the view MIRRORS it — and
+ *      §11.1 below proves the mirror agrees with the real function bit for bit
+ *      rather than asserting that it does.
+ */
+{
+  // ── The REAL chargeForItem, lifted from the server module by brace-match ──
+  // Extracted rather than imported: ingest-queue.js is server-side (fs, paths,
+  // llm.js) and this is an offline browser-code suite. Extraction runs the
+  // SAME SOURCE TEXT that ships, with the real getModelPrice injected — so a
+  // change to either side's formula shows up here.
+  const QUEUE_PATH = path.join(ROOT, 'src/brain/ingest-queue.js');
+  const queueSrc = readFileSync(QUEUE_PATH, 'utf8');
+  const chargeForItem = new Function('getModelPrice',
+    extractFunction(queueSrc, 'chargeForItem') + '\nreturn chargeForItem;'
+  )(getModelPrice);
+  ok(typeof chargeForItem === 'function',
+    '§11 the REAL chargeForItem was extracted from src/brain/ingest-queue.js');
+
+  // Every entry of the LIVE catalogue — enumerated, never a hardcoded list, so
+  // a model added or repriced in llm.js is covered here the moment it lands.
+  const everyEntry = [];
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) everyEntry.push({ p, e });
+  ok(everyEntry.length > 1, `§11 enumerated ${everyEntry.length} live catalogue entries`);
+
+  const ANY = ['gemini', 'anthropic'];
+  const OFF = rawFull();
+  const ctx = { offerable: OFF, availableProviders: ANY, activeProvider: 'gemini' };
+  const msg = (model, usage, extra) =>
+    Object.assign({ role: 'assistant', content: 'x', model, usage }, extra || {});
+
+  // A spread of token shapes, including cache terms (which chat does not
+  // currently produce but the record can carry) and a genuine all-zero report.
+  const USAGES = [
+    { inputTokens: 621, outputTokens: 84, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 953, outputTokens: 153, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 1, outputTokens: 1, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 40000, outputTokens: 12288, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 500, outputTokens: 200, cachedReadTokens: 9000, cacheWriteTokens: 0 },
+    { inputTokens: 500, outputTokens: 200, cachedReadTokens: 0, cacheWriteTokens: 4000 },
+    { inputTokens: 500, outputTokens: 200, cachedReadTokens: 9000, cacheWriteTokens: 4000 },
+    { inputTokens: 500, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 },
+    { inputTokens: 0, outputTokens: 200, cachedReadTokens: 0, cacheWriteTokens: 0 },
+  ];
+  // NOT in USAGES, deliberately: {0,0,0,0} is the "provider reported nothing"
+  // sentinel and is refused before the arithmetic runs (§11.3), so it is not a
+  // case where the mirror and chargeForItem are expected to agree. Stated here
+  // rather than silently omitted — the two functions differ on exactly this
+  // input, by design, and §11.1 would otherwise look like it had been trimmed
+  // to fit.
+  const SENTINEL = { inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 };
+
+  // ── §11.1  THE MIRROR IS MEASURED, NOT PROMISED ─────────────────────────
+  {
+    let checked = 0;
+    for (const { e } of everyEntry) {
+      for (const u of USAGES) {
+        const mine = messageCostUsd(msg(e.id, u), ctx);
+        const theirs = chargeForItem({ items: [], estimate: null },
+          { tokenUsage: Object.assign({ model: e.id }, u) });
+        if (mine !== theirs) {
+          ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: mirror ${mine} !== chargeForItem ${theirs}`);
+        }
+        checked++;
+      }
+    }
+    ok(true, `§11.1 the view's arithmetic equals the REAL chargeForItem exactly, ` +
+      `over ${checked} (model × token-shape) cases generated from the live catalogue`);
+    // The ONE deliberate divergence, asserted so it is a decision on the record
+    // rather than a gap: chargeForItem prices the sentinel as 0 (correct for a
+    // running spend total, where 0 is the neutral element); the view refuses to
+    // price it at all (correct for a per-answer readout, where an exact $0.00
+    // beside a paid answer is a lie).
+    {
+      const probeId = everyEntry[0].e.id;
+      const theirs = chargeForItem({ items: [], estimate: null },
+        { tokenUsage: Object.assign({ model: probeId }, SENTINEL) });
+      ok(theirs === 0, '§11.1 chargeForItem prices the {0,0,0,0} sentinel as 0');
+      ok(messageCostUsd(msg(probeId, SENTINEL), ctx) === null,
+        '§11.1 the view REFUSES to price it — the one deliberate divergence, and the safe direction');
+    }
+    // Control: the comparison can distinguish a difference, so the green above
+    // is not "both returned undefined".
+    const probe = everyEntry[0].e;
+    const u0 = USAGES[0];
+    const real = chargeForItem({ items: [], estimate: null },
+      { tokenUsage: Object.assign({ model: probe.id }, u0) });
+    ok(typeof real === 'number' && real > 0,
+      `§11.1 control — chargeForItem returns a real positive charge (${real})`);
+    ok(messageCostUsd(msg(probe.id, u0), ctx) !== real * 2,
+      '§11.1 control — the equality check would notice a doubled figure');
+  }
+
+  // ── §11.2  PRICED BY THE SERVED MODEL, NEVER THE REQUESTED ONE ──────────
+  {
+    // Two entries with genuinely different prices, taken from the real table.
+    const sorted = everyEntry.slice().sort((a, b) => a.e.input - b.e.input);
+    const CHEAP = sorted[0].e;
+    const DEAR = sorted[sorted.length - 1].e;
+    ok(DEAR.input > CHEAP.input,
+      `§11.2 fixture: the catalogue spans real prices (${CHEAP.id} $${CHEAP.input} → ${DEAR.id} $${DEAR.input} in)`);
+    const u = USAGES[1];
+    // Asked for the cheap one; the DEAR one answered (the fallback-walk shape).
+    const walked = msg(DEAR.id, u, { requestedModel: CHEAP.id });
+    const byServed = messageCostUsd(walked, ctx);
+    const byRequested = messageCostUsd(msg(CHEAP.id, u), ctx);
+    ok(byServed !== byRequested,
+      '§11.2 fixture: the two models produce different costs for identical tokens');
+    ok(byServed === chargeForItem({ items: [], estimate: null },
+      { tokenUsage: Object.assign({ model: DEAR.id }, u) }),
+      '§11.2 the cost is the SERVED model\'s — the one that actually answered');
+    ok(byServed > byRequested,
+      `§11.2 a walk ONTO a costlier model reports the higher bill (${byServed} > ${byRequested}), ` +
+      'not the cheaper one the user asked for');
+    // And the rendered fragment carries the served figure, not the requested.
+    const html = assistantCostHtml(walked, ctx);
+    ok(html.includes(escapeHtmlStub(formatUsdHonest(byServed))),
+      '§11.2 the RENDERED cost is the served model\'s figure');
+    if (formatUsdHonest(byServed) !== formatUsdHonest(byRequested)) {
+      ok(!html.includes(escapeHtmlStub(formatUsdHonest(byRequested))),
+        '§11.2 the requested model\'s figure never appears');
+    }
+    // Same message, same tokens, but with the COMPOSER pointed elsewhere: the
+    // selection is carried in ctx (so the bug is expressible) and must not move
+    // the number.
+    ok(assistantCostHtml(walked, { ...ctx, chatModel: CHEAP.id }) === html,
+      '§11.2 the composer\'s current selection cannot change a historical cost');
+  }
+
+  // ── §11.3  NO USAGE ⇒ NO COST. Not zero, not a dash, not an estimate ────
+  {
+    const M = everyEntry[0].e.id;
+    const cases = [
+      ['no usage key at all (every pre-existing message)', msg(M, undefined)],
+      ['usage null', msg(M, null)],
+      ['usage is not an object', msg(M, 42)],
+      ['usage is a string', msg(M, '{"inputTokens":1}')],
+      ['usage is an array', msg(M, [])],
+      ['inputTokens missing', msg(M, { outputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['outputTokens missing', msg(M, { inputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['cachedReadTokens missing', msg(M, { inputTokens: 5, outputTokens: 5, cacheWriteTokens: 0 })],
+      ['cacheWriteTokens missing', msg(M, { inputTokens: 5, outputTokens: 5, cachedReadTokens: 0 })],
+      ['a token count is a NUMERIC STRING', msg(M, { inputTokens: '5', outputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['a token count is NaN', msg(M, { inputTokens: NaN, outputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['a token count is Infinity', msg(M, { inputTokens: Infinity, outputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['a token count is negative', msg(M, { inputTokens: -5, outputTokens: 5, cachedReadTokens: 0, cacheWriteTokens: 0 })],
+      ['usage present but NO model recorded', msg(null, USAGES[0])],
+      ['usage present, model is empty string', msg('', USAGES[0])],
+    ];
+    for (const [label, m] of cases) {
+      ok(messageCostUsd(m, ctx) === null, `§11.3 ${label} → no cost computed (null, not 0)`);
+      const h = assistantCostHtml(m, ctx);
+      ok(h === '', `§11.3 ${label} → renders NOTHING (got ${JSON.stringify(h)})`);
+      const eye = assistantEyebrowHtml(m, ctx);
+      ok(!/\$/.test(eye), `§11.3 ${label} → the eyebrow shows no dollar figure at all`);
+      ok(!/chat-msg-cost/.test(eye), `§11.3 ${label} → no empty cost element is emitted`);
+    }
+    // ── THE SENTINEL, and why it is refused rather than shown as $0.00 ────
+    // llm.js's usage normalizers coerce every missing field to 0, so a provider
+    // that reports NO usage block at all arrives as {0,0,0,0}. A completed chat
+    // turn cannot have consumed zero input (the prompt carries the schema plus
+    // thousands of characters of wiki context), so zero-in-AND-zero-out can
+    // only mean "we were not told" — and rendering it would put an exact $0.00
+    // beside a paid answer, which is the very defect shared/format-usd.js
+    // exists to prevent, arriving through a different door. Refused on BOTH
+    // sides (src/brain/chat.js's normalizeReportedUsage refuses to write it;
+    // this refuses to price a hand-edited or synced file that carries it).
+    const zero = msg(M, { inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 });
+    ok(messageUsageTokens(zero) === null,
+      '§11.3 zero-in AND zero-out is the "nothing reported" sentinel, not a measurement');
+    ok(messageCostUsd(zero, ctx) === null,
+      '§11.3 …so it yields NO cost');
+    ok(!/\$/.test(assistantEyebrowHtml(zero, ctx)),
+      '§11.3 …and renders no $0.00 beside an answer that was certainly paid for');
+    // The rule is NARROW, and that narrowness is asserted: a zero on ONE axis
+    // is still a real report and still prices.
+    const zeroOut = msg(M, { inputTokens: 611, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 });
+    ok(messageCostUsd(zeroOut, ctx) > 0,
+      '§11.3 zero OUTPUT alone is still a report, and still prices above zero');
+    const zeroIn = msg(M, { inputTokens: 0, outputTokens: 97, cachedReadTokens: 0, cacheWriteTokens: 0 });
+    ok(messageCostUsd(zeroIn, ctx) > 0,
+      '§11.3 zero INPUT alone is still a report, and still prices above zero');
+  }
+
+  // ── §11.4  UNKNOWN / UNPRICED MODEL ⇒ NO COST ───────────────────────────
+  {
+    const u = USAGES[0];
+    for (const bad of ['gpt-4o', 'zz-not-a-model', 'claude-3-5-haiku-latest',
+                       '__proto__', 'constructor', 'toString']) {
+      ok(messageCostUsd(msg(bad, u), ctx) === null,
+        `§11.4 "${bad}" is not in the live catalogue → no cost`);
+      ok(assistantCostHtml(msg(bad, u), ctx) === '',
+        `§11.4 "${bad}" renders no cost fragment`);
+    }
+    // A catalogue entry whose price is missing/garbage must also refuse — the
+    // price is a component like any other.
+    const base = everyEntry[0].e;
+    for (const [label, patch] of [
+      ['input missing', { input: undefined }],
+      ['output missing', { output: undefined }],
+      ['input is a string', { input: '0.10' }],
+      ['output is NaN', { output: NaN }],
+      ['input is negative', { input: -1 }],
+    ]) {
+      const broken = { gemini: [{ ...base, ...patch }], anthropic: [] };
+      ok(messageCostUsd(msg(base.id, u), { offerable: broken, availableProviders: ANY }) === null,
+        `§11.4 catalogue entry with ${label} → no cost (a price is a component, not a default)`);
+    }
+    // Control: the same entry UNPATCHED does produce a cost, so the five
+    // refusals above are about the patch and not about the fixture.
+    ok(messageCostUsd(msg(base.id, u),
+      { offerable: { gemini: [base], anthropic: [] }, availableProviders: ANY }) !== null,
+      '§11.4 control — the unpatched entry does yield a cost');
+    // A model whose PROVIDER has no saved key is not in the client catalogue at
+    // all, so its historical cost is unknown rather than guessed.
+    const anthroOnly = normalizeOfferable(rawFull(), ['anthropic']);
+    ok(messageCostUsd(msg(REAL.gemini[0].id, u),
+      { offerable: anthroOnly, availableProviders: ['anthropic'] }) === null,
+      '§11.4 a Disconnected provider\'s model has no price on hand → no cost, never a substitute');
+  }
+
+  // ── §11.5  PROMOTIONAL PRICE — today's rate, not the coming one ─────────
+  {
+    const u = USAGES[3]; // large enough that a 2x price difference is unmissable
+    let promoChecked = 0;
+    for (const { e } of promotedEntries) {
+      const live = messageCostUsd(msg(e.id, u), ctx);
+      const standardCost =
+        u.inputTokens / 1e6 * e.standardInput + u.outputTokens / 1e6 * e.standardOutput;
+      ok(live !== null, `§11.5 ${e.id}: a promoted model still gets a cost`);
+      ok(Math.abs(live - standardCost) > 1e-9,
+        `§11.5 ${e.id}: the STANDARD price is NOT used (live ${live} vs standard ${standardCost})`);
+      const promoCost = u.inputTokens / 1e6 * e.input + u.outputTokens / 1e6 * e.output;
+      ok(Math.abs(live - promoCost) < 1e-12,
+        `§11.5 ${e.id}: today's effective (promotional) price is used`);
+      ok(live < standardCost,
+        `§11.5 ${e.id}: the promotion makes it CHEAPER than the standing rate, as measured`);
+      // Cross-check against llm.js's own date resolver — the same authority
+      // the server prices with — rather than against arithmetic done here.
+      const p = resolveModelPrice(e.id, Date.now());
+      ok(p !== null && Math.abs(u.inputTokens / 1e6 * p.input + u.outputTokens / 1e6 * p.output - live) < 1e-12,
+        `§11.5 ${e.id}: agrees with llm.js resolveModelPrice for today`);
+      promoChecked++;
+    }
+    ok(promoChecked > 0,
+      `§11.5 fixture self-check — the real catalogue contains ${promoChecked} promoted model(s), ` +
+      'so none of the above is vacuous');
+  }
+
+  // ── §11.6  A TINY NON-ZERO COST NEVER READS AS FREE ─────────────────────
+  {
+    // The measured real case: a one-word turn on the cheapest model.
+    const CHEAPEST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
+    const tiny = { inputTokens: 8, outputTokens: 2, cachedReadTokens: 0, cacheWriteTokens: 0 };
+    const usd = messageCostUsd(msg(CHEAPEST.id, tiny), ctx);
+    ok(usd > 0 && usd < 0.00005,
+      `§11.6 fixture: a one-word turn on ${CHEAPEST.id} really does cost less than $0.00005 (${usd})`);
+    const h = assistantCostHtml(msg(CHEAPEST.id, tiny), ctx);
+    ok(!h.includes('$0.0000<') && !/\$0\.0000[^\d]/.test(h),
+      '§11.6 it does NOT render as $0.0000 — a paid answer must never be labelled free');
+    ok(h.includes('&lt; $0.0001') || h.includes('< $0.0001'),
+      `§11.6 it renders as the honest "< $0.0001" (got ${JSON.stringify(h)})`);
+    // Positive control: a bespoke toFixed(4) formatter — mutation M4 — WOULD
+    // have produced the lie, so the green above is about the code and not about
+    // the number happening to be large.
+    ok(('$' + usd.toFixed(4)) === '$0.0000',
+      '§11.6 control — the naive toFixed(4) formatter renders this exact value as $0.0000');
+  }
+
+  // ── §11.7  THE SHARED FORMATTER IS USED, NOT RE-IMPLEMENTED ─────────────
+  {
+    // Behavioural, not a grep: drive a spread of magnitudes through the real
+    // formatter and require the rendered fragment to carry exactly its output.
+    const CHEAPEST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
+    const DEAREST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input).slice(-1)[0].e;
+    for (const [model, u] of [
+      [CHEAPEST.id, { inputTokens: 8, outputTokens: 2, cachedReadTokens: 0, cacheWriteTokens: 0 }],
+      [CHEAPEST.id, USAGES[0]],
+      [DEAREST.id, USAGES[1]],
+      [DEAREST.id, USAGES[3]],
+    ]) {
+      const usd = messageCostUsd(msg(model, u), ctx);
+      const expected = formatUsdHonest(usd);
+      ok(assistantCostHtml(msg(model, u), ctx).includes(escapeHtmlStub(expected)),
+        `§11.7 ${model} ${u.inputTokens}/${u.outputTokens} renders exactly formatUsdHonest's output (${expected})`);
+    }
+    // The source-level half of the same claim: the view must not re-grow a
+    // local dollar formatter. (Kept as a companion to the behavioural checks,
+    // not as a substitute — it catches a SECOND formatter that is never
+    // reached by these inputs.)
+    ok(/^import \{ formatUsdHonest \} from '\.\.\/shared\/format-usd\.js';$/m.test(chatSrc),
+      '§11.7 views/chat.js imports the shared formatter');
+    // Comments stripped, string literals kept: the pattern being hunted
+    // CONTAINS a string literal, and this file's own docblock explains that
+    // pattern in prose. Without the strip this asserted against its own comment.
+    const chatCode = stripComments(chatSrc);
+    ok(!/\$['"]\s*\+\s*[A-Za-z_.$[\]]+\.toFixed\(4\)/.test(chatCode),
+      '§11.7 views/chat.js has no local \'$\' + x.toFixed(4) dollar formatter');
+    ok(!/toFixed\(4\)/.test(chatCode),
+      '§11.7 views/chat.js contains no toFixed(4) in CODE at all');
+    // Control: the detector sees a planted re-implementation.
+    ok(/\$['"]\s*\+\s*[A-Za-z_.$[\]]+\.toFixed\(4\)/.test(chatCode + "\nreturn '$' + usd.toFixed(4);"),
+      '§11.7 control — a planted bespoke formatter IS detected');
+  }
+
+  // ── §11.8  ESCAPING + PLACEMENT ─────────────────────────────────────────
+  {
+    const HOSTILE = '<img src=x onerror=alert(1)>"\'&';
+    // A hostile model id is not in the catalogue, so it produces no cost at all
+    // — but the eyebrow still renders it as a label, and the cost fragment must
+    // not be the thing that reopens that.
+    const hostileEntry = {
+      id: HOSTILE, provider: 'gemini', label: HOSTILE, note: HOSTILE,
+      suitability: 'general', dominated: false, input: 1, output: 2,
+      standardInput: 1, standardOutput: 2, promotionUntilIso: null, standardPriceFromIso: null,
+    };
+    const hCtx = { offerable: { gemini: [hostileEntry], anthropic: [] }, availableProviders: ANY };
+    const h = assistantEyebrowHtml(msg(HOSTILE, USAGES[0]), hCtx);
+    ok(!h.includes('<img'), '§11.8 a hostile model id priced from a hostile entry cannot inject a tag');
+    for (const t of scanTags(h)) {
+      ok(!t.attrs.some(a => /^on[a-z]+$/i.test(a)),
+        `§11.8 no tag carries an event-handler attribute (<${t.name}>)`);
+    }
+    ok(/\$/.test(h), '§11.8 …and the cost still renders for that message');
+    // Placement: the cost lives INSIDE the eyebrow, on the model's own line —
+    // not as a separate block competing for attention.
+    const normal = assistantEyebrowHtml(msg(everyEntry[0].e.id, USAGES[0]), ctx);
+    const eyebrowClose = normal.indexOf('</div>');
+    ok(normal.indexOf('chat-msg-cost') > 0 && normal.indexOf('chat-msg-cost') < eyebrowClose,
+      '§11.8 the cost is rendered inside the eyebrow element, beside the model name');
+    ok((normal.match(/chat-msg-cost/g) || []).length === 1,
+      '§11.8 exactly one cost element per message');
+    // A divergence notice and a cost coexist without either swallowing the other.
+    const sorted = everyEntry.slice().sort((a, b) => a.e.input - b.e.input);
+    const both = assistantEyebrowHtml(
+      msg(sorted[sorted.length - 1].e.id, USAGES[1], { requestedModel: sorted[0].e.id }), ctx);
+    ok(/chat-msg-cost/.test(both) && /chat-msg-fallback/.test(both),
+      '§11.8 the fallback notice and the cost both render on a diverged message');
+  }
+
+  // ── §11.9  messageUsageTokens returns a FRESH object, never the record ──
+  {
+    const u = { inputTokens: 1, outputTokens: 2, cachedReadTokens: 3, cacheWriteTokens: 4, sneaky: 'x' };
+    const got = messageUsageTokens(msg('m', u));
+    ok(got !== u, '§11.9 the returned counts are a fresh object, not the message\'s own');
+    ok(!('sneaky' in got), '§11.9 …carrying only the four known fields');
+    got.inputTokens = 999;
+    ok(u.inputTokens === 1, '§11.9 mutating the result cannot corrupt the message record');
+    ok(messageUsageTokens(null) === null && messageUsageTokens({}) === null,
+      '§11.9 a missing message or missing usage is null');
   }
 }
 

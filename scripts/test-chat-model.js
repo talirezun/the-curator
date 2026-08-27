@@ -24,6 +24,9 @@ import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          __testing as llmTesting } from '../src/brain/llm.js';
 import { getApiKeys, getActiveProvider, __setDomainsDirOverride } from '../src/brain/config.js';
 import { __testing, sendMessage, readConversation, RESPONSE_STYLES } from '../src/brain/chat.js';
+// The REAL Express router, so §18(d) can DRIVE the POST handler rather than
+// grep it. Importing it is side-effect free (it only wires handlers).
+import chatRouter from '../src/routes/chat.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync as writeFile } from 'node:fs';
 import os from 'node:os';
 
@@ -1351,6 +1354,297 @@ section('17. Conversation record — persists the model that ANSWERED, and never
         'the legacy message round-trips through a WRITE byte-identically');
       eq(assistants[2] && assistants[2].model, 'claude-sonnet-5', 'only the NEW message carries a model');
       eq(assistants[2] && assistants[2].provider, 'anthropic', 'only the NEW message carries a provider');
+    }
+  } finally {
+    console.error = realErr;
+    __setAnthropicClientFactory(null);
+    __setDomainsDirOverride(null);
+    if (savedUD === undefined) delete process.env.CURATOR_TEST_USER_DATA_DIR;
+    else process.env.CURATOR_TEST_USER_DATA_DIR = savedUD;
+    if (savedM === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedM;
+    if (savedEnvG === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedEnvG;
+    if (savedEnvA === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedEnvA;
+    rmSync(tmpUD, { recursive: true, force: true });
+    rmSync(tmpDom, { recursive: true, force: true });
+  }
+}
+
+
+// ── 18. Per-answer cost: the token counts that make it possible ─────────────
+section('18. Usage record — the tokens that price an answer, reported or absent');
+{
+  /*
+   * The chat thread shows what each answer cost. The dollar figure is computed
+   * in the client from two things: the SERVED model (section 17) and the token
+   * counts recorded here. This section is about the counts.
+   *
+   * PERSISTENCE IS THE LOAD-BEARING HALF. A cost derived only from the live
+   * `sendMessage` return would show beside an answer and then vanish on reload —
+   * the same message priced in one view and blank in another. So the counts go
+   * into the conversation record, and every assertion below reads them BACK OFF
+   * DISK rather than trusting the return value.
+   */
+  const savedUD = process.env.CURATOR_TEST_USER_DATA_DIR;
+  const savedM = process.env.LLM_MODEL;
+  const savedEnvG = process.env.GEMINI_API_KEY;
+  const savedEnvA = process.env.ANTHROPIC_API_KEY;
+  const realErr = console.error;
+  const tmpUD = mkdtempSync(path.join(os.tmpdir(), 'curator-chatusage-ud-'));
+  const tmpDom = mkdtempSync(path.join(os.tmpdir(), 'curator-chatusage-dom-'));
+  const DOMAIN = 'zzusage';
+  const { normalizeReportedUsage } = __testing;
+  try {
+    delete process.env.LLM_MODEL;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CURATOR_TEST_USER_DATA_DIR = tmpUD;
+    writeFile(path.join(tmpUD, '.curator-config.json'), JSON.stringify({
+      anthropicApiKey: 'zz-fake-anthropic-key-for-tests',
+      activeProvider: 'anthropic',
+    }) + '\n');
+    __setDomainsDirOverride(tmpDom);
+
+    mkdirSync(path.join(tmpDom, DOMAIN, 'wiki', 'entities'), { recursive: true });
+    mkdirSync(path.join(tmpDom, DOMAIN, 'conversations'), { recursive: true });
+    writeFile(path.join(tmpDom, DOMAIN, 'CLAUDE.md'), '# zzusage schema\n');
+    writeFile(path.join(tmpDom, DOMAIN, 'wiki', 'entities', 'foo.md'),
+      '---\ntype: entity\n---\n# Foo\n\n## Key Facts\n- Foo is a thing.\n');
+
+    // The usage block the fake transport reports. Mutable so individual cases
+    // can make the provider report nothing, or report partially.
+    let reportedUsage = {
+      input_tokens: 611,
+      output_tokens: 97,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    };
+    __setAnthropicClientFactory(() => ({
+      messages: {
+        stream: () => ({
+          finalMessage: async () => ({
+            stop_reason: 'end_turn',
+            content: [{ type: 'text', text: 'An answer. [source: entities/foo.md]' }],
+            ...(reportedUsage === null ? {} : { usage: reportedUsage }),
+          }),
+        }),
+      },
+    }));
+
+    async function lastAssistantOnDisk(convId) {
+      const conv = await readConversation(DOMAIN, convId);
+      const assistants = conv.messages.filter(m => m.role === 'assistant');
+      return assistants[assistants.length - 1];
+    }
+
+    // ── (a) THE COUNTS REACH BOTH THE RETURN AND THE DISK ─────────────────
+    {
+      reportedUsage = { input_tokens: 611, output_tokens: 97,
+                        cache_read_input_tokens: 13, cache_creation_input_tokens: 5 };
+      const r = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic' });
+      ok(r.usage && typeof r.usage === 'object', 'sendMessage RETURNS a usage object');
+      eq(r.usage.inputTokens, 611, 'returned inputTokens is the provider\'s own figure');
+      eq(r.usage.outputTokens, 97, 'returned outputTokens is the provider\'s own figure');
+      eq(r.usage.cachedReadTokens, 13, 'returned cachedReadTokens is the provider\'s own figure');
+      eq(r.usage.cacheWriteTokens, 5, 'returned cacheWriteTokens is the provider\'s own figure');
+      const msg = await lastAssistantOnDisk(r.conversationId);
+      ok(msg.usage && typeof msg.usage === 'object',
+        'the PERSISTED record carries usage — a reloaded thread can price the same answer');
+      eq(JSON.stringify(msg.usage), JSON.stringify(r.usage),
+        'the persisted counts are byte-identical to the returned ones (one figure, two surfaces)');
+      // Appended LAST, so an untouched message serialises byte-identically.
+      eq(Object.keys(msg).join(','), 'role,content,citations,provider,model,usage',
+        'usage is the LAST key — existing keys keep their order and their bytes');
+      // It carries ONLY the four counts: nothing else riding on the usage
+      // payload (provider/model, or whatever llm.js adds next) may leak into a
+      // conversation record and out over the wire.
+      eq(Object.keys(msg.usage).join(','),
+        'inputTokens,outputTokens,cachedReadTokens,cacheWriteTokens',
+        'the record holds exactly the four token counts — nothing else from the payload');
+    }
+
+    // ── (b) NOTHING REPORTED ⇒ NOTHING RECORDED. Never a zero. ────────────
+    {
+      // FOUND BY THIS ASSERTION, not anticipated: llm.js's normalizers coerce
+      // every missing field to 0, so an absent usage block arrives as {0,0,0,0}
+      // — which, recorded, would price a real paid answer at exactly $0.00 on a
+      // spend surface. Zero-in-and-zero-out is therefore refused (see
+      // normalizeReportedUsage). Driven through the REAL transport so the
+      // coercion is the shipping one, not a fixture's idea of it.
+      reportedUsage = null;   // provider returns no usage block at all
+      const r = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic' });
+      const msg = await lastAssistantOnDisk(r.conversationId);
+      eq(r.usage, null,
+        'a provider that reports NO usage block yields null — never a fabricated zero');
+      ok(!Object.prototype.hasOwnProperty.call(msg, 'usage'),
+        'nothing reported → the usage key is not even present on the record');
+      // Control: the same transport WITH a usage block does record one, so the
+      // refusal above is about the absent block and not about the harness.
+      reportedUsage = { input_tokens: 5, output_tokens: 5,
+                        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      const ctrl = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic' });
+      ok(ctrl.usage !== null, 'control — a reported block IS recorded');
+      // And the narrowness of the rule: input > 0 with output 0 is still a
+      // report, and still prices above zero.
+      reportedUsage = { input_tokens: 611, output_tokens: 0,
+                        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      const partialOut = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic' });
+      ok(partialOut.usage !== null && partialOut.usage.inputTokens === 611,
+        'zero OUTPUT alone is still a real report — the refusal is zero-in-AND-zero-out only');
+    }
+
+    // ── (c) THE RULE ITSELF, driven on the pure builder ───────────────────
+    // A PARTIAL payload is refused. Three of four counts priced as if they were
+    // four is a confidently wrong number that looks exactly like a right one.
+    {
+      const base = ['role', 'content', 'citations'];
+      const FULL = { inputTokens: 1, outputTokens: 2, cachedReadTokens: 3, cacheWriteTokens: 4 };
+      const cases = [
+        ['undefined', undefined, false],
+        ['null', null, false],
+        ['a number', 42, false],
+        ['a string', JSON.stringify(FULL), false],
+        ['an empty object', {}, false],
+        ['inputTokens missing', { outputTokens: 2, cachedReadTokens: 3, cacheWriteTokens: 4 }, false],
+        ['outputTokens missing', { inputTokens: 1, cachedReadTokens: 3, cacheWriteTokens: 4 }, false],
+        ['cachedReadTokens missing', { inputTokens: 1, outputTokens: 2, cacheWriteTokens: 4 }, false],
+        ['cacheWriteTokens missing', { inputTokens: 1, outputTokens: 2, cachedReadTokens: 3 }, false],
+        ['a numeric STRING count', { ...FULL, inputTokens: '1' }, false],
+        ['a NaN count', { ...FULL, inputTokens: NaN }, false],
+        ['an Infinite count', { ...FULL, outputTokens: Infinity }, false],
+        ['a negative count', { ...FULL, cachedReadTokens: -1 }, false],
+        ['all four present', FULL, true],
+        // The sentinel case: llm.js coerces a missing usage block to four
+        // zeros, and a completed turn cannot have consumed zero input.
+        ['all four ZERO (the "nothing reported" sentinel)',
+          { inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 }, false],
+        ['zero in, zero out, but cache terms present',
+          { inputTokens: 0, outputTokens: 0, cachedReadTokens: 9, cacheWriteTokens: 3 }, false],
+        ['zero OUTPUT only — still a real report',
+          { inputTokens: 611, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 }, true],
+        ['zero INPUT only — still a real report',
+          { inputTokens: 0, outputTokens: 97, cachedReadTokens: 0, cacheWriteTokens: 0 }, true],
+      ];
+      for (const [label, usage, shouldRecord] of cases) {
+        const msg = buildAssistantMessage('a', ['e/f.md'], 'anthropic', 'claude-haiku-4-5', usage);
+        const has = Object.prototype.hasOwnProperty.call(msg, 'usage');
+        ok(has === shouldRecord,
+          `usage rule (${label}): ${shouldRecord ? 'recorded' : 'REFUSED — never part-filled'}`);
+        eq(Object.keys(msg).filter(k => !base.includes(k)).join(','),
+          shouldRecord ? 'provider,model,usage' : 'provider,model',
+          `usage rule (${label}): key set is exactly right`);
+      }
+      // Zero is a MEASUREMENT, not an absence — the discriminator is
+      // Number.isFinite, never truthiness. This is the assertion that would go
+      // red if someone "simplified" the check to `if (v)`.
+      const zeroOut = buildAssistantMessage('a', [], 'anthropic', 'claude-haiku-4-5',
+        { inputTokens: 611, outputTokens: 0, cachedReadTokens: 0, cacheWriteTokens: 0 });
+      eq(JSON.stringify(zeroOut.usage),
+        '{"inputTokens":611,"outputTokens":0,"cachedReadTokens":0,"cacheWriteTokens":0}',
+        'a zero OUTPUT count is RECORDED as zero — the check is Number.isFinite, never truthiness');
+      // The returned object is a fresh literal, never the caller's.
+      const src = { ...FULL, sneaky: 'x' };
+      const built = buildAssistantMessage('a', [], null, null, src);
+      ok(built.usage !== src, 'the recorded usage is a fresh object, not the payload itself');
+      ok(!('sneaky' in built.usage), '…carrying only the four known fields');
+      // And the exported helper agrees with what the builder does.
+      ok(normalizeReportedUsage(FULL) !== null && normalizeReportedUsage({}) === null,
+        'normalizeReportedUsage implements the same all-four-or-nothing rule');
+    }
+
+    // ── (d) THE ROUTE DOES NOT STRIP IT ───────────────────────────────────
+    // Verified by DRIVING the real POST handler, not by reading its source: the
+    // spec's claim was "src/routes/chat.js needs no change because it spreads",
+    // and a route that enumerated fields would have made this the app's third
+    // dead-data field (v3.9.0 finding 7). The handler is pulled off the real
+    // Express router and called with a recording res.
+    {
+      reportedUsage = { input_tokens: 222, output_tokens: 33,
+                        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      const layer = chatRouter.stack.find(l =>
+        l.route && l.route.path === '/:domain' && l.route.methods.post);
+      ok(!!layer, 'the real POST /:domain handler was located on the chat router');
+      const handler = layer.route.stack[0].handle;
+      let body = null, status = 200;
+      const res = {
+        json: (v) => { body = v; return res; },
+        status: (s) => { status = s; return res; },
+      };
+      await handler(
+        { params: { domain: DOMAIN }, body: { message: 'What is foo?', provider: 'anthropic' } },
+        res, () => {});
+      eq(status, 200, 'the route answered 200');
+      ok(body && body.usage && typeof body.usage === 'object',
+        'the WIRE payload carries usage — the route passes the result through untouched');
+      eq(body.usage.inputTokens, 222, 'the wire carries the provider\'s own inputTokens');
+      eq(body.usage.outputTokens, 33, 'the wire carries the provider\'s own outputTokens');
+      ok(typeof body.model === 'string' && body.model,
+        'the wire still carries the served model beside it (the other half of a price)');
+    }
+
+    // ── (e) BACKWARD COMPATIBILITY — the assertion protecting every user ──
+    // Every conversation written before this change has assistant messages with
+    // no `usage` key. It must LOAD, RENDER-as-unknown, and survive a WRITE
+    // byte-identically. A migrate-on-write would invent a measurement for a turn
+    // nobody measured.
+    {
+      const LEGACY_ID = '99999999-8888-7777-6666-555555555555';
+      const legacy = {
+        id: LEGACY_ID,
+        title: 'A conversation from before per-answer cost existed',
+        createdAt: '2026-02-02T00:00:00.000Z',
+        domain: DOMAIN,
+        messages: [
+          { role: 'user', content: 'old question' },
+          // (i) truly ancient: no provider, no model, no usage.
+          { role: 'assistant', content: 'old answer', citations: ['entities/foo.md'] },
+          { role: 'user', content: 'a v3.13.2-era question' },
+          // (ii) the intermediate shape: model recorded, usage not.
+          { role: 'assistant', content: 'a labelled answer', citations: [],
+            provider: 'anthropic', model: 'claude-haiku-4-5' },
+        ],
+      };
+      const legacyJson = JSON.stringify(legacy, null, 2);
+      writeFile(path.join(tmpDom, DOMAIN, 'conversations', `${LEGACY_ID}.json`), legacyJson);
+
+      let threw = null, loaded = null;
+      try { loaded = await readConversation(DOMAIN, LEGACY_ID); }
+      catch (err) { threw = err; }
+      ok(threw === null, 'a pre-cost conversation LOADS WITHOUT THROWING');
+      eq(JSON.stringify(loaded), JSON.stringify(legacy),
+        'it loads BYTE-FOR-BYTE unchanged — no migration on read');
+      const before = (loaded && loaded.messages ? loaded.messages : [])
+        .filter(m => m.role === 'assistant');
+      for (const [i, m] of before.entries()) {
+        ok(!Object.prototype.hasOwnProperty.call(m, 'usage'),
+          `legacy assistant message ${i}: the usage key is not present (unknown ≠ zero)`);
+      }
+
+      // Now APPEND a new turn and re-read. The new message must carry usage; the
+      // old ones must be untouched down to the byte.
+      reportedUsage = { input_tokens: 44, output_tokens: 8,
+                        cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      let sendThrew = null, r = null;
+      try {
+        r = await sendMessage(DOMAIN, LEGACY_ID, 'a new question', { provider: 'anthropic' });
+      } catch (err) { sendThrew = err; }
+      ok(sendThrew === null, 'appending a turn to a pre-cost conversation does not throw');
+      eq(r && r.conversationId, LEGACY_ID, 'the reply appended to the existing conversation');
+
+      const conv = await readConversation(DOMAIN, LEGACY_ID);
+      const after = conv.messages.filter(m => m.role === 'assistant');
+      eq(after.length, 3, 'the conversation now holds three assistant messages');
+      eq(JSON.stringify(after[0]), JSON.stringify(legacy.messages[1]),
+        'the ANCIENT legacy message round-trips through a WRITE byte-identically');
+      eq(JSON.stringify(after[1]), JSON.stringify(legacy.messages[3]),
+        'the v3.13.2-era legacy message round-trips through a WRITE byte-identically');
+      ok(!Object.prototype.hasOwnProperty.call(after[0], 'usage')
+        && !Object.prototype.hasOwnProperty.call(after[1], 'usage'),
+        'neither legacy message acquired a usage key — history is never back-filled');
+      ok(after[2] && after[2].usage && after[2].usage.inputTokens === 44,
+        'only the NEW message carries usage, and it carries the provider\'s own figure');
+      // Negative control: the byte-identity comparisons above can see a change.
+      ok(JSON.stringify(after[0]) !== JSON.stringify({ ...legacy.messages[1], usage: {} }),
+        'control — the byte-identity comparison distinguishes an added usage key');
     }
   } finally {
     console.error = realErr;

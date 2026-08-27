@@ -178,12 +178,18 @@ The catalogue currently holds **14 models — 7 Gemini and 7 Anthropic**. Gemini
 
 ### Where a user picks, and what each choice governs (v3.13.0)
 
-| Surface | Persistence | Scope |
-|---|---|---|
-| **Settings → Providers & keys →** the collapsible model list under a connected provider | Server-side, in `selectedModels` in `.curator-config.json` | **Ingest, AI Health scans, Compile to Wiki, and chat** — everything |
-| **Chat composer → Model dropdown** | `localStorage` in that browser (`curator-next-chat-model`) — sticky across conversations and restarts, **not** per-conversation | **Chat only** |
+The governing principle is **one model builds your brain; you choose freely when talking to it** — two lanes, not two halves of one setting:
 
-The split is about money and reversibility: ingest is the dominant token consumer, so trying an expensive model on one chat must not change what the next ingest costs. Note there is **no "follow the default" row in the composer menu** — to return, the user picks the default model explicitly. In Settings there *is* a **Follow the app default** button, and it is the only route back to the un-pinned state: picking today's default model by hand **pins** it, which is a different thing (a pinned choice survives a Curator release that bumps `DEFAULTS`; following does not).
+| Lane | Surface | Persistence | Scope |
+|---|---|---|---|
+| **Build** | **Settings → Providers & keys →** the collapsible model list under a connected provider | Server-side, in `selectedModels` in `.curator-config.json`, keyed **per provider** | **Ingest, AI Health scans, Compile to Wiki, and chat** — everything |
+| **Chat** | **Chat composer → Model dropdown** | `localStorage` in that browser (`curator-next-chat-model`) — sticky across conversations and restarts, **not** per-conversation | **Chat only** |
+
+The build lane is **one setting rather than one per feature, deliberately**: Health scans read the same wiki that ingest wrote, in the same shapes, so there is nothing to gain from splitting them and a divergent pair would let the wiki be built and maintained by two models that disagree about it. It is also not a convention that could drift — `health-ai.js`, `compile.js` and `query.js` all call `generateText` **without an options argument**, so a per-model override there is inexpressible rather than merely unused. The structural argument is in [architecture.md → Two lanes](architecture.md#two-lanes-one-model-builds-the-wiki-chat-chooses-per-call).
+
+The split between the lanes is about money and reversibility: ingest is the dominant token consumer, so trying an expensive model on one chat must not change what the next ingest costs. Note there is **no "follow the default" row in the composer menu** — to return, the user picks the default model explicitly. In Settings there *is* a **Follow the app default** button, and it is the only route back to the un-pinned state: picking today's default model by hand **pins** it, which is a different thing (a pinned choice survives a Curator release that bumps `DEFAULTS`; following does not).
+
+**A pin is per provider, and only the active provider's pin is live.** `resolveProviderDefault` selects the provider first and consults `storedSelection(provider)` second, so a model pinned under the non-active provider is stored but dormant until that provider is made active. This matters when reading a bug report: "my pinned model isn't being used" is far more often an inactive provider than a router fault.
 
 Resolution precedence is `per-call preferModel > LLM_MODEL > stored selection > DEFAULTS`, every refusal falls back rather than throwing, and the write route is `guardConcurrent`'d so a pick cannot land mid-ingest. The mechanics — the five model-producing sites, the config-only key gating at both ends, the persistence layer, and why `FALLBACK_CHAINS` and `OFFERABLE_MODELS` obey different rules — are in [architecture.md → Model selection](architecture.md#model-selection-the-router-v3120--v3130). The user-facing walkthrough is [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model).
 

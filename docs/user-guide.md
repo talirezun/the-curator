@@ -654,9 +654,11 @@ The message box has its controls tucked along its own bottom edge, to the left o
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
 - **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — that provider alone offers seven models. With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
-- To the right, a small note reads *"cost varies with response length"*.
+- Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
-Both dropdowns open **upward**. Both choices are remembered in your browser between questions — the model you pick here stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one. It applies to **chat only**: ingest, Compile and Health scans keep using the model set in Settings ([§16b](#16b-choosing-your-ai-model) explains why the two are separate).
+Both dropdowns open **upward**. Both choices are remembered in your browser between questions — the model you pick here stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one.
+
+This is the **chat lane**, and it is sealed off from the rest of the app: ingest, Compile and Health scans all keep using the model set in Settings, no matter what you pick here. That is the design — *one model builds your brain; you choose freely when talking to it* — and [§16b](#16b-choosing-your-ai-model) explains why the two lanes are separate and why the build side is a single setting rather than one per feature. Because the choice is sticky, **each answer displays the model that actually produced it**, so a selection you made and forgot is always visible on the answers themselves rather than only in the dropdown. Where that figure comes from, and why it sometimes isn't shown at all, is explained just below in [Why a sticky chat choice is safe](#why-a-sticky-chat-choice-is-safe--every-answer-names-the-model-that-produced-it).
 
 ### Answer length — Concise · Balanced · Detailed
 
@@ -1136,7 +1138,7 @@ You only do this once. After that, syncing is two button clicks.
 
 #### Step 2 — Create a Personal Access Token
 
-This is how The Curator gets permission to read and write your private repository. GitHub offers two token types — **either works**; fine-grained is more secure (scoped to one repo), classic is lower-maintenance (can never expire). Full comparison in [docs/sync.md](sync.md#step-4--create-and-enter-a-personal-access-token-wizard-step-2).
+This is how The Curator gets permission to read and write your private repository. GitHub offers two token types — **either works**; fine-grained is more secure (scoped to one repo), classic is lower-maintenance (can never expire). Full comparison in [docs/sync.md](sync.md#step-4--create-and-enter-a-personal-access-token).
 
 **Fine-grained token (recommended):**
 
@@ -1325,6 +1327,8 @@ Saving a key makes that provider active (*last-saved-wins*). Two more buttons ap
 
 Under each connected provider's row there is a collapsible **model list** — that is where you choose which model that provider runs. It is covered in its own section: [§16b Choosing your AI model](#16b-choosing-your-ai-model).
 
+> **The active provider is chosen first, then its model.** A model you pin under a provider only takes effect while that provider is the active one; pinning under the *other* provider stores a preference that sits dormant until you **Set active** on it. So switching providers also switches which pinned model is running — see [§16b](#16b-choosing-your-ai-model).
+
 You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. OpenRouter is not supported either. The only two providers The Curator can call today are Gemini and Anthropic.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
@@ -1410,19 +1414,51 @@ Now there is. **Fourteen models** are on offer: seven Gemini and seven Anthropic
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
 
-### The two places you can pick — and why they're different
+### The principle: one model builds your brain, and you choose freely when talking to it
 
-| Where | Scope | Governs |
-|---|---|---|
-| **Settings → Providers & keys →** the model list under a provider | **Durable.** Saved on this machine, survives restarts, applies to everything. | **Ingest, Wiki Health AI scans, Compile to Wiki, and chat.** |
-| **Chat composer → Model dropdown** (next to Length) | **Chat only.** Remembered in this browser until you change it. | Only the chat messages you send. |
+There are two places to pick a model, and they are not two halves of one setting. They are **two lanes**, and knowing which is which answers almost every question people have about this screen.
 
-That split is deliberate, and it's about money. Ingest is by far the biggest consumer of tokens — a batch of PDFs on Opus is a genuinely different bill from the same batch on Flash Lite. Chat is cheap and reversible: one question, one answer, and you can ask it again on another model to compare. So trying an expensive model on a single chat must not quietly change what your next ingest costs, and it doesn't — the composer choice never touches the Settings choice.
+| Lane | Where you pick | Scope | Governs |
+|---|---|---|---|
+| **The build lane** — everything that *writes* to your wiki | **Settings → Providers & keys →** the model list under the **active** provider | **Durable.** Saved on this machine, survives restarts. | **Ingest, Wiki Health AI scans, and Compile to Wiki** — and chat too, unless the composer overrides it. |
+| **The chat lane** — talking to what you built | **Chat composer → Model dropdown** (next to Length) | **Per message.** Remembered in this browser until you change it. | Only the chat messages you send. |
 
-Two consequences worth knowing:
+**The build lane is one setting, not three — and that is deliberate.** You cannot give ingest one model and Health another, because there is nothing sensible to gain from it and a great deal to lose. Health scans read the same wiki that ingest wrote, in the same shapes, and ask the same kind of judgement of it — the work of noticing that two pages describe one thing is the same work as deciding they were two things in the first place. Splitting them would double the number of decisions you have to make, double the number of prices you have to reason about, and let your wiki be built and maintained by two models that disagree about it. So there is one choice, it is the one you already made when you picked a provider's model, and it covers the whole build lane.
+
+It is also not a convention that could quietly drift. The parts of the app that build your wiki are written so that a per-model override there is not merely unused — it cannot be expressed at all, because there is no argument to pass it through. Health cannot end up on a different model from ingest unless someone first adds parameters that do not exist there today.
+
+The split between the two lanes is about money and reversibility. Ingest is by far the biggest consumer of tokens — a batch of PDFs on Opus is a genuinely different bill from the same batch on Flash Lite. Chat is cheap and reversible: one question, one answer, and you can ask it again on another model to compare. So trying an expensive model on a single chat must not quietly change what your next ingest costs, and it doesn't — the composer choice never touches the Settings choice.
+
+Which gives the two answers people most often want:
+
+- **"If I pick Sonnet 5 in chat, does my next ingest cost more?"** No. Nothing you do in the composer reaches ingest, Health or Compile. The composer choice is attached to one chat request and stored in your browser; it changes nothing on the server.
+- **"I pinned a model under Anthropic, but Gemini is active — what runs my ingest?"** Gemini's. The **active provider is chosen first**, and only *that* provider's pinned model is consulted. A pin on the other provider is remembered, not applied — it is waiting for you to make that provider active (**Set active** on its row), at which point it takes effect. This is why the model list sits underneath a provider rather than above both of them: a pin is a per-provider preference, and only one provider is live at a time.
+
+Two more consequences worth knowing:
 
 - The composer choice is **sticky per browser, not per conversation.** Pick Opus in the composer and every later chat message from that browser uses Opus, across conversations and across restarts, until you pick something else. There is no "back to default" row in the composer menu — to go back, pick the default model (the cheapest one, at the top of its provider group) explicitly.
 - The composer choice **overrides** the Settings choice for chat. If Settings says Sonnet 5 and the composer says Haiku 4.5, chat runs Haiku 4.5.
+
+### Why a sticky chat choice is safe — every answer names the model that produced it
+
+Stickiness is a real decision, not an oversight, and it cuts both ways. In its favour: picking a model for a hard question is a considered act, and silently resetting it after one message would throw that away and make you re-pick every time. Against it: a forgotten selection quietly spends more than you meant to. The cost of forgetting is **cents per message** rather than the dollars an ingest can run to, so the balance lands on respecting the choice.
+
+But that balance only holds because of the safeguard beside it: **each answer records and displays the model that actually produced it**, so a forgotten selection cannot hide. The label is not a repeat of what you picked — it is read back from the provider's own billing information for that call, which means it survives the cases where the two differ:
+
+- If the model you asked for is unavailable — its provider has no key saved, or it isn't one of the fourteen on offer — the request is **not refused**. It quietly falls back to that provider's default and still answers you, and the answer says so, naming both what ran and that it differs from what you asked.
+- Older messages, written before this existed, carry no recorded model. They show the provider's name and nothing more. They are **never** relabelled with whatever is currently in the dropdown — a label that guessed would be worse than no label, because you would have no way to tell a guess from a fact.
+
+The practical upshot: you never have to remember what the dropdown says. Scroll up and the thread tells you what answered each question.
+
+### What that small dollar figure next to the model name means
+
+Beside the model name on each answer, you'll often see a small cost figure too — hover it and you get the exact token counts (input, output, and cached, if there were any) that produced it.
+
+**It shows only when it can be stated as fact, and shows nothing otherwise.** If anything needed to work it out is missing — your provider didn't report usage for that call, the model isn't one this app has a published price for, or you're looking at a message from before this existed — you see no figure at all. Not "$0.00", not a dash, not an estimate. A wrong number about money is worse than an absent one, and this app has shown a real cost as `$0.00` before by accident; it isn't going to invent one on purpose.
+
+**Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the fourteen models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
+
+**One thing worth knowing:** the figure is always priced at *today's* rate, not the rate on the day the answer was given. A couple of the Gemini models on offer are running a temporary discount with a stated end date ([The two promotional prices](#the-two-promotional-prices)); reopen an old answer from one of them after that date and it will show the *higher*, standing price — even though it cost less at the time. That's deliberate: when this app can't be exact about a cost, it always rounds toward the number that costs you nothing to have over-believed, never the other way.
 
 ### Picking, pinning, and following the default
 

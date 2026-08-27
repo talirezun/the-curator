@@ -209,6 +209,16 @@
   color: var(--text-3);
   margin-bottom: 6px;
 }
+/* What THIS answer cost, appended to the eyebrow beside the model that
+   produced it. Inherits the eyebrow's mono font, size and muted tone
+   deliberately: it is a fact about the message, not a callout, and the
+   composer already carries the one qualitative spend hint this column
+   should have. Rendered only when every input is known — token counts, a
+   served model, and a live price for it — so an absent figure means
+   "unknown", never "free". No colour, no weight change, no animation,
+   therefore nothing for prefers-reduced-motion to neutralise. */
+.chat-msg-cost { color: var(--text-3); }
+
 /* Shown only when the model that answered differs from the one requested.
    Deliberately NOT a warning colour: a silent fallback is correct behaviour
    and this is a statement of fact about which model was billed, not an

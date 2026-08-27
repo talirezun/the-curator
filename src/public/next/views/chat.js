@@ -23,6 +23,12 @@ import {
   consumeChatScopeRequest,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
+// The ONE honest USD renderer for /next. Imported, never re-implemented: a
+// local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
+// `$0.0000`, i.e. a paid answer labelled free — and a one-word chat turn on the
+// cheapest model measures ~$0.0000015, so that is this surface's ORDINARY case,
+// not an edge case. See shared/format-usd.js.
+import { formatUsdHonest } from '../shared/format-usd.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
@@ -191,7 +197,20 @@ const state = {
   // (a provider with no saved Settings key gets `[]`), and re-scoped CLIENT-side
   // by normalizeOfferable so the v3.0.13 rule holds even if that ever changes.
   offerable: { gemini: [], anthropic: [] },
-  chatModel: null,        // per-conversation model id; null -> the provider's default
+  // PER-BROWSER, not per-conversation. Persisted to localStorage[LS_MODEL] on
+  // pick and restored in applyApiKeys, and nothing clears it on a conversation
+  // switch — so one selection carries across every conversation and survives a
+  // reload. (This line previously claimed the opposite, and was contradicted
+  // by describeAnswerModel's docblock further down THIS same file.)
+  // null -> the provider's default.
+  //
+  // The stickiness is deliberate and is SAFE ONLY BECAUSE every answer carries
+  // the model that actually produced it (see describeAnswerModel /
+  // assistantEyebrowHtml): a selection that outlives the conversation you made
+  // it in is fine while each message says what answered it, and becomes a
+  // silent surprise the moment it does not. Removing the per-message label
+  // would remove the argument for keeping this sticky.
+  chatModel: null,
   activeProvider: null,   // global active provider (fallback label when modelProvider is null)
   openPicker: null,       // 'model' | 'length' | null
   loadError: null,
@@ -731,6 +750,18 @@ async function sendCurrentMessage() {
       // the renderer shows the neutral provider name rather than guessing.
       model: typeof data.model === 'string' && data.model ? data.model : null,
       requestedModel: requestedModelAtSend || null,
+      // The provider's own token counts for THIS turn. Carried verbatim and
+      // re-validated at render time by `messageUsageTokens` — the shape is
+      // checked once here only to the extent of "is it an object", because the
+      // renderer must apply the same rule to a message replayed from disk as to
+      // this one, and duplicating the field check in two places is how two
+      // copies of a rule drift.
+      //
+      // This is the SAME object the server just persisted into the conversation
+      // JSON, which is what makes the live thread and a reloaded thread show the
+      // same figure for the same message. If it were derived only here, the cost
+      // would disappear on reload.
+      usage: data.usage && typeof data.usage === 'object' ? data.usage : null,
     });
 
     if (wasNew) {
@@ -1539,8 +1570,21 @@ function renderComposerHtml(active) {
 // parameter — which is what makes "an unkeyed provider is not selectable"
 // provable rather than asserted about source text.
 
+// Kept WORD-FOR-WORD in sync with settings.js's MODEL_SUITABILITY_BADGES.
+// Same underlying `OFFERABLE_MODELS[].suitability` field (src/brain/llm.js, not
+// owned by this view), so the two surfaces must not describe one measured fact
+// in two different vocabularies — the composer said "chat only" where Settings
+// said "chat only — not for ingest", which reads as a narrower claim than the
+// measurement actually makes. There is no single shared JS constant the two
+// views both import (they are independent modules with independent badge
+// tables), so this comment is the enforcement point: change a word here and
+// change it in settings.js's MODEL_SUITABILITY_BADGES in the same commit.
+// scripts/test-next-composer-model.js pins these literals on this side and
+// scripts/test-next-model-picker.js pins them on the other — two mirrored
+// assertions, NOT one source of truth. Stated rather than implied: nothing
+// mechanically prevents the two tables drifting apart again.
 const SUITABILITY_LABELS = Object.assign(Object.create(null), {
-  'chat-only': 'chat only',
+  'chat-only': 'chat only — not for ingest',
   caution: 'caution',
 });
 
@@ -1685,6 +1729,164 @@ function describeAnswerModel(m, ctx) {
 }
 
 /**
+ * The four token counts recorded on ONE message, or null.
+ *
+ * Mirrors `normalizeReportedUsage` in src/brain/chat.js, which is what decides
+ * whether the record gets written in the first place — but this side must
+ * re-check rather than trust, because a conversation JSON is a file on disk that
+ * syncs between machines and can be hand-edited in Obsidian. ALL FOUR or
+ * nothing, for the reason given there: the four counts carry four different
+ * rates, so three of them priced as if they were four is a confidently wrong
+ * number that looks exactly like a right one.
+ *
+ * Zero is a REPORT, not an absence (`Number.isFinite`, never truthiness).
+ * Negative is refused — nothing emits one and it would subtract from a bill.
+ */
+function messageUsageTokens(m) {
+  const u = m && typeof m.usage === 'object' && m.usage ? m.usage : null;
+  if (!u) return null;
+  const out = {};
+  for (const f of ['inputTokens', 'outputTokens', 'cachedReadTokens', 'cacheWriteTokens']) {
+    const v = u[f];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+    out[f] = v;
+  }
+  // Zero-in AND zero-out is the "provider reported nothing" sentinel, not a
+  // measurement — llm.js's normalizers coerce every missing field to 0, and a
+  // completed chat turn cannot have consumed zero input (the prompt carries the
+  // schema plus thousands of characters of wiki context). Recording it server-
+  // side is refused for the same reason; this side refuses it too so a
+  // hand-edited or synced conversation file cannot make a paid answer render as
+  // exactly $0.00. See normalizeReportedUsage in src/brain/chat.js.
+  if (out.inputTokens === 0 && out.outputTokens === 0) return null;
+  return out;
+}
+
+/**
+ * What ONE assistant message cost, in USD, or null when we cannot say.
+ *
+ * ── EVERY MISSING COMPONENT RETURNS null, NEVER A PARTIAL FIGURE ─────────
+ * Three independent things must all be present: the token counts, a recorded
+ * SERVED model, and a live published price for that model. Any one absent and
+ * the caller renders nothing at all. Specifically NOT rendered:
+ *
+ *   • a message from before this feature (no `usage` key) — every existing
+ *     conversation in every existing wiki is this case;
+ *   • a message whose model we do not ship a price for, or whose provider the
+ *     user has since Disconnected (the catalogue arrives key-scoped, so its
+ *     entries simply are not there);
+ *   • anything estimated from character counts or message length. There is no
+ *     estimate path in this function on purpose. A plausible number on a money
+ *     surface is worse than a blank, because a blank is legible as "unknown"
+ *     and a wrong number is not.
+ *
+ * ── THE ARITHMETIC IS A DELIBERATE MIRROR, NOT AN INVENTION ──────────────
+ * The formula is `chargeForItem` in src/brain/ingest-queue.js — the app's
+ * existing, shipped answer to "what did these tokens cost", including both
+ * Anthropic cache multipliers (0.1x read, 1.25x write). It is MIRRORED here
+ * rather than imported for one reason: that module is server-side, imports
+ * llm.js and the filesystem, and this file runs in a browser. It cannot be
+ * imported, so the honest options were a mirror or a second formula, and a
+ * second formula is how this repo produced its v3.2.0 CRITICAL.
+ *
+ * A mirror is only safe if something can see it drift, so the drift is MEASURED
+ * rather than promised: scripts/test-next-composer-model.js imports the real
+ * `chargeForItem` out of ingest-queue.js's `__testing` surface and asserts this
+ * function agrees with it to the last bit across a matrix generated from the
+ * real catalogue. Change either one alone and that goes red naming the case.
+ *
+ * ── PRICE AT RENDER TIME, AND THE ONE APPROXIMATION IN IT ────────────────
+ * `entry.input` / `entry.output` are the LIVE, promotion-resolved figures
+ * (llm.js resolves them per-request through getters, so the JSON the client
+ * receives already carries today's price) — never `standardInput` /
+ * `standardOutput`, which are what two Gemini models will cost from 2027-01-01
+ * and would over-report their cost by 2x today.
+ *
+ * The consequence, stated rather than hidden: a turn served during a promotion
+ * and re-read after it ends prices at the standing rate — higher than it
+ * actually cost. That is the safe direction under this repo's rule that a price
+ * failure resolves upward, and it is the price of not freezing a dollar figure
+ * into a conversation record. See src/brain/chat.js's `usage` comment.
+ *
+ * ── A PRE-EXISTING APPROXIMATION, INHERITED KNOWINGLY ────────────────────
+ * `cachedReadTokens * price.input * 0.1` is ANTHROPIC's cached-read multiplier.
+ * Chat sends no cache breakpoint at all (`cachePrefixChars` is passed only by
+ * ingest.js), so both providers measure 0 cache-write here — but GEMINI's
+ * IMPLICIT cache can still populate `cachedReadTokens`, and Gemini's implicit
+ * discount is not 0.1x. Applying one provider's multiplier to the other is
+ * therefore an approximation on that one term. It is inherited deliberately and
+ * unchanged from `chargeForItem`, which has always done exactly this: fixing it
+ * would mean diverging from the formula this mirrors, which is the drift the
+ * mirror exists to prevent. Recorded here so the next reader knows it is a known
+ * approximation rather than an oversight.
+ */
+function messageCostUsd(m, ctx) {
+  const u = messageUsageTokens(m);
+  if (!u) return null;
+  const modelId = m && typeof m.model === 'string' && m.model ? m.model : null;
+  if (!modelId) return null;
+  const c = ctx || {};
+  // The SERVED model — `m.model` is what the provider reported, never
+  // `ctx.chatModel` (the composer's current pick) and never `m.requestedModel`.
+  // On a fallback walk those differ and the walk is where it matters most: it
+  // can move a user ONTO a costlier model, so pricing the request would
+  // under-report the bill in exactly the case they did not choose.
+  //
+  // Resolved through the same key-scoped lookup the LABEL uses, so the price and
+  // the name beside it can never come from two different catalogue walks.
+  const row = resolveChatModel(modelId, c.offerable, c.availableProviders);
+  if (!row || !row.entry) return null;
+  const input = row.entry.input;
+  const output = row.entry.output;
+  if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) return null;
+  if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) return null;
+  // ── chargeForItem's formula, term for term ──────────────────────────────
+  const inCost = (u.inputTokens || 0) / 1e6 * input;
+  const outCost = (u.outputTokens || 0) / 1e6 * output;
+  const cachedReadCost = (u.cachedReadTokens || 0) / 1e6 * input * 0.1;
+  const cacheWriteCost = (u.cacheWriteTokens || 0) / 1e6 * input * 1.25;
+  const total = inCost + outCost + cachedReadCost + cacheWriteCost;
+  return Number.isFinite(total) ? total : null;
+}
+
+/**
+ * The cost fragment appended to one message's eyebrow, or '' when there is
+ * nothing we can honestly say.
+ *
+ * Returning '' — not '$0.00', not '—', not 'cost unknown' — is the whole
+ * contract. An unknown cost renders as the absence of a cost.
+ *
+ * Deliberately QUIET: a mid-dot and a figure on the eyebrow line that already
+ * names the model, in the eyebrow's own muted tone. Not a badge, not a colour,
+ * not a second money surface — the composer already carries the qualitative
+ * "cost varies with response length" hint, and two spend readouts arguing for
+ * attention in one column would make the factual one look like an alarm.
+ *
+ * The `title` carries the token counts behind the figure, so a user who wants
+ * to check the arithmetic against their provider's own dashboard can, without
+ * the thread growing a table.
+ */
+function assistantCostHtml(m, ctx) {
+  const usd = messageCostUsd(m, ctx);
+  if (usd === null) return '';
+  const text = formatUsdHonest(usd);
+  // formatUsdHonest returns null for anything that is not a finite number. It
+  // cannot happen here (messageCostUsd already guaranteed one), but a formatter
+  // that CAN say "no figure" must never have that answer interpolated as the
+  // string "null" on a spend line.
+  if (text === null) return '';
+  const u = messageUsageTokens(m);
+  const title = u
+    ? u.inputTokens + ' in / ' + u.outputTokens + ' out' +
+      (u.cachedReadTokens ? ' / ' + u.cachedReadTokens + ' cached' : '') +
+      (u.cacheWriteTokens ? ' / ' + u.cacheWriteTokens + ' cache write' : '') +
+      ' tokens'
+    : '';
+  return '<span class="chat-msg-cost" title="' + escapeHtml(title) + '">' +
+    ' · ' + escapeHtml(text) + '</span>';
+}
+
+/**
  * The eyebrow (and, on divergence, the one-line notice under it) for one
  * assistant message.
  *
@@ -1699,8 +1901,15 @@ function describeAnswerModel(m, ctx) {
  */
 function assistantEyebrowHtml(m, ctx) {
   const d = describeAnswerModel(m, ctx);
+  // The cost rides INSIDE the eyebrow, computed from THIS message — same
+  // reasoning as the model label directly beside it: `renderThreadOnly` rebuilds
+  // the whole thread with one `innerHTML = ...`, so anything derived from
+  // view-level state would restamp every historical answer. A relabelled model
+  // was the v3.13.2 bug; a re-priced history would be the same bug about money.
   const eyebrow =
-    '<div class="chat-msg-eyebrow mono">THE CURATOR · ' + escapeHtml(d.label) + '</div>';
+    '<div class="chat-msg-eyebrow mono">THE CURATOR · ' + escapeHtml(d.label) +
+      assistantCostHtml(m, ctx) +
+    '</div>';
   if (!d.diverged) return eyebrow;
   return eyebrow +
     '<div class="chat-msg-fallback">' +
@@ -1729,6 +1938,33 @@ function formatLivePrice(entry) {
 }
 
 /**
+ * '2027-01-01' -> '1 Jan 2027'.
+ *
+ * Parsed from the ISO COMPONENTS, never via `new Date(iso)` +
+ * `toLocaleDateString`: that reads the string as UTC midnight and then renders
+ * it in the viewer's zone, so anyone west of Greenwich would be told a price
+ * rises on 31 Dec 2026. An off-by-one on a price date is a small lie about
+ * money. Unparseable input returns the raw string rather than inventing a date.
+ *
+ * A DELIBERATE SECOND COPY of settings.js's `formatIsoDay`, not a shared
+ * import: that module is an independent view with no shared date utility, and
+ * this release does not own it. The composer previously rendered this same fact
+ * as a raw ISO string while Settings humanised it — one date, two renderings,
+ * one app. NOT ENFORCED, and said plainly: nothing mechanically pins these two
+ * functions together; if this behaviour changes, change settings.js's copy in
+ * the same commit. The suites assert the OUTPUT on each side independently.
+ */
+function formatIsoDay(iso) {
+  if (typeof iso !== 'string') return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return iso;
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthIdx = Number(m[2]) - 1;
+  if (monthIdx < 0 || monthIdx > 11) return iso;
+  return String(Number(m[3])) + ' ' + MONTHS[monthIdx] + ' ' + m[1];
+}
+
+/**
  * The coming rise, when `input`/`output` are a promotion rather than the
  * standing price. Returns '' when there is no promotion — so a caller that
  * renders this unconditionally shows nothing extra for a normally-priced model.
@@ -1737,13 +1973,36 @@ function formatLivePrice(entry) {
  */
 function formatPromotionRise(entry) {
   if (!entry || !entry.promotionUntilIso) return '';
+  // ── Only claim a rise that has not already happened ──────────────────────
+  // `promotionUntilIso` stays populated AFTER a promotion expires, at which
+  // point llm.js's `input`/`output` getters have already resolved to the
+  // standing figures. The old truthiness-only check would therefore keep
+  // telling a 2027 reader that this price "rises to $1.50" while the price
+  // line directly above it already read $1.50 — a warning about a change that
+  // has already happened, on the one surface whose whole job is to say what
+  // something costs. settings.js's renderModelRow has carried this guard since
+  // the picker shipped (`promoActive`); the composer did not, and the drift
+  // was invisible because today's clock is on the promoted side of the date.
+  //
+  // SUPPRESS ONLY ON POSITIVE EVIDENCE OF EXPIRY. If any of the four figures
+  // is missing we cannot establish that the promotion has ended, and the
+  // fail-safe direction on money is to WARN (v3.9.0's rule) — so an entry with
+  // unknown standard prices still discloses that a rise is coming, via the
+  // date-only fallback below. Going silent because we could not tell would
+  // turn "we don't know" into "there is nothing to know".
+  const bothKnown =
+    typeof entry.input === 'number' && typeof entry.standardInput === 'number' &&
+    typeof entry.output === 'number' && typeof entry.standardOutput === 'number';
+  const expired = bothKnown &&
+    entry.input === entry.standardInput && entry.output === entry.standardOutput;
+  if (expired) return '';
   const inp = formatPricePerM(entry.standardInput);
   const out = formatPricePerM(entry.standardOutput);
   const from = typeof entry.standardPriceFromIso === 'string' && entry.standardPriceFromIso
     ? entry.standardPriceFromIso
     : entry.promotionUntilIso;
-  if (inp === null || out === null) return 'promotional price — rises after ' + entry.promotionUntilIso;
-  return 'promotional price — rises to ' + inp + ' / ' + out + ' on ' + from;
+  if (inp === null || out === null) return 'promotional price — rises after ' + formatIsoDay(entry.promotionUntilIso);
+  return 'promotional price — rises to ' + inp + ' / ' + out + ' on ' + formatIsoDay(from);
 }
 
 /**

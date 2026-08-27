@@ -527,6 +527,32 @@
 }
 .model-picker-count { color: var(--text-3); font-size: var(--text-2xs); margin-left: auto; }
 
+/* ── THE LANE MARKER ───────────────────────────────────────────────────────
+   Only the ACTIVE provider's model reaches ingest, Health scans and Compile.
+   The sections are collapsed by default, so this is the one place most users
+   will ever see that fact — the collapsed header has to carry it, not the
+   body. Accent for the provider that spends on the build path; recessed and
+   outlined for the one that does not, so the two are separable at a glance
+   without either reading as an error. Colour is NOT the only channel: the
+   two badges carry different words as well.                                */
+.model-picker-lane {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.model-picker-lane-live {
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+}
+.model-picker-lane-idle {
+  color: var(--text-3);
+  border-color: var(--border-subtle);
+}
+
 .model-picker-body { padding: 0 13px 13px; }
 
 /* The one place the app states what a selection does and does not do.
@@ -535,13 +561,24 @@
   margin: 0 0 10px;
   padding: 8px 11px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--attention-text);
-  background: var(--attention-tint);
-  color: var(--attention-text);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  color: var(--text-2);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
 }
+/* Amber is reserved for the section that actually governs the build path.
+   Tinting BOTH would give the inactive provider the same visual weight and
+   re-create the ambiguity this copy exists to remove; tinting NEITHER would
+   bury the one sentence that answers "what will my next ingest cost?". */
+.model-picker-scope-live {
+  border-color: var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+}
+.model-picker-scope strong { color: var(--text); font-weight: var(--weight-semibold); }
+.model-picker-scope-live strong { color: var(--attention-text); }
 .model-picker-scope code {
   padding: 1px 5px;
   border-radius: 5px;

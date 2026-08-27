@@ -423,6 +423,54 @@ Until v3.12.0 the app could run exactly one model per provider. v3.12.0 added th
 
 > **User-facing counterpart:** [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). **Catalogue contents, measurements and the release checklist:** [model-lifecycle.md](model-lifecycle.md). This section deliberately does not repeat either.
 
+### Two lanes: one model builds the wiki, chat chooses per call
+
+The design principle the router implements, stated once:
+
+> **One model builds your brain; you choose freely when talking to it.**
+
+- **The build lane** — ingest, AI Wiki Health and Compile — runs on the **active provider** and that provider's resolved default model (its pinned selection, or `DEFAULTS[provider]` when nothing is pinned). It is **one setting, not three**, and not separately configurable per feature.
+- **The chat lane** — a per-message provider *and* model override, honoured only when that provider has a key saved in Settings and the id is in `OFFERABLE_MODELS`. It has **no effect on the build lane**: it travels on one request body and is never written to config.
+
+**The coupling is structural, not conventional.** The build-lane call sites do not merely decline to pass an override — most of them have no parameter to pass it through. Every LLM call in the app enters `generateText(systemPrompt, userPrompt, maxTokens, responseFormat, onWait, opts)`, and only the sixth parameter can carry `provider` / `model`:
+
+| Entry point | Arity at the call site | Can it express a model override? |
+|---|---|---|
+| `health-ai.js` — **five** calls | 4 positional args (no `onWait`, no `opts`) | **No — inexpressible.** There is no argument to pass. |
+| `compile.js` — via the `opts.generateText` test seam | 5 positional args | **No — inexpressible.** |
+| `query.js` | 3 positional args | **No — inexpressible.** |
+| `diagnostics.js` (live API check) | 4 positional args | **No — inexpressible.** |
+| `sharedbrain-delta.js` / `sharedbrain-synthesis.js` | 4 args via an `llmFn` wrapper | **No — inexpressible.** |
+| `ingest.js` — two calls | `opts` present, carrying `onUsage` + `signal` only | Expressible, **not passed**. |
+| `chat.js` | `opts` carrying `provider`, `model`, `onUsage` | **Yes — the only site that does.** |
+
+So **Health cannot diverge from ingest**, and no future edit inside `health-ai.js` can make it diverge without first adding two arguments that do not exist there today. Compile resolves identically and for the same structural reason. Ingest is the one build-lane site where an override is *syntactically* possible, and it is the site where a mid-run change is most harmful — which is why the protection there is the route-level `guardConcurrent` described below, not a call-site convention.
+
+`health-ai.js` also calls `getProviderInfo()` with **no arguments**, six times, purely to price its cost estimates. That is the same resolution the call it is estimating will perform, so the estimate and the call can never disagree about which model is being paid for.
+
+### The build-lane resolution chain
+
+With no override passed, every build-lane call resolves identically:
+
+```
+generateText(sys, user, maxTokens, format)          // opts absent → no provider/model
+  └─ callLLM(..., providerOverride = null, opts)
+       └─ getProviderInfo(null, null)
+            ├─ resolveProviderDefault(null)
+            │    └─ getActiveProvider()             // config.activeProvider, last-saved-wins
+            │         └─ defaultModelFor(provider, process.env.LLM_MODEL)
+            │              ├─ envModel  →  return it                     (dev escape hatch)
+            │              └─ applyModelOverride(provider,
+            │                     DEFAULTS[provider],
+            │                     storedSelection(provider))             (the user's pin)
+            └─ applyModelOverride(provider, <that>, preferModel = null)  // no-op on first line
+```
+
+Two details this makes visible that the flat precedence line below does not:
+
+- **`applyModelOverride` is applied twice**, at two different rungs — once inside `defaultModelFor` against the *stored* selection, once inside `getProviderInfo` against the *per-call* one. Both applications enforce `isOfferableModel`, which is why a stored id that later stops being offerable is refused on **read** and falls back, rather than being honoured forever because it was valid when written.
+- **The provider is decided before the model.** `resolveProviderDefault` picks the active provider, and only then is *that* provider's stored selection consulted via `storedSelection(provider)`. A pin recorded against the **other** provider is therefore inert until that provider becomes active — it is stored per provider, not globally, and `selectedModels` is a map keyed by provider for exactly this reason. This is the single most likely user-facing surprise in the whole router, and it is documented as such in [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model).
+
 ### `OFFERABLE_MODELS` is a frozen capability record, and it cannot be incomplete
 
 `OFFERABLE_MODELS` (in [`llm.js`](../src/brain/llm.js)) is a frozen `{ gemini: [...], anthropic: [...] }` table, ordered cheapest-first on the **standard** price within each provider. Entries are not written as object literals — they are built by `defineOfferableModel(provider, spec)`, which **throws at module load** if:
@@ -542,11 +590,29 @@ The `/next` Settings UI disables the pick buttons while any write is running, bu
 | `views/settings.js` → `renderModelPicker` / `renderModelOption` | `POST /api/config/api-keys/model` | Durable, server-side. Governs ingest, Health AI, Compile and chat. |
 | `views/chat.js` → `renderModelMenuHtml` / `renderModelOptionHtml` | `model` field on the `POST /api/chat/:domain` body → `normalizeChatModel` → `generateText(..., { model })` | Chat only. Persisted in `localStorage` (`curator-next-chat-model`), so it is per-browser and sticky across conversations — **not** per-conversation. |
 
+**Stickiness is a decision, and it is only defensible because of the per-message model label.** A selection restored on load and never reset is a selection a user can forget they made; unlabelled, that is silent overspend. It is tolerable here on two grounds. First, magnitude: the chat lane bills cents per message, where a forgotten *build-lane* pin bills across a whole ingest — which is precisely why the build lane makes its pin visible in Settings with a marker rather than restoring it invisibly. Second, and load-bearing: **the model of record is stamped on the message, taken from the provider's own usage payload** (see [Refusal is a fall-back](#refusal-is-a-fall-back-never-a-throw) above), so the thread itself reports what ran on every turn. A message with no recorded model renders the neutral provider name and **never** the composer's current selection — falling back to the live selection there would re-create precisely the dead-data shape the recorded field exists to remove, and would relabel historical answers with a model that never saw them. Removing the label would therefore also remove the argument for keeping the selection sticky; the two ship together.
+
 Both render the server's `note` **verbatim** rather than paraphrasing it: `note` is the measured finding, and rewriting it into marketing copy would delete the only thing that makes an honest choice possible. Both escape every interpolated field — the payload originates in `llm.js` but arrives over HTTP, and "the payload is ours" is not a property a render function can verify.
 
 Both gate on the saved key **client-side as well**, via a lookup table rather than a `p.id === 'gemini' ? … : …` binary — that binary shape is what made a provider row render another provider's masked key in v3.10.1. An id absent from the table resolves to `undefined` and the whole list disappears, which is the safe direction.
 
 The chat composer's localStorage key is deliberately **not** shared with the provider key (`curator-chat-model-provider`): one holds `'gemini'|'anthropic'` and the other a model id like `'claude-sonnet-5'`, and two different value *formats* sharing one key is how a stale value from the other writer gets applied as if it were ours. A restored model implies its provider, so the two can never be sent disagreeing.
+
+### Per-answer cost: measured, priced by the served model, mirrored rather than shared
+
+Each assistant message in `/next`'s chat carries a small cost fragment beside the model label already documented above (`assistantEyebrowHtml` → `assistantCostHtml`, both in `views/chat.js`).
+
+**Where the token counts come from.** The source is the same `onUsage` callback documented under [LLM provider selection](#llm-provider-selection-srcbrainllmjs) — fired once per completed provider call from inside `callProvider`, carrying the normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}` payload. `sendMessage` (`src/brain/chat.js`) captures that payload into `usedProvider`/`usedModel`/`usedUsage`, and `buildAssistantMessage` persists them onto the assistant message via `normalizeReportedUsage` — an ALL-FOUR-OR-NOTHING gate: any one of the four fields missing, non-finite or negative discards the whole record, because three of four numbers priced as if they were four is a confidently wrong figure that looks exactly like a correct one. The message (four raw token counts and the served model id — never a dollar amount) is written to `domains/<domain>/conversations/<id>.json` in the ordinary `writeConversation` call, so it survives a reload; see [Data flow: Chat](#data-flow-chat) below for the on-disk shape.
+
+**Priced by the model that ACTUALLY answered.** `usedModel`/`usedProvider` are read out of the usage payload itself, never out of `chatModel`/`chatProvider` (what was requested) — the same rule [Refusal is a fall-back](#refusal-is-a-fall-back-never-a-throw) already documents for the label beside it. This is where it matters most: on a fallback-chain walk the requested rung 404s and a costlier rung answers, and pricing the request instead of the outcome would under-report the bill for precisely the turn the user did not choose.
+
+**The formula is a deliberate mirror, not an import.** `messageCostUsd` in `src/public/next/views/chat.js` reproduces `chargeForItem` from `src/brain/ingest-queue.js` — the app's one other "what did these tokens cost" calculation, including both Anthropic cache multipliers (0.1× the input rate for a cached read, 1.25× for a cache write) — term for term. It is mirrored rather than imported because `ingest-queue.js` pulls in `fs` and `llm.js` and cannot run in a browser; a second, independently-written formula is exactly the two-hand-maintained-copies shape that produced the v3.2.0 CRITICAL. So the mirror is pinned rather than trusted: `scripts/test-next-composer-model.js` §11 points the same brace-matching function extractor this suite already uses on `chat.js` at `ingest-queue.js` instead, lifting out the real `chargeForItem`, and asserts the two agree to the last bit across every offerable model crossed with nine token shapes — 14 models × 9 shapes = 126 cases. A change to either formula alone goes red naming the case.
+
+**The `{0,0,0,0}` sentinel, and why the two normalisers treat it differently on purpose.** `normalizeGeminiUsage`/`normalizeAnthropicUsage` (`llm.js`) each coerce a missing field to `0` via a local `num()` helper, so a provider response that carries no usage block at all — not a genuine report of zero — arrives as all four fields zeroed, indistinguishable from a real zero-cost call. `chat.js`'s `normalizeReportedUsage` refuses exactly this shape (`inputTokens === 0 && outputTokens === 0` → discard the record): a completed chat turn cannot have consumed zero input, because the prompt always carries the domain schema plus the selected wiki pages ahead of the user's message, so an all-zero report can only mean "the provider told us nothing." `llm.js`'s own normalisers deliberately do **not** apply that same refusal — those two functions also feed `ingest-queue.js`'s running `spentUsd` total, where `0` is the correct neutral element for an item that has not yet billed anything, and narrowing them here would move real accumulating-spend arithmetic in a change that is otherwise a chat-only label.
+
+**Priced at render time, not frozen onto the record.** `entry.input`/`entry.output` (see `OFFERABLE_MODELS` above) are getters that resolve the live, promotion-aware price on every read; the persisted message stores only the four raw token counts and the served model id, never a dollar figure. The Chat view re-fetches its provider/model catalogue on every view entry, so the figure shown for a given message is priced against whatever that catalogue currently says the served model costs — which means an answer served during a promotion and re-read after the promotion's stated end date renders at the higher, standing price. That is the same fail-safe-upward rule already stated under [Promotional pricing](#promotional-pricing-two-tables-resolved-by-date): every direction a price calculation can fail resolves to the number that costs the user less to have believed, never more.
+
+**One inherited approximation, not introduced here.** `chargeForItem`'s formula applies `price.input * 0.1` — Anthropic's cached-read discount — to `cachedReadTokens` unconditionally. Chat passes no `cachePrefixChars` breakpoint at all (only `ingest.js` does), so Anthropic never reports a cache write or a cache read for a chat call — but Gemini's *implicit* caching can still populate `cachedReadTokens` on a chat call, and Gemini's real implicit-cache discount is not 0.1×. This is a pre-existing approximation in `chargeForItem` itself, not something this feature introduced; fixing it only in the mirror would itself be the drift the mirror exists to prevent, so it is recorded here rather than quietly corrected in one of the two places it lives.
 
 ### Coverage
 
@@ -556,7 +622,7 @@ The chat composer's localStorage key is deliberately **not** shared with the pro
 | `scripts/test-selected-model.js` | Storage round-trip, clearing, sanitising, and the byte-identical-with-nothing-stored claim. |
 | `scripts/test-offerable-models-route.js` | The wire shape of `offerable` / `selectedModels` and the config-only key gating. |
 | `scripts/test-next-model-picker.js` | The Settings surface, including the provider-lookup class invariant. |
-| `scripts/test-next-composer-model.js` | The chat composer surface. |
+| `scripts/test-next-composer-model.js` | The chat composer surface, including §11's 126-case equality check between `messageCostUsd` and the real `chargeForItem`. |
 | `scripts/test-next-model-fallback.js` | The fallback banner's three cost states. |
 
 ---
@@ -769,13 +835,21 @@ src/brain/chat.js
       │     instruction block, with last 20 messages as conversation history
       ├─ 7. Call LLM via llm.js  (text mode, 8 192 max output tokens; on
       │     truncation, returns the partial answer + a note — never hard-fails)
-      │     Returns: markdown answer with [source: path] citation tags
+      │     opts.onUsage captures {provider, model, four token counts} for
+      │     the provider call that actually answered — see "Per-answer cost"
+      │     above. Returns: markdown answer with [source: path] citation tags
       ├─ 8. stripCatalogueEcho() — remove any residual bare-file-path blob
       ├─ 9. Parse [source: ...] tags → deduplicated citation list
-      ├─ 10. Append user + assistant messages to conversation
+      ├─ 10. Append user + assistant messages to conversation (the assistant
+      │      message additionally carries `provider`/`model`/`usage` when the
+      │      onUsage payload validated — see Conversation persistence below)
       └─ 11. Save conversation JSON to domains/<domain>/conversations/<id>.json
 
-HTTP response → { conversationId, isNew, title, answer, citations: [...] }
+HTTP response → { conversationId, isNew, title, answer, citations: [...],
+                   responseStyle, provider, model, usage }
+  // `model` and `usage` describe the model that ANSWERED, not the one
+  // requested; both are null when nothing valid was reported. See
+  // "Per-answer cost" under Model selection, above.
 
 Other chat endpoints:
   GET    /api/chat/:domain        → list conversations (id, title, messageCount)
@@ -795,12 +869,17 @@ Each conversation is a JSON file:
   "domain": "ai-tech",
   "messages": [
     { "role": "user",      "content": "What is RAG?" },
-    { "role": "assistant", "content": "RAG stands for…", "citations": ["concepts/rag.md"] }
+    { "role": "assistant", "content": "RAG stands for…", "citations": ["concepts/rag.md"],
+      "provider": "anthropic", "model": "claude-opus-5",
+      "usage": { "inputTokens": 998, "outputTokens": 247,
+                 "cachedReadTokens": 0, "cacheWriteTokens": 0 } }
   ]
 }
 ```
 
-Conversations are gitignored — they are personal to each user's machine.
+`provider`/`model`/`usage` on an assistant message are **additive and optional** — `buildAssistantMessage` omits each one it cannot validate rather than writing a guessed or partial value (see "Per-answer cost" under [Model selection](#model-selection-the-router-v3120--v3130) above), and every message written before that field existed simply lacks it. There is deliberately no read-side migration or defaulting: absent means unknown, not zero and not "the current default."
+
+Conversations are **not** gitignored: `domains/.gitignore` (built from `DOMAINS_GITIGNORE_RULES` in `src/brain/sync.js`) excludes `raw/`, a handful of machine-local lock/cache files, and Obsidian junk, but never `conversations/*.json` — so conversation history is tracked and travels with the wiki through Personal Sync, deliberately, so a thread can be continued from any machine. See [Sync](sync.md) and [user-guide.md §15](user-guide.md#15-sync-across-computers).
 
 ---
 
@@ -1254,10 +1333,13 @@ Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:dom
 sendMessage(domain, conversationId, userMessage, opts = {})
   // opts: { responseStyle, provider, model }
   → Promise<{ conversationId, isNew, title, answer, citations[],
-              responseStyle, provider, model }>
+              responseStyle, provider, model, usage }>
   // `model` is the model that ANSWERED (taken from the last onUsage payload),
   // not the one requested — so it is correct across both an allow-list refusal
-  // and a fallback-chain walk.
+  // and a fallback-chain walk. `usage` is the same payload's four token counts,
+  // or null when nothing valid was reported — see "Per-answer cost" under
+  // Model selection, above. Both are also persisted onto the saved assistant
+  // message (buildAssistantMessage), so a reloaded conversation carries them.
 
 normalizeChatProvider(provider) → 'gemini' | 'anthropic' | null
 normalizeChatModel(provider, model) → '<id>' | null
