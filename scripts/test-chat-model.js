@@ -20,13 +20,21 @@ import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          isCostlierModel, anthropicMaxOutputTokens, ANTHROPIC_MAX_OUTPUT_TOKENS,
          OFFERABLE_MODELS, DOMINATED_MODELS, AWAITING_MEASUREMENT,
          isOfferableModel, resolveModelPrice, getFallbackStatus,
-         __setAnthropicClientFactory,
+         isFreeModel, isBuildLaneModel, isKnownProvider, listOfferableModels,
+         setOpenRouterCatalogue, normalizeOpenRouterUsage,
+         __setAnthropicClientFactory, __setOpenRouterAdapterFactory,
          __testing as llmTesting } from '../src/brain/llm.js';
 import { getApiKeys, getActiveProvider, __setDomainsDirOverride } from '../src/brain/config.js';
 import { __testing, sendMessage, readConversation, RESPONSE_STYLES } from '../src/brain/chat.js';
 // The REAL Express router, so §18(d) can DRIVE the POST handler rather than
 // grep it. Importing it is side-effect free (it only wires handlers).
 import chatRouter from '../src/routes/chat.js';
+// §11's ONE genuinely-derived ceiling check. `MULTI_PHASE_OUTLINE_TOKENS` is
+// the output budget ingest asks for on the Phase-1 outline call, so it is the
+// floor a build-lane model's ceiling has to clear. Read from ingest.js rather
+// than re-typed, so the floor moves with the thing it is a floor for; the
+// import is side-effect free (chat.js already pulls this module in).
+import { __testing as ingestTesting } from '../src/brain/ingest.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync as writeFile } from 'node:fs';
 import os from 'node:os';
 
@@ -127,7 +135,42 @@ section('4. Source guards — provider override wired through the stack');
   ok(/export function normalizeChatProvider/.test(chat), 'chat.js exports normalizeChatProvider');
   ok(/getApiKeys\(\)/.test(chat) && !/getEffectiveKey\(/.test(chat),
     'normalizeChatProvider gates on config (getApiKeys), NOT a getEffectiveKey/.env call');
-  ok(/normalizeChatProvider\(opts\.provider\)/.test(chat), 'sendMessage normalises opts.provider');
+  // ── THE INSTRUMENT CHANGED HERE, DELIBERATELY ─────────────────────────────
+  // This used to be `/normalizeChatProvider\(opts\.provider\)/` — a pin on the
+  // literal ARITY of the call. It broke on a CORRECT change (chat.js now calls
+  // `normalizeChatProvider(opts.provider, chatModel)`) while the behaviour it
+  // named never regressed for a moment. A guard that reds on a correct edit and
+  // stays green on a real one is worse than no guard: it trains people to
+  // "fix" the assertion, and the obvious fix — contorting the production call
+  // back to one argument — would have re-opened a real defect.
+  //
+  // The ORIGINAL INTENT ("sendMessage normalises opts.provider") is already
+  // proven BEHAVIOURALLY, and better, in §15: an offerable model on an UNKEYED
+  // provider is sent through the real sendMessage and must come back
+  // `provider: null` having been answered by the global provider. If sendMessage
+  // ever stopped normalising opts.provider, that assertion reds — it drives the
+  // whole path instead of describing one line of it. So the arity pin is not
+  // repaired, it is REPLACED by the thing arity was standing in for.
+  ok(/normalizeChatProvider\(\s*opts\.provider\b/.test(chat),
+    'sendMessage normalises opts.provider (shape-tolerant: pins the ARGUMENT, not the arity — see §15 for the behavioural proof this is a belt-and-braces restatement of)');
+
+  // ── AND THE PART NOTHING WAS GUARDING: the two are COUPLED ────────────────
+  // The model must be resolved FIRST and handed to the provider gate. Resolved
+  // independently the two can disagree, and a model honoured beside a REFUSED
+  // provider is sent to the GLOBAL provider, which discards it as not offerable
+  // there and answers on a provider the user never picked — the same mis-bill
+  // as the picker bug, one layer down. This is a real invariant, it is what the
+  // second argument exists for, and no arity pin could ever have expressed it.
+  {
+    const iModel = chat.indexOf('normalizeChatModel(opts.provider');
+    const iProv  = chat.search(/normalizeChatProvider\(\s*opts\.provider\b/);
+    ok(iModel !== -1, 'sendMessage resolves the model via normalizeChatModel(opts.provider, …)');
+    ok(iProv !== -1, 'sendMessage resolves the provider via normalizeChatProvider(opts.provider, …)');
+    ok(iModel !== -1 && iProv !== -1 && iModel < iProv,
+      'ORDER IS LOAD-BEARING: the MODEL is resolved BEFORE the provider gate, so a provider whose model was accepted is accepted WITH it');
+    ok(/normalizeChatProvider\(\s*opts\.provider\s*,\s*[A-Za-z_$][\w$]*/.test(chat),
+      'COUPLING: the resolved model is passed INTO the provider gate — decoupled, a honoured model beside a refused provider goes to the GLOBAL provider and mis-bills');
+  }
   ok(/generateText\([\s\S]{0,600}?provider: chatProvider,/.test(chat),
     'sendMessage passes the provider override to generateText');
   ok(/provider: chatProvider,\s*\/\//.test(chat) || /provider: chatProvider,/.test(chat), 'sendMessage returns the resolved provider');
@@ -166,19 +209,71 @@ section('5. Model price map — every shipped model id is priced');
   // additionally shown to the user in the picker before they choose it. Both
   // halves of this section move together — widening the union without widening
   // the equality below would silently stop catching dead-weight entries.
+  // ── DEFAULTS POSTURE: a provider default NAMES a model, or is null ─────────
+  // `DEFAULTS.openrouter` is null ON PURPOSE (v3.15.0). A provider may have no
+  // build-lane default until a model has been measured against this repo's real
+  // ingest outline prompt; picking a plausible id off a public catalogue would
+  // be a guess about JSON reliability and hidden thinking tokens dressed up as
+  // a default, on the one path where a wrong guess writes a whole wiki.
+  //
+  // So `shipped` can no longer be "every value in DEFAULTS" — but the filter
+  // that fixes that is itself a hazard: quietly dropping falsy values would
+  // also drop a genuine `''` typo, and would shrink this whole section's sweep
+  // with nothing to notice. The RULE is therefore ASSERTED first and the set of
+  // null-carrying providers is PINNED, so nulling gemini's or anthropic's
+  // default reds here instead of silently emptying the coverage below.
+  const unpinnedProviders = Object.entries(DEFAULTS)
+    .filter(([, id]) => id === null).map(([p]) => p).sort();
+  // RE-POINTED. This read 'openrouter' while that provider had no measured
+  // build-lane model. The live measurement session (9 runs each against the
+  // real 341,005-char ingest prompt) closed that: DEFAULTS.openrouter is now
+  // `upstage/solar-pro4`, so NO provider is unpinned and the expected set is
+  // empty. The pin is KEPT rather than deleted, and still does two jobs — it
+  // reds if a fourth provider lands with no measured default, and it reds if
+  // anyone nulls an existing one. `''` is a state, not an absence of guard.
+  eq(unpinnedProviders.join(','), '',
+    'every provider now carries a MEASURED build-lane default — no provider is unpinned (a new null here means an unmeasured provider shipped)');
+  for (const [p, id] of Object.entries(DEFAULTS)) {
+    ok(id === null || (typeof id === 'string' && id.length > 0),
+      `DEFAULTS.${p} is a non-empty model id, or null meaning "nothing measured yet" — never '' and never an object`);
+  }
+
   const shipped = [
     ...Object.values(DEFAULTS),
     ...Object.values(FALLBACK_CHAINS).flat(),
     ...Object.values(OFFERABLE_MODELS).flat().map(m => m.id),
-  ];
-  // Standing invariant: adding a fallback rung or an offerable model without its
-  // price must FAIL here rather than silently downgrade that model's cost
-  // warning to 'unknown' — or, worse now, render a blank price in the picker.
-  const unpriced = shipped.filter(id => !getModelPrice(id));
+  ].filter(id => id !== null);
+  // The filter must drop ONLY the nulls. Nothing below iterates over what is
+  // missing, so an over-broad filter would read as green.
+  for (const [p, id] of Object.entries(DEFAULTS)) {
+    if (id === null) continue;
+    ok(shipped.includes(id), `DEFAULTS.${p} ("${id}") survives the null filter and IS swept below`);
+  }
+  const shippedSet = new Set(shipped);
+
+  // ── PRICE POSTURE: priced, or EXPLICITLY free. Never {input:0, output:0} ────
+  // Standing invariant, widened rather than relaxed. It used to read "every
+  // shipped id has a price". v3.15.0 admits a second legal posture — explicitly
+  // free — because OpenRouter carries genuinely $0 models, and recording one as
+  // {input: 0, output: 0} is the single most dangerous shape available: that
+  // object is TRUTHY, so `usdHigh` becomes 0, `createJob`'s budget guard accepts
+  // a cap it believes it can enforce, and spend tracks at zero forever while
+  // every flag reports success — v3.3.0's inert-cap defect re-armed and worse,
+  // because there the number at least moved.
+  //
+  // "Free" is therefore MEMBERSHIP (FREE_MODELS), never a price test, and
+  // getModelPrice() must keep returning null for it. Adding a rung or an
+  // offerable model with NEITHER posture still fails here.
+  const freeShipped = [...shippedSet].filter(id => isFreeModel(id));
+  const unpriced = [...shippedSet].filter(id => !getModelPrice(id) && !isFreeModel(id));
   ok(unpriced.length === 0,
-    `every DEFAULTS + FALLBACK_CHAINS + OFFERABLE id has a price${unpriced.length ? ` (missing: ${unpriced.join(', ')})` : ''}`);
-  ok(Object.keys(MODEL_PRICES_USD_PER_MTOK).length === new Set(shipped).size,
-    'price map has no entries beyond the ids we actually ship');
+    `every DEFAULTS + FALLBACK_CHAINS + OFFERABLE id has a KNOWN PRICE POSTURE — priced, or explicitly free${unpriced.length ? ` (no posture: ${unpriced.join(', ')})` : ''}`);
+  for (const id of freeShipped) {
+    eq(getModelPrice(id), null,
+      `${id}: a FREE model resolves to NO price — getModelPrice must stay null, never {input:0,output:0} (that object is truthy and would make a budget cap inert)`);
+  }
+  eq(Object.keys(MODEL_PRICES_USD_PER_MTOK).length, shippedSet.size - freeShipped.length,
+    'price map has no entries beyond the PRICED ids we actually ship (free ids are shipped but deliberately unpriced)');
   for (const [id, price] of Object.entries(MODEL_PRICES_USD_PER_MTOK)) {
     ok(typeof price.input === 'number' && typeof price.output === 'number'
        && price.input > 0 && price.output > 0, `${id} has positive input+output prices`);
@@ -288,16 +383,50 @@ section('8. Source guards — cost warning + boot guard wiring');
 // and is pinned here, where it runs on every `npm test`.
 section('9. Fallback chains — priced, ordered cheapest-first, no retired ids');
 {
-  const { DEFAULTS, FALLBACK_CHAINS } = llmTesting;
-  for (const provider of ['gemini', 'anthropic']) {
+  const { DEFAULTS, FALLBACK_CHAINS, KNOWN_PROVIDERS } = llmTesting;
+
+  // ── PROVIDER LIST DERIVED, NOT HARDCODED ──────────────────────────────────
+  // This loop read `['gemini', 'anthropic']`, so when the OpenRouter chain
+  // landed it was COMPLETELY UNGUARDED — in the section whose entire job is
+  // guarding fallback chains. That is v3.11.0's `FN_NAMES` blind spot verbatim:
+  // a hardcoded member list means a new member is not merely unchecked, it is
+  // invisible. Derived from the data, and cross-checked against the providers
+  // llm.js can actually dispatch to, so neither side can drift alone.
+  const chainProviders = Object.keys(FALLBACK_CHAINS).sort();
+  eq(chainProviders.join(','), [...KNOWN_PROVIDERS].sort().join(','),
+    'FALLBACK_CHAINS has exactly one chain per provider llm.js can dispatch to — a provider with no chain has no safety net at all');
+
+  for (const provider of chainProviders) {
     const chain = FALLBACK_CHAINS[provider];
     ok(chain.length > 0, `${provider}: chain is non-empty (a default with no net is not a net)`);
     ok(new Set(chain).size === chain.length, `${provider}: no duplicate rungs`);
     ok(!chain.includes(DEFAULTS[provider]),
       `${provider}: the default is not repeated as its own fallback`);
 
-    // Cheapest-first, comparing on the same basis compareModelCost uses. A tie
-    // is fine (Sonnet 4.6 / 4.5); a strict decrease is not.
+    // EVERY rung priced, asserted per-rung rather than only pairwise. The
+    // pairwise loop below starts at i=1, so a ONE-RUNG chain — which is exactly
+    // what OpenRouter ships — had no price assertion at all. An unpriced rung
+    // silently degrades compareModelCost to 'unknown', so the fallback banner
+    // stops being able to warn the user they were moved onto something dearer.
+    for (const rung of chain) {
+      ok(getModelPrice(rung) !== null || isFreeModel(rung),
+        `${provider}: rung "${rung}" has a known price posture — priced, or explicitly free`);
+      ok(!Object.hasOwn(DOMINATED_MODELS, rung),
+        `${provider}: rung "${rung}" is not DOMINATED — a chain picks silently FOR the user, on the day their default died, so a measured-worse model must never be reachable there`);
+    }
+
+    // ── CHEAPEST-FIRST IS A TOTAL ORDER, AND THE PRICE SPACE IS NOT ──────────
+    // RECORDED LIMIT, for whoever adds the next rung: this requires each rung to
+    // be no cheaper than the previous on BOTH axes, which is only satisfiable
+    // when the candidates are pairwise comparable. OpenRouter's are not.
+    // `ibm-granite/granite-4.0-h-micro` is 0.017/0.112 and `nex-agi/nex-n2-mini`
+    // is 0.025/0.10 — cheaper on input, dearer on output, so NEITHER order
+    // admits both and no chain containing both can satisfy this assertion. The
+    // shipped one-rung chain is valid; a two-rung chain drawn from that pair is
+    // not, and the failure will look like a broken guard rather than an
+    // impossible request unless you have read this.
+    //
+    // A tie is fine (Sonnet 4.6 / 4.5); a strict decrease is not.
     for (let i = 1; i < chain.length; i++) {
       const prev = getModelPrice(chain[i - 1]);
       const cur = getModelPrice(chain[i]);
@@ -353,7 +482,9 @@ section('9. Fallback chains — priced, ordered cheapest-first, no retired ids')
   for (const [id, rec] of Object.entries(DOMINATED_MODELS)) {
     // THE load-bearing invariant: dominated ids are banned from the chains (the
     // app picks) but ALLOWED in OFFERABLE (the user picks). Two lists, two rules.
-    for (const provider of ['gemini', 'anthropic']) {
+    // Derived, for the same reason as the chain loop above: hardcoded here, a
+    // dominated model could be added to the OpenRouter chain with nothing to say so.
+    for (const provider of chainProviders) {
       ok(!FALLBACK_CHAINS[provider].includes(id),
         `dominated "${id}" is not a ${provider} fallback rung (the chain picks FOR the user)`);
     }
@@ -468,17 +599,123 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
           GEMINI_MODEL_MAX_OUTPUT_TOKENS, OFFERABLE_SUITABILITY,
           defineOfferableModel, DEFAULTS, FALLBACK_CHAINS } = llmTesting;
 
-  ok(Object.isFrozen(OFFERABLE_MODELS), 'the OFFERABLE_MODELS table is frozen');
-  eq(Object.keys(OFFERABLE_MODELS).sort().join(','), 'anthropic,gemini',
-    'exactly the two providers, no more');
+  const { capsFor, KNOWN_PROVIDERS } = llmTesting;
 
-  for (const provider of ['gemini', 'anthropic']) {
+  // Non-vacuous precondition: if this ever resolves to undefined the floor
+  // assertion below becomes `m.maxOutput >= undefined` -> false for everything,
+  // i.e. it would fail loudly rather than silently pass. Asserted anyway so the
+  // reason is named at the source rather than discovered in 20 red lines.
+  const OUTLINE_BUDGET_TOKENS = ingestTesting.MULTI_PHASE_OUTLINE_TOKENS;
+  ok(Number.isInteger(OUTLINE_BUDGET_TOKENS) && OUTLINE_BUDGET_TOKENS > 0,
+    `ingest's Phase-1 outline budget was read from ingest.js (${OUTLINE_BUDGET_TOKENS}) — the build-lane ceiling floor is derived from it, not re-typed`);
+
+  /**
+   * ── HAND-TYPED OUTPUT CEILINGS — THIS FILE'S OWN STATEMENT ────────────────
+   *
+   * An entry's `maxOutput` is normally DERIVED: `defineOfferableModel` reads it
+   * out of the provider's cap map, and the assertion below proves the entry did
+   * not re-type it. That derivation is unavailable for OpenRouter by design —
+   * `OPENROUTER_MODEL_MAX_OUTPUT_TOKENS` is deliberately `{}` because an
+   * OpenRouter id routes over rotating upstream hosts, so a ceiling frozen into
+   * llm.js is a snapshot of a fact that can move without the id changing. Those
+   * entries therefore carry `spec.maxOutput` themselves.
+   *
+   * WHAT WAS ACTUALLY HAPPENING. The else-arm asserted `m.provider ===
+   * 'openrouter'` under the premise "only a DYNAMICALLY-admitted OpenRouter
+   * entry may carry its own ceiling". That premise is false in this loop:
+   * OFFERABLE_MODELS is the STATIC table, nothing in it is dynamic, and the
+   * runtime overlay never appears here at all. So all three OpenRouter ceilings
+   * fell into an escape arm that checked only "is a positive integer". Measured
+   * on this file before the change: derivation-checked = 0, escape-arm = 3.
+   * A 10x digit typo on `upstage/solar-pro4` — the PINNED OpenRouter default,
+   * and a build-lane entry, so its ceiling governs ingest truncation — shipped
+   * at 1144 passed / 0 failed, and five sibling suites missed it too.
+   *
+   * STATED HONESTLY: this map is a SECOND COPY of a number, which is normally
+   * the exact shape this repo forbids. It is not a derivation and does not
+   * pretend to be one — there is no second SOURCE for a hand-read OpenRouter
+   * ceiling. It is a REVIEW GATE: changing a ceiling must also change this
+   * file, so the change is seen by someone. Where a real cross-check does
+   * exist it is asserted separately below (the build-lane floor), and that one
+   * IS derived.
+   *
+   * Provenance of each figure: OpenRouter publishes
+   * `top_provider.max_completion_tokens` per model; these were read from that
+   * field on 2026-08-26, the same probe run that measured the notes.
+   */
+  const HAND_TYPED_CEILINGS = Object.freeze({
+    'minimax/minimax-m3:free':        943718,
+    'ibm-granite/granite-4.0-h-micro': 117900,
+    'upstage/solar-pro4':              131072,
+  });
+
+  // Counters so the SPLIT between the two arms is visible rather than inferred.
+  // A silent drift of every entry into the un-derived arm is what hid the hole.
+  let capDerived = 0, capSelfDeclared = 0;
+  const selfDeclaredIds = [];
+
+  ok(Object.isFrozen(OFFERABLE_MODELS), 'the OFFERABLE_MODELS table is frozen');
+  // RE-PINNED, not softened. This literal's job is to catch a provider key
+  // appearing (or vanishing) that nobody reviewed. v3.15.0 adds a third
+  // deliberately, so the exact set moves to three — it does NOT become
+  // `length >= 2`, because a bounds check cannot tell a reviewed addition from
+  // an accident, which is the whole value of the original assertion.
+  eq(Object.keys(OFFERABLE_MODELS).sort().join(','), 'anthropic,gemini,openrouter',
+    'exactly the three providers, no more');
+  // …and the table's key set must agree with the providers llm.js will actually
+  // dispatch to. Two independent lists that can drift is this repo's named
+  // v3.2.0 shape; pinning only the literal above would let KNOWN_PROVIDERS grow
+  // a fourth member with no catalogue and nothing would say so.
+  eq(Object.keys(OFFERABLE_MODELS).sort().join(','), [...KNOWN_PROVIDERS].sort().join(','),
+    'OFFERABLE_MODELS has exactly one key per provider llm.js can dispatch to');
+
+  // ── WHICH PROVIDERS SHIP HAND-MEASURED ENTRIES — a tripwire, not a bound ───
+  // `list.length > 0` was right while every provider carried hand-measured
+  // models. OpenRouter deliberately carries NONE: its build-lane entries would
+  // have to be probed against this repo's real ingest outline prompt, and its
+  // chat entries arrive at runtime through setOpenRouterCatalogue(). An empty
+  // static list is therefore the HONEST state, not an omission — and pinning it
+  // means the day somebody adds a static OpenRouter entry, this reds and the
+  // reviewer has to confirm a measurement happened.
+  const populated = Object.entries(OFFERABLE_MODELS)
+    .filter(([, l]) => l.length > 0).map(([p]) => p).sort();
+  // RE-POINTED, same reason. This read 'anthropic,gemini' and carried the note
+  // "the day somebody adds a static OpenRouter entry, this reds". That day came:
+  // three OpenRouter models were hand-measured and admitted. The tripwire is
+  // kept pointing at the POPULATED state so it still fires if a provider's
+  // catalogue is emptied, or if a fourth appears without measurement.
+  eq(populated.join(','), 'anthropic,gemini,openrouter',
+    'every known provider ships a non-empty hand-measured static catalogue (an emptied or unmeasured provider reds here)');
+
+  // Provider list DERIVED from the table, never hand-typed: a hardcoded pair
+  // here would mean a third provider's entries were never checked for freezing,
+  // pricing, caps, ordering or measurement — silently, with the suite green.
+  for (const provider of Object.keys(OFFERABLE_MODELS)) {
     const list = OFFERABLE_MODELS[provider];
     ok(Array.isArray(list) && Object.isFrozen(list), `${provider}: list is a frozen array`);
-    ok(list.length > 0, `${provider}: at least one offerable model`);
     ok(new Set(list.map(m => m.id)).size === list.length, `${provider}: no duplicate ids`);
 
-    const caps = provider === 'gemini' ? GEMINI_MODEL_MAX_OUTPUT_TOKENS : ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS;
+    // `provider === 'gemini' ? GEMINI_CAPS : ANTHROPIC_CAPS` used to stand here.
+    // That is a BINARY ternary with no third arm — precisely the v3.10.1 shape
+    // that judged a third provider on Anthropic's credential — so a third
+    // provider's models would have been checked against Anthropic's cap map and
+    // failed for a reason that named the wrong file. `capsFor` is llm.js's own
+    // total lookup and is the single source of that mapping.
+    // `caps !== null` was true for OpenRouter's deliberately-empty `{}` — a
+    // pass that asserted nothing about whether a ceiling could be derived. The
+    // POPULATED/EMPTY state is what actually decides which arm every entry
+    // below takes, so it is pinned per provider instead of merely non-null.
+    const caps = capsFor(provider);
+    ok(caps !== null && typeof caps === 'object',
+      `${provider}: llm.js knows an output-cap map for this provider`);
+    const capCount = caps ? Object.keys(caps).length : -1;
+    if (provider === 'openrouter') {
+      eq(capCount, 0,
+        'openrouter: its cap map is EMPTY BY DESIGN — an id routes over rotating upstream hosts, so a ceiling frozen in llm.js is a snapshot of a fact that can move without the id changing (if this ever gains entries, the else-arm below is no longer the right test)');
+    } else {
+      ok(capCount > 0,
+        `${provider}: ships a POPULATED cap map, so every one of its entries must DERIVE its ceiling (${capCount} entries)`);
+    }
 
     for (const m of list) {
       ok(Object.isFrozen(m), `${m.id}: entry is frozen`);
@@ -490,19 +727,86 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
       // re-typing them; two hand-maintained copies of a price is how a picker
       // starts quoting a number the biller disagrees with.
       const price = getModelPrice(m.id);
-      ok(Boolean(price), `${m.id}: is priced in MODEL_PRICES_USD_PER_MTOK`);
-      ok(Boolean(price) && m.input === price.input && m.output === price.output,
-        `${m.id}: entry price is derived from the price table, not a second copy`);
-      ok(typeof m.standardInput === 'number' && typeof m.standardOutput === 'number'
-         && m.standardInput > 0 && m.standardOutput > 0,
-        `${m.id}: carries a positive standard (post-promotional) price`);
-      ok(Object.hasOwn(caps, m.id), `${m.id}: is capped in the provider output-cap map`);
-      eq(m.maxOutput, caps[m.id], `${m.id}: maxOutput is derived from the cap map`);
+      // POSTURE-AWARE, and the free branch is the stricter of the two. A free
+      // entry must resolve to NO price at all — `{input: 0, output: 0}` is
+      // truthy and would make a budget cap inert while every flag reported
+      // success (see §5). `m.free` is the single source of that verdict.
+      if (m.free) {
+        eq(price, null, `${m.id}: FREE entry resolves to NO price — never a zero pair`);
+        eq(m.input, null, `${m.id}: FREE entry exposes input: null on the wire, not 0`);
+        eq(m.output, null, `${m.id}: FREE entry exposes output: null on the wire, not 0`);
+        eq(m.standardInput, null, `${m.id}: FREE entry has no standard price either`);
+        eq(m.standardOutput, null, `${m.id}: FREE entry has no standard price either`);
+      } else {
+        ok(Boolean(price), `${m.id}: is priced (MODEL_PRICES_USD_PER_MTOK, or a registered dynamic price)`);
+        ok(Boolean(price) && m.input === price.input && m.output === price.output,
+          `${m.id}: entry price is derived from the price table, not a second copy`);
+        ok(typeof m.standardInput === 'number' && typeof m.standardOutput === 'number'
+           && m.standardInput > 0 && m.standardOutput > 0,
+          `${m.id}: carries a positive standard (post-promotional) price`);
+      }
+      // CAPPED. A statically-admitted entry DERIVES its ceiling from the
+      // provider cap map; a dynamically-admitted one (OpenRouter's catalogue)
+      // brings its own, because that ceiling comes from the provider's API
+      // rather than from a hand-typed table. Either way `maxOutput` must be a
+      // positive integer, and where BOTH exist they must agree — two
+      // hand-maintained copies of one number is the shape this repo names.
       ok(Number.isInteger(m.maxOutput) && m.maxOutput > 0, `${m.id}: cap is a positive integer`);
+      if (Object.hasOwn(caps, m.id)) {
+        capDerived++;
+        eq(m.maxOutput, caps[m.id], `${m.id}: maxOutput is derived from the cap map, not a second copy`);
+      } else {
+        // PROVENANCE, not provider id. Everything in OFFERABLE_MODELS is
+        // STATICALLY admitted — the runtime overlay lives in a separate array
+        // reached through listOfferableModels() and never appears in this loop
+        // — so "it is dynamic" was never an available excuse here. The only
+        // legitimate reason an entry cannot derive its ceiling is that its
+        // provider has no cap map to derive from.
+        capSelfDeclared++;
+        selfDeclaredIds.push(m.id);
+        ok(capCount === 0,
+          `${m.id}: carries its own ceiling, and that is only legitimate because ${provider}'s cap map is deliberately EMPTY — a provider WITH a cap map must derive (${capCount} entries present)`);
+        // …and because there is no second SOURCE to derive from, the VALUE is
+        // pinned. Not a derivation, a review gate: see HAND_TYPED_CEILINGS.
+        ok(Object.hasOwn(HAND_TYPED_CEILINGS, m.id),
+          `${m.id}: has a declared expected ceiling in this file — a new self-declared ceiling must be reviewed here, not merely be a positive integer`);
+        if (Object.hasOwn(HAND_TYPED_CEILINGS, m.id)) {
+          eq(m.maxOutput, HAND_TYPED_CEILINGS[m.id],
+            `${m.id}: hand-typed ceiling matches the figure read from the provider (a digit typo reds here — nothing else in the repo sees it)`);
+        }
+      }
+
+      // ── THE ONE CEILING CHECK THAT IS GENUINELY DERIVED ──────────────────
+      // A ceiling is not decoration: `MULTI_PHASE_OUTLINE_TOKENS` is what
+      // ingest ASKS FOR on the Phase-1 outline call, so a build-lane model
+      // whose ceiling sits below it is structurally unable to serve — llm.js's
+      // own OpenRouter docblock rejects `liquid/lfm-2.5-2.6b:free` for exactly
+      // that (8,192 against the 24,576 the outline requests). Reading the
+      // budget from ingest.js rather than re-typing it means this floor moves
+      // with the thing it is a floor for. A 'chat-only' entry is exempt: it
+      // never reaches that call.
+      //
+      // This catches a downward typo on ANY provider with no second copy of a
+      // number; the pin above catches an upward one on the un-derived entries.
+      if (m.suitability !== 'chat-only') {
+        ok(m.maxOutput >= OUTLINE_BUDGET_TOKENS,
+          `${m.id}: BUILD-LANE ceiling (${m.maxOutput}) clears the ${OUTLINE_BUDGET_TOKENS}-token Phase-1 outline budget it will be asked to produce`);
+      }
 
       // MEASURED — the fields that only a live probe can supply.
       ok(typeof m.thinks === 'boolean', `${m.id}: measured \`thinks\` present`);
-      ok(typeof m.jsonRaw === 'boolean', `${m.id}: measured \`jsonRaw\` present`);
+      // `jsonRaw` measures whether a RAW JSON.parse of the ingest outline
+      // succeeds. It is meaningless for a model that may never serve ingest, so
+      // a 'chat-only' entry may carry null — meaning NOT MEASURED, which is a
+      // different fact from `false` (measured bad) and must never be coerced
+      // into it. A build-lane entry must still carry a real boolean.
+      if (m.suitability === 'chat-only') {
+        ok(typeof m.jsonRaw === 'boolean' || m.jsonRaw === null,
+          `${m.id}: chat-only entry carries a measured \`jsonRaw\` or null ("not measured") — never undefined`);
+      } else {
+        ok(typeof m.jsonRaw === 'boolean',
+          `${m.id}: BUILD-LANE entry carries a measured \`jsonRaw\` (required for ingest/Health/Compile)`);
+      }
       ok(typeof m.tokenizerFactor === 'number' && m.tokenizerFactor >= 1,
         `${m.id}: measured \`tokenizerFactor\` present`);
       ok(OFFERABLE_SUITABILITY.includes(m.suitability),
@@ -517,22 +821,80 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // silently re-order itself the day a promotion expires — and then again on
     // the price as-billed today, so it is correct on BOTH sides of that
     // boundary. A picker that leads with the priciest model is a cost trap.
+    //
+    // ── NULL IS NOT ZERO, AND `>=` DOES NOT KNOW THAT ─────────────────────
+    // A FREE entry's prices are `null` BY DESIGN (never 0 — see §5). `0.017 >=
+    // null` is TRUE in JS, because null coerces to 0. So the moment a free
+    // model was admitted at index 0 the FIRST pair of every OpenRouter
+    // comparison stopped comparing anything and started passing on a
+    // coercion — CORRECT BY ACCIDENT, and only because free genuinely is the
+    // cheapest thing on offer. The same shape as the picker suite's control,
+    // which was already repaired; this one was left because it happened to
+    // give the right answer, which is exactly how these survive.
+    //
+    // Now: ordering is compared only between entries that carry NUMBERS, and
+    // "free comes first" is asserted as the MEMBERSHIP fact it is.
+    let pricedPairs = 0;
     for (let i = 1; i < list.length; i++) {
       const a = list[i - 1], b = list[i];
+      const bothPriced = typeof a.standardInput === 'number' && typeof b.standardInput === 'number'
+                      && typeof a.standardOutput === 'number' && typeof b.standardOutput === 'number';
+      if (!bothPriced) {
+        // The only legal reason a side has no number is that it is free — and
+        // a free entry may only precede a paid one, never follow it.
+        ok(a.free === true || b.free === true,
+          `${provider}: "${a.id}"/"${b.id}" — a missing standard price is only legal on a FREE entry`);
+        ok(a.free === true,
+          `${provider}: the unpriced side of this pair is the EARLIER one — a free model must not be listed after a paid one ("${a.id}" then "${b.id}")`);
+        continue;
+      }
+      pricedPairs++;
       ok(b.standardInput >= a.standardInput && b.standardOutput >= a.standardOutput,
         `${provider}: "${b.id}" is not cheaper than "${a.id}" at STANDARD price — order stays cheapest-first`);
-      ok(b.input >= a.input && b.output >= a.output,
+      ok(typeof a.input === 'number' && typeof b.input === 'number'
+         && typeof a.output === 'number' && typeof b.output === 'number'
+         && b.input >= a.input && b.output >= a.output,
         `${provider}: "${b.id}" is not cheaper than "${a.id}" at TODAY'S price`);
     }
+    // Declared per provider, so a catalogue that compares nothing is visible
+    // rather than silently green.
+    ok(list.length < 2 || pricedPairs > 0,
+      `${provider}: the ordering walk compared ${pricedPairs} priced pair(s) across ${list.length} entries — not vacuous`);
 
     // Everything the app can pick FOR the user must also be pickable BY the
     // user — otherwise a fallback could land them on a model the picker claims
     // does not exist.
-    ok(list.some(m => m.id === DEFAULTS[provider]),
-      `${provider}: the pinned default is itself offerable`);
+    if (DEFAULTS[provider] === null) {
+      // No default is pinned, so there is nothing to be offerable. Assert the
+      // CONSEQUENCE explicitly rather than skipping quietly: a provider with no
+      // measured default must not be able to serve the build lane at all, and
+      // getProviderInfo() is where that refusal lives (§ below drives it live).
+      ok(list.length === 0 || list.every(m => m.suitability === 'chat-only'),
+        `${provider}: has no pinned default, so nothing it offers may claim the build lane`);
+    } else {
+      ok(list.some(m => m.id === DEFAULTS[provider]),
+        `${provider}: the pinned default is itself offerable`);
+    }
     for (const rung of FALLBACK_CHAINS[provider]) {
       ok(list.some(m => m.id === rung), `${provider}: fallback rung "${rung}" is offerable`);
     }
+  }
+
+  // ── THE CEILING SPLIT, DECLARED ───────────────────────────────────────────
+  // Printed AND asserted. The hole this closes was invisible precisely because
+  // a whole provider's entries drifted into the un-derived arm and nothing
+  // said so: a count that only gets quieter is not a guard.
+  console.log(`     (output ceilings: ${capDerived} DERIVED from a cap map, ${capSelfDeclared} self-declared+pinned${selfDeclaredIds.length ? ` — ${selfDeclaredIds.join(', ')}` : ''})`);
+  ok(capDerived > 0,
+    `at least one entry still DERIVES its ceiling from a cap map (${capDerived}) — if this ever hits 0 the derivation assertion has stopped running entirely`);
+  eq(capDerived + capSelfDeclared,
+    Object.values(OFFERABLE_MODELS).reduce((n, l) => n + l.length, 0),
+    'every offerable entry took exactly one of the two ceiling arms — none was skipped');
+  // Both directions. A stale expectation for a model that has been removed is
+  // as much a review failure as a missing one for a model that was added.
+  for (const id of Object.keys(HAND_TYPED_CEILINGS)) {
+    ok(selfDeclaredIds.includes(id),
+      `HAND_TYPED_CEILINGS entry "${id}" corresponds to a live self-declared ceiling — a stale expectation is deleted, not left asserting about nothing`);
   }
 
   // The four models on Anthropic's NEWER tokenizer. Measured at 1.329x more
@@ -541,16 +903,56 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
   // character count under-reports these by ~25% unless the factor is applied.
   // Of the four, claude-opus-4-7 is NOT offerable (never probed live), so three
   // are asserted here and the fourth is covered by the AWAITING invariants in §9.
-  const NEWER_TOKENIZER = ['claude-sonnet-5', 'claude-opus-5', 'claude-opus-4-8'];
   const byId = Object.fromEntries(Object.values(OFFERABLE_MODELS).flat().map(m => [m.id, m]));
-  for (const id of NEWER_TOKENIZER) {
-    eq(byId[id]?.tokenizerFactor, 1.329, `${id}: newer-tokenizer factor is 1.329, not 1.0`);
-  }
+
+  // ── THE PREMISE EXPIRED, NOT THE FIELD ────────────────────────────────────
+  // This asserted `tokenizerFactor === 1.0` for every model not on a hardcoded
+  // NEWER_TOKENIZER list. That premise — "anything I have not listed is exactly
+  // 1.0" — was true only while every measured non-Anthropic model happened to
+  // tokenize like the baseline. The OpenRouter measurements are 1.015 and 1.036,
+  // deterministic across a byte-identical prompt (77,080 / 78,257 / 79,844
+  // provider-counted tokens on the real 341,005-char ingest prompt). Those are
+  // REAL measurements and were correctly kept — carrying exactly this is what
+  // the field is FOR. An assertion demanding they be 1.0 was demanding the data
+  // be rounded to fit the guard.
+  //
+  // Re-pointed to what the field actually promises: a MEASURED number ≥ 1, with
+  // a ceiling so a typo cannot pass as a measurement. The exact-value pins that
+  // remain are the ones with stated provenance.
   for (const m of Object.values(OFFERABLE_MODELS).flat()) {
-    if (!NEWER_TOKENIZER.includes(m.id)) {
-      eq(m.tokenizerFactor, 1.0, `${m.id}: baseline tokenizer factor 1.0`);
-    }
+    ok(typeof m.tokenizerFactor === 'number' && Number.isFinite(m.tokenizerFactor),
+      `${m.id}: tokenizerFactor is a finite number`);
+    ok(m.tokenizerFactor >= 1.0,
+      `${m.id}: tokenizerFactor is >= 1.0 — it is a PREMIUM against a baseline tokenizer, so a value below 1 is not a measurement, it is a sign error`);
+    ok(m.tokenizerFactor <= 2.0,
+      `${m.id}: tokenizerFactor is <= 2.0 — a sanity ceiling, so a mistyped 13.29 cannot pass as a measurement (the largest real value measured to date is 1.329)`);
   }
+
+  // The EXACT set of models whose factor is not the baseline, pinned with its
+  // measured value. This is what the old blanket `=== 1.0` was really doing:
+  // catching an unreviewed non-baseline value appearing. Keeping it as an
+  // explicit map preserves that job while letting the data be honest — a new
+  // non-1.0 entry reds here and has to arrive with its measurement, and a
+  // silently CHANGED figure reds too.
+  const MEASURED_TOKENIZER_PREMIUM = {
+    // Anthropic's newer tokenizer, measured on real Curator prose. This is why
+    // claude-opus-5's $5/1M is really ~$6.65 against a Haiku baseline.
+    'claude-sonnet-5': 1.329,
+    'claude-opus-5':   1.329,
+    'claude-opus-4-8': 1.329,
+    // OpenRouter, measured 2026-08-27 across 9 runs each on the real ingest
+    // outline prompt; deterministic to the token on a byte-identical prompt.
+    'ibm-granite/granite-4.0-h-micro': 1.036,
+    'minimax/minimax-m3:free':         1.015,
+  };
+  for (const [id, factor] of Object.entries(MEASURED_TOKENIZER_PREMIUM)) {
+    ok(Object.hasOwn(byId, id), `${id}: is offerable (a premium recorded for a model nobody can pick is dead data)`);
+    eq(byId[id]?.tokenizerFactor, factor, `${id}: measured tokenizer premium is ${factor}`);
+  }
+  const nonBaseline = Object.values(OFFERABLE_MODELS).flat()
+    .filter(m => m.tokenizerFactor !== 1.0).map(m => m.id).sort();
+  eq(nonBaseline.join(','), Object.keys(MEASURED_TOKENIZER_PREMIUM).sort().join(','),
+    'exactly the models this suite has measured premiums for carry a non-baseline tokenizerFactor — a new one appearing must arrive with its measurement');
   ok(!Object.hasOwn(byId, 'claude-opus-4-7'),
     'claude-opus-4-7 shares the newer tokenizer per the docs but is NOT offerable — unprobed');
 
@@ -761,8 +1163,19 @@ section('13. Promotional pricing — date-resolved, and never mistakable for per
     eq(m.promotionUntilIso, null, `${m.id}: no promotion recorded`);
     ok(m.input === m.standardInput && m.output === m.standardOutput,
       `${m.id}: today's price and the standard price are the same`);
-    eq(resolveModelPrice(m.id, Date.parse('2030-01-01T00:00:00Z')).input, m.standardInput,
-      `${m.id}: price is date-invariant`);
+    // POSTURE-AWARE, and null-safe. A FREE model resolves to no price at ALL,
+    // at any instant — so an unguarded `.input` here throws a TypeError that
+    // aborts the file and hides every assertion after it, which is exactly what
+    // the first free model landing in the catalogue did. Date-invariance is
+    // still asserted for both postures; only the shape of "the price" differs.
+    const future = resolveModelPrice(m.id, Date.parse('2030-01-01T00:00:00Z'));
+    if (m.free) {
+      eq(future, null,
+        `${m.id}: FREE model resolves to NO price at any date — date-invariance for a free model means it is never priced, not that its price never moves`);
+    } else {
+      ok(future !== null, `${m.id}: a priced model still resolves at a future date`);
+      eq(future && future.input, m.standardInput, `${m.id}: price is date-invariant`);
+    }
   }
 
   // resolveModelPrice keeps every defensive property getModelPrice had.

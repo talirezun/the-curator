@@ -63,7 +63,7 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
 ```
 
 Everything is stored as plain markdown files on your computer. No subscriptions, no database,
-no cloud accounts — except a Google Gemini or Anthropic Claude API key (Gemini has a free tier
+no cloud accounts — except an API key from Google Gemini, Anthropic Claude or OpenRouter (Gemini has a free tier
 with strict daily quotas; pay-as-you-go costs roughly **€5/month** for moderate solo use, or
 **€10–20/month** for an admin running cohort-scale synthesis weekly — see
 [Cost & API keys](docs/user-guide.md#19-api-keys-cost--free-tier) for the full breakdown).
@@ -146,17 +146,33 @@ This is the shift from a file cabinet to a neural network.
 - **Live UI updates** — domain stats, wiki pages, and page counts refresh automatically after ingest and sync — no manual browser reload needed
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
-- Supports **Google Gemini** (recommended, very cheap) and **Anthropic Claude**
-- **Choose your model** — 14 models across the two providers (7 Gemini, 7 Anthropic).
+- Supports **Google Gemini** (recommended, very cheap), **Anthropic Claude**, and **OpenRouter** (now cheapest of the three for building a wiki — see below)
+- **Choose your model** — 17 hand-measured models: 7 Gemini, 7 Anthropic and 3 OpenRouter, plus
+  plus three measured OpenRouter models, one of them free.
   **One model builds your brain; you choose freely when talking to it.** A single durable choice in
   **Settings → Providers & keys** governs everything that *writes* to your wiki — ingest, Health
   scans and Compile — deliberately as one setting rather than three, while the chat composer's
   Model dropdown picks per message and leaves what your next ingest costs untouched.
-  Every model was probed live against the app's real
+  Every model that can build your wiki was probed live against the app's real
   ingest prompt, and each row shows its price as billed today plus the measured trade-off — output
   ceiling, hidden reasoning spend, and how thoroughly it plans a wiki — so the cost is visible at
   the moment of choosing. **The defaults are unchanged and remain the cheapest on each provider**;
   a user who picks nothing runs exactly what they ran before. See [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model)
+- **OpenRouter — one key, three measured models, and two different rules.** The build lane (ingest,
+  Health, Compile) admits only models hand-measured against the real ingest prompt; the chat lane
+  admits whatever your key unlocks, labelled as unmeasured. The reason is asymmetric consequence:
+  a bad chat answer costs one answer you can see, a bad ingest writes wrong pages into your wiki
+  permanently and you already paid for it. **Three OpenRouter models have now been measured for the
+  build lane** — nine runs each against the real ingest prompt — so OpenRouter can build a wiki as
+  of this release, and its pinned default is **the cheapest route The Curator offers** ($0.03/$0.12
+  per 1M tokens, roughly a third of the cheapest Gemini option). ⚠ **Because it can build, saving an
+  OpenRouter key now makes it your active provider** — ordinary last-saved-wins, the same as the
+  other two — so your next ingest is built by it. That is a change from the previous release, where
+  the key was saved but not activated. Free models exist and are subject to a daily request cap and
+  a shared upstream pool; the app shows the real limits it reads back from
+  your own key rather than a number written down here. `/old` does not support OpenRouter — a
+  stated limit, since its files are frozen. See
+  [User Guide §16b](docs/user-guide.md#openrouter--one-key-three-measured-models-and-two-different-rules)
 - Four AI-tuned domain templates to start from — Tech/AI, Business/Finance, Personal Growth, Generic — plus unlimited custom domains, no terminal or file editing required
 - Mac Dock app — double-click to launch, no terminal needed
 
@@ -345,7 +361,7 @@ The Node.js server runs anywhere Node 18+ runs. Only the one-line installer and 
 
 **Prerequisites**
 - [Node.js 18+](https://nodejs.org)
-- An API key — [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available, paid tier ~€5/month for moderate use) or [Anthropic Claude](https://console.anthropic.com/) (paid only)
+- An API key — [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available, paid tier ~€5/month for moderate use), [Anthropic Claude](https://console.anthropic.com/) (paid only), or [OpenRouter](https://openrouter.ai/) (one key onto many vendors, and the cheapest route to building a wiki — it can run ingest on its own)
 - [Obsidian](https://obsidian.md) for the knowledge graph (free, optional)
 
 ```bash
@@ -414,7 +430,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 | **Google Gemini 2.5 Flash Lite** *(default, recommended)* | Yes — 15 RPM, 1,000 requests/day, 250k tokens/min ([details](https://ai.google.dev/gemini-api/docs/rate-limits)) | $0.10/M input · $0.40/M output | **~€5/month** at heavy use (50 articles × ~10 pages, plus daily chat) |
 | **Anthropic Claude Haiku 4.5** | No | $1/M input · $5/M output | ~10× the Gemini bill for the same workload |
 
-**Those two rows are the defaults, not the only options.** You can pick a different model per provider — 14 are offered — and the span across them is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
+**Those two rows are the defaults, not the only options.** You can pick a different model per provider — 17 hand-measured models are offered for building your wiki — 7 Gemini, 7 Anthropic and 3 OpenRouter, one of the OpenRouter models free — and the span across the measured fourteen is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
 
 **About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
 
@@ -649,7 +665,7 @@ the-curator/
 │   ├── server.js           Express server (port 3333)
 │   ├── routes/             API route handlers
 │   ├── brain/
-│   │   ├── llm.js          LLM abstraction (Gemini + Claude)
+│   │   ├── llm.js          LLM abstraction (Gemini + Claude + OpenRouter)
 │   │   ├── ingest.js       Ingest pipeline (single-pass + multi-phase for large docs)
 │   │   ├── chat.js         Multi-turn chat with persistent conversations
 │   │   ├── sync.js         GitHub sync (git --git-dir / --work-tree)
@@ -706,7 +722,7 @@ the-curator/
 
 - API keys can be stored via **Settings** (saved in `.curator-config.json`) or in `.env` — both are gitignored, never committed. Credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`) are written with `0600` permissions (owner-only) as of v3.0.1-beta.20
 - Sync token lives in `.sync-config.json` — gitignored, never committed
-- The app runs entirely on your local machine — the only outbound calls are to Gemini/Claude and (when syncing) to your own private GitHub repo
+- The app runs entirely on your local machine — the only outbound calls are to the AI provider you configured (Gemini, Claude or OpenRouter) and (when syncing) to your own private GitHub repo
 - The server binds to `127.0.0.1` (loopback) only, so it is **not reachable from your local network**, and a cross-origin guard rejects state-changing requests from other web origins (CSRF / DNS-rebinding defense). It still has no per-request authentication — it is a single-user local app and should not be reverse-proxied onto a public network
 
 ---

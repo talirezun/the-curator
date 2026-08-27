@@ -1048,7 +1048,17 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // app update is running (health.js's use) — whereas this is a config
     // mutation being protected FROM an in-flight write. /update already refuses
     // while writes are active, so the pair is closed from both sides.
-    expectedMutatingCount: 8,
+    //
+    // 9th (api-keys/validate, v3.15.0): a READ-ONLY key check. The count moved
+    // 8 -> 9 in this release and that is exactly what this tripwire is for —
+    // it does not assert "eight is correct", it asserts "the set of routes has
+    // not moved without a human looking at the exemption list below". Bumping
+    // it IS that look. See the exemption entry for why the new route carries no
+    // concurrency guard; the classifier below deliberately stays VERB-BASED, so
+    // a read-only POST trips it and must be exempted by name rather than being
+    // waved through by a cleverer classifier that could also wave through a
+    // genuinely destructive one.
+    expectedMutatingCount: 9,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
@@ -1059,6 +1069,8 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
       exemptions: [
         { method: 'POST', path: '/default-domain', reason:
           'selects which domain MCP write tools assume when the caller does not name one; an in-flight write already carries an explicit domain captured at request time, so changing this default cannot affect it (see CLAUDE.md section 5 of this same file\'s own docblock).' },
+        { method: 'POST', path: '/api-keys/validate', reason:
+          'read-only key check — one zero-token GET to the provider, writes no state; POST only so the cross-origin guard applies. Precedent: sharedbrain /validate-pat, diagnostics /live. Guarding it would be actively HARMFUL, not merely redundant: a 409 here fires precisely while a multi-phase ingest is running, i.e. exactly when a user is asking "is my key the problem?" — it would refuse the diagnostic at the moment it is needed. This is the same reasoning the writability axis on health.js uses for its six read-only POSTs (/ai-suggest, /semantic-dupes/scan, /semantic-dupes/preview, /broken-links/plan, /orphans/plan): the verb says mutate, the body does not.' },
       ],
     }],
     // No writability class: config.js routes are not domain-scoped, so there

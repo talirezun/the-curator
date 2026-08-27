@@ -196,7 +196,7 @@ import {
   makeUsageAccumulator,
   __testing as ingestTesting,
 } from './ingest.js';
-import { getProviderInfo, getModelPrice, isAbortError } from './llm.js';
+import { getProviderInfo, getModelPrice, isFreeModel, isAbortError } from './llm.js';
 import { scanWiki } from './health.js';
 
 const { buildPrompt, buildOutlinePrompt, buildBatchPromptParts, TEXT_CAP } = ingestTesting;
@@ -1062,6 +1062,19 @@ export async function estimateIngestQueueCost(domain, files) {
 
   const warnings = [];
   if (!provider) warnings.push('No AI provider is configured — add an API key in Settings to see a cost estimate.');
+  // A free model reaches `price === null` by the SAME route as an unpriced one
+  // (getModelPrice returns null for both), so it used to inherit "cost cannot
+  // be estimated in dollars" — which is false, and false in the direction that
+  // matters least to a user but reads worst: the cost is known exactly, and it
+  // is nothing. Named as its own case rather than left to the unpriced text.
+  //
+  // `usdLow`/`usdHigh` stay NULL rather than becoming 0, deliberately. Writing
+  // a zero into the dollar fields would put a truthy zero back on the money
+  // path — the trap llm.js's FREE_MODELS docblock refuses — and would make
+  // chargeForItem's estimate share silently "work" for a free model instead of
+  // being explicitly bypassed. Null keeps the rule intact: no dollar figure to
+  // render, with the reason stated in words instead.
+  else if (isFreeModel(model)) warnings.push(`"${model}" is free to use — this batch will not cost anything, so no dollar estimate is shown. The file and call counts below still apply.`);
   else if (!price) warnings.push(`No published price is on file for "${model}" — cost cannot be estimated in dollars, but the file/call counts below are still shown.`);
 
   const wikiDir = wikiPath(domain);
@@ -1281,8 +1294,30 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
   // thing it protects" shape. Refusing here is the honest half of the choice;
   // it also guarantees the fallback charge is strictly positive whenever a
   // budget exists, so the cap always converges.
+  //
+  // A FREE MODEL IS EXEMPT, AND REFUSING IT WAS THE LESS SAFE CHOICE.
+  // `usdHigh` is null for a free model for the same reason it is null for an
+  // unpriced one (`getModelPrice` returns null for both), so this guard used
+  // to 400 a cap on a free batch with a message whose central claim is false
+  // there: The Curator CAN measure what a free batch spends — exactly $0.00 —
+  // and "it would run the whole batch while reporting $0.00" describes the
+  // correct outcome, not a failure. The user experience was the inverse of the
+  // guard's purpose: someone who picked the free model precisely to control
+  // spend, and set a cautious cap on top, was told the app cannot track money.
+  //
+  // The safety argument runs the same way. A refusal is a 400 — the job is not
+  // created, so the user retries WITHOUT a cap. If the run then walks off the
+  // free model onto a paid fallback rung, they have no cap at all. Accepting
+  // it stores a real `budgetUsd` that stays trivially unreached while the run
+  // is free (chargeForItem now returns a true 0) and engages for real the
+  // moment a priced model answers. Accepting protects strictly more than
+  // refusing does.
+  //
+  // An unpriced NON-free model is still refused, unchanged: there the cap
+  // genuinely cannot be enforced, because spend advances by an estimate share
+  // whose relationship to the bill is unknown.
   const requestedBudget = (typeof budgetUsd === 'number' && Number.isFinite(budgetUsd) && budgetUsd > 0) ? budgetUsd : null;
-  if (requestedBudget !== null && typeof estimate.estimate.usdHigh !== 'number') {
+  if (requestedBudget !== null && typeof estimate.estimate.usdHigh !== 'number' && !isFreeModel(estimate.model)) {
     try { await rm(jobDir(jobId), { recursive: true, force: true }); } catch { /* best-effort */ }
     throw statusErr(400,
       `A spending cap can't be applied to this batch. ${estimate.model ? `No published price is on file for the model currently in use ("${estimate.model}")` : 'No AI provider is configured'}, ` +
@@ -1395,6 +1430,40 @@ async function createJobInner({ domain, uploadedFiles, overwrite = false, budget
  */
 function chargeForItem(job, item) {
   const u = item.tokenUsage;
+  // ── A FREE MODEL BILLS NOTHING, AND ZERO IS A MEASUREMENT ────────────────
+  // `getModelPrice()` returns null for a free model BY DESIGN (see llm.js's
+  // FREE_MODELS docblock: a free model is recorded by MEMBERSHIP, never by a
+  // zero price, because `{input:0,output:0}` is truthy and would re-arm
+  // v3.3.0's inert-cap defect). That null is indistinguishable from "this
+  // model has no published price" at this call site, so without this line a
+  // free model fell straight through to the estimate branch below and was
+  // charged a FULL share of `estimate.usdHigh` — measured at $0.140000 on a
+  // one-file batch, carrying `spendIsEstimated: true`, for a model that bills
+  // $0.00. That is a spend surface reporting money that was never spent: the
+  // exact class v3.14.0 exists to eliminate ("reported or absent, never
+  // inferred"), arriving through the one door nothing was watching.
+  //
+  // `spendIsEstimated` is deliberately NOT set. It means "this figure is
+  // INFERRED", and zero-for-free is not inferred — it is known from
+  // membership, the same way a priced model's cost is known from its rate.
+  // Flipping the flag here would make the UI print "approx. $0.00" over a
+  // number that is exact, and would poison the flag for every later item in
+  // the job (it is sticky and never reset).
+  //
+  // FIRST, ahead of the priced branch, and that ordering is the point:
+  // membership is the authority over any price that might ever be typed for a
+  // free id. Today `defineOfferableModel` refuses to register a price for a
+  // free model so the two can't disagree, but if they ever did, "free" must
+  // win rather than being silently overridden by a stale table entry.
+  //
+  // Keyed on `u.model` — the model that ACTUALLY RAN, reported by llm.js per
+  // completed provider call — never on the job's configured model, so a
+  // fallback-chain walk from a free model onto a paid one is charged for real.
+  // NOT ENFORCED, and it is the honest residual: an item whose `tokenUsage` is
+  // missing entirely names no model, so it still takes the estimate share even
+  // on a free-model job. Closing that needs the model persisted on the job
+  // manifest, which is a schema change and a separate piece of work.
+  if (u && isFreeModel(u.model)) return 0;
   const price = u && u.model ? getModelPrice(u.model) : null;
   if (u && price) {
     const inCost = (u.inputTokens || 0) / 1e6 * price.input;

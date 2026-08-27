@@ -178,7 +178,14 @@ On Claude Haiku 4.5 the cost is roughly **12×** higher — about **$0.52** for 
 
 All AI Health cost estimates (this scan, the broken-link fixer, and the orphan rescuer) are priced from the SAME table the rest of the app uses — `MODEL_PRICES_USD_PER_MTOK` in [`src/brain/llm.js`](../src/brain/llm.js), reached through its exported `getModelPrice(modelId)` accessor. There is no separate copy in `health-ai.js` to drift out of sync (there used to be — a 2026-04-dated table that had gone ~25% stale on the Gemini default and had no entry at all for any automatic-fallback model or for `claude-sonnet-4-5`; a scan running on any of those returned no price at all). The figures above are for the *default* model only — the actual estimate you see always reflects the model the app is currently configured to use.
 
-If the active model genuinely has no published price (for example, an `LLM_MODEL` override in `.env` pointing at a model id `llm.js` doesn't know about — normal fallback-chain models and `claude-sonnet-4-5` are all covered), `estimateUsdCost` returns `null` and the estimate/plan payload additionally carries `priceKnown: false` and a `costNote` explaining why, rather than silently substituting a wrong number. Both frontends render `costNote` verbatim in that case: the shipping app's `formatHealthCost` (in [`src/public/app.js`](../src/public/app.js)) and `/next`'s `costReadout` (in [`src/public/next/views/domains.js`](../src/public/next/views/domains.js)) both fall through to the server-supplied sentence whenever `estimatedUsd` is null. This covers every pre-run confirm dialog (semantic-duplicate scan, broken-link fix, orphan rescue) **and** every post-run readout — the shipping app's broken-link and orphan-rescue plan previews ("Planning cost: …") and the semantic-dupe scan's "Done" summary all read `costNote` the same way, so an unpriced model shows the real sentence there too, not a blank string. The one deliberate exception is `/next`'s per-domain quick-action button badge: a full sentence would break that pill's layout, so `costReadout(est, { compact: true })` renders a short **"cost unknown"** instead of the server's longer note. `/next` does not currently display an actual post-run cost figure anywhere (the scan result stores `cost` but no view renders it) — a pre-existing gap in that frontend, unrelated to pricing coverage, not tracked here.
+If the active model has no published price, `estimateUsdCost` returns `null` and the estimate/plan payload additionally carries `priceKnown: false` and a `costNote` explaining why, rather than silently substituting a wrong number. Both frontends render `costNote` verbatim in that case: the shipping app's `formatHealthCost` (in [`src/public/app.js`](../src/public/app.js)) and `/next`'s `costReadout` (in [`src/public/next/views/domains.js`](../src/public/next/views/domains.js)) both fall through to the server-supplied sentence whenever `estimatedUsd` is null. This covers every pre-run confirm dialog (semantic-duplicate scan, broken-link fix, orphan rescue) **and** every post-run readout — the shipping app's broken-link and orphan-rescue plan previews ("Planning cost: …") and the semantic-dupe scan's "Done" summary all read `costNote` the same way, so an unpriced model shows the real sentence there too, not a blank string. There are THREE states here, not two, because a FREE model's price is **known** and it is zero. A free model returns `estimatedUsd: null` with `priceKnown: true` and a note saying it is free — deliberately not `estimatedUsd: 0`, because a numeric zero makes the legacy renderer print `$0.0000`, the exact string this project's currency formatter exists to prevent. An unpriced model returns `priceKnown: false`, which still means *we were not told*. The one deliberate exception is `/next`'s per-domain quick-action button badge: a full sentence would break that pill's layout, so `costReadout(est, { compact: true })` renders a short **"free"** or **"cost unknown"** according to `priceKnown`, instead of the server's longer note. `/next` does not currently display an actual post-run cost figure anywhere (the scan result stores `cost` but no view renders it) — a pre-existing gap in that frontend, unrelated to pricing coverage, not tracked here.
+
+Two different situations reach that `null`, and they are not the same fact:
+
+- **A model whose price we don't know.** For example an `LLM_MODEL` override in `.env` pointing at a model id `llm.js` doesn't recognise. Normal fallback-chain models and `claude-sonnet-4-5` are all covered, so this is rare.
+- **A model that is genuinely free.** OpenRouter offers free models, and a free model is recorded as free by *membership*, never by being priced at zero — `getModelPrice()` deliberately keeps returning `null` for it. That is not an oversight: a `{input: 0, output: 0}` entry would be a truthy price, and a truthy zero price silently disables the batch-ingest budget cap that multiplies it. So a free model shows no dollar estimate rather than `$0.00`.
+
+The estimate payload does not currently distinguish the two: the note a free model produces says the price is unpublished rather than saying the model is free. The scan still runs, and it still costs nothing. (The batch-ingest queue *does* distinguish them, and says so — the two surfaces are not yet consistent on this point.)
 
 `priceKnown` itself has no reader in either frontend today — every consumer above checks `costNote`'s truthiness, which is sufficient. It's kept as a structured true/false alternative for a future consumer (a script, an API client, a UI that wants an icon rather than a sentence) that would rather not parse prose.
 
@@ -231,7 +238,7 @@ A 2000-page domain typically produces 70–500 semantic-duplicate candidate pair
 
 ## Privacy — what leaves your machine
 
-When you click **✨ Ask AI**, The Curator sends to your configured LLM provider (Google Gemini or Anthropic, whichever you set in Settings):
+When you click **✨ Ask AI**, The Curator sends the following to whichever provider is active in Settings — Google Gemini, Anthropic, or OpenRouter:
 
 - For **broken links**: a ~4 KB excerpt from the wiki page containing the broken link, plus a list of your wiki's page names (entities, concepts, and summaries — slugs only, not contents).
 - For **orphan rescue**: up to ~4 KB of the orphan page's content, plus a list of entity and concept slugs (summaries are omitted). A 2000-page domain adds ~15 KB of slugs.
@@ -248,6 +255,9 @@ The provider's privacy policy applies to the excerpt and slug list you send. See
 
 - [Google Gemini API Terms](https://ai.google.dev/terms)
 - [Anthropic Usage Policies](https://www.anthropic.com/legal/usage-policy)
+- [OpenRouter Terms](https://openrouter.ai/terms) and [Privacy Policy](https://openrouter.ai/privacy)
+
+OpenRouter is an aggregator, so a third party serves the request behind it. The Curator sends routing preferences that forbid OpenRouter from substituting a different upstream provider for the one the model you picked belongs to, so the request is served by the provider that model comes from. It does **not** send a data-collection preference of its own; whether an upstream may train on your requests is governed by your OpenRouter account settings and by that upstream's own policy. If your wiki content is sensitive, settle that against OpenRouter's current policy before pointing an AI Health action at it.
 
 A one-time disclosure modal summarises this the first time you launch an ✨ AI action in a browser (per-row **Ask AI** at `/old`, or a Quick maintenance button in the current interface — both read the same acknowledgement key, so you are never asked twice). Accepting it stores the acknowledgement in `localStorage` under the key `curator-ai-health-disclosure-seen-v1`.
 
@@ -265,7 +275,7 @@ Orphan rescue is slightly larger because it asks for up to 5 candidates with des
 - Input tokens ≈ the same shape as broken-link (orphan page content + entity/concept inventory).
 - Response ≈ **600–1000 output tokens** (5 × candidate block).
 
-On the default low-cost models (Gemini 2.5 Flash Lite or Claude Haiku 4.5), each per-row Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent.
+On the low-cost models each provider defaults to (Gemini 2.5 Flash Lite, Claude Haiku 4.5, or OpenRouter's Solar Pro 4 — cheaper again than either, at $0.03/$0.12 per 1M tokens), each per-row Ask AI click costs roughly **$0.0001–0.0005** — approximately one-thousandth of a cent to one-half of a cent. On one of OpenRouter's free models it costs nothing, and no dollar figure is shown at all — see the unpriced-model paragraph in the Phase 3 **Cost** section above.
 
 The Curator does not aggregate or cache suggestions — each click is an independent call.
 
@@ -295,8 +305,8 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 
 There is no global toggle. AI Health is gated purely on whether an API key is configured:
 
-- **Remove both keys** in Settings → Disconnect. The ✨ AI actions disappear from the Wiki health panel (and the `/old` Health tab) on the next scan.
-- **Remove the `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`** values from `.env` if you only use the developer fallback.
+- **Remove every provider key** in Settings → Disconnect. The ✨ AI actions disappear from the Wiki health panel (and the `/old` Health tab) on the next scan. Any one key left in place is enough to keep them available.
+- **Remove the `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY`** values from `.env` if you only use the developer fallback.
 
 The existing algorithmic Health fixes continue to work without any API key.
 
@@ -336,7 +346,9 @@ The check above runs in the *suggestion* layer. Two write paths do not go throug
 
 ### Provider-agnostic
 
-`health-ai.js` calls `generateText()` from [src/brain/llm.js](../src/brain/llm.js), which dispatches to whichever provider the user has activated (Gemini or Anthropic) with the full v2.4.0 fallback safety net. Swapping providers in Settings is picked up on the next AI action — no special code.
+`health-ai.js` calls `generateText()` from [src/brain/llm.js](../src/brain/llm.js), which dispatches to whichever provider the user has activated — Gemini, Anthropic or OpenRouter — with the full v2.4.0 fallback safety net. Swapping providers in Settings is picked up on the next AI action — no special code. Health runs on the **active** provider, which is also what ingest and Compile use; it is not separately configurable, and it does not follow the per-message model chosen in the chat composer.
+
+Because the provider is resolved through the same single chokepoint, adding OpenRouter required no change here at all. The one behavioural consequence worth knowing about is on cost, not on function: an OpenRouter free model has no published price, so the cost estimate is absent rather than zero — see the unpriced-model paragraph in the Phase 3 **Cost** section.
 
 ### Endpoint surface
 

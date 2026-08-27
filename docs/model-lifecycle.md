@@ -22,10 +22,15 @@ Providers rename and retire models. When Google retires `gemini-2.5-flash-lite` 
 const DEFAULTS = {
   gemini:    'gemini-2.5-flash-lite',   // Google's low-cost tier
   anthropic: 'claude-haiku-4-5',        // Anthropic's low-cost tier
+  openrouter: 'upstage/solar-pro4',     // measured build-lane model — see below
 };
 ```
 
-Both defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output pick a different model in **Settings → Providers & keys**, or per-chat from the composer — see [Choosing a model](#choosing-a-model-multi-model-support) below and [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). (Developers additionally have the unrestricted `LLM_MODEL` escape hatch; it bypasses the allow-list and outranks the stored Settings choice.)
+All three pinned defaults target the **low-cost tier** of their respective providers so ingestion of large libraries stays affordable. Users who prefer higher-quality (and costlier) output pick a different model in **Settings → Providers & keys**, or per-chat from the composer — see [Choosing a model](#choosing-a-model-multi-model-support) below and [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model). (Developers additionally have the unrestricted `LLM_MODEL` escape hatch; it bypasses the allow-list and outranks the stored Settings choice.)
+
+**OpenRouter now has a pinned default, and it was earned by measurement.** Until this release the entry was `null` and the consequence was intended: OpenRouter could not build a wiki at all. That changed when three routes through it were probed against this repo's real ingest outline prompt — nine runs each — and `upstage/solar-pro4` came back cleanest. It is now a **full build-lane provider**: it can run ingest, Health and Compile, it can be made the active provider, and — the part most likely to surprise you — **saving an OpenRouter key now makes it active**, exactly as saving a Gemini or Anthropic key always has. See [OpenRouter](#openrouter--a-third-provider-whose-catalogue-moves-without-us) below, and read [Saving a key changes which model builds your wiki](#saving-a-key-changes-which-model-builds-your-wiki) before you save one.
+
+`upstage/solar-pro4` is also a genuine affordability win: **$0.03/$0.12 per 1M tokens**, roughly a third of `gemini-2.5-flash-lite` ($0.10/$0.40), which had been the cheapest model The Curator offered anywhere.
 
 When a provider retires or supersedes one of these, we bump the constant in a new release and push. Users get the new default via **Settings → Check for Updates**.
 
@@ -42,8 +47,17 @@ const FALLBACK_CHAINS = {
     'claude-sonnet-4-6',            // $3/$15 — ties 4.5 on price, newer, 128k output ceiling
     'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output ceiling
   ],
+  openrouter: [
+    'ibm-granite/granite-4.0-h-micro',  // $0.017/$0.112 — cheaper than the default it backs up
+  ],
 };
 ```
+
+**OpenRouter's chain has exactly one rung, and both the inclusion and the exclusions are deliberate.** An earlier draft of this document argued that a chain here would be *wrong in principle*. That argument rested on there being no pinned default to rescue — which is no longer true — and it is superseded. What survives from it is the narrower point, which still holds: every OpenRouter request carries routing preferences forbidding OpenRouter from serving it out of a different upstream, and never sends the request shape that would let it swap the *model*. This chain is therefore the **only** substitution that can happen, which is why it is short and hand-checked.
+
+`ibm-granite/granite-4.0-h-micro` qualifies on three counts: it was measured clean on the real ingest prompt, it is **paid** (so its availability does not depend on a shared free queue), and it is **cheaper** than the default it backs up — a safety net that cannot cost more than the thing it replaces. Its measured weakness is coverage, not correctness: it plans a thinner outline. Degrading to a thinner plan is the right trade when the alternative is not ingesting at all, and it mirrors what the Gemini chain already does.
+
+**The free model is deliberately not a rung**, and the reason is a rule rather than a preference: a chain picks *for* the user, silently. Free routing may carry different data-handling terms from paid routing — an open question this project does not claim to have settled, set out under [Free models and privacy](#free-models-and-privacy--an-open-question-stated-rather-than-answered) — and that is not a change to make on someone's behalf without them choosing it. **A chain may degrade capability; it may not degrade privacy.**
 
 **`gemini-3.5-flash-lite` was removed from the Gemini chain on 2026-08-26** — a
 deletion, not a reorder, so the chain stays cheapest-first ($0.25 → $0.30). It
@@ -174,7 +188,7 @@ For most of its life The Curator could run exactly **two** models — one per pr
 
 **The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned, and remain the cheapest thing on their provider. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
 
-The catalogue currently holds **14 models — 7 Gemini and 7 Anthropic**. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below).
+The hand-measured catalogue holds **17 models — 7 Gemini, 7 Anthropic and 3 OpenRouter**. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because the design there provides for a *second*, larger chat-lane list read from the provider's live catalogue rather than hand-typed here. **That overlay is not populated in this release** — `setOpenRouterCatalogue()` has no caller outside its own tests, so `listOfferableModels('openrouter')` returns exactly the three hand-measured entries above and 17 is the whole offer on both lanes. Those three were admitted the same way every other entry was, by measurement against the real ingest prompt.
 
 ### Where a user picks, and what each choice governs (v3.13.0)
 
@@ -210,8 +224,21 @@ Resolution precedence is `per-call preferModel > LLM_MODEL > stored selection > 
 `suitability` describes **fitness for a feature** and nothing else. Cost lives in the price fields and hidden reasoning spend lives in `thinks`; folding either into `caution` would put five of seven Gemini models in one bucket and the label would stop meaning anything.
 
 - **`general`** — measured clean for every feature, ingest included.
-- **`chat-only`** — measured *unfit for ingest specifically*. Ingest is JSON mode; chat is text mode and is unaffected by a JSON defect, so the model stays genuinely useful for chat instead of being hidden. `gemini-3.5-flash-lite` is the only current case.
+- **`chat-only`** — measured *unfit for ingest specifically*. Ingest is JSON mode; chat is text mode and is unaffected by a JSON defect, so the model stays genuinely useful for chat instead of being hidden. `gemini-3.5-flash-lite` is the founding case.
 - **`caution`** — usable everywhere, but carries a measured downside (a scheduled price rise, thinner outlines than a *cheaper* model, a same-priced sibling that beat it) that the user must see before choosing it.
+
+#### `chat-only` is now ENFORCED, and until this release it was not
+
+This is a **behaviour change to an existing feature**, not new plumbing, and a user who had pinned a chat-only model will see the app behave differently.
+
+`suitability: 'chat-only'` used to be read in exactly three places, all of them badge rendering. Nothing acted on it. The route that pins a build model checked only that the id was in the catalogue and that the provider's key was saved — so a user could pin `gemini-3.5-flash-lite`, the model measured emitting unrepairable JSON in 2 of 9 real ingest runs, as the model that builds their wiki, and the app accepted the click while the badge beside it said *not for ingest*. **A label the code does not honour is worse than no label**: it reports that a decision was checked when it was not.
+
+The lane is now a predicate — `isBuildLaneModel(provider, id)`, derived from `suitability` and nothing else, so exactly one place decides a model's lane — and it is applied at two layers:
+
+1. **The pin route refuses it**, with a message naming the model, saying why, and pointing out that it is still selectable in chat. A silent no-op there would read as the picker being broken.
+2. **A pin that is already stored falls back** to the provider default when the build lane resolves. Write-time refusal alone would be insufficient in both directions: a selection saved before this release is already on disk, and a model can be re-classified `chat-only` *after* it was validly pinned. Read-side enforcement is what covers both.
+
+**Chat is deliberately untouched.** A chat-only model stays fully pickable in the composer — the verdict says *unfit for ingest*, and hiding it from chat would be the over-correction the verdict exists to avoid. The refusal also fails closed and cheaply: an unknown provider, an unknown id, or an id we do not offer all return `false`, and the response to `false` is the provider default, which is that provider's cheapest model. The worst case of a false negative is spending *less* than the user asked for.
 
 ### The three measured surprises worth knowing
 
@@ -264,7 +291,7 @@ The guard is exercised on **both sides of the boundary today**, not on the day i
 
 ### Where the allow-list is enforced
 
-Inside **`getProviderInfo()`** — the single producer of the model string both SDKs receive — and nowhere else. Validating at a route would leave the other seven `generateText` entry points (ingest, compile, chat, query, health-AI, shared-brain, diagnostics) open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL.
+Inside **`getProviderInfo()`** — the single producer of the model string every SDK and adapter receives — and nowhere else. Validating at a route would leave the other seven `generateText` entry points (ingest, compile, chat, query, health-AI, shared-brain, diagnostics) open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL.
 
 A model id that is not offerable for the resolved provider is **refused by falling back to that provider's default**, not by throwing. Two reasons, both about failing safe:
 
@@ -272,6 +299,159 @@ A model id that is not offerable for the resolved provider is **refused by falli
 2. The default is the **cheapest** model on that provider, so a refusal can only ever spend *less* than the user asked for, never more.
 
 This mirrors `normalizeChatProvider` (invalid provider → `null` → global) and `anthropicMaxOutputTokens` (unknown id → conservative cap). A caller that needs to know a refusal happened can compare: `getProviderInfo` returns the model it actually resolved, so `result.model !== requested` is the signal. Prototype-pollution inputs (`__proto__`, `constructor`, `toString`) are refused **by construction** — `isOfferableModel` scans an array comparing with `===`, so no object is ever indexed by the caller's string.
+
+**There is one case where falling back is not available, and it throws instead.** Falling back presumes the provider *has* a default to fall back to. Every provider now carries a pinned one, so this branch is **not reachable in the shipping configuration** — but it is deliberately kept, because it is the guard that makes adding a fourth provider safe. If a provider is ever wired up before a build-lane model has been measured for it, resolving it for the build lane with no per-call override yields no model to send, and that is refused at this same single chokepoint — the only correct place, since it is the one producer of the model string — with wording chosen to avoid every substring the recovery classifiers key on, so it cannot be mistaken for a token-limit, a missing model or an overload, retried with backoff, or used to walk a fallback chain. Failing there makes the failure loud, free and actionable; passing an empty model through would turn a configuration problem into an opaque provider error several layers away.
+
+---
+
+## OpenRouter — a third provider whose catalogue moves without us
+
+Gemini and Anthropic are two vendors with two catalogues, and both are small enough to hand-measure in full. **OpenRouter is an aggregator**: one key, one wire format, and hundreds of models from many vendors behind it. That difference is the whole design problem, because this project's admission rule — *a model may not be offered for a feature it has never been measured against* — does not scale to a catalogue nobody on this project controls, that changes without a release of ours, and that is already large enough that measuring all of it is not a task with an end.
+
+The answer is **two admission standards over one catalogue, split by lane**. It is the same principle the app already runs on, applied to a case that forces it to be precise.
+
+| Lane | What it runs | What a model must satisfy to enter it |
+|---|---|---|
+| **Build** — ingest, AI Health scans, Compile | Writes pages into the user's wiki | **Hand-measured against the real ingest outline prompt.** Unchanged from the standard the 14 hand-measured models were held to. |
+| **Chat** | Answers one question | Whatever the user's key unlocks, after the structural filters below — **clearly labelled as unmeasured**. |
+
+> **Status in this release: the chat lane's live-catalogue overlay is BUILT BUT NOT POPULATED.** Everything in this section describes the admission design and the structural filters it applies — all of it real code, all of it exercised by tests. What does not exist yet is a **caller**: `setOpenRouterCatalogue()` is invoked nowhere outside its own test suites, so no live catalogue is ever fetched at runtime and `listOfferableModels('openrouter')` returns the three hand-measured build-lane entries and nothing else. Both lanes therefore offer the same three models today. Read what follows as **the contract a future catalogue fetch must satisfy**, not as a description of models a user can pick right now.
+
+### Why the standards differ: the consequence is asymmetric
+
+A bad chat answer costs one answer, and **you can see it** — it is prose, on your screen, and you can ask again on a different model for the price of another question. A bad ingest is not like that. It writes pages into the wiki permanently, it does so across a document you will not re-read, and you have already paid for it. The wiki is the thing this whole app exists to protect, and ingest is by far the largest token consumer in it.
+
+So the lanes are not "strict" and "lax". They are two different bets with two different downsides, priced accordingly.
+
+### What the app refuses structurally, before anyone measures anything
+
+From the live catalogue, four classes are refused by construction rather than by judgement, because in each case the refusal follows from something the app cannot do rather than from a preference:
+
+- **No JSON mode at all.** Ingest asks for structured output. A model whose published parameters include no way to request it cannot serve the build lane, and the app will not pretend otherwise. (This is candidacy, not a guarantee — see below.)
+- **Router ids whose price is published as unknown.** An aggregator can offer meta-models that decide *at request time* which real model serves you, and whose price is therefore unknowable until after the call. Every cost surface in this app quotes a price **before** you choose. A model whose price cannot be stated before the call is incompatible with that, so it is refused rather than displayed with a blank.
+- **Moving aliases.** Some ids are pointers that resolve to whatever the vendor currently considers newest. Pinning one means what you picked can change underneath you with no signal — the exact silent-swap the app refuses one layer down by forbidding provider substitution on every request.
+- **No published output ceiling.** The Phase-1 ingest outline requests a large output budget, and a model whose ceiling is below it is structurally unable to serve one however well it scores on anything else. Real examples exist in the live catalogue at 4,000 and 7,372 tokens — both pass every other filter.
+
+**Tiered (long-context) pricing is a fifth refusal, and only for the build lane.** Some models change their rate above a prompt-size threshold — one common case doubles both rates above 200,000 prompt tokens. The Curator's price model is a single `{input, output}` pair, and every consumer of it assumes one rate per model. A flat entry would therefore quote **half the real rate on exactly the largest ingests**, which is where a user spends most — and no ordering assertion would notice, because array order survives a doubling. Such a model is admitted **chat-only, structurally**: the factory refuses to build it as anything else. That is safe for the specific reason that chat's prompt is bounded and small — on the order of 20k tokens against a threshold an order of magnitude higher — so the flat rate quoted for chat is the rate actually billed. The build lane, the only lane that can cross a threshold, cannot reach these models at all.
+
+**What the filters narrow to, and what they do not decide.** They are a large reduction and still leave hundreds of candidates. The API narrows the field; it does not choose. That is the point of the next section.
+
+### Why measurement cannot be automated — the load-bearing argument
+
+The obvious idea is to qualify a model on demand: the user picks one, the app probes it, and if the probe passes it enters the build lane. It was considered and **rejected**, for reasons that are worth stating in full because they are the reason the build lane is small.
+
+**Metadata says a model ACCEPTS JSON mode. It cannot say the JSON PARSES.** Those are different claims, and this project's own catalogue is the proof. `gemini-3.5-flash-lite` advertises structured output and honours the request — and in 2 of 9 live runs against the real ingest prompt it returned JSON that neither `JSON.parse` nor the `jsonrepair` fallback could recover: a dropped object key, unrecoverable because repair would have to invent it. In an aggregator's metadata that model looks fully JSON-capable, because it is. The defect is in what comes back, not in what is supported.
+
+**A probe a new user could run would be a toy probe.** A realistic ingest outline prompt measured about **285,000 characters**, of which roughly **90% is the user's own index and slug inventory**. A fresh install has neither, so the only prompt it could probe with is the small synthetic one [this document already forbids](#verify-a-chain-against-the-live-api-not-against-memory) — and forbids for a measured reason: a trivial prompt returns a shape that passes green while a real prompt returns one that fails. That is not hypothetical here; it is how a 100%-reproducible failure survived a release.
+
+**One probe cannot see a 2-in-9 defect.** At roughly a 22% failure rate, a single run passes a broken model about **78%** of the time. Catching it reliably takes on the order of nine runs — on a prompt of that size, before the user has ingested anything.
+
+**And two of the recorded fields are comparative by nature.** `suitability` and `note` say things like *"a same-priced sibling measured better on every axis"* — a claim about a relationship between models, which no single model's probe can produce. A machine can honestly emit *"7/7 clean JSON, 14 pages planned"*. It cannot write the verdict.
+
+**One more, specific to an aggregator:** an OpenRouter id routes over upstream hosts that can change. A measurement can therefore go stale **without the id changing** — so even a measurement taken correctly is a statement about a moment, which is another reason the build lane is entered deliberately and by hand rather than automatically.
+
+### What the provider tells us, and what we measure
+
+This is the honest narrowing of *"never offer an unmeasured model"*. It is not *"we measured everything"*; it is **"the provider tells us what it costs; we measure whether it can do our job."**
+
+| Field | Source |
+|---|---|
+| Price (in / out) | **The provider's own API.** Read from the live catalogue, per token, converted to the per-million figures the app quotes. |
+| Output ceiling | **The provider's own API**, per model. |
+| Context window | **The provider's own API.** |
+| Whether the model spends hidden reasoning tokens | **The provider's own API** exposes this as machine-readable metadata. |
+| `jsonRaw` — does the ingest outline parse without the repair pass? | **Measured here.** Not derivable from metadata; see above. |
+| `suitability` — which lane it belongs in | **Measured here, and written by a human.** Comparative. |
+| `note` — the reason behind the verdict, shown verbatim | **Written by a human from measured numbers.** |
+
+The price half is not taken on trust either: the aggregator's published prices were checked against this project's own independently hand-verified table and **matched on all five models compared**. That is a reason to read prices from the API rather than re-typing them, not a reason to skip the check.
+
+Everything the aggregator reports is still held to the same structural standard as a hand-typed entry. A catalogue entry goes through the **same admission function** the hand-measured models use, so it must carry a label, a price posture, an output ceiling, a `thinks` verdict and a note, or it does not become an offer. Refusal is **per entry, not all-or-nothing**: one malformed record in a large response is dropped and the rest are admitted, because refusing the lot would hand a third party a switch that disables the feature.
+
+### Free models must never be priced as zero
+
+Some models on an aggregator are genuinely free. Recording that as `{input: 0, output: 0}` is the single most dangerous shape available, and it is refused by construction.
+
+The reason is that zero is **truthy**. A zero-priced entry makes the price lookup return an object rather than nothing, which makes an ingest estimate resolve to `$0.00`, which makes the batch queue's budget guard **accept a spending cap it believes it can enforce** — and then track spend at zero forever while every flag reports success. That is a defect this project has already shipped once, in a form where the number at least moved.
+
+So a free model is recorded by **membership**, never by a price, and the price lookup keeps returning *nothing* for it. Every downstream consequence of that is already implemented and already correct: a dollar cap is refused as unenforceable (which it is — a dollar cap on a free model is meaningless), and cost readouts render **nothing at all** rather than `$0.00`, which is this project's standing rule that a figure is reported or absent, never inferred.
+
+**Identify free by the id, never by the price being zero.** In the live catalogue the two sets do not coincide: a small number of zero-priced ids are not free-tier models at all, and one of them is a router whose real price is unknown until it has routed. Treating "price is 0" as "free" would admit exactly that.
+
+**Rate limits, and why this is a product fact rather than a footnote.** Free models carry a daily request cap, which rises once credits have been purchased on the account. This document deliberately **does not print the figures** — they are the provider's to change, and they could not be independently verified from the provider's own published documentation, whose table renders its values dynamically. Instead the app reads what the provider reports **about the user's own key** — whether it is on the free tier, its limit, how much remains and how much has been used — through a key-check that costs nothing and consumes no tokens, and shows those. That is the same rule as everywhere else in this app: reported or absent, never inferred, and never a number this project invented.
+
+The consequence, though, is worth stating plainly because a user who does not know it will read the resulting error as the app being broken: **a large multi-phase ingest is 40+ LLM calls** — one measured run in this repo's history was 42. A daily cap counted in requests therefore limits how many large ingests a free-tier user gets per day, possibly to a very small number. Free models are viable; they are not unlimited.
+
+**A negative balance refuses free models too.** This is confirmed from the provider's own documentation, and it is counter-intuitive enough to be worth naming: an account in arrears gets errors *including* on free models. Free is not unconditional.
+
+**Availability is per-request, and it is uneven — measured, not assumed.** Free ids draw on a **shared upstream pool**, so whether one answers is not a property of your account alone. Over a ten-minute availability poll during the measurement pass, the free model this app offers answered **8 of 8** attempts — while **three of its free siblings answered 0 of 8**, returning *"temporarily rate-limited upstream"* throughout. Same account, same moment, same tier; entirely different outcomes per model.
+
+That is why the free model is offered as a **deliberate pick and never as a default or a fallback rung**. A default is what runs when the user has chosen nothing, and a 40-call multi-phase ingest cannot rest on a shared queue that may stall partway. A free model is a real option, not a guaranteed one — nothing is billed, and nothing is promised.
+
+### Free models and privacy — an open question, stated rather than answered
+
+An aggregator routes your prompt to some upstream vendor, and your prompt here contains your own notes and your own wiki. The provider documents an account-level setting governing whether requests may be routed to providers that may train on the data, with separate controls for paid and free models.
+
+**Two things about that could not be verified, and are therefore not asserted in either direction:** whether free models *require* that permission to be granted, and what the provider's own data-retention policy is. This documentation will not tell you free models are private, and it will not tell you they are not. If your sources are sensitive, treat that as an open question to settle against the provider's current policy before pointing the build lane — or a chat about those sources — at a free model.
+
+What the app does do on every request is refuse provider substitution, so a request is served by the provider you selected the model from rather than one chosen for you at routing time.
+
+**The app does not send a data-collection preference, and there is a measured reason it cannot simply be switched on.** The provider accepts a per-request flag that refuses upstreams which may train on the data. Sending it unconditionally looks like free privacy hardening; it is not. Measured during this release's live pass: the flag is accepted on paid models, but a **free** model returns `HTTP 404 — "No endpoints found matching your data policy"`. A 404 is worse here than a plain failure, because the app's own model-not-found classifier fires on it and would **walk the fallback chain** — spending additional calls — over a policy flag the app sent itself.
+
+So the honest statement is a conjunction, not a reassurance: **the strict data policy and free models are not combinable on this route.** A paid-only conditional form would be safe in principle and is deliberately not built, because it changes the request shape on every call to solve a problem better solved by the user choosing a paid model when the data matters. Relatedly, and worth knowing before reading a 404 as a retired model: an **account-level** data policy can already make a catalogued free model unreachable with nothing sent at all.
+
+### What was measured before any OpenRouter model was admitted
+
+A build-lane model writes a whole wiki, so none was admitted on catalogue metadata. Every candidate was probed with **this repo's real `buildOutlinePrompt`**, assembled read-only from the real `articles` domain — a 127,666-char index, 607 entity and 2,685 concept filenames, plus a real source document truncated to ingest's own 80,000-char cap. The assembled prompt was **341,005 chars (~77–80k provider-counted tokens)** and was **byte-identical across every model**, which is what makes the numbers below comparable to each other rather than to a toy benchmark. Requests went through the production adapter, carrying the same routing refusal, `require_parameters`, and JSON response format a real ingest sends, at the same 24,576 output budget.
+
+**Nine runs per candidate.** One run cannot distinguish a model that emits clean JSON from one that got lucky, and the defect this measurement exists to catch — unrepairable structured output — showed up in the Gemini catalogue at a rate of 2 in 9.
+
+**Admitted:**
+
+| Model | Runs raw-parseable | Median outline pages | Price (in/out per 1M) |
+|---|---|---|---|
+| `upstage/solar-pro4` — **pinned default** | 9 of 9, no repair pass | **23** (range 14–36) | $0.03 / $0.12 |
+| `ibm-granite/granite-4.0-h-micro` — **fallback rung** | 9 of 9, no repair pass | **9** (range 7–13) | $0.017 / $0.112 |
+| `minimax/minimax-m3:free` — **free, chat-oriented** | 8 of 9 raw, 1 needed the repair pass, 0 unrepairable | **21** (range 15–40) | free — no price recorded |
+
+`solar-pro4` is the default because it was the only candidate that was simultaneously clean, richly covering and reliably reachable. It is worth noting that its JSON is **stricter than this app's own Anthropic default**, which fences its outline 3 times out of 3 and depends entirely on the repair path.
+
+**Rejected, and the list is short for measured reasons rather than by accident:**
+
+- **`nex-agi/nex-n2-mini` — 3 of 3 runs unrepairable.** It spent its *entire* 24,576-token output budget on hidden reasoning and returned no parseable outline at all, at roughly 160 seconds per attempt. Its catalogue metadata advertises reasoning as *optional*, so only a real probe could have found this — which is the whole argument for probing rather than reading a spec sheet.
+- **`openai/gpt-oss-20b` — 18 of 18 runs rate-limited (HTTP 429)**, across both 1.5-second and 45-second spacings, while a trivial prompt to the same id succeeded. That is a throughput limit that makes it unmeasurable on a real ingest prompt, and **a model that could not be measured may not be offered.**
+- **`liquid/lfm-2.5-2.6b:free` — output ceiling of 8,192**, below the 24,576 the outline requests. Structurally unable to serve the lane.
+- **`dots-studio/dots-3-note-preview:free` — carries a retirement date inside this release's own lifetime.** Offering a model due to disappear before the next release is offering a future failure.
+- **`ibm-granite/granite-4.1-8b` — measured clean (9 of 9 raw JSON) and still not admitted**, which is the most instructive rejection here. It lost on comparison rather than on defect: `solar-pro4` is cheaper on input, plans wider outlines, and is equally clean. A catalogue is more useful when every entry earns its place against the others.
+
+### The state of the build lane in this release
+
+**OpenRouter is now a full build-lane provider.** Three models were measured and admitted, and `upstage/solar-pro4` is pinned as the default. Every consequence below is a *change* from the previous release, where the lane was empty:
+
+- **OpenRouter can run ingest, Health and Compile.** There is a pinned model id to send, and a one-rung fallback chain behind it.
+- **It can be made the active provider**, from **Settings → Providers & keys → Set active**, like any other provider.
+- **Saving an OpenRouter key makes it the active provider** — ordinary *last-saved-wins*, with no exception any more. This is the change most likely to catch someone out, and it has its own section immediately below.
+
+The guard that produced the previous behaviour has **not** been removed, and it is worth being precise about what it does now. The app still refuses to activate a provider that cannot serve the build lane — that rule was always written as a **class**, not as a special case for OpenRouter, which is exactly why it needed no edit when OpenRouter gained models. It simply no longer *fires* for OpenRouter, because the predicate it asks now answers yes. It remains load-bearing for the next provider added the same way.
+
+#### Saving a key changes which model builds your wiki
+
+The Curator has used **last-saved-wins** since v2.4.2: whenever you save a provider key, that provider becomes the active one, and the active provider is what runs **ingest, Health and Compile**. That rule is not new. What is new is that it now applies to OpenRouter, and that makes it consequential in a way it was not before.
+
+Concretely: if you have been happily ingesting on Gemini and you paste an OpenRouter key to try a model in chat, **your next ingest will be built by `upstage/solar-pro4`, not by `gemini-2.5-flash-lite`** — a different model, from a different vendor, at a different price. Nothing is broken and nothing is lost; the wiki still builds. But it is built by something you did not consciously choose, and if you are comparing wiki quality across ingests it is the sort of change that is very hard to spot after the fact.
+
+Two things follow, and both are worth knowing *before* you save the key rather than after:
+
+- **The active provider is always visible.** The word `active` beside a row in **Settings → Providers & keys** is the truth about which provider is live. If you did not intend the switch, click **Set active** on the row you did want — it moves the build lane back without re-pasting or deleting anything.
+- **Chat is a separate lane and is not affected.** Chat sends an explicit per-call model, so it never reads the pinned default. Changing your active provider does not change what answers your chat messages, and picking an OpenRouter model in the chat composer does not change what builds your wiki.
+
+The previous behaviour — save the key, *don't* activate — existed only because activating a provider with no build model was a reproduced P0 that silently broke ingest. That hazard is gone now that a model resolves. Keeping the exception would mean OpenRouter behaved differently from the other two providers for no remaining reason, which is its own kind of surprise.
+
+### `/old` does not support OpenRouter
+
+The legacy interface at `/old` offers Gemini and Anthropic only. This is a **documented limit, not a gap**: its four frontend files are frozen, and this release does not touch them. A user whose only key is an OpenRouter key should use the primary interface.
+
+One known consequence is worth recording, because it is the kind of thing that reads as a bug: `/old`'s first-run overlay checks only for the two original providers' keys, so an OpenRouter-only user who navigates there is shown setup guidance for a key they already have — and that overlay has no Escape, no backdrop close, no close control, and no skip on its first step. It strengthens the existing case for retiring `/old`; it is not a reason to unfreeze it.
 
 ---
 
@@ -288,6 +468,13 @@ When releasing a new version that updates a model default:
 5. **To make it user-selectable, add an `OFFERABLE_MODELS` entry** — but only after probing it live with the **real** ingest outline prompt. Record what you measured: `thinks`, `jsonRaw`, `tokenizerFactor`, a `suitability` verdict and the `note` explaining it. The factory refuses an incomplete entry at module load, so an under-specified model does not merely fail a test — the app refuses to boot. If you cannot probe it yet, add it to `AWAITING_MEASUREMENT` with the reason instead.
 6. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
 7. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
+
+**Promoting an OpenRouter model into the build lane** follows step 5's rule and adds two constraints of its own, both of which come from [the section above](#openrouter--a-third-provider-whose-catalogue-moves-without-us):
+
+- **Measure it the same way, and record the run count.** Nine runs against the real ingest outline prompt is the target and five is the floor; the `note` states the count observed (`"7/7 clean JSON, 14 pages"`), never an extrapolation from it. A model whose output *any* run cannot recover — neither a raw parse nor the repair pass — does not enter the build lane at all. Build the prompt from a real domain's index and inventory, read-only, writing nothing.
+- **The free-tier daily cap constrains the measurement itself.** Nine runs each across every free candidate can exceed the cap. Measure a **small** set thoroughly rather than every candidate thinly — a thin measurement is the coin-flip the standard exists to refuse. Paid candidates are not subject to that cap, and the cheapest eligible ones cost cents for a full pass.
+
+Note that an OpenRouter entry's **price and output ceiling come from the provider's API, not from the static tables**, so steps 3 and 4 do not apply to it in the same way — a catalogue entry carries its own. What is hand-written is what was measured: `jsonRaw`, `suitability`, and the `note`.
 
 > **The provider selector requires no change here.** The chat *provider* selector (Gemini / Claude) reads the current `DEFAULTS[provider]` from the backend (`getDefaultModel` → `GET /api/config/api-keys` `models`), so bumping `DEFAULTS` updates its label automatically.
 >
@@ -431,6 +618,8 @@ Note the caps are **not monotonic with recency** — Sonnet 4.5 is 64k while the
 Gemini is not clamped at all. Its models each carry a **65,536** ceiling in `GEMINI_MODEL_MAX_OUTPUT_TOKENS`, but that map is **declarative data for the catalogue only** — Gemini clamps an over-large `maxOutputTokens` server-side rather than rejecting it, so a client-side clamp would be a behaviour change with no failure to fix. The map exists so the UI can tell a user what ceiling a model has, and so `defineOfferableModel` can refuse a Gemini model whose ceiling is unknown.
 
 An unknown id resolves to the **conservative** value on purpose: guessing high produces a hard API rejection, while guessing low merely truncates, and chat degrades gracefully on truncation (v3.0.7).
+
+**OpenRouter's cap map is empty, and empty on purpose.** The provider publishes a per-model output ceiling for nearly every id, so a ceiling is *readable* for most of them — it is simply not frozen into our source, because an aggregator id routes over upstream hosts that can change, which makes a value hardcoded here a snapshot of a fact that can move **without the id changing**. A catalogue entry therefore carries its own ceiling, read at admission time, and a model with no published ceiling is refused rather than given a guessed one. The lookup that selects a provider's cap map is a `switch` returning nothing for a provider we do not dispatch to — it replaced a two-armed ternary that silently resolved every unknown provider to Anthropic's map, which was harmless only while a third provider was unreachable.
 
 **Release-checklist addition:** when adding a rung, record its **output cap** as well as its price. A test now fails on a shipped id with no cap entry, mirroring the existing price invariant.
 

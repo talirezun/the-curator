@@ -22,7 +22,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { jsonrepair } from 'jsonrepair';
 import { wikiPath } from './files.js';
-import { generateText, getProviderInfo, getModelPrice } from './llm.js';
+import { generateText, getProviderInfo, getModelPrice, isFreeModel } from './llm.js';
 import { findSemanticCandidatePairs, SEMANTIC_DUPE_DEFAULT_CAP, scanWiki } from './health.js';
 
 // Excerpt window around the broken link — ~4 KB total (≈800 words). Large
@@ -396,9 +396,60 @@ function estimateUsdCost(provider, model, inputTokens, outputTokens) {
  * or a UI that wants to render an icon instead of a sentence) — not because
  * anything reads it today.
  *
+ * ── THREE STATES, BECAUSE TWO FORCED THIS FUNCTION TO LIE ────────────────────
+ *
+ * FREE IS A KNOWN PRICE, NOT A MISSING ONE. `getModelPrice()` returns null for
+ * a free model BY DESIGN (see FREE_MODELS in llm.js: a free model is recorded
+ * by MEMBERSHIP, never as `{input: 0, output: 0}`, precisely so a budget guard
+ * can never mistake "known to be free" for a truthy zero it must enforce). So
+ * `estimateUsdCost` returned null and the single `=== null` branch below filed
+ * free under "we have no idea what this costs".
+ *
+ * MEASURED, with the free model active: the FREE and UNPRICED payloads were
+ * BYTE-IDENTICAL in all three fields, so Health's primary action button read
+ * "Fix 1 broken link · cost unknown" and both confirm dialogs read "no
+ * published price for model minimax/minimax-m3:free" — a false statement, the
+ * price is published and it is zero. Settings and the chat composer both say
+ * "free" for the same model, so three surfaces carried two vocabularies about
+ * spend, directly under a line promising every AI action shows its cost before
+ * it runs. It is also backwards: "unknown" is alarming on a PAID model, while
+ * free is the one case where the cost is known EXACTLY.
+ *
+ * Resolved BEFORE the price lookup, and keyed on `isFreeModel()` — llm.js's
+ * authoritative membership test — never on a price of 0 and never on the
+ * `:free` id suffix. That mirrors `formatLivePrice` in next/views/chat.js,
+ * whose docblock records why both shortcuts are unsafe (a router id and two
+ * audio models are zero-priced without being free), and it is the same ordering
+ * `compareModelCost` and `chargeForItem` already use for the same reason.
+ *
+ * `estimatedUsd` STAYS `null` for a free model — it is deliberately NOT 0.
+ * `formatHealthCost` in the FROZEN src/public/app.js renders any number via
+ * `toFixed(4)`, so a 0 would print `$0.0000` (verified against the real
+ * function; scripts/test-health-cost-readouts.js §2 pins that rendering). That
+ * is the exact string src/public/next/shared/format-usd.js exists to prevent,
+ * because a reader cannot tell it from a real charge that rounded away. Free is
+ * said in words, never as a dollar figure.
+ *
+ * The free case is therefore `{estimatedUsd: null, priceKnown: true}` — a
+ * combination that could not previously occur, and the one a new reader must
+ * handle: a null estimate no longer implies the price is unknown. It needs no
+ * new field, which is deliberate; a field nothing reads is this repo's named
+ * dead-data shape. The existing tri-state already distinguishes all three
+ * cases, because a priced model always yields a number and an unpriced one
+ * always yields `priceKnown: false`.
+ *
  * @returns {{estimatedUsd: number|null, priceKnown: boolean, costNote: string|null}}
  */
 function costFields(provider, model, inputTokens, outputTokens) {
+  // Ahead of the price lookup: membership is the authority over any figure a
+  // table might hold for a free id. See the docblock above.
+  if (isFreeModel(model)) {
+    return {
+      estimatedUsd: null,
+      priceKnown: true,
+      costNote: `Free — no charge for model "${model}".`,
+    };
+  }
   const estimatedUsd = estimateUsdCost(provider, model, inputTokens, outputTokens);
   if (estimatedUsd === null) {
     return {

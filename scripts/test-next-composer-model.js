@@ -47,7 +47,46 @@
  * proves nothing about what it does (CLAUDE.md, v3.0.17).
  *
  *   §1  Extraction + real-catalogue sanity.
- *   §2  Fixture self-check — the two providers' entries are distinguishable,
+ *   §0b BINDING RESOLUTION BY EXECUTION. §0's scanner reads CALLS and is
+ *       blind to a bare identifier READ. Every extracted function — chat.js's
+ *       helpers AND §11's `chargeForItem` — is smoke-called on trivially safe
+ *       arguments, and only `ReferenceError` counts. §0 is now TERMINAL: a
+ *       named red followed by the crash it predicted still leaves the runner
+ *       with no tally.
+ *
+ *       ── THE BLIND SPOT THIS CLOSED, MEASURED ────────────────────────────
+ *       §11 lifts `chargeForItem` from src/brain/ingest-queue.js through a
+ *       SECOND sandbox that §0 never scanned. `chargeForItem` gained a call to
+ *       `isFreeModel`; §11 died with a ReferenceError after 539 of 646
+ *       assertions while §0 reported green — the same hardcoded-manifest class
+ *       §0 exists to close, in the one section that can see a money bug.
+ *
+ *   §11.1b A FREE MODEL CHARGES A TRUE ZERO. `getModelPrice()` returns null
+ *       for a free model by design, so before the fix it fell into the
+ *       ESTIMATE branch and was charged a share of `estimate.usdHigh` with
+ *       `spendIsEstimated: true` — $0.14 measured on a one-file batch, for a
+ *       model that bills nothing.
+ *
+ *       ── AND §11.1's FIXTURE HAD NEUTERED THAT BRANCH ────────────────────
+ *       Every call passed `{ items: [], estimate: null }`, the one job shape
+ *       in which `perFileHigh` is 0 and `plannedCount` is 1 — so the branch
+ *       always returned `0 / 1 = 0`. The 126-case exact-dollar mirror could
+ *       NEVER have gone red on a phantom charge of any size. The job fixture
+ *       now carries a real estimate and real items, a self-check proves the
+ *       branch is live, and the assertion is on the BATCH TOTAL, because the
+ *       charge is `usdHigh / plannedCount`: a bigger batch charges each item
+ *       less and charges every item, so the total still converges on the whole
+ *       phantom figure. Measured under mutation: per-item $0.21, batch $0.42.
+ *
+ *   §1b THE COMPOSER'S OWN PROVIDER LIST is complete against the catalogue.
+ *       `normalizeOfferable` holds a hardcoded `known` list, deliberately
+ *       (deriving it from the payload would let the payload decide what the
+ *       v3.0.13 key gate covers). This asserts the list COVERS every provider
+ *       in the real catalogue, because the failure mode its own docblock
+ *       describes — a provider missing from that list arrives as an empty
+ *       array with NO exception anywhere, and its whole catalogue silently
+ *       vanishes from the composer — has no other detector.
+ *   §2  Fixture self-check — the providers' entries are distinguishable,
  *       and the real catalogue actually CONTAINS the cases §5–§8 depend on
  *       (a flagged entry, a promoted entry, a dominated entry). A green in
  *       those sections must not be able to mean "the case never occurred".
@@ -59,9 +98,18 @@
  *       never reaches the rendered menu. Asserted for every entry of the
  *       unkeyed provider in the real table, in both directions (gemini-only
  *       and anthropic-only), so a fix special-casing one provider is caught.
- *   §5  PRICE HONESTY — for every entry in the real table, the rendered price
- *       is the LIVE `input`/`output`. For every PROMOTED entry (where the two
- *       differ), the standard price must NOT be rendered as the current one.
+ *   §5  PRICE HONESTY — THREE STATES, NEVER TWO. **paid**: the LIVE
+ *       `input`/`output` render. **free**: known to bill nothing, so it must
+ *       say "free" — never "$0.00" (v3.14.0: reported or absent, never
+ *       inferred) and never "price unavailable", which is a DIFFERENT fact.
+ *       **unknown**: we were not told, and must go on saying so. Decided by
+ *       `entry.free === true` alone — never a price of zero, never a provider
+ *       id, never a ":free" id substring (llm.js records why that suffix is
+ *       not a safe membership test). Collapsing free into unknown was the
+ *       SHIPPED behaviour until this release, with `entry.free` on the wire
+ *       and read by nobody — the sixth instance of this repo's dead-data
+ *       shape. For every PROMOTED entry the standard price must NOT be
+ *       rendered as the current one.
  *   §6  PROMOTION DISCLOSURE — every promoted entry renders the coming rise
  *       (the standard price and the date it applies).
  *   §7  MEASURED NOTES — every flagged entry (`suitability !== 'general'` or
@@ -130,7 +178,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel } from '../src/brain/llm.js';
 // The REAL shared formatter the view imports, driven directly — not a stub. A
 // stub would let a bespoke re-implementation in the view pass unnoticed, which
 // is mutation M4.
@@ -254,6 +302,26 @@ const FN_NAMES = [
 /** Bindings the sandbox supplies to the extracted code, in call order. */
 const INJECTED = ['escapeHtml', 'formatUsdHonest'];
 
+// ── §11's SECOND EXTRACTION SITE, declared here so §0 can see it ──────────
+// §11.1 lifts the REAL `chargeForItem` out of the server module and asserts
+// exact-dollar equality against the composer's mirrored copy. It is the one
+// assertion in this suite that can see a MONEY bug — and it had the same
+// hardcoded-manifest blind spot §0 exists to close, in the place least able
+// to afford it: `chargeForItem` gained a call to `isFreeModel`, the sandbox
+// injected only `getModelPrice`, and the section died with a ReferenceError
+// after 539 of 646 assertions. §0 now scans this manifest too.
+const QUEUE_PATH = path.join(ROOT, 'src/brain/ingest-queue.js');
+const QUEUE_FN_NAMES = ['chargeForItem'];
+const QUEUE_INJECTED = {
+  getModelPrice,
+  // A free model has NO price by design (`getModelPrice` returns null, because
+  // `{input:0,output:0}` is truthy and would re-arm v3.3.0's inert budget cap),
+  // so `chargeForItem` must decide free by MEMBERSHIP before it ever reaches
+  // the priced branch. Injecting the REAL predicate, not a stub, so §11.1
+  // measures the shipping decision.
+  isFreeModel,
+};
+
 const sandbox = new Function(
   ...INJECTED,
   extractConst(chatSrc, 'PROVIDER_LABELS') + '\n' +
@@ -352,7 +420,34 @@ const SAFE_GLOBALS = new Set([
 
 // ── The REAL, live catalogue, and a raw server-shaped payload built from it ─
 const REAL = OFFERABLE_MODELS;
-const ALL_PROVIDERS = ['gemini', 'anthropic'];
+/**
+ * ── DERIVED, NOT LISTED — and the reason is the strongest cross-check here ─
+ * This was `['gemini', 'anthropic']`. Every per-model loop in this file is
+ * enumerated from the live catalogue and a comment nearby says so — true for
+ * the MODEL dimension and false for the PROVIDER dimension, which was pinned
+ * by that literal. §11.1 is the sharpest instance: it extracts the REAL
+ * `chargeForItem` out of src/brain/ingest-queue.js and asserts exact-dollar
+ * equality against the composer's mirrored copy over every (model × token
+ * shape) pair — generated by walking ALL_PROVIDERS. A provider whose pricing
+ * behaved differently would have been invisible to the one assertion in this
+ * suite that can see a money bug.
+ *
+ * Derived from the catalogue, a new provider is covered the day its models
+ * land, with no edit here. OpenRouter contributes ZERO cases today because
+ * its catalogue is deliberately empty (see EMPTY below) — that is the point:
+ * the coverage arrives on its own rather than needing to be remembered.
+ */
+const ALL_PROVIDERS = Object.keys(REAL);
+/**
+ * ── EMPTY IS A STATE, NOT AN ABSENCE ─────────────────────────────────────
+ * A provider's catalogue may legitimately be `[]`: this project does not
+ * offer a model for a job it has not been measured doing, so a provider whose
+ * routes have not met the real ingest outline prompt ships none. Assertions
+ * needing at least one model run over POPULATED; the partition is asserted to
+ * be TOTAL in §1, so a genuinely MISSING or malformed catalogue still fails.
+ */
+const POPULATED = ALL_PROVIDERS.filter(p => Array.isArray(REAL[p]) && REAL[p].length > 0);
+const EMPTY = ALL_PROVIDERS.filter(p => Array.isArray(REAL[p]) && REAL[p].length === 0);
 /**
  * The FULL, UNGATED catalogue — every model from both providers.
  *
@@ -372,14 +467,15 @@ const ALL_PROVIDERS = ['gemini', 'anthropic'];
  * server-gated payload is kept as a separate COMPOSITION control below.
  */
 function rawFull() {
-  return { gemini: REAL.gemini.slice(), anthropic: REAL.anthropic.slice() };
+  const out = {};
+  for (const p of ALL_PROVIDERS) out[p] = REAL[p].slice();
+  return out;
 }
 /** The `offerable` field exactly as GET /api/config/api-keys builds it today. */
 function serverOfferable(keyed) {
-  return {
-    gemini: keyed.includes('gemini') ? REAL.gemini.slice() : [],
-    anthropic: keyed.includes('anthropic') ? REAL.anthropic.slice() : [],
-  };
+  const out = {};
+  for (const p of ALL_PROVIDERS) out[p] = keyed.includes(p) ? REAL[p].slice() : [];
+  return out;
 }
 /** Build the menu the way the view does, with the CLIENT doing the scoping. */
 function menuFor(keyed, selectedId = null) {
@@ -458,6 +554,140 @@ section('§0  FN_NAMES COMPLETENESS — the harness cannot go blind by omission'
     (unresolved.length ? ` — UNRESOLVED: ${[...new Set(unresolved)].join(', ')}. ` +
       `Add the callee to FN_NAMES (if it is a chat.js helper) or to INJECTED (if it is an import), ` +
       `or this suite will CRASH with a ReferenceError instead of failing.` : ''));
+
+  // ── §0's SECOND SANDBOX, and the one that was left ────────────────────
+  // §11.1 lifts the REAL `chargeForItem` out of src/brain/ingest-queue.js and
+  // asserts exact-dollar equality against the composer's mirrored copy. It is
+  // the only assertion in this suite that can see a MONEY bug, and it had the
+  // same hardcoded-manifest blind spot this section exists to close — with no
+  // guard of any kind over it.
+  //
+  // MEASURED: `chargeForItem` gained a call to `isFreeModel`, the sandbox
+  // injected only `getModelPrice`, and §11 died with
+  // `ReferenceError: isFreeModel is not defined` after 539 of 646 assertions.
+  // The suite's own §0 reported GREEN throughout, because it scanned chat.js's
+  // FN_NAMES and nothing else. Same class, different file, worst possible
+  // section.
+  {
+    const queueSrcForScan = readFileSync(QUEUE_PATH, 'utf8');
+    const queueTopLevel = topLevelFunctionNames(queueSrcForScan);
+    for (const n of QUEUE_FN_NAMES) {
+      ok(queueTopLevel.has(n), `§0 queue manifest entry "${n}" is a real top-level function in ingest-queue.js`);
+    }
+    const queueProvided = new Set([...QUEUE_FN_NAMES, ...Object.keys(QUEUE_INJECTED)]);
+    const queueUnresolved = [];
+    for (const name of QUEUE_FN_NAMES) {
+      const body = stripCommentsAndLiterals(extractFunction(queueSrcForScan, name));
+      const callRe = /(^|[^.\w$\\])([A-Za-z_$][\w$]*)\s*\(/g;
+      const locals = new Set();
+      let d;
+      const declRe = /\b(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
+      while ((d = declRe.exec(body)) !== null) locals.add(d[1]);
+      let m;
+      while ((m = callRe.exec(body)) !== null) {
+        const called = m[2];
+        if (called === name) continue;
+        if (queueProvided.has(called)) continue;
+        if (locals.has(called)) continue;
+        if (SAFE_GLOBALS.has(called)) continue;
+        queueUnresolved.push(`${name}() -> ${called}()`);
+      }
+    }
+    ok(queueUnresolved.length === 0,
+      '§0 every function §11\'s ingest-queue.js extraction calls is itself extracted or injected' +
+      (queueUnresolved.length
+        ? ` — UNRESOLVED: ${[...new Set(queueUnresolved)].join(', ')}. Add it to QUEUE_INJECTED (if it is an llm.js import) or QUEUE_FN_NAMES (if it is another ingest-queue.js helper), or §11 CRASHES mid-run and the tally under-reports.`
+        : ''));
+    // POSITIVE CONTROL 3 — drop the binding that actually broke it and the
+    // scanner must name it. Proves this half is not green because it sees
+    // nothing.
+    // Deliberately NOT "chargeForItem calls isFreeModel". That would pin a
+    // BEHAVIOURAL coupling in a section whose only job is binding resolution,
+    // and it would fire — terminally — on any legitimate change to the
+    // function's logic, masking the real assertion further down. (Measured:
+    // removing the free guard from ingest-queue.js made §0 red and stopped the
+    // run before §11.1b could report the phantom charge it exists to catch.)
+    // Instead: whichever injected bindings the function DOES call, removing
+    // one must be detected.
+    {
+      const body = stripCommentsAndLiterals(extractFunction(queueSrcForScan, 'chargeForItem'));
+      const calledInjected = Object.keys(QUEUE_INJECTED)
+        .filter(k => new RegExp('(^|[^.\\w$\\\\])' + k + '\\s*\\(').test(body));
+      ok(calledInjected.length > 0,
+        `§0 control — the queue scan has something to resolve: chargeForItem calls ${calledInjected.length} injected binding(s) [${calledInjected.join(', ')}]`);
+      const provided = new Set([...QUEUE_FN_NAMES,
+        ...Object.keys(QUEUE_INJECTED).filter(k => k !== calledInjected[0])]);
+      ok(!provided.has(calledInjected[0]),
+        `§0 control — …and dropping "${calledInjected[0]}" from QUEUE_INJECTED would leave it unresolved`);
+    }
+  }
+
+  // ── §0b  WHAT THE SCANNER CANNOT READ, EXECUTION CAN ──────────────────
+  // The scan above resolves CALLS and is blind to a bare identifier READ (a
+  // module-level const referenced without parentheses). So every extracted
+  // function is SMOKE-CALLED on trivially safe arguments and only
+  // `ReferenceError` counts as a failure — this asks "are your bindings
+  // resolvable?", never "do you behave correctly", which is every other
+  // section's job. Path-dependent, and said plainly: a missing binding on a
+  // branch these arguments never reach is still invisible, which is why it
+  // SUPPLEMENTS the scanner rather than replacing it.
+  {
+    const SMOKE = [
+      [], [undefined], [null], [''], [0],
+      [{ id: 'x', input: 1, output: 2 }], ['gemini', { id: 'x', input: 1, output: 2 }, null],
+      [{ role: 'assistant', content: 'x' }, { offerable: {}, availableProviders: [] }],
+      [{ gemini: [], anthropic: [] }, []],
+      ['2027-01-01'], [1], [1, 2],
+    ];
+    const refErrors = [];
+    for (const name of FN_NAMES) {
+      const fn = sandbox[name];
+      if (typeof fn !== 'function') continue;
+      for (const args of SMOKE) {
+        try { fn(...args); } catch (err) {
+          if (err instanceof ReferenceError) refErrors.push(`${name}() -> ${err.message}`);
+        }
+      }
+    }
+    ok(refErrors.length === 0,
+      '§0b every extracted chat.js function resolves all its bindings when CALLED — no ReferenceError' +
+      (refErrors.length ? ` — ${[...new Set(refErrors)].join('; ')}` : ''));
+    // And the same for the queue sandbox, BUILT AND RUN here rather than in
+    // §11 — the point is to fail with a tally at the top of the run instead of
+    // crashing 500 assertions in, which is exactly what happened when
+    // `isFreeModel` landed.
+    {
+      let refErr = null;
+      try {
+        const qSrc = readFileSync(QUEUE_PATH, 'utf8');
+        const qNames = Object.keys(QUEUE_INJECTED);
+        const probe = new Function(
+          ...qNames,
+          QUEUE_FN_NAMES.map(fn => extractFunction(qSrc, fn)).join('\n') +
+          '\nreturn ' + QUEUE_FN_NAMES[0] + ';'
+        )(...qNames.map(k => QUEUE_INJECTED[k]));
+        // A job shape that reaches BOTH branches: an unpriced id takes the
+        // estimate path, a real id takes the priced path.
+        for (const id of ['zz-unpriced', REAL[POPULATED[0]][0].id]) {
+          probe({ items: [{ status: 'done' }], estimate: { usdHigh: 1 } },
+            { tokenUsage: { model: id, inputTokens: 1, outputTokens: 1 } });
+        }
+      } catch (err) { if (err instanceof ReferenceError) refErr = err.message; }
+      ok(refErr === null,
+        '§0b …and so does §11\'s extracted chargeForItem, executed against a real job' +
+        (refErr ? ` — ${refErr}. §11 would otherwise crash mid-run and the tally would silently under-report.` : ''));
+    }
+    // POSITIVE CONTROL 4 — a function whose only missing binding is a bare
+    // READ throws ReferenceError, which this pass catches and the scanner
+    // above cannot.
+    {
+      let caught = null;
+      try { new Function('return function p(){ return SOME_UNPROVIDED_CONST.x; };')()(); }
+      catch (err) { caught = err; }
+      ok(caught instanceof ReferenceError,
+        `§0b control — a bare-READ binding failure is caught here (${caught && caught.message})`);
+    }
+  }
   // Positive control: the detector can actually see a missing name. Drop one
   // real entry from the list and the helpers that call it must be reported.
   {
@@ -483,15 +713,100 @@ section('§0  FN_NAMES COMPLETENESS — the harness cannot go blind by omission'
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════
+// TERMINAL. A named red in §0 that is then followed by the very crash it
+// predicted still leaves the runner with no tally — which is the whole defect
+// this section exists to remove. So stop here, with one.
+if (failed > 0) {
+  console.log(`\n${'-'.repeat(60)}`);
+  console.log(`Passed: ${passed}   Failed: ${failed}`);
+  console.log('FAILED — extraction manifest incomplete; stopping before the ReferenceError this predicts');
+  process.exit(1);
+}
+
+// =========================================================================
 section('§1  Extraction + real-catalogue sanity');
 // ═════════════════════════════════════════════════════════════════════════
 {
   for (const n of FN_NAMES) ok(typeof sandbox[n] === 'function', `${n} extracted as a function`);
   ok(REAL && typeof REAL === 'object', 'OFFERABLE_MODELS imported from the real llm.js');
+  // AN ARRAY, ALWAYS — this is what still catches a genuinely missing or
+  // malformed catalogue. It used to also demand `length > 0`, which stopped
+  // being true the moment a provider shipped with nothing measured yet.
   for (const p of ALL_PROVIDERS) {
-    ok(Array.isArray(REAL[p]) && REAL[p].length > 0,
-      `real catalogue has at least one ${p} entry (found ${REAL[p] ? REAL[p].length : 0})`);
+    ok(Array.isArray(REAL[p]),
+      `real catalogue for "${p}" is an ARRAY (${Array.isArray(REAL[p]) ? REAL[p].length + ' entries' : typeof REAL[p]})`);
+  }
+  ok(POPULATED.length + EMPTY.length === ALL_PROVIDERS.length,
+    `every catalogue is an array — ${POPULATED.length} populated (${POPULATED.join(', ') || 'none'}), ` +
+    `${EMPTY.length} deliberately empty (${EMPTY.join(', ') || 'none'}), 0 missing or malformed`);
+  ok(POPULATED.length >= 2,
+    `at least two providers ship a measured catalogue (${POPULATED.join(', ')}) — a collapse to one would make every cross-provider assertion vacuous`);
+  // CONTROL — the same partition rejects a missing and a malformed catalogue,
+  // so relaxing "non-empty" to "is an array" did not make §1 decorative.
+  {
+    const probe = { good: [{ id: 'x' }], empty: [], missing: undefined, wrong: { id: 'x' } };
+    const names = Object.keys(probe);
+    const pop = names.filter(p => Array.isArray(probe[p]) && probe[p].length > 0);
+    const emp = names.filter(p => Array.isArray(probe[p]) && probe[p].length === 0);
+    ok(pop.length + emp.length !== names.length,
+      'control: a missing and a malformed catalogue are classified as NEITHER populated nor empty — a real fault still fails');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§1b  THE COMPOSER\'S OWN PROVIDER LIST covers the whole catalogue');
+// ═════════════════════════════════════════════════════════════════════════
+/*
+ * `normalizeOfferable` in views/chat.js holds a hardcoded `known` list. That
+ * is a DELIBERATE design decision and its docblock says why: the zeroed shape
+ * must include providers the user has no key for (so a reader gets `[]` and
+ * not a TypeError), and deriving it from the payload would let the payload
+ * decide what the v3.0.13 key gate covers.
+ *
+ * The hazard the same docblock describes is what this pins: the list used to
+ * appear TWICE in one function, and doing only one of the two edits produced
+ * NO ERROR ANYWHERE — the key existed, the array stayed empty, and the whole
+ * catalogue for that provider silently vanished from the composer. A dropped
+ * menu with no exception is the hardest defect to notice.
+ *
+ * Deriving the list is the wrong fix (it would defeat the gate). Asserting it
+ * is COMPLETE against the real catalogue is the right one: a provider added to
+ * llm.js and forgotten here goes red naming itself, instead of shipping a
+ * composer that silently cannot offer it.
+ */
+{
+  const norm = normalizeOfferable(rawFull(), ALL_PROVIDERS);
+  for (const p of ALL_PROVIDERS) {
+    // NOTE THE `Array.isArray(...) &&` ON THE SECOND ASSERTION. The first
+    // draft read `norm[p].length` directly, so the very mutation this section
+    // exists to catch (a provider dropped from `known`, leaving `norm[p]`
+    // undefined) produced a TypeError one line later — a crash instead of a
+    // counted red, which is exactly the defect this release is closing in the
+    // sibling suite. Found by running the mutation, not by reading the code.
+    ok(Array.isArray(norm[p]),
+      `"${p}" survives normalizeOfferable as an array — it is in chat.js's own \`known\` list`);
+    ok(Array.isArray(norm[p]) && norm[p].length === REAL[p].length,
+      `"${p}": all ${REAL[p].length} catalogue entries survive (got ${Array.isArray(norm[p]) ? norm[p].length : JSON.stringify(norm[p])}) — a provider missing from \`known\` would silently arrive empty`);
+  }
+  // …and the same for the provider LABEL table, which is the other hardcoded
+  // per-provider map in that file. A missing label renders the raw id.
+  for (const p of ALL_PROVIDERS) {
+    ok(typeof neutralProviderLabel(p) === 'string' && neutralProviderLabel(p).length > 0,
+      `"${p}" has a human label in chat.js's PROVIDER_LABELS (got ${JSON.stringify(neutralProviderLabel(p))})`);
+  }
+  // CONTROL — a provider chat.js does NOT know arrives empty, which is what
+  // proves the assertions above are measuring the `known` list and not the
+  // fixture. (Also the fail-safe direction: an unknown provider is dropped,
+  // never merged into a neighbour's list.)
+  {
+    const withFuture = Object.assign(rawFull(), { 'zzz-future-provider': [{ id: 'zzz-model', provider: 'zzz-future-provider' }] });
+    const n2 = normalizeOfferable(withFuture, [...ALL_PROVIDERS, 'zzz-future-provider']);
+    ok(!n2['zzz-future-provider'] || n2['zzz-future-provider'].length === 0,
+      'control: a provider absent from chat.js\'s `known` list arrives with NO entries — which is exactly the silent-drop this section forbids for a REAL provider');
+    for (const p of ALL_PROVIDERS) {
+      ok(!(n2[p] || []).some(e => e.id === 'zzz-model'),
+        `control: the unknown provider's model does not leak into "${p}"'s list`);
+    }
   }
 }
 
@@ -518,9 +833,17 @@ const generalEntries = [];
   // "standard is not shown as current" assertion unfalsifiable.
   const priceDiffers = promotedEntries.every(({ e }) => e.input !== e.standardInput || e.output !== e.standardOutput);
   ok(priceDiffers, 'every promoted entry has a live price DIFFERENT from its standard price — §5 can actually fail');
-  const idsG = new Set(REAL.gemini.map(e => e.id));
-  const idsA = new Set(REAL.anthropic.map(e => e.id));
-  ok([...idsG].every(id => !idsA.has(id)), 'control: no model id appears under both providers — cross-provider leakage is observable');
+  // Over EVERY ordered pair of providers, so a third provider that reused an
+  // id would be caught too. It used to compare exactly gemini against
+  // anthropic.
+  for (const a of ALL_PROVIDERS) {
+    for (const b of ALL_PROVIDERS) {
+      if (a >= b) continue;
+      const idsA = new Set(REAL[a].map(e => e.id));
+      ok(REAL[b].every(e => !idsA.has(e.id)),
+        `control: no model id appears under both ${a} and ${b} — cross-provider leakage is observable`);
+    }
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -532,21 +855,38 @@ section('§3  Key scoping — zero / one / two saved keys');
   ok(offerableEntries(none.norm, []).length === 0, 'ZERO saved keys → nothing is pickable');
 
   for (const only of ALL_PROVIDERS) {
-    const other = ALL_PROVIDERS.find(p => p !== only);
+    const others = ALL_PROVIDERS.filter(p => p !== only);
     const { norm, html } = menuFor([only]);
-    ok(html !== '', `ONE key (${only}) → a menu is rendered`);
-    ok(norm[other].length === 0, `ONE key (${only}) → the unkeyed provider "${other}" has zero entries after normalizeOfferable`);
+    // A keyed provider with NO measured model has nothing to offer, so the
+    // menu is legitimately empty — that is a state, not a regression (§1).
+    // Asserted in the direction that matches, rather than skipped.
+    if (REAL[only].length > 0) {
+      ok(html !== '', `ONE key (${only}) → a menu is rendered`);
+    } else {
+      ok(html === '', `ONE key (${only}, empty catalogue) → no menu at all, because there is nothing to pick`);
+    }
+    // EVERY other provider, not just the first one .find() happened to pick.
+    for (const other of others) {
+      // `(norm[other] || [])`, not `norm[other].length`: a provider dropped
+      // from chat.js's `known` list makes this undefined, and an unguarded
+      // dereference turns §1b's clean red into a CRASH that eats the tally.
+      // §1b is where that condition is diagnosed; this line must survive it.
+      ok((norm[other] || []).length === 0, `ONE key (${only}) → the unkeyed provider "${other}" has zero entries after normalizeOfferable`);
+    }
     ok(offerableEntries(norm, [only]).length === REAL[only].length,
       `ONE key (${only}) → exactly its own ${REAL[only].length} models are pickable`);
     for (const e of REAL[only]) ok(html.includes(e.id), `ONE key (${only}) → menu lists own model "${e.id}"`);
-    for (const e of REAL[other]) ok(!html.includes(e.id), `ONE key (${only}) → menu does NOT list "${other}" model "${e.id}"`);
+    for (const other of others) {
+      for (const e of REAL[other]) ok(!html.includes(e.id), `ONE key (${only}) → menu does NOT list "${other}" model "${e.id}"`);
+    }
   }
 
   const both = menuFor(ALL_PROVIDERS);
-  ok(offerableEntries(both.norm, ALL_PROVIDERS).length === REAL.gemini.length + REAL.anthropic.length,
-    'TWO keys → every model from both providers is pickable');
+  const totalModels = ALL_PROVIDERS.reduce((n, p) => n + REAL[p].length, 0);
+  ok(offerableEntries(both.norm, ALL_PROVIDERS).length === totalModels,
+    `EVERY key → every model from every provider is pickable (${totalModels} across ${ALL_PROVIDERS.length} providers)`);
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
-    ok(both.html.includes(e.id), `TWO keys → menu lists "${e.id}"`);
+    ok(both.html.includes(e.id), `EVERY key → menu lists "${e.id}"`);
   }
   // Cheapest-first ordering, exactly as the server sent it, is preserved.
   for (const p of ALL_PROVIDERS) {
@@ -622,15 +962,71 @@ section('§4  v3.0.13 GUARD — an unkeyed provider\'s models are NOT selectable
 section('§5  Price honesty — the LIVE price is rendered, never the standard one');
 // ═════════════════════════════════════════════════════════════════════════
 {
+  // ── THREE STATES, NEVER TWO ───────────────────────────────────────────
+  // paid    a real price renders, built from the LIVE input/output.
+  // free    known to bill nothing. Must NOT render "$0.00" (v3.14.0:
+  //         reported or absent, never inferred) and must NOT say the price is
+  //         unknown — we know exactly what it is.
+  // unknown we were not told. Must go on saying so.
+  //
+  // Collapsing free into unknown is the absent-vs-empty mistake in a new
+  // costume, and it was the SHIPPED behaviour until this release: a free
+  // model rendered "price unavailable" in the composer and blank in Settings,
+  // while `entry.free === true` sat on the wire read by nobody — the sixth
+  // instance of this repo's dead-data shape.
   for (const p of ALL_PROVIDERS) {
     for (const e of REAL[p]) {
       const html = renderModelOptionHtml(p, e, null);
       const live = formatLivePrice(e);
-      ok(live === formatPricePerM(e.input) + ' in / ' + formatPricePerM(e.output) + ' out per 1M',
-        `${e.id}: formatLivePrice is built from input/output`);
+      if (e.free === true) {
+        ok(live === 'free', `${e.id}: a FREE entry renders "free" (got ${JSON.stringify(live)})`);
+        ok(live !== 'price unavailable',
+          `${e.id}: …and NOT "price unavailable" — a known-zero cost is not an unknown one`);
+        ok(!/\$/.test(live), `${e.id}: …and no dollar figure at all, so no $0.00 can be inferred`);
+      } else {
+        ok(live === formatPricePerM(e.input) + ' in / ' + formatPricePerM(e.output) + ' out per 1M',
+          `${e.id}: formatLivePrice is built from input/output`);
+        ok(html.includes(escapeHtmlStub(formatPricePerM(e.input))), `${e.id}: row shows live input ${e.input}`);
+      }
       ok(html.includes(escapeHtmlStub(live)), `${e.id}: row renders the live price "${live}"`);
-      ok(html.includes(escapeHtmlStub(formatPricePerM(e.input))), `${e.id}: row shows live input ${e.input}`);
     }
+  }
+
+  // ── THE THREE STATES ARE MUTUALLY DISTINGUISHABLE ─────────────────────
+  // Driven on synthetic entries so this holds whatever the catalogue contains
+  // today, and so each state is reached deliberately rather than by whichever
+  // real model happens to exist.
+  {
+    const paid = { id: 'p', input: 1, output: 5 };
+    const free = { id: 'f', free: true, input: null, output: null };
+    const unknown = { id: 'u' };
+    const [lp, lf, lu] = [formatLivePrice(paid), formatLivePrice(free), formatLivePrice(unknown)];
+    ok(new Set([lp, lf, lu]).size === 3,
+      `the three price states render three DIFFERENT strings (${JSON.stringify([lp, lf, lu])})`);
+    ok(lf === 'free' && lu === 'price unavailable',
+      'free says free; unknown says unavailable');
+    ok(!/\$0(\.0+)?\b/.test(lf), 'the free state never renders a $0 figure');
+    // DRIVEN OFF THE FLAG, never off a zero price, a provider id, or a ":free"
+    // id substring. Each of those would be a different (and wrong) test, and
+    // llm.js's own docblock records why the `:free` suffix in particular is
+    // unsafe — a router id and two audio models are zero-priced but not free.
+    ok(formatLivePrice({ id: 'z', input: 0, output: 0 }) !== 'free',
+      'a model priced at exactly $0/$0 without the flag is NOT called free — membership is the authority, not the number');
+    ok(formatLivePrice({ id: 'x/y:free', input: 1, output: 5 }) !== 'free',
+      'an id merely CONTAINING ":free" is not treated as free — the suffix is not a membership test');
+    ok(formatLivePrice({ id: 'q', provider: 'openrouter', input: 1, output: 5 }) !== 'free',
+      'and no provider id implies free');
+    ok(formatLivePrice({ id: 'w', free: false, input: null, output: null }) === 'price unavailable',
+      'free:false with no price stays UNKNOWN — the flag being present and false is not a licence to guess');
+    // The rendered rows differ too, not merely the helper's return value.
+    const rp = renderModelOptionHtml('gemini', paid, null);
+    const rf = renderModelOptionHtml('gemini', free, null);
+    const ru = renderModelOptionHtml('gemini', unknown, null);
+    ok(rf.includes('free') && !rf.includes('price unavailable'),
+      'the rendered FREE row says free and does not also claim the price is unavailable');
+    ok(ru.includes('price unavailable') && !/>free</.test(ru),
+      'the rendered UNKNOWN row keeps saying unavailable and is never relabelled free');
+    ok(rp !== rf && rf !== ru && rp !== ru, 'all three rows render differently');
   }
   // For a PROMOTED entry the standard price must never appear as the current
   // price — i.e. never inside the .chat-mm-price span.
@@ -1206,21 +1602,125 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
   // llm.js) and this is an offline browser-code suite. Extraction runs the
   // SAME SOURCE TEXT that ships, with the real getModelPrice injected — so a
   // change to either side's formula shows up here.
-  const QUEUE_PATH = path.join(ROOT, 'src/brain/ingest-queue.js');
   const queueSrc = readFileSync(QUEUE_PATH, 'utf8');
-  const chargeForItem = new Function('getModelPrice',
-    extractFunction(queueSrc, 'chargeForItem') + '\nreturn chargeForItem;'
-  )(getModelPrice);
+  // ONE MAP, name to value — see §0's note on positional binding. The names
+  // and the arguments are derived from the same object, so they cannot fall
+  // out of step; and §0 scans this manifest, so a callee that is neither
+  // extracted nor injected is a NAMED failure rather than a crash.
+  const qNames = Object.keys(QUEUE_INJECTED);
+  const chargeForItem = new Function(
+    ...qNames,
+    QUEUE_FN_NAMES.map(fn => extractFunction(queueSrc, fn)).join('\n') +
+    '\nreturn ' + QUEUE_FN_NAMES[0] + ';'
+  )(...qNames.map(k => QUEUE_INJECTED[k]));
   ok(typeof chargeForItem === 'function',
     '§11 the REAL chargeForItem was extracted from src/brain/ingest-queue.js');
 
-  // Every entry of the LIVE catalogue — enumerated, never a hardcoded list, so
+  // Every entry of the LIVE catalogue, across every provider in it — BOTH
+  // dimensions enumerated. This comment used to say "never a hardcoded list",
+  // which was true of the model dimension and false of the provider one:
+  // `ALL_PROVIDERS` was the literal `['gemini','anthropic']`, so any
+  // provider-specific pricing behaviour was invisible to the one assertion in
+  // this suite that can see a money bug. Now derived from `OFFERABLE_MODELS`,
+  // and the per-provider contribution is asserted just below rather than left
+  // to a case count that would merely get smaller. So
   // a model added or repriced in llm.js is covered here the moment it lands.
   const everyEntry = [];
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) everyEntry.push({ p, e });
   ok(everyEntry.length > 1, `§11 enumerated ${everyEntry.length} live catalogue entries`);
+  // THE PROVIDER DIMENSION, asserted rather than assumed. The case COUNT below
+  // is derived and printed, but a provider silently dropping out of the
+  // enumeration would only make that number smaller — still green, and the
+  // strongest money cross-check in this suite would quietly stop covering it.
+  // This is what the literal `['gemini','anthropic']` used to hide.
+  for (const p of POPULATED) {
+    const n = everyEntry.filter(x => x.p === p).length;
+    ok(n === REAL[p].length,
+      `§11 provider "${p}" contributes all ${REAL[p].length} of its entries to the money cross-check (got ${n})`);
+  }
+  // DECLARED, because today this loop runs ZERO times: every provider ships a
+  // populated catalogue, so EMPTY is `[]` and the assertion inside it never
+  // executes. A loop over an empty collection is not a failing test and not a
+  // passing one — it is no test — and reading a green tally without knowing
+  // that is how a section quietly stops covering anything. The picker suite's
+  // equivalents declare their counts; this one did not.
+  console.log(`     (§11 EMPTY-catalogue arm covered ${EMPTY.length} provider(s): ${EMPTY.join(', ') || 'none — every provider is populated today'})`);
+  ok(EMPTY.length + POPULATED.length === ALL_PROVIDERS.length,
+    `§11 every provider is in exactly one of POPULATED (${POPULATED.length}) or EMPTY (${EMPTY.length}) — the arm that runs zero times today is empty by partition, not by an oversight`);
+  for (const p of EMPTY) {
+    ok(everyEntry.filter(x => x.p === p).length === 0,
+      `§11 provider "${p}" contributes 0 cases today because its catalogue is empty — it will be covered the day models land, with no edit here`);
+  }
+  ok(new Set(everyEntry.map(x => x.p)).size === POPULATED.length,
+    `§11 the cross-check spans every populated provider (${POPULATED.join(', ')}) — the provider dimension is enumerated, not pinned`);
 
-  const ANY = ['gemini', 'anthropic'];
+  // ── PAID vs FREE, separated ONCE ──────────────────────────────────────
+  // Sections that need an exemplar with a REAL price (a cheapest/dearest
+  // spread, a tiny-but-non-zero charge) must draw from the paid entries only.
+  // A free entry's `input`/`output` are `null` BY DESIGN — never 0 — so
+  // sorting the whole catalogue by `input` puts it first, and every later
+  // `usd.toFixed()` on it throws. Split by the REPORTED FLAG, never by a
+  // price of zero or an id substring.
+  //
+  // ── THE PARTITION THAT COULD NOT FAIL ─────────────────────────────────
+  // This used to split on `free !== true` / `free === true` and then assert
+  // that the two halves summed to the whole. Those two predicates are EXACT
+  // COMPLEMENTS, so that sums to the whole for ANY array whatsoever — it is
+  // not a check, it is arithmetic. Verified against `{free:true}`,
+  // `{free:false}`, `{}`, `{free:'yes'}` and `{free:0}`: all five pass, and an
+  // entry with `free: undefined` and no price at all was silently counted as
+  // PAID — the one classification that then feeds a dollar figure.
+  //
+  // The replacement classifies on the FLAG **and** the price together, so the
+  // dangerous middle states are unclassifiable by construction rather than
+  // absorbed into whichever arm happened to be the `else`:
+  //   • flagged free but carrying a price   -> the stale-money shape
+  //   • flagged paid but carrying no price  -> a row that renders no cost
+  //   • no flag / a non-boolean flag        -> nothing was reported
+  //   • a `{input:0, output:0}` pair        -> v3.3.0's truthy inert cap
+  // A control just below proves each of those really does return null, so a
+  // green here means the corpus is clean, not that the classifier is blind.
+  const classifyPricePosture = (e) => {
+    const priced = typeof e.input === 'number' && typeof e.output === 'number'
+                && e.input > 0 && e.output > 0;
+    const blank  = e.input === null && e.output === null;
+    if (e.free === true  && blank)  return 'free';
+    if (e.free === false && priced) return 'paid';
+    return null;
+  };
+  const paidEntries = everyEntry.filter(x => classifyPricePosture(x.e) === 'paid');
+  const freeEntries = everyEntry.filter(x => classifyPricePosture(x.e) === 'free');
+  const unclassifiable = everyEntry.filter(x => classifyPricePosture(x.e) === null);
+  ok(unclassifiable.length === 0,
+    `§11 every catalogue entry is either priced or flagged free — ${paidEntries.length} paid, ${freeEntries.length} free, ${unclassifiable.length} unclassifiable` +
+    (unclassifiable.length
+      ? ` — ${unclassifiable.map(x => `"${x.e.id}" (free=${JSON.stringify(x.e.free)}, input=${JSON.stringify(x.e.input)}, output=${JSON.stringify(x.e.output)})`).join('; ')}`
+      : ''));
+  // ── CONTROL: the classifier can genuinely refuse ───────────────────────
+  // Without this, the assertion above is indistinguishable from the tautology
+  // it replaces. Each probe is a shape a real defect would produce.
+  for (const [probe, why] of [
+    [{ id: 'p1', free: true,  input: 1,    output: 5 },    'a FREE flag next to a real price (the stale-money shape)'],
+    [{ id: 'p2', free: false, input: null, output: null }, 'a PAID flag with no price at all'],
+    [{ id: 'p3',              input: 1,    output: 5 },    'no `free` flag reported at all'],
+    [{ id: 'p4', free: 'yes', input: null, output: null }, 'a non-boolean `free` flag'],
+    [{ id: 'p5', free: false, input: 0,    output: 0 },    'the truthy {0,0} price pair v3.3.0 names'],
+  ]) {
+    ok(classifyPricePosture(probe) === null,
+      `§11 CONTROL — the posture classifier REFUSES ${why}, so the count above is a measurement and not arithmetic`);
+  }
+  // …and admits the two legal shapes, so it is not refusing everything.
+  ok(classifyPricePosture({ free: false, input: 0.1, output: 0.4 }) === 'paid',
+    '§11 CONTROL — …while a genuinely priced entry still classifies as paid');
+  ok(classifyPricePosture({ free: true, input: null, output: null }) === 'free',
+    '§11 CONTROL — …and a genuinely free entry still classifies as free');
+  ok(paidEntries.length > 0, '§11 there is at least one PAID entry to price against');
+  for (const { e } of freeEntries) {
+    ok(e.input === null && e.output === null,
+      `§11 "${e.id}" is flagged free and carries a NULL price, never 0 — a truthy zero would re-arm v3.3.0's inert budget cap`);
+  }
+
+  const ANY = ALL_PROVIDERS;
   const OFF = rawFull();
   const ctx = { offerable: OFF, availableProviders: ANY, activeProvider: 'gemini' };
   const msg = (model, usage, extra) =>
@@ -1249,12 +1749,40 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
 
   // ── §11.1  THE MIRROR IS MEASURED, NOT PROMISED ─────────────────────────
   {
-    let checked = 0;
+    // ── THE FIXTURE THAT NEUTERED THE BRANCH CARRYING THE BUG ─────────────
+    // Every call below used to pass `{ items: [], estimate: null }`. That is
+    // the ONE job shape in which chargeForItem's estimate branch is inert:
+    // `perFileHigh` falls back to 0, `plannedCount` to 1, so the branch always
+    // returned `0 / 1 = 0`. A model that fell through to it — which is exactly
+    // what a FREE model did, because getModelPrice returns null for it by
+    // design — could have been charged an arbitrarily large phantom share and
+    // this 126-case exact-dollar mirror, the guard this repo trusts most on
+    // money, could NEVER have gone red. Measured live at $0.14 on a one-file
+    // batch with `spendIsEstimated: true`, for a model that bills nothing.
+    //
+    // So the job fixture now carries a REAL estimate and REAL items. The
+    // priced arithmetic is unaffected by either field (it returns before
+    // reaching them), so the equality assertions below are unchanged in
+    // meaning — but the estimate branch is now live, and §11.1b can measure it.
+    const JOB = () => ({
+      items: [{ status: 'done' }, { status: 'done' }, { status: 'skipped' }],
+      estimate: { usdHigh: 0.42 },
+    });
+    let checked = 0, freeChecked = 0;
     for (const { e } of everyEntry) {
       for (const u of USAGES) {
         const mine = messageCostUsd(msg(e.id, u), ctx);
-        const theirs = chargeForItem({ items: [], estimate: null },
-          { tokenUsage: Object.assign({ model: e.id }, u) });
+        const theirs = chargeForItem(JOB(), { tokenUsage: Object.assign({ model: e.id }, u) });
+        if (e.free === true) {
+          // A free entry is the SECOND deliberate divergence (see §11.1b).
+          // The property that protects money holds either way and is asserted
+          // here: neither side may ever invent a POSITIVE charge for a model
+          // that bills nothing.
+          freeChecked++;
+          if (theirs !== 0) ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: chargeForItem charged ${theirs} for a FREE model`);
+          if (!(mine === null || mine === 0)) ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: the view produced ${mine} for a FREE model`);
+          continue;
+        }
         if (mine !== theirs) {
           ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: mirror ${mine} !== chargeForItem ${theirs}`);
         }
@@ -1262,7 +1790,10 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
       }
     }
     ok(true, `§11.1 the view's arithmetic equals the REAL chargeForItem exactly, ` +
-      `over ${checked} (model × token-shape) cases generated from the live catalogue`);
+      `over ${checked} PAID (model × token-shape) cases generated from the live catalogue` +
+      (freeChecked ? `, plus ${freeChecked} FREE cases held to the zero-or-absent rule (§11.1b)` : ''));
+    ok(checked > 100 && freeChecked > 0,
+      `§11.1 both arms are populated — ${checked} paid, ${freeChecked} free — so neither is passing by covering nothing`);
     // The ONE deliberate divergence, asserted so it is a decision on the record
     // rather than a gap: chargeForItem prices the sentinel as 0 (correct for a
     // running spend total, where 0 is the neutral element); the view refuses to
@@ -1270,7 +1801,7 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     // beside a paid answer is a lie).
     {
       const probeId = everyEntry[0].e.id;
-      const theirs = chargeForItem({ items: [], estimate: null },
+      const theirs = chargeForItem(JOB(),
         { tokenUsage: Object.assign({ model: probeId }, SENTINEL) });
       ok(theirs === 0, '§11.1 chargeForItem prices the {0,0,0,0} sentinel as 0');
       ok(messageCostUsd(msg(probeId, SENTINEL), ctx) === null,
@@ -1280,7 +1811,7 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     // is not "both returned undefined".
     const probe = everyEntry[0].e;
     const u0 = USAGES[0];
-    const real = chargeForItem({ items: [], estimate: null },
+    const real = chargeForItem(JOB(),
       { tokenUsage: Object.assign({ model: probe.id }, u0) });
     ok(typeof real === 'number' && real > 0,
       `§11.1 control — chargeForItem returns a real positive charge (${real})`);
@@ -1288,10 +1819,100 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
       '§11.1 control — the equality check would notice a doubled figure');
   }
 
+  // ── §11.1b  A FREE MODEL CHARGES A TRUE ZERO, AND NOT AN ESTIMATE ───────
+  // THE BUG THIS SECTION EXISTS FOR, measured live: `getModelPrice()` returns
+  // null for a free model BY DESIGN (a `{0,0}` price is truthy and would make
+  // the ingest budget cap inert — v3.3.0), so before the fix a free model fell
+  // past the priced branch into the ESTIMATE branch and was charged a full
+  // share of `estimate.usdHigh` — $0.14 on a one-file batch — while setting
+  // `spendIsEstimated: true`. A spend surface reporting money that was never
+  // spent, which is the exact class v3.14.0 exists to eliminate.
+  //
+  // Severity is BATCH-SIZE-DEPENDENT, not a constant: the charge is
+  // `usdHigh / plannedCount`, so a larger batch charges each item less and
+  // charges EVERY item — the TOTAL still converges on the whole phantom
+  // `usdHigh`. So the assertions below are on the total across a batch, not on
+  // one item, which would understate it.
+  {
+    const FREE = freeEntries[0] && freeEntries[0].e;
+    ok(!!FREE, `§11.1b fixture: the live catalogue contains a free model (${FREE && FREE.id})`);
+    if (FREE) {
+      const usdHigh = 0.42;
+      // Three ITEMS, one skipped — so plannedCount is 2 and the per-item share
+      // is a real, non-zero number. This is the fixture shape that used to be
+      // `{ items: [], estimate: null }`, in which the branch was inert.
+      const mkJob = () => ({
+        items: [{ status: 'done' }, { status: 'done' }, { status: 'skipped' }],
+        estimate: { usdHigh },
+      });
+      const usage = (model) => ({ tokenUsage: Object.assign({ model }, USAGES[0]) });
+
+      // FIXTURE SELF-CHECK — the branch is genuinely live. Drive it with a
+      // model that has NO price and is NOT free: it must take the estimate
+      // share, and that share must be a real positive number. Without this the
+      // whole section could pass over a branch that still returns 0/1.
+      {
+        const j = mkJob();
+        const share = chargeForItem(j, usage('zz-unpriced-and-not-free'));
+        ok(share > 0 && Math.abs(share - usdHigh / 2) < 1e-12,
+          `§11.1b fixture self-check: the ESTIMATE branch is live and returns usdHigh/plannedCount ($${share}) — the old { items: [], estimate: null } fixture returned 0 here, which is what made this whole guard unable to fail`);
+        ok(j.spendIsEstimated === true,
+          '§11.1b fixture self-check: …and it flags the figure as ESTIMATED, as it should for a genuinely unpriced model');
+      }
+
+      // THE ASSERTION. A free model charges zero, per item…
+      const j = mkJob();
+      const per = chargeForItem(j, usage(FREE.id));
+      ok(per === 0,
+        `§11.1b a FREE model charges exactly 0 per item, even with a live estimate on the job (got ${per})`);
+      // …and, the number that actually matters, ZERO ACROSS THE WHOLE BATCH.
+      let total = 0;
+      for (let i = 0; i < 2; i++) total += chargeForItem(j, usage(FREE.id));
+      ok(total === 0,
+        `§11.1b …and 0 across the whole batch (got $${total}); the pre-fix behaviour converged on the full phantom $${usdHigh}`);
+      // ZERO-FOR-FREE IS A MEASUREMENT, NOT AN ESTIMATE. The flag is what tells
+      // a reader whether to trust the figure, and it is sticky — once set it is
+      // never reset — so flipping it here would print "approx. $0.00" over an
+      // exact number AND poison every later item in the job.
+      ok(j.spendIsEstimated !== true,
+        '§11.1b …without setting spendIsEstimated — zero-for-free is known from membership, not inferred');
+      // A PRICED item later in the SAME job must still charge normally, so the
+      // free branch is a per-item decision and not a job-wide switch.
+      const paidId = paidEntries[0].e.id;
+      const paidCharge = chargeForItem(j, usage(paidId));
+      ok(paidCharge > 0,
+        `§11.1b a PAID item in the same batch still charges for real ($${paidCharge}) — free is decided per item, not per job`);
+      // MEMBERSHIP BEATS ANY PRICE THAT MIGHT EVER BE TYPED. The free check
+      // runs ahead of the priced branch deliberately: today
+      // defineOfferableModel refuses to register a price for a free model so
+      // the two cannot disagree, but if they ever did, free must win.
+      ok(getModelPrice(FREE.id) === null,
+        `§11.1b getModelPrice("${FREE.id}") returns null — a free model is recorded by MEMBERSHIP, never by a zero price`);
+      ok(isFreeModel(FREE.id) === true,
+        '§11.1b …and isFreeModel is the predicate that decides it');
+      // The DIVERGENCE, recorded rather than left as a gap: the view returns
+      // null (renders nothing) where chargeForItem returns 0. Both refuse to
+      // invent a positive charge, which is the property that protects money.
+      // Whether the composer SHOULD say "free" on a free answer's eyebrow —
+      // the menu already does — is a design question for the view's owner and
+      // is reported, not silently pinned either way here.
+      const viewSaid = messageCostUsd(msg(FREE.id, USAGES[0]), ctx);
+      ok(viewSaid === null || viewSaid === 0,
+        `§11.1b the view never invents a positive per-answer cost for a free model (got ${viewSaid})`);
+      ok(assistantCostHtml(msg(FREE.id, USAGES[0]), ctx) === '' ||
+         /free/i.test(assistantCostHtml(msg(FREE.id, USAGES[0]), ctx)),
+        '§11.1b …and its eyebrow either says nothing or says "free" — never a dollar figure');
+      ok(!/\$0\.00/.test(assistantCostHtml(msg(FREE.id, USAGES[0]), ctx)),
+        '§11.1b …and specifically never "$0.00", which is the string reserved for a value we were not told');
+    }
+  }
+
   // ── §11.2  PRICED BY THE SERVED MODEL, NEVER THE REQUESTED ONE ──────────
   {
     // Two entries with genuinely different prices, taken from the real table.
-    const sorted = everyEntry.slice().sort((a, b) => a.e.input - b.e.input);
+    // paidEntries, not everyEntry: a free entry's null price sorts first and
+    // has no figure to compare.
+    const sorted = paidEntries.slice().sort((a, b) => a.e.input - b.e.input);
     const CHEAP = sorted[0].e;
     const DEAR = sorted[sorted.length - 1].e;
     ok(DEAR.input > CHEAP.input,
@@ -1447,7 +2068,9 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
   // ── §11.6  A TINY NON-ZERO COST NEVER READS AS FREE ─────────────────────
   {
     // The measured real case: a one-word turn on the cheapest model.
-    const CHEAPEST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
+    // The cheapest PAID model. A free one has no cost to under-render, so it
+    // cannot exercise "a tiny non-zero cost must not read as free".
+    const CHEAPEST = paidEntries.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
     const tiny = { inputTokens: 8, outputTokens: 2, cachedReadTokens: 0, cacheWriteTokens: 0 };
     const usd = messageCostUsd(msg(CHEAPEST.id, tiny), ctx);
     ok(usd > 0 && usd < 0.00005,

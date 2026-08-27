@@ -513,11 +513,55 @@ section('10. D — the onUsage contract (observability must not affect correctne
   // BOTH branches, and BEFORE the truncation check — a truncated response is a
   // call that ran and was billed.
   const llm = readFileSync(path.join(ROOT, 'src/brain/llm.js'), 'utf8');
-  eq((llm.match(/reportUsage\(opts\.onUsage/g) || []).length, 2, 'reportUsage is called on both provider branches');
-  ok(llm.indexOf("reportUsage(opts.onUsage, {\n      provider: 'gemini'") < llm.indexOf('const finishReason'),
-    'gemini reports usage BEFORE the MAX_TOKENS truncation check');
-  ok(llm.indexOf("provider: 'anthropic'") < llm.indexOf("if (message.stop_reason === 'max_tokens')"),
-    'anthropic reports usage BEFORE the max_tokens truncation check');
+  // ── ONE reportUsage PER PROVIDER BRANCH, each BEFORE its truncation check ──
+  // This pinned `2` for two releases and it was right while llm.js could
+  // dispatch to exactly two providers. v3.15.0 adds a third, so the literal is
+  // EXTENDED, not deleted — and extended by DERIVING it from KNOWN_PROVIDERS
+  // rather than by re-typing `3`. The rule the pin exists to enforce is "every
+  // provider branch reports what it was billed", and a hardcoded number cannot
+  // say that: it goes red when a fourth provider lands (good) but it goes red
+  // identically whether that provider reports usage or not (useless).
+  //
+  // WHY IT MATTERS THAT NO BRANCH IS MISSED: an unreported branch spends real
+  // money invisibly. The ingest queue's running total, the per-answer cost line
+  // and `spendIsEstimated` all derive from these callbacks, so a provider that
+  // never fires one bills the user while every readout says $0 — which is
+  // v3.14.0's `{0,0,0,0}` sentinel defect reached through a different door.
+  const usageBranches = [...llm.matchAll(/reportUsage\(opts\.onUsage,\s*\{\s*\n\s*provider:\s*'([a-z]+)'/g)]
+    .map(m => m[1]);
+  const { KNOWN_PROVIDERS } = llmTesting;
+  eq((llm.match(/reportUsage\(opts\.onUsage/g) || []).length, KNOWN_PROVIDERS.length,
+    `reportUsage is called on every provider branch (${KNOWN_PROVIDERS.length} known providers: ${KNOWN_PROVIDERS.join(', ')})`);
+  eq([...usageBranches].sort().join(','), [...KNOWN_PROVIDERS].sort().join(','),
+    'each reportUsage call names a DISTINCT known provider — no branch reports under another branch\'s name');
+
+  // Per-provider ordering: usage is reported BEFORE the truncation check,
+  // because a truncated response is a call that ran and WAS BILLED.
+  //
+  // COMPLETENESS GUARD. The tokens below are hand-written per provider, which
+  // is the hardcoded-list shape that has twice made a suite in this repo CRASH
+  // (or silently skip) instead of failing when a new member appeared. So the
+  // table is checked against KNOWN_PROVIDERS first and emits a NAMED FAILING
+  // ASSERTION for any provider it does not cover — a fourth provider added to
+  // llm.js without its truncation token added here fails LOUDLY here rather
+  // than sailing past an assertion that never ran.
+  const TRUNCATION_CHECK_BY_PROVIDER = {
+    gemini:     "const finishReason",
+    anthropic:  "if (message.stop_reason === 'max_tokens')",
+    openrouter: "if (res.finishReason === 'length')",
+  };
+  for (const p of KNOWN_PROVIDERS) {
+    ok(Object.hasOwn(TRUNCATION_CHECK_BY_PROVIDER, p),
+      `COMPLETENESS: provider "${p}" has a truncation-check token declared in this suite (add one when you add a provider)`);
+  }
+  for (const [p, token] of Object.entries(TRUNCATION_CHECK_BY_PROVIDER)) {
+    const usageAt = llm.search(new RegExp(`reportUsage\\(opts\\.onUsage,\\s*\\{\\s*\\n\\s*provider:\\s*'${p}'`));
+    const checkAt = llm.indexOf(token);
+    ok(usageAt !== -1, `${p}: its reportUsage call is present in llm.js`);
+    ok(checkAt !== -1, `${p}: its truncation check (${token}) is present in llm.js`);
+    ok(usageAt !== -1 && checkAt !== -1 && usageAt < checkAt,
+      `${p} reports usage BEFORE its truncation check (a truncated response is a call that was billed)`);
+  }
   ok(/callProvider\(provider, candidate, systemPrompt, userPrompt, maxTokens, responseFormat, opts\)/.test(llm),
     'opts reaches every fallback-chain rung, so total real spend is visible');
   ok(/return await callLLM\(systemPrompt, userPrompt, maxTokens, responseFormat, providerOverride, callOpts\)/.test(llm),

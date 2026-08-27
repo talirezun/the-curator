@@ -24,7 +24,7 @@
  * the thing they guard moved underneath them.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -592,6 +592,166 @@ section('§10  Structural invariants');
 
   // config.js must not import llm.js (cycle), so validation cannot live there.
   ok(!/from '\.\/llm\.js'/.test(cfgSrc), 'config.js does not import llm.js — no import cycle');
+
+  // ── THE CONSEQUENCE OF THAT ANTI-CYCLE RULE (v3.15.0) ─────────────────────
+  //
+  // Because config.js may not import llm.js, it cannot decide for itself
+  // whether a provider has a model that can BUILD a wiki. So `setApiKeys`
+  // takes an INJECTED predicate — `opts.canActivate(provider)` — and, with no
+  // predicate supplied, ACTIVATES NOTHING. That default is fail-safe by
+  // design, and both failure directions were weighed at the definition site:
+  //
+  //   • forget the predicate  -> the key saves but does not become active.
+  //     Annoying, VISIBLE, undone by one click on the Set-active control.
+  //   • activate a provider that cannot build -> ingest, Health and Compile
+  //     all throw on the next call with NOTHING on screen, because the route
+  //     swallows getProviderInfo()'s throw in a catch commented "no key
+  //     configured yet" — while a key IS configured. That is the v3.15.0 P0:
+  //     a user with a WORKING Gemini install who merely SAVED an OpenRouter
+  //     key lost the entire build lane.
+  //
+  // BOTH REGRESSIONS ARE SILENT, which is why they need a guard rather than a
+  // comment. A caller that never passes the predicate quietly stops honouring
+  // last-saved-wins (a working feature dies with no error); a caller that has
+  // the predicate REMOVED re-arms the P0. Neither throws, neither logs.
+  //
+  // WHY A WHOLE-TREE WALK AND NOT A SCAN OF routes/config.js. Today that file
+  // holds the only production caller — verified, and re-verified mechanically
+  // below. But the entire point of the guard is the caller that does not exist
+  // yet, and a scan pinned to one filename is blind to exactly that. Same
+  // approach as test-next-chat-compile.js, which pins that exactly one
+  // POST /api/domains call site exists anywhere under its tree.
+  //
+  // DELIBERATELY NOT EXTENDED TO `setActiveProvider`, and this is not an
+  // oversight. Its default is the OPPOSITE (absent predicate => allow) because
+  // it backs an explicit user click, where a silent no-op reads as a dead
+  // button; POST /api-keys/active returns a 400 with a reason instead. Three
+  // LIVE suites call it with no opts and depend on that. Do not "fix" the
+  // asymmetry into symmetry — it is load-bearing in both directions.
+  {
+    // Production trees only. `scripts/` is excluded because a test may
+    // legitimately drive the raw seam (test-paths.js probes the domains-dir
+    // override; this suite's sibling seeds an isolated config), and
+    // src/brain/config.js is excluded because it DEFINES the function.
+    const SKIP_DIRS = new Set(['node_modules', '.git', 'scripts', 'domains',
+                               '.knowledge-git', 'Design', 'coverage', 'dist', 'build']);
+    const DEFINITION_FILE = path.join(ROOT, 'src/brain/config.js');
+
+    function walkJs(dir, out = []) {
+      let entries;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walkJs(full, out); }
+        else if (e.name.endsWith('.js') || e.name.endsWith('.mjs')) out.push(full);
+      }
+      return out;
+    }
+
+    /**
+     * Extract the FULL argument text of a call, by paren depth rather than by
+     * `([^)]*)`. That single-line form breaks on a multi-line call and on any
+     * nested parenthesis — and a call site it cannot read is precisely where a
+     * missing predicate would hide.
+     *
+     * Returns null when it cannot find a balanced close paren, and the caller
+     * turns that into a NAMED FAILURE. Unparseable is never a silent skip.
+     *
+     * String- and comment-aware, because an apostrophe or a `)` inside a
+     * message string would otherwise unbalance the count.
+     */
+    function extractCallArgs(src, openIdx, cap = 4000) {
+      let depth = 0, i = openIdx;
+      let str = null, esc = false, line = false, block = false;
+      const end = Math.min(src.length, openIdx + cap);
+      for (; i < end; i++) {
+        const c = src[i], n = src[i + 1];
+        if (line) { if (c === '\n') line = false; continue; }
+        if (block) { if (c === '*' && n === '/') { block = false; i++; } continue; }
+        if (str) {
+          if (esc) { esc = false; continue; }
+          if (c === '\\') { esc = true; continue; }
+          if (c === str) str = null;
+          continue;
+        }
+        if (c === '/' && n === '/') { line = true; i++; continue; }
+        if (c === '/' && n === '*') { block = true; i++; continue; }
+        if (c === '"' || c === "'" || c === '`') { str = c; continue; }
+        if (c === '(') depth++;
+        else if (c === ')') { depth--; if (depth === 0) return src.slice(openIdx + 1, i); }
+      }
+      return null; // unbalanced, or longer than the cap -> the caller FAILS
+    }
+
+    // Find every call site outside the definition file, across the whole
+    // production tree. Matches `setApiKeys(` and any qualified form
+    // (`cfg.setApiKeys(`, `configModule.setApiKeys(`), so a namespace import
+    // cannot evade it.
+    const callSites = [];
+    let unparseable = [];
+    const visited = walkJs(ROOT);
+    for (const file of visited) {
+      if (file === DEFINITION_FILE) continue;
+      const src = readFileSync(file, 'utf8');
+      const re = /(?:^|[^A-Za-z0-9_$.])(?:[A-Za-z0-9_$]+\s*\.\s*)?setApiKeys\s*\(/g;
+      let m;
+      while ((m = re.exec(src)) !== null) {
+        const openIdx = src.indexOf('(', m.index + m[0].length - 1);
+        const args = extractCallArgs(src, openIdx);
+        const rel = path.relative(ROOT, file);
+        if (args === null) unparseable.push(`${rel}@${m.index}`);
+        else callSites.push({ file: rel, args });
+      }
+    }
+
+    // NON-VACUITY, both halves. A walk that visits nothing, or a matcher that
+    // finds nothing, would pass every requirement below by finding no work.
+    ok(visited.length > 20 && visited.some(f => f.endsWith(path.join('src', 'routes', 'config.js'))),
+      `the walk actually visited the production tree (${visited.length} .js/.mjs files, including src/routes/config.js)`);
+    ok(callSites.length >= 1,
+      `at least one production setApiKeys(...) call site was FOUND — found ${callSites.length}: ${JSON.stringify(callSites.map(c => c.file))}`);
+    // Unparseable is a FAILURE naming the file, never a skip.
+    eq(unparseable.length, 0,
+      `every setApiKeys(...) call site parsed to a balanced argument list${unparseable.length ? ` — UNPARSEABLE: ${unparseable.join(', ')}` : ''}`);
+
+    for (const c of callSites) {
+      ok(/\bcanActivate\s*:/.test(c.args),
+        `${c.file}: setApiKeys(...) passes canActivate — without it the save NEVER activates, silently killing last-saved-wins; with it removed, the v3.15.0 P0 (a saved OpenRouter key deactivating the build lane) is re-armed`);
+    }
+
+    // ── NEGATIVE CONTROLS, driven through the REAL extractor + predicate ──────
+    // Not a hand-written boolean: the same two functions the loop above uses,
+    // so a bug in either is caught here rather than making the loop vacuous.
+    {
+      const bare = 'const r = setApiKeys(update);';
+      const bareArgs = extractCallArgs(bare, bare.indexOf('('));
+      eq(bareArgs, 'update', 'control: the extractor reads a bare single-argument call');
+      ok(!/\bcanActivate\s*:/.test(bareArgs),
+        'CONTROL: a bare `setApiKeys(update)` FAILS the requirement — the assertion above can go red');
+
+      // Multi-line + nested parens + a `)` and an apostrophe inside a string:
+      // the exact shapes a `([^)]*)` regex silently truncates or mis-reads.
+      const hard = [
+        'const { skippedActivation } = setApiKeys(update, {',
+        "  // a comment with a stray ) paren",
+        "  label: 'it\\'s fine (really)',",
+        '  canActivate: (p) => providerCanBuild(p, getProviderInfo(p)),',
+        '});',
+      ].join('\n');
+      const hardArgs = extractCallArgs(hard, hard.indexOf('('));
+      ok(hardArgs !== null, 'control: the extractor survives a multi-line call with nested parens, a comment and a quoted apostrophe');
+      ok(/\bcanActivate\s*:/.test(hardArgs || ''),
+        'control: and still SEES canActivate in that hard case (a single-line [^)]* regex truncates at the first inner paren and would miss it)');
+      const naive = /setApiKeys\(([^)]*)\)/.exec(hard);
+      ok(naive && !/\bcanActivate\s*:/.test(naive[1]),
+        'control: the naive single-line regex DOES miss it on that same input — which is why the extractor exists');
+
+      // An unbalanced call must be reported, never treated as compliant.
+      eq(extractCallArgs('setApiKeys(update, { canActivate: f', 'setApiKeys('.length - 1), null,
+        'control: an unbalanced call site returns null, which the loop turns into a NAMED failure rather than a silent pass');
+    }
+  }
   // Comments stripped first, deliberately — the same trap test-chat-model.js
   // records: config.js's own docblock NAMES OFFERABLE_MODELS to explain where
   // validation does live, and a guard that reds on prose describing the
@@ -602,9 +762,66 @@ section('§10  Structural invariants');
   ok(/OFFERABLE_MODELS|isOfferableModel/.test(cfgCode + '\nif (!isOfferableModel(p, m)) return null;'),
     'control: that no-copy guard detects a planted allow-list check in config.js');
 
-  // The allow-list has exactly one implementation.
-  const impls = (llmSrc.match(/OFFERABLE_MODELS\[provider\]\.some/g) || []).length;
-  eq(impls, 1, 'isOfferableModel is the ONE implementation of the allow-list scan in llm.js');
+  // ── The allow-list has exactly ONE implementation ─────────────────────────
+  // The RULE is unchanged and is more load-bearing now than when it was
+  // written: exactly one array scan decides membership in the offerable
+  // catalogue. What changed in v3.15.0 is the SHAPE that expresses it. It used
+  // to read `OFFERABLE_MODELS[provider].some(...)`; OpenRouter's catalogue is
+  // populated at runtime, so the static table is a PARTIAL view for that
+  // provider and the scan now runs over the `listOfferableModels(provider)`
+  // accessor instead.
+  //
+  // The pin is therefore WIDENED, never softened: it counts BOTH shapes, so a
+  // regression to the old direct-table form is caught as well as a second copy
+  // of the new one. It also counts `.find` / `.filter` / `.includes` /
+  // `.indexOf`, because "one scan" is about the number of membership decisions,
+  // not about which array method spells them.
+  //
+  // COMMENTS ARE STRIPPED FIRST, and that is not tidiness — measured, the raw
+  // source matches TWICE and the executable source matches ONCE, because
+  // llm.js's own docblock on `isBuildLaneModel` explains the rule by quoting
+  // the very expression it forbids ("A second `listOfferableModels(...).find(...)`
+  // here would be a hand-maintained copy"). A guard that reds on the prose
+  // describing the invariant gets "fixed" by deleting the explanation. This is
+  // the same trap already recorded 10 lines above for config.js.
+  const CATALOGUE_SCAN_RE =
+    /(?:OFFERABLE_MODELS\s*\[[^\]]*\]|listOfferableModels\s*\([^)]*\))\s*\.\s*(?:some|find|findIndex|filter|includes|indexOf)\s*\(/g;
+  const llmCode = llmSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const impls = (llmCode.match(CATALOGUE_SCAN_RE) || []).length;
+  eq(impls, 1, 'exactly ONE allow-list scan over the offerable catalogue exists in llm.js');
+  // Negative controls — both shapes must be detectable, or the widening above
+  // is decoration. Planted separately so a regex that only sees the new form
+  // (i.e. that silently stopped guarding against the old one) still reds.
+  eq((`${llmCode}\nreturn OFFERABLE_MODELS[provider].some(m => m.id === id);`.match(CATALOGUE_SCAN_RE) || []).length, 2,
+    'control: a planted SECOND scan in the OLD direct-table shape is detected');
+  eq((`${llmCode}\nreturn listOfferableModels(provider).find(e => e.id === id);`.match(CATALOGUE_SCAN_RE) || []).length, 2,
+    'control: a planted SECOND scan in the NEW accessor shape is detected');
+
+  // ── The lane check must SHARE that one scan, not open a second front ──────
+  // `isBuildLaneModel` (v3.15.0) is a second question asked of the same entry:
+  // "may the user pick this at all" vs "may it build the wiki". If it did its
+  // own `listOfferableModels(...).find(...)` there would be two membership
+  // tests that can disagree — the v3.2.0 CRITICAL's shape, and here the
+  // disagreement would be a model that is refused for chat but accepted for
+  // ingest, or the reverse. Both functions must reach the catalogue through
+  // the one shared helper. llm.js's own comment claims "there is a standing
+  // offline guard against it"; this is that guard.
+  const helperUses = (llmCode.match(/findOfferableModel\s*\(/g) || []).length;
+  ok(helperUses >= 3,
+    `the shared findOfferableModel helper is defined once and called by both predicates (found ${helperUses} occurrences: 1 definition + >=2 call sites)`);
+  for (const fn of ['isOfferableModel', 'isBuildLaneModel']) {
+    const start = llmCode.indexOf(`export function ${fn}(`);
+    ok(start !== -1, `${fn} is exported from llm.js`);
+    const body = llmCode.slice(start, llmCode.indexOf('\n}', start) + 2);
+    ok(/findOfferableModel\s*\(/.test(body),
+      `${fn} reaches the catalogue through the shared findOfferableModel helper`);
+    // Fresh non-global regex per test: CATALOGUE_SCAN_RE carries /g, and
+    // `.test()` on a /g regex is STATEFUL (it advances lastIndex), so reusing
+    // it here would make the second loop iteration read from an arbitrary
+    // offset and pass for the wrong reason.
+    ok(!new RegExp(CATALOGUE_SCAN_RE.source).test(body),
+      `${fn} does NOT carry its own catalogue scan (one membership test, not two that can disagree)`);
+  }
 
   // The single 0600 atomic writer.
   const writers = (cfgSrc.match(/writeFileAtomicSync\(/g) || []).length;

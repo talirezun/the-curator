@@ -35,7 +35,7 @@ ESM). The app is loopback-only by design — see the Security note in
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (97 suites total — 80 OFFLINE
+The Curator has an extensive battle-test suite (98 suites total — 81 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
@@ -255,7 +255,7 @@ client to leak.
 **A new OFFLINE suite is deliberately temporary and must be deleted, not
 adapted, once its reason for existing is gone.** `src/public/next/**` is a
 parallel redesign frontend served at `/next` (see
-[docs/architecture.md § The `/next` redesign shell](docs/architecture.md#the-next-redesign-shell-parallel-frontend-not-user-facing)
+[docs/architecture.md § The redesigned shell](docs/architecture.md#the-redesigned-shell-srcpublicnext--the-primary-frontend-since-v390)
 for what it is and why it exists) that will eventually replace
 `src/public/app.js` outright. In the meantime,
 `src/public/next/shared/ingest-queue-logic.js` holds 13 pure batch-ingest

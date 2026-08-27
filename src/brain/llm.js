@@ -13,6 +13,57 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel } from './config.js';
+// RETRY_CLASSIFIER_TOKENS / MODEL_NOT_FOUND_CLAUSES are the census of message
+// substrings the recovery classifiers below key on. They are DECLARED in the
+// adapter, beside the neutralisers that must strip them, and imported here so
+// the load-time guard beside `is429`/`is503` can prove the two ends still agree.
+// The import direction is the only one available — the adapter has no imports
+// at all, so it cannot reach back into this file without forming a cycle.
+import {
+  OpenRouterAdapter,
+  RETRY_CLASSIFIER_TOKENS,
+  MODEL_NOT_FOUND_CLAUSES,
+} from './openrouter-adapter.js';
+
+/**
+ * The providers this module can dispatch to.
+ *
+ * ONE PREDICATE, NOT ELEVEN HAND-MAINTAINED COPIES. Before OpenRouter this file
+ * carried the literal test `provider !== 'gemini' && provider !== 'anthropic'`
+ * (and its ternary forms) in about a dozen places. Every one of them would have
+ * needed the same edit to admit a third provider, and the ones that were MISSED
+ * would not have failed loudly — they would have quietly resolved a third
+ * provider to the Anthropic arm of a binary ternary. That is exactly the
+ * `p.id === 'gemini' ? A : B` shape that produced the v3.10.1 credential bug,
+ * where a third provider's key would have been POSTed into the Anthropic slot
+ * and silently overwritten a real credential.
+ *
+ * Order is NOT precedence — precedence lives in resolveProviderDefault.
+ */
+const KNOWN_PROVIDERS = Object.freeze(['gemini', 'anthropic', 'openrouter']);
+
+/**
+ * Is this a provider this module can dispatch to?
+ *
+ * Membership is tested with `includes` over a frozen array of literals, so
+ * `'__proto__'`, `'constructor'` and `'toString'` are structurally unable to
+ * pass — there is no object indexed by the caller's string anywhere on this
+ * path (the v3.0.9 normalizeResponseStyle bug shape, closed by construction
+ * rather than by remembering to call Object.hasOwn).
+ */
+export function isKnownProvider(provider) {
+  return typeof provider === 'string' && KNOWN_PROVIDERS.includes(provider);
+}
+
+/** Human-facing provider name for error messages. Never used for dispatch. */
+function providerDisplayName(provider) {
+  switch (provider) {
+    case 'gemini':     return 'Gemini';
+    case 'anthropic':  return 'Claude';
+    case 'openrouter': return 'OpenRouter';
+    default:           return 'AI provider';
+  }
+}
 
 // DELIBERATELY UNCHANGED in the 2026-08-24 chain repair. Both ids were probed
 // live that day and both remain the CHEAPEST working model on their provider
@@ -39,6 +90,35 @@ const DEFAULTS = {
   // the normal case for the pinned default. Do not "simplify" parseJSON to a
   // bare JSON.parse without re-measuring this.
   anthropic: 'claude-haiku-4-5',
+  /**
+   * `DEFAULTS[provider]` is the model that ingest, Health and Compile run on,
+   * so this id is chosen on MEASURED reliability first and price second.
+   *
+   * Pinned 2026-08-27 after a live pass against this repo's real ingest outline
+   * prompt (see OFFERABLE_MODELS.openrouter for the method). solar-pro4 was
+   * 9/9 raw-parseable JSON with zero hidden reasoning tokens and a median of 23
+   * outline pages — the only candidate that was simultaneously clean, richly
+   * covering and reliably reachable.
+   *
+   * The two it beat, and why neither is the default:
+   *   • minimax/minimax-m3:free is FREE and covered slightly wider (median 21,
+   *     range 15-40), but free ids draw on a SHARED upstream pool. In the same
+   *     session four of its free siblings returned "temporarily rate-limited
+   *     upstream" on 8 of 8 polls. A default is what runs when the user has
+   *     chosen nothing, and it must not be a shared queue that can stall a
+   *     40-call multi-phase ingest. It stays offerable as a deliberate pick.
+   *   • ibm-granite/granite-4.0-h-micro is ~43% cheaper on input and equally
+   *     clean, but plans a median of 9 pages against solar-pro4's 23 on the
+   *     identical prompt. Halving outline coverage by default would degrade
+   *     every wiki built on it to save a fraction of a cent per call.
+   *
+   * Still an affordability win: $0.03/$0.12 per 1M tokens is roughly a third of
+   * gemini-2.5-flash-lite ($0.10/$0.40), previously the cheapest model here.
+   *
+   * Chat is a separate lane and is unaffected: it passes an explicit per-call
+   * model, so it never reads this value.
+   */
+  openrouter: 'upstage/solar-pro4',
 };
 
 /**
@@ -134,6 +214,187 @@ const GEMINI_MODEL_MAX_OUTPUT_TOKENS = {
   'gemini-3.5-flash':      65536,
 };
 Object.freeze(GEMINI_MODEL_MAX_OUTPUT_TOKENS);
+
+/**
+ * Per-model output ceilings for OpenRouter — EMPTY, and empty on purpose.
+ *
+ * OpenRouter publishes `top_provider.max_completion_tokens` per model (411 of
+ * 417 carry one; 6 are null), so a ceiling is READABLE for most ids. It is not
+ * hardcoded here because an OpenRouter id routes over rotating upstream hosts:
+ * the same id can be served by a different provider tomorrow, so a value frozen
+ * into this file is a snapshot of a fact that can move WITHOUT the id changing.
+ * Dynamically-admitted entries carry their own measured/read ceiling instead
+ * (see defineOfferableModel's `spec.maxOutput`).
+ */
+const OPENROUTER_MODEL_MAX_OUTPUT_TOKENS = Object.freeze({});
+
+/**
+ * The provider's output-cap map, or null for a provider we do not dispatch to.
+ *
+ * Replaces `provider === 'gemini' ? GEMINI_CAPS : ANTHROPIC_CAPS` — a BINARY
+ * ternary with no third arm and an unvalidated `provider`, which resolved every
+ * unknown provider to the Anthropic map. Harmless while a third provider was
+ * unreachable; a silent wrong answer the moment one existed.
+ */
+function capsFor(provider) {
+  switch (provider) {
+    case 'gemini':     return GEMINI_MODEL_MAX_OUTPUT_TOKENS;
+    case 'anthropic':  return ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS;
+    case 'openrouter': return OPENROUTER_MODEL_MAX_OUTPUT_TOKENS;
+    default:           return null;
+  }
+}
+
+/**
+ * ── PRICE POSTURE: a model must be PRICED or EXPLICITLY FREE ─────────────────
+ *
+ * `{input: 0, output: 0}` looks like the natural way to record a free model and
+ * is the single most dangerous shape available here. It is TRUTHY, so:
+ *   • `getModelPrice()` returns an object rather than null;
+ *   • the ingest estimator's `usdHigh` becomes 0;
+ *   • `createJob`'s budget guard ACCEPTS a `budgetUsd` it believes it can
+ *     enforce, then tracks spend at zero forever while every flag reports
+ *     success. That is v3.3.0's inert-cap defect re-armed — and worse, because
+ *     there the number at least moved.
+ *   • `compareModelCost` answers 'similar' instead of 'unknown', so the
+ *     fallback banner asserts parity it has not established.
+ *
+ * So a free model is recorded by MEMBERSHIP here, never by a zero price, and
+ * `getModelPrice()` keeps returning **null** for it. That part is right and is
+ * the whole design.
+ *
+ * ⚠ THIS BLOCK ONCE CLAIMED "every downstream consequence of that null is
+ * already implemented and already correct", and named three. ALL THREE WERE
+ * WRONG. Nobody noticed until the first free model was actually admitted to the
+ * catalogue and the paths were EXECUTED — which is the entire argument for
+ * shipping a free model rather than reasoning about one:
+ *
+ *   1. `chargeForItem` did NOT merely flip `spendIsEstimated`. Falling past the
+ *      priced branch, it returned `estimate.usdHigh / plannedCount` — an
+ *      INVENTED figure, measured at $0.14 for a model that bills nothing, and
+ *      identical for every token shape including the {0,0,0,0} sentinel,
+ *      because it is decoupled from usage entirely. Now guarded by
+ *      `isFreeModel` BEFORE the priced branch: a free model charges a true 0
+ *      and the flag stays false, because zero-for-free is a MEASUREMENT, not an
+ *      estimate.
+ *   2. `createJob` refusing a dollar cap on a free model was not "meaningless",
+ *      it was actively LESS SAFE. The refusal is a 400, so the user retries
+ *      with NO cap — and if the run then walks onto a priced fallback rung they
+ *      have no protection at all. A cap is now accepted for a free model: it
+ *      sits trivially unreached while the model is free and engages for real
+ *      the moment a priced model answers. An unpriced NON-free model is still
+ *      refused.
+ *   3. The cost readouts did NOT "render nothing". The chat composer rendered
+ *      "price unavailable" and Settings rendered blank — both claiming we do
+ *      not know a price we know exactly. `free: true` was on the wire and read
+ *      by nobody: this repo's dead-data shape, sixth instance.
+ *
+ * The v3.14.0 rule still governs and is unchanged: a figure is reported or
+ * absent, NEVER inferred. Free is *reported* zero, which is why it may render
+ * as free and must never render as `$0.00`.
+ *
+ * DO NOT restore a summary sentence here asserting the downstream is "correct".
+ * State what is enforced and where, so the next reader can check it.
+ *
+ * IDENTIFY FREE BY THE `:free` SUFFIX, NEVER BY PRICE === 0. Measured on
+ * OpenRouter's live catalogue 2026-08-27: 17 ids carry `:free`, 20 are
+ * zero-priced, and the 3 zero-priced ids that are NOT `:free` are two audio
+ * models and `openrouter/free` — a ROUTER, whose real price is unknown until it
+ * has routed. Treating "price is 0" as "free" would admit a router with an
+ * unknowable bill.
+ *
+ * Membership is HAND-TYPED from the `:free` suffix on a model we measured, so
+ * that admitting one can never be done by typing a zero into the price table.
+ */
+const FREE_MODELS = Object.freeze(new Set([
+  // Measured live 2026-08-27 against the real buildOutlinePrompt (341,005 chars
+  // built from the real `articles` domain — 127,666-char index, 607 entities,
+  // 2,685 concepts, plus an 80,000-char source at ingest's own TEXT_CAP).
+  // 9 runs: 8 raw-clean JSON, 1 needing jsonrepair, 0 unrepairable, 15-40
+  // outline pages. Deliberately absent from MODEL_PRICES_USD_PER_MTOK so
+  // getModelPrice() keeps returning null for it.
+  'minimax/minimax-m3:free',
+]));
+
+/**
+ * Free ids admitted through `defineOfferableModel`, split by LIFETIME.
+ *
+ * `_dynamicFree` holds ids from OpenRouter's runtime catalogue and is on
+ * exactly the same lifecycle as `_dynamicPrices`: `setOpenRouterCatalogue`
+ * CLEARS it and rebuilds it, so a free registration can never outlive the offer
+ * it came with. That matters in the money-LOSING direction — an id that is free
+ * today and PAID in tomorrow's catalogue would otherwise keep `isFreeModel`
+ * true, and `chargeForItem` checks freeness first and returns a hard 0, so a
+ * real bill would be recorded as $0.00.
+ *
+ * `_staticFree` holds ids from the hand-typed table, which is built once at
+ * module load and never reloaded, so clearing it would silently un-free a
+ * shipped entry the first time a catalogue arrived. Two sets rather than one
+ * flag, because the two really do have different lifetimes.
+ *
+ * Neither replaces FREE_MODELS: that stays the hand-typed, MEASURED list, and
+ * it is what `isFreeModel` answers from for every shipped id.
+ */
+const _staticFree = new Set();
+const _dynamicFree = new Set();
+
+/**
+ * True for a model we know bills nothing. MEMBERSHIP, never a price test.
+ *
+ * ── ONE AUTHORITY, BECAUSE TWO DISAGREED ────────────────────────────────────
+ * `entry.free` (the flag every UI reads) and this function (what `chargeForItem`
+ * reads) were two independent derivations of one fact, bound by nothing.
+ * MEASURED with the real `chargeForItem` on an entry carrying `free: true`
+ * whose id was absent here: **$0.140000 charged, `spendIsEstimated: true`** —
+ * an invented figure for a model every surface in the app labelled "free",
+ * which is precisely the defect v3.15.0 shipped to close, arriving through a
+ * different door. And it was not a hypothetical maintainer slip: the runtime
+ * catalogue mints `free: true` for EVERY `:free` id OpenRouter publishes, and
+ * none of those are in the hand-typed set.
+ *
+ * They cannot disagree now because `defineOfferableModel` REGISTERS a
+ * dynamically-admitted free id here and then reads `entry.free` back OUT of
+ * this function — the flag is no longer derived in parallel, it is a copy of
+ * this answer. On the static path a mismatch is refused at module load instead.
+ */
+export function isFreeModel(modelId) {
+  if (typeof modelId !== 'string') return false;
+  return FREE_MODELS.has(modelId) || _staticFree.has(modelId) || _dynamicFree.has(modelId);
+}
+
+/**
+ * Register an id admitted through the offer factory as free.
+ *
+ * Gated on the `:free` SUFFIX — the project's OWN structural identification
+ * rule, stated in FREE_MODELS' docblock ("IDENTIFY FREE BY THE `:free` SUFFIX,
+ * NEVER BY PRICE === 0") and the same test `openrouter-adapter.js` uses to
+ * decide freeness in the first place. Measured there on the live catalogue:
+ * 17 ids carry `:free` while 20 are zero-priced, and the three zero-priced ids
+ * that are not `:free` include a ROUTER whose real bill is unknowable.
+ *
+ * The gate is load-bearing, not decorative, and it guards the one direction
+ * that LOSES money: without it a spec claiming `free: true` on a PAID id would
+ * make `isFreeModel` true and `chargeForItem` would return a hard 0 against a
+ * real invoice. Refusing here makes `defineOfferableModel`'s agreement check
+ * fail for such a spec, so the entry is dropped with a named reason instead of
+ * being admitted as a $0.00 lie.
+ */
+function registerFreeModel(modelId, { dynamic }) {
+  if (typeof modelId !== 'string' || !/:free$/.test(modelId)) return false;
+  (dynamic ? _dynamicFree : _staticFree).add(modelId);
+  return true;
+}
+
+/**
+ * A model has a KNOWN PRICE POSTURE when it is either priced or explicitly free.
+ * Anything else is a model whose bill we cannot describe, and
+ * `defineOfferableModel` refuses to build an entry for it.
+ */
+function hasKnownPricePosture(modelId, spec) {
+  if (spec && spec.free === true) return true;
+  if (spec && spec.price) return true;
+  return Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId) || isFreeModel(modelId);
+}
 
 /**
  * The output ceiling to clamp to for a given Anthropic model id.
@@ -237,6 +498,51 @@ const FALLBACK_CHAINS = {
     'claude-sonnet-4-6',            // $3/$15 — tie on price with 4.5, newer, 128k output
     'claude-sonnet-4-5',            // $3/$15 — oldest live rung, 64k output
   ],
+  /**
+   * A fallback chain picks FOR the user, silently, on the day their model
+   * disappears — so every rung must be a model we have measured and would be
+   * willing to spend their money on without asking. This chain has exactly one
+   * rung, and both the inclusion and the exclusions are deliberate.
+   *
+   * ibm-granite/granite-4.0-h-micro qualifies on all three counts: measured
+   * 9/9 raw-parseable JSON on the real ingest prompt, PAID (so its availability
+   * does not depend on a shared free queue), and CHEAPER than the default it
+   * backs up ($0.017/$0.112 vs $0.03/$0.12) — a net that cannot cost more than
+   * the thing it replaces. Its measured weakness is coverage, not correctness:
+   * a median of 9 outline pages against solar-pro4's 23. Degrading to a thinner
+   * plan is the right trade when the alternative is not ingesting at all, and
+   * it mirrors what the Gemini chain already does.
+   *
+   * ⚠ minimax/minimax-m3:free is offerable but is deliberately NOT a rung, and
+   * the reason is stated at the strength it was actually established.
+   *
+   * WHAT WAS OBSERVED: a `:free` id is gated by an OpenRouter ACCOUNT SETTING
+   * about free-model training — a request for one can be refused outright with
+   * "No endpoints found matching your data policy (Free model training)". So a
+   * free model's reachability, and the data-policy permission it is filed
+   * under, are not the same as a paid model's.
+   *
+   * WHAT WAS NOT ESTABLISHED, and is therefore NOT asserted here: whether free
+   * models REQUIRE that permission, and what OpenRouter's own retention policy
+   * is. This comment previously stated as fact that "free OpenRouter variants
+   * are free because their upstreams may train on the request" — the same claim
+   * `docs/user-guide.md` explicitly declines to make, saying it could not be
+   * verified. Two files in one repo disagreeing about a PRIVACY property is
+   * worse than either answer, and the confident one had no evidence behind it.
+   *
+   * The decision does not depend on the unverified half. A fallback walks the
+   * user onto a model they did not choose, silently, on the day their default
+   * dies; walking them from a paid id onto one whose availability turns on a
+   * data-policy toggle changes the terms their ingest runs under without them
+   * agreeing to it. A chain may degrade capability; it may not quietly move the
+   * request into a different data-handling regime.
+   *
+   * A chain is still narrower than it looks: every request carries
+   * `allow_fallbacks: false`, so OpenRouter itself cannot re-route us to an
+   * upstream we did not pick. This list is the ONLY substitution that can
+   * happen, which is why it is short and hand-checked.
+   */
+  openrouter: ['ibm-granite/granite-4.0-h-micro'],
 };
 
 /**
@@ -326,6 +632,28 @@ const MODEL_PRICES_USD_PER_MTOK = {
   'claude-opus-5':             { input: 5.00, output: 25.00 },
   'claude-opus-4-8':           { input: 5.00, output: 25.00 },
   'claude-opus-4-5':           { input: 5.00, output: 25.00 },
+
+  // ── OpenRouter (PAID entries only) ──
+  // Read verbatim from OpenRouter's public catalogue on 2026-08-27 and
+  // CROSS-CHECKED against the bill: `usage.cost` returned on every live call
+  // matched the figure these numbers produce to six decimal places
+  // (e.g. computed $0.001391 vs reported 0.001391284), which also settles the
+  // previously-unverified question of whether an OpenRouter credit is a USD
+  // cent. `pricing.prompt`/`.completion` are decimal STRINGS in USD PER TOKEN,
+  // so these are x1e6; typing the per-token figure here would under-price by a
+  // million.
+  //
+  // ⚠ Neither carries `pricing.overrides`, i.e. neither is tiered — verified on
+  // the live payload the same day. That is a precondition of build-lane
+  // admission, not a nicety: a tiered rate would under-state the bill on
+  // exactly the large ingests this lane produces.
+  //
+  // minimax/minimax-m3:free is DELIBERATELY ABSENT. It is free, it lives in
+  // FREE_MODELS, and `getModelPrice()` must keep returning null for it — an
+  // `{input: 0, output: 0}` entry here is truthy and would silently re-arm
+  // v3.3.0's inert budget cap.
+  'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
+  'upstage/solar-pro4':              { input: 0.03,  output: 0.12  },
 };
 
 // Frozen at definition: this table is exported through `__testing` for the
@@ -410,6 +738,14 @@ Object.freeze(PROMOTIONAL_PRICES);
  */
 export function resolveModelPrice(modelId, atMs = Date.now()) {
   if (typeof modelId !== 'string') return null;
+  // Dynamically-admitted models (the OpenRouter catalogue) carry their price on
+  // the registered entry rather than in the static table, because the static
+  // table's stated contract — and the offline invariant that enforces it — is
+  // "exactly the ids we ship in this release". Consulted BEFORE the static
+  // table only to keep the lookup a single expression; the two sets are
+  // disjoint by construction (registerDynamicPrice refuses a statically-priced
+  // id, so a dynamic entry can never shadow a hand-verified number).
+  if (_dynamicPrices.has(modelId)) return _dynamicPrices.get(modelId);
   if (!Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)) return null;
   const standard = MODEL_PRICES_USD_PER_MTOK[modelId];
   if (!Object.hasOwn(PROMOTIONAL_PRICES, modelId)) return standard;
@@ -427,6 +763,128 @@ export function resolveModelPrice(modelId, atMs = Date.now()) {
  */
 export function getModelPrice(modelId) {
   return resolveModelPrice(modelId, Date.now());
+}
+
+/**
+ * ── Prices for dynamically-admitted models ───────────────────────────────────
+ *
+ * OpenRouter's catalogue is 417 models and moves without our release process,
+ * so its chat-lane entries are admitted at RUNTIME from the provider's public
+ * API rather than hand-typed here. Their prices therefore cannot live in
+ * MODEL_PRICES_USD_PER_MTOK, whose contract (and whose offline invariant) is
+ * "no entries beyond the ids we actually ship in this release".
+ *
+ * They still have to be readable through `getModelPrice()`, because that one
+ * function is what every cost surface in the app calls — the ingest estimator,
+ * `chargeForItem`, `compareModelCost`, the chat cost line. A separate price
+ * lookup for one provider would be a second hand-maintained copy of the money
+ * path, which is this repo's named cause of the v3.2.0 CRITICAL.
+ *
+ * Populated ONLY through `setOpenRouterCatalogue`, so a price and an offer are
+ * admitted by the same call and cannot disagree. It is therefore empty until
+ * the first catalogue arrives and is REBUILT on every one after that — never
+ * "empty in this release", which is what this line used to say and which stops
+ * being true the moment the runtime overlay is fetched.
+ */
+const _dynamicPrices = new Map();
+
+/**
+ * Register a dynamic price. Refuses to shadow a statically-priced id, refuses a
+ * non-positive or non-finite figure, and freezes what it stores.
+ *
+ * A free model registers NOTHING: `getModelPrice()` must keep returning null for
+ * it (see FREE_MODELS), and storing `{input: 0, output: 0}` here is precisely the
+ * inert-budget-cap bug that posture exists to prevent.
+ */
+function registerDynamicPrice(modelId, price) {
+  if (typeof modelId !== 'string' || modelId.length === 0) return false;
+  if (Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, modelId)) return false;
+  if (!price || typeof price !== 'object') return false;
+  const { input, output } = price;
+  if (!Number.isFinite(input) || !Number.isFinite(output) || input <= 0 || output <= 0) return false;
+  _dynamicPrices.set(modelId, Object.freeze({ input, output }));
+  return true;
+}
+
+/**
+ * ── TIERED (long-context) PRICING — a flat price is a LIE for these models ────
+ *
+ * 60 of OpenRouter's 417 models carry `pricing.overrides`: the rate CHANGES
+ * above a prompt-token threshold. `anthropic/claude-sonnet-4.5` DOUBLES above
+ * 200,000 prompt tokens — $3→$6 in, $15→$22.50 out.
+ *
+ * WHY THIS IS WORSE THAN THE PROMOTIONAL-PRICE TRAP IT RESEMBLES. A promotion
+ * expires on a DATE, which is knowable in advance and resolvable by clock (see
+ * PROMOTIONAL_PRICES). A tier fires on the SIZE OF THE REQUEST — and the
+ * requests that cross it are exactly this app's large ingests, the ones where a
+ * user is spending most. A flat entry would quote half the real rate on the
+ * calls that cost the most, on a spend surface, and no ordering assertion would
+ * notice: the array order survives a doubling, this project's named "green over
+ * a wrong number" shape.
+ *
+ * HOW IT IS HANDLED IN THIS PASS — stated plainly rather than half-solved.
+ * The Curator's price model is a single `{input, output}` pair, and every
+ * consumer (`chargeForItem`, the estimator, `compareModelCost`, and the
+ * composer's MIRRORED copy of the charge formula that a 126-case suite pins to
+ * exact-dollar equality) assumes one rate per model. Threading a threshold
+ * through all of that is a money-path change that deserves its own release and
+ * its own proof.
+ *
+ * So: a model with tiered pricing is admitted for CHAT ONLY, structurally.
+ * `defineOfferableModel` REFUSES to build a 'general' or 'caution' entry for one.
+ * That is safe for the specific reason that chat's prompt is bounded and small —
+ * chat.js caps loaded content at 60 KB plus a 12 KB catalogue, on the order of
+ * 20k tokens, an order of magnitude under the lowest threshold seen (200k) — so
+ * the flat rate we quote for chat is the rate that is actually billed. The build
+ * lane, which is the only lane that can cross a threshold, cannot reach these
+ * models at all.
+ *
+ * Empty today: this release admits no tiered model. The mechanism exists so the
+ * next one cannot be admitted by omission.
+ */
+const TIERED_PRICE_MODELS = Object.freeze(new Set([]));
+
+/**
+ * True when a model's published rate changes above some prompt size — either
+ * because it is on the static list or because the entry being admitted declares
+ * a threshold read from the provider.
+ */
+function hasTieredPricing(modelId, spec) {
+  // `tiered: true` is the PRODUCER this predicate lacked. Until it existed, the
+  // only two ways to be tiered were a `priceTierThresholdTokens` nobody set and
+  // an empty static Set — so the refusal below was vacuous, and the real
+  // `anthropic/claude-sonnet-4.5` (which DOUBLES above 200k prompt tokens) was
+  // admitted to the BUILD lane at a flat rate. `openRouterRecordToSpec()` now
+  // reads `pricing.overrides` off the provider's payload and sets this flag.
+  //
+  // PRESENCE, not a threshold: the exact JSON shape of `pricing.overrides` is
+  // unverified, so the mapper reports THAT a rate changes without inventing
+  // WHERE. Presence is everything the refusal needs; a guessed threshold would
+  // be a made-up number on a spend surface.
+  if (spec && spec.tiered === true) return true;
+  if (spec && Number.isFinite(spec.priceTierThresholdTokens)) return true;
+  return typeof modelId === 'string' && TIERED_PRICE_MODELS.has(modelId);
+}
+
+/**
+ * Does this id LOOK like a moving alias?
+ *
+ * The authoritative signal is OpenRouter's `alias_target`, read by
+ * `openRouterRecordToSpec()`. This is the second, independent layer: it works on
+ * an id ALONE, so it also covers a hand-written spec that never went through the
+ * mapper, and it covers the other providers, whose `*-latest` ids are moving
+ * aliases in exactly the same way (`claude-3-5-haiku-latest` was one, until a
+ * live probe found the whole generation 404'd in v3.6.0).
+ *
+ * A moving id is refused because the user does not know what they picked and the
+ * price we quote is the alias's, not the target's.
+ *
+ * VERIFIED SAFE AT MODULE LOAD: 0 of the 14 ids this app currently ships —
+ * defaults, fallback rungs, priced entries and offerable entries — match. A
+ * false positive here would be a throw at import time, i.e. the whole app.
+ */
+function looksLikeMovingAlias(modelId) {
+  return typeof modelId === 'string' && /[-:]latest$/i.test(modelId);
 }
 
 /**
@@ -560,7 +1018,7 @@ const OFFERABLE_SUITABILITY = Object.freeze(['general', 'chat-only', 'caution'])
  * invokes them, so the route serialises plain numbers to the wire exactly as if
  * they were data properties.
  */
-function defineOfferableModel(provider, spec) {
+function defineOfferableModel(provider, spec, opts = {}) {
   const id = spec && typeof spec.id === 'string' ? spec.id : '(no id)';
   const where = `OFFERABLE_MODELS.${provider} entry "${id}"`;
   const need = (cond, what) => {
@@ -572,8 +1030,6 @@ function defineOfferableModel(provider, spec) {
   need(typeof spec.label === 'string' && spec.label.length > 0, 'missing `label`');
   need(typeof spec.thinks === 'boolean',
     'missing measured `thinks` — it is PER-MODEL and cannot be inferred from a family or a release date (claude-opus-5 is newer than claude-sonnet-5 and thinks 0/3 where sonnet-5 thinks 7/7)');
-  need(typeof spec.jsonRaw === 'boolean',
-    'missing measured `jsonRaw` — whether a raw JSON.parse of the ingest outline succeeds without the jsonrepair fallback');
   need(typeof spec.tokenizerFactor === 'number' && Number.isFinite(spec.tokenizerFactor) && spec.tokenizerFactor >= 1,
     'missing/invalid `tokenizerFactor` (>= 1; 1.0 means no measured premium over its provider baseline)');
   need(OFFERABLE_SUITABILITY.includes(spec.suitability),
@@ -581,14 +1037,123 @@ function defineOfferableModel(provider, spec) {
   need(typeof spec.note === 'string' && spec.note.trim().length > 0,
     'missing `note` — the measured reason shown to the user. A model nobody has measured must not be offered at all');
 
-  need(Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, spec.id),
-    'no entry in MODEL_PRICES_USD_PER_MTOK — a model may not be offerable unless it is priced');
-  const standard = MODEL_PRICES_USD_PER_MTOK[spec.id];
+  // A MOVING ALIAS IS NEVER OFFERABLE. Applies to every provider and every
+  // admission path, because it is decidable from the id alone. See
+  // looksLikeMovingAlias for why an id that resolves elsewhere cannot be priced
+  // or measured, and for the check that no shipped id matches.
+  need(!looksLikeMovingAlias(spec.id),
+    'is a MOVING ALIAS (`*-latest`) — the id resolves to a different model that can change under the user, so neither the price we quote nor any measurement we record stays true for it');
 
-  const caps = provider === 'gemini' ? GEMINI_MODEL_MAX_OUTPUT_TOKENS : ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS;
-  need(Object.hasOwn(caps, spec.id),
-    'no entry in the provider output-cap map — a model may not be offerable unless its output ceiling is known');
-  const maxOutput = caps[spec.id];
+  // ── THE OVERLAY IS THE CHAT LANE, STRUCTURALLY ────────────────────────────
+  // `opts.dynamic` marks an entry admitted at RUNTIME from a provider's public
+  // catalogue rather than hand-typed into the static table.
+  //
+  // THE BUG THIS CLOSES. The overlay's docblock claimed it "can only ever ADD
+  // chat-lane offers" and NOTHING enforced it: `setOpenRouterCatalogue` passed
+  // its spec straight through here with no constraint on `suitability`, so a
+  // fabricated `{suitability:'general', jsonRaw:true, price, maxOutput}` was
+  // admitted with `isBuildLaneModel` TRUE — verified by execution. The release's
+  // central claim, "BUILD: hand-measured only", was resting on the discipline of
+  // whoever wrote the catalogue-builder next.
+  //
+  // REFUSE rather than silently coerce to 'chat-only', and the reason is which
+  // failure a caller can SEE. A refusal is counted in the returned `refused`
+  // tally and named on stderr, so a builder that mis-declares 300 entries finds
+  // out immediately. Coercion would admit all 300 quietly demoted, leaving the
+  // builder believing the build lane had been populated over the network —
+  // precisely the false belief this guard exists to destroy. Refusal is already
+  // per-entry, so this drops one record, never the catalogue.
+  //
+  // This SUBSUMES the tiered-price refusal below for every dynamic entry (a
+  // tiered model can only ever be chat-only anyway). That one's remaining job is
+  // the hand-typed static table, where TIERED_PRICE_MODELS is the producer —
+  // the same kind of hand-curated list as DOMINATED_MODELS.
+  need(!opts.dynamic || spec.suitability === 'chat-only',
+    'was admitted at RUNTIME from a provider catalogue and declared a BUILD-lane suitability. Only a HAND-MEASURED entry in the static table may serve ingest, Wiki Health or Compile; a fetched entry may only be `suitability: "chat-only"`');
+
+  // ── LANE-SCOPED REQUIREMENTS ──────────────────────────────────────────────
+  // `jsonRaw` records whether a raw JSON.parse of the INGEST OUTLINE succeeds
+  // without the jsonrepair fallback. It is a measurement of JSON-mode ingest
+  // behaviour and it is MEANINGLESS FOR CHAT, which is text mode. Requiring it
+  // of a chat-only entry would force whoever admits one to invent a boolean
+  // about a thing they never measured — the precise failure this factory exists
+  // to prevent — so a 'chat-only' entry may omit it and carries `null`,
+  // meaning "not measured", never `false`, which would read as "measured bad".
+  //
+  // Everything a BUILD-lane entry ('general' | 'caution') had to carry before
+  // OpenRouter existed, it still has to carry. That half is unchanged.
+  const buildLane = spec.suitability !== 'chat-only';
+  if (buildLane) {
+    need(typeof spec.jsonRaw === 'boolean',
+      'missing measured `jsonRaw` — whether a raw JSON.parse of the ingest outline succeeds without the jsonrepair fallback. Required for any model offered for ingest/Health/Compile');
+  } else {
+    need(spec.jsonRaw === undefined || spec.jsonRaw === null || typeof spec.jsonRaw === 'boolean',
+      '`jsonRaw` must be a boolean or omitted');
+  }
+
+  // A model whose rate changes above a prompt-size threshold cannot be
+  // described by the single flat {input, output} pair every cost surface in
+  // this app consumes. The build lane is the only lane that can cross such a
+  // threshold, so tiered models are refused there STRUCTURALLY rather than by
+  // convention. See TIERED_PRICE_MODELS for the full reasoning.
+  const tiered = hasTieredPricing(spec.id, spec);
+  need(!(tiered && buildLane),
+    'has tiered (long-context) pricing, so a flat price would UNDER-STATE the bill on exactly the large ingests the build lane produces. Such a model may only be admitted as `suitability: "chat-only"`');
+
+  need(hasKnownPricePosture(spec.id, spec),
+    'no known price posture — a model may not be offerable unless it is either priced or explicitly free (see FREE_MODELS; a free model must NEVER be recorded as {input: 0, output: 0})');
+
+  // A dynamically-admitted entry (the OpenRouter catalogue) brings its own price
+  // and ceiling; a statically-admitted one DERIVES both, never re-types them,
+  // because two hand-maintained copies of one fact is this repo's named cause of
+  // the v3.2.0 CRITICAL — and here the copies would be money in a picker.
+  // ── "THIS MODEL BILLS NOTHING" HAS EXACTLY ONE AUTHORITY ──────────────────
+  // Register FIRST, then read the flag back out of `isFreeModel`, so `entry.free`
+  // is a COPY of that answer rather than a second derivation of it. Written as
+  // `spec.free === true || isFreeModel(spec.id)`, the two could — and did —
+  // disagree: the runtime catalogue mints `free: true` for every `:free` id, none
+  // of which are in the hand-typed FREE_MODELS, so `entry.free` said free while
+  // `chargeForItem`'s `isFreeModel` said not-free and billed an invented $0.14.
+  //
+  // The `need()` below is what covers the STATIC path, where there is nothing to
+  // register: a hand-typed spec claiming `free: true` for an id missing from
+  // FREE_MODELS refuses to build at module load, in the house style — the same
+  // answer `defineOfferableModel` already gives to a model with no price posture,
+  // and strictly better than a test, because it cannot be skipped.
+  // Registers only what the spec DECLARES, and only when `registerFreeModel`'s
+  // `:free` test structurally confirms the declaration — so a spec claiming
+  // `free: true` on a paid id registers nothing and is refused below, rather
+  // than being billed at $0.00 against a real invoice.
+  if (spec.free === true) registerFreeModel(spec.id, { dynamic: !!opts.dynamic });
+  const free = isFreeModel(spec.id);
+  need(spec.free !== true || free,
+    'declares `free: true` but its id does not carry the `:free` suffix and is not in FREE_MODELS, so nothing here can confirm the claim. Admitting it would let `entry.free` (what every price surface reads) disagree with `isFreeModel()` (what the spend arithmetic reads) — which charges an invented figure for a model shown as free, or a hard $0.00 against a real bill');
+  if (spec.price && !free) registerDynamicPrice(spec.id, spec.price);
+  // `Object.hasOwn`, NOT a bare index. `MODEL_PRICES_USD_PER_MTOK['__proto__']`
+  // returns the prototype OBJECT — truthy — so a bare `A[id] || B.get(id)`
+  // short-circuited on it and resolved `standard.input` to `undefined`, which
+  // `JSON.stringify` then dropped from the wire entirely: an entry served to the
+  // picker with NO price field at all while `getModelPrice()` answered normally
+  // from the Map. Measured on `__proto__`, `constructor` and `toString`, all
+  // three of which were admitted. This is the v3.0.9 normalizeResponseStyle bug
+  // shape; `resolveModelPrice` and `hasKnownPricePosture` already guard it and
+  // this site did not. The id is caller-controlled on the dynamic path in
+  // exactly the way `findOfferableModel`'s scan is not.
+  const staticPrice = Object.hasOwn(MODEL_PRICES_USD_PER_MTOK, spec.id)
+    ? MODEL_PRICES_USD_PER_MTOK[spec.id] : null;
+  const standard = free ? null : (staticPrice || _dynamicPrices.get(spec.id) || null);
+  need(free || standard, 'priced model resolved to no price — refusing to build an entry with a blank price');
+
+  let maxOutput;
+  if (Number.isFinite(spec.maxOutput) && spec.maxOutput > 0) {
+    maxOutput = spec.maxOutput;
+  } else {
+    const caps = capsFor(provider);
+    need(caps !== null, 'unknown provider — there is no output-cap map to read a ceiling from');
+    need(Object.hasOwn(caps, spec.id),
+      'no entry in the provider output-cap map — a model may not be offerable unless its output ceiling is known');
+    maxOutput = caps[spec.id];
+  }
 
   const promo = Object.hasOwn(PROMOTIONAL_PRICES, spec.id) ? PROMOTIONAL_PRICES[spec.id] : null;
 
@@ -600,8 +1165,14 @@ function defineOfferableModel(provider, spec) {
     maxOutput,
     /** Measured: does it spend hidden reasoning tokens (billed as OUTPUT, drawn from the same budget as the answer)? */
     thinks: spec.thinks,
-    /** Measured: does a raw JSON.parse of the ingest outline succeed, or is the jsonrepair fallback load-bearing? */
-    jsonRaw: spec.jsonRaw,
+    /**
+     * Measured: does a raw JSON.parse of the ingest outline succeed, or is the
+     * jsonrepair fallback load-bearing? `null` means NOT MEASURED — only legal
+     * on a 'chat-only' entry, where the question does not arise. Never coerce a
+     * null here to `false`: "we never measured it" and "it measured badly" are
+     * different facts and only one of them is a reason to warn a user.
+     */
+    jsonRaw: typeof spec.jsonRaw === 'boolean' ? spec.jsonRaw : null,
     /**
      * Measured INPUT-side token multiplier against this provider's older
      * tokenizer, on real Curator prose. 1.0 = no premium. It is deliberately NOT
@@ -615,9 +1186,22 @@ function defineOfferableModel(provider, spec) {
     suitability: spec.suitability,
     /** The measured reason behind `suitability`, written to be shown verbatim to a user. */
     note: spec.note,
-    /** Price after any promotion ends. Equal to input/output when there is no promotion. */
-    standardInput: standard.input,
-    standardOutput: standard.output,
+    /**
+     * Price after any promotion ends. Equal to input/output when there is no
+     * promotion, and `null` for an explicitly-free model — never 0, which is a
+     * truthy figure a budget guard would happily "enforce" (see FREE_MODELS).
+     */
+    standardInput: standard ? standard.input : null,
+    standardOutput: standard ? standard.output : null,
+    /** True when this model bills nothing. getModelPrice() returns null for it. */
+    free,
+    /**
+     * Prompt-token threshold above which the published rate changes, or null.
+     * Present so a UI can say so; a model carrying one can only ever be
+     * 'chat-only' (see TIERED_PRICE_MODELS).
+     */
+    priceTierThresholdTokens: Number.isFinite(spec.priceTierThresholdTokens)
+      ? spec.priceTierThresholdTokens : null,
     /** Last day of the current promotional price (ISO date), or null. */
     promotionUntilIso: promo ? promo.untilIso : null,
     /** First day the standard price applies (ISO date), or null. */
@@ -628,13 +1212,17 @@ function defineOfferableModel(provider, spec) {
 
   // Resolved at READ time, so a promotion expiring mid-process cannot serve a
   // stale price. Enumerable + JSON-visible; see the docblock above.
+  // `?? null` rather than a bare dereference: a free model resolves to no price
+  // at all, and reading `.input` off null would throw at JSON.stringify time —
+  // i.e. inside the route that serialises this table, taking the whole
+  // /api/config/api-keys response down.
   Object.defineProperty(entry, 'input', {
     enumerable: true, configurable: false,
-    get: () => resolveModelPrice(spec.id).input,
+    get: () => resolveModelPrice(spec.id)?.input ?? null,
   });
   Object.defineProperty(entry, 'output', {
     enumerable: true, configurable: false,
-    get: () => resolveModelPrice(spec.id).output,
+    get: () => resolveModelPrice(spec.id)?.output ?? null,
   });
 
   return Object.freeze(entry);
@@ -836,7 +1424,249 @@ export const OFFERABLE_MODELS = Object.freeze({
         'nothing measured supports paying $5 per 1M for it.',
     }),
   ]),
+  /**
+   * OpenRouter's catalogue is 417 models and moves independently of our release
+   * process, so it splits into two lanes with two admission standards:
+   *
+   *   BUILD (ingest / Health / Compile) — must be HAND-MEASURED against this
+   *     repo's real ingest outline prompt, exactly as every entry above was.
+   *     The THREE entries below are that measurement; the session is recorded
+   *     immediately underneath. Nothing here may be filled in from the
+   *     provider's metadata: `thinks`, `jsonRaw`, `suitability` and `note` are
+   *     MEASUREMENTS, and OpenRouter's API reports capability flags
+   *     (`supported_parameters`, `reasoning.mandatory`) which are a UNION ACROSS
+   *     UPSTREAM PROVIDERS — candidacy, never a guarantee.
+   *
+   *   CHAT — admitted at RUNTIME from the provider's public catalogue via
+   *     setOpenRouterCatalogue(), because a static list of 417 entries would be
+   *     stale the week it shipped. Those entries are additive to this table and
+   *     are read through listOfferableModels(), not from here.
+   *
+   * ⚠ THIS BLOCK OPENED "EMPTY IN THIS RELEASE … that measurement session has
+   * not happened yet, so nothing is listed" — directly above three populated,
+   * measured entries, and directly above its OWN "WHAT WAS MEASURED, 2026-08-27"
+   * section describing how they were probed. It contradicted the code and
+   * itself. It is corrected rather than deleted because the lane split it
+   * explains is still exactly right and is the reason the table has the shape
+   * it has; only the count was stale. The FAIL-SAFE argument it used to make —
+   * that an empty array refuses everything, so a half-wired provider costs
+   * nobody money — was true of the empty state and no longer describes this one,
+   * so it is gone rather than left to reassure a reader about a property the
+   * table no longer has.
+   *
+   * ── WHAT WAS MEASURED, 2026-08-27 ────────────────────────────────────────
+   * Every entry below was probed with this repo's REAL `buildOutlinePrompt`
+   * (via ingest.js's `__testing` export), built READ-ONLY from the real
+   * `articles` domain: a 127,666-char index, 607 entity and 2,685 concept
+   * filenames, plus a real 158,992-char source document truncated to ingest's
+   * own TEXT_CAP of 80,000. The assembled prompt was 341,005 chars (~77-80k
+   * provider-counted tokens) and was BYTE-IDENTICAL across every model, which
+   * is what makes the page counts and `tokenizerFactor` below comparable to
+   * each other. Requests went through OpenRouterAdapter, so they carried the
+   * production `provider: {allow_fallbacks:false, require_parameters:true}`
+   * and `response_format: {type:'json_object'}` at maxTokens 24,576.
+   *
+   * `tokenizerFactor` is PROVIDER-RELATIVE and baselined on the pinned default
+   * (upstage/solar-pro4, 77,080 prompt tokens = 1.0) — it says nothing about
+   * Gemini or Anthropic token counts.
+   *
+   * ── WHAT WAS REFUSED, and why it is not a short list by accident ─────────
+   *   nex-agi/nex-n2-mini      3 of 3 runs UNREPAIRABLE. It spent its ENTIRE
+   *                            24,576-token output budget on hidden reasoning
+   *                            (reasoning_tokens 24,576, finishReason "length")
+   *                            and returned no parseable outline at all, at
+   *                            ~$0.0045 and ~160s per attempt. Its catalogue
+   *                            metadata advertises reasoning as OPTIONAL, so
+   *                            only a real probe could have found this.
+   *   openai/gpt-oss-20b       18 of 18 runs HTTP 429, across 1.5s and 45s
+   *                            spacings, while a trivial prompt to the same id
+   *                            succeeded — a throughput limit that makes it
+   *                            unmeasurable on a real ingest prompt. A model we
+   *                            could not measure may not be offered.
+   *   ibm-granite/granite-4.1-8b  Measured CLEAN (9/9 raw JSON, 10-28 pages)
+   *                            and still not admitted: upstage/solar-pro4 is
+   *                            cheaper on input ($0.03 vs $0.05 — and input is
+   *                            ~98% of an outline call's tokens), plans wider
+   *                            outlines (median 23 vs 13) and is equally clean.
+   *   liquid/lfm-2.5-2.6b:free 8,192 output ceiling, below the 24,576 the
+   *                            outline requests — structurally unable to serve.
+   *   dots-studio/dots-3-note-preview:free  carries `expiration_date`
+   *                            2026-09-30, i.e. it retires inside this release's
+   *                            own lifetime.
+   */
+  openrouter: Object.freeze([
+    defineOfferableModel('openrouter', {
+      id: 'minimax/minimax-m3:free',
+      label: 'MiniMax M3 (free)',
+      maxOutput: 943718, free: true,
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.015,
+      suitability: 'caution',
+      note:
+        'FREE, and the widest outlines measured on OpenRouter: 15-40 pages (median 21) against the ' +
+        'real ingest prompt, with no hidden reasoning tokens in any of 9 runs. Two measured caveats. ' +
+        '(1) 8 of 9 runs parsed as raw JSON and 1 needed the jsonrepair fallback — none were ' +
+        'unrepairable, so it is safe, but the repair path is load-bearing. (2) Free models draw on a ' +
+        'SHARED upstream pool: over a 10-round availability poll it served 8/8, but four of its free ' +
+        'siblings served 0/8 and returned "temporarily rate-limited upstream" throughout. A free ' +
+        'model is a real option, not a guaranteed one — nothing is billed, and nothing is promised.',
+    }),
+    defineOfferableModel('openrouter', {
+      id: 'ibm-granite/granite-4.0-h-micro',
+      label: 'Granite 4.0 H Micro',
+      maxOutput: 117900,
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.036,
+      suitability: 'caution',
+      note:
+        'The cheapest paid model here and the cheapest The Curator offers anywhere: $0.017/$0.112 per ' +
+        '1M tokens, roughly a sixth of the cheapest Gemini option on input. Perfectly clean — 9 of 9 runs ' +
+        'parsed as raw JSON with no jsonrepair and no hidden reasoning tokens — but THIN: 7-13 outline ' +
+        'pages (median 9) where solar-pro4 plans a median of 23 on the identical prompt. Fewer planned ' +
+        'pages means a less detailed wiki from the same source, so pick it when cost dominates.',
+    }),
+    defineOfferableModel('openrouter', {
+      id: 'upstage/solar-pro4',
+      label: 'Solar Pro 4',
+      maxOutput: 131072,
+      thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
+      suitability: 'general',
+      note:
+        'The pinned OpenRouter default. 9 of 9 runs returned raw JSON that parsed WITHOUT jsonrepair ' +
+        '— stricter than our own Anthropic default, which fences its JSON 3/3 and depends entirely on ' +
+        'the repair path — and 14-36 outline pages (median 23), coverage comparable to the cheapest ' +
+        'Gemini option at roughly a third of its price ($0.03/$0.12 against $0.10/$0.40). No hidden ' +
+        'reasoning tokens in any run, so the whole output budget goes to the answer.',
+    }),
+  ]),
 });
+
+/**
+ * ── The LIVE OpenRouter chat catalogue ───────────────────────────────────────
+ *
+ * Additive overlay on OFFERABLE_MODELS.openrouter, populated at runtime from
+ * `fetchOpenRouterCatalogue()`. Empty until something populates it, so the
+ * default state of this module is "OpenRouter offers nothing", which is what
+ * makes a partially-wired provider harmless.
+ *
+ * WHY AN OVERLAY RATHER THAN A MUTABLE TABLE. OFFERABLE_MODELS is frozen and is
+ * serialised verbatim onto the wire; keeping it frozen means the hand-measured
+ * build-lane entries can never be replaced by something fetched over the
+ * network. The overlay can only ever ADD chat-lane offers.
+ *
+ * THAT LAST SENTENCE WAS FALSE WHEN IT WAS WRITTEN, and is now enforced. Nothing
+ * constrained `suitability` on the way in, so a fetched entry declaring
+ * `'general'` was admitted with `isBuildLaneModel` true — the overlay could
+ * reach the lane that WRITES the user's wiki. `setOpenRouterCatalogue` now
+ * refuses any dynamic entry that is not `'chat-only'`, at the admission function
+ * and again on the built entry. See both for the reasoning.
+ */
+let _openrouterCatalogue = Object.freeze([]);
+
+/**
+ * Replace the live OpenRouter chat catalogue.
+ *
+ * Every entry goes through `defineOfferableModel`, the SAME admission function
+ * the hand-measured entries use, so a fetched model is held to the same
+ * structural standard: it must carry a label, a `thinks` verdict, a price
+ * posture, an output ceiling and a `note`, or it does not become an offer.
+ *
+ * REFUSAL IS PER-ENTRY, NOT ALL-OR-NOTHING: one malformed record in a
+ * 417-element response must not take the whole catalogue down, so a rejected
+ * entry is dropped with a stderr line and the rest are admitted. Refusing the
+ * lot would hand a third party a switch that disables the feature.
+ *
+ * @param {Array<object>} specs
+ * @returns {{admitted: number, refused: number}}
+ */
+export function setOpenRouterCatalogue(specs) {
+  // ── THE PRICE REGISTRY IS REBUILT, NOT APPENDED TO ────────────────────────
+  // `_dynamicPrices` used to be write-only: `registerDynamicPrice` added and
+  // nothing ever removed, while THIS function replaced `_openrouterCatalogue`
+  // wholesale. So a price outlived the offer it belonged to. Measured:
+  //
+  //   load 1: 'z/model' priced $1/$5      -> getModelPrice = {input:1,output:5}
+  //   load 2: same id, now free:true      -> entry.free true, standardInput null,
+  //                                          getModelPrice STILL {input:1,output:5}
+  //   load 3: setOpenRouterCatalogue([])  -> getModelPrice STILL {input:1,output:5}
+  //
+  // That breaks the invariant the whole price posture rests on — `getModelPrice()`
+  // MUST return null for a free model — and it breaks it in the exact direction
+  // the posture exists to prevent: a non-null price on a model that bills nothing
+  // re-arms `createJob`'s budget cap and renders a dollar figure on a free row.
+  //
+  // Clearing FIRST and pruning to the admitted set afterwards makes the registry
+  // a function of the current catalogue rather than of every catalogue ever
+  // loaded. The prune matters on its own: `registerDynamicPrice` runs before the
+  // last few `need()` checks, so a REFUSED entry can still have written a price,
+  // and a price for a model nobody can select is the same stale-money surface in
+  // a smaller font. Synchronous throughout, so no caller can observe the gap.
+  _dynamicPrices.clear();
+  // Same lifecycle, same reason, and the direction of harm is the sharper one.
+  // A stale PRICE renders a dollar figure on a model that bills nothing; a stale
+  // FREE registration does the opposite — it makes `isFreeModel` true for an id
+  // that has since become PAID, and `chargeForItem` checks freeness FIRST and
+  // returns a hard 0, so a real bill would be recorded as $0.00 with
+  // `spendIsEstimated` left false. Under-reporting money while asserting the
+  // figure is measured is the worst available combination (v3.9.0).
+  _dynamicFree.clear();
+
+  const out = [];
+  let refused = 0;
+  for (const spec of Array.isArray(specs) ? specs : []) {
+    try {
+      // `{dynamic: true}` is what makes the overlay's chat-lane claim structural
+      // rather than a comment — see defineOfferableModel.
+      const entry = defineOfferableModel('openrouter', spec, { dynamic: true });
+      // Second layer, and deliberately NOT independently mutation-provable: the
+      // check above is the one that fails loudly with a named reason. This one
+      // holds even if a future refactor changes HOW the factory decides a lane,
+      // because it inspects the BUILT entry rather than the declared spec. The
+      // property it guarantees is flat: nothing in `_openrouterCatalogue` can
+      // ever make `isBuildLaneModel` true.
+      if (entry.suitability !== 'chat-only') {
+        throw new Error(`[llm] built entry "${entry.id}" is not chat-only — the runtime overlay may not reach the build lane`);
+      }
+      out.push(entry);
+    } catch (err) {
+      refused++;
+      // stderr, never stdout — this module is imported by the MCP child
+      // process, which reserves stdout for JSON-RPC frames (v2.5.2/v3.9.1).
+      console.error(`[llm] OpenRouter catalogue entry refused: ${err && err.message}`);
+    }
+  }
+
+  const admittedIds = new Set(out.map(e => e.id));
+  for (const id of [..._dynamicPrices.keys()]) {
+    if (!admittedIds.has(id)) _dynamicPrices.delete(id);
+  }
+  // The free registry needs the same prune for the same reason the price one
+  // does: registration happens BEFORE the last few `need()` checks, so a REFUSED
+  // entry can still have written itself in. A free id nobody can select is not
+  // inert — `chargeForItem` keys on `tokenUsage.model`, which is the model that
+  // actually RAN, so a lingering registration would zero a real charge.
+  for (const id of [..._dynamicFree]) {
+    if (!admittedIds.has(id)) _dynamicFree.delete(id);
+  }
+
+  _openrouterCatalogue = Object.freeze(out);
+  return { admitted: out.length, refused };
+}
+
+/**
+ * The models a user may currently pick on a provider — the static table plus,
+ * for OpenRouter, whatever the live catalogue admitted.
+ *
+ * This is the accessor every consumer should read (including the route that
+ * serialises the picker), because OFFERABLE_MODELS alone is a partial view for
+ * OpenRouter. Returns a frozen array, never null, so a caller can iterate
+ * without a guard.
+ */
+export function listOfferableModels(provider) {
+  if (!isKnownProvider(provider)) return Object.freeze([]);
+  const stat = OFFERABLE_MODELS[provider] || Object.freeze([]);
+  if (provider !== 'openrouter') return stat;
+  if (_openrouterCatalogue.length === 0) return stat;
+  return Object.freeze([...stat, ..._openrouterCatalogue]);
+}
 
 /**
  * Is this exact model id one the user is allowed to select on this provider?
@@ -854,25 +1684,96 @@ export const OFFERABLE_MODELS = Object.freeze({
  * (the v3.0.9 normalizeResponseStyle bug shape, closed by construction rather
  * than by remembering to call Object.hasOwn).
  */
+function findOfferableModel(provider, modelId) {
+  if (!isKnownProvider(provider)) return null;
+  if (typeof modelId !== 'string' || modelId.length === 0) return null;
+  return listOfferableModels(provider).find(entry => entry.id === modelId) || null;
+}
+
 export function isOfferableModel(provider, modelId) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return false;
-  if (typeof modelId !== 'string' || modelId.length === 0) return false;
-  return OFFERABLE_MODELS[provider].some(entry => entry.id === modelId);
+  return findOfferableModel(provider, modelId) !== null;
+}
+
+/**
+ * ── THE BUILD LANE ───────────────────────────────────────────────────────────
+ *
+ * May this model serve ingest, Wiki Health and Compile — the features that
+ * WRITE the wiki?
+ *
+ * THE BUG THIS CLOSES. `suitability: 'chat-only'` has existed since the
+ * multi-model work and was read in exactly three places, all of them BADGE
+ * RENDERING. Nothing enforced it. `POST /api/config/api-keys/model` gated on
+ * `isOfferableModel` plus a saved key and nothing else — so a user could pin
+ * `gemini-3.5-flash-lite` as their BUILD model and the app would let them,
+ * while the picker sat there displaying "not recommended for ingest" beside the
+ * choice it had just accepted. That model emits JSON that neither JSON.parse
+ * nor jsonrepair can fix in 2 of 9 live runs against the real ingest outline
+ * prompt. A label the code does not honour is worse than no label: it tells the
+ * user a decision was checked when it was not.
+ *
+ * The verdict derives from `suitability` and nothing else, so there is exactly
+ * one place a model's lane is decided. `defineOfferableModel` refuses to admit
+ * a tiered-price model as anything but 'chat-only', which is how the pricing
+ * hazard reaches this predicate without giving it a second meaning.
+ *
+ * FAILS CLOSED: an unknown provider, an unknown id, or an id we do not offer
+ * all return false. The caller's response to false is to fall back to the
+ * provider default (see applyModelOverride) — never to throw — so the cost of a
+ * false negative is spending LESS than the user asked for.
+ */
+export function isBuildLaneModel(provider, modelId) {
+  // Shares findOfferableModel with isOfferableModel deliberately: the allow-list
+  // must have exactly ONE scan. A second `listOfferableModels(...).find(...)`
+  // here would be a hand-maintained copy of the membership test — the v3.2.0
+  // CRITICAL's shape, and there is a standing offline guard against it.
+  const entry = findOfferableModel(provider, modelId);
+  return entry !== null && entry.suitability !== 'chat-only';
 }
 
 /**
  * Compare what the user CONFIGURED against what they are actually being billed
  * for right now. Three states, because two would force us to lie:
  *
- *   'costlier' — confirmed higher on input and/or output. Warn plainly.
- *   'similar'  — confirmed same-or-cheaper. Say nothing about cost.
- *   'unknown'  — at least one id is not in the price table. NEVER imply parity
- *                here: any fallback means the user is off the model they chose,
- *                so the honest line is "pricing may differ", not silence.
+ *   'costlier' — confirmed higher on input and/or output. Warn plainly. This
+ *                INCLUDES a free model falling back onto a priced one, which is
+ *                the biggest jump available (see the free branch below).
+ *   'similar'  — confirmed same-or-cheaper. Say nothing about cost. Reached by
+ *                free -> free and by paid -> free; the word means
+ *                same-or-cheaper, not equal.
+ *   'unknown'  — at least one id has NO KNOWN PRICE POSTURE: not priced, and not
+ *                free either. NEVER imply parity here: any fallback means the
+ *                user is off the model they chose, so the honest line is
+ *                "pricing may differ", not silence. A FREE model does not land
+ *                here — free is a price we know exactly, and filing it under
+ *                "no price" is what this function used to do.
  *
  * @returns {'costlier'|'similar'|'unknown'}
  */
 export function compareModelCost(requestedModel, usingModel) {
+  // ── FREE IS A KNOWN PRICE, NOT A MISSING ONE ──────────────────────────────
+  // `getModelPrice()` returns null for a free model BY DESIGN (see FREE_MODELS:
+  // a free model is recorded by MEMBERSHIP, never as `{input:0,output:0}`), so
+  // the `!a || !b` test below read that null as "we have no idea" and answered
+  // 'unknown'. MEASURED: `compareModelCost('minimax/minimax-m3:free',
+  // 'claude-haiku-4-5')` returned **'unknown'**, which renders as "pricing for
+  // this model is not known here" — on a fallback from a model that bills $0.00
+  // to one that bills real money. That is the LARGEST cost transition the app
+  // can make, both of its facts are known exactly, and the honest sentence is
+  // "you were on a free model and are now being billed."
+  //
+  // Resolved before the price lookup, because membership is the authority over
+  // any price a table might hold for a free id — the same ordering, for the same
+  // reason, as `chargeForItem`'s free branch sitting ahead of its priced one.
+  const aFree = isFreeModel(requestedModel);
+  const bFree = isFreeModel(usingModel);
+  if (aFree || bFree) {
+    // free -> free: identical, and both figures are known. Nothing to warn about.
+    // paid -> free: strictly cheaper, which 'similar' already means here
+    //               ("confirmed same-or-cheaper", not "confirmed equal").
+    // free -> paid: the transition above. Warn.
+    if (bFree) return 'similar';
+    return getModelPrice(usingModel) ? 'costlier' : 'unknown';
+  }
   const a = getModelPrice(requestedModel);
   const b = getModelPrice(usingModel);
   if (!a || !b) return 'unknown';
@@ -943,9 +1844,19 @@ export function getFallbackStatus() {
  * the v3.2.0 CRITICAL.
  */
 function storedSelection(provider) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return null;
+  if (!isKnownProvider(provider)) return null;
   const keys = getApiKeys();
-  const savedKey = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
+  // Explicit branches rather than an object index: this used to be a BINARY
+  // ternary (`provider === 'gemini' ? gemini : anthropic`) whose "else" arm
+  // silently claimed the Anthropic key for any other provider — the v3.10.1
+  // credential-crossing shape.
+  let savedKey = null;
+  switch (provider) {
+    case 'gemini':     savedKey = keys.geminiApiKey; break;
+    case 'anthropic':  savedKey = keys.anthropicApiKey; break;
+    case 'openrouter': savedKey = keys.openrouterApiKey; break;
+    default:           savedKey = null;
+  }
   if (!savedKey) return null;
   return getSelectedModel(provider);
 }
@@ -982,7 +1893,12 @@ function storedSelection(provider) {
  */
 function defaultModelFor(provider, envModel) {
   if (envModel) return envModel;
-  return applyModelOverride(provider, DEFAULTS[provider], storedSelection(provider));
+  // `requireBuildLane: true` — this resolves the PROVIDER DEFAULT, which is what
+  // ingest, Health and Compile run on. A stored 'chat-only' pin must not become
+  // the build model just because it was allow-listed at the moment it was
+  // saved; it falls back to the provider default instead. The per-call chat
+  // picker (applied in getProviderInfo) passes no such flag and is unaffected.
+  return applyModelOverride(provider, DEFAULTS[provider], storedSelection(provider), true);
 }
 
 /**
@@ -993,7 +1909,7 @@ function defaultModelFor(provider, envModel) {
  * automatically with no frontend change.
  */
 export function getDefaultModel(provider) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return null;
+  if (!isKnownProvider(provider)) return null;
   // LLM_MODEL is a single global dev override tied to the active provider; only
   // surface it for that provider so we never label Gemini with a Claude id.
   const envModel = (process.env.LLM_MODEL && getActiveProvider() === provider)
@@ -1023,14 +1939,27 @@ export function getDefaultModel(provider) {
  * signal. The return shape is deliberately unchanged (no new field) because
  * `{provider, model}` is destructured at ~15 call sites across src/ and mcp/.
  */
-function applyModelOverride(provider, defaultModel, preferModel) {
+function applyModelOverride(provider, defaultModel, preferModel, requireBuildLane = false) {
   if (preferModel === null || preferModel === undefined) return defaultModel;
-  if (isOfferableModel(provider, preferModel)) return preferModel;
   // Bounded and newline-stripped: this string is caller-supplied and this repo
   // has a recorded log-forgery finding (v3.0.1-beta.20, connection labels).
   // stderr, never stdout — llm.js is imported by the MCP child process, which
   // reserves stdout for JSON-RPC frames (v2.5.2/v3.9.1).
   const shown = String(preferModel).replace(/[\r\n]+/g, ' ').slice(0, 80);
+  if (isOfferableModel(provider, preferModel)) {
+    // LANE CHECK, and it is deliberately SEPARATE from the allow-list rather
+    // than folded into it: `isOfferableModel` answers "may the user pick this
+    // at all", which for a chat-only model is still YES. Merging the two would
+    // hide a measured-good chat model from the chat picker, which is the
+    // over-correction the 'chat-only' verdict exists to avoid.
+    if (!requireBuildLane || isBuildLaneModel(provider, preferModel)) return preferModel;
+    console.error(
+      `[llm] Refusing model "${shown}" as the ${provider} BUILD model — it is measured unfit for ` +
+      `ingest/Health/Compile (suitability "chat-only"). Using "${defaultModel}" instead. ` +
+      `It remains selectable for chat.`
+    );
+    return defaultModel;
+  }
   console.error(
     `[llm] Refusing model "${shown}" for provider "${provider}" — not in OFFERABLE_MODELS. ` +
     `Using the provider default "${defaultModel}" instead.`
@@ -1053,7 +1982,41 @@ function applyModelOverride(provider, defaultModel, preferModel) {
  */
 export function getProviderInfo(preferProvider = null, preferModel = null) {
   const base = resolveProviderDefault(preferProvider);
-  return { provider: base.provider, model: applyModelOverride(base.provider, base.model, preferModel) };
+  const model = applyModelOverride(base.provider, base.model, preferModel);
+  // ── THE MODEL MUST EXIST ──────────────────────────────────────────────────
+  // Every provider currently carries a pinned DEFAULT, so in the shipping
+  // configuration this refusal does not fire. It is not therefore decorative:
+  // `resolveProviderDefault` reads a STORED per-provider selection and the
+  // `LLM_MODEL` env override before falling back to `DEFAULTS`, and a provider
+  // added without a default — `local`, already scaffolded — resolves to nothing
+  // at all.
+  //
+  // ⚠ This comment used to assert that OpenRouter "deliberately does not" carry
+  // a default because "it has no measured build-lane model". Both halves are
+  // false: `DEFAULTS.openrouter` is 'upstage/solar-pro4', which is admitted
+  // `suitability: 'general'` — the build lane — on 9 measured runs. The claim
+  // dated from before those measurements landed and would have sent the next
+  // reader looking for a hole that had been filled.
+  //
+  // This is the single producer of the model string both SDKs and the adapter
+  // receive, so it is the only correct place to refuse. Failing HERE means the
+  // failure is loud, free and actionable; passing a null model through would
+  // put `"model": null` on the wire and turn a configuration problem into an
+  // opaque provider 400 several layers away.
+  //
+  // The wording deliberately avoids every substring the recovery classifiers
+  // key on — no "output token limit" (isOutputTokenLimit), no "not found"
+  // (isModelNotFound), no 429/503/"overloaded" (is429/is503) — so this cannot
+  // be mistaken for a recoverable condition, retried four times with backoff,
+  // or used to walk a fallback chain.
+  if (typeof model !== 'string' || model.length === 0) {
+    throw new Error(
+      `No model is configured for ${providerDisplayName(base.provider)}. ` +
+      `This provider has no default model for building your wiki — pick one in Settings, ` +
+      `or switch the active provider.`
+    );
+  }
+  return { provider: base.provider, model };
 }
 
 /**
@@ -1064,7 +2027,7 @@ export function getProviderInfo(preferProvider = null, preferModel = null) {
 function resolveProviderDefault(preferProvider) {
   // Per-call override (v3.0.11: chat model selector). Never honours a stale
   // override whose key is missing — falls through to the global logic below.
-  if ((preferProvider === 'gemini' || preferProvider === 'anthropic') && getEffectiveKey(preferProvider)) {
+  if (isKnownProvider(preferProvider) && getEffectiveKey(preferProvider)) {
     return { provider: preferProvider, model: getDefaultModel(preferProvider) };
   }
   // Honour the user's last-saved active provider (v2.4.2+). Falls back to
@@ -1076,13 +2039,27 @@ function resolveProviderDefault(preferProvider) {
   if (active === 'anthropic' && getEffectiveKey('anthropic')) {
     return { provider: 'anthropic', model: defaultModelFor('anthropic', process.env.LLM_MODEL) };
   }
+  if (active === 'openrouter' && getEffectiveKey('openrouter')) {
+    return { provider: 'openrouter', model: defaultModelFor('openrouter', process.env.LLM_MODEL) };
+  }
   // Defensive fallback: active provider is stored but its key is missing.
   // Prefer whichever provider still has a usable key.
+  //
+  // ORDER IS UNCHANGED for the two original providers, deliberately: this arm
+  // decides what an existing user gets when their active provider's key
+  // disappears, and nothing about that should move because a third provider
+  // exists. OpenRouter is tried LAST, after both — and reaching it produces a
+  // named "no model configured" error from getProviderInfo rather than silent
+  // spend, which is still strictly more actionable than "No LLM API key found"
+  // for a user who does have a key.
   if (getEffectiveKey('gemini')) {
     return { provider: 'gemini', model: defaultModelFor('gemini', process.env.LLM_MODEL) };
   }
   if (getEffectiveKey('anthropic')) {
     return { provider: 'anthropic', model: defaultModelFor('anthropic', process.env.LLM_MODEL) };
+  }
+  if (getEffectiveKey('openrouter')) {
+    return { provider: 'openrouter', model: defaultModelFor('openrouter', process.env.LLM_MODEL) };
   }
   throw new Error(
     'No LLM API key found. Add one in Settings, or set GEMINI_API_KEY / ANTHROPIC_API_KEY in .env.'
@@ -1117,6 +2094,83 @@ function is429(err) {
 function is503(err) {
   const msg = err?.message ?? '';
   return msg.includes('503') || msg.includes('Service Unavailable') || msg.includes('high demand') || msg.includes('overloaded');
+}
+
+/**
+ * ── LOAD-TIME PROOF THAT THE ADAPTER'S CENSUS STILL DESCRIBES THESE ──────────
+ *
+ * `openrouter-adapter.js` neutralises upstream prose so a third party's error
+ * text cannot make the two functions above (and `isModelNotFound` below) say
+ * "retry" or "the model is gone" — either of which SPENDS THE USER'S MONEY.
+ * It works from a declared census, and a census can go stale in two directions.
+ * The adapter closes one at its own load (every listed token is really stripped).
+ * This closes the other: every listed token really is a token these classifiers
+ * trip on, so the list can never quietly describe a signal they stopped caring
+ * about — which would leave the neutraliser defending a door that moved.
+ *
+ * Kept as a behavioural probe rather than a shared constant the classifiers
+ * read, deliberately: the offline suite extracts these literals from this
+ * file's SOURCE with `/\.includes\('([^']+)'\)/`, so rewriting the bodies to
+ * loop over an array would silently blind a guard another file owns. The
+ * literals stay inline; the agreement is proven by execution instead.
+ *
+ * NOT ENFORCED, and it is the honest residual: COMPLETENESS. Nothing can
+ * enumerate the substrings a function matches, so a token added to `is429`,
+ * `is503` or `isModelNotFound` and to neither the census nor a probe is
+ * invisible to both halves of this guard. Closing that needs a source-reading
+ * assertion, which belongs in the offline suite and not in a module the MCP
+ * child process imports.
+ */
+{
+  const missed = [];
+  for (const token of RETRY_CLASSIFIER_TOKENS) {
+    const probe = { message: `upstream said ${token} for this request` };
+    if (!is429(probe) && !is503(probe)) missed.push(`retry token "${token}"`);
+  }
+  for (const clause of MODEL_NOT_FOUND_CLAUSES) {
+    if (!isModelNotFound({ message: clause.join(' ') })) {
+      missed.push(`not-found clause [${clause.join(' + ')}]`);
+    }
+  }
+  if (missed.length > 0) {
+    throw new Error(
+      '[llm] openrouter-adapter.js declares a recovery signal that these classifiers no longer ' +
+      'detect, so its neutraliser is defending a door that moved: ' + missed.join('; ') +
+      '. Reconcile the census with is429/is503/isModelNotFound.',
+    );
+  }
+}
+
+/**
+ * ── A FAILURE THAT CANNOT SUCCEED ON RETRY ───────────────────────────────────
+ *
+ * `is429`/`is503` classify by MESSAGE SUBSTRING, which is the only thing two
+ * vendor SDKs give us in common. That is fine for a genuine outage and wrong for
+ * a failure that is deterministic by construction — and OpenRouter produces one:
+ * with `allow_fallbacks:false` + `require_parameters:true`, HTTP 503 means "no
+ * upstream provider met the required parameters". A capability mismatch does not
+ * resolve during a backoff.
+ *
+ * MEASURED BEFORE THIS EXISTED: the adapter wrote an accurate, specific message
+ * naming the real cause; `is503` matched the "503" inside it; the ladder retried
+ * four times over ~39 seconds and then REPLACED that message with the generic
+ * "infrastructure is temporarily overloaded … affects ALL accounts equally".
+ * The user was told the provider was down when the answer was "pick a different
+ * model", and on a 40-call multi-phase ingest that is ~26 minutes of apparent
+ * hang — the v3.0.17 "the app is hung" complaint, re-armed.
+ *
+ * A STRUCTURAL TAG, NOT A REWORDED MESSAGE. The producer states the fact as a
+ * property; this reads the property. Nothing here parses text, so an upstream
+ * cannot acquire or shed the tag by changing its own prose — which is the whole
+ * failure mode substring classification has.
+ *
+ * FAIL-SAFE DIRECTION: absent tag ⇒ classified exactly as before, so every
+ * existing provider path is byte-unchanged. A wrongly-tagged transient error
+ * surfaces to the user immediately; an untagged deterministic one merely costs
+ * the retries it costs today.
+ */
+function isDeterministicProviderError(err) {
+  return !!err && err.curatorDeterministic === true;
 }
 
 /**
@@ -1216,8 +2270,7 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
   // v3.0.11: optional per-call provider override (chat model selector). Ignored
   // unless it names a provider with a usable key (getProviderInfo enforces this).
-  const providerOverride = (opts && (opts.provider === 'gemini' || opts.provider === 'anthropic'))
-    ? opts.provider : null;
+  const providerOverride = (opts && isKnownProvider(opts.provider)) ? opts.provider : null;
   // Per-call MODEL override (multi-model picker). Only a non-empty string is
   // even a candidate; getProviderInfo then enforces the OFFERABLE_MODELS
   // allow-list and falls back to the provider default if it does not pass.
@@ -1250,7 +2303,7 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   let providerName = 'AI provider';
   try {
     const info = getProviderInfo(providerOverride, modelOverride);
-    providerName = info.provider === 'gemini' ? 'Gemini' : info.provider === 'anthropic' ? 'Claude' : 'AI provider';
+    providerName = providerDisplayName(info.provider);
   } catch { /* surface real error from callLLM below */ }
 
   // Already cancelled before we even dispatch: never spend on a call the user
@@ -1266,12 +2319,21 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
       // classify as retryable, and retrying is precisely what a cancel must
       // not do. Normalised to our tagged error so callers get one shape.
       if (isAbortError(err) || (signal && signal.aborted)) throw makeAbortError();
-      const retryable = is429(err) || is503(err);
+      // A DETERMINISTIC failure is neither retried NOR re-messaged. Both halves
+      // matter: gating only `retryable` would still let the `is503(err)` branch
+      // below overwrite an accurate, actionable message with a generic outage
+      // claim. Hoisted into two locals so every downstream use — the gate, the
+      // two message rewrites, the delay and the log line — reads ONE decision
+      // instead of re-asking three classifiers that could drift apart.
+      const deterministic = isDeterministicProviderError(err);
+      const rateLimited = !deterministic && is429(err);
+      const unavailable = !deterministic && is503(err);
+      const retryable = rateLimited || unavailable;
       if (!retryable || attempt === MAX_RETRIES) {
         // Out of retries or non-retryable error — surface a clean message that
         // makes clear whether the issue is in The Curator or upstream at the
         // AI provider, and what the user should do next (v3.0.1-beta.4).
-        if (is429(err)) {
+        if (rateLimited) {
           const delaySec = Math.ceil(parseRetryDelay(err) / 1000);
           // v3.2.x (batch-ingest queue): tag the error so a caller that only
           // sees the final thrown Error (not the raw provider error) can
@@ -1290,7 +2352,7 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
           e.curatorRetryAfterMs = parseRetryDelay(err);
           throw e;
         }
-        if (is503(err)) {
+        if (unavailable) {
           const e = new Error(
             `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
             `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
@@ -1305,12 +2367,12 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
       }
 
       // Calculate delay: 429 respects API hint; 503 uses exponential backoff (3s, 9s, 27s)
-      const delayMs = is429(err)
+      const delayMs = rateLimited
         ? parseRetryDelay(err)
         : Math.min(3000 * Math.pow(3, attempt - 1), 60_000);
 
       const delaySec = Math.ceil(delayMs / 1000);
-      const reason = is429(err) ? 'Rate limit' : 'Service busy';
+      const reason = rateLimited ? 'Rate limit' : 'Service busy';
       console.warn(
         `[llm] ${reason} (attempt ${attempt}/${MAX_RETRIES}). Waiting ${delaySec}s...`
       );
@@ -1451,6 +2513,50 @@ export function normalizeAnthropicUsage(usage) {
 }
 
 /**
+ * Normalise OpenRouter's OpenAI-shaped `usage` block into the same shape.
+ *
+ * ⚠ OPENROUTER FOLLOWS THE GEMINI CONVENTION, NOT ANTHROPIC'S: `prompt_tokens`
+ * INCLUDES the cached portion. So this SUBTRACTS, exactly as
+ * normalizeGeminiUsage does. Getting this wrong does not throw and does not
+ * warn — it silently double-counts cached tokens in every cost calculation
+ * downstream, because `chargeForItem` adds `inputTokens` and
+ * `cachedReadTokens * 0.1` together.
+ *
+ * `cache_write_tokens` is reported separately but it is UNVERIFIED whether
+ * `prompt_tokens` includes it. It is NOT subtracted, and that choice is
+ * deliberate: if it is included, `chargeForItem` bills those tokens at
+ * 1.0 + 1.25 = 2.25x instead of 1.25x, i.e. we OVER-report. This repo's
+ * standing rule on money is that the fail-safe direction is to warn (v3.9.0:
+ * an unrecognised cost tier resolves to 'unknown', never 'similar'), and a user
+ * quoted more than they are billed picks a cheaper model than they needed,
+ * while a user quoted less was lied to. Re-measure and revisit when a live call
+ * with a cache write is available.
+ *
+ * `reasoning_tokens` is surfaced as an EXTRA field, not folded into anything.
+ * By the OpenAI convention it is ALREADY INCLUDED in `completion_tokens`, so
+ * adding it to `outputTokens` would bill hidden reasoning twice. It is reported
+ * so a caller can show a user how much of a paid answer they never saw — the
+ * same fact `thinks` records statically.
+ */
+export function normalizeOpenRouterUsage(usage) {
+  const u = usage && typeof usage === 'object' ? usage : {};
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const obj = v => (v && typeof v === 'object' ? v : {});
+  const pd = obj(u.prompt_tokens_details);
+  const cd = obj(u.completion_tokens_details);
+  const cached = num(pd.cached_tokens);
+  return {
+    // Clamped at 0 — a provider that ever reports cached > prompt must not
+    // produce a negative that corrupts a running total.
+    inputTokens:      Math.max(0, num(u.prompt_tokens) - cached),
+    outputTokens:     num(u.completion_tokens),
+    cachedReadTokens: cached,
+    cacheWriteTokens: num(pd.cache_write_tokens),
+    reasoningTokens:  num(cd.reasoning_tokens),
+  };
+}
+
+/**
  * Invoke an optional usage callback. Contract (mirrors the v3.0.4 adapter
  * `onWarn` rule): a throwing callback must NEVER break the LLM call — usage
  * reporting is observability, not correctness. Diagnostics go to stderr because
@@ -1578,6 +2684,109 @@ export function __setAnthropicClientFactory(factory) {
 }
 
 /**
+ * ── ONE RULE FOR EVERY FATAL PROVIDER MESSAGE ────────────────────────────────
+ *
+ * Several throws in this file interpolate a value into their message, and both
+ * `generateText`'s retry gate and `callLLM`'s fallback walk are MESSAGE-
+ * SUBSTRING classifiers. So an interpolated value carrying classifier
+ * vocabulary silently converts a FATAL error into four automatic retries with
+ * ~40s of backoff, or a walk down the provider's fallback chain — real spend,
+ * on a request already known to be dead.
+ *
+ * Measured on this file before these guards existed:
+ * `callProvider('model not found', …)` threw a message `isModelNotFound()`
+ * returns TRUE for, `'503 Service Unavailable'` satisfied is503, and
+ * `'429 Too Many Requests'` satisfied is429. Each throw's own comment claimed
+ * the wording "avoids every substring the recovery classifiers key on" — true
+ * of the fixed literal, false of the interpolation beneath it. A comment
+ * asserting a safety property its own code lacks is this repo's most-recurring
+ * early-warning shape (v3.7.0 found four such docblocks; v3.13.1 four more
+ * within a day of being written), so the CODE is made true rather than the
+ * comment weakened to describe the gap.
+ *
+ * DELIBERATELY NOT A BLACKLIST of today's classifier vocabulary. A substring
+ * stripper is precisely what rots: the day is429/is503/isModelNotFound gains a
+ * token, a hand-maintained list silently stops covering it and the claim is
+ * quietly false again, with nothing failing. This asks the REAL classifiers
+ * instead, so the guard tracks them automatically and cannot drift from them.
+ * It asks about the FINISHED message rather than the interpolated fragment,
+ * because isModelNotFound ANDs two independent `includes` over the whole string
+ * ('404' + 'not found') — a fragment can be clean while the concatenation is
+ * not.
+ *
+ * openrouter-adapter.js's neutralizeRetrySignals was considered and rejected on
+ * two counts. It is reachable only through that module's `__testing` surface,
+ * and a test-only export has no business on a production dispatch path; and it
+ * strips only 429/503/"too many requests"/"service unavailable"/"overloaded"/
+ * "high demand" — not "not found", "model_not_found", "does not exist",
+ * "is not supported", RESOURCE_EXHAUSTED or "output token limit", i.e. not the
+ * first case measured above. Its own docblock scopes it to the echoed detail of
+ * a non-transient OpenRouter status, which is a different job from this one.
+ *
+ * isOutputTokenLimit lives in ingest.js and importing it here would be a cycle
+ * (ingest.js imports this module). Testing the phrase locally is not a second
+ * copy of someone else's guard: llm.js is the PRODUCER of that literal —
+ * handleOutputTokenLimit emits it deliberately so ingest's three recovery
+ * ladders and compile's fire — so this is the producer refusing to emit its own
+ * sentinel by accident.
+ */
+function readsAsRecoverable(message) {
+  return is429({ message }) || is503({ message }) || isModelNotFound({ message }) ||
+    /output token limit/i.test(message);
+}
+
+/**
+ * Last resort if EVERY rendering offered below is claimed by a classifier —
+ * which can only mean a FIXED literal in one of them has acquired classifier
+ * vocabulary. That is a source defect, not a runtime condition, so this says
+ * the minimum that cannot carry any.
+ */
+const INERT_FATAL_MESSAGE =
+  'The Curator hit a provider error it cannot recover from. This is a defect in The Curator. Please report it.';
+
+/**
+ * Return the first rendering no classifier claims.
+ *
+ * `renderings` is ordered MOST INFORMATIVE FIRST, and the last should
+ * interpolate nothing so the ladder normally terminates there. Every rung is
+ * checked rather than assumed safe, because "a fixed literal is obviously fine"
+ * is exactly the assumption that made the original comments false the moment an
+ * interpolation was added beneath them.
+ *
+ * WITHHOLDING IS BINARY on purpose. A partially-redacted value ("model ###
+ * found") reads worse in the bug report these messages ask for than an honest
+ * statement that it was withheld, because a mangled value invites the reader to
+ * debug the mangling instead of the defect.
+ */
+function firstInertMessage(renderings) {
+  for (const m of renderings) if (!readsAsRecoverable(m)) return m;
+  return INERT_FATAL_MESSAGE;
+}
+
+/**
+ * The fatal "cannot dispatch" message for callProvider's totality throw. The
+ * provider id is echoed while it is inert — it is the one thing a bug report
+ * needs — and withheld when the finished message would read as recoverable.
+ * See readsAsRecoverable above for the rule and the measurement behind it.
+ *
+ * This is the LEAST exposed of the three sites using that rule: `provider` here
+ * can only be what getProviderInfo() resolved, i.e. a member of KNOWN_PROVIDERS.
+ * It is guarded anyway because the claim in the throw's own comment should be
+ * true as written, rather than true only for the inputs we happen to produce.
+ */
+function undispatchableProviderMessage(provider) {
+  const build = (shown) =>
+    `⚠ The Curator cannot dispatch to the AI provider ${shown}. ` +
+    `This is a defect in The Curator, not a problem with your API key. Please report it.`;
+
+  const raw = String(provider).replace(/[\r\n]+/g, ' ').slice(0, 40);
+  return firstInertMessage([
+    build(`"${raw}"`),
+    build('(withheld: its name reads as a provider fault)'),
+  ]);
+}
+
+/**
  * Invoke a specific provider+model. No retry/fallback here — pure dispatch.
  * Called by `callLLM` which handles fallback, and by the retry loop in `generateText`.
  *
@@ -1645,7 +2854,140 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
     return result.response.text();
   }
 
+  // ── OpenRouter (OpenAI-compatible) ───────────────────────────────────────
+  if (provider === 'openrouter') {
+    return await callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal);
+  }
+
   // ── Anthropic Claude ─────────────────────────────────────────────────────
+  if (provider === 'anthropic') {
+    return await callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal);
+  }
+
+  // ── Unknown provider — THE `else` THAT IS THE POINT OF THIS STRUCTURE ─────
+  // Until v3.15.0 the Anthropic call was UNCONDITIONAL: `if (provider ===
+  // 'gemini') {…}` and then straight into
+  // `new Anthropic({apiKey: getEffectiveKey('anthropic')})` with no test on
+  // `provider` at all. It was unreachable only because resolveProviderDefault
+  // could not return a third value.
+  //
+  // The moment a third provider existed, an OpenRouter request would have gone
+  // to api.anthropic.com on the user's ANTHROPIC key, 404'd on an unrecognised
+  // model id, been classified retryable by isModelNotFound, and WALKED THE
+  // ANTHROPIC FALLBACK CHAIN — spending real Anthropic money on Sonnet while
+  // the user believed they were on a free OpenRouter model. Silent, mis-billed,
+  // and reported as success.
+  //
+  // Dispatch is now explicit and TOTAL: every arm names its provider and there
+  // is no fall-through body. Adding a fourth provider to KNOWN_PROVIDERS
+  // without a branch here lands on this throw — loudly, before any spend —
+  // instead of being absorbed by whichever branch happened to be last.
+  //
+  // The message avoids every substring the recovery classifiers key on (no
+  // "not found", no 429/503/"overloaded", no "output token limit") so it can
+  // never be retried, nor used to walk a fallback chain.
+  //
+  // That claim used to cover only the FIXED literal, while the interpolated
+  // provider id sailed straight past it — see undispatchableProviderMessage,
+  // which now asks the real classifiers about the finished string and withholds
+  // the id rather than let this throw be mistaken for a recoverable condition.
+  throw new Error(undispatchableProviderMessage(provider));
+}
+
+/**
+ * OpenRouter dispatch. Split out so `callProvider` reads as pure, total
+ * dispatch — see the throw above for why that totality is load-bearing.
+ *
+ * Everything wire-shaped lives in openrouter-adapter.js; this function owns only
+ * the three things that are llm.js's business: usage normalisation, the
+ * truncation ladder, and refusing an empty answer.
+ */
+async function callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal) {
+  const apiKey = getEffectiveKey('openrouter');
+  if (!apiKey) {
+    throw new Error(
+      '⚠ No OpenRouter API key found. Add one in Settings (it looks like "sk-or-v1-…").'
+    );
+  }
+  const adapter = _openrouterAdapterFactory
+    ? _openrouterAdapterFactory({ apiKey })
+    : new OpenRouterAdapter({ apiKey });
+
+  const res = await adapter.createChatCompletion({
+    model, systemPrompt, userPrompt, maxTokens, responseFormat, signal,
+  });
+
+  // Fired BEFORE the truncation check, matching both other providers: a
+  // truncated response is a call that ran and was billed.
+  //
+  // `model:` carries the RESOLVED model from the response body, falling back to
+  // the requested id only when the provider did not say. That is the v3.13.2
+  // rule — report the outcome, never the request — and it matters more here
+  // than anywhere else, because OpenRouter is a router: the id that answers is
+  // the id that is billed, and it is what a cost line must name.
+  reportUsage(opts.onUsage, {
+    provider: 'openrouter',
+    model: res.model || model,
+    ...normalizeOpenRouterUsage(res.usage),
+  });
+
+  // OpenAI-compatible `finish_reason: "length"` is the output-budget
+  // truncation. Routed through the same shared handler as the other two
+  // providers so JSON mode still throws with the literal phrase "output token
+  // limit" that isOutputTokenLimit() matches on — which is what makes ingest's
+  // three recovery ladders and compile's full→concise→summary-only ladder fire.
+  if (res.finishReason === 'length') {
+    return handleOutputTokenLimit('OpenRouter', maxTokens, responseFormat, res.text);
+  }
+
+  // Defensive, and NOT the same condition as an empty string: a completion that
+  // finished normally with no content at all is a real failure and must never
+  // degrade into a silent empty answer written to a wiki page.
+  if (typeof res.text !== 'string' || res.text.length === 0) {
+    // `finishReason` is PROVIDER-CONTROLLED text arriving off the wire, which
+    // makes it strictly MORE exposed than the dispatch throw's provider id: that
+    // one can only be a value our own config resolved, whereas this is whatever
+    // an aggregator echoes back, from an upstream set that rotates. Echoed while
+    // it is inert — it is the single most useful field for diagnosing an empty
+    // completion — and withheld when the finished message would read as
+    // recoverable. That distinction matters here precisely BECAUSE this message
+    // says "usually transient — try again": that is an instruction to the USER,
+    // and a classifier claiming it would convert a MANUAL retry into four
+    // automatic ones with backoff, or a walk down the fallback chain, spending
+    // real money on a completion we already know came back empty.
+    const shown = String(res.finishReason || 'unknown').replace(/[\r\n]+/g, ' ').slice(0, 40);
+    const build = (reason) =>
+      `⚠ OpenRouter returned an empty response (finish reason: ${reason}). ` +
+      `This is usually transient — try again. If it persists, pick a different model in Settings.`;
+    throw new Error(firstInertMessage([
+      build(shown),
+      build('withheld — it reads as a provider fault'),
+    ]));
+  }
+  return res.text;
+}
+
+/**
+ * TEST-ONLY seam, mirroring `__setAnthropicClientFactory`. Null in production,
+ * where `new OpenRouterAdapter(...)` is used exactly as written. Resolved PER
+ * CALL, never snapshotted at module load — a top-level `const adapter = …`
+ * would make the override silently import-order dependent (the v3.1.0 finding).
+ *
+ * Note the adapter ALSO accepts an injected `fetchImpl`, so a suite has two
+ * seams available: this one to swap the whole adapter, and that one to drive
+ * the real adapter's real classifier against synthetic HTTP responses.
+ */
+let _openrouterAdapterFactory = null;
+export function __setOpenRouterAdapterFactory(factory) {
+  _openrouterAdapterFactory = typeof factory === 'function' ? factory : null;
+}
+
+/**
+ * Anthropic dispatch. Body moved verbatim out of `callProvider` when dispatch
+ * was made total; the logic, the clamp, the cache breakpoint, the streaming
+ * transport and every comment below are unchanged.
+ */
+async function callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal) {
   // Note: Anthropic's API has no native JSON mode equivalent. Prompts that ask
   // for JSON rely on the "Return ONLY valid JSON" directive in the system prompt
   // plus the jsonrepair fallback in parseJSON (see src/brain/ingest.js).
@@ -1720,11 +3062,23 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
   // normal response and now extracts correctly.
   const answerText = extractAnthropicText(message?.content);
   if (answerText === null) {
-    throw new Error(
-      `⚠ Claude returned no text content (stop_reason: ${message.stop_reason || 'unknown'}). ` +
+    // Same rule as the OpenRouter site above, and for the same reason:
+    // `stop_reason` is provider-supplied text off the wire. Anthropic's enum is
+    // tighter than an aggregator's `finish_reason`, so this is the less likely
+    // of the two to ever carry classifier vocabulary — but "no evidence a
+    // provider does this today" is the argument that lets a latent defect ship,
+    // and guarding one of two identical shapes is this repo's guard-applied-to-
+    // an-instance-not-a-class pattern (v3.6.0 found four in one release). The
+    // cost of closing it is one call to the shared helper.
+    const shown = String(message.stop_reason || 'unknown').replace(/[\r\n]+/g, ' ').slice(0, 40);
+    const build = (reason) =>
+      `⚠ Claude returned no text content (stop_reason: ${reason}). ` +
       `This is rare and usually transient — try again. If it persists, switch ` +
-      `provider in Settings.`
-    );
+      `provider in Settings.`;
+    throw new Error(firstInertMessage([
+      build(shown),
+      build('withheld — it reads as a provider fault'),
+    ]));
   }
   return answerText;
 }
@@ -1810,7 +3164,25 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
 export const __testing = {
   DEFAULTS, FALLBACK_CHAINS, MODEL_PRICES_USD_PER_MTOK, reportUsage,
   ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS, GEMINI_MODEL_MAX_OUTPUT_TOKENS,
+  OPENROUTER_MODEL_MAX_OUTPUT_TOKENS,
   PROMOTIONAL_PRICES, OFFERABLE_SUITABILITY,
+  KNOWN_PROVIDERS, FREE_MODELS, TIERED_PRICE_MODELS,
+  capsFor, hasKnownPricePosture, hasTieredPricing, providerDisplayName,
+  // v3.15.0 guards. Exposed so a suite can drive the real predicates rather than
+  // reach them through a provider call: `looksLikeMovingAlias` is the id-shaped
+  // half of the alias refusal (the record-shaped half is the adapter's mapper),
+  // and `isDeterministicProviderError` is what stops a 39-second retry of a
+  // failure that cannot succeed.
+  looksLikeMovingAlias, isDeterministicProviderError,
+  // The private half of the model-resolution path, so a suite can assert the
+  // build-lane refusal without having to reach it through a config write.
+  applyModelOverride, defaultModelFor, storedSelection, resolveProviderDefault,
+  callProvider,
+  // Dynamic-price registry. Exposed so a suite can prove a free model registers
+  // NO price (getModelPrice must stay null) and that a dynamic entry can never
+  // shadow a hand-verified static one.
+  registerDynamicPrice,
+  dynamicPrices: _dynamicPrices,
   // Exposed so the suite can attempt to build a deliberately under-specified
   // entry and assert the factory REFUSES it — proving "a model may not be
   // offerable unless it is fully specified" is structural, not a convention.

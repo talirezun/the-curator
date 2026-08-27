@@ -1511,13 +1511,21 @@ Returns masked API key status, the active provider, and the model-picker catalog
 {
   "geminiApiKey": "••••••••ab12",
   "anthropicApiKey": "",
+  "openrouterApiKey": "",
   "hasGeminiKey": true,
   "hasAnthropicKey": false,
+  "hasOpenrouterKey": false,
   "activeProvider": "gemini",
   "activeModel": "gemini-2.5-flash-lite",
   "models": {
     "gemini": "gemini-2.5-flash-lite",
-    "anthropic": "claude-haiku-4-5"
+    "anthropic": "claude-haiku-4-5",
+    "openrouter": "upstage/solar-pro4"
+  },
+  "selectedModels": {
+    "gemini": null,
+    "anthropic": null,
+    "openrouter": null
   },
   "fallback": null,
   "offerable": {
@@ -1541,37 +1549,57 @@ Returns masked API key status, the active provider, and the model-picker catalog
         "output": 0.40
       }
     ],
-    "anthropic": []
+    "anthropic": [],
+    "openrouter": []
   }
 }
 ```
 
-- `geminiApiKey` / `anthropicApiKey` — masked (`••••••••` + last 4 chars), or `""` if unset. The
-  raw key is never sent back over this endpoint.
-- `hasGeminiKey` / `hasAnthropicKey` — **config-scoped only** (from `getApiKeys()` /
-  `.curator-config.json`, never `.env`/`getEffectiveKey()`). A key that exists only in `.env` reports
-  `false` here — this is deliberate (v3.0.13): the per-chat model selector and the onboarding
-  first-run check both key off these two fields, and a provider the user has **Disconnected** in
-  Settings must not read as configured just because a developer `.env` fallback still has a key.
+- `geminiApiKey` / `anthropicApiKey` / `openrouterApiKey` — masked (`••••••••` + last 4 chars), or
+  `""` if unset. The raw key is never sent back over this endpoint.
+- `hasGeminiKey` / `hasAnthropicKey` / `hasOpenrouterKey` — **config-scoped only** (from
+  `getApiKeys()` / `.curator-config.json`, never `.env`/`getEffectiveKey()`). A key that exists only
+  in `.env` reports `false` here — this is deliberate (v3.0.13): the per-chat model selector and the
+  onboarding first-run check both key off these fields, and a provider the user has **Disconnected**
+  in Settings must not read as configured just because a developer `.env` fallback still has a key.
 - `activeProvider` / `activeModel` — the provider/model an LLM call would actually use right now
   (`null` if no usable key at all). Can differ from `hasXKey` when a key is `.env`-only.
-- `models` — **stays a `{ gemini: "<id>", anthropic: "<id>" }` map of plain STRINGS.** This is
+- `models` — **stays a map of plain STRINGS (or `null`), one per provider.** This is
   load-bearing, not incidental: the `/old` frontend's chat model-selector dropdown
   (`src/public/app.js`) renders `escHtml(models[p] || '')`, and `escHtml` begins with
-  `String(str)` — so if this field were ever an object or array instead of a string, `/old`
+  `String(str)` — so if a value here were ever an object or array instead of a string, `/old`
   would render the literal text `[object Object]` in that dropdown for every user still on the
   pre-cutover UI. Do not fold `offerable` into this field or otherwise change its shape; add new
   data as a new key instead (which is exactly what `offerable` below does).
+  - **A `null` value is legitimate** and means *this provider has no resolvable default model*.
+    **No provider is `null` in the shipping configuration** — `openrouter` resolved to `null` until
+    a model was measured for its build lane, and since this release it carries
+    `upstage/solar-pro4`. The `null` case is documented because it is still reachable for any
+    provider wired up before its models are measured, and because consumers must keep handling it.
+    This is safe for `/old` in both directions, and both halves were checked rather than assumed: `/old` never
+    enumerates this map (it builds its own provider list from the two original `hasXKey` fields and
+    only indexes `models[p]` for those), and the `|| ''` renders a `null` as empty rather than as
+    `[object Object]`. The invariant this protects is *never an object or array* — not *never null*.
+    **`/old` therefore does not offer OpenRouter at all**, which is the documented limit for this
+    release.
+- `selectedModels` — the user's **explicit stored pick** per provider, or `null` where they have
+  chosen nothing. Deliberately separate from `models`: `models` is what the app will actually *use*
+  (and already reflects a stored pick), while this distinguishes *the user chose the default* from
+  *the user chose nothing* — which a picker needs in order to render a selected state honestly.
+  Strings or `null` only; same shape discipline as `models`. Gated config-only, exactly like
+  `offerable` and the `hasXKey` fields: a Disconnected provider reports `null` here because the
+  engine will not honour its stored selection either. **The UI must never show a selection the
+  engine has stopped obeying.**
 - `fallback` — `null` when the primary model is working; populated when the model-lifecycle
   fallback chain kicked in (see `docs/model-lifecycle.md`).
-- `offerable` — **new, additive** (added alongside `models`, which is untouched). The full
-  pickable-model catalogue per provider, sourced from `OFFERABLE_MODELS` in `src/brain/llm.js`,
-  for a future model-picker UI. Each array is ordered **cheapest-first** by standard `input`
-  price. Gated the *same config-scoped way* as `hasGeminiKey`/`hasAnthropicKey`: a provider with
-  no **saved Settings key** reports `offerable.<provider>: []`, even if `.env` has a key for it —
-  a Disconnected provider must not appear pickable. `offerable.<provider>` is always an array
-  (possibly empty); the endpoint never throws or omits the field if `OFFERABLE_MODELS` is absent
-  or a provider has no shipped entries.
+- `offerable` — the full pickable-model catalogue per provider, driving the model picker. Each
+  array is ordered **cheapest-first** by standard `input` price. Sourced from
+  `listOfferableModels(provider)` in `src/brain/llm.js` — **not** the frozen `OFFERABLE_MODELS`
+  table directly, which for a provider whose catalogue is fetched at runtime is only a partial
+  view. Gated the *same config-scoped way* as the `hasXKey` fields: a provider with no **saved
+  Settings key** reports `offerable.<provider>: []`, even if `.env` has a key for it — a
+  Disconnected provider must not appear pickable. `offerable.<provider>` is always an array
+  (possibly empty); the endpoint never throws or omits the field if a provider has no entries.
   - `id` / `label` — model id and a short display label.
   - `input` / `output` — current USD price per 1M tokens (reflects an active promotion if any).
   - `standardInput` / `standardOutput` — the price once any promotion ends (equal to `input`/
@@ -1580,16 +1608,24 @@ Returns masked API key status, the active provider, and the model-picker catalog
   - `maxOutput` — hard output-token ceiling for this model.
   - `thinks` — measured: whether the model spends hidden reasoning tokens (billed as output).
   - `jsonRaw` — measured: whether the ingest outline's JSON parses raw, without the `jsonrepair`
-    fallback.
+    fallback. **`null` on a `chat-only` entry**, meaning *not measured* — it describes JSON-mode
+    ingest behaviour and is meaningless for chat, which is text mode. It is never `false` in that
+    case, which would read as *measured bad*.
   - `tokenizerFactor` — measured input-token multiplier vs. that provider's baseline tokenizer.
-  - `suitability` — `'general' | 'chat-only' | 'caution'`.
+  - `suitability` — `'general' | 'chat-only' | 'caution'`. **`'chat-only'` is enforced**, not
+    decorative: such a model is refused by `POST /api/config/api-keys/model` and is not honoured
+    as a build model even if already stored. See that endpoint below.
   - `note` — the measured reason behind `suitability`, written to be shown to the user verbatim.
   - `dominated` — `true` when a same-priced sibling measured strictly better.
 
+Every provider key in these three maps (`models`, `selectedModels`, `offerable`) is present for
+each provider the app knows how to talk to. Adding a provider **appends** a key; it never
+re-orders or removes one.
+
 ## POST /api/config/api-keys
 
-Save API keys (partial update — only overwrites provided fields). Saving a non-empty key also
-makes that provider active ("last-saved-wins").
+Save API keys (partial update — only overwrites provided fields). Saving a non-empty key normally
+also makes that provider active ("last-saved-wins").
 
 ```json
 // Request
@@ -1598,19 +1634,159 @@ makes that provider active ("last-saved-wins").
 
 ```json
 // Response
-{ "ok": true, "activeProvider": "gemini", "activeModel": "gemini-2.5-flash-lite" }
+{
+  "ok": true,
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-flash-lite",
+  "skippedActivation": []
+}
 ```
+
+- `skippedActivation` — an array of `{ provider, reason }`. An entry means the key
+  **was saved** but that provider did **not** become active, because it has no model available for
+  the build lane (`reason: "no_build_model"`). The save genuinely succeeded, so this is not an
+  error — it is the signal a UI needs in order to explain why the active provider did not move.
+  Without it the user sees a successful save and an unchanged active provider with no reason given,
+  which reads as the app ignoring the click.
+  - ⚠ **It is empty for every provider that ships today.** All three — `gemini`, `anthropic` and
+    `openrouter` — now have a build-lane model, so saving any of their keys **activates** that
+    provider under ordinary last-saved-wins. `openrouter` produced an entry here until its build
+    lane was measured; it no longer does. Treat this array as a channel that may legitimately
+    never carry anything, and **do not** rely on it to warn a user that saving a key changed their
+    active provider — saving a key changing the active provider is the *normal* path, and the
+    honest signal for it is `activeProvider` in the same response.
+
+  This is the one documented exception to last-saved-wins, and it exists because activating a
+  provider that cannot build silently breaks ingest, Health and Compile. See
+  [model-lifecycle.md → OpenRouter](model-lifecycle.md#the-state-of-the-build-lane-in-this-release).
 
 ## POST /api/config/api-keys/disconnect
 
-Clear one provider's stored key. Body: `{ "provider": "gemini" | "anthropic" }`. If the cleared
-key was active, active switches to the other provider (if it still has a key) or to `null`.
+Clear one provider's stored key. Body: `{ "provider": "<provider>" }`. If the cleared key was
+active, active moves to the first remaining provider **in provider order** that still holds a saved
+key, or to `null` when none does. Config keys only — a lingering `.env` key does not hold a
+provider active after the user disconnected it (the v3.0.13 rule).
 
 ## POST /api/config/api-keys/active
 
-Switch the active provider **without** re-saving its key. Body:
-`{ "provider": "gemini" | "anthropic" }`. Refuses with `400` if the requested provider has no
-stored key.
+Switch the active provider **without** re-saving its key. Body: `{ "provider": "<provider>" }`.
+
+Refuses with `400` in two cases:
+
+| Condition | Response |
+|---|---|
+| The provider has no stored key | `{ "error": "No <provider> key is configured — …" }` |
+| The provider has no build-lane model | `{ "error": "…cannot be made active — ingest, Health and Compile would stop working. Your current provider is unchanged.", "reason": "no_build_model" }` |
+
+The second refusal is **loud on purpose**. Succeeding here would leave ingest, Health and Compile
+throwing on the next call with nothing on screen saying so; a silent no-op would look like a broken
+control. The storage layer refuses this independently as a backstop for any other caller.
+
+**No provider currently triggers that second refusal.** All three have a build-lane model as of
+this release, so `Set active` succeeds for any of them that has a stored key. The branch is
+documented because it stays reachable for a provider wired up before its models are measured, and
+because the storage-layer backstop still enforces it for every caller.
+
+## POST /api/config/api-keys/model
+
+Persist the user's model choice for one provider, **without** changing which provider is active.
+This pins the **build model** — the one that runs ingest, Health and Compile.
+
+```json
+// Request — an empty/null/absent model CLEARS the selection (back to the provider default)
+{ "provider": "anthropic", "model": "claude-sonnet-5" }
+```
+
+```json
+// Response
+{
+  "ok": true,
+  "provider": "anthropic",
+  "selectedModel": "claude-sonnet-5",
+  "effectiveModel": "claude-sonnet-5",
+  "activeProvider": "gemini",
+  "activeModel": "gemini-2.5-flash-lite"
+}
+```
+
+- `selectedModel` — what is now stored (`null` after a clear).
+- `effectiveModel` — what the app will **actually use** for that provider now, so a UI renders the
+  resolved truth rather than assuming the write took effect verbatim.
+- `activeProvider` / `activeModel` — unchanged by this call; returned for convenience. Note they
+  can name a *different* provider: a pin is per provider, and only the active provider's pin is live.
+
+Refuses with `400`:
+
+| Condition | Note |
+|---|---|
+| Unknown provider | — |
+| `model` present but not a string | — |
+| The provider has no key **saved in Settings** | Config-scoped (`getApiKeys()`), never `.env`. Both ends of the contract agree — you can only store a selection for a provider you have connected, and it is only honoured while that key stays connected, so a Disconnect cannot leave a live orphaned selection. |
+| The model is not in that provider's catalogue | The refusal deliberately **does not echo the submitted string** — this repo has a recorded log-forgery finding from echoing an attacker-controlled value into a user-facing message. |
+| The model is measured **`chat-only`** | Refused as a build model, naming the model and stating that it remains selectable per-conversation in chat. Safe to name here because this branch is only reached after the id has been confirmed to be one of our own catalogue ids. |
+
+Also returns **`409`** while any write is in progress (`guardConcurrent`). That is not symmetry with
+its `/active` sibling — the stored selection is consulted **fresh on every LLM call**, and a
+multi-phase ingest makes 20+ calls over several minutes, so an unguarded click mid-ingest would plan
+the outline on one model and write later batches on another, invalidate Anthropic's prompt cache
+(a different model is a different cache namespace, so every cached read becomes a write at 1.25×),
+and make the queue's per-item spend arithmetic wrong.
+
+Write-time validation exists to give the user an actionable `400`. It is deliberately **not** the
+only gate: the model layer re-checks on read, because a stored id can stop being offerable — or be
+re-classified `chat-only` — *after* it was validly written.
+
+## POST /api/config/api-keys/validate
+
+Check a provider key **without spending anything**. Body:
+`{ "provider": "openrouter", "apiKey": "<key>" }`.
+
+Omit or empty `apiKey` to validate the key already resolved for that provider (config, then
+`.env`), which doubles as an *is my saved key still good?* probe. Supplying one lets a caller verify
+a key **before** saving it: the key travels browser → localhost → provider once and is never
+persisted by this route. Length is bounded to 20–400 characters — a format check would reject
+legitimate future keys, since the upstream endpoint is the format authority; the bound exists only
+to stop a megabyte of junk becoming an outbound header.
+
+> **Note on the shipping UI:** the Settings key-test control sends `{ provider }` only, i.e. it
+> checks the **already-saved** key. The pre-save form of this route is supported and tested but is
+> not currently used by the frontend.
+
+**Only OpenRouter is supported**, and the asymmetry is deliberate rather than an omission: OpenRouter
+publishes an authenticated endpoint that reports a key's own tier, limit and usage and **costs zero
+tokens**. Gemini and Anthropic have no equivalent, which is why those are verified instead by
+[System Check](system-check.md)'s explicitly cost-confirmed one-call test. The other providers are
+refused **by name**, pointing at that surface, rather than silently doing nothing.
+
+```json
+// Response — a working key
+{
+  "ok": true, "provider": "openrouter", "valid": true,
+  "isFreeTier": false, "limit": null, "limitRemaining": null, "usage": 0
+}
+```
+
+- **The verdict is a `200` body, not an HTTP error.** A rejected key means this route *worked* and
+  the answer is *no*. Returning `401` would be a lie about our own API and would land in the
+  frontend's generic network-error path, where the actionable detail is discarded.
+- **`valid` is tri-state: `true` / `false` / `null`.** `null` means *we could not find out*
+  (rate-limited, upstream broken, unreachable, unreadable) — a different fact from *this key is
+  bad*, and it must not be rendered as one.
+- **A `402` reports `valid: true` with a warning.** The key authenticated; the *account* is out of
+  credit. Telling the user their key is wrong would send them to regenerate a perfectly good one.
+  Worth knowing: a negative balance produces errors **including on free models**.
+- `limit` / `limitRemaining` / `usage` / `isFreeTier` — passed through **in the provider's own
+  units, with no conversion applied by this app**, and normalised to **`null`, never `0`**, when
+  absent or unreadable. Upstream reports `limit: null` to mean *no cap on this key*, and rendering
+  that as `0` would tell the user their key is exhausted. Reported or absent, never inferred.
+- **No key bytes and no upstream text can reach the response.** Every message is a fixed literal
+  chosen by HTTP status; the upstream error body is never read, let alone echoed. Classification is
+  structural (on the numeric status) and never a substring match on a message.
+- **Deliberately not `guardConcurrent`'d** — do not "fix" this by symmetry with its siblings. That
+  guard exists to stop a *config mutation* landing mid-write; this route mutates nothing. Guarding
+  it would be actively harmful, since a `409` would fire precisely when a long ingest is running,
+  i.e. exactly when a user is asking *is my key the problem?* `POST` (not `GET`) is still
+  load-bearing: the server's cross-origin guard only inspects mutating verbs.
 
 ---
 
@@ -1630,7 +1806,7 @@ The server also serves the web UI from `src/public/` at the root path.
 ## Notes
 
 - The server binds to `127.0.0.1` (loopback) only (v3.0.1-beta.20+), so endpoints are not reachable from the LAN. A cross-origin guard rejects mutating requests (POST/PUT/DELETE/PATCH) carrying a non-loopback `Origin` header (CSRF defense); requests with no `Origin` (curl, scripts) and all GETs pass through. Additionally (v3.0.2+), a Host-header guard rejects any request whose `Host` is not a loopback form (`localhost:PORT` / `127.0.0.1:PORT` / `[::1]:PORT`) with 403 — this closes DNS-rebinding read access, where a rebound hostname made same-origin GETs readable by an attacker page. There is no per-request authentication — it remains a single-user local app.
-- The ingest endpoint blocks until the configured LLM provider (Gemini by default; Anthropic Claude if the user configured it in Settings) returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to the model).
+- The ingest endpoint blocks until the configured LLM provider (Gemini by default; whichever provider the user made active in Settings) returns a response. For large PDFs (50k+ words) this may take 60+ seconds. The 50MB file size limit is a rough guard — what actually matters is the text length extracted from the file (capped at 80,000 characters sent to the model).
 - `POST /api/query` (above) is a simple, single-shot Q&A endpoint — separate from the Chat tab's `POST /api/chat/:domain` — and it still sends up to 90,000 characters of concatenated wiki content to the LLM in one call, in arbitrary file order (`src/brain/query.js`). On a wiki bigger than ~90 KB of raw page content, later pages are silently left out of that request. **The Curator's own web UI never calls this endpoint** — there is no reference to it anywhere in `src/public/`, so the only way to reach it is a direct HTTP call to the loopback server (curl, a script, another tool). The Chat tab does **not** have this limitation: since v3.0.1-beta.11 it uses query-driven page selection (score pages by relevance to the question, load up to ~60 KB of full content plus a ~12 KB slug catalogue — see [docs/ingestion-pipeline.md §10b](ingestion-pipeline.md#10b-the-chat-read-side-v301-beta11-refined-in-v301-beta13)), so it scales to much larger wikis. If you're calling `/api/query` directly against a large wiki (150+ pages), prefer `/api/chat/:domain` instead, or expect its answers to reflect only whatever page content the alphabetical/readdir order happened to include.
 - **Known limitation — `POST /api/ingest-queue` and a filename containing a raw double-quote character.** The multipart parser (upstream of the batch-ingest queue's own code, in `busboy`) mis-parses a `Content-Disposition` header whose filename contains an unescaped `"`: the request still returns `200`/`ok: true`, but that one file is silently absent from `items` — no `rejected` entry, no warning of any kind. A NUL byte in a filename fails the parse outright instead, and is reported as a plain `400`. Neither is reachable from a browser — the WHATWG form-serialisation spec escapes `"` to `%22` before the request is ever built, and NUL is not a legal filename byte on any mainstream filesystem — but a hand-built multipart request from a script or another tool can trigger the quote case silently. If you are integrating against this endpoint programmatically, avoid unescaped `"` in filenames sent this way.
 - **Known limitation — a domain missing `wiki/log.md` fails a completed ingest at the very last step.** This affects both `POST /api/ingest` and `POST /api/ingest-queue` identically (both funnel through the same `appendLog` in `src/brain/files.js`, which has no existence check on `log.md`, unlike the equivalent `readIndex` two lines below it). If it's missing, the ingest still runs to completion — pages are written to disk, real AI spend has happened — and only the final logging step throws `ENOENT`, which surfaces as a `failed` item with a cryptic error. Not reachable through any documented path (`createDomain()` always writes `log.md`, and [docs/domains.md](domains.md) tells manual-setup users to create it too), so it takes a hand-built domain folder to hit. Recovery: the pages are correct and unaffected — create an empty `wiki/log.md` and re-ingest the same source (safe; see the idempotency notes above).

@@ -192,7 +192,19 @@ const ONBOARDING_ROOT_CLASS = 'obp-root';
 // reintroduce geminiUsable/anthropicUsable — v3.0.13 removed them.
 function hasApiKey(keys) {
   if (!keys || typeof keys !== 'object') return false;
-  return keys.hasGeminiKey === true || keys.hasAnthropicKey === true;
+  // Derived from the payload rather than a hardcoded list of providers: this
+  // exact predicate has already gone stale once (it checked only
+  // hasGeminiKey/hasAnthropicKey and missed hasOpenrouterKey when the third
+  // provider landed, telling an OpenRouter-only user on every load that they
+  // still needed a key they had already added) — a fourth provider must not
+  // require editing this file again. Any OWN property named has<Provider>Key
+  // whose value is strictly `true` counts; Object.hasOwn (never a bare index)
+  // is what keeps an inherited name like `constructor` from reading as
+  // present.
+  for (const k in keys) {
+    if (Object.hasOwn(keys, k) && /^has[A-Z][A-Za-z]*Key$/.test(k) && keys[k] === true) return true;
+  }
+  return false;
 }
 
 // GET /api/domains/stats -> { domains: [ { slug, pageCount, ... } ], ... }.

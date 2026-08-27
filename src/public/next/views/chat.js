@@ -87,7 +87,15 @@ function timeAgo(iso) {
 // / state.activeProvider come from the /api/config/api-keys response) — same
 // __proto__/constructor lookup hazard as app.js's READER_TYPE_CLASS/DOT maps,
 // closed the same way.
-const PROVIDER_LABELS = Object.assign(Object.create(null), { gemini: 'Gemini', anthropic: 'Claude' });
+// 'Claude' rather than 'Anthropic' is deliberate and predates OpenRouter: the
+// composer names the thing that answers, and users say Claude. 'OpenRouter' is
+// the vendor's own capitalisation — note the wire field is `hasOpenrouterKey`
+// with a lowercase r, because the route derives it mechanically from the id.
+const PROVIDER_LABELS = Object.assign(Object.create(null), {
+  gemini: 'Gemini',
+  anthropic: 'Claude',
+  openrouter: 'OpenRouter',
+});
 const STYLE_LABELS = { concise: 'Concise', balanced: 'Balanced', comprehensive: 'Detailed' };
 const STYLE_ORDER = ['concise', 'balanced', 'comprehensive'];
 
@@ -104,13 +112,28 @@ const COMPILE_MIN_USER_MESSAGES = 1;
 // namespaced pair — verified the stored-value FORMATS are identical before
 // wiring this up, not just the key names: CHAT_STYLE_KEY holds one of the
 // plain strings 'concise'|'balanced'|'comprehensive' (app.js CHAT_STYLES),
-// exactly STYLE_ORDER below; CHAT_MODEL_KEY holds one of 'gemini'|
-// 'anthropic', exactly the provider strings used here. Both sides already
+// exactly STYLE_ORDER below; CHAT_MODEL_KEY holds a provider id, exactly the
+// provider strings used here. Both sides already
 // guard every read with an `.includes()` allow-list against the live
 // available-providers/styles list (see applyApiKeys below and app.js's own
 // `CHAT_STYLES.includes(saved)` / `providers.includes(saved)`), so an
 // unrecognised or stale value on either side already degrades to "not set"
-// rather than being applied — no extra normalisation needed here. Reading
+// rather than being applied — no extra normalisation needed here.
+//
+// ── v3.15.0: THE TWO SIDES NO LONGER WRITE THE SAME VALUE SET ────────────
+// /next can now write 'openrouter' into this shared key; /old cannot, and
+// deliberately will not — it has no OpenRouter support and its four files
+// are byte-frozen. So /old will read a provider id it does not recognise.
+// VERIFIED, not assumed: src/public/app.js:1862 reads it as
+// `providers.includes(saved) ? saved : (providers.includes(data.activeProvider)
+// ? data.activeProvider : providers[0])`, and its `providers` array is built
+// from hasGeminiKey/hasAnthropicKey only — so 'openrouter' fails the
+// `.includes()` and falls through to the active provider or the first keyed
+// one. The user's /old chat quietly uses a provider /old can actually reach,
+// which is the correct degradation and needs no change on either side. It is
+// recorded here because "a stale value degrades safely" is the whole reason
+// sharing this key was acceptable, and that argument now has to hold for a
+// value one writer produces and the other has never heard of. Reading
 // the same keys means a user's per-chat model and response-length choice
 // survives the /next cutover instead of silently resetting to the
 // defaults (global provider, 'balanced'). LS_DOMAIN has no shipping
@@ -120,8 +143,8 @@ const LS_DOMAIN = 'curator-next-chat-domain';
 const LS_STYLE = 'curator-chat-response-style';
 const LS_PROVIDER = 'curator-chat-model-provider';
 // The per-conversation MODEL id. Deliberately /next-namespaced and NOT sharing
-// a key with anything the shipping app writes: LS_PROVIDER above holds one of
-// 'gemini'|'anthropic', and this holds a model id like 'claude-sonnet-5'. Two
+// a key with anything the shipping app writes: LS_PROVIDER above holds a
+// provider id, and this holds a model id like 'claude-sonnet-5'. Two
 // different value FORMATS must never share one key — that is how a stale value
 // from the other writer gets applied as if it were ours.
 const LS_MODEL = 'curator-next-chat-model';
@@ -190,13 +213,26 @@ const state = {
   sending: false,
   responseStyle: 'balanced',
   modelProvider: null,    // null -> global active provider
-  availableProviders: [], // config-scoped subset of ['gemini','anthropic']
-  models: {},             // {gemini, anthropic} default model ids, for labels
+  availableProviders: [], // config-scoped subset of PROVIDER_KEY_FLAGS' ids
+  // The subset of availableProviders that can serve a turn in which NO MODEL IS
+  // NAMED — i.e. the ones the provider-only menu may offer, and the only ones a
+  // restored localStorage provider may resolve to. Derived from `models[p]`
+  // below (the backend's own getDefaultModel), never a hardcoded id list.
+  //
+  // WHY IT IS A SEPARATE LIST. `availableProviders` means "has a saved key" and
+  // is what scopes the catalogue (normalizeOfferable, resolveChatModel) — that
+  // meaning must not move. But having a key does not imply being usable: an
+  // OpenRouter key with nothing measured yet gives `models.openrouter === null`,
+  // so there is no model to send. Offering it anyway is what let the composer
+  // put a provider on screen, persist it, and POST it on every message while the
+  // backend silently discarded it and billed whichever provider was active.
+  providerOnlyProviders: [],
+  models: {},             // {gemini, anthropic, openrouter} default model ids, for labels
   // The pickable-model catalogue, per provider, cheapest-first, exactly as
   // GET /api/config/api-keys returned it. Already config-scoped SERVER-side
   // (a provider with no saved Settings key gets `[]`), and re-scoped CLIENT-side
   // by normalizeOfferable so the v3.0.13 rule holds even if that ever changes.
-  offerable: { gemini: [], anthropic: [] },
+  offerable: { gemini: [], anthropic: [], openrouter: [] },
   // PER-BROWSER, not per-conversation. Persisted to localStorage[LS_MODEL] on
   // pick and restored in applyApiKeys, and nothing clears it on a conversation
   // switch — so one selection carries across every conversation and survives a
@@ -520,17 +556,73 @@ async function boot(token, scopeReq) {
   await loadDomainConversations(state.activeDomain, token, { autoSelectMostRecent: true });
 }
 
+// The `has<Provider>Key` flags this view reads, in the order providers should
+// appear in the composer menu. Explicit rather than derived from the payload's
+// key names, because these gate what a user can SPEND on: a provider reaches
+// the picker only by being named here, so a backend that grew a new flag
+// cannot make a provider pickable in chat without this file agreeing.
+//
+// Both halves are stated once. `hasOpenrouterKey` has a LOWERCASE r — the
+// route derives it mechanically from the provider id, so it is not
+// `hasOpenRouterKey`; reading the wrong name is silently falsy and the
+// provider simply never appears, which is easy to miss and tedious to find.
+const PROVIDER_KEY_FLAGS = Object.freeze([
+  ['gemini', 'hasGeminiKey'],
+  ['anthropic', 'hasAnthropicKey'],
+  ['openrouter', 'hasOpenrouterKey'],
+]);
+
+/**
+ * Which keyed providers can serve a chat turn with NO MODEL NAMED?
+ *
+ * DERIVED FROM THE WIRE, NEVER FROM A HARDCODED ID LIST. `models[p]` is the
+ * backend's own `getDefaultModel(p)`, so this asks the engine the exact question
+ * whose answer decides whether the request can be built at all — and a fourth
+ * provider becomes offerable here the moment it genuinely resolves a model, with
+ * no edit to this file.
+ *
+ * It is the client mirror of `normalizeChatProvider`'s model-less arm in
+ * src/brain/chat.js. The two are independent by necessity (one reads the wire,
+ * one reads config) and both fail in the SAME safe direction — refuse, and let
+ * the global active provider answer — so a drift between them can only ever
+ * under-offer, never let an unusable provider through.
+ *
+ * `Object.hasOwn` rather than a bare index: `models['__proto__']` returns
+ * Object.prototype, which is truthy, and would admit a provider that does not
+ * exist. `providers` is already built from this file's own frozen
+ * PROVIDER_KEY_FLAGS, so that is defence in depth rather than the only guard.
+ */
+function providersWithDefaultModel(providers, models) {
+  const list = Array.isArray(providers) ? providers : [];
+  const map = models && typeof models === 'object' ? models : {};
+  return list.filter(p => {
+    if (!Object.hasOwn(map, p)) return false;
+    const id = map[p];
+    return typeof id === 'string' && id.length > 0;
+  });
+}
+
 function applyApiKeys(data) {
   const providers = [];
-  if (data.hasGeminiKey) providers.push('gemini');
-  if (data.hasAnthropicKey) providers.push('anthropic');
+  for (const [id, flag] of PROVIDER_KEY_FLAGS) {
+    if (data[flag]) providers.push(id);
+  }
   state.availableProviders = providers;
   state.models = data.models || {};
   state.activeProvider = data.activeProvider || null;
+  state.providerOnlyProviders = providersWithDefaultModel(providers, state.models);
 
   let savedProvider = null;
   try { savedProvider = localStorage.getItem(LS_PROVIDER); } catch { /* ignore */ }
-  state.modelProvider = providers.includes(savedProvider) ? savedProvider : null;
+  // Gated on providerOnlyProviders, NOT on `providers`. A stored id is a
+  // MODEL-LESS selection — nothing else in this restore names a model — so it
+  // may only resolve to a provider that can serve one. Restoring it off the
+  // key list alone was the reachable half of the OpenRouter defect: no UI
+  // interaction was needed, `state.modelProvider` came back as 'openrouter' on
+  // load, and every POST carried a provider the backend threw away. A model
+  // restored below re-sets this to its own provider, which is the model-mode
+  // path and is unaffected.
+  state.modelProvider = state.providerOnlyProviders.includes(savedProvider) ? savedProvider : null;
 
   let savedStyle = null;
   try { savedStyle = localStorage.getItem(LS_STYLE); } catch { /* ignore */ }
@@ -1529,14 +1621,17 @@ function renderCompileButtonHtml() {
 
 function renderComposerHtml(active) {
   const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
-  // Provider mode (v3.0.11): 2+ keyed providers, otherwise there is nothing to
-  // choose between. Model mode: ONE keyed provider is enough, because that
-  // provider alone offers several models — but still nothing at all with zero
-  // keys, since `offerable` is empty for an unkeyed provider.
+  // Provider mode (v3.0.11): 2+ providers that can actually serve a MODEL-LESS
+  // turn, otherwise there is nothing to choose between. Counting merely-keyed
+  // providers here would open the picker for a pair like Gemini + a provider
+  // with nothing measured, whose only extra row is one the app cannot use.
+  // Model mode: ONE keyed provider is enough, because that provider alone
+  // offers several models — but still nothing at all with zero keys, since
+  // `offerable` is empty for an unkeyed provider.
   const showModelPicker = MODEL_PICKER_ENABLED
-    ? (state.availableProviders.length >= 2
+    ? (state.providerOnlyProviders.length >= 2
         || offerableEntries(state.offerable, state.availableProviders).length > 0)
-    : state.availableProviders.length >= 2;
+    : state.providerOnlyProviders.length >= 2;
 
   return (
     '<div class="chat-composer-wrap">' +
@@ -1603,10 +1698,32 @@ const SUITABILITY_LABELS = Object.assign(Object.create(null), {
  */
 function normalizeOfferable(raw, availableProviders) {
   const out = Object.create(null);
-  out.gemini = [];
-  out.anthropic = [];
-  if (!raw || typeof raw !== 'object') return out;
-  for (const p of ['gemini', 'anthropic']) {
+
+  // ── ONE LIST, TWO JOBS, AND THAT IS THE POINT ──────────────────────────
+  // This function used to hold the provider names TWICE — once to zero the
+  // output shape, once to drive the fill loop — so adding a provider needed
+  // two edits inside one function and doing only the first produced NO
+  // ERROR ANYWHERE: the key existed, the array stayed empty, and the entire
+  // catalogue for that provider silently vanished from the composer. A
+  // dropped menu with no exception is the hardest kind of defect to notice
+  // and the exact "we shipped it and it doesn't appear" shape. Now the same
+  // list drives both, in one pass, so the two cannot disagree.
+  //
+  // Deliberately NOT derived from `availableProviders` alone: the zeroed
+  // shape must include providers the user has NO key for, so a caller
+  // reading `out.anthropic` for an unkeyed provider gets an empty array
+  // rather than `undefined` — that is the difference between "no models"
+  // and a TypeError at the reader.
+  //
+  // Deliberately NOT derived from `raw`'s own keys either: this is the
+  // client-side half of the v3.0.13 key gate, and a list of providers taken
+  // from the payload would let the payload decide what the gate covers.
+  const known = ['gemini', 'anthropic', 'openrouter'];
+
+  const rawIsUsable = !!raw && typeof raw === 'object';
+  for (const p of known) {
+    out[p] = [];
+    if (!rawIsUsable) continue;
     if (!Array.isArray(availableProviders) || !availableProviders.includes(p)) continue;
     if (!Object.hasOwn(raw, p)) continue;
     const list = raw[p];
@@ -1819,6 +1936,28 @@ function messageUsageTokens(m) {
  * would mean diverging from the formula this mirrors, which is the drift the
  * mirror exists to prevent. Recorded here so the next reader knows it is a known
  * approximation rather than an oversight.
+ *
+ * ── A FREE MODEL NEVER REACHES THE PRICED BRANCH — MADE EXPLICIT ─────────
+ * `chargeForItem`'s own fix (src/brain/ingest-queue.js) states the rule this
+ * mirror must hold too: "MEMBERSHIP BEATS ANY PRICE THAT MIGHT EVER BE TYPED"
+ * — the free check runs FIRST, ahead of the priced branch, so a free model can
+ * never be billed even if a price were ever mistakenly typed for one. This
+ * function already could not compute a positive figure for a free model —
+ * `defineOfferableModel` (llm.js) refuses to register a numeric price for a
+ * free entry, so `entry.input`/`entry.output` are `null` and the type guard
+ * two lines below already returns null — but that safety was IMPLICIT,
+ * riding on a data-contract promise made elsewhere rather than stated here.
+ * The explicit `row.entry.free === true` check below makes it a property of
+ * THIS function, matching `chargeForItem`'s ordering exactly, so a future
+ * change to how free models carry their price cannot silently reopen this.
+ *
+ * Returns `null`, deliberately not `0` — the ONE proven divergence from
+ * `chargeForItem` (which returns a true `0`, correct for a running batch
+ * total, where zero is the neutral element). A per-answer readout is not a
+ * running total: `0` here would be indistinguishable from a genuine `$0.00`,
+ * which is exactly the ambiguity `formatUsdHonest` and the `{0,0,0,0}`
+ * sentinel guard above both exist to prevent. `assistantCostHtml` is what
+ * turns this `null` into the word "free" — see its own docblock.
  */
 function messageCostUsd(m, ctx) {
   const u = messageUsageTokens(m);
@@ -1836,6 +1975,8 @@ function messageCostUsd(m, ctx) {
   // the name beside it can never come from two different catalogue walks.
   const row = resolveChatModel(modelId, c.offerable, c.availableProviders);
   if (!row || !row.entry) return null;
+  // Membership first, ahead of the priced branch — see the docblock above.
+  if (row.entry.free === true) return null;
   const input = row.entry.input;
   const output = row.entry.output;
   if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) return null;
@@ -1853,28 +1994,47 @@ function messageCostUsd(m, ctx) {
  * The cost fragment appended to one message's eyebrow, or '' when there is
  * nothing we can honestly say.
  *
- * Returning '' — not '$0.00', not '—', not 'cost unknown' — is the whole
- * contract. An unknown cost renders as the absence of a cost.
+ * THREE states, not two — `messageCostUsd` returning `null` collapses two
+ * DIFFERENT facts (v3.14.0's whole point is that a user can compare what each
+ * answer cost, so collapsing them defeats the release on its own surface):
  *
- * Deliberately QUIET: a mid-dot and a figure on the eyebrow line that already
- * names the model, in the eyebrow's own muted tone. Not a badge, not a colour,
- * not a second money surface — the composer already carries the qualitative
- * "cost varies with response length" hint, and two spend readouts arguing for
- * attention in one column would make the factual one look like an alarm.
+ *   • the served model is FREE (a known, exact fact — zero, by membership)
+ *   • the cost is UNKNOWN (no usage recorded, no served model, an unpriced
+ *     model, or a Disconnected provider's model — "we were not told")
+ *
+ * Free is decided by resolving the message's SERVED model through the exact
+ * same lookup `messageCostUsd` uses (`resolveChatModel`) and reading its
+ * `free` flag — the same and ONLY test `formatLivePrice` uses for the menu.
+ * Never a price of 0 (a free entry's price is `null` by design, precisely so
+ * a truthy `{input:0,output:0}` can never be read as "priced" — the v3.3.0
+ * shape), never a provider id, never an id substring.
+ *
+ * The {0,0,0,0} "provider reported nothing" sentinel is refused BEFORE this
+ * lookup runs (`messageUsageTokens` returns null for it first), so a free
+ * model can never borrow that refusal's silence to render "free" over a turn
+ * we simply were not told about.
+ *
+ * Returning '' for the unknown case — not '$0.00', not '—', not 'cost
+ * unknown' — is unchanged: an unknown cost still renders as the absence of a
+ * cost. A genuinely free one renders as the word "free", never as a dollar
+ * figure and never as "$0.00" (that string is reserved for a value we were
+ * not told, per format-usd.js's own rule — a free answer is a measurement,
+ * not an estimate that happens to round to nothing).
+ *
+ * Deliberately QUIET: a mid-dot and a figure (or the word "free") on the
+ * eyebrow line that already names the model, in the eyebrow's own muted tone.
+ * Not a badge, not a colour, not a second money surface — the composer
+ * already carries the qualitative "cost varies with response length" hint,
+ * and two spend readouts arguing for attention in one column would make the
+ * factual one look like an alarm.
  *
  * The `title` carries the token counts behind the figure, so a user who wants
  * to check the arithmetic against their provider's own dashboard can, without
- * the thread growing a table.
+ * the thread growing a table. The free case still carries a title when usage
+ * is on hand — "free" is a price, not an absence of tokens.
  */
 function assistantCostHtml(m, ctx) {
   const usd = messageCostUsd(m, ctx);
-  if (usd === null) return '';
-  const text = formatUsdHonest(usd);
-  // formatUsdHonest returns null for anything that is not a finite number. It
-  // cannot happen here (messageCostUsd already guaranteed one), but a formatter
-  // that CAN say "no figure" must never have that answer interpolated as the
-  // string "null" on a spend line.
-  if (text === null) return '';
   const u = messageUsageTokens(m);
   const title = u
     ? u.inputTokens + ' in / ' + u.outputTokens + ' out' +
@@ -1882,6 +2042,27 @@ function assistantCostHtml(m, ctx) {
       (u.cacheWriteTokens ? ' / ' + u.cacheWriteTokens + ' cache write' : '') +
       ' tokens'
     : '';
+  if (usd === null) {
+    // `messageCostUsd` returned null for one of several reasons (see its own
+    // docblock) — free is only ONE of them, and must be checked with the
+    // identical resolution it uses so this can never disagree with it about
+    // which model is being asked about. `u` (checked above) already proves
+    // this is not the {0,0,0,0} sentinel and not a usage-less message.
+    if (!u) return '';
+    const modelId = m && typeof m.model === 'string' && m.model ? m.model : null;
+    if (!modelId) return '';
+    const c = ctx || {};
+    const row = resolveChatModel(modelId, c.offerable, c.availableProviders);
+    if (!row || !row.entry || row.entry.free !== true) return '';
+    return '<span class="chat-msg-cost" title="' + escapeHtml(title) + '">' +
+      ' · free</span>';
+  }
+  const text = formatUsdHonest(usd);
+  // formatUsdHonest returns null for anything that is not a finite number. It
+  // cannot happen here (messageCostUsd already guaranteed one), but a formatter
+  // that CAN say "no figure" must never have that answer interpolated as the
+  // string "null" on a spend line.
+  if (text === null) return '';
   return '<span class="chat-msg-cost" title="' + escapeHtml(title) + '">' +
     ' · ' + escapeHtml(text) + '</span>';
 }
@@ -1929,8 +2110,29 @@ function formatPricePerM(n) {
   return '$' + n.toFixed(2).replace(/\.00$/, '');
 }
 
-/** "$1 in / $5 out per 1M" from the LIVE (promotion-resolved) fields. */
+/**
+ * "$1 in / $5 out per 1M" from the LIVE (promotion-resolved) fields — or
+ * 'free' / 'price unavailable', which are DIFFERENT facts and must not
+ * collapse into one string.
+ *
+ * `entry.free === true` is llm.js's own reported fact that this model bills
+ * nothing (see FREE_MODELS in src/brain/llm.js) — a free model's `input`/
+ * `output` are `null` BY DESIGN, never `0`, precisely so a budget guard can
+ * never mistake "known to be free" for a truthy zero it must "enforce" (the
+ * v3.3.0 shape). So `free` is checked FIRST, ahead of the price fields, and
+ * is the ONLY thing this function branches on to say "free" — never a price
+ * of 0 (a real model could in principle be priced at exactly $0/$0 and that
+ * would still not mean "free" without the flag), never a provider id, and
+ * never an id substring like ":free" (llm.js's own docblock records why
+ * OpenRouter's `:free` suffix is not a safe membership test — a router id
+ * and two audio models are zero-priced but not actually free).
+ *
+ * A model with NO `free` flag and no usable price is a DIFFERENT fact — the
+ * catalogue did not tell us what this costs — and must keep saying so rather
+ * than being read as free. "Free" and "unknown" must never render the same.
+ */
 function formatLivePrice(entry) {
+  if (entry && entry.free === true) return 'free';
   const inp = formatPricePerM(entry && entry.input);
   const out = formatPricePerM(entry && entry.output);
   if (inp === null || out === null) return 'price unavailable';
@@ -2127,7 +2329,26 @@ function renderComposerPickers() {
   const modelMenu = document.getElementById('chat-model-menu');
   const modelBtn = document.getElementById('chat-model-btn');
   if (modelValue && modelMenu && modelBtn) {
-    const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || 'gemini';
+    // ── NO `|| 'gemini'` TERMINAL FALLBACK ─────────────────────────────────
+    // This chain used to end in the literal 'gemini', which meant that when
+    // NONE of the three sources resolved — no composer selection, no active
+    // provider, and no keyed provider at all — the composer confidently
+    // rendered "Gemini default" to a user who may have no Gemini key. Naming
+    // a specific vendor as a stand-in for "we do not know" is a small lie on
+    // a surface whose entire job is to say which model answers, and it gets
+    // worse as providers are added: an OpenRouter-only user was told Gemini.
+    //
+    // `null` instead, and the two readers below render a neutral label for
+    // it. Same rule as v3.13.2's per-message eyebrow, which renders the
+    // neutral provider label when no model is recorded and NEVER the current
+    // selection — because inventing the likely answer is exactly how a
+    // display stops being evidence of anything.
+    const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || null;
+    // `PROVIDER_LABELS[null]` is undefined on a null-prototype object, and
+    // `undefined || null` is null, so this is null precisely when
+    // shownProvider is null or is an id we have no name for. Both cases mean
+    // the same thing to the reader: we cannot name the provider.
+    const shownLabel = (shownProvider && PROVIDER_LABELS[shownProvider]) || shownProvider || null;
 
     // MODEL mode (gated — see MODEL_PICKER_ENABLED). Falls through to the
     // v3.0.11 PROVIDER menu below whenever the gate is off OR nothing is
@@ -2139,9 +2360,13 @@ function renderComposerPickers() {
       : '';
     if (modelMenuHtml) {
       const chosen = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
+      // "<Provider> default" only when we can name the provider. With no
+      // keyed provider at all there is nothing true to put here, and the
+      // pre-v3.15.0 code said "Gemini default" regardless — see shownProvider
+      // above. A bare "Default" claims only what is actually known.
       modelValue.textContent = chosen
         ? (chosen.entry.label || chosen.entry.id)
-        : ((PROVIDER_LABELS[shownProvider] || shownProvider) + ' default');
+        : (shownLabel ? shownLabel + ' default' : 'Default');
       modelMenu.innerHTML = modelMenuHtml;
       modelMenu.classList.add('chat-mm-menu');
       modelMenu.hidden = state.openPicker !== 'model';
@@ -2166,12 +2391,29 @@ function renderComposerPickers() {
       return;
     }
 
+    // Legacy PROVIDER menu (no model catalogue available). `shownLabel` is
+    // null when no provider is keyed at all; the button previously rendered
+    // the string "Gemini" there and, once shownProvider stopped defaulting,
+    // would render the literal text "null" — so state the absence instead.
     const shown = shownProvider;
-    modelValue.textContent = PROVIDER_LABELS[shown] || shown;
+    modelValue.textContent = shownLabel || 'No provider';
     modelMenu.classList.remove('chat-mm-menu');
-    modelMenu.innerHTML = state.availableProviders.map(p => (
-      '<button type="button" class="chat-dd-opt' + (p === shown ? ' is-active' : '') + '" role="option" data-provider="' + p + '">' +
-        '<span class="chat-dd-opt-title">' + (PROVIDER_LABELS[p] || p) + '</span>' +
+    // ── ROWS COME FROM providerOnlyProviders, NOT availableProviders ────────
+    // This menu names NO MODEL: picking a row sends `provider` alone, so a row
+    // may only exist for a provider that can resolve its own default. Listing
+    // every keyed provider put OpenRouter on screen with an empty model column
+    // while the backend discarded the selection and billed whichever provider
+    // was active — a user watching "OpenRouter" sit selected above answers
+    // labelled with another vendor's model, and nothing anywhere explaining it.
+    //
+    // `p` comes from state.availableProviders, which this file builds from
+    // its own frozen PROVIDER_KEY_FLAGS list — so it is never payload text.
+    // Escaped anyway: "safe because of where the value came from" is a
+    // property a reader has to go and verify, and it stops being true the
+    // day someone sources this list from the wire instead.
+    modelMenu.innerHTML = state.providerOnlyProviders.map(p => (
+      '<button type="button" class="chat-dd-opt' + (p === shown ? ' is-active' : '') + '" role="option" data-provider="' + escapeHtml(p) + '">' +
+        '<span class="chat-dd-opt-title">' + escapeHtml(PROVIDER_LABELS[p] || p) + '</span>' +
         '<span class="chat-dd-opt-desc mono">' + escapeHtml(state.models[p] || '') + '</span>' +
       '</button>'
     )).join('');
@@ -2180,7 +2422,11 @@ function renderComposerPickers() {
     modelMenu.querySelectorAll('[data-provider]').forEach(opt => {
       opt.addEventListener('click', () => {
         const p = opt.dataset.provider;
-        if (!state.availableProviders.includes(p)) return;
+        // Re-validated at CLICK time against the live list, not trusted from the
+        // markup — the same gate the model branch applies via resolveChatModel.
+        // providerOnlyProviders, so a row that somehow reached the DOM for a
+        // provider with no resolvable model still cannot be selected.
+        if (!state.providerOnlyProviders.includes(p)) return;
         state.modelProvider = p;
         try { localStorage.setItem(LS_PROVIDER, p); } catch { /* ignore */ }
         state.openPicker = null;

@@ -9,7 +9,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 1. [What is this app?](#1-what-is-this-app)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
-4. [Get your API key (Gemini or Claude)](#4-get-your-api-key-gemini-or-claude)
+4. [Get your API key (Gemini, Claude or OpenRouter)](#4-get-your-api-key-gemini-claude-or-openrouter)
 5. [First run — the Getting started panel](#5-first-run--the-getting-started-panel)
 6. [Start the server (and how lifecycle works)](#6-start-the-server-and-how-lifecycle-works)
 7. [Finding your way around](#7-finding-your-way-around)
@@ -152,9 +152,16 @@ Open **http://localhost:3333** in your browser. The Getting started panel will g
 
 ---
 
-## 4. Get your API key (Gemini or Claude)
+## 4. Get your API key (Gemini, Claude or OpenRouter)
 
-The app uses an AI provider to read your documents and power chat. You need an API key from one of two providers — **Google Gemini** (recommended, has a free tier and the lowest pay-as-you-go cost) or **Anthropic Claude** (paid only, costs roughly 10× more).
+The app uses an AI provider to read your documents and power chat. You need an API key from one of three providers:
+
+| Provider | Free tier? | Notes |
+|---|---|---|
+| **Google Gemini** | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost, and the app's default. |
+| **Anthropic Claude** | No — paid only | Roughly 10× the Gemini bill for the same workload. |
+| **OpenRouter** | Some models are free, with a daily request cap | One key onto many vendors. **It can build your wiki**, on three hand-measured models, and its default is the cheapest route to that job of the three providers. Because saving its key also makes it the active provider, read [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) before you do. |
+
 
 > ⚠️ **About "free" — read this before you commit to free-tier-only usage.**
 >
@@ -186,7 +193,16 @@ If you'd rather pay Anthropic than Google (e.g. for privacy preference, or becau
 3. Anthropic has **no free tier** — you must add billing before any call works
 4. The Curator defaults to **Claude Haiku 4.5** (Anthropic's lowest-cost tier). If you want more capability, you can pick a different Anthropic model in **Settings → Providers & keys** — seven are offered, with the price and the measured trade-off shown next to each. See [§16b Choosing your AI model](#16b-choosing-your-ai-model).
 
-**Switching between providers when you have both keys.** The Curator uses *last-saved-wins*: whenever you save a key, that provider automatically becomes the active one. So if you've been on Anthropic and then paste a Gemini key, the app switches to Gemini on its own — that's expected. To flip back **without re-pasting or deleting anything**, open **Settings → Providers & keys** and click **Set active** on the row you want. That button appears on any provider that has a key saved and isn't already active; the switch is instant and applies to ingest, chat, and AI Wiki Health. The word `active` next to a row is always the truth about which provider is live. See [§16 → API keys](#api-keys).
+**⚠ Saving a key switches which AI builds your wiki.** The Curator uses *last-saved-wins*: whenever you save a provider key, **that provider immediately becomes the active one** — and the active provider is what runs **ingest, Wiki Health and Compile**. So if you've been on Anthropic and then paste a Gemini key, the app switches to Gemini on its own. That is expected, long-standing behaviour, and it **applies to all three providers, OpenRouter included**.
+
+Worth pausing on, because it is the easiest way to surprise yourself: paste an OpenRouter key just to try a model in chat, and your **next ingest is built by OpenRouter's model instead of the one you were using** — a different model, from a different vendor, at a different price. Nothing breaks and nothing is lost; the wiki still builds. But it is built by something you did not deliberately choose.
+
+Two things make this easy to stay on top of:
+
+- **The word `active` beside a row in Settings → Providers & keys is always the truth** about which provider is live. Check it after saving a key.
+- **To flip back without re-pasting or deleting anything**, click **Set active** on the row you want. That button appears on any provider that has a key saved, has a model able to build your wiki, and isn't already active. The switch is instant.
+
+**Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → API keys](#api-keys) and [§16b](#openrouter--one-key-three-measured-models-and-two-different-rules).
 
 ---
 
@@ -309,6 +325,8 @@ http://localhost:3333/old
 ```
 
 Everything there works exactly as it did — same server, same files on disk, same wiki. Nothing was migrated or moved; the two interfaces are two views onto the same `domains/` folder, and you can use both.
+
+**With one stated exception: `/old` does not support OpenRouter.** Its files are frozen, so the third provider was never added there — it offers Gemini and Anthropic only. If OpenRouter is your only key, use the main interface. One knock-on is worth knowing about because it looks like a fault rather than a limit: `/old`'s first-run setup overlay only checks for the two original providers' keys, so an OpenRouter-only user landing there is shown setup instructions for a key they already have, in an overlay whose first step has no way to close or skip. It is one more reason `/old` is on its way out.
 
 The first time you open the app after updating, a one-time bar appears at the top saying **"The Curator has a new look."** with a **Use the previous interface** link and a **Got it** button. Dismissing it is permanent. (Brand-new installs never see it — there's nothing to be surprised by.)
 
@@ -652,7 +670,7 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — that provider alone offers seven models. With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
+- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three. With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
@@ -1120,7 +1138,7 @@ Here is the recommended way to use The Curator day-to-day:
 | Gets synced | Stays local only |
 |-------------|-----------------|
 | ✓ All wiki pages | ✗ Original source files (PDFs, etc.) |
-| ✓ Chat conversations | ✗ Your Gemini/Claude API key |
+| ✓ Chat conversations | ✗ Your AI provider API keys |
 | ✓ Domain schemas | ✗ App code |
 
 ### First-time setup (~3 minutes)
@@ -1303,7 +1321,7 @@ The full setup walkthrough, daily workflow, troubleshooting, and admin operation
 | Section | What's in it |
 |---|---|
 | **General** | Appearance (theme), System check, Show setup guide |
-| **Providers & keys** | Gemini, Anthropic — save, set active, disconnect, **and choose which model each one runs** ([§16b](#16b-choosing-your-ai-model)) |
+| **Providers & keys** | Gemini, Anthropic, OpenRouter — save, set active, disconnect, **and choose which model each one runs** ([§16b](#16b-choosing-your-ai-model)) |
 | **MCP bridge** | My Curator setup wizard, self-test, default write domain |
 | **Health & scan limits** | Cost ceilings and candidate-pair caps for the AI health scans |
 | **Knowledge base** | Where your `domains/` folder lives; your Obsidian vault folder |
@@ -1316,20 +1334,20 @@ At the bottom of that list you'll see the version — e.g. `The Curator v3.9.0` 
 
 To add or change a key:
 
-1. Click **Replace** on that provider's row
+1. Click **Add key** on a provider that has none, or **Replace** on one that already does
 2. Paste the key into the field that appears
 3. Click **Save**
 
-Saving a key makes that provider active (*last-saved-wins*). Two more buttons appear on a row once it has a key:
+Saving a key makes that provider active (*last-saved-wins*) — unless that provider has no model able to build your wiki, in which case the key is saved and the switch is skipped, with the reason shown. Two more controls appear on a row once it has a key:
 
-- **Set active** — makes this the provider used for ingest, chat and health scans, without re-pasting anything. Shown only on a provider that has a key and isn't already active.
+- **Set active** — makes this the provider used for ingest, Wiki Health and Compile, without re-pasting anything. Shown on any provider that has a key, isn't already active, **and** has a model able to build your wiki. All three usable providers — Gemini, Anthropic and OpenRouter — qualify today. (The condition is still enforced rather than assumed: a provider with a key but no build-lane model would show a short label explaining why instead of a button that would just break ingest. Nothing ships in that state right now, but the guard is what makes adding a new provider safe.)
 - **Disconnect** — removes that key entirely. Use it only when you want to drop a provider, not just deactivate it.
 
 Under each connected provider's row there is a collapsible **model list** — that is where you choose which model that provider runs. It is covered in its own section: [§16b Choosing your AI model](#16b-choosing-your-ai-model).
 
 > **The active provider is chosen first, then its model.** A model you pin under a provider only takes effect while that provider is the active one; pinning under the *other* provider stores a preference that sits dormant until you **Set active** on it. So switching providers also switches which pinned model is running — see [§16b](#16b-choosing-your-ai-model).
 
-You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. OpenRouter is not supported either. The only two providers The Curator can call today are Gemini and Anthropic.
+You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-three-measured-models-and-two-different-rules) explains what makes OpenRouter different from the other two.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
 
@@ -1410,7 +1428,7 @@ The **Choose folder** button greys out while anything is writing to your wiki. T
 
 For most of its life The Curator ran exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still what you get if you never touch anything. But it also meant that if you wanted more capability out of a big wiki, and were willing to pay for it on your own key, there was no way to ask.
 
-Now there is. **Fourteen models** are on offer: seven Gemini and seven Anthropic.
+Now there is. **Seventeen hand-measured models** are on offer: seven Gemini, seven Anthropic and three OpenRouter. Every one of them was measured by hand against The Curator's real ingest prompt before being offered, and all seventeen can build your wiki. The third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) below.
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
 
@@ -1445,7 +1463,7 @@ Stickiness is a real decision, not an oversight, and it cuts both ways. In its f
 
 But that balance only holds because of the safeguard beside it: **each answer records and displays the model that actually produced it**, so a forgotten selection cannot hide. The label is not a repeat of what you picked — it is read back from the provider's own billing information for that call, which means it survives the cases where the two differ:
 
-- If the model you asked for is unavailable — its provider has no key saved, or it isn't one of the fourteen on offer — the request is **not refused**. It quietly falls back to that provider's default and still answers you, and the answer says so, naming both what ran and that it differs from what you asked.
+- If the model you asked for is unavailable — its provider has no key saved, or it isn't one of the seventeen on offer — the request is **not refused**. It quietly falls back to that provider's default and still answers you, and the answer says so, naming both what ran and that it differs from what you asked.
 - Older messages, written before this existed, carry no recorded model. They show the provider's name and nothing more. They are **never** relabelled with whatever is currently in the dropdown — a label that guessed would be worse than no label, because you would have no way to tell a guess from a fact.
 
 The practical upshot: you never have to remember what the dropdown says. Scroll up and the thread tells you what answered each question.
@@ -1456,7 +1474,7 @@ Beside the model name on each answer, you'll often see a small cost figure too �
 
 **It shows only when it can be stated as fact, and shows nothing otherwise.** If anything needed to work it out is missing — your provider didn't report usage for that call, the model isn't one this app has a published price for, or you're looking at a message from before this existed — you see no figure at all. Not "$0.00", not a dash, not an estimate. A wrong number about money is worse than an absent one, and this app has shown a real cost as `$0.00` before by accident; it isn't going to invent one on purpose.
 
-**Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the fourteen models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
+**Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the seventeen models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
 
 **One thing worth knowing:** the figure is always priced at *today's* rate, not the rate on the day the answer was given. A couple of the Gemini models on offer are running a temporary discount with a stated end date ([The two promotional prices](#the-two-promotional-prices)); reopen an old answer from one of them after that date and it will show the *higher*, standing price — even though it cost less at the time. That's deliberate: when this app can't be exact about a cost, it always rounds toward the number that costs you nothing to have over-believed, never the other way.
 
@@ -1483,7 +1501,7 @@ While anything is writing to your wiki, the **Use this** buttons grey out, and t
 
 Wait for the run to finish. The chat composer's dropdown is unaffected and stays usable throughout — it only remembers a preference in your browser and attaches it to your next chat message; it changes nothing on the server, so there is nothing that could land mid-run.
 
-### Why these fourteen — the selection criteria
+### Why these seventeen — the selection criteria
 
 Every model on the list was **probed live against The Curator's real ingest prompt, on real prose** — not against a toy *"return this JSON"* test. That matters more than it sounds: several of the defects below only appear under a realistic prompt and would have passed a simple probe green. Prices were read off the providers' **live pricing pages**, never a cached copy, because a cached table once carried a scheduled price change that had already been cancelled.
 
@@ -1512,7 +1530,7 @@ In **Settings**, each row can carry any combination of:
 | **in use** | This is what the provider is actually running right now. | Nothing. |
 | **your choice** | You pinned this one. Without it, you're following the app default. | Nothing — but it tells you an update won't move you. |
 | **caution** | Usable everywhere, but carries a measured downside you should see before choosing: a scheduled price rise, thinner results than a *cheaper* model, or a same-priced sibling that beat it. | Expand the row and read the note. Then choose deliberately. |
-| **chat only — not for ingest** | Measured *unfit for ingest specifically.* Chat is unaffected. | Fine for chat. Don't make it your Settings model, because Settings governs ingest. |
+| **chat only — not for ingest** | Measured *unfit for ingest specifically.* Chat is unaffected. | Fine for chat. You **cannot** make it your Settings model — the app refuses, and says why. |
 | **out-performed** | Another model at **exactly the same price** measured better on every axis tested. | Pick the sibling named in the note instead. You're paying the same either way. |
 
 The **chat composer** menu shows a shorter set on the same data: **caution**, **chat only**, **dominated** (the composer's word for *out-performed*), and **thinks**. It also shows the full measured note on any flagged model, so a warning is never a badge you can't interpret.
@@ -1525,6 +1543,119 @@ Two examples, because the principle matters more than the specifics:
 
 **`claude-opus-4-5` is offered but marked "out-performed."** At the identical $5 / $25 it is behind `claude-opus-5` on all three measured axes: half the output ceiling, formatting that needs repair, and 12–13 planned pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price. There is no measurement supporting the choice — but it is still on the list, labelled, because it is your key.
 
+**A flag on the build lane is now a rule, not just a label.** Until this release, "chat only — not for ingest" was a badge and nothing more: you could pin such a model as your Settings model and the app would let you, while the warning sat on the same screen. That is fixed. The app now **refuses** to make a chat-only model your build model, tells you why, and reminds you it is still available in chat — and if you had already pinned one, it quietly runs the provider's default for ingest instead. Nothing about chat changed: a chat-only model stays fully pickable in the composer, which is the whole point of the label.
+
+### OpenRouter — one key, three measured models, and two different rules
+
+**OpenRouter is an aggregator**, not a vendor: one key, one account, and models from many different companies behind it. That is genuinely useful — it is the cheapest route into this app, and one of the models it reaches is free — and it is why it plays by slightly different rules from the other two.
+
+**How many models that actually means here: three.** OpenRouter's own catalogue is very large, but The Curator offers only what someone has measured against its real ingest prompt, and that is three routes (below). There is no larger list to unlock: the app is built to hold a bigger chat-only catalogue read from your own account, but **nothing fills it in this release**, so three is what you get in both the Settings picker and the chat composer.
+
+**⚠ Read this first: OpenRouter can now build your wiki — and saving its key switches you over to it.**
+
+This changed in this release. Ingest, Wiki Health scans and Compile all run on models measured by hand against The Curator's real ingest prompt, and **three OpenRouter routes have now been measured that way** (see [The three measured models](#the-three-measured-models-and-which-to-pick) below). So:
+
+- OpenRouter is available for **chat**, as before.
+- It is now **also** available for ingest, Wiki Health and Compile.
+- **Saving an OpenRouter key makes it your active provider** — ordinary *last-saved-wins*, the same as Gemini and Anthropic. In the previous release it did not, because there was no model to build with; that exception is gone.
+- You can also switch to it deliberately with **Set active**.
+
+**The practical consequence, stated plainly:** if you have a Gemini or Anthropic key that has been building your wiki, and you save an OpenRouter key to try a model in chat, **your next ingest will be built by OpenRouter** — specifically by `upstage/solar-pro4`, the pinned default. Nothing breaks and nothing is lost. But it is a different model at a different price, and if you did not intend it, click **Set active** on the provider you did want. The word `active` beside a row is always the truth about which provider is live.
+
+If OpenRouter is your **only** key, you can now run the whole app on it, which was not true before.
+
+#### The three measured models, and which to pick
+
+Each was run **nine times** against The Curator's real ingest prompt — the full thing, roughly 341,000 characters assembled from a real wiki, not a toy test — and the same prompt, byte for byte, went to all three, so these numbers compare to each other honestly.
+
+| Model | What it's for | Measured |
+|---|---|---|
+| **Solar Pro 4** — `upstage/solar-pro4` | **The default.** Best all-round of the three. | Clean JSON on **9 of 9** runs with no repair needed; plans a median of **23** pages per document. **$0.03 / $0.12** per 1M tokens. |
+| **Granite 4.0 H Micro** — `ibm-granite/granite-4.0-h-micro` | **When cost dominates.** Also the automatic backup if the default ever disappears. | Equally clean — **9 of 9** — but **thin**: a median of **9** pages where Solar plans 23. **$0.017 / $0.112**, the cheapest model The Curator offers anywhere. |
+| **MiniMax M3 (free)** — `minimax/minimax-m3:free` | **Free.** Widest coverage measured, but least predictable to reach. | **8 of 9** runs clean, 1 needed the repair pass, none unusable; median **21** pages. No price at all. |
+
+Two things are worth reading off that table rather than skipping:
+
+- **Fewer planned pages means a less detailed wiki from the same document.** Granite's median of 9 against Solar's 23 is not a rounding difference — it is the difference between a thorough wiki and a sketch. Pick it when cost genuinely dominates, not by default.
+- **Solar Pro 4 is roughly a third the price of the cheapest Gemini option** ($0.03/$0.12 against $0.10/$0.40) at comparable coverage. If cost is why you are here, that is the headline.
+
+**A note on the free one.** It is genuinely free and genuinely useful, but free models draw on a **shared pool**, so whether one answers is not just about your account. In a ten-minute availability check during measurement, this model answered **8 of 8** attempts while **three of its free siblings answered 0 of 8**, all reporting they were rate-limited upstream — same account, same moment. That is why it is offered as a deliberate choice and is never picked for you automatically. Combined with a large ingest being **40+ separate calls**, treat free as a real option, not a guaranteed one.
+
+#### Why two standards — and why it is not fussiness
+
+The consequences are not symmetrical.
+
+- **A bad chat answer costs you one answer, and you can see it.** It's prose, on your screen. Ask again on a different model.
+- **A bad ingest writes wrong pages into your wiki, permanently, across a document you won't re-read — and you've already paid for it.** Your wiki is the thing this whole app exists to protect.
+
+So the build lane admits only what has been measured, and the chat lane admits what your key unlocks, **labelled as unmeasured**. Two different bets, two different downsides.
+
+#### Why the app can't just test a model for you when you pick it
+
+The obvious idea — probe the model, and let it in if the probe passes — was considered and rejected, and the reasons are worth knowing because they explain why the measured list stays small.
+
+- **A model's published capabilities say it *accepts* structured output. They cannot say the output *parses*.** The Curator's own list is the proof: one Gemini model advertises structured output, honours the request, and in 2 of 9 real runs returned data that neither the parser nor the repair pass could fix. In an aggregator's catalogue it looks perfectly capable — because it is. The defect is in what comes back.
+- **A test on a fresh install would be a toy test.** A real ingest prompt is roughly 285,000 characters, about **90% of which is your own wiki index and page list**. A new install has neither. And a small synthetic prompt is precisely the kind that passes green while a real one fails — that is not hypothetical, it is how a 100%-reproducible failure once survived a release here.
+- **One run cannot see a 2-in-9 problem.** At that rate a single test passes a broken model about **78%** of the time. Catching it reliably takes around nine runs of a very large prompt, before you have ingested anything.
+- **And some of what's recorded is comparative.** "A model at the same price measured better on every axis" is a statement about a *relationship*, which no single model's test can produce. A machine can honestly report *"7 of 7 clean, 14 pages planned"*. It cannot write the verdict.
+
+#### What's checked automatically, and what a human measures
+
+Not everything needs a human. Some things the provider publishes, and the app reads them straight from the source:
+
+| From OpenRouter itself | Measured here, by hand |
+|---|---|
+| Price, in and out | Whether the ingest output actually parses |
+| Maximum output tokens | Which lane the model belongs in |
+| Context window | The written reason you see on the row |
+| Whether the model spends hidden reasoning tokens | |
+
+Which makes the honest version of the rule: **the provider tells us what it costs; we measure whether it can do our job.** (The prices are not taken on faith either — the aggregator's published prices were checked against this project's own independently verified figures and matched on every model compared.)
+
+#### What is refused automatically, before anyone measures anything
+
+Some models are ruled out structurally, because of something the app *can't* do rather than a preference:
+
+- **Models with no structured-output mode at all.** Ingest needs it.
+- **"Auto" router models whose price is unknown until after the call.** Every price in this app is shown to you **before** you choose. A model that can't be priced in advance can't be shown honestly, so it isn't shown.
+- **Moving aliases** that quietly resolve to whatever the vendor considers newest. Pin one and what you picked can change underneath you.
+- **Models that can't write enough in one go** to produce an ingest outline at all.
+- **Models whose price changes above a certain prompt size** — some double their rate on long prompts. Those are allowed **for chat only**, where prompts are small and bounded, and never for ingest, which is exactly where a long prompt would cross the threshold and where quoting half the real rate would matter most.
+
+#### Free models — real, useful, and not unlimited
+
+Some models on OpenRouter genuinely cost nothing. Three things to know:
+
+- **There is a daily cap on requests**, which rises once you have bought credits. This guide deliberately **does not print the numbers**: they're OpenRouter's to change, and the app shows you the real figures it reads back from your own key instead of a number written down here months ago.
+- **It matters more than it sounds for ingest.** A large document is **40+ separate AI calls** — one real run measured 42. A daily cap counted in requests can therefore mean roughly *one* large ingest per day on a free account. If you hit a limit mid-ingest, that is the cap, not a broken app.
+- **A negative balance blocks free models too.** Counter-intuitive, but it's how the provider works: if your account is in arrears, even free models return errors until you top up.
+
+You'll also see nothing at all where a cost figure would normally be, on a free model. That's on purpose: a free model shows **no price**, never `$0.00`, and a dollar budget cap can't be applied to one, because a dollar cap on something free is meaningless.
+
+#### Free models and privacy — an open question, honestly
+
+Your prompts contain your notes and your wiki, and an aggregator routes them onward to some other vendor.
+
+OpenRouter has an account setting governing whether your requests may go to providers that might train on your data, with separate controls for paid and free models. **Two things could not be verified when this was written, so this guide will not claim either:** whether free models *require* that permission, and what OpenRouter's own data-retention policy is.
+
+**What the app itself sends is a measured fact, and it is this: nothing.** The Curator sends no data-collection preference on any request, so whatever you have set on your OpenRouter account is what governs, untouched. That is a deliberate choice rather than an omission. Asking OpenRouter to deny data collection was tested, and it is **accepted on paid models but refused outright on free ones** — the request comes back as a hard failure saying no provider matches that data policy. The strict setting and the free models therefore cannot be combined today, and sending it unconditionally would have broken every free-model request while looking like the model had simply vanished.
+
+So: **this guide does not tell you free models are private, and it does not tell you they aren't.** If your sources are sensitive, treat it as a question to settle against OpenRouter's current policy before pointing chat at a free model. What the app does do on every request is refuse provider substitution — your request is served by the provider you picked the model from, not one chosen for you mid-flight.
+
+#### Where the key is stored
+
+Same place as the others: **Settings → Providers & keys**, saved to `.curator-config.json` on this machine with permissions locked to `0600`. Never committed, never sent anywhere except OpenRouter. (`.env` still works as a developer fallback, but a key that lives *only* there won't appear in the model picker — deliberately: a provider you Disconnected in Settings must not stay usable in chat.)
+
+Unlike the other two, an OpenRouter key can be **checked for free**: OpenRouter publishes a way to ask about a key that costs nothing and uses no tokens, so Settings can confirm your saved key still works — and show what your account's tier and limits actually are — without spending a cent. Gemini and Anthropic have no equivalent, which is why those are verified instead by [System check](#system-check)'s explicitly cost-confirmed one-call test.
+
+The check reports three outcomes, and the middle one matters: a key can come back as **working but out of credit**. That is not a bad key — the key authenticated, the *account* is in arrears — and it is reported that way deliberately, because telling you the key was wrong would send you off to regenerate a perfectly good one. There is also a distinct *couldn't find out* result (OpenRouter unreachable or rate-limiting the check), which is a different fact from *this key is bad* and is never shown as one.
+
+#### One thing that won't work: the old interface
+
+The previous interface at [`/old`](#the-previous-interface-is-still-there-at-old) does **not** support OpenRouter. That's a stated limit, not a bug being worked on — its files are frozen. If OpenRouter is your only key, use the main interface.
+
+There's a knock-on worth knowing about, because it looks like a fault: `/old`'s first-run setup overlay only checks for Gemini and Anthropic keys, so an OpenRouter-only user landing there is shown setup instructions for a key they already have — and that overlay has no way to close or skip past its first step. It is one more reason `/old` is on its way out.
+
 ### The two promotional prices
 
 `gemini-3.7-flash` and `gemini-3.6-flash` bill at **$0.75 in / $3.75 out per 1M tokens through 31 December 2026**, then **double to $1.50 / $7.50 on 1 January 2027**.
@@ -1535,7 +1666,7 @@ Everything about pricing here fails in the safe direction. A wrong clock, a miss
 
 ### Cost, honestly
 
-Across the two catalogues, the span is roughly **50× on input and 62× on output** — from $0.10 / $0.40 per 1M tokens at the cheap end to $5 / $25 at the expensive one. Choosing blind can multiply your bill without you noticing, which is why every row carries its own price and no price is hidden behind an expand.
+Across the fourteen Gemini and Anthropic models, the span is roughly **50× on input and 62× on output** — from $0.10 / $0.40 per 1M tokens at the cheap end to $5 / $25 at the expensive one. (The three OpenRouter models extend that floor *downward* rather than the ceiling up: the cheapest of them bills $0.017 / $0.112, and one is free. None of them is dearer than anything above.) Choosing blind can multiply your bill without you noticing, which is why every row carries its own price and no price is hidden behind an expand.
 
 One thing you could not possibly work out for yourself, so it belongs here:
 
@@ -1545,7 +1676,8 @@ Also remember that a **thinks** model bills its invisible reasoning as output to
 
 ### What isn't available
 
-- **OpenRouter** — not supported. There is no way to route The Curator through it.
+- **A larger OpenRouter model list** — not in this release. Three OpenRouter models are measured and offered, and that is the whole list in both the Settings picker and the chat composer. The app carries the machinery to hold a bigger chat-only catalogue read from your own account, but **nothing populates it in this build**, so there is no larger list waiting to appear. (OpenRouter itself *can* run ingest, Health and Compile — see [OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) above.)
+- **OpenRouter in the old interface at `/old`** — not supported at all, deliberately.
 - **Local models** — not supported for The Curator's own calls. The **Local model** row in Settings is a placeholder marked *"not available in this build."* (You *can* point a local model at your wiki through the MCP bridge — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252) — but that is the model reading your wiki, not The Curator calling it.)
 - **OpenAI** — the same: a placeholder row, nothing to configure.
 - **Gemini Pro** — a deliberate omission rather than an oversight. It is a different price class again, and nothing on the list was found short of coverage.
@@ -1723,7 +1855,7 @@ Node.js is not installed, or the terminal can't find it. Download it from [nodej
 
 **"No LLM API key found" error when starting the server**
 
-No API key is configured. Open the app in your browser and use **Settings → Providers & keys → Replace → Save** (the Getting started panel links you straight there). If you prefer to use a file, check that `.env` exists in the `the-curator` folder with `GEMINI_API_KEY=your_key_here`.
+No API key is configured. Open the app in your browser and use **Settings → Providers & keys → Add key → Save** (the Getting started panel links you straight there). If you prefer to use a file, check that `.env` exists in the `the-curator` folder with `GEMINI_API_KEY=your_key_here`.
 
 **The server starts but `http://localhost:3333` shows "This site can't be reached"**
 
@@ -1823,7 +1955,9 @@ You are on Gemini's free tier and have hit a daily/per-minute quota — see [§1
 
 > **Read this section before you commit to using The Curator at scale.** It is the single most common source of frustration for new users.
 
-The Curator is **free software**. The only thing that costs money is the AI provider you call for the features that actually invoke an LLM. There are two providers you can plug in (Gemini or Claude), and a clear split between which features use tokens and which don't.
+The Curator is **free software**. The only thing that costs money is the AI provider you call for the features that actually invoke an LLM. There are three providers you can plug in — Gemini, Claude, or OpenRouter — and a clear split between which features use tokens and which don't.
+
+The cost figures throughout this section are for **Gemini and Claude**, the two providers these numbers were originally measured across, and ingest is where nearly all the money goes. **OpenRouter can now build your wiki too**, and its pinned default is cheaper than either column here — roughly a third of the cheapest Gemini option on input. All three of its models sit below the cheap end of this section's range, and one of them is free, so treating these figures as an upper bound for OpenRouter is safe. Its own caveats — a daily request cap and shared-pool availability on free models, and what happens when an account goes into arrears — are in [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules).
 
 ### Which features use tokens
 
@@ -1852,7 +1986,9 @@ So when you see a bill, the dominant line item is **ingest**. Chat and Health As
 
 > Gemini has a free tier *and* the cheapest paid tier *and* the largest context window. That is why it is the default. Claude Haiku 4.5 is the right choice if you specifically want Anthropic — for example because you already have a corporate Anthropic account, or you prefer Anthropic's privacy stance — but expect a roughly 10× higher bill for the same workload.
 
-> ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen models on offer the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
+> **OpenRouter is absent from this comparison because it was not measured the same way, not because it cannot do the work.** It **can** run ingest as of this release, and its pinned default (`upstage/solar-pro4`, $0.03/$0.12 per 1M tokens) is cheaper on both axes than either column above. What is missing is a like-for-like end-to-end cost run of the kind the two columns are built from, so putting a third column here would be comparing a measured figure against an estimate. Its per-model prices, coverage and free-tier caveats are in [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules).
+
+> ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen Gemini and Anthropic models the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. (The three OpenRouter models all sit below the cheap end of that span.) Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
 
 ### What the Gemini free tier actually gives you
 
@@ -1950,7 +2086,7 @@ Do not edit any files outside ~/the-curator. Do not commit anything to my git co
 - Most agents will ask before running `npm install` and before launching the server. Approve those — they're the install.
 - If the agent doesn't have permission to install Node.js system-wide, it will tell you. On Linux, `sudo apt install nodejs npm` (or your distro's equivalent) is enough.
 - After the install, the **Getting started** panel in the browser walks you through the rest: API key, first domain, first ingest. The agent should not need to touch any of that.
-- The agent doesn't replace this guide — when you want to understand what the app actually does, [§4 (API keys)](#4-get-your-api-key-gemini-or-claude), [§13 (three ways to talk to your knowledge)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp), and [§19 (cost)](#19-api-keys-cost--free-tier) are the most important sections.
+- The agent doesn't replace this guide — when you want to understand what the app actually does, [§4 (API keys)](#4-get-your-api-key-gemini-claude-or-openrouter), [§13 (three ways to talk to your knowledge)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp), and [§19 (cost)](#19-api-keys-cost--free-tier) are the most important sections.
 
 ### Updating with a coding agent
 

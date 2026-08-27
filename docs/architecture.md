@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Curator is a local Node.js web application. It has no external database — all knowledge is stored as plain markdown files on disk. An LLM (Google Gemini or Anthropic Claude, selected by which API key is configured) is the only external dependency at runtime.
+The Curator is a local Node.js web application. It has no external database — all knowledge is stored as plain markdown files on disk. An LLM is the only external dependency at runtime, reached through one of three providers — Google Gemini, Anthropic Claude, or OpenRouter — selected by which API key is configured.
 
 ### Core design philosophy: Curation, not retrieval
 
@@ -387,14 +387,25 @@ With **both** keys stored, the winner is **not** Gemini-by-default — it is `ac
 
 ```
 Only one key set            →  that provider
-Both keys set               →  config.activeProvider  (last saved / toggled)
-Both set, legacy config      →  Gemini  (no activeProvider field → Gemini-first fallback)
+Several keys set            →  config.activeProvider  (last saved / toggled)
+Legacy config, no
+  activeProvider field      →  first provider with a key, in provider order
+                               (gemini → anthropic → openrouter)
 activeProvider set but its
   key missing               →  falls through to whichever provider still has a key
 Neither set                 →  Error on first LLM call
 
-default models (DEFAULTS in llm.js):  gemini-2.5-flash-lite  /  claude-haiku-4-5
+default models (DEFAULTS in llm.js):  gemini-2.5-flash-lite  /  claude-haiku-4-5  /  (none)
 ```
+
+**The legacy ladder is append-only, and that is load-bearing.** It re-resolves configs written before `activeProvider` existed, so its order decides *retroactively* which provider an existing user is billed to. `openrouter` therefore sits **last**, reached only after both original providers have failed — i.e. only in cases that previously resolved to nothing at all. A pre-OpenRouter config cannot contain an OpenRouter key field, so every such config resolves byte-identically to before. Inserting anywhere earlier would silently move real users onto a different provider, and therefore a different bill, with no on-screen signal.
+
+**Last-saved-wins now has one exception: a provider that cannot build.** Saving a non-empty key still activates that provider — *unless* it has no build-lane model, in which case the key is saved and the activation is skipped, with the reason returned so the UI can explain why the active provider did not move. This closes a reproduced P0: a user with a working Gemini install who merely *saved* an OpenRouter key lost ingest, Health and Compile, because activation flipped to a provider with no resolvable model and the route that would have reported it swallows the throw in a `catch` commented "no key configured yet" — when a key *is* configured. The rule is deliberately the **class**, not the instance: **the app never activates a provider that cannot serve the build lane.**
+
+**That class-scoping is now load-bearing rather than hypothetical, and the outcome is worth stating precisely.** OpenRouter gained measured build-lane models in this release, so the predicate it is asked now answers *yes* and **the exception no longer fires for OpenRouter** — saving an OpenRouter key activates it, ordinary last-saved-wins, exactly as for the other two. Not one line of the guard needed editing to produce that, which is the payoff for writing it as a class. What remains is a live guard for the next provider wired up before its models are measured, and the `skippedActivation` array it returns is correspondingly **empty for every provider that ships today** — a consumer must treat it as a signal that may legitimately never arrive, not as a channel it can assume is exercised. **The predicate lives in the route layer and is INJECTED into storage, not computed there.** The question — *does a model resolve for this provider, and may it build?* — is `llm.js`'s to answer, and `llm.js` imports `config.js`, so computing it in `config.js` would need a cycle that a standing offline invariant forbids. `src/routes/config.js` already namespace-imports `llm.js`, so the predicate is defined there and passed to the two storage **mutators** as a callback. Two consequences of that shape are deliberate:
+
+- **With no predicate supplied, nothing is activated.** The failure directions are wildly unequal: a skipped activation that should have happened is mildly annoying, *visible*, and undone by one click on the existing set-active control; an activation that should not have happened breaks the entire build lane with nothing on screen saying so. Defaulting to *activate* would make the P0 the default behaviour. A predicate that **throws** is treated as a refusal for the same reason.
+- **Its own degradation is asymmetric on purpose.** The hard requirement is only that a non-empty model id resolves — precisely the mechanism that broke — which a long-standing export decides. The newer lane predicate is consulted when present; when absent, the answer falls back to *a model resolved, therefore it can build*, which is exactly the truth for Gemini and Anthropic. Making a missing export mean *cannot build* would silently kill last-saved-wins for both, a far worse regression than the bug being fixed.
 
 The table above describes the **effective** key (config *or* `.env`). The **onboarding
 wizard's trigger does not**: `checkFirstRun()` reads `hasGeminiKey`/`hasAnthropicKey`,
@@ -411,9 +422,24 @@ The optional `LLM_MODEL` env var overrides the default model for whichever provi
 - `cachePrefixChars` (v3.0.16) — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
 - `provider` (v3.0.11) — a per-call provider override for the chat model selector, honoured only when that provider has a key **saved in Settings**.
 - `model` (v3.13.0) — a per-call model override (the chat composer's model dropdown). Narrowed to a non-empty string here and then allow-listed inside `getProviderInfo()`; anything not in `OFFERABLE_MODELS` for the resolved provider falls back to that provider's default rather than throwing. See [Model selection](#model-selection-the-router-v3120--v3130).
-- `signal` (v3.4.0) — **an `AbortSignal`, and the entire mechanism behind "Cancel" on a batch ingest.** It is threaded queue → `ingestFile` → `generateText` → both provider SDKs; abort is checked *before* the retry ladder, the 429/503 backoff (`sleep()` is itself abortable) and the model-not-found fallback chain, so a cancel stops spending immediately rather than walking up to five more calls. Measured: 334 s → 63 ms. Omitting it leaves every code path byte-identical to the pre-v3.4.0 behaviour.
+- `signal` (v3.4.0) — **an `AbortSignal`, and the entire mechanism behind "Cancel" on a batch ingest.** It is threaded queue → `ingestFile` → `generateText` → every provider client (both SDKs and the OpenRouter adapter, which additionally links it to its own request timeout); abort is checked *before* the retry ladder, the 429/503 backoff (`sleep()` is itself abortable) and the model-not-found fallback chain, so a cancel stops spending immediately rather than walking up to five more calls. Measured: 334 s → 63 ms. Omitting it leaves every code path byte-identical to the pre-v3.4.0 behaviour.
 
 For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's native `responseMimeType: 'application/json'` — this forces the model to produce structurally valid JSON even when the content contains markdown characters (backticks, quotes, backslashes) that would otherwise break parsing.
+
+### Provider dispatch has a terminating `else`, and adding the third branch is what forced it
+
+`callProvider` used to be a Gemini `if` followed by an **unconditional** Anthropic client construction reading a hardcoded Anthropic key. That was safe only because the provider resolution could not return a third value. The moment it could, an OpenRouter request would have been sent to Anthropic's API on the user's Anthropic key, returned a model-not-found, been classified as retryable by `isModelNotFound`, and **walked the Anthropic fallback chain — spending real Anthropic money while the user believed they were on a different provider.**
+
+Dispatch is now `if / else if / else { throw }`, and the third branch and the terminating throw landed in the same change. The same binary-with-no-third-arm shape existed in the output-cap lookup (`provider === 'gemini' ? GEMINI_CAPS : ANTHROPIC_CAPS`, with `provider` unvalidated, so every unknown provider silently resolved to the Anthropic map) and was replaced by a `switch` returning `null` for a provider we do not dispatch to. This is the v3.10.1 finding — a two-armed conditional has no third arm, and the fall-through arm is whichever one happened to be written second.
+
+The OpenRouter branch is an adapter over the provider's OpenAI-compatible endpoint. Two request-level preferences are sent on **every** call and both are load-bearing:
+
+- **Provider fallback is off.** The aggregator's upstream fallback is on by default, so without this the model the user picked could be served by an upstream they did not pick, at a price the app did not quote.
+- **Required parameters are enforced.** This is what stops an upstream **silently dropping** the JSON-mode request. A dropped structured-output request does not error — it returns prose, which surfaces as a parse failure several layers away with no indication of the real cause.
+
+The request never carries a model-substitution list, which would be the same class of silent swap one rung up. Error classification is **structural** — on the numeric status, which the provider also mirrors into its error body — never a substring match, because this repo's own `/\b429\b/` once matched its own prose about "429 characters". Note that a `503` under these preferences means *no upstream met the required parameters*, an expected outcome of our own strictness rather than necessarily an outage, and it is named as such so a user is not sent to a status page for a request that will never succeed as written.
+
+**Usage normalisation differs by provider and getting it wrong double-counts silently.** OpenRouter's prompt-token count **includes** cached tokens — the Gemini convention, not Anthropic's — so its normaliser subtracts, exactly as the Gemini one does. This is the same trap documented for Gemini in v3.0.16; it is restated here because the two providers it resembles disagree with each other.
 
 ---
 
@@ -430,7 +456,9 @@ The design principle the router implements, stated once:
 > **One model builds your brain; you choose freely when talking to it.**
 
 - **The build lane** — ingest, AI Wiki Health and Compile — runs on the **active provider** and that provider's resolved default model (its pinned selection, or `DEFAULTS[provider]` when nothing is pinned). It is **one setting, not three**, and not separately configurable per feature.
-- **The chat lane** — a per-message provider *and* model override, honoured only when that provider has a key saved in Settings and the id is in `OFFERABLE_MODELS`. It has **no effect on the build lane**: it travels on one request body and is never written to config.
+- **The chat lane** — a per-message provider *and* model override, honoured only when that provider has a key saved in Settings and the id is offerable for that provider. It has **no effect on the build lane**: it travels on one request body and is never written to config.
+
+**The two lanes now also have two admission standards**, which is what adding an aggregator forced into the open. The build lane admits only models hand-measured against the real ingest outline prompt; the chat lane admits what a provider's live catalogue offers, after structural filtering, labelled as unmeasured. The reason is asymmetric consequence — a bad chat answer costs one visible answer, a bad ingest writes pages into the wiki permanently and was already paid for. The full argument, including why on-demand qualification was rejected, is in [model-lifecycle.md → OpenRouter](model-lifecycle.md#openrouter--a-third-provider-whose-catalogue-moves-without-us).
 
 **The coupling is structural, not conventional.** The build-lane call sites do not merely decline to pass an override — most of them have no parameter to pass it through. Every LLM call in the app enters `generateText(systemPrompt, userPrompt, maxTokens, responseFormat, onWait, opts)`, and only the sixth parameter can carry `provider` / `model`:
 
@@ -471,23 +499,61 @@ Two details this makes visible that the flat precedence line below does not:
 - **`applyModelOverride` is applied twice**, at two different rungs — once inside `defaultModelFor` against the *stored* selection, once inside `getProviderInfo` against the *per-call* one. Both applications enforce `isOfferableModel`, which is why a stored id that later stops being offerable is refused on **read** and falls back, rather than being honoured forever because it was valid when written.
 - **The provider is decided before the model.** `resolveProviderDefault` picks the active provider, and only then is *that* provider's stored selection consulted via `storedSelection(provider)`. A pin recorded against the **other** provider is therefore inert until that provider becomes active — it is stored per provider, not globally, and `selectedModels` is a map keyed by provider for exactly this reason. This is the single most likely user-facing surprise in the whole router, and it is documented as such in [user-guide.md §16b](user-guide.md#16b-choosing-your-ai-model).
 
+### The lane is a predicate, and it used to be only a badge
+
+`isBuildLaneModel(provider, modelId)` answers *may this model be the one that builds the wiki*. It derives from `suitability` and nothing else, so exactly one place decides a model's lane, and it shares `findOfferableModel` with `isOfferableModel` so the allow-list still has exactly **one** scan — a second `list(...).find(...)` here would be a hand-maintained copy of the membership test.
+
+It exists because `suitability: 'chat-only'` was, until this release, **read in exactly three places, all badge rendering**. Nothing enforced it. The pin route gated on `isOfferableModel` plus a saved key, so a model measured as emitting unrepairable JSON in 2 of 9 real ingest runs could be pinned as the build model, and the app accepted the click while the badge on the same screen said not to. Enforcement is at two layers, and both are needed:
+
+- **The pin route refuses** (`400`, naming the model, saying it stays available in chat) — so the user gets an actionable reason rather than a silent no-op that reads as a broken control.
+- **`defaultModelFor` refuses on read**, via `applyModelOverride(..., requireBuildLane = true)` — because a chat-only pin may already be on disk from before enforcement existed, and because a model can be re-classified `chat-only` *after* it was validly pinned. Write-time validation alone leaves both cases honoured forever.
+
+The per-call chat override passes no such flag and is unaffected. Failure is closed and cheap: unknown provider, unknown id or non-offerable id all return `false`, and `false` resolves to the provider default — the cheapest model on that provider — so a false negative can only ever spend *less*.
+
 ### `OFFERABLE_MODELS` is a frozen capability record, and it cannot be incomplete
 
-`OFFERABLE_MODELS` (in [`llm.js`](../src/brain/llm.js)) is a frozen `{ gemini: [...], anthropic: [...] }` table, ordered cheapest-first on the **standard** price within each provider. Entries are not written as object literals — they are built by `defineOfferableModel(provider, spec)`, which **throws at module load** if:
+`OFFERABLE_MODELS` (in [`llm.js`](../src/brain/llm.js)) is a frozen per-provider table, ordered cheapest-first on the **standard** price within each provider. For a provider whose catalogue is fetched at runtime it is a **partial view** — see [the overlay](#the-live-catalogue-is-an-additive-overlay-never-a-mutation-of-the-frozen-table) below — so consumers read `listOfferableModels(provider)`, never the table directly. Entries are not written as object literals — they are built by `defineOfferableModel(provider, spec)`, which **throws at module load** if:
 
-- any measured field is missing or the wrong type (`thinks`, `jsonRaw`, `tokenizerFactor`, `suitability`, `note`, `label`, `id`);
-- the id has no entry in `MODEL_PRICES_USD_PER_MTOK`;
-- the id has no entry in its provider's output-cap map (`ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS` / `GEMINI_MODEL_MAX_OUTPUT_TOKENS`).
+- any measured field is missing or the wrong type (`thinks`, `tokenizerFactor`, `suitability`, `note`, `label`, `id`);
+- it has **no known price posture** — meaning neither a price nor an explicit free-model declaration (see below);
+- it has no resolvable output ceiling — either an entry in its provider's output-cap map (`ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS` / `GEMINI_MODEL_MAX_OUTPUT_TOKENS`) or one carried on the entry itself;
+- it is `'general'` or `'caution'` and is missing a measured `jsonRaw`, or has tiered pricing (both **lane-scoped** — see the two notes below).
 
-**A model that is not fully specified therefore does not merely fail a test — it fails to exist, and the app refuses to boot.** That is the structural half of "a model may not be offered for a feature it has never been measured against": a convention can be forgotten, a module-load throw cannot. The table is static, so the throw is unreachable in production by construction; it is a developer-time tripwire.
+**A model that is not fully specified therefore does not merely fail a test — it fails to exist.** That is the structural half of "a model may not be offered for a feature it has never been measured against": a convention can be forgotten, a module-load throw cannot. For the static tables the throw is a developer-time tripwire, unreachable in production by construction; for a dynamically-admitted entry it is a live per-entry refusal (below).
 
-Price and ceiling are **derived** from those two tables rather than re-typed into the entry, so there is no second copy to drift — two hand-maintained copies of one fact is this repo's named cause of the v3.2.0 CRITICAL, and here the fact is a number a user makes a spending decision from. `input`/`output` are defined as **getters**, not snapshots, so a promotional price that expires mid-process resolves correctly on the next read (`JSON.stringify` invokes them, so the route serialises plain numbers).
+**Two requirements are lane-scoped, and the scoping is the point.** `jsonRaw` records whether a raw parse of the *ingest outline* succeeds without the repair pass. It is a measurement of JSON-mode ingest behaviour and is **meaningless for chat**, which is text mode — so requiring it of a chat-only entry would force whoever admits one to invent a boolean about something they never measured, the precise failure the factory exists to prevent. A chat-only entry may omit it and carries `null`, meaning *not measured*, never `false`, which would read as *measured bad*. Everything a build-lane entry had to carry before, it still carries. Likewise a model whose rate changes above a prompt-size threshold is refused as `'general'`/`'caution'` **structurally**, and may only be admitted chat-only (see [Tiered pricing](#tiered-pricing-and-free-models-two-shapes-a-single-price-pair-cannot-express) below).
+
+For statically-admitted entries, price and ceiling are **derived** from those tables rather than re-typed into the entry, so there is no second copy to drift — two hand-maintained copies of one fact is this repo's named cause of the v3.2.0 CRITICAL, and here the fact is a number a user makes a spending decision from. `input`/`output` are defined as **getters**, not snapshots, so a promotional price that expires mid-process resolves correctly on the next read (`JSON.stringify` invokes them, so the route serialises plain numbers).
+
+### The live catalogue is an additive overlay, never a mutation of the frozen table
+
+An aggregator's catalogue is hundreds of models and moves without a release of ours, so its chat-lane entries are admitted **at runtime** from the provider's public API rather than hand-typed. Three properties keep that from weakening anything:
+
+- **The frozen table stays frozen.** The runtime catalogue is a separate list, and `listOfferableModels(provider)` is the accessor that concatenates them. The hand-measured build-lane entries can therefore never be replaced by something fetched over the network; the overlay can only **add** chat-lane offers.
+- **Every fetched entry goes through the same admission function** as a hand-measured one, so it must still carry a label, a `thinks` verdict, a price posture, an output ceiling and a note, or it does not become an offer.
+- **Refusal is per entry, not all-or-nothing.** One malformed record in a large response is dropped with a stderr line and the rest are admitted — refusing the lot would hand a third party a switch that disables the feature. (stderr, never stdout: this module is imported by the MCP child process, which reserves stdout for JSON-RPC frames.)
+
+Empty until something populates it, so the module's default state is *this provider offers nothing*, which is what makes a partially-wired provider harmless.
+
+**Every consumer must read the accessor, not the frozen table.** `src/routes/config.js` routes both its call sites — the picker serialiser *and* the build-lane check — through one helper for this reason. The two could defensibly differ (reading the static table fails **closed** for a build pin but fails by **hiding** for the picker), and they deliberately do not: an accidental asymmetry and a deliberate one are indistinguishable six months later, which is how this repo's comment-contradicts-code defects start.
+
+### Tiered pricing and free models: two shapes a single price pair cannot express
+
+The app's price model is one `{input, output}` pair per model, and every consumer assumes it — the estimator, `chargeForItem`, `compareModelCost`, and the composer's mirrored copy of the charge formula that a 126-case suite pins to exact-dollar equality. Two real shapes in an aggregator's catalogue break that assumption in opposite directions, and both are handled by refusing to encode them as a number rather than by threading a new one through the whole money path.
+
+**Tiered (long-context) pricing.** Some models change rate above a prompt-token threshold — a common case doubles both rates above 200,000 prompt tokens. This resembles the promotional-price trap and is arithmetically worse: a promotion expires on a **date**, which is knowable in advance and resolvable by clock, whereas a tier fires on the **size of the request** — and the requests that cross it are precisely this app's large ingests, where a user spends most. A flat entry would quote half the real rate there, on a spend surface, and **no ordering assertion would notice**, because array order survives a doubling: this project's named "green over a wrong number" shape. So such a model is admitted **chat-only, structurally**. That is safe for a specific measured reason rather than by hope: chat's prompt is bounded (60 KB of content plus a 12 KB catalogue, on the order of 20k tokens) — an order of magnitude below the lowest threshold observed — so the flat rate quoted for chat is the rate billed. The build lane, the only lane that can cross a threshold, cannot reach these models.
+
+**Free models.** `{input: 0, output: 0}` is the natural-looking encoding and the single most dangerous one available, because zero is **truthy**: `getModelPrice()` would return an object rather than `null`, the estimator's high bound would become 0, and `createJob`'s budget guard would **accept a `budgetUsd` it believes it can enforce** and then track spend at zero forever while every flag reported success — v3.3.0's inert-cap defect re-armed, and worse, because there the number at least moved. `compareModelCost` would answer `'similar'` where it has established nothing.
+
+So a free model is recorded by **membership**, never by a price, and `getModelPrice()` keeps returning **`null`** for it. Every downstream consequence of that null is already implemented and already correct: `createJob` refuses a dollar cap it cannot price (a dollar cap on a free model is meaningless), `chargeForItem` flips its estimated flag, and cost readouts render **nothing** rather than `$0.00` — the v3.14.0 rule that a figure is reported or absent, never inferred. The dynamic price registry enforces the same rule from the other side: it refuses a non-positive or non-finite figure outright, and refuses to shadow a statically-priced id, so the two price sets are disjoint by construction and a fetched number can never override a hand-verified one.
+
+**Identify free by the id, never by the price being zero.** In the live catalogue the sets do not coincide — a small number of zero-priced ids are not free-tier models, and one is a router whose real price is unknown until it has routed. `test-chat-model.js`'s assertion that every entry in the static price table is strictly positive on both axes is what makes the zero-price encoding structurally unavailable; it must not be weakened.
 
 The entry shape is a **public contract**: `src/routes/config.js` serialises entries verbatim onto `GET /api/config/api-keys` → `offerable`. Fields may be added; renaming or removing one is a wire-format change.
 
 ### The allow-list has exactly one application point
 
-`isOfferableModel(provider, modelId)` is the predicate. It is applied **inside `getProviderInfo()`** — the single producer of the model string both SDKs receive — and nowhere else.
+`isOfferableModel(provider, modelId)` is the predicate. It is applied **inside `getProviderInfo()`** — the single producer of the model string every SDK and adapter receives — and nowhere else.
 
 That placement is deliberate and load-bearing. There are seven other entry points into `generateText` (ingest, compile, chat, query, health-AI, shared-brain, diagnostics); validating at a route would leave every other one open **and** create a second hand-maintained copy of the guard, which is exactly the shape that produced the v3.2.0 CRITICAL. The route (`POST /api/config/api-keys/model`) does call the predicate, but as a **read of the same function** to give the user an actionable 400 — not as a second implementation, and not as the only gate.
 
@@ -525,7 +591,11 @@ per-call preferModel  >  LLM_MODEL  >  stored selection  >  DEFAULTS[provider]
 | Stored selection belongs to a provider whose key is no longer **saved in config** | `storedSelection()` returns `null` before the allow-list is even consulted → provider default. |
 | Per-call override is invalid | **Falls back to the user's STORED selection**, not to `DEFAULTS` — because `applyModelOverride` is applied on top of the already-resolved provider default, which has the stored pick baked in. Dropping to `DEFAULTS` would silently demote a user who deliberately paid for a better model. |
 
-Every one of these resolves toward the **cheapest** model at worst, so a refusal can only ever spend *less* than the user asked for. This mirrors `normalizeChatProvider` (invalid provider → `null` → global) and `anthropicMaxOutputTokens` (unknown id → conservative cap). A caller that needs to know a refusal happened compares: `getProviderInfo` returns the model it actually resolved, so `result.model !== requested` is the signal. The return shape is unchanged — `{provider, model}` is destructured at roughly 15 call sites across `src/` and `mcp/`.
+A fourth case was added by the build-lane predicate: a **stored `chat-only` pin** resolves to the provider default when the build lane asks, and is honoured unchanged when chat asks.
+
+Every one of these resolves toward the **cheapest** model at worst, so a refusal can only ever spend *less* than the user asked for.
+
+**The one case that throws instead is a provider with no default at all.** Falling back presumes there is something to fall back *to*. Every provider now carries a pinned default — OpenRouter included, as of this release — so this branch is **unreachable in the shipping configuration**, and it is kept deliberately as the guard that makes wiring a fourth provider safe: if one is ever added before a build-lane model has been measured for it, resolving it for the build lane with no per-call override produces no model to send. `getProviderInfo` refuses there — the only correct place, since it is the single producer of the model string — rather than putting an empty model on the wire and converting a configuration problem into an opaque provider error several layers away. The message is worded to avoid **every** substring the recovery classifiers key on (no *output token limit*, no *not found*, no 429/503/overloaded), so it cannot be mistaken for a recoverable condition, retried four times with backoff, or used to walk a fallback chain. This mirrors `normalizeChatProvider` (invalid provider → `null` → global) and `anthropicMaxOutputTokens` (unknown id → conservative cap). A caller that needs to know a refusal happened compares: `getProviderInfo` returns the model it actually resolved, so `result.model !== requested` is the signal. The return shape is unchanged — `{provider, model}` is destructured at roughly 15 call sites across `src/` and `mcp/`.
 
 `chat.js` goes one step further and reports the model that **answered** rather than the one requested, taken from the last `onUsage` payload. That covers both an allow-list refusal *and* a fallback-chain walk; re-resolving through `getProviderInfo` would see the first and be blind to the second, and the walk is where the number matters most because it can move the user onto a *costlier* model.
 
@@ -606,7 +676,7 @@ Each assistant message in `/next`'s chat carries a small cost fragment beside th
 
 **Priced by the model that ACTUALLY answered.** `usedModel`/`usedProvider` are read out of the usage payload itself, never out of `chatModel`/`chatProvider` (what was requested) — the same rule [Refusal is a fall-back](#refusal-is-a-fall-back-never-a-throw) already documents for the label beside it. This is where it matters most: on a fallback-chain walk the requested rung 404s and a costlier rung answers, and pricing the request instead of the outcome would under-report the bill for precisely the turn the user did not choose.
 
-**The formula is a deliberate mirror, not an import.** `messageCostUsd` in `src/public/next/views/chat.js` reproduces `chargeForItem` from `src/brain/ingest-queue.js` — the app's one other "what did these tokens cost" calculation, including both Anthropic cache multipliers (0.1× the input rate for a cached read, 1.25× for a cache write) — term for term. It is mirrored rather than imported because `ingest-queue.js` pulls in `fs` and `llm.js` and cannot run in a browser; a second, independently-written formula is exactly the two-hand-maintained-copies shape that produced the v3.2.0 CRITICAL. So the mirror is pinned rather than trusted: `scripts/test-next-composer-model.js` §11 points the same brace-matching function extractor this suite already uses on `chat.js` at `ingest-queue.js` instead, lifting out the real `chargeForItem`, and asserts the two agree to the last bit across every offerable model crossed with nine token shapes — 14 models × 9 shapes = 126 cases. A change to either formula alone goes red naming the case.
+**The formula is a deliberate mirror, not an import.** `messageCostUsd` in `src/public/next/views/chat.js` reproduces `chargeForItem` from `src/brain/ingest-queue.js` — the app's one other "what did these tokens cost" calculation, including both Anthropic cache multipliers (0.1× the input rate for a cached read, 1.25× for a cache write) — term for term. It is mirrored rather than imported because `ingest-queue.js` pulls in `fs` and `llm.js` and cannot run in a browser; a second, independently-written formula is exactly the two-hand-maintained-copies shape that produced the v3.2.0 CRITICAL. So the mirror is pinned rather than trusted: `scripts/test-next-composer-model.js` §11 points the same brace-matching function extractor this suite already uses on `chat.js` at `ingest-queue.js` instead, lifting out the real `chargeForItem`, and asserts the two agree to the last bit across **every entry of the live catalogue** crossed with nine token shapes. The model set is enumerated from the catalogue rather than hardcoded, and the suite reports the case count it actually ran — so a model added or repriced is covered the moment it lands, and this document does not carry a total that can silently go stale. A change to either formula alone goes red naming the case. The all-zero usage shape is deliberately excluded: it is the *provider reported nothing* sentinel, refused before the arithmetic runs, so it is the one input on which the two are expected to differ.
 
 **The `{0,0,0,0}` sentinel, and why the two normalisers treat it differently on purpose.** `normalizeGeminiUsage`/`normalizeAnthropicUsage` (`llm.js`) each coerce a missing field to `0` via a local `num()` helper, so a provider response that carries no usage block at all — not a genuine report of zero — arrives as all four fields zeroed, indistinguishable from a real zero-cost call. `chat.js`'s `normalizeReportedUsage` refuses exactly this shape (`inputTokens === 0 && outputTokens === 0` → discard the record): a completed chat turn cannot have consumed zero input, because the prompt always carries the domain schema plus the selected wiki pages ahead of the user's message, so an all-zero report can only mean "the provider told us nothing." `llm.js`'s own normalisers deliberately do **not** apply that same refusal — those two functions also feed `ingest-queue.js`'s running `spentUsd` total, where `0` is the correct neutral element for an item that has not yet billed anything, and narrowing them here would move real accumulating-spend arithmetic in a change that is otherwise a chat-only label.
 
@@ -624,6 +694,7 @@ Each assistant message in `/next`'s chat carries a small cost fragment beside th
 | `scripts/test-next-model-picker.js` | The Settings surface, including the provider-lookup class invariant. |
 | `scripts/test-next-composer-model.js` | The chat composer surface, including §11's 126-case equality check between `messageCostUsd` and the real `chargeForItem`. |
 | `scripts/test-next-model-fallback.js` | The fallback banner's three cost states. |
+| `scripts/test-openrouter-model-layer.js` | The third provider's model layer: the build-lane predicate, price posture, the runtime catalogue overlay, and the structural refusals. |
 
 ---
 
@@ -811,7 +882,7 @@ Properties that are correctness requirements, not conveniences:
 - **Never auto-starts spend.** A job interrupted by a crash or restart recovers to `paused`; nothing calls start on its own.
 - **The job directory lives OUTSIDE `domains/`** — `<user-data dir>/.ingest-queue/` via `getIngestQueueDir()` in `src/brain/paths.js` — because `getDomainsDir()` is Personal Sync's git work-tree (`sync.js` passes `--work-tree=getDomainsDir()`). A queue directory inside it would commit and push staged, possibly-large source files to the user's GitHub repo — the same class of bug this project has shipped twice before (`.DS_Store` in v3.0.16, `.write-lock` in v3.0.15).
 
-**Pause vs. Cancel — deliberately not the same "stop" (v3.4.0+).** Pause is lossless: it only ever stops between files. Cancel means "stop spending right now": an `AbortController` is threaded from the queue worker through `ingestFile` down to the `generateText` call and both provider SDKs, so a click aborts the file that's *currently* in flight rather than waiting for it to finish. Measured on a real multi-phase 150 KB source: cancel acknowledged in single-digit milliseconds and the job reached a terminal state in ~63–74 ms, versus the ~334 s and up to 17 further paid provider calls the same run would otherwise have made. The interrupted item gets its own terminal status, `cancelled` ("Stopped"), distinct from `failed`; nothing already written is rolled back, and re-ingesting that one file (with Overwrite ticked, since it's already recorded in `raw/`) completes it. The abort check is placed FIRST in every one of `ingest.js`'s LLM-reachable recovery catches (Phase 1 outline retry, Phase 2 batch → page-by-page → stub, single-pass → multi-phase) — a cancel caught by one of those ladders instead of honoured would silently keep spending, the exact inverse of what Cancel is for.
+**Pause vs. Cancel — deliberately not the same "stop" (v3.4.0+).** Pause is lossless: it only ever stops between files. Cancel means "stop spending right now": an `AbortController` is threaded from the queue worker through `ingestFile` down to the `generateText` call and every provider client, so a click aborts the file that's *currently* in flight rather than waiting for it to finish. Measured on a real multi-phase 150 KB source: cancel acknowledged in single-digit milliseconds and the job reached a terminal state in ~63–74 ms, versus the ~334 s and up to 17 further paid provider calls the same run would otherwise have made. The interrupted item gets its own terminal status, `cancelled` ("Stopped"), distinct from `failed`; nothing already written is rolled back, and re-ingesting that one file (with Overwrite ticked, since it's already recorded in `raw/`) completes it. The abort check is placed FIRST in every one of `ingest.js`'s LLM-reachable recovery catches (Phase 1 outline retry, Phase 2 batch → page-by-page → stub, single-pass → multi-phase) — a cancel caught by one of those ladders instead of honoured would silently keep spending, the exact inverse of what Cancel is for.
 
 ## Data flow: Chat
 
@@ -1181,7 +1252,8 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 | `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
 | `setApiKeys({ geminiApiKey, anthropicApiKey })` | Saves API keys to the config file (partial update) |
 | `getEffectiveKey(provider)` | Returns the active key for a provider: config file takes priority over `.env` |
-| `getSelectedModel(provider)` | The user's stored model choice for a provider, or `null`. Read **fresh per call**; sanitised, and deliberately **not** validated against `OFFERABLE_MODELS` here (that happens on the read side in `llm.js` — see [Model selection](#model-selection-the-router-v3120--v3130)) |
+| `getSelectedModel(provider)` | The user's stored model choice for a provider, or `null`. Read **fresh per call**; sanitised, and deliberately **not** validated against the catalogue here (that happens on the read side in `llm.js` — see [Model selection](#model-selection-the-router-v3120--v3130)) |
+| `setApiKeys(keys, opts)` / `setActiveProvider(provider, opts)` | The two activation mutators. Both take an **injected** `opts.canActivate` predicate and activate nothing without it — see [LLM provider selection](#llm-provider-selection-srcbrainllmjs). The predicate itself lives in `src/routes/config.js`, because answering it needs `llm.js`, which imports this file |
 | `setSelectedModel(provider, modelId)` | Persists the choice, or clears it on empty/null. Deletes the key entirely when nothing is selected, so a user who never picks keeps a byte-identical config file |
 
 ### `src/brain/llm.js`
@@ -1190,13 +1262,30 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 |--------|-------------|
 | `getProviderInfo(preferProvider?, preferModel?)` | Returns `{ provider, model }` based on effective keys (via `config.js`). **The single application point of the `OFFERABLE_MODELS` allow-list** — see [Model selection](#model-selection-the-router-v3120--v3130) |
 | `getDefaultModel(provider)` | The model id a provider resolves to right now (`LLM_MODEL` gated on the active provider, then the stored Settings choice, then `DEFAULTS`). Drives `models` on `GET /api/config/api-keys` |
-| `OFFERABLE_MODELS` | Frozen, cheapest-first catalogue of user-pickable models per provider. Entries are built by a factory that throws at module load on an incomplete spec (v3.12.0) |
+| `OFFERABLE_MODELS` | Frozen, cheapest-first catalogue of hand-measured user-pickable models per provider. Entries are built by a factory that throws at module load on an incomplete spec (v3.12.0). A **partial view** for a provider whose catalogue is fetched at runtime |
+| `listOfferableModels(provider)` | **The accessor every consumer should read** — the frozen table plus whatever the runtime catalogue admitted. Always an array, never `null` |
+| `setOpenRouterCatalogue(specs)` | Replaces the runtime chat-lane catalogue, admitting each entry through the same factory. Per-entry refusal, never all-or-nothing; returns `{admitted, refused}` |
 | `isOfferableModel(provider, modelId)` | The allow-list predicate. Array scan with `===`, so prototype keys resolve to nothing |
+| `isBuildLaneModel(provider, modelId)` | May this model be pinned as the model that **builds the wiki**? Derives from `suitability` alone; fails closed to `false` |
+| `isKnownProvider(provider)` / `isFreeModel(modelId)` | The one provider-membership test (no hand-copied string lists), and the free-model membership test — membership, never a price test |
 | `DOMINATED_MODELS` / `AWAITING_MEASUREMENT` | Frozen records of models that work-but-are-beaten, and of real models never probed against the real ingest prompt. Different lists, different bans |
 | `resolveModelPrice(id, atMs)` / `getModelPrice(id)` | Published price per 1M tokens, promotion-resolved by date. `null` for an id we don't ship |
 | `anthropicMaxOutputTokens(modelId)` | Per-model output ceiling; unknown ids resolve to the conservative `ANTHROPIC_MAX_OUTPUT_TOKENS` (64,000) |
+| `normalizeOpenRouterUsage(usage)` | Normalises the aggregator's usage block. **Subtracts cached tokens from the prompt count** (its convention includes them) and clamps at 0, so a running spend total can never be double-counted or driven negative |
 | `getFallbackStatus()` | `null`, or the active fallback event plus a derived `costTier` (`costlier`/`similar`/`unknown`) |
-| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles Gemini and Claude API differences, retry/fallback, and `opts.onUsage`/`opts.cachePrefixChars` (v3.0.16), `opts.provider` (v3.0.11), `opts.model` (v3.13.0), `opts.signal` (v3.4.0) |
+| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles the per-provider API differences, retry/fallback, and `opts.onUsage`/`opts.cachePrefixChars` (v3.0.16), `opts.provider` (v3.0.11), `opts.model` (v3.13.0), `opts.signal` (v3.4.0) |
+
+### `src/brain/openrouter-adapter.js`
+
+The OpenAI-compatible adapter behind the third provider, plus the pure helpers that make its behaviour testable offline with no credential.
+
+| Export | Description |
+|--------|-------------|
+| `OpenRouterAdapter` | One non-streaming chat completion. Sends the no-substitution routing preferences on every call, and reports the **resolved** model from the response body — the model that actually answered, not the one requested |
+| `fetchOpenRouterCatalogue(...)` | Reads the provider's public model catalogue (no auth required) |
+| `classifyOpenRouterStatus(status)` | **Structural** error classification on the numeric status, never a substring match on a message |
+| `usdPerMtokFromPerTokenString(s)` | Converts the provider's per-token decimal strings into the per-million figures the app quotes |
+| `redactOpenRouterSecrets(s)` | Strips key-shaped text before any detail reaches a message |
 
 ### `src/brain/files.js`
 

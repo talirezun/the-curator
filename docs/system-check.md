@@ -31,7 +31,7 @@ no API cost — and shows a result for each:
 | Check | What it confirms |
 |-------|------------------|
 | **Installed version** | Which version of The Curator you're running. |
-| **AI provider key** | That a Gemini or Anthropic key is configured (and which model is active, including a fallback model if one is in use). |
+| **AI provider key** | That a key is configured for one of the three supported providers — Gemini, Anthropic or OpenRouter — and which provider and model are active, including a fallback model if one is in use. If a key is present but no model can be resolved for it, the check says so specifically instead of reporting that you have no key at all. |
 | **Knowledge folder** | That your `domains/` folder exists and is writable. The check writes a tiny throwaway file and immediately deletes it — **it never touches your wiki content.** |
 | **Credential file permissions** | That your credential files (`.curator-config.json`, `.sync-config.json`, `.sharedbrain-config.json`, `.env`, and the sync git config) are owner-only (`0600`) so other accounts on the machine can't read your keys. |
 | **GitHub sync** | Whether sync is configured, and how many local changes are waiting to be pushed. |
@@ -49,7 +49,8 @@ Each result is marked:
 
 This is the only part that costs anything. Click **Verify AI connection**, and
 you'll get a confirmation prompt explaining that it makes **one small request**
-to your AI provider — roughly **a hundredth of a cent**. Confirm, and The Curator
+to your AI provider — roughly **a hundredth of a cent**, and nothing at all if the
+model you are on is one of OpenRouter's free ones. Confirm, and The Curator
 sends a tiny "reply OK" request to your configured model.
 
 It then reports:

@@ -90,12 +90,51 @@ export function getConfig() {
 
 // ── API Keys ────────────────────────────────────────────────────────────────
 
+/**
+ * The providers this app can hold a credential for, in the ONE order that
+ * governs every "which provider do we fall back to" question in this file:
+ * `getActiveProvider`'s legacy ladder and `clearApiKey`'s reassignment.
+ *
+ * v3.15.0 (OpenRouter): `openrouter` is APPENDED, never inserted. Both readers
+ * scan this list in order and stop at the first provider that holds a key, so
+ * appending is provably behaviour-preserving for every config written before
+ * this release: such a config has no `openrouterApiKey` field at all, so the
+ * third rung is unreachable and resolution is byte-identical to v3.14.0. An
+ * INSERT would have retroactively re-resolved existing users onto a provider
+ * they never chose — which changes what every subsequent ingest costs, the
+ * exact class v3.14.0 shipped a whole feature to make visible.
+ *
+ * Frozen, and every lookup keyed on it goes through `providerFields()` below,
+ * which gates on `Array.prototype.includes` (a `===` scan) BEFORE the string
+ * indexes anything — so `'__proto__'`, `'constructor'` and `'toString'` are
+ * structurally unable to resolve to a field name (the v3.0.9 shape, closed by
+ * construction rather than by remembering to call Object.hasOwn).
+ */
+const PROVIDER_ORDER = Object.freeze(['gemini', 'anthropic', 'openrouter']);
+
+/**
+ * Per-provider credential locations: the `.curator-config.json` field, and the
+ * `.env` variable that acts as the documented DEVELOPER fallback.
+ */
+const PROVIDER_KEY_FIELDS = Object.freeze({
+  gemini:     Object.freeze({ config: 'geminiApiKey',     env: 'GEMINI_API_KEY' }),
+  anthropic:  Object.freeze({ config: 'anthropicApiKey',  env: 'ANTHROPIC_API_KEY' }),
+  openrouter: Object.freeze({ config: 'openrouterApiKey', env: 'OPENROUTER_API_KEY' }),
+});
+
+/** Field names for a provider, or null if it is not a provider we know. */
+function providerFields(provider) {
+  if (!PROVIDER_ORDER.includes(provider)) return null;
+  return PROVIDER_KEY_FIELDS[provider];
+}
+
 /** Read API keys from .curator-config.json (not .env). */
 export function getApiKeys() {
   const cfg = readRaw();
   return {
-    geminiApiKey:    cfg.geminiApiKey    || '',
-    anthropicApiKey: cfg.anthropicApiKey || '',
+    geminiApiKey:     cfg.geminiApiKey     || '',
+    anthropicApiKey:  cfg.anthropicApiKey  || '',
+    openrouterApiKey: cfg.openrouterApiKey || '',
   };
 }
 
@@ -106,36 +145,206 @@ export function getApiKeys() {
  * This implements "last-saved-wins": users don't juggle priorities, they just
  * paste the key they want to use. If both fields are submitted in one save,
  * whichever non-empty key is encountered last takes the active slot (the
- * current frontend sends {geminiApiKey, anthropicApiKey} in that order, so
- * Anthropic wins a dual-save — deterministic, rare edge case).
+ * current frontend sends {geminiApiKey, anthropicApiKey, openrouterApiKey} in
+ * that order, so the last non-empty one in that order wins a multi-save —
+ * deterministic, rare edge case).
+ *
+ * ── `opts.canActivate` IS REQUIRED FOR ACTIVATION, AND ITS ABSENCE MEANS NO ──
+ * A provider may become active ONLY if `opts.canActivate(provider)` returns
+ * true. It is INJECTED rather than computed here because the answer lives in
+ * llm.js (which model resolves, and whether that model may serve the build
+ * lane) and llm.js imports THIS file — so importing it back would form a cycle.
+ * That is not a stylistic preference: the invariant is asserted offline
+ * ("config.js does not import llm.js — no import cycle") and its comment states
+ * the architecture directly, that validation belongs where the catalogue lives.
+ * `src/routes/config.js` already namespace-imports llm.js and passes the real
+ * predicate on every call.
+ *
+ * WITH NO PREDICATE, THIS FUNCTION ACTIVATES NOTHING — and note the exact
+ * claim, because a looser one was written here and was FALSE. It used to read
+ * "WITH NO PREDICATE, NOTHING IS ACTIVATED", which is a statement about
+ * `getActiveProvider()`, and measured on an empty config `setApiKeys({geminiApiKey})`
+ * with no opts at all returned `activeProvider: 'gemini'` while ALSO reporting
+ * gemini in `skippedActivation` — because refusing meant leaving the field
+ * absent, and an absent field is precisely what the legacy ladder infers from.
+ * What this function guarantees is that it will not ASSIGN; the resolved answer
+ * is now held still by the explicit pin at the end of the loop.
+ *
+ * That is fail-safe, and the two failure directions are wildly unequal:
+ *   • Skipping an activation that should have happened -> the key saves but
+ *     does not become active. Mildly annoying, VISIBLE, and undone by one click
+ *     on the existing Set-active control.
+ *   • Activating a provider that cannot build -> ingest, Health and Compile all
+ *     throw on the next call with NOTHING on screen saying so, because the
+ *     route swallows getProviderInfo()'s throw in a catch commented "no key
+ *     configured yet" — while a key IS configured. That is the v3.15.0 P0 this
+ *     contract exists to prevent, reproduced before it was fixed: a user with a
+ *     WORKING Gemini install who merely SAVED an OpenRouter key lost the entire
+ *     build lane.
+ * Defaulting to "activate" would make that P0 the default behaviour, which is
+ * exactly backwards. A caller that forgets the predicate gets the annoying
+ * outcome, never the broken one.
+ *
+ * A predicate that THROWS is treated as a refusal, for the same reason.
+ *
+ * Returns { activeProvider, skippedActivation } where skippedActivation is a
+ * (usually empty) array of { provider, reason } — keys that were SAVED but did
+ * not become active. The save still succeeded; this is the signal the UI needs
+ * to explain why the Active row did not move.
  */
-export function setApiKeys({ geminiApiKey, anthropicApiKey }) {
+export function setApiKeys({ geminiApiKey, anthropicApiKey, openrouterApiKey }, opts = {}) {
   const cfg = readRaw();
-  if (geminiApiKey !== undefined) {
-    cfg.geminiApiKey = geminiApiKey;
-    if (geminiApiKey) cfg.activeProvider = 'gemini';
+  const skippedActivation = [];
+  // NO PREDICATE MEANS NO ACTIVATION — see the docblock above.
+  const canActivate = typeof opts.canActivate === 'function' ? opts.canActivate : null;
+  // Snapshotted BEFORE anything is written, because "the refusal must not move
+  // the build lane" is a statement about the lane as it stood when the user
+  // clicked Save. See the pin below.
+  const activeBefore = getActiveProvider();
+
+  // Ordered so "last non-empty key wins" is decided by this list, not by the
+  // order the caller happened to put fields in the body.
+  const saves = [
+    ['gemini',     'geminiApiKey',     geminiApiKey],
+    ['anthropic',  'anthropicApiKey',  anthropicApiKey],
+    ['openrouter', 'openrouterApiKey', openrouterApiKey],
+  ];
+
+  for (const [provider, field, value] of saves) {
+    if (value === undefined) continue;
+    cfg[field] = value;                      // the key is ALWAYS saved
+    if (!value) continue;                    // clearing never activates
+    let allowed = false;
+    try { allowed = !!(canActivate && canActivate(provider)); } catch { allowed = false; }
+    if (allowed) {
+      cfg.activeProvider = provider;         // last-saved-wins, unchanged
+    } else {
+      skippedActivation.push({ provider, reason: 'no_build_model' });
+    }
   }
-  if (anthropicApiKey !== undefined) {
-    cfg.anthropicApiKey = anthropicApiKey;
-    if (anthropicApiKey) cfg.activeProvider = 'anthropic';
+
+  // ── A REFUSAL MUST BE OBSERVABLE, NOT MERELY UN-WRITTEN ───────────────────
+  // Refusing used to mean "do not assign `cfg.activeProvider`" — and an ABSENT
+  // field is exactly what `getActiveProvider`'s legacy ladder reads as "infer
+  // from whichever key exists". So the key we had just saved supplied the very
+  // inference the refusal was meant to prevent. MEASURED on an empty config:
+  //
+  //   setApiKeys({openrouterApiKey}, {canActivate: () => false})
+  //     -> returned   { activeProvider: 'openrouter', skippedActivation: [...] }
+  //     -> on disk    activeProvider: undefined
+  //     -> resolved   getActiveProvider() === 'openrouter'
+  //
+  // i.e. a payload that contradicted itself, and a no-op guard, on every fresh
+  // install (any config holding no earlier-ranked provider key). Unexercised
+  // only because all three shipped providers currently pass `providerCanBuild`
+  // — `local` is scaffolded to hit it for real, and the frontend already renders
+  // copy asserting the refusal happened.
+  //
+  // Omission cannot carry two meanings, so the sentinel does: an activeProvider
+  // field that is PRESENT AND `null` means "we decided, and the answer is
+  // nobody". An ABSENT field still means "written before this field existed" and
+  // still runs the ladder, so a pre-v3.15.0 config resolves byte-identically —
+  // that back-compat is load-bearing and separately asserted. A field holding
+  // GARBAGE (hand-edited) also still falls through to the ladder, unchanged:
+  // degrading a corrupt config to inference is deliberate, and only the exact
+  // `null` we write here is read as a decision.
+  //
+  // The pin is `activeBefore`, not a blanket null: the promise is "this save did
+  // not MOVE the lane", so a user who already had a working provider keeps it.
+  // Only when the pre-save answer was genuinely nobody do we record nobody. And
+  // it is applied ONLY when nothing was activated in this call and no explicit
+  // pin already exists — so a successful activation, and an existing pinned
+  // choice, both win over it.
+  if (skippedActivation.length > 0 && !PROVIDER_ORDER.includes(cfg.activeProvider)) {
+    cfg.activeProvider = activeBefore;
   }
+
   writeRaw(cfg);
+  return { activeProvider: getActiveProvider(), skippedActivation };
 }
+
+
 
 /**
  * Clear a specific provider's stored key. Used by the Settings "Disconnect"
  * button so users can wipe a key without having to add a new one.
- * If the cleared key was the active provider, active switches to the other
- * provider (if it has a key), or to null.
+ *
+ * If the cleared key was the ACTIVE provider, active moves to the first
+ * remaining provider (in PROVIDER_ORDER) that still holds a SAVED key, or is
+ * deleted entirely when none does.
+ *
+ * ── Why this is a scan and not a ternary (v3.15.0) ──────────────────────────
+ * Until OpenRouter there were exactly two providers, so this encoded a PAIRWISE
+ * fallback — "if the cleared one was active, activate the other one". With
+ * three providers there is no "the other one", and a naive third arm would make
+ * the destination depend on which branch happened to be written first. The
+ * reassignment is a SPENDING decision (it decides which provider every
+ * subsequent ingest, Health scan and Compile is billed to), so it must be
+ * deterministic and stated, not emergent.
+ *
+ * The order is PROVIDER_ORDER — deliberately the SAME list `getActiveProvider`
+ * walks, so "which provider do we fall back to" has ONE definition in this file
+ * rather than two that can drift apart. Behaviour for a config holding only the
+ * two legacy providers is byte-identical to v3.14.0: clearing gemini picks
+ * anthropic iff it has a key; clearing anthropic picks gemini iff it has a key;
+ * otherwise the field is deleted.
+ *
+ * CONFIG keys only — `.env` is deliberately NOT consulted here, exactly as
+ * before. Disconnect is a Settings action about Settings state; letting a
+ * lingering `.env` key silently hold a provider active after the user
+ * disconnected it is the v3.0.13 bug.
+ *
+ * ── `opts.canActivate` HERE IS OPTIONAL, AND ABSENT MEANS ALLOW ─────────────
+ * This is the THIRD of the three functions in this file that can move the build
+ * lane, and it had no build-lane check at all: disconnecting the active provider
+ * handed the lane to the next provider holding a key, whether or not that
+ * provider has a model that can build a wiki. MEASURED — a config holding a
+ * Gemini key and an OpenRouter key, active gemini, `clearApiKey('gemini')`
+ * resolved to **openrouter**, and there was no parameter through which a caller
+ * could have said no.
+ *
+ * The default is ALLOW, matching `setActiveProvider` and NOT `setApiKeys`,
+ * because here the two failure directions are inverted. Refusing by default
+ * would mean a bare `clearApiKey('gemini')` on a config holding a working
+ * Anthropic key hands the lane to NOBODY — a user who disconnected one of two
+ * good providers silently loses ingest, Health and Compile. That is the same P0
+ * `setApiKeys`' refuse-by-default exists to prevent, arriving from the other
+ * side. Preserving today's behaviour for a caller that passes nothing is
+ * therefore the fail-safe choice, and the real guarantee is the caller supplying
+ * the predicate.
+ *
+ * ⚠ NOT YET SUPPLIED BY THE ROUTE. `src/routes/config.js` (a different owner)
+ * still calls this with one argument, so the check is inert on the shipping
+ * path today. It is a one-argument change there — that file already namespace-
+ * imports llm.js and already builds `providerCanBuild` for `setApiKeys`.
  */
-export function clearApiKey(provider) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return;
+export function clearApiKey(provider, opts = {}) {
+  const fields = providerFields(provider);
+  if (!fields) return;
+  // ABSENT MEANS ALLOW — see this function's docblock for why it is NOT
+  // setApiKeys' default.
+  const canActivate = typeof opts.canActivate === 'function' ? opts.canActivate : null;
   const cfg = readRaw();
-  if (provider === 'gemini')    cfg.geminiApiKey = '';
-  if (provider === 'anthropic') cfg.anthropicApiKey = '';
+  cfg[fields.config] = '';
   if (cfg.activeProvider === provider) {
-    if (provider === 'gemini'    && cfg.anthropicApiKey) cfg.activeProvider = 'anthropic';
-    else if (provider === 'anthropic' && cfg.geminiApiKey)    cfg.activeProvider = 'gemini';
+    const candidates = PROVIDER_ORDER.filter(
+      p => p !== provider && !!cfg[PROVIDER_KEY_FIELDS[p].config]
+    );
+    let next = candidates[0] ?? null;
+    let refusedAll = false;
+    if (canActivate && candidates.length > 0) {
+      next = candidates.find(p => { try { return !!canActivate(p); } catch { return false; } }) ?? null;
+      refusedAll = next === null;
+    }
+    if (next) cfg.activeProvider = next;
+    // Candidates existed and every one of them was refused: record the DECISION
+    // (`null`), not the absence. Deleting the field here would hand the question
+    // straight back to the legacy ladder, which would re-pick the first keyed
+    // provider — the same no-op-refusal shape `setApiKeys` had.
+    else if (refusedAll) cfg.activeProvider = null;
+    // No candidate at all — nothing was refused, there was simply nobody to
+    // consider. The field is REMOVED, unchanged from before, so the documented
+    // `.env` developer fallback in `getActiveProvider` still applies.
     else delete cfg.activeProvider;
   }
   writeRaw(cfg);
@@ -151,14 +360,38 @@ export function clearApiKey(provider) {
  * Refuses to activate a provider that has no stored key — switching to a
  * provider with no key would break every subsequent LLM call. Returns the
  * resulting active provider (unchanged if the switch was refused).
+ *
+ * ── `opts.canActivate` here is OPTIONAL, and ABSENT MEANS ALLOW ─────────────
+ * Deliberately the OPPOSITE default to setApiKeys, and the asymmetry is stated
+ * rather than left to be discovered:
+ *   • setApiKeys activation is IMPLICIT — a side effect of saving a key. A user
+ *     who never asked for it cannot miss it not happening, so refusing by
+ *     default costs nothing.
+ *   • This function is EXPLICIT — the user clicked "use this provider". Making
+ *     it a silent no-op because a caller forgot an argument is not fail-safe,
+ *     it is fail-broken: the click appears to do nothing and the user cannot
+ *     tell why. Three existing callers (the live chat suites, which force a
+ *     provider they hold a real key for) are legitimate and would break.
+ *
+ * SAY IT PLAINLY: WITH NO PREDICATE THERE IS NO BUILD-LANE BACKSTOP HERE. The
+ * key-existence check above is all this function enforces on its own. The real
+ * guarantee for the user-facing path is POST /api/config/api-keys/active, which
+ * evaluates providerCanBuild and returns an actionable 400 BEFORE calling this.
+ * Do not read the presence of `opts` as protection that is always on.
  */
-export function setActiveProvider(provider) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return getActiveProvider();
+export function setActiveProvider(provider, opts = {}) {
+  const fields = providerFields(provider);
+  if (!fields) return getActiveProvider();
   const cfg = readRaw();
-  const hasKey = provider === 'gemini'
-    ? !!(cfg.geminiApiKey || process.env.GEMINI_API_KEY)
-    : !!(cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY);
+  const hasKey = !!(cfg[fields.config] || process.env[fields.env]);
   if (!hasKey) return getActiveProvider();
+  // Build-lane check, when the caller supplies one. ABSENT MEANS ALLOW here,
+  // the opposite of setApiKeys — see this function's docblock for why.
+  if (typeof opts.canActivate === 'function') {
+    let allowed = false;
+    try { allowed = !!opts.canActivate(provider); } catch { allowed = false; }
+    if (!allowed) return getActiveProvider();
+  }
   cfg.activeProvider = provider;
   writeRaw(cfg);
   return provider;
@@ -169,30 +402,69 @@ export function setActiveProvider(provider) {
  * For legacy configs (pre-v2.4.2) that don't have an activeProvider field,
  * falls back to the previous "Gemini-first if both are set" behaviour so
  * existing installations keep working without any action.
+ *
+ * ── The legacy ladder is APPEND-ONLY (v3.15.0) ──────────────────────────────
+ * This ladder RE-RESOLVES configs that were written before the field existed,
+ * so its order is not a style choice — it decides, retroactively, which
+ * provider an existing user is billed to. `openrouter` therefore sits LAST in
+ * PROVIDER_ORDER and is reached only after both legacy providers have failed,
+ * i.e. only in cases that returned `null` before. A pre-v3.15.0 config cannot
+ * contain `openrouterApiKey` at all, so every such config resolves BYTE-
+ * IDENTICALLY to v3.14.0. Inserting anywhere earlier would silently move real
+ * users onto a different provider — and therefore a different bill — with no
+ * on-screen signal, which is exactly what v3.14.0's build-lane labelling exists
+ * to prevent.
+ *
+ * Config beats env for the whole ladder (config rung, then env rung), matching
+ * the pre-v3.15.0 sequencing.
  */
 export function getActiveProvider() {
   const cfg = readRaw();
-  if (cfg.activeProvider === 'gemini' || cfg.activeProvider === 'anthropic') {
+  if (PROVIDER_ORDER.includes(cfg.activeProvider)) {
     return cfg.activeProvider;
   }
-  // Legacy priority: whichever key exists, Gemini first
-  if (cfg.geminiApiKey)    return 'gemini';
-  if (cfg.anthropicApiKey) return 'anthropic';
-  if (process.env.GEMINI_API_KEY)    return 'gemini';
-  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  // ── "NEVER SET" AND "DELIBERATELY NOT SET" ARE DIFFERENT FACTS ────────────
+  // An ABSENT field means the config predates the field (or `clearApiKey`
+  // removed it because there was no candidate at all) — infer, exactly as
+  // before. An EXPLICIT `null` is a DECISION recorded by `setApiKeys` /
+  // `clearApiKey`: candidates existed and were refused because none of them can
+  // build the wiki. Inferring there would re-derive the very answer that was
+  // just refused, which is what made the refusal a no-op.
+  //
+  // `=== null` and nothing looser. `undefined` (absent) does not match it, and
+  // neither does a garbage string from a hand-edited file — that keeps falling
+  // through to the ladder, so "a corrupt config degrades to the defaults" is
+  // unchanged. JSON round-trips `null` faithfully and cannot store `undefined`,
+  // so the two states stay distinguishable on disk.
+  if (cfg.activeProvider === null) return null;
+  // Legacy priority: whichever key exists, in PROVIDER_ORDER, config before env.
+  for (const p of PROVIDER_ORDER) {
+    if (cfg[PROVIDER_KEY_FIELDS[p].config]) return p;
+  }
+  for (const p of PROVIDER_ORDER) {
+    if (process.env[PROVIDER_KEY_FIELDS[p].env]) return p;
+  }
   return null;
 }
 
 // ── Selected model per provider ──────────────────────────────────────────────
 
 /**
- * The two providers a model may be stored for. A hardcoded pair, not a derived
- * list: every read and write below is gated on membership BEFORE the string is
- * ever used to index anything, so `'__proto__'`, `'constructor'` and
- * `'toString'` cannot reach an object lookup (the v3.0.9 shape, closed by
- * construction rather than by remembering to call Object.hasOwn).
+ * The providers a model may be stored for. Every read and write below is gated
+ * on membership BEFORE the string is ever used to index anything, so
+ * `'__proto__'`, `'constructor'` and `'toString'` cannot reach an object lookup
+ * (the v3.0.9 shape, closed by construction rather than by remembering to call
+ * Object.hasOwn).
+ *
+ * DELIBERATELY the same frozen list as the credential providers, not a second
+ * copy of it: a provider you can hold a key for is exactly a provider you can
+ * pin a model for, and two hand-maintained copies of that membership in one
+ * file is this repo's v3.2.0 drift shape. Only membership is load-bearing here
+ * — the ORDER matters to `getActiveProvider`/`clearApiKey`, while these three
+ * consumers use it purely as a set (plus JSON key insertion order in the
+ * stored `selectedModels` map, which is cosmetic).
  */
-const MODEL_PROVIDERS = ['gemini', 'anthropic'];
+const MODEL_PROVIDERS = PROVIDER_ORDER;
 
 /**
  * Sanitise whatever `.curator-config.json` holds under `selectedModels` into a
@@ -362,6 +634,28 @@ export function setSharedBrainEnabled(enabled) {
 /**
  * Returns the effective API key for a provider.
  * Priority: .curator-config.json → process.env → null
+ *
+ * ── Why OpenRouter DOES get an `OPENROUTER_API_KEY` env fallback (v3.15.0) ───
+ * The alternative considered was a config-only third branch, on the reasoning
+ * that `.env` is what made a Disconnected provider still callable in v3.0.13.
+ * It was rejected: that bug was in the SELECTORS, not here. The fix v3.0.13
+ * shipped was to gate the chat provider picker, `hasXKey`, `selectedModels` and
+ * `offerable` on `getApiKeys()` (config only) while leaving `getEffectiveKey`
+ * as the uniform config→env→null resolver for the GLOBAL provider — which is
+ * still exactly how it is used, and those selectors remain config-scoped for
+ * OpenRouter too (see routes/config.js `GET /api-keys`).
+ *
+ * Given that, an asymmetric third branch would buy no safety and cost a trap:
+ * the next reader would take the docblock above at face value for all three
+ * providers and be wrong about one of them. A uniform resolver keeps the
+ * documented developer fallback working for OpenRouter exactly as it does for
+ * the other two, and `.env` still cannot make a Disconnected provider appear in
+ * any picker, because no picker reads this function.
+ *
+ * Note the deliberate asymmetry that DOES exist and is documented at its own
+ * site: `getActiveProvider`'s legacy env rung puts OpenRouter LAST, so an
+ * `OPENROUTER_API_KEY` in a developer's `.env` can never out-rank an existing
+ * user's stored Gemini/Anthropic credential.
  */
 export function getEffectiveKey(provider) {
   const keys = getApiKeys();
@@ -370,6 +664,9 @@ export function getEffectiveKey(provider) {
   }
   if (provider === 'anthropic') {
     return keys.anthropicApiKey || process.env.ANTHROPIC_API_KEY || null;
+  }
+  if (provider === 'openrouter') {
+    return keys.openrouterApiKey || process.env.OPENROUTER_API_KEY || null;
   }
   return null;
 }

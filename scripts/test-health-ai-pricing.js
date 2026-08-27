@@ -94,8 +94,41 @@ section('1. Source-level guard — exactly one price table, reachable everywhere
 // ── 2. Shared-source invariant — derived from the LIVE llm.js table ────────
 section("2. Shared-source invariant — health-ai matches llm.js's LIVE table for every shipped id");
 {
-  const shipped = [...Object.values(DEFAULTS), ...Object.values(FALLBACK_CHAINS).flat()];
+  // ── DEFAULTS POSTURE: a provider default names a model, OR is null ─────────
+  // `DEFAULTS.openrouter` is null ON PURPOSE (v3.15.0). A provider may have no
+  // build-lane default until a model has been measured against this repo's real
+  // ingest outline prompt; inventing a plausible id off a public catalogue would
+  // be a guess about JSON reliability dressed up as a default, on the one path
+  // where a wrong guess writes a whole wiki. So the sweep below is no longer
+  // "every value in DEFAULTS" — it is every value that NAMES a model.
+  //
+  // The rule is ASSERTED, not accidentally satisfied by a filter. The set of
+  // providers carrying null is PINNED: nulling gemini's or anthropic's default
+  // would otherwise silently shrink this coverage sweep and leave the section
+  // green over a shipped model nobody priced. That is the failure mode the
+  // filter itself introduces, so it is closed in the same breath.
+  const unpinned = Object.entries(DEFAULTS).filter(([, id]) => id === null).map(([p]) => p).sort();
+  // RE-POINTED: OpenRouter now has a measured build-lane default
+  // (`upstage/solar-pro4`, 9/9 raw JSON on the real ingest prompt), so no
+  // provider is unpinned. The pin is kept — it reds if a fourth provider lands
+  // unmeasured, and it reds if an existing default is nulled.
+  eq(unpinned.join(','), '',
+    'every provider carries a MEASURED build-lane default — no provider is unpinned');
+  for (const [p, id] of Object.entries(DEFAULTS)) {
+    ok(id === null || (typeof id === 'string' && id.length > 0),
+      `DEFAULTS.${p} is a non-empty model id, or null meaning "nothing measured yet" — never '' and never an object`);
+  }
+
+  const shipped = [...Object.values(DEFAULTS), ...Object.values(FALLBACK_CHAINS).flat()]
+    .filter(id => id !== null);
   ok(shipped.length > 0, 'fixture sanity: DEFAULTS + FALLBACK_CHAINS is non-empty');
+  // The filter must drop ONLY the nulls. An over-broad filter would shrink the
+  // sweep silently — no assertion below iterates over what is missing, so it
+  // would read as green. Closed by checking every id that should have survived.
+  for (const [p, id] of Object.entries(DEFAULTS)) {
+    if (id === null) continue;
+    ok(shipped.includes(id), `DEFAULTS.${p} ("${id}") survives the null filter and IS swept below`);
+  }
   for (const id of new Set(shipped)) {
     const price = getModelPrice(id); // read live from llm.js, never re-typed here
     ok(price, `fixture sanity: llm.js currently prices "${id}"`);

@@ -166,7 +166,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
-  ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenAI, local'],
+  ['providers', 'Providers & keys',     'Gemini, Anthropic, OpenRouter, local'],
   ['mcp',       'MCP bridge',           'My Curator, default write domain'],
   ['health',    'Health & scan limits', 'Cost ceilings, candidate pairs'],
   ['storage',   'Knowledge base',       'Vault folder, Obsidian'],
@@ -174,13 +174,25 @@ const SETTINGS_SECTIONS = [
 
 const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) => [id, label]));
 
-// ── Provider display metadata — only 2 of these actually run. The other
-// two are rendered clearly inert (see honesty note above). ──────────────
+// ── Provider display metadata — 3 of these actually run. The remaining one
+// is rendered clearly inert (see honesty note above). ────────────────────
+//
+// v3.15.0: OPENAI WAS REMOVED, NOT FLIPPED. It shipped as a permanently
+// disabled row reading "not available in this build" — a promise of a
+// provider nobody was building. The maintainer has ruled OpenAI out, so the
+// honest thing is to stop advertising it rather than leave a row implying it
+// is queued. OpenRouter reaches most OpenAI models anyway, which is a large
+// part of why it is the one that landed.
+//
+// `local` STAYS inert: the OpenRouter adapter is OpenAI-wire-compatible, so
+// the same adapter serves a local runtime (Ollama, llama.cpp, LM Studio) once
+// there is a base-URL setting to point it at. That row is a real slot with a
+// real path to being filled, not a placeholder.
 const PROVIDER_ROWS = [
-  { id: 'gemini',    name: 'Gemini',    dot: 'var(--type-entity)',  available: true  },
-  { id: 'anthropic', name: 'Anthropic', dot: 'var(--type-summary)', available: true  },
-  { id: 'openai',    name: 'OpenAI',    dot: 'var(--text-faint)',   available: false },
-  { id: 'local',     name: 'Local model', dot: 'var(--text-faint)', available: false },
+  { id: 'gemini',     name: 'Gemini',      dot: 'var(--type-entity)',  available: true  },
+  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--type-summary)', available: true  },
+  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--accent)',       available: true  },
+  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',   available: false },
 ];
 
 // ── Updates: the decision, as pure functions ─────────────────────────────
@@ -290,10 +302,108 @@ function classifyUpdate(check, versionInfo) {
 // reach the cheapest still-working model. Without a surface, the user is
 // billed more and sees nothing, anywhere.
 
+// Brand capitalisation, deliberately NOT derived from the field names. The
+// wire carries `hasOpenrouterKey` / `openrouterApiKey` with a lowercase r,
+// because those are mechanical `has<Provider>Key` derivations of the id — but
+// the company writes it OpenRouter, and a credentials screen that renders a
+// vendor's name wrong is a small, avoidable credibility cost. The id stays
+// `openrouter` everywhere it is a key; only the human-readable string differs.
 function providerLabel(id) {
   if (id === 'gemini') return 'Gemini';
   if (id === 'anthropic') return 'Anthropic';
+  if (id === 'openrouter') return 'OpenRouter';
   return (typeof id === 'string' && id) ? id : null;
+}
+
+/**
+ * ── Why the Active row did not move ───────────────────────────────────────
+ *
+ * `POST /api/config/api-keys` returns `skippedActivation` — a usually-empty
+ * array of `{ provider, reason }` naming keys that were SAVED but did NOT
+ * become active. Until this was written, `grep -rn "skippedActivation"
+ * src/public/` returned ZERO hits: computed in brain/config.js, gated in
+ * routes/config.js, serialised on the wire, and read by nobody. That is this
+ * repo's named dead-data shape, and the fifth instance of it (v3.6.1 finding
+ * 5; v3.9.0 findings 7 and 17; v3.9.1 finding 9).
+ *
+ * It is not cosmetic. Saving a key normally makes that provider active
+ * ("last-saved-wins", v2.4.2). A provider with no build-lane model cannot be
+ * activated — doing so threw on the next ingest, Health scan and Compile with
+ * NOTHING on screen saying why, which is the v3.15.0 P0 the refusal exists to
+ * prevent. The design deliberately chose "annoying but visible" over "silently
+ * broken". With no reader it degrades to annoying and UNEXPLAINED: the user
+ * saves a key, the Active row does not move, and nothing accounts for it —
+ * which reads as the app ignoring the click, i.e. most of the way back to the
+ * defect.
+ *
+ * REASON-DRIVEN, NOT PROVIDER-DRIVEN. There is no `id === 'openrouter'`
+ * anywhere below, deliberately: the render-half of exactly that shape is the
+ * v3.10.1 defect (a binary provider ternary that showed one provider's
+ * credential state under another provider's name). A fourth provider must
+ * inherit this surface without anyone editing it.
+ *
+ * An UNKNOWN reason code renders the FACT and omits the why, rather than
+ * defaulting into the one explanation we happen to know today — same fail-safe
+ * direction as providerLabel above, which echoes an unrecognised id instead of
+ * substituting another provider's name.
+ */
+const ACTIVATION_SKIP_REASONS = Object.assign(Object.create(null), {
+  // The backend's own words for this code are "that provider has no build-lane
+  // model yet". Rendered in the user's terms — no model id, no date, and no
+  // claim about price, rate limits or what the provider can do elsewhere,
+  // because none of that is what the field reports.
+  no_build_model: 'it has no model available for building your wiki yet',
+});
+
+/**
+ * ABSENT is not EMPTY, and the difference is load-bearing.
+ *
+ *   `[]`      the server TOLD US nothing was skipped -> we may be silent with
+ *             confidence.
+ *   absent    the server told us NOTHING — an older backend, or a body we
+ *             could not parse. Concluding "nothing was skipped" from silence
+ *             invents a fact we were never given.
+ *
+ * Returns an array (possibly empty) when the field was actually reported, and
+ * `null` when it was not. A non-array value counts as not reported: we were
+ * sent something, but nothing we can read.
+ */
+function readSkippedActivation(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  if (!Object.hasOwn(payload, 'skippedActivation')) return null;
+  const v = payload.skippedActivation;
+  if (!Array.isArray(v)) return null;
+  return v.filter((e) => e && typeof e === 'object');
+}
+
+/**
+ * The whole decision, as one pure function — DOM-free and fetch-free, for the
+ * same reason classifyUpdate() above is.
+ *
+ *   savedProvider  the provider whose key this save carried
+ *   payload        the parsed POST response, or null if it could not be read
+ *
+ * Three outcomes:
+ *   silent      say nothing.
+ *   skipped     the server named what it skipped. Explain it.
+ *   unreported  the field was absent AND the response's own `activeProvider`
+ *               shows the row did not move. State the fact, claim no reason.
+ *
+ * The `unreported` arm is gated on POSITIVE evidence of non-activation, never
+ * on the absence of evidence: if `activeProvider` could not be read either, we
+ * know nothing about the outcome and therefore say nothing. Announcing "it did
+ * not become active" off an unparseable body would be the same invented fact in
+ * the other direction.
+ */
+function classifyActivationOutcome(payload, savedProvider) {
+  const skipped = readSkippedActivation(payload);
+  if (skipped === null) {
+    const after = payload && typeof payload.activeProvider === 'string' ? payload.activeProvider : null;
+    return (after && savedProvider && after !== savedProvider)
+      ? { kind: 'unreported', provider: savedProvider }
+      : { kind: 'silent' };
+  }
+  return skipped.length ? { kind: 'skipped', entries: skipped } : { kind: 'silent' };
 }
 
 /**
@@ -458,9 +568,31 @@ function freshState() {
     // that they read the reset button as "my click didn't register" and
     // retried a refused write.
     modelPickError: {},
+    // ── "Test this key" (v3.15.0, OpenRouter only) ────────────────────────
+    // Which provider's key check is in flight, or null. Separate from
+    // `keysBusy` on purpose: keysBusy gates the MUTATING controls (save,
+    // disconnect, set-active) and a read-only key check must not disable
+    // them, nor be disabled by the cross-view write gate. Nothing is written
+    // by this request — not to config, not to the wiki — so there is nothing
+    // for a concurrent ingest to be protected from.
+    keyTestBusy: null,
+    // The last verdict, keyed by provider: { <provider>: <route payload> }.
+    // Held per provider rather than as one shared object so a result under
+    // one provider cannot be read as belonging to another — the same reason
+    // modelPickError is a map. Cleared on mount with the rest of state, so a
+    // verdict never outlives the key it was about across a navigate-away.
+    keyTest: {},
     keys: null,             // GET /api/config/api-keys response
     keysError: null,        // the section FAILED TO LOAD — renderProviders shows this INSTEAD of the list (state.keys is also null in this case, so there's nothing to show anyway)
     keysActionError: null,  // a save/disconnect/set-active ACTION failed — rendered INLINE, list stays visible (found live while verifying MEDIUM-1: reusing keysError here hid the entire provider list — including the Cancel button — behind a bare error message the instant a save failed)
+    // The last save SUCCEEDED but the Active row did not move — the
+    // classifyActivationOutcome() verdict, or null. Deliberately NOT reusing
+    // keysActionError: this is not a failure, and rendering it in the danger
+    // style would tell a user whose key saved fine that something broke.
+    // Cleared at the START of every key action, so a notice can never outlive
+    // the save it explains — and reset with the rest of state on every
+    // onEnter, so it cannot survive a navigate-away either.
+    keysActivationNotice: null,
     replacing: null,        // provider id currently showing an input row
     // MEDIUM-2 fix (this session): this field used to be declared and never
     // read or written — the input row rendered with no `value=` attribute
@@ -1085,6 +1217,10 @@ function renderProviders() {
     // a fallback is a silent change to what the user is billed, so it has
     // to be unmissable on the section that owns providers.
     renderFallbackBanner(k.fallback) +
+    // Directly above the Active line, because it exists to explain why that
+    // line reads what it reads. Below the fallback banner, which is a money
+    // warning and keeps the top slot.
+    renderActivationNotice(state.keysActivationNotice) +
     renderActiveModelLine(k) +
     '<div class="provider-row-list">' + rows + '</div>' +
     '<div class="settings-note-row">' +
@@ -1093,6 +1229,48 @@ function renderProviders() {
       'never sent anywhere except the provider you call.</span>' +
     '</div>'
   );
+}
+
+/**
+ * The `skippedActivation` surface — see classifyActivationOutcome above for
+ * why it exists and why it is reason-driven rather than provider-driven.
+ *
+ * Leads with "Key saved" in both arms, because that is the part a user will
+ * otherwise doubt: they typed a secret, pressed Save, and the screen did not
+ * change in the way they expected. Telling them what DID happen comes before
+ * telling them what did not.
+ *
+ * Every interpolated value — provider id and reason code alike — arrives over
+ * the wire and goes through escapeHtml. The ids are ours today, but "the
+ * payload is trustworthy" is not a property this function can verify, which is
+ * the same rule renderFallbackBanner below states for itself.
+ */
+function renderActivationNotice(verdict) {
+  if (!verdict || verdict.kind === 'silent') return '';
+
+  let body;
+  if (verdict.kind === 'unreported') {
+    const name = providerLabel(verdict.provider);
+    body = '<span>Your key was saved, but ' + (name ? '<strong>' + escapeHtml(name) + '</strong>' : 'that provider') +
+      ' did not become the active provider, and this build did not report why. ' +
+      'The provider marked Active is unchanged.</span>';
+  } else {
+    const lines = verdict.entries.map((e) => {
+      const name = providerLabel(e.provider);
+      const who = name ? '<strong>' + escapeHtml(name) + '</strong>' : 'That provider';
+      // An unrecognised reason code renders the FACT with no explanation
+      // rather than borrowing the one we happen to know — an invented "why"
+      // on a credentials screen is worse than an acknowledged gap.
+      const why = ACTIVATION_SKIP_REASONS[e.reason];
+      return '<span>' + who + ' did not become the active provider' +
+        (why ? ', because ' + escapeHtml(why) : '') + '. ' +
+        'Ingest, Health scans and Compile keep running on the provider marked Active.</span>';
+    }).join('');
+    body = '<span><strong>Your key was saved</strong> — nothing was lost.</span>' + lines;
+  }
+
+  return '<div class="settings-activation-note">' + icon('alertTriangle', 15) +
+    '<div class="settings-activation-note-body">' + body + '</div></div>';
 }
 
 // Amber callout, rendered whenever a fallback is active. Every interpolated
@@ -1161,10 +1339,28 @@ function renderProviderRow(p, k, crossBusy) {
   // above; it arms the moment a third provider is flipped available. A
   // provider id absent from this table fails SAFE (undefined reads as "no
   // key" below) rather than falling through to someone else's credentials.
-  const KEY_INFO_BY_PROVIDER = {
+  //
+  // NULL-PROTOTYPE, and that is not tidiness. `p.id` is a string index into
+  // this object, and on a plain object literal `KEY_INFO_BY_PROVIDER['constructor']`
+  // returns Object.prototype's constructor — TRUTHY — so the `|| {}` guard
+  // below would never fire and `keyInfo.field`/`.has` would read `undefined`
+  // off a function. Harmless today because every id comes from the hardcoded
+  // PROVIDER_ROWS table, but "fails SAFE for any id not in this table" is the
+  // property the comment above CLAIMS, and on a plain literal that claim is
+  // false for inherited names. chat.js's PROVIDER_LABELS and config.js's own
+  // provider maps already use this form; this brings the credential surface
+  // into line with them rather than leaving the weakest one on the screen
+  // that hands out secrets.
+  const KEY_INFO_BY_PROVIDER = Object.assign(Object.create(null), {
     gemini: { field: k.geminiApiKey, has: k.hasGeminiKey },
     anthropic: { field: k.anthropicApiKey, has: k.hasAnthropicKey },
-  };
+    // v3.15.0. Note the wire field is `hasOpenrouterKey` — lowercase r —
+    // because the route derives it mechanically from the provider id. It is
+    // NOT `hasOpenRouterKey`; reading the wrong one resolves to `undefined`,
+    // which fails safe as "not set" and would be invisible except that the
+    // row would never show a saved key.
+    openrouter: { field: k.openrouterApiKey, has: k.hasOpenrouterKey },
+  });
   const keyInfo = KEY_INFO_BY_PROVIDER[p.id] || {};
   const hasKeyField = keyInfo.field;
   const hasKey = keyInfo.has;
@@ -1186,12 +1382,177 @@ function renderProviderRow(p, k, crossBusy) {
     ? ' title="' + escapeHtml(crossWriteTitle('wait for it to finish before changing keys or the active provider — it may be mid-call.')) + '"'
     : '';
 
+  // ── "Test this key" — which providers can actually be tested ────────────
+  // A LOOKUP, function-local, exactly like KEY_INFO_BY_PROVIDER above and for
+  // the same two reasons: an id absent from it fails safe (no control), and
+  // keeping it inside this function means no new module-level identifier
+  // enters the sandbox that scripts/test-next-provider-rows.js builds by
+  // extracting this function alone — a missing binding there is a CRASH, not
+  // a failing assertion (the v3.11.0 FN_NAMES shape).
+  //
+  // WHY IT IS NOT EVERY PROVIDER. `POST /api/config/api-keys/validate` 400s
+  // on anything but `openrouter`, and that is not an oversight: OpenRouter
+  // publishes `GET /api/v1/key`, an authenticated endpoint that returns the
+  // key's own limits and spends ZERO tokens. Gemini and Anthropic have no
+  // equivalent, so the only way to check their keys is to make a real
+  // (billable) call — which is what Settings' System Check already offers,
+  // deliberately behind a cost-confirm. Offering an identical-looking
+  // "Test this key" button beside all three, where one is free and two cost
+  // money, would be the worse design. This table follows the route; when the
+  // route learns another provider, add it here.
+  const KEY_TEST_BY_PROVIDER = Object.assign(Object.create(null), {
+    openrouter: true,
+  });
+  const canTestKey = KEY_TEST_BY_PROVIDER[p.id] === true;
+  const testBusy = state.keyTestBusy === p.id;
+
+  // ── A PROVIDER WITH NO DEFAULT MODEL CANNOT BE THE ACTIVE ONE ───────────
+  // MEASURED, not assumed. With an OpenRouter-keyed config marked active,
+  // `getProviderInfo()` THROWS ("No model is configured for OpenRouter"),
+  // and it is the single producer of the provider/model pair that every
+  // `generateText` call resolves — so ingest, Health scans and Compile all
+  // fail. Offering a one-click "Set active" that breaks three features, on a
+  // row whose state cell cheerfully reads "configured", is the worst control
+  // on this screen.
+  //
+  // The test is `models[p.id]` — a PAYLOAD fact (null exactly when
+  // DEFAULTS[provider] is null, i.e. when nothing has been measured for that
+  // provider) — never `p.id === 'openrouter'`. A future provider in the same
+  // position is covered with no edit here, and the day OpenRouter gains a
+  // measured default the button appears on its own.
+  //
+  // Hiding a control is not a guarantee — it only stops the common case, so
+  // the durable fix lives on the WRITE path, not in this render. It is there:
+  // `setApiKeys` activates a newly-saved provider only if an injected
+  // `canActivate` predicate affirms it can serve the build lane, and an ABSENT
+  // predicate does not activate at all. `POST /api-keys/active` refuses with a
+  // 400 carrying `reason: 'no_build_model'`.
+  //
+  // HISTORY, kept because the reasoning still governs this render: an earlier
+  // draft of this comment said "saving an OpenRouter key sets it active
+  // server-side without any click here". That was TRUE when it was written and
+  // was a P0 — a working Gemini install broke silently on saving a second key,
+  // because `getProviderInfo()` threw and the route swallowed it in a catch
+  // commented "no key configured yet" while a key WAS configured. It is FALSE
+  // now, and was verified false over real HTTP in the same release that wrote
+  // it: the save returns `activeProvider: 'gemini'` with
+  // `skippedActivation: [{ provider: 'openrouter', reason: 'no_build_model' }]`.
+  // Do not restore the old claim; do not delete the render-side gate either —
+  // two layers is the point.
+  const canBuild = !!(k.models && typeof k.models[p.id] === 'string' && k.models[p.id]);
+
   const extraActions = [];
-  if (hasKey && !isActive) {
+  // A keyed provider with NO resolvable model gets NO "Set active" button — see
+  // `canBuild` above. That refusal is correct (activating it would hand ingest,
+  // Health and Compile a provider with nothing to run them on — the v3.15.0 P0),
+  // but ON ITS OWN IT IS SILENT: the maintainer saw the button present on two
+  // providers, absent on the third, and had to ask why. A hidden control with no
+  // stated reason reads as a missing feature, not as a safeguard. So say it where
+  // the button would have been. Derived from `canBuild`, never from a provider id.
+  if (hasKey && !isActive && !canBuild) {
+    extraActions.push(
+      '<span class="mono provider-state provider-state-muted" title="' +
+      escapeHtml(p.name + ' has no models available in this build yet, so it cannot run ingest, Health scans or Compile. Your key is saved and this will change on its own once models are available.') +
+      '">no models yet — cannot be active</span>'
+    );
+  }
+  if (hasKey && !isActive && canBuild) {
     extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-set-active="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>Set active</button>');
+  }
+  if (hasKey && canTestKey) {
+    // Deliberately NOT gated on `crossBusy`. Every other control here is a
+    // WRITE — a save or an active-provider switch lands in the config that
+    // getProviderInfo() re-reads on every call, so one arriving mid-ingest
+    // can change what the rest of that run costs. This request writes
+    // nothing: it asks OpenRouter about a key we already hold and renders
+    // the answer. Disabling a read-only diagnostic during a long ingest
+    // would remove the tool at precisely the moment someone is most likely
+    // to be asking "is my key the problem?".
+    extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-test-key="' + p.id + '"' +
+      (testBusy ? ' disabled' : '') + '>' + (testBusy ? 'Testing…' : 'Test this key') + '</button>');
   }
   if (hasKey) {
     extraActions.push('<button type="button" class="btn btn-ghost btn-xs" data-disconnect="' + p.id + '"' + (mutateDisabled ? ' disabled' : '') + crossTitleAttr + '>Disconnect</button>');
+  }
+
+  // ── The verdict, as three genuinely different states ────────────────────
+  // `valid` is TRI-STATE on the wire: true / false / null. `null` means the
+  // check could not be completed — rate-limited, OpenRouter 5xx, unreadable
+  // body, or unreachable network. Collapsing that into "invalid" would tell
+  // a user their key is bad when what actually happened is that we could not
+  // ask, and the observed cost of that is someone revoking and regenerating
+  // a perfectly good credential. So: pass / fail / could-not-check, never
+  // two states.
+  //
+  // NUMBERS ARE RENDERED ONLY WHEN PRESENT. OpenRouter returns `limit: null`
+  // to mean NO CAP; printing that as "0" would read as "exhausted", which is
+  // the opposite fact. Same rule as v3.14.0's cost line: reported or absent,
+  // never inferred. `typeof === 'number'` rather than truthiness, so a
+  // genuine remaining balance of 0 — which IS exhausted — still prints.
+  let testHtml = '';
+  const tr = (state.keyTest && state.keyTest[p.id]) || null;
+  if (canTestKey && tr && typeof tr === 'object') {
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+    const usd = (v) => '$' + (Math.round(v * 10000) / 10000);
+    const facts = [];
+    if (tr.isFreeTier === true) facts.push('free tier');
+    else if (tr.isFreeTier === false) facts.push('paid tier');
+    const used = num(tr.usage), lim = num(tr.limit), rem = num(tr.limitRemaining);
+    if (used !== null) facts.push('used ' + usd(used));
+    if (lim !== null) facts.push('limit ' + usd(lim));
+    // `limit === null` is OpenRouter's "no cap on this key". Say so rather
+    // than staying silent, because "no limit shown" and "no limit" look
+    // identical on screen and only one of them is reassuring.
+    //
+    // NOT on the no_credits verdict, though — found by reading the rendered
+    // output rather than the code. There, "no spending cap on this key" sits
+    // directly beside the headline "Key accepted, but it cannot spend", and
+    // the two read as contradicting each other. Both are true (there is no
+    // CAP; there is no BALANCE) but the distinction is not worth making on a
+    // line whose only job is reassurance, and the warning underneath already
+    // states the real constraint.
+    else if (tr.valid === true && tr.reason !== 'no_credits') facts.push('no spending cap on this key');
+    if (rem !== null) facts.push(usd(rem) + ' remaining');
+
+    let cls, head, detail;
+    if (tr.valid === true && tr.reason === 'no_credits') {
+      cls = 'provider-keytest-warn';
+      // The route's own `warning` names the real condition (a negative
+      // balance 402s even on free models). Used verbatim where present: it
+      // is more specific than anything this view could compose.
+      head = 'Key accepted, but it cannot spend';
+      detail = typeof tr.warning === 'string' && tr.warning.trim() ? tr.warning.trim() : '';
+    } else if (tr.valid === true) {
+      cls = 'provider-keytest-ok';
+      // "The key works" — NOT "OpenRouter works", and not "your setup
+      // works". GET /api/v1/key authenticates the CREDENTIAL; it says
+      // nothing about whether any particular model will serve a request.
+      // The Curator sends `allow_fallbacks: false`, so a perfectly valid key
+      // can still get a 503 when no provider meets the routing requirements.
+      // A green tick that implied otherwise would send someone hunting for a
+      // key problem that does not exist.
+      head = 'Key accepted by OpenRouter';
+      detail = 'This confirms the credential only. It does not check that any particular model ' +
+        'will accept a request — The Curator asks for an exact model and never lets OpenRouter ' +
+        'substitute one, so an individual model can still be unavailable.';
+    } else if (tr.valid === false) {
+      cls = 'provider-keytest-fail';
+      head = 'OpenRouter rejected this key';
+      detail = typeof tr.error === 'string' && tr.error.trim() ? tr.error.trim() : '';
+    } else {
+      cls = 'provider-keytest-unknown';
+      head = 'Could not check this key';
+      detail = (typeof tr.error === 'string' && tr.error.trim() ? tr.error.trim() + ' ' : '') +
+        'This says nothing about whether the key is good — only that the check did not complete.';
+    }
+
+    testHtml = (
+      '<div class="provider-keytest ' + cls + '" role="status" data-keytest="' + escapeHtml(String(p.id)) + '">' +
+        '<span class="provider-keytest-head">' + escapeHtml(head) + '</span>' +
+        (facts.length ? '<span class="mono provider-keytest-facts">' + escapeHtml(facts.join(' · ')) + '</span>' : '') +
+        (detail ? '<span class="provider-keytest-detail">' + escapeHtml(detail) + '</span>' : '') +
+      '</div>'
+    );
   }
 
   let fieldHtml;
@@ -1220,12 +1581,31 @@ function renderProviderRow(p, k, crossBusy) {
       '<span class="mono provider-state ' + stateClass + '">' + stateText + '</span>' +
       '<div class="provider-row-actions">' +
         extraActions.join('') +
-        // "Replace" only opens the input row locally — no network call — so it's deliberately NOT gated (see file-header comment).
-        '<button type="button" class="btn btn-secondary btn-xs" data-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>Replace</button>' +
+        // This button only opens the input row locally — no network call — so it's deliberately NOT gated (see file-header comment).
+        //
+        // The LABEL is derived from whether a key exists, and that is a fix, not
+        // decoration. The field beside it is a static <code> display, never an
+        // input — you cannot type into it until this button swaps in the real
+        // password field. That was invisible while every shipping provider
+        // always had a key, because "Replace" reads as a sensible action on a
+        // key you can see. OpenRouter is the first provider that starts EMPTY,
+        // and the maintainer reported exactly the predictable outcome: he tried
+        // to click and paste into the "Not set" box, and nothing happened —
+        // because the only way in was a button labelled as if there were
+        // something to replace. Derived from `hasKeyField`, so a fourth
+        // provider needs no edit here.
+        '<button type="button" class="btn btn-' + (hasKeyField ? 'secondary' : 'primary') + ' btn-xs" data-replace="' + p.id + '"' + (isBusy ? ' disabled' : '') + '>' + (hasKeyField ? 'Replace' : 'Add key') + '</button>' +
       '</div>'
     );
   }
 
+  // The verdict is a SIBLING of the row, not a child of it. `.provider-row`
+  // is a single-line flex strip sized for controls; folding a two-sentence
+  // explanation into it would either clip the explanation or stretch every
+  // other provider's row to match. Emitting it after the row also leaves the
+  // row's own markup byte-identical when no test has been run, which is the
+  // overwhelmingly common case and the one every existing assertion about
+  // this function covers.
   return (
     '<div class="provider-row' + (isReplacing ? ' provider-row-replacing' : '') + '">' +
       '<span class="provider-dot" style="background:' + p.dot + '"></span>' +
@@ -1234,7 +1614,8 @@ function renderProviderRow(p, k, crossBusy) {
         '<span class="mono provider-model">' + escapeHtml(model) + '</span>' +
       '</span>' +
       fieldHtml +
-    '</div>'
+    '</div>' +
+    testHtml
   );
 }
 
@@ -1444,20 +1825,63 @@ function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled, s
 function renderModelPicker(p, k, isOpen, crossBusy) {
   if (!p || !p.available || !k) return '';
 
-  const HAS_KEY_BY_PROVIDER = {
+  // Null-prototype for the same reason KEY_INFO_BY_PROVIDER above is: on a
+  // plain literal `HAS_KEY_BY_PROVIDER['constructor']` is truthy, so the gate
+  // below would PASS for an inherited name — the opposite of the fail-safe
+  // direction this docblock promises.
+  const HAS_KEY_BY_PROVIDER = Object.assign(Object.create(null), {
     gemini: k.hasGeminiKey,
     anthropic: k.hasAnthropicKey,
-    // A future provider (OpenRouter, a local runtime) adds ONE line here and
-    // one entry to PROVIDER_ROWS. Nothing else in this file needs to change:
-    // the section, its header and its list are all derived from the
-    // catalogue the route sends for that id.
-  };
+    // v3.15.0 — OpenRouter. A further provider (a local runtime) adds ONE
+    // line here and one entry to PROVIDER_ROWS. Nothing else in this file
+    // needs to change: the section, its header and its list are all derived
+    // from the catalogue the route sends for that id.
+    openrouter: k.hasOpenrouterKey,
+  });
   if (!HAS_KEY_BY_PROVIDER[p.id]) return '';
 
-  const list = (k.offerable && Array.isArray(k.offerable[p.id])) ? k.offerable[p.id] : [];
-  if (list.length === 0) return '';
+  // TWO DIFFERENT ABSENCES, and only one of them is a fact worth rendering.
+  //   `offerable[p.id]` is an ARRAY  — the server TOLD us this provider's
+  //                                    catalogue. An empty one is information.
+  //   `offerable` absent / not an array for this id — the server told us
+  //                                    NOTHING (an older backend that predates
+  //                                    the catalogue, a truncated payload).
+  // Saying "there are no models for this provider" in the second case would
+  // assert something we never learned, so it stays silent and the section
+  // simply does not appear — the pre-catalogue behaviour, degrading cleanly.
+  const hasCatalogue = !!(k.offerable && typeof k.offerable === 'object'
+    && Array.isArray(k.offerable[p.id]));
+  const list = hasCatalogue ? k.offerable[p.id] : [];
+  if (!hasCatalogue) return '';
 
+  // ── AN EMPTY CATALOGUE UNDER A SAVED KEY IS A STATE, NOT A NON-EVENT ────
+  // This used to `return ''`, which was correct while every keyed provider
+  // always shipped a catalogue: the only way to reach it was a provider with
+  // no key, and that is already handled one line above. v3.15.0 makes it
+  // reachable in the normal course of use — OpenRouter's `offerable` is `[]`
+  // for this release, because no OpenRouter route has been measured against
+  // the real ingest outline prompt and this project does not offer a model
+  // for a job it has not been measured doing (docs/model-lifecycle.md).
+  //
+  // Rendering NOTHING there is the failure this repo keeps re-finding under
+  // new names: the user saves a key, the screen does not change, and there is
+  // no way to tell "working, nothing to choose yet" from "my key did not
+  // save". Say it instead.
+  //
+  // The two arms are DERIVED FROM THE PAYLOAD, never from `p.id === 'openrouter'`.
+  // A binary test on a provider id is the exact shape that made this file
+  // render Anthropic's masked key beside another provider's name (v3.10.1),
+  // and it would also be wrong on its own terms: what distinguishes the two
+  // cases is whether the provider has a DEFAULT MODEL at all, and that is a
+  // fact on the wire. `models[p.id]` is null only when DEFAULTS[provider] is
+  // null — i.e. when nothing is pinned because nothing is measured. Any
+  // future provider that lands in that state gets the right sentence with no
+  // edit here, and a keyed Gemini that somehow arrives with an empty
+  // catalogue gets the anomaly sentence rather than a claim about
+  // measurement that would be false for it.
   const defaultId = (k.models && typeof k.models[p.id] === 'string') ? k.models[p.id] : '';
+  if (list.length === 0) return renderEmptyModelPicker(p, defaultId);
+
 
   // The user's EXPLICIT stored pick, straight off the wire — never a local
   // optimistic copy. `models[p.id]` above is what the app will actually RUN
@@ -1557,6 +1981,65 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
 }
 
 /**
+ * The catalogue section for a KEYED provider that has no models to list.
+ *
+ * Reached only from renderModelPicker's `list.length === 0` arm, i.e. the key
+ * is saved and the route still sent an empty `offerable` array. See that call
+ * site for why this is a rendered state rather than a silent ''.
+ *
+ * TWO ARMS, BOTH TRUE STATEMENTS, chosen on `defaultId` (a payload fact) and
+ * never on the provider id:
+ *
+ *   no default model  — nothing is pinned because nothing has been measured
+ *                       for this provider. This is OpenRouter in v3.15.0 and
+ *                       it is the DESIGNED state, so it must not read as an
+ *                       error. It says what the key is good for today (chat
+ *                       is not yet wired to it either, so it says neither),
+ *                       and what would have to happen for models to appear.
+ *   has a default     — an anomaly: the engine has a model for this provider
+ *                       but the catalogue arrived empty. Name the model still
+ *                       in force so the user knows what is running, and do
+ *                       NOT guess at a cause we cannot see from here.
+ *
+ * NOT a <details>. There is nothing to expand into, and a disclosure that
+ * opens onto one sentence is a control that punishes curiosity. The header of
+ * a real picker answers "what am I running"; this answers it directly.
+ *
+ * NO PROMISE OF A DATE, and no "coming soon". This project has shipped 27
+ * consecutive "previews" straight to production; a version number here would
+ * be a commitment the person reading it cannot check. "Once measured" is the
+ * actual condition and it is verifiable in the docs.
+ */
+function renderEmptyModelPicker(p, defaultId) {
+  if (!p) return '';
+  const name = escapeHtml(p.name || p.id || 'This provider');
+
+  const body = defaultId
+    ? 'No model list is available for ' + name + ' right now. Ingest, Health scans and Compile ' +
+      'still run on <code class="mono">' + escapeHtml(defaultId) + '</code>, the model already in force — ' +
+      'nothing has changed about what you are billed. Reload Settings to try again.'
+    : 'Your key is saved, and there are no models to choose yet. The Curator only offers a model ' +
+      'once it has been measured against a real ingest, so that the price and the limits beside it ' +
+      'are things we have observed rather than copied from a spec sheet. ' +
+      name + ' models arrive here as that measurement lands. ' +
+      // Stated plainly rather than left to be discovered. Until this provider
+      // has a model, it cannot build the wiki — which is why its row offers
+      // no "Set active" button (see renderProviderRow's canBuild).
+      '<strong>Until then ' + name + ' cannot build your wiki</strong> — ingest, Health scans and ' +
+      'Compile need a measured model, so they keep running on the provider that has one.';
+
+  return (
+    '<div class="model-picker model-picker-empty" data-model-picker-empty="' + escapeHtml(String(p.id || '')) + '">' +
+      '<div class="model-picker-summary model-picker-empty-head">' +
+        '<span class="model-picker-title">' + name + '</span>' +
+        '<span class="model-picker-lane model-picker-lane-idle">no models listed yet</span>' +
+      '</div>' +
+      '<p class="model-picker-scope model-picker-empty-body">' + body + '</p>' +
+    '</div>'
+  );
+}
+
+/**
  * One model row. Every interpolated value originates in llm.js but arrives
  * over an HTTP response, so all of it — label, id, note, suitability — goes
  * through escapeHtml. "The payload is ours" is not a property this function
@@ -1592,11 +2075,28 @@ function renderModelOption(m, index, defaultId, ctx) {
     badges.push('<span class="model-badge model-badge-flag">out-performed</span>');
   }
 
+  // ── FREE is a REPORTED fact, checked ahead of the price fields ──────────
+  // `m.free === true` is llm.js's own catalogue fact that this model bills
+  // nothing (see FREE_MODELS in src/brain/llm.js) — a free model's
+  // `input`/`output` are `null` BY DESIGN, never `0`, precisely so nothing
+  // downstream can mistake "known to be free" for a truthy zero (the
+  // v3.3.0 shape, where `{input:0,output:0}` made a budget cap inert).
+  // `formatModelPrice` therefore correctly renders '' for a free model too
+  // (it only ever sees the null price, never the flag) — so branching on
+  // `m.free` is the ONLY way to tell "known to be free" apart from "price
+  // unknown", which is a DIFFERENT fact and must go on rendering as blank
+  // rather than being read as free. Never branch on a price of zero, a
+  // provider id, or an id substring like ":free" — see llm.js's own
+  // FREE_MODELS docblock for why a `:free` suffix is not a safe test (a
+  // router id and two audio models are zero-priced but not actually free).
+  // A fourth provider's free tier inherits this with no edit here.
   const price = formatModelPrice(m.input, m.output);
-  const priceHtml = price
-    ? '<span class="mono model-price">' + escapeHtml(price) +
-        '<span class="model-price-unit"> /1M tokens</span></span>'
-    : '';
+  const priceHtml = m.free === true
+    ? '<span class="mono model-price">free</span>'
+    : (price
+        ? '<span class="mono model-price">' + escapeHtml(price) +
+            '<span class="model-price-unit"> /1M tokens</span></span>'
+        : '');
 
   // Only claim a rise when the live price is ACTUALLY below the standard one.
   // `promotionUntilIso` stays populated after a promotion expires, at which
@@ -1961,6 +2461,9 @@ function wireProviderListeners() {
   document.querySelectorAll('[data-set-active]').forEach((btn) => {
     btn.addEventListener('click', () => onSetActive(btn.dataset.setActive, myMountToken));
   });
+  document.querySelectorAll('[data-test-key]').forEach((btn) => {
+    btn.addEventListener('click', () => onTestKey(btn.dataset.testKey, myMountToken));
+  });
   // The provider comes off the BUTTON, not from the enclosing section — the
   // same reason renderProviderRow keys its fields off a lookup table rather
   // than position. Both attributes are emitted together by renderModelOption,
@@ -2273,6 +2776,11 @@ async function onSaveKey(provider, token) {
   if (!value) return;
   state.keysBusy = provider;
   state.keysActionError = null;
+  // Cleared at the START of every key action, never only on the paths that
+  // could set it: a notice explaining the LAST save must not still be on
+  // screen next to the result of a different one. Disconnect and Set-active
+  // both move the Active row, which is the exact thing the notice narrates.
+  state.keysActivationNotice = null;
   render(token);
   try {
     // Keyed by provider via a lookup table, NOT a binary gemini/anthropic
@@ -2288,7 +2796,28 @@ async function onSaveKey(provider, token) {
     // than guessing a field: under-saving is recoverable; writing into the
     // wrong provider's slot may go unnoticed until that other service
     // starts failing.
-    const SAVE_BODY_KEY_BY_PROVIDER = { gemini: 'geminiApiKey', anthropic: 'anthropicApiKey' };
+    //
+    // NULL-PROTOTYPE. On a plain object literal
+    // `SAVE_BODY_KEY_BY_PROVIDER['constructor']` returns a FUNCTION, which is
+    // truthy — so the refusal below would not fire and `{ [bodyKey]: value }`
+    // would POST the user's key under a garbage field name. Not reachable
+    // today (provider comes off a button rendered from PROVIDER_ROWS), but
+    // "an id absent from this table REFUSES to save" is the safety property
+    // this comment asserts, and on a plain literal it is false for inherited
+    // names. On the one screen where users hand us secrets, the guard should
+    // be true as written rather than true only for the inputs we happen to
+    // produce.
+    const SAVE_BODY_KEY_BY_PROVIDER = Object.assign(Object.create(null), {
+      gemini: 'geminiApiKey',
+      anthropic: 'anthropicApiKey',
+      // v3.15.0. Until this line existed, saving an OpenRouter key REFUSED
+      // outright rather than guessing a field — which is the v3.10.1 fix
+      // working exactly as designed, and is why adding the provider row
+      // without this line could not have silently written into
+      // `anthropicApiKey`. Keep that property for the next provider: add the
+      // row and this entry together, or not at all.
+      openrouter: 'openrouterApiKey',
+    });
     const bodyKey = SAVE_BODY_KEY_BY_PROVIDER[provider];
     if (!bodyKey) {
       throw new Error(`Cannot save a key for provider "${provider}" — no known credential field for it.`);
@@ -2300,7 +2829,21 @@ async function onSaveKey(provider, token) {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+    // The SAVE HAS SUCCEEDED by this point. Everything below is about
+    // explaining the outcome, so an unreadable body must never be re-thrown as
+    // a failed save — that would report a lost key the server actually stored,
+    // which is worse than the silence this whole change exists to remove. An
+    // unparseable body simply means we were told nothing, which
+    // classifyActivationOutcome handles as its own case.
+    let payload = null;
+    try { payload = await res.json(); } catch { /* told nothing — see above */ }
     if (!isCurrentMount(token)) return;
+    // Read from the POST's OWN response, not from state after the refetch
+    // below: the verdict and the activeProvider it is judged against then come
+    // from the same reply, so no concurrent write landing between the two
+    // requests can make them disagree.
+    const verdict = classifyActivationOutcome(payload, provider);
+    state.keysActivationNotice = verdict.kind === 'silent' ? null : verdict;
     state.keysBusy = null;
     state.replacing = null;
     state.replaceValue = ''; // MEDIUM-2 fix: never let a saved secret linger in state past a successful save
@@ -2317,6 +2860,11 @@ async function onSaveKey(provider, token) {
 async function onDisconnect(provider, token) {
   state.keysBusy = provider;
   state.keysActionError = null;
+  // Cleared at the START of every key action, never only on the paths that
+  // could set it: a notice explaining the LAST save must not still be on
+  // screen next to the result of a different one. Disconnect and Set-active
+  // both move the Active row, which is the exact thing the notice narrates.
+  state.keysActivationNotice = null;
   render(token);
   try {
     const res = await fetch('/api/config/api-keys/disconnect', {
@@ -2340,6 +2888,11 @@ async function onDisconnect(provider, token) {
 async function onSetActive(provider, token) {
   state.keysBusy = provider;
   state.keysActionError = null;
+  // Cleared at the START of every key action, never only on the paths that
+  // could set it: a notice explaining the LAST save must not still be on
+  // screen next to the result of a different one. Disconnect and Set-active
+  // both move the Active row, which is the exact thing the notice narrates.
+  state.keysActivationNotice = null;
   render(token);
   try {
     const res = await fetch('/api/config/api-keys/active', {
@@ -2358,6 +2911,77 @@ async function onSetActive(provider, token) {
       render(token);
     }
   }
+}
+
+/**
+ * Ask the server to check a saved key against the provider, and render the
+ * verdict. READ-ONLY: nothing is written anywhere by this path.
+ *
+ * ── WHAT IS DELIBERATELY NOT SENT ────────────────────────────────────────
+ * The route accepts an optional `apiKey` so an UNSAVED key can be checked
+ * before committing it. This view does not use that arm, and the omission is
+ * a choice rather than an oversight: it would add a second frontend request
+ * shape that carries a raw credential in a JSON body, for the sake of saving
+ * one click on a key that is about to be saved anyway. The existing rule on
+ * this screen is that a secret leaves the field exactly once, on Save, and
+ * never lingers in state afterwards (see state.replaceValue's comment). One
+ * credential-carrying request is easier to keep honest than two.
+ *
+ * ── WHY THE VERDICT IS NOT DERIVED HERE ──────────────────────────────────
+ * The whole payload is stored verbatim and read by the renderer. Classifying
+ * it here would put a second opinion about `valid` in the frontend, and the
+ * server's classification is the STRUCTURAL one — it keys off the numeric
+ * HTTP status, which OpenRouter also echoes in `error.code`. Re-deriving it
+ * from message text is precisely the substring-matching mistake this repo
+ * made once before, when a `/\b429\b/` test matched its own error message's
+ * "429 characters".
+ *
+ * A transport failure is recorded as the SAME `valid: null` shape the route
+ * uses for its own could-not-check outcomes, so the renderer has one contract
+ * and there is no fourth state that only exists when the fetch itself broke.
+ */
+async function onTestKey(provider, token) {
+  state.keyTestBusy = provider;
+  // Clear only THIS provider's previous verdict, and clear it before the
+  // request rather than after: a stale "Key accepted" sitting under a
+  // spinner, while a key that has since been revoked is being re-checked, is
+  // a reassuring lie for as long as the request takes.
+  state.keyTest = Object.assign({}, state.keyTest, { [provider]: null });
+  render(token);
+  let payload;
+  try {
+    const res = await fetch('/api/config/api-keys/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    // Read defensively and NEVER inside a throw — a non-JSON body (a proxy's
+    // HTML error page) must produce a legible verdict, not an "Unexpected
+    // token '<'". Same class this repo has fixed twice (v2.3.3, v3.6.0).
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (data && typeof data === 'object' && (res.ok || typeof data.valid !== 'undefined')) {
+      payload = data;
+    } else {
+      payload = {
+        valid: null,
+        reason: 'bad_response',
+        error: (data && typeof data.error === 'string' && data.error.trim())
+          ? data.error.trim()
+          : 'The server returned a response we could not read (HTTP ' + res.status + ').',
+      };
+    }
+  } catch {
+    payload = {
+      valid: null,
+      reason: 'unreachable',
+      error: 'Could not reach The Curator’s own server to run the check.',
+    };
+  }
+  if (!isCurrentMount(token)) return;
+  state.keyTestBusy = null;
+  state.keyTest = Object.assign({}, state.keyTest, { [provider]: payload });
+  render(token);
 }
 
 /**
@@ -2405,7 +3029,21 @@ async function onPickModel(provider, modelId, token) {
   // an id we do not recognise must not be POSTed. Under-writing is
   // recoverable; writing a selection into some other provider's slot is not
   // noticed until that provider starts billing differently.
-  const KNOWN = { gemini: true, anthropic: true };
+  // Null-prototype: `KNOWN['constructor']` on a plain literal is truthy, so
+  // the refusal below would be skipped for an inherited name and a model
+  // selection would be POSTed under a provider the server does not know.
+  const KNOWN = Object.assign(Object.create(null), {
+    gemini: true,
+    anthropic: true,
+    // v3.15.0. Listed even though OpenRouter's catalogue is empty this
+    // release and therefore renders no "Use this" button to reach this code:
+    // the alternative is a table that disagrees with PROVIDER_ROWS, and a
+    // provider that is savable but not choosable is a discrepancy the next
+    // reader has to re-derive. The server is the real gate either way — it
+    // refuses a model that is not offerable, so an empty catalogue means
+    // every id is refused there regardless of what this table says.
+    openrouter: true,
+  });
   const model = typeof modelId === 'string' ? modelId : '';
   if (!KNOWN[provider]) {
     state.modelPickError = Object.assign({}, state.modelPickError, {

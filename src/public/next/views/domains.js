@@ -407,7 +407,14 @@ function formatUsd(n) {
 function costReadout(est, { compact = false } = {}) {
   if (!est || est.error) return null;
   if (typeof est.estimatedUsd === 'number') return formatUsd(est.estimatedUsd);
-  if (compact) return 'cost unknown';
+  // A FREE model's cost is KNOWN and it is zero — `priceKnown: true` with a null
+  // `estimatedUsd`. Before this, the compact branch returned before ever reading
+  // the note, so the spend button read "cost unknown" on the ONE model whose cost
+  // is certain, directly beneath copy promising every AI action shows its cost
+  // first. Eighth instance in v3.15.0 of a fact and its ABSENCE collapsed into one
+  // value. Never render `$0.00` here: `estimatedUsd: 0` makes the frozen /old
+  // renderer print `$0.0000`, which is what format-usd.js exists to prevent.
+  if (compact) return est.priceKnown ? 'free' : 'cost unknown';
   return (typeof est.costNote === 'string' && est.costNote) || 'cost unknown';
 }
 

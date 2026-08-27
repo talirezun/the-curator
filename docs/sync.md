@@ -26,7 +26,7 @@ Compared to alternatives:
 | Chat conversations (`conversations/`) | Yes | So you can continue threads on any machine |
 | Domain schemas (`CLAUDE.md`) | Yes | So the AI behaves consistently everywhere |
 | Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed. A per-domain manifest of what was ingested (filename, size, ingest date) DOES sync inside `wiki/`, so on a second machine a summary page can still tell you what its source was called and when it arrived, even though the file itself isn't there — see the reader overlay's "Reveal in Finder" bar or [mcp-user-guide.md](mcp-user-guide.md)'s `get_raw_source` section |
-| API keys (`.env`) | No | Never synced — stays on each machine only |
+| AI provider API keys (`.curator-config.json`, or `.env` if you use the developer fallback) | No | Never synced — they stay on each machine only, for every provider. Add your key again on each computer |
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
 | Sync config (`.sync-config.json`) | No | Contains your PAT — stays local only |
 | Write locks (`.write-lock`) | No | Machine-local state, not knowledge. Syncing one meant a crash on machine A could block writes on machine B for up to 30 minutes (fixed in v3.0.15) |
@@ -303,7 +303,7 @@ Your repository is **private**. GitHub employees do not read private repository 
 
 Your Personal Access Token is stored only in `.sync-config.json` on your local machine — it is gitignored and never uploaded anywhere.
 
-Your Gemini API key (in `.env`) is also never synced.
+Your AI provider API keys are also never synced — whichever providers you use. They live in `.curator-config.json` when you save them in Settings (or in `.env` if you use the developer fallback), both of which are gitignored and stay on the machine you entered them on.
 
 ---
 

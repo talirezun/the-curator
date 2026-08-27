@@ -135,6 +135,31 @@
 }
 .settings-write-busy-note svg { flex: none; margin-top: 1px; }
 
+/* "Key saved, but it did not become active" — see renderActivationNotice.
+   Same attention-tinted pattern as .settings-write-busy-note above, declared
+   separately rather than shared because the two say different things and a
+   class named for one job should not quietly acquire another (the views/
+   README's "own your own CSS file" rule, applied within the file).
+   ATTENTION, never DANGER: the save SUCCEEDED, and the danger tint would tell
+   a user whose key stored fine that something broke. */
+.settings-activation-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin-bottom: 14px;
+}
+.settings-activation-note svg { flex: none; margin-top: 1px; }
+/* Column, so a save that skipped more than one provider reads as one line per
+   provider instead of a single run-on paragraph. */
+.settings-activation-note-body { display: flex; flex-direction: column; gap: 5px; }
+
 .settings-note-row {
   display: flex;
   align-items: center;
@@ -352,6 +377,54 @@
 .provider-state-muted { color: var(--text-3); }
 .provider-row-actions { display: flex; gap: 6px; flex: none; }
 
+/* ── "Test this key" verdict (v3.15.0) ────────────────────────────────────
+   A SIBLING of .provider-row, not a child: the row is a single-line flex
+   strip sized for controls, and a two-sentence explanation folded into it
+   would either be clipped or stretch every other provider's row to match.
+   Pulled up against its row the same way .model-picker is, so it reads as
+   belonging to the key above it rather than floating between providers.
+
+   FOUR variants for THREE wire states, because `valid: true` splits into
+   "works" and "works but cannot spend". `unknown` is deliberately NEUTRAL
+   grey, not red: `valid: null` means the check did not complete, and
+   painting that with the failure colour is how a user comes to revoke a
+   perfectly good credential. Colour is doing real work here, so the text
+   states the outcome too — nothing depends on hue alone. */
+.provider-keytest {
+  margin: -2px 0 2px;
+  padding: 8px 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}
+.provider-keytest-head { font-weight: var(--weight-medium); color: var(--text); }
+.provider-keytest-facts { font-size: var(--text-2xs); color: var(--text-2); }
+.provider-keytest-detail { color: var(--text-2); }
+.provider-keytest-ok {
+  border-color: var(--success);
+  background: var(--success-tint);
+}
+.provider-keytest-ok .provider-keytest-head { color: var(--success-text); }
+.provider-keytest-warn {
+  border-color: var(--attention-text);
+  background: var(--attention-tint);
+}
+.provider-keytest-warn .provider-keytest-head { color: var(--attention-text); }
+.provider-keytest-fail {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+}
+.provider-keytest-fail .provider-keytest-head { color: var(--danger-text); }
+/* No tint and no border colour — "we could not ask" is not a status worth
+   colouring, and giving it one would make it compete with the two that are. */
+.provider-keytest-unknown .provider-keytest-head { color: var(--text); }
+
 .provider-replace-row {
   flex: 1;
   min-width: 260px;
@@ -554,6 +627,15 @@
 }
 
 .model-picker-body { padding: 0 13px 13px; }
+
+/* ── The keyed-but-empty catalogue (v3.15.0) ──────────────────────────────
+   Reuses .model-picker's frame so it sits in the same place, at the same
+   width, as the real picker it stands in for. NOT a <details>: there is
+   nothing to expand into, and the head must therefore not look clickable —
+   .model-picker-summary sets `cursor: pointer`, which is the one thing that
+   has to be undone here. */
+.model-picker-empty-head { cursor: default; }
+.model-picker-empty-body { margin: 0 13px 13px; }
 
 /* The one place the app states what a selection does and does not do.
    Amber rather than grey deliberately: it is a limitation, not a footnote. */

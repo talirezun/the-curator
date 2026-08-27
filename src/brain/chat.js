@@ -1,5 +1,17 @@
 import { randomUUID } from 'crypto';
 import { generateText, isOfferableModel } from './llm.js';
+// NAMESPACE import for everything ADDED after v3.14.0. A named import of an
+// export that is later renamed or not yet shipped is a SyntaxError at MODULE
+// LOAD, which takes this whole file — and therefore all of chat — down; a
+// namespace member is merely `undefined`, and every read of it below is
+// type-checked before it is called so the miss degrades to a refusal (fall back
+// to the global active provider) instead of a crash. This is routes/config.js's
+// v3.12.0 rule applied at the second consumer of the same catalogue.
+//
+// The two named imports above are LEFT AS THEY ARE deliberately: they predate
+// this change, are load-bearing on the chat path, and rewriting them would
+// widen the diff of a defect fix into a refactor of a working import.
+import * as llmModule from './llm.js';
 import { getApiKeys } from './config.js';
 import { tokenize } from './sharedbrain-delta.js';
 import {
@@ -618,17 +630,118 @@ export function stripCatalogueEcho(answer) {
   return cleaned.length ? cleaned : answer;           // never return empty
 }
 
+/**
+ * ── PER-PROVIDER CREDENTIAL FIELD, KEYED BY ID ───────────────────────────────
+ *
+ * This replaces a pair of BINARY TERNARIES — `provider === 'gemini' ? keys.gemini
+ * : keys.anthropic` — which had no third arm, so ANY provider that was not
+ * literally 'gemini' fell through to the ANTHROPIC credential. That is the
+ * v3.10.1 credential-crossing shape verbatim: measured here, with an OpenRouter
+ * key saved and OpenRouter models offerable, `normalizeChatModel('openrouter', …)`
+ * returned the model when an Anthropic key happened to be saved and null when it
+ * was not. An OpenRouter decision was being made from Anthropic's credential.
+ *
+ * A frozen array of pairs scanned with `===`, exactly like llm.js's
+ * KNOWN_PROVIDERS: the caller's string is compared, never used to index, so
+ * '__proto__' / 'constructor' / 'toString' are structurally unable to resolve to
+ * a field name. `row[1]` is a literal from this table and never caller text.
+ *
+ * AN UNKNOWN ID RESOLVES TO NO KEY, never to another provider's — the whole
+ * point of the change. Under-reading is recoverable (chat falls back to the
+ * global active provider); reading the wrong slot spends someone else's money.
+ *
+ * This list must stay in step with config.js's PROVIDER_KEY_FIELDS, which is not
+ * exported. Drift fails SAFE in both directions: a provider missing here is
+ * simply not chat-selectable, and a provider here but unknown to llm.js is
+ * refused by the catalogue gates below.
+ */
+const CHAT_PROVIDER_KEY_FIELDS = Object.freeze([
+  Object.freeze(['gemini',     'geminiApiKey']),
+  Object.freeze(['anthropic',  'anthropicApiKey']),
+  Object.freeze(['openrouter', 'openrouterApiKey']),
+]);
+
+/**
+ * The key SAVED IN SETTINGS for a provider, or '' when there is none.
+ *
+ * CONFIG-SCOPED, never getEffectiveKey/.env — the v3.0.13 rule: a provider the
+ * user has Disconnected in Settings must not be reachable from chat even if its
+ * key still lingers in .env.
+ */
+function savedChatKey(provider) {
+  const row = CHAT_PROVIDER_KEY_FIELDS.find(([id]) => id === provider);
+  if (!row) return '';
+  return getApiKeys()[row[1]] || '';
+}
+
+/**
+ * Can this provider serve a chat turn in which NO model is named?
+ *
+ * DERIVED, NEVER A HARDCODED PROVIDER LIST. It asks llm.js the only question
+ * that matters — does `getDefaultModel(provider)` resolve to an actual id — so a
+ * provider becomes chat-selectable the moment it genuinely can serve one, and a
+ * fourth provider needs no edit here.
+ *
+ * WHY THIS GATE IS DERIVED RATHER THAN AN ALLOW-LIST. The case that taught the
+ * lesson has since resolved, but the lesson is why the shape is right. When
+ * OpenRouter was first added, `DEFAULTS.openrouter` was deliberately null (no
+ * route had yet been measured against the ingest outline prompt) and
+ * `getProviderInfo` refused a null model with a named throw — measured at the
+ * time: `getProviderInfo('openrouter', null)` threw "No model is configured for
+ * OpenRouter". Merely adding 'openrouter' to a hardcoded allow-list would
+ * therefore have converted a silent mis-bill into a HARD CHAT FAILURE for every
+ * OpenRouter user — the same shape as the P0 already fixed on the key-save path.
+ *
+ * ⚠ THAT PREMISE HAS EXPIRED, AND NOTHING HERE NEEDED EDITING — which is the
+ * point. As of v3.14.0 `DEFAULTS.openrouter` is `'upstage/solar-pro4'` and
+ * `getProviderInfo('openrouter', null)` RESOLVES instead of throwing (measured
+ * by execution, not read off the source). Because this gate asks llm.js the
+ * question rather than carrying a list, OpenRouter became chat-selectable at the
+ * exact moment it could genuinely serve a model-less turn. The same property
+ * holds in the other direction: a provider whose default is later withdrawn
+ * silently stops being offered here instead of starting to throw.
+ *
+ * FAILS SAFE ON A MISSING EXPORT. llm.js is imported as a NAMESPACE and the
+ * function is type-checked before it is called, so an export that is renamed or
+ * not yet shipped degrades to "this provider cannot serve a model-less turn" —
+ * a fall-back to the global active provider — rather than a TypeError at the
+ * trust boundary or a SyntaxError at module load.
+ */
+function chatProviderHasDefaultModel(provider) {
+  if (typeof llmModule.getDefaultModel !== 'function') return false;
+  let id = null;
+  try { id = llmModule.getDefaultModel(provider); } catch { return false; }
+  return typeof id === 'string' && id.length > 0;
+}
+
 // Validate a per-chat provider override against the SAVED SETTINGS KEYS (config
 // only — NOT getEffectiveKey / .env). This is deliberate: a provider the user
 // has Disconnected in Settings must not be usable in chat, even if the key still
 // lingers in .env — so the chat model selector exactly mirrors the saved-keys
 // state and a disconnected model can never silently answer. Anything invalid or
 // without a saved key → null (fall back to the global active provider).
-export function normalizeChatProvider(provider) {
-  if (provider !== 'gemini' && provider !== 'anthropic') return null;
-  const keys = getApiKeys();
-  const saved = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
-  return saved ? provider : null;
+//
+// ── TWO MODES, AND THE PAIR MUST NEVER DISAGREE ─────────────────────────────
+// `normalizedModel` is the output of normalizeChatModel for this same request.
+// When a model has been honoured, the provider that offers it is honoured with
+// it; when no model is named, the provider must be able to resolve its own
+// default (chatProviderHasDefaultModel above).
+//
+// This coupling is the point, not a convenience. sendMessage passes provider and
+// model to generateText independently, so if this function refused a provider
+// whose MODEL the sibling function had just accepted, getProviderInfo would
+// resolve the GLOBAL active provider and then discard the model as not offerable
+// there — silently answering on, and billing, a provider the user did not pick.
+// That is the same defect one layer down, so the two are resolved together.
+//
+// The hand-off is SELF-VALIDATING rather than trusted: `normalizedModel` is
+// re-checked against the allow-list here, so a caller passing arbitrary truthy
+// junk cannot use it to skip the default-model gate. The parameter is defaulted,
+// so every existing single-argument caller keeps its exact previous meaning.
+export function normalizeChatProvider(provider, normalizedModel = null) {
+  if (!savedChatKey(provider)) return null;
+  if (normalizedModel && isOfferableModel(provider, normalizedModel)) return provider;
+  return chatProviderHasDefaultModel(provider) ? provider : null;
 }
 
 // Validate a per-chat MODEL override. TWO independent gates, both required:
@@ -645,7 +758,18 @@ export function normalizeChatProvider(provider) {
 //      Disconnected in Settings must not be reachable from chat even if its key
 //      still lingers in .env. A model is a strictly NARROWER choice than the
 //      provider that serves it, so it must inherit the stricter of the two
-//      gates — it can never be a way back in.
+//      gates — it can never be a way back in. The lookup is now KEYED BY
+//      PROVIDER ID (savedChatKey) rather than the binary ternary that used to
+//      sit here, which had no third arm and therefore decided every
+//      non-Gemini provider — OpenRouter included — from ANTHROPIC's credential.
+//
+// DELIBERATELY DOES NOT REQUIRE A RESOLVABLE PROVIDER DEFAULT, unlike its
+// sibling. A model override NAMES what to send, so it works on a provider with
+// no pinned default at all: measured, `getProviderInfo('openrouter', '<offerable
+// id>')` resolves cleanly while `getProviderInfo('openrouter', null)` throws.
+// Requiring a default here would keep a fully-measured OpenRouter catalogue
+// unusable until the user also pinned something in Settings, which is a gate on
+// the wrong fact.
 //
 // Anything else → null → the provider's default model. Refusal FALLS BACK rather
 // than throwing, matching normalizeChatProvider and applyModelOverride: a saved
@@ -661,9 +785,7 @@ export function normalizeChatProvider(provider) {
 // on both money and correctness, so this is not widened speculatively.
 export function normalizeChatModel(provider, model) {
   if (!isOfferableModel(provider, model)) return null;
-  const keys = getApiKeys();
-  const saved = provider === 'gemini' ? keys.geminiApiKey : keys.anthropicApiKey;
-  return saved ? model : null;
+  return savedChatKey(provider) ? model : null;
 }
 
 /**
@@ -792,8 +914,14 @@ function normalizeReportedUsage(u) {
 
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
   const responseStyle = normalizeResponseStyle(opts.responseStyle);
-  const chatProvider = normalizeChatProvider(opts.provider);   // null → global active provider
+  // ORDER IS LOAD-BEARING: the MODEL is resolved first and handed to the
+  // provider gate, so a provider whose model was accepted is accepted with it.
+  // Resolved independently, the two could disagree — and a model honoured
+  // beside a refused provider is sent to the GLOBAL provider, which then
+  // discards it as not offerable there and answers on a provider the user never
+  // picked. Same mis-bill, one layer down.
   const chatModel = normalizeChatModel(opts.provider, opts.model); // null → provider default model
+  const chatProvider = normalizeChatProvider(opts.provider, chatModel); // null → global active provider
   const schema = await readSchema(domain);
   const pages = await readWikiPages(domain);
 

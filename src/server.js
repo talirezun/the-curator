@@ -315,12 +315,30 @@ const BIND_RETRY_DELAY_MS = 100;
 // LAN attack surface entirely.
 const BIND_HOST = '127.0.0.1';
 
+// id-keyed with a safe default (v3.15.x): a plain `a === 'gemini' ? X : Y`
+// binary ternary has no third arm, so a third (or fourth) provider silently
+// renders as whichever name sits in the "else" branch — the exact v3.10.1
+// credential-crossing shape, here in a log line rather than a write. An
+// unrecognised id must render its OWN id, never another provider's label.
+// Object.hasOwn (not a bare `in`/index) so a garbage id like '__proto__' or
+// 'constructor' can't resolve to an inherited Object.prototype member.
+const PROVIDER_STARTUP_LABELS = Object.freeze({
+  gemini:     '🟦 Gemini',
+  anthropic:  '🟣 Anthropic',
+  openrouter: '🟠 OpenRouter',
+});
+function providerStartupLabel(provider) {
+  return Object.hasOwn(PROVIDER_STARTUP_LABELS, provider)
+    ? PROVIDER_STARTUP_LABELS[provider]
+    : `❓ ${provider}`;
+}
+
 let server;
 function startListen(retriesLeft = MAX_BIND_RETRIES) {
   server = app.listen(PORT, BIND_HOST, () => {
     try {
       const { provider, model } = getProviderInfo();
-      const providerLabel = provider === 'gemini' ? '🟦 Gemini' : '🟣 Anthropic';
+      const providerLabel = providerStartupLabel(provider);
       console.log(`The Curator v${version} running at http://localhost:${PORT}`);
       console.log(`LLM provider: ${providerLabel}  |  model: ${model}`);
     } catch (err) {

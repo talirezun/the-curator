@@ -19,7 +19,7 @@
 import { readFileSync, statSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import path from 'path';
-import { getDomainsDir } from './config.js';
+import { getDomainsDir, getApiKeys, getEffectiveKey } from './config.js';
 import { appPath, getCredentialFiles } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
@@ -49,6 +49,35 @@ function checkVersion() {
   return check('version', 'Installed version', 'info', `The Curator v${readVersion()}`);
 }
 
+/**
+ * Is ANY provider's key present — in .curator-config.json OR the .env
+ * developer fallback? Derived from getApiKeys()'s own field names rather than
+ * a hardcoded provider list, so a future provider needs no edit here: each
+ * `<id>ApiKey` field it adds is picked up automatically, and getEffectiveKey
+ * already resolves config-or-env per id (returning null for anything it
+ * doesn't recognise, so a stray/garbage id here is harmless).
+ *
+ * This exists to answer a narrower question than "does getProviderInfo()
+ * throw": getProviderInfo() can throw WITH a key configured, and conflating
+ * that with "no key at all" tells a user holding a valid key that they have
+ * none. See checkProvider() / runLiveApiCheck() below.
+ *
+ * ⚠ THE CONCRETE CASE THAT MOTIVATED THIS HAS RESOLVED; THE GUARD IS KEPT ON
+ * PURPOSE. When written, an OpenRouter-only install genuinely had no default
+ * model, so getProviderInfo() threw for a user whose key was perfectly fine. As
+ * of v3.14.0 all three shipped providers resolve a default (DEFAULTS.openrouter
+ * is 'upstage/solar-pro4'), so no shipped provider reaches that throw today.
+ * The throw itself still exists in getProviderInfo as a CLASS guard against any
+ * provider added without a measured build-lane model, so this branch is latent
+ * rather than dead — deleting it would re-arm the original defect for whoever
+ * adds the fourth provider.
+ */
+function hasAnyKeyConfigured() {
+  return Object.keys(getApiKeys())
+    .map(field => field.replace(/ApiKey$/, ''))
+    .some(id => !!getEffectiveKey(id));
+}
+
 // ── 2. AI provider key configured (no API call) ──────────────────────────────
 function checkProvider() {
   try {
@@ -57,9 +86,17 @@ function checkProvider() {
     const fbNote = fb ? ` (currently using fallback model ${fb.usingModel})` : '';
     return check('provider', 'AI provider key', 'ok',
       `Configured: ${provider} · ${model}${fbNote}`);
-  } catch {
+  } catch (err) {
+    if (hasAnyKeyConfigured()) {
+      // A key IS configured somewhere — getProviderInfo() failed for a
+      // different, more specific reason (e.g. a provider with no default
+      // model and nothing selected in Settings). Surface its own message
+      // verbatim rather than guessing at a cause we can't verify, and never
+      // claim no key exists when one does.
+      return check('provider', 'AI provider key', 'warn', err.message);
+    }
     return check('provider', 'AI provider key', 'warn',
-      'No API key configured. Add a Gemini or Anthropic key above to enable ingest, chat, and AI Health.');
+      'No API key configured. Add one in Settings to enable ingest, chat, and AI Health.');
   }
 }
 
@@ -160,7 +197,13 @@ export async function runLiveApiCheck() {
   try {
     ({ provider, model } = getProviderInfo());
   } catch (err) {
-    return { ok: false, error: 'No API key configured. Add a Gemini or Anthropic key in Settings first.' };
+    // Same distinction as checkProvider() above: a configured-but-unresolvable
+    // provider (e.g. no default model chosen) gets its own real error, not a
+    // false "no key" claim.
+    const error = hasAnyKeyConfigured()
+      ? err.message
+      : 'No API key configured. Add one in Settings first.';
+    return { ok: false, error };
   }
   const started = Date.now();
   try {
