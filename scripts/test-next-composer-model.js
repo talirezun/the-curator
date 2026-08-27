@@ -215,6 +215,9 @@ const FN_NAMES = [
   'normalizeOfferable', 'offerableEntries', 'resolveChatModel',
   'formatPricePerM', 'formatLivePrice', 'formatPromotionRise',
   'isFlaggedModel', 'renderModelOptionHtml', 'renderModelMenuHtml',
+  // §10 — the ANSWER label (which model actually wrote a message).
+  'modelDisplayLabel', 'neutralProviderLabel', 'describeAnswerModel',
+  'assistantEyebrowHtml',
 ];
 
 const sandbox = new Function(
@@ -229,6 +232,8 @@ const {
   normalizeOfferable, offerableEntries, resolveChatModel,
   formatPricePerM, formatLivePrice, formatPromotionRise,
   isFlaggedModel, renderModelOptionHtml, renderModelMenuHtml,
+  modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
+  assistantEyebrowHtml,
 } = sandbox;
 
 // ── The REAL, live catalogue, and a raw server-shaped payload built from it ─
@@ -616,6 +621,194 @@ section('§9  Backend-capability drift guard');
     ok(true, 'backend exposes model normalisation and the picker gate is ON — consistent');
   } else {
     ok(!gateOn, 'backend exposes NO chat-model normalisation, so the picker gate is correctly OFF (model selection would be inert)');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10  THE ANSWER LABEL — the model that ANSWERED, per message');
+// ═════════════════════════════════════════════════════════════════════════
+/**
+ * THE DEFECT THIS SECTION EXISTS FOR (v3.13.1, maintainer-reported).
+ *
+ * The assistant eyebrow read `THE CURATOR · <state.chatModel>` — the
+ * composer's CURRENT selection. Two bugs in one expression:
+ *
+ *   (a) It reported the REQUEST, not the OUTCOME. `applyModelOverride` falls
+ *       back rather than throwing, so a refused model was served by the
+ *       provider default while the UI kept naming the pick. The server has
+ *       always returned the measured truth (`sendMessage`'s `model`, captured
+ *       from the provider's own usage payload); a grep of the whole view found
+ *       ZERO readers of it. That is the repo's dead-data shape and precisely
+ *       the `M3b` case — re-deriving the model passes every refusal test and
+ *       fails only the fallback-walk, which is why §10.3 exists.
+ *   (b) It was per-THREAD, not per-message. `renderThreadOnly` rebuilds the
+ *       whole thread on every send, so changing the dropdown relabelled
+ *       HISTORICAL answers with a model that never saw them (§10.1).
+ *
+ * Everything below DRIVES the real extracted `describeAnswerModel` /
+ * `assistantEyebrowHtml`. Nothing greps for the shape of the fix.
+ *
+ * ── NOT ENFORCED, stated rather than implied away ────────────────────────
+ *   - That `sendCurrentMessage` actually WRITES `model`/`requestedModel` onto
+ *     the pushed message is not driven here: that function reads module state,
+ *     `document` and `fetch` directly, so extracting it would mean re-creating
+ *     the view. It is covered by the live browser pass, not by this suite.
+ *   - That the SERVER's `model` is the billed model is src/brain/chat.js's
+ *     property, asserted in scripts/test-chat-model.js, not here.
+ *   - This section is FUNCTION-scoped, not file-scoped (the v3.13.0 finding
+ *     about test-next-provider-rows.js, stated here before it bites): it
+ *     drives `assistantEyebrowHtml`, so a mutation at the CALL SITE — a
+ *     renderThreadOnly that stopped calling it and inlined a thread-level
+ *     label again — would leave this green. That case is covered only by the
+ *     live browser pass.
+ */
+{
+  // Two REAL, distinguishable entries from the live catalogue — never a
+  // hardcoded model list. A catalogue that cannot supply two differently
+  // labelled models fails loudly rather than silently skipping the section.
+  const everyEntry = [];
+  for (const p of ALL_PROVIDERS) for (const e of REAL[p]) everyEntry.push({ p, e });
+  const labelOf = (e) => e.label || e.id;
+  const A = everyEntry[0];
+  const B = everyEntry.find(x => x.e.id !== A.e.id && labelOf(x.e) !== labelOf(A.e));
+  ok(!!A && !!B, 'fixture self-check: the real catalogue supplies two distinguishably-labelled models');
+  const ID_A = A.e.id, LBL_A = labelOf(A.e);
+  const ID_B = B.e.id, LBL_B = labelOf(B.e);
+
+  // NOTE the `chatModel` field. The composer's CURRENT selection is
+  // deliberately PRESENT in the context these renderers are handed — exactly
+  // as renderThreadOnly hands it in production, and for the same reason. Omit
+  // it and the pre-fix behaviour becomes INEXPRESSIBLE: a renderer reaching
+  // for the selection would find nothing, and every assertion below would
+  // pass with the bug fully present. That is this file's own §3/§4 lesson
+  // (feed the client the ungated catalogue, then assert it does not leak)
+  // applied to a stale label instead of an unkeyed model.
+  const ctx = {
+    offerable: normalizeOfferable(rawFull(), ALL_PROVIDERS),
+    availableProviders: ALL_PROVIDERS,
+    modelProvider: null,
+    activeProvider: 'gemini',
+    chatModel: ID_A,
+  };
+
+  // ── §10.1  THE CORE ASSERTION — this is what failed before the fix ──────
+  // A message whose recorded model is B renders B, even while the composer's
+  // selection is A. The pre-fix renderer computed one label from
+  // state.chatModel for the WHOLE thread, so it rendered A here.
+  {
+    const html = assistantEyebrowHtml({ role: 'assistant', content: 'x', model: ID_B }, ctx);
+    ok(html.includes(escapeHtmlStub(LBL_B)),
+      `§10.1 message recorded as ${ID_B} renders its OWN model (${LBL_B})`);
+    // The composer's selection is a DIFFERENT model and must not appear.
+    // (Guarded against a vacuous pass: the two labels are asserted distinct
+    // by the fixture self-check above.)
+    ok(!html.includes(escapeHtmlStub(LBL_A)),
+      `§10.1 the composer's current selection (${LBL_A}) does NOT appear on a message answered by another model`);
+    // Independent of the labels: driving the same message through the same
+    // renderer while the "selection" differs must give a byte-identical
+    // result, because the selection is not an input to it at all.
+    const other = assistantEyebrowHtml({ role: 'assistant', content: 'x', model: ID_B },
+      { ...ctx, chatModel: ID_B, modelProvider: 'anthropic', activeProvider: 'anthropic' });
+    ok(html === other,
+      '§10.1 the rendered eyebrow is a function of the MESSAGE, not of any current composer/provider state');
+  }
+
+  // ── §10.2  NO RECORDED MODEL → NEUTRAL LABEL, never the selection ───────
+  {
+    const bare = { role: 'assistant', content: 'x' };
+    const html = assistantEyebrowHtml(bare, ctx);
+    ok(!html.includes(escapeHtmlStub(LBL_A)) && !html.includes(escapeHtmlStub(LBL_B)),
+      '§10.2 a message with NO recorded model names no model at all');
+    ok(html.includes('Gemini') || html.includes('gemini'),
+      '§10.2 it falls back to the PROVIDER name (activeProvider)');
+    const d = describeAnswerModel(bare, ctx);
+    ok(d.usedModel === null && d.diverged === false,
+      '§10.2 describeAnswerModel reports no model and claims no divergence when nothing was recorded');
+    // The bug being guarded: falling back to the composer's selection. `ctx`
+    // already CARRIES that selection (ID_A), so this is not vacuous — driving
+    // the same message with the selection removed must be byte-identical.
+    const noSelection = { ...ctx };
+    delete noSelection.chatModel;
+    ok(assistantEyebrowHtml(bare, noSelection) === html,
+      '§10.2 removing the current selection from the context changes nothing — the selection is never a fallback');
+    // Neutral label precedence + the total absence of any provider.
+    ok(assistantEyebrowHtml(bare, { ...ctx, modelProvider: 'anthropic' }).includes('Claude')
+       || assistantEyebrowHtml(bare, { ...ctx, modelProvider: 'anthropic' }).includes('anthropic'),
+      '§10.2 a per-chat provider override outranks the global active provider in the neutral label');
+    ok(assistantEyebrowHtml(bare, { offerable: ctx.offerable, availableProviders: ALL_PROVIDERS }).includes('The Curator'),
+      '§10.2 with no model and no provider at all, the label is the neutral "The Curator"');
+    ok(!assistantEyebrowHtml(bare, { ...ctx, modelProvider: '__proto__' }).includes('[object Object]'),
+      '§10.2 a prototype-key provider id cannot render as "[object Object]"');
+  }
+
+  // ── §10.3  DIVERGENCE SURFACED — requested A, answered B ────────────────
+  {
+    const m = { role: 'assistant', content: 'x', model: ID_B, requestedModel: ID_A };
+    const d = describeAnswerModel(m, ctx);
+    ok(d.diverged === true, '§10.3 requested !== answered is reported as divergence');
+    ok(d.label === LBL_B && d.requestedLabel === LBL_A,
+      '§10.3 the answering model is the headline label; the requested one is named as the request');
+    const html = assistantEyebrowHtml(m, ctx);
+    ok(html.includes(escapeHtmlStub(LBL_A)) && html.includes(escapeHtmlStub(LBL_B)),
+      '§10.3 the rendered notice names BOTH the requested and the answering model');
+    ok(/billed/i.test(html),
+      '§10.3 the notice states which model the bill follows (silent fallback is behaviour; invisible fallback is a lie about money)');
+    ok(html.includes('chat-msg-fallback'),
+      '§10.3 the notice is rendered as its own element, not folded into the eyebrow text');
+  }
+
+  // ── §10.4  NO DIVERGENCE NOISE when the request was honoured ────────────
+  {
+    const m = { role: 'assistant', content: 'x', model: ID_A, requestedModel: ID_A };
+    const d = describeAnswerModel(m, ctx);
+    ok(d.diverged === false, '§10.4 requested === answered is NOT divergence');
+    const html = assistantEyebrowHtml(m, ctx);
+    ok(!html.includes('chat-msg-fallback') && !/billed/i.test(html),
+      '§10.4 an honoured request renders no fallback notice');
+    ok(html.includes(escapeHtmlStub(LBL_A)), '§10.4 the honoured model is still named');
+    // A recorded model with NO recorded request cannot claim divergence.
+    const noReq = describeAnswerModel({ role: 'assistant', content: 'x', model: ID_B }, ctx);
+    ok(noReq.diverged === false && noReq.requestedLabel === null,
+      '§10.4 a message recording only the ANSWER claims no divergence (history replay: we cannot know the request)');
+  }
+
+  // ── §10.5  ESCAPING — the model string arrives over an API response ─────
+  {
+    const HOSTILE = '<img src=x onerror=alert(1)>"\'&';
+    // Not in the catalogue, so it falls through to the raw id — which is
+    // exactly the path a server-reported unknown model takes.
+    const html = assistantEyebrowHtml(
+      { role: 'assistant', content: 'x', model: HOSTILE, requestedModel: ID_A }, ctx);
+    ok(!html.includes('<img'), '§10.5 a hostile model id cannot inject a tag');
+    for (const t of scanTags(html)) {
+      ok(!t.attrs.some(a => /^on[a-z]+$/i.test(a)),
+        `§10.5 no tag in the rendered eyebrow carries an event-handler attribute (<${t.name}>)`);
+    }
+    ok(html.includes('&lt;img'), '§10.5 the hostile id is present as INERT escaped text (not silently dropped)');
+    // Positive control: the same value unescaped WOULD be observable, so the
+    // green above is not vacuous.
+    ok(('<div>' + HOSTILE + '</div>').includes('<img'),
+      '§10.5 positive control — the hostile id unescaped would inject a tag');
+    // And on the neutral path, where the provider string is interpolated.
+    const nHtml = assistantEyebrowHtml({ role: 'assistant', content: 'x' },
+      { ...ctx, modelProvider: null, activeProvider: '<script>x</script>' });
+    ok(!nHtml.includes('<script'), '§10.5 a hostile provider name on the neutral path is escaped too');
+  }
+
+  // ── §10.6  modelDisplayLabel contract ───────────────────────────────────
+  {
+    ok(modelDisplayLabel(ID_A, ctx.offerable, ALL_PROVIDERS) === LBL_A,
+      '§10.6 a catalogued id resolves to its friendly label');
+    ok(modelDisplayLabel('some-model-we-do-not-ship', ctx.offerable, ALL_PROVIDERS) === 'some-model-we-do-not-ship',
+      '§10.6 an UNKNOWN id falls back to the raw id — named honestly, never relabelled as another model');
+    ok(modelDisplayLabel('', ctx.offerable, ALL_PROVIDERS) === null
+      && modelDisplayLabel(null, ctx.offerable, ALL_PROVIDERS) === null,
+      '§10.6 a missing id is null ("we were not told" is not a label)');
+    // Every real entry round-trips.
+    for (const { e } of everyEntry) {
+      ok(modelDisplayLabel(e.id, ctx.offerable, ALL_PROVIDERS) === labelOf(e),
+        `§10.6 ${e.id} → "${labelOf(e)}"`);
+    }
   }
 }
 

@@ -675,6 +675,11 @@ async function sendCurrentMessage() {
   const mountToken = myMountToken;
   const domainAtSend = state.activeDomain;
   const conversationIdAtSend = state.activeConversationId;
+  // Captured for the same reason as the three above: the composer is live
+  // during the 15-45s call, so by the time the answer lands `state.chatModel`
+  // may already be something else. This is the ONLY record of what THIS turn
+  // asked for, and it is half of the divergence comparison.
+  const requestedModelAtSend = state.chatModel;
 
   state.sending = true;
   state.thread.push({ role: 'user', content: text });
@@ -716,7 +721,17 @@ async function sendCurrentMessage() {
 
     const wasNew = !!data.isNew && !!data.conversationId;
     if (data.conversationId) state.activeConversationId = data.conversationId;
-    state.thread.push({ role: 'assistant', content: data.answer, citations: data.citations || [] });
+    state.thread.push({
+      role: 'assistant',
+      content: data.answer,
+      citations: data.citations || [],
+      // `data.model` is the model that ANSWERED, measured by the server from
+      // the provider's own usage payload (src/brain/chat.js `usedModel`) —
+      // not an echo of what we asked for. A missing/blank value stays null:
+      // the renderer shows the neutral provider name rather than guessing.
+      model: typeof data.model === 'string' && data.model ? data.model : null,
+      requestedModel: requestedModelAtSend || null,
+    });
 
     if (wasNew) {
       // Live-verified bug (found while testing an unrelated fix in this
@@ -1588,6 +1603,113 @@ function resolveChatModel(modelId, offerable, availableProviders) {
 }
 
 /**
+ * The friendly display name for a model id, resolved against the live
+ * key-scoped catalogue.
+ *
+ * A model the catalogue cannot describe falls back to its RAW ID rather than
+ * to null or to some other model's name: the server told us this id answered,
+ * and naming it unrecognisably is honest where relabelling it would not be.
+ * Returns null ONLY for a missing/blank id — "we were not told" is a distinct
+ * fact from any label, and its caller renders the neutral provider name.
+ */
+function modelDisplayLabel(modelId, offerable, availableProviders) {
+  if (typeof modelId !== 'string' || !modelId) return null;
+  const row = resolveChatModel(modelId, offerable, availableProviders);
+  return row ? (row.entry.label || row.entry.id) : modelId;
+}
+
+/**
+ * The provider name to show when no model is recorded for a message.
+ *
+ * `Object.hasOwn` rather than a bare index: `PROVIDER_LABELS['__proto__']`
+ * returns Object.prototype, which is truthy, and would render the literal
+ * text `[object Object]` as a provider name.
+ */
+function neutralProviderLabel(ctx) {
+  const c = ctx || {};
+  for (const p of [c.modelProvider, c.activeProvider]) {
+    if (typeof p === 'string' && p) {
+      return Object.hasOwn(PROVIDER_LABELS, p) ? PROVIDER_LABELS[p] : p;
+    }
+  }
+  return 'The Curator';
+}
+
+/**
+ * What to say about ONE assistant message: which model actually answered it,
+ * and whether that differs from the model that was asked for.
+ *
+ * ── WHY THIS READS THE MESSAGE AND NEVER THE COMPOSER ────────────────────
+ * Until v3.13.1 the eyebrow was computed ONCE per render from
+ * `state.chatModel` — the composer's CURRENT selection — and stamped onto
+ * every assistant message in the thread. That was wrong twice over:
+ *
+ *   1. It reported the REQUEST, not the OUTCOME. `applyModelOverride` falls
+ *      back rather than throwing (deliberately: a refused model must not kill
+ *      a chat turn), so a refused pick was served by the provider default
+ *      while the UI kept claiming the pick. That is this repo's named
+ *      dead-data shape, and specifically the `M3b` case — re-deriving the
+ *      model instead of reporting the measured one passes every refusal test
+ *      and fails only the fallback-walk. The server has always returned the
+ *      truth: `sendMessage`'s `model` field is captured from the provider's
+ *      own usage payload via `onUsage`. Nothing read it.
+ *   2. It was per-THREAD. `renderThreadOnly` rebuilds the whole thread from
+ *      `state.thread` on every send, so changing the dropdown relabelled
+ *      HISTORICAL answers with a model that never saw them.
+ *
+ * So: the model is a property of the message. A message with no recorded
+ * model renders the neutral provider name — NEVER the current selection,
+ * because that fallback IS the bug — and no divergence is claimed, because
+ * with nothing recorded there is nothing to compare.
+ *
+ * Divergence needs BOTH facts, and `requestedModel` is only ever recorded by
+ * the live send (the conversation record does not carry it), so a message
+ * replayed from history shows its model without a fallback notice. That is
+ * the honest limit: we can say what answered, not what was asked, once the
+ * turn is over.
+ */
+function describeAnswerModel(m, ctx) {
+  const c = ctx || {};
+  const used = m && typeof m.model === 'string' && m.model ? m.model : null;
+  const requested = m && typeof m.requestedModel === 'string' && m.requestedModel ? m.requestedModel : null;
+  if (!used) {
+    return { label: neutralProviderLabel(c), usedModel: null, requestedLabel: null, diverged: false };
+  }
+  const diverged = !!requested && requested !== used;
+  return {
+    label: modelDisplayLabel(used, c.offerable, c.availableProviders),
+    usedModel: used,
+    requestedLabel: diverged ? modelDisplayLabel(requested, c.offerable, c.availableProviders) : null,
+    diverged,
+  };
+}
+
+/**
+ * The eyebrow (and, on divergence, the one-line notice under it) for one
+ * assistant message.
+ *
+ * Silent fallback is correct BEHAVIOUR and invisible fallback is a lie about
+ * money — the span between the catalogue's dearest and cheapest offerable
+ * model is 50x on input and 62x on output — so the notice states plainly what
+ * was asked for, what answered, and which of the two the bill follows. It is
+ * a fact, not an alarm: no icon, no colour beyond the muted eyebrow tone.
+ *
+ * Every interpolated value is server- or catalogue-supplied and passes
+ * through `escapeHtml`.
+ */
+function assistantEyebrowHtml(m, ctx) {
+  const d = describeAnswerModel(m, ctx);
+  const eyebrow =
+    '<div class="chat-msg-eyebrow mono">THE CURATOR · ' + escapeHtml(d.label) + '</div>';
+  if (!d.diverged) return eyebrow;
+  return eyebrow +
+    '<div class="chat-msg-fallback">' +
+      'Requested ' + escapeHtml(d.requestedLabel) + ' — answered by ' + escapeHtml(d.label) +
+      '. You are billed for the model that answered.' +
+    '</div>';
+}
+
+/**
  * A price per 1M tokens as a display string, or null when the value is not a
  * finite number. NEVER substitutes a placeholder number — an unknown price is
  * rendered as "price unavailable", because a fabricated 0 on a spend surface is
@@ -1874,13 +1996,28 @@ function renderThreadOnly(token) {
     return;
   }
 
-  // Names the MODEL when one is deliberately chosen (it is the more specific
-  // truth), otherwise the provider exactly as before.
-  const chosenModel = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
-  const modelLabel = chosenModel
-    ? (chosenModel.entry.label || chosenModel.entry.id)
-    : (state.modelProvider ? (PROVIDER_LABELS[state.modelProvider] || state.modelProvider)
-      : (state.activeProvider ? (PROVIDER_LABELS[state.activeProvider] || state.activeProvider) : 'The Curator'));
+  // Everything the eyebrow needs that is NOT a property of the message
+  // itself: the catalogue used to turn a model id into a friendly name, and
+  // the provider fallback for a message with no model recorded. The MODEL is
+  // deliberately NOT in here — see describeAnswerModel: it comes from each
+  // message, so a dropdown change can never relabel an answer it never saw.
+  const eyebrowCtx = {
+    offerable: state.offerable,
+    availableProviders: state.availableProviders,
+    modelProvider: state.modelProvider,
+    activeProvider: state.activeProvider,
+    // PASSED IN DELIBERATELY, AND DELIBERATELY NEVER READ.
+    // `describeAnswerModel` must not use the composer's current selection for
+    // anything — that is the whole defect. Withholding it here would make the
+    // pre-fix behaviour INEXPRESSIBLE: a renderer that reached for it would
+    // find nothing, and the suite would stay green with the bug fully
+    // present. Same reasoning as this view's model-menu suite §3/§4, which
+    // feeds the client the UNGATED catalogue rather than a pre-filtered one
+    // so that a client-side leak is something the fixture can actually
+    // contain. Here the "leak" is a stale label, and §10.1/§10.2 assert it
+    // does not happen while the material for it is sitting in the argument.
+    chatModel: state.chatModel,
+  };
 
   el.innerHTML = state.thread.map(m => {
     // Compile-to-Wiki outcome cards (see the "Compile to Wiki" section
@@ -1925,7 +2062,7 @@ function renderThreadOnly(token) {
     }).join('');
     return (
       '<div class="chat-msg chat-msg-assistant">' +
-        '<div class="chat-msg-eyebrow mono">THE CURATOR · ' + escapeHtml(modelLabel) + '</div>' +
+        assistantEyebrowHtml(m, eyebrowCtx) +
         '<div class="chat-answer">' + renderMarkdown(m.content || '') + '</div>' +
         (chips ? '<div class="chat-cite-row">' + chips + '</div>' : '') +
       '</div>'

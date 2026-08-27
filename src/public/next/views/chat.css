@@ -209,6 +209,19 @@
   color: var(--text-3);
   margin-bottom: 6px;
 }
+/* Shown only when the model that answered differs from the one requested.
+   Deliberately NOT a warning colour: a silent fallback is correct behaviour
+   and this is a statement of fact about which model was billed, not an
+   error. It sits between the eyebrow and the answer, in the eyebrow's own
+   muted tone one step lighter. No animation — nothing here enters or
+   leaves, so there is nothing for prefers-reduced-motion to neutralise. */
+.chat-msg-fallback {
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-3);
+  margin: -2px 0 8px;
+  max-width: 62ch;
+}
 .chat-msg-user { display: flex; flex-direction: column; align-items: flex-end; }
 .chat-bubble {
   max-width: 80%;

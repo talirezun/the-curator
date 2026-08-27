@@ -23,11 +23,11 @@ import { getDefaultModel, getProviderInfo, getModelPrice, compareModelCost,
          __setAnthropicClientFactory,
          __testing as llmTesting } from '../src/brain/llm.js';
 import { getApiKeys, getActiveProvider, __setDomainsDirOverride } from '../src/brain/config.js';
-import { __testing, sendMessage, RESPONSE_STYLES } from '../src/brain/chat.js';
+import { __testing, sendMessage, readConversation, RESPONSE_STYLES } from '../src/brain/chat.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync as writeFile } from 'node:fs';
 import os from 'node:os';
 
-const { normalizeChatProvider, normalizeChatModel } = __testing;
+const { normalizeChatProvider, normalizeChatModel, buildAssistantMessage } = __testing;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 
@@ -1104,6 +1104,253 @@ section('15. sendMessage — the returned model is the one that actually answere
       ok(r.answer.includes('A partial answ'), 'TEXT mode returns the partial answer, not an error');
       ok(/cut off|length limit/i.test(r.answer), 'the truncation note is appended');
       eq(r.model, 'claude-sonnet-5', 'a truncated answer still reports the model that produced it');
+    }
+  } finally {
+    console.error = realErr;
+    __setAnthropicClientFactory(null);
+    __setDomainsDirOverride(null);
+    if (savedUD === undefined) delete process.env.CURATOR_TEST_USER_DATA_DIR;
+    else process.env.CURATOR_TEST_USER_DATA_DIR = savedUD;
+    if (savedM === undefined) delete process.env.LLM_MODEL; else process.env.LLM_MODEL = savedM;
+    if (savedEnvG === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = savedEnvG;
+    if (savedEnvA === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedEnvA;
+    rmSync(tmpUD, { recursive: true, force: true });
+    rmSync(tmpDom, { recursive: true, force: true });
+  }
+}
+
+// ── 17. The conversation RECORD carries the model that answered ──────────────
+// Before this, a conversation stored only { role, content, citations }: once an
+// answer was written there was no record anywhere of which model produced it,
+// and the Chat tab's label is derived from the user's own dropdown — a
+// restatement of the REQUEST, not evidence about the ANSWER. A maintainer who
+// picked claude-sonnet-5 and wanted to confirm Sonnet 5 had run had nothing in
+// the app to check.
+//
+// Driven through the same real chat.js → llm.js → callProvider path as §15 with
+// the fake SDK, then READ BACK OFF DISK via readConversation — so these assert
+// what a future session/UI would actually load, not what sendMessage returned.
+section('17. Conversation record — persists the model that ANSWERED, and never relabels history');
+{
+  const savedUD = process.env.CURATOR_TEST_USER_DATA_DIR;
+  const savedM = process.env.LLM_MODEL;
+  const savedEnvG = process.env.GEMINI_API_KEY;
+  const savedEnvA = process.env.ANTHROPIC_API_KEY;
+  const realErr = console.error;
+  const tmpUD = mkdtempSync(path.join(os.tmpdir(), 'curator-chatrec-ud-'));
+  const tmpDom = mkdtempSync(path.join(os.tmpdir(), 'curator-chatrec-dom-'));
+  const DOMAIN = 'zztest';
+  try {
+    delete process.env.LLM_MODEL;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    process.env.CURATOR_TEST_USER_DATA_DIR = tmpUD;
+    writeFile(path.join(tmpUD, '.curator-config.json'), JSON.stringify({
+      anthropicApiKey: 'zz-fake-anthropic-key-for-tests',
+      activeProvider: 'anthropic',
+    }) + '\n');
+    __setDomainsDirOverride(tmpDom);
+
+    mkdirSync(path.join(tmpDom, DOMAIN, 'wiki', 'entities'), { recursive: true });
+    mkdirSync(path.join(tmpDom, DOMAIN, 'conversations'), { recursive: true });
+    writeFile(path.join(tmpDom, DOMAIN, 'CLAUDE.md'), '# zztest schema\n');
+    writeFile(path.join(tmpDom, DOMAIN, 'wiki', 'entities', 'foo.md'),
+      '---\ntype: entity\n---\n# Foo\n\n## Key Facts\n- Foo is a thing.\n');
+
+    let asked = [];
+    let failFirstWith404 = false;
+    __setAnthropicClientFactory(() => ({
+      messages: {
+        stream: (body) => ({
+          finalMessage: async () => {
+            asked.push(body.model);
+            if (failFirstWith404 && asked.length === 1) {
+              const e = new Error('404 model not found');
+              e.status = 404;
+              throw e;
+            }
+            return {
+              stop_reason: 'end_turn',
+              content: [{ type: 'text', text: 'An answer. [source: entities/foo.md]' }],
+              usage: { input_tokens: 11, output_tokens: 7 },
+            };
+          },
+        }),
+      },
+    }));
+
+    const ANTHROPIC_DEFAULT = getDefaultModel('anthropic');
+    // Read the record back off disk — the whole point is durability, so nothing
+    // here trusts sendMessage's return value.
+    async function lastAssistantOnDisk(convId) {
+      const conv = await readConversation(DOMAIN, convId);
+      const assistants = conv.messages.filter(m => m.role === 'assistant');
+      return assistants[assistants.length - 1];
+    }
+
+    // (a) Every offerable Anthropic model, enumerated from the real table — the
+    // record must name the model that ran, for every one a user can pick.
+    for (const m of OFFERABLE_MODELS.anthropic) {
+      asked = [];
+      const r = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic', model: m.id });
+      const msg = await lastAssistantOnDisk(r.conversationId);
+      eq(msg.model, m.id, `"${m.id}": persisted record names the model that answered`);
+      eq(msg.model, asked[0], `"${m.id}": persisted model === the id the transport actually ran`);
+      eq(msg.provider, 'anthropic', `"${m.id}": persisted provider is the one that served`);
+    }
+
+    // (b) A REFUSED model must never be recorded. The user asked for one thing
+    // and a different, cheaper one answered; writing the request would make the
+    // record a lie in exactly the direction that hides an unwanted downgrade.
+    console.error = () => {};
+    for (const bad of ['gpt-4o', 'zz-not-a-model', '__proto__',
+                       ...Object.keys(AWAITING_MEASUREMENT)]) {
+      asked = [];
+      const r = await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic', model: bad });
+      const msg = await lastAssistantOnDisk(r.conversationId);
+      eq(msg.model, ANTHROPIC_DEFAULT, `refused ${JSON.stringify(bad)}: records what ran`);
+      ok(msg.model !== bad, `refused ${JSON.stringify(bad)}: the request is never recorded`);
+    }
+    console.error = realErr;
+
+    // (c) THE CASE A getProviderInfo() RE-RESOLUTION CANNOT SEE — mutation M3b.
+    // The requested model is accepted by every gate, reaches the SDK, and 404s;
+    // a later fallback rung answers. Re-deriving the record from getProviderInfo
+    // would pass every case above and fail only here — and this is the case
+    // where the number matters most, because a walk can move the user ONTO a
+    // costlier model (sonnet-5 $2/$10 → sonnet-4-6 $3/$15).
+    {
+      asked = [];
+      failFirstWith404 = true;
+      const r = await sendMessage(DOMAIN, null, 'What is foo?',
+        { provider: 'anthropic', model: 'claude-sonnet-5' });
+      failFirstWith404 = false;
+      const msg = await lastAssistantOnDisk(r.conversationId);
+      ok(asked.length >= 2, `fallback walk happened (transport tried ${asked.length} models)`);
+      eq(asked[0], 'claude-sonnet-5', 'the requested model was tried first');
+      ok(msg.model !== 'claude-sonnet-5',
+        'requested X, provider reported Y → the record holds Y, not the 404ed request');
+      eq(msg.model, asked[asked.length - 1],
+        'the record holds the rung that actually produced the answer');
+      // Control: without the injected 404 the same request records itself, so
+      // the assertion above detects the WALK rather than a blanket mismatch.
+      asked = [];
+      const ctrl = await sendMessage(DOMAIN, null, 'What is foo?',
+        { provider: 'anthropic', model: 'claude-sonnet-5' });
+      const ctrlMsg = await lastAssistantOnDisk(ctrl.conversationId);
+      eq(ctrlMsg.model, 'claude-sonnet-5',
+        'control: with no 404 the requested model answers and IS recorded');
+    }
+    await sendMessage(DOMAIN, null, 'What is foo?', { provider: 'anthropic' });
+    ok(getFallbackStatus() === null, 'fallback state cleared after a clean primary call');
+
+    // (d) NOTHING REPORTED ⇒ NOTHING RECORDED. Both shipping provider branches
+    // call reportUsage before returning, so this is the defensive path — and it
+    // must OMIT the fields rather than guess, because "we could not tell" and
+    // "it was the default" are different facts. Driven on the pure builder,
+    // which is the code that implements the rule.
+    {
+      const base = ['role', 'content', 'citations'];
+      for (const [p, m, label] of [
+        [null, null, 'both null'],
+        [undefined, undefined, 'both undefined'],
+        ['', '', 'both empty string'],
+        ['anthropic', null, 'model missing'],
+        [null, 'claude-sonnet-5', 'provider missing'],
+        [{ toString: () => 'anthropic' }, { toString: () => 'x' }, 'non-string objects'],
+        [123, 456, 'numbers'],
+      ]) {
+        const msg = buildAssistantMessage('a', ['e/f.md'], p, m);
+        const extra = Object.keys(msg).filter(k => !base.includes(k));
+        const expected = [];
+        if (typeof p === 'string' && p) expected.push('provider');
+        if (typeof m === 'string' && m) expected.push('model');
+        eq(extra.join(','), expected.join(','), `nothing-reported (${label}): only reported fields appear`);
+        ok(JSON.parse(JSON.stringify(msg)) !== null, `nothing-reported (${label}): the record serialises`);
+      }
+      // A record with no model must still read back without throwing.
+      const bare = buildAssistantMessage('a', [], null, null);
+      eq(bare.model, undefined, 'a bare record has model === undefined, not a guessed default');
+      eq(bare.provider, undefined, 'a bare record has provider === undefined');
+    }
+
+    // (e) BACKWARD COMPATIBILITY — the assertion that protects every existing
+    // user. Every conversation written before this change has assistant
+    // messages with neither field. Loading one must not throw, must not
+    // relabel, and must not migrate anything on read.
+    const LEGACY_ID = '11111111-2222-3333-4444-555555555555';
+    const legacy = {
+      id: LEGACY_ID,
+      title: 'A pre-existing conversation',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      domain: DOMAIN,
+      messages: [
+        { role: 'user', content: 'old question' },
+        { role: 'assistant', content: 'old answer', citations: ['entities/foo.md'] },
+        { role: 'user', content: 'another old question' },
+        { role: 'assistant', content: 'another old answer', citations: [] },
+      ],
+    };
+    const legacyJson = JSON.stringify(legacy, null, 2);
+    const legacyPath = path.join(tmpDom, DOMAIN, 'conversations', `${LEGACY_ID}.json`);
+    writeFile(legacyPath, legacyJson);
+    {
+      let threw = null;
+      let loaded = null;
+      try { loaded = await readConversation(DOMAIN, LEGACY_ID); }
+      catch (err) { threw = err; }
+      ok(threw === null, 'a pre-existing conversation with no model field LOADS WITHOUT THROWING');
+      eq(JSON.stringify(loaded), JSON.stringify(legacy),
+        'a pre-existing conversation loads BYTE-FOR-BYTE unchanged — no migration on read');
+      // Guarded, deliberately: a reader that THROWS on a legacy message leaves
+      // `loaded` null, and an unguarded dereference below would kill the whole
+      // run — a crash instead of a clean behavioural red, which loses the
+      // assertion tally the runner classifies suites by. Fail the dependent
+      // assertions explicitly instead.
+      const legacyMsgs = loaded && Array.isArray(loaded.messages) ? loaded.messages : [];
+      ok(legacyMsgs.length === legacy.messages.length,
+        'the legacy conversation came back with all its messages');
+      for (const [i, m] of legacyMsgs.entries()) {
+        if (m.role !== 'assistant') continue;
+        eq(m.model, undefined, `legacy message ${i}: model stays ABSENT (unknown ≠ the default)`);
+        eq(m.provider, undefined, `legacy message ${i}: provider stays ABSENT`);
+        ok(!Object.prototype.hasOwnProperty.call(m, 'model'),
+          `legacy message ${i}: the key is not even present`);
+      }
+      // Negative control: the equality above is not vacuous.
+      ok(loaded !== null && JSON.stringify(loaded) !== JSON.stringify({ ...legacy, title: 'different' }),
+        'control: the unchanged-on-read comparison can distinguish a difference');
+    }
+
+    // (f) APPENDING to a legacy conversation must not retro-label its history.
+    // A migrate-on-write would invent a measurement for messages produced by an
+    // unknown model — the same falsehood, applied retroactively.
+    {
+      asked = [];
+      // Guarded for the same reason as the read above: sendMessage READS the
+      // conversation before appending, so a reader that throws on a legacy
+      // message takes this call down too. Catch it so the failure is a clean
+      // assertion with a tally rather than a stack trace that aborts the run.
+      let r = null, sendThrew = null;
+      try {
+        r = await sendMessage(DOMAIN, LEGACY_ID, 'a new question',
+          { provider: 'anthropic', model: 'claude-sonnet-5' });
+      } catch (err) { sendThrew = err; }
+      ok(sendThrew === null, 'appending a turn to a legacy conversation does not throw');
+      eq(r && r.conversationId, LEGACY_ID, 'the reply appended to the existing conversation');
+      let conv = null;
+      try { conv = await readConversation(DOMAIN, LEGACY_ID); } catch { /* asserted above */ }
+      const assistants = (conv && Array.isArray(conv.messages) ? conv.messages : [])
+        .filter(m => m.role === 'assistant');
+      eq(assistants.length, 3, 'the legacy conversation now holds three assistant messages');
+      ok(assistants[0] && !Object.prototype.hasOwnProperty.call(assistants[0], 'model'),
+        'the FIRST legacy assistant message is still unlabelled after a new turn');
+      ok(assistants[1] && !Object.prototype.hasOwnProperty.call(assistants[1], 'model'),
+        'the SECOND legacy assistant message is still unlabelled after a new turn');
+      eq(JSON.stringify(assistants[0]), JSON.stringify(legacy.messages[1]),
+        'the legacy message round-trips through a WRITE byte-identically');
+      eq(assistants[2] && assistants[2].model, 'claude-sonnet-5', 'only the NEW message carries a model');
+      eq(assistants[2] && assistants[2].provider, 'anthropic', 'only the NEW message carries a provider');
     }
   } finally {
     console.error = realErr;

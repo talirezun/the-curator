@@ -666,6 +666,56 @@ export function normalizeChatModel(provider, model) {
   return saved ? model : null;
 }
 
+/**
+ * Build the assistant message RECORD that is persisted into the conversation
+ * JSON. Pure; exported for testing.
+ *
+ * WHY THIS EXISTS. Until now a conversation stored only { role, content,
+ * citations }, so once an answer had been written there was NO record anywhere
+ * of which model produced it — the Chat tab labelled it from the user's own
+ * dropdown, which is a restatement of the request, not evidence about the
+ * answer. A maintainer who picked claude-sonnet-5 and wanted to confirm Sonnet 5
+ * had actually run had nothing in the app to check against.
+ *
+ * THE RULE: servedProvider / servedModel are what the PROVIDER REPORTED in its
+ * own usage payload (llm.js reportUsage), never what the caller requested. The
+ * two diverge on two real paths:
+ *
+ *   • an allow-list refusal — normalizeChatModel returns null and the provider
+ *     default answers instead;
+ *   • a fallback-chain WALK — the picked model 404s and the NEXT rung answers.
+ *
+ * Re-deriving the value here by calling getProviderInfo() would look correct and
+ * would pass every refusal case, while being blind to the walk — reporting
+ * claude-sonnet-5 ($2/$10) when claude-sonnet-4-6 ($3/$15) actually answered.
+ * That is mutation M3b from the v3.13.0 work: a stored falsehood about capability
+ * AND money, in the one direction where the user pays more. Only the reported
+ * value is trustworthy, so only the reported value is stored.
+ *
+ * NOTHING REPORTED ⇒ NOTHING STORED. The fields are OMITTED rather than filled
+ * with a guess, because "we could not tell" and "it was the default" are
+ * different facts and a record that cannot express the first is worse than no
+ * record. Both shipping provider branches call reportUsage before returning, so
+ * this is a defensive path, not an expected one.
+ *
+ * BACKWARD COMPATIBILITY IS THE LOAD-BEARING PROPERTY. Every conversation
+ * written before this change has assistant messages with neither field, and
+ * those are read by a plain JSON.parse in files.js's readConversation. There is
+ * deliberately NO read-side defaulting, NO migration-on-read and NO relabelling
+ * anywhere: absent means UNKNOWN, and any reader that renders these must treat
+ * it that way. Defaulting a missing field to DEFAULTS[provider] would invent a
+ * measurement for every historical message in every existing user's wiki — the
+ * exact falsehood this record exists to prevent, applied retroactively and at
+ * scale. The new keys are appended AFTER the existing ones so an untouched
+ * message serialises byte-identically to before.
+ */
+export function buildAssistantMessage(content, citations, servedProvider, servedModel) {
+  const msg = { role: 'assistant', content, citations };
+  if (typeof servedProvider === 'string' && servedProvider) msg.provider = servedProvider;
+  if (typeof servedModel === 'string' && servedModel) msg.model = servedModel;
+  return msg;
+}
+
 export async function sendMessage(domain, conversationId, userMessage, opts = {}) {
   const responseStyle = normalizeResponseStyle(opts.responseStyle);
   const chatProvider = normalizeChatProvider(opts.provider);   // null → global active provider
@@ -729,11 +779,22 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // reported model that names the request would then be a falsehood about money,
   // which is the v3.9.0 dead-flag shape. A throwing callback cannot break the
   // call: llm.js's reportUsage try/catches it.
+  //
+  // usedProvider rides alongside usedModel for the same reason and under the
+  // same rule: it is READ OUT OF THE USAGE PAYLOAD, never inferred from
+  // chatProvider. chatProvider is what was ASKED for (null meaning "whatever
+  // the global active provider is"), which is precisely the thing a persisted
+  // record must not claim.
   let usedModel = null;
+  let usedProvider = null;
   const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, {
     provider: chatProvider,
     model: chatModel,
-    onUsage: (u) => { if (u && typeof u.model === 'string' && u.model) usedModel = u.model; },
+    onUsage: (u) => {
+      if (!u) return;
+      if (typeof u.model === 'string' && u.model) usedModel = u.model;
+      if (typeof u.provider === 'string' && u.provider) usedProvider = u.provider;
+    },
   });
   // v3.0.7 Tier 1: strip any catalogue-echo blob before it reaches the user or
   // the saved history. Citations are extracted from the CLEANED answer so a
@@ -744,7 +805,7 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const uniqueCitations = [...new Set(citations)];
 
   conversation.messages.push({ role: 'user', content: userMessage });
-  conversation.messages.push({ role: 'assistant', content: answer, citations: uniqueCitations });
+  conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel));
   await writeConversation(domain, conversation);
 
   return {
@@ -766,4 +827,4 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
 }
 
 // Exported for tests (v3.0.1-beta.11+)
-export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel };
+export const __testing = { buildSlugCatalogue, scorePage, buildPrompt, stripCatalogueEcho, extractAsk, RESPONSE_STYLES, normalizeResponseStyle, normalizeChatProvider, normalizeChatModel, buildAssistantMessage };
