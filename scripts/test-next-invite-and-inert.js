@@ -483,7 +483,27 @@ for (const [name, body] of Object.entries({
 
 // The replacement copy is real product language, not a differently-worded
 // evasion.
-ok(src.memory.includes('coming soon'), 'memory: reworded to "coming soon" (product language, not build vocabulary)');
+// v3.17.0 INVERTED this assertion, and the reason matters more than the line.
+// It was written when replacing build vocabulary ("not wired up in this shell")
+// with "coming soon" was the FIX — the honest wording for a feature that did not
+// exist. Agent memory now EXISTS (two MCP tools, a store, a route), so "coming
+// soon" became the false claim, and views/settings.js carries an explicit house
+// rule against it: "NO PROMISE OF A DATE, and no 'coming soon'. This project has
+// shipped 27 consecutive 'previews' straight to production."
+// The durable guarantee is the PREVIEW_VOCAB sweep above, which still runs over
+// this file. What is pinned here is the fact that replaced it: the view must not
+// tell a user the feature is unbuilt when it is built.
+{
+  const memCode = stripComments(src.memory).toLowerCase();
+  const UNBUILT = ['coming soon', 'not built', "isn't built", 'is not built',
+    "doesn't exist yet", 'does not exist yet', 'not yet built'];
+  const stale = UNBUILT.filter((v) => memCode.includes(v));
+  ok(stale.length === 0,
+    `memory: does not claim the feature is unbuilt${stale.length ? ' (found: ' + stale.join(', ') + ')' : ''}`);
+  // Control: this detector must be able to fire, or it is decoration.
+  ok(UNBUILT.some((v) => 'a planted coming soon string'.includes(v)),
+    'control: the unbuilt-claim detector FIRES on a planted string');
+}
 ok(src.shared.includes('Exporting your Shared Brain data — coming soon.'), 'shared: the export note reworded to "coming soon"');
 ok(src.shared.includes('Disconnect and re-join to change the selection.'),
   'shared: the domain-selection note now tells the user what to actually DO instead of naming the build');

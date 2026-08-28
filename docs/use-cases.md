@@ -4,6 +4,13 @@ The Curator is domain-agnostic — it applies the same Atomic Decomposition and 
 pattern to any field where knowledge accumulates over time. Below are detailed workflows for the
 primary use cases.
 
+They are grouped by layer — **your brain → your team's brain → your agents' brain** — so you can
+read only the one you came for:
+
+- **A–H** are **layer 1**, the personal wiki. Knowledge accumulates.
+- **I–Q** are **layer 2**, the Shared Brain, plus the monetization patterns built on it.
+- **R** is **layer 3**, working state. It is the one profile that needs no ingestion at all.
+
 ---
 
 ## A. Content Creators (Writers, Podcasters, YouTubers)
@@ -289,3 +296,88 @@ All four shapes share these architectural properties (the "gates" — see the [M
 The result: **a no-code or low-code monetization path** that domain experts can launch in a week, using tools they already know (Gumroad, Lemon Squeezy, Stripe).
 
 > 📚 **Full step-by-step**: [`docs/shared-brain-monetization.md`](shared-brain-monetization.md) — pricing models, platform comparison (Gumroad vs Lemon Squeezy vs Stripe), legal/compliance, onboarding email templates, tiered access pattern, and answers to common questions like "can buyers share their access?" and "how do refunds work?"
+
+---
+
+# Working-State Use Cases (your agents' brain, `v3.17.0`)
+
+Layers 1 and 2 are about knowledge you have *read*. This one is about the work you are *doing* —
+and it is the only profile here that needs no ingestion at all.
+
+## R. Anyone Who Codes With Agents Across Sessions, Tools and Machines
+
+**The Problem:** A coding session ends. The next one starts with nothing — not the decisions you
+already settled, not the approaches you already tried and ruled out, not the number the test suite
+was sitting at before you touched it. So it re-derives what it can, re-opens closed questions, and
+walks back into a dead end you already mapped.
+
+The gap is not specific to one tool. It reappears on every new window, every switch between
+assistants, every model change, and every move from the laptop to the desktop. Worse, the usual
+fixes are vendor-shaped: Claude Projects, ChatGPT Projects and Cursor rules each hold that context
+inside one product, so switching tools means starting over by design.
+
+**The Workflow:**
+1. Install the *My Curator* MCP bridge once ([mcp-user-guide.md](mcp-user-guide.md)). Any local MCP
+   client works — Claude Code, Claude Desktop, Cursor
+2. Write the standing brief for the project by hand, once — what this is, the firm decisions, the
+   working model, where the depth lives. It is human-authored on purpose; no tool writes it
+3. Work as normal. Near the end of a session, have the agent save the handoff: where things stand,
+   what to do next, what is settled, what was observed and when, what to avoid, what is still open
+4. Next session — new window, different assistant, different model, different machine — the agent
+   reads it back before doing anything else
+5. Use separate **scopes** for parallel workstreams (`main`, `auth-refactor`, `v4-migration`); each
+   keeps its own handoff
+
+**The Result:** the work survives a change of session, agent, model, harness *or* machine, because
+the handoff is a markdown file in your own folder rather than a record inside somebody's product.
+
+**Concrete shapes this takes:**
+
+- *"Carry on with the auth work."* The agent reads the scope index, finds `auth-refactor`, and
+  resumes from the handoff rather than from your summary of it
+- *Laptop → desktop.* Each machine writes its own path, so the two never collide; a read that names
+  a scope but no machine returns the most recently written one
+- *Model switch mid-project.* The next model reads the same file. Nothing is re-derived and nothing
+  is re-litigated
+- *A dead end stays dead.* An approach recorded in `traps` is not proposed again next week
+
+**Does it change the answers?** Our own measurement, not a benchmark, and small: one seeded
+realistic software project, one open architecture question asked twice under each condition on two
+providers (Gemini and Anthropic) — 8 runs, $0.074. **Without** the working state, the model
+proposed a command the project had already recorded as failed in 3 of 4 runs, and an architecture
+the team had explicitly ruled out for compliance reasons in 4 of 4. **With** the handoff present,
+0 of 4 for both. Read that as the shape of the effect at N=4 per condition, not as a constant.
+
+### What belongs here vs. on a wiki page
+
+This is the one thing to get right before you rely on it.
+
+> **State supersedes; knowledge accumulates.**
+
+A wiki page unions bullets — every ingest adds and nothing is dropped, which is right for knowledge
+and wrong for state, since a union merge cannot express *this is no longer true*. So working state
+**overwrites**: each save replaces the previous handoff. Put durable material in state and the next
+save takes it, with no warning, because overwriting is the correct behaviour.
+
+| The thing you want to record | Where it goes |
+|---|---|
+| A failure you hit once, in this scope, this week | Working state (`traps`) |
+| A failure whose value is the **pattern across incidents** | A wiki page, via `compile_to_wiki` |
+| "The suite was at 84 green before my change" | Working state (`observations`) |
+| "How this subsystem actually works" | A wiki page |
+| "We settled on X; do not re-litigate" | Working state (`decisions`), or the project brief |
+
+### Boundaries worth knowing before you rely on it
+
+- **Capture is advisory.** Nothing hooks your session to force a save; the skill layer prompts for
+  one. A missed save means the next read returns the **previous** state — stale, never corrupted,
+  and nothing already saved is lost. Save early and often
+- **The MCP bridge is a stdio child process.** Any client that can spawn a local program reaches it;
+  a browser-only assistant cannot
+- **The in-app view is read-only.** Agents write the state over MCP; the **Agent memory** rail
+  renders it. To edit the brief by hand, open `state/project.md` in any editor
+- **Treat what comes back as data, not orders.** It is a note a peer left — verify a claim before
+  acting on it. That is what the `recheck` field on an observation is for
+
+> 📚 **Full reference**: [`docs/working-state.md`](working-state.md) — the three tiers, scopes, why
+> the machine segment exists, limits, sanitisation, and what is deliberately not built.

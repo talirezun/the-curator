@@ -1454,6 +1454,20 @@ The config entry these endpoints describe is always:
                                   "args": ["<app>/mcp/server.js", "--domains-path", "<domainsDir>"] } } }
 ```
 
+⚠️ **`--domains-path` governs MCP writes as well as reads only from v3.17.0.** Reads have honoured
+it since v3.1.0 (`mcp/storage/local.js` ranks it second in its own resolver), but writes go through
+`writePage`/`domainPath` in `src/brain/files.js`, which resolve via `getDomainsDir()` — and that
+function had **no rung for the argument at all**. One MCP process could therefore resolve two
+different trees: measured before the fix, `compile_to_wiki` returned `ok: true` with a
+`summary_path`, wrote the page under one tree, wrote `.mcp-write-log.jsonl` under another (the
+audit log goes through the read adapter), and a follow-up `get_node` on the path just returned
+reported **not found** — a success report over a write the next call could not see.
+`mcp/server.js` now calls `setCliDomainsDir(domainsPath)` before building the adapter, which
+installs the argument into `getDomainsDir()` directly below the test seams and directly above the
+stored setting — byte-for-byte where the read adapter already puts it. The web app never imports
+that setter, so its own resolution is unchanged. See
+[architecture.md § Precedence](architecture.md#precedence-getdomainsdir-srcbrainconfigjs).
+
 | Path | Description |
 |---|---|
 | `GET /api/mcp/config` | Install status. `{ok, mcp_server_path, mcp_server_exists, mcp_server_name, domains_dir, domains_dir_exists, node_binary, claude_config_path, claude_config_exists, claude_config_parse_error, installed, stale}`. `ok` is `mcp_server_exists && domains_dir_exists`. `installed` is true when the config already has an `mcpServers["my-curator"]` entry; `stale` is true when that entry's `command`/`args` differ from what this install would generate (the usual cause is a moved domains folder). Both are forced `false` when `claude_config_parse_error` is true — an unreadable file cannot be inspected. |
@@ -1468,7 +1482,7 @@ The config entry these endpoints describe is always:
 {
   "ok": true,
   "server_info": { "name": "my-curator", "version": "…" },
-  "tool_count": 18,
+  "tool_count": 20,
   "tool_names": ["list_domains", "get_index", "…"],
   "domains": ["articles", "business"],
   "domains_status": "ok",
@@ -1500,6 +1514,40 @@ The `list_domains` outcome is reported separately and honestly in `domains_statu
 `domains` keeps its original meaning and type — an array, or `null` when no list could be read — so
 pre-v3.6.1 consumers are unaffected. `domains_message` carries the child's own sentence (truncated
 at 500 chars) when it sent one.
+
+---
+
+## Working state — deliberately not an HTTP endpoint
+
+Working state (`domains/<project>/state/`, v3.17.0) has **no route**. There is no `/api/memory`,
+no `/api/state`, and no `/api/working-state`; if you are looking for one, it does not exist and
+its absence is not an oversight. The store (`src/brain/working-state.js`) is reached in exactly
+two ways:
+
+1. The My Curator MCP's `get_working_state` and `save_working_state` tools, from a local MCP
+   client (Claude Code, Claude Desktop, Cursor, …).
+2. Opening the markdown files directly — they are plain files in the user's own domain folder.
+
+The **Agent memory** rail slot renders a card explaining this; it issues no request.
+
+Behaviour that an integrator would otherwise have to infer:
+
+- Both store functions **return** a result object and **never throw**. A refusal is
+  `{ok: false, reason, message}` with `reason` drawn from `invalid-project`, `unknown-project`,
+  `readonly`, `invalid-scope`, `invalid-machine`, `missing-headline`, `empty-brief`,
+  `unsafe-path`, `io`.
+- A save into a **read-only `shared-*` Shared Brain mirror is refused** (`reason: 'readonly'`),
+  matching every other write surface in the app — see the Health-endpoint mirror refusals above.
+- A save into a name that is **not a real domain** is refused (`reason: 'unknown-project'`) rather
+  than creating the folder. A directory with no `CLAUDE.md` is `rm -rf`'d by `sync.pull()`'s
+  ghost-domain prune, so state written there would be silently deleted on the next pull.
+- An **over-budget save is never refused.** Trailing list items are dropped, and the drop is
+  recorded in the document itself, in the result's `notes`/`truncated`, and in the journal line.
+- The journal append is **best-effort**: a failure sets `journalWritten: false` and does not fail
+  the save, matching the raw-source manifest and the MCP audit log.
+
+Full contract: [working-state.md](working-state.md) and
+[architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).
 
 ---
 

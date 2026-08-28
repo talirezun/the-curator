@@ -19,12 +19,66 @@
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/github/stars/talirezun/the-curator?style=social" alt="GitHub Stars"></a>
 </p>
 
-A local, AI-powered knowledge curation system. Drop in a PDF, article, or note — The Curator automatically atomizes it into an interlinked wiki of entities, concepts, and summaries. Chat with your knowledge in a multi-turn AI conversation. Explore everything as a visual knowledge graph in Obsidian. Sync seamlessly across your own computers via a private GitHub repository — **or contribute to a collective Shared Brain** with your cohort, team, or research group (v3.0.0-beta+, opt-in).
+## Your brain → your team's brain → your agents' brain
 
-Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) concept: instead of one giant notebook where everything gets lost, you maintain **dedicated, compounding wikis per domain** (e.g. AI/Tech, Business, Personal Growth). Each one gets smarter with every source you add.
+The Curator is where your **context** lives — both the knowledge you have accumulated and the
+state of the work you are doing — as plain markdown files on your own machine. Any editor opens
+them. Your own private GitHub repo syncs them. Any local MCP client reads and writes them.
+
+**That last part is the whole argument.** Claude Projects, ChatGPT Projects and Cursor rules each
+hold your accumulated context inside one vendor's product, and you leave it behind on the day you
+switch tools — or switch models, or switch machines. The Curator's answer is structural rather
+than clever: **there is no proprietary store to leave behind.** Three layers, one format, one
+owner — you.
+
+| Layer | What it holds | How it behaves |
+|---|---|---|
+| **1. Your brain** — a personal wiki per domain | What you have read and understood: entities, concepts, summaries, all cross-linked | Knowledge **accumulates** — every source adds to existing pages instead of duplicating them |
+| **2. Your team's brain** — [Shared Brain](#shared-brain--collective-wikis-v300-beta-opt-in) *(opt-in)* | The same, built collectively by a cohort, team or research group; your other domains never leave your machine | Knowledge **accumulates**, collectively |
+| **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands: what is settled, what to do next, what was already tried and ruled out | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back |
+
+Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
+written by your coding agent at the end of a session and read at the start of the next one, so
+the work survives a change of session, agent, model, harness *or* machine.
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
 > The Curator's job is everything else — summarizing, cross-referencing, filing, and bookkeeping.
+
+Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) concept: instead of one giant notebook where everything gets lost, you maintain **dedicated, compounding wikis per domain** (e.g. AI/Tech, Business, Personal Growth). Each one gets smarter with every source you add.
+
+### Why portability is the product
+
+Everything The Curator writes is a markdown file in a folder you chose:
+
+- **Open it anywhere.** Obsidian, VS Code, `cat`. There is no database and no export step.
+- **Take it anywhere.** It syncs through *your* private GitHub repo, on credentials you issue and
+  can revoke. Nothing routes through a service we run — we run none.
+- **Query it from anywhere local.** The *My Curator* MCP server exposes the whole graph, and the
+  working state, to any MCP client on your machine — Claude Code, Claude Desktop, Cursor.
+  Switching between them changes nothing about where your context lives.
+- **Uninstall us and keep it all.** The files are the product; the app is a convenience over them.
+
+> **The honest boundary on "anywhere".** The MCP bridge is a **stdio child process** — a client
+> has to be able to spawn a local program to reach it. Browser-only assistants cannot, so a
+> chat assistant running purely in a web tab is out of scope by construction, not by choice.
+
+### Does carrying state actually change the answers?
+
+Our own measurement, not a benchmark, and small: one seeded realistic software project, one open
+architecture question asked twice under each condition on **two** providers (Gemini and
+Anthropic) — 8 runs, $0.074 total. Asked **without** the working state in front of it, the model
+proposed a command the project had already recorded as failed in **3 of 4** runs, and an
+architecture the team had explicitly ruled out for compliance reasons in **4 of 4**. Asked the
+same question **with** the handoff present: **0 of 4** for both.
+
+That is a scenario we built and ran ourselves, at N=4 per condition. Treat it as the shape of the
+effect rather than a measured constant — but the shape is the reason the third layer exists.
+
+**Capture is advisory, and that is stated rather than implied away.** Nothing hooks your session
+to force a save; the skill layer prompts for one. If a session ends without saving, the next read
+returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Save
+early and often rather than treating it as a ceremony at the end. The standing project brief is
+human-authored; no tool writes it for you.
 
 **Licensing in one line:** The Curator is MIT-licensed open source; ten Shared Brain backend files are source-available under the [Curator Enterprise License](LICENSES/LICENSE-ENTERPRISE.txt) — and the GitHub-backed Shared Brain stays free for everyone, forever. [Full details ↓](#licensing)
 
@@ -51,7 +105,7 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
    (summary + entity pages + concept pages, with YAML frontmatter)
          ↓
 3. Chat with your knowledge — multi-turn AI conversation
-   with full memory, cited answers, persistent history
+   with cited answers and persistent, synced history
          ↓
 4. Open Obsidian → explore the auto-colored visual knowledge graph
          ↓
@@ -60,6 +114,10 @@ Built on the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf5559148
 6. (v3.0.0-beta+, optional) Join a Shared Brain → your opted-in
    domain contributes to a collective wiki shared with your cohort,
    team, or research group; everyone's reading compounds together
+         ↓
+7. (v3.17.0, optional) Point a coding agent at a domain over MCP →
+   it saves where the work stands at the end of a session and reads
+   it back at the start of the next one, on any machine
 ```
 
 Everything is stored as plain markdown files on your computer. No subscriptions, no database,
@@ -73,8 +131,11 @@ with strict daily quotas; pay-as-you-go costs roughly **€5/month** for moderat
 ## The interface
 
 The app is organized as a left icon rail rather than a row of tabs: **Chat, Domains, Shared
-Brain, Ingest**, and **Agent memory** (a rail slot for a planned feature — visible, not yet
-functional) run down the side, with **Sync** and **Settings** in the rail footer. There's no
+Brain, Ingest**, and **Agent memory** — the third layer, showing the working state your coding
+agents write over MCP — run down the side, with
+**Sync** and **Settings** in the rail footer. **Agent memory is read-only in the app**: agents
+write it, the app shows it, and if you want to edit the standing brief by hand you open
+`state/project.md` in any editor. There's no
 separate Wiki section — pages open in an overlay reader from a chat citation or from the page
 browser inside Domains — and **Wiki Health now lives inside each domain in Domains** rather than
 being its own section.
@@ -113,6 +174,16 @@ This is the shift from a file cabinet to a neural network.
   let Obsidian color-code every node automatically; set it up once, every future ingest colors itself
 - **Multi-turn AI chat** with persistent conversation history — ask follow-ups, connect the dots. Answers adapt to your question (recommendation vs. list vs. synthesis) and a **Length** selector (Concise · Balanced · Detailed) controls how much detail you get
   across sources, pick up where you left off
+- **Working state — your agents' brain (v3.17.0)** — a small handoff your coding agent saves at
+  the end of a session and reads at the start of the next one: where things stand, what to do
+  next, what is already settled, what was tried and ruled out. It survives a change of session,
+  agent, model, harness *or* machine. Plain markdown under `domains/<project>/state/`, a sibling
+  of `wiki/`, so it syncs with the rest of your knowledge and opens in any editor. Written **only**
+  over MCP, by Claude Code, Claude Desktop, Cursor or any other local MCP client; the **Agent
+  memory** rail view renders it **read-only**, deliberately, so the app never becomes a second
+  writer to the same files. **State supersedes, knowledge accumulates** — each save replaces the
+  previous handoff, so durable material belongs on a wiki page instead.
+  See [docs/working-state.md](docs/working-state.md).
 - **Compile to Wiki (v2.5.0)** — turn any chat conversation into permanent wiki pages with one
   click. The AI reads the dialogue, extracts the durable knowledge, writes a summary page plus
   any new entities/concepts that emerged, and updates everything related — same merge pipeline
@@ -225,9 +296,9 @@ The license text has not been reviewed by a lawyer, and says so at the top. If a
 |------|------|----------|
 | **Chat** | Built-in AI (Chat) | "How does X relate to Y?", synthesising across sources, multi-turn conversation |
 | **Visual** | Obsidian graph view | Seeing the full knowledge map, spotting clusters, browsing pages |
-| **Frontier LLM** | Claude Desktop via *My Curator* MCP bridge (v2.3+) | Deep research with Opus / Sonnet over the full graph — tags, links, backlinks, topology |
+| **Frontier LLM** | Any local MCP client via the *My Curator* bridge (v2.3+) — Claude Desktop, Claude Code, Cursor | Deep research over the full graph — tags, links, backlinks, topology — plus reading and writing the working state |
 
-All three read the same markdown files — no sync or export needed between them. Set up *My Curator* from Settings; see [`docs/mcp-user-guide.md`](docs/mcp-user-guide.md).
+All three read the same markdown files — no sync or export needed between them. Set up *My Curator* from Settings; see [`docs/mcp-user-guide.md`](docs/mcp-user-guide.md). The bridge is a stdio child process, so it works with clients that can spawn a local program and not with browser-only assistants.
 
 ---
 
@@ -261,6 +332,17 @@ Ingest architecture decision records (ADRs), API specs, post-mortems, and README
 The app builds a dependency graph of your codebase's *decisions*, not just its code.
 New team members can ask: *"Why did we choose Postgres over MongoDB for the auth service?"*
 and get an answer cited directly from an ADR written years ago.
+
+### Anyone Who Codes With Agents Across Sessions, Tools and Machines
+This is the **third layer** rather than the first, and it is the one profile that needs no
+ingestion at all. You end a session; the next one starts blank. It re-derives what it can,
+re-opens decisions you already closed, and walks back into a dead end you already mapped — and it
+does that again every time you open a new window, switch from one assistant to another, change
+model, or move from the laptop to the desktop. Point your agent at a domain over MCP: at the end
+of a session it saves where things stand, what to do next, what is settled and what to avoid; at
+the start of the next one it reads that back, whatever tool it happens to be running in.
+Nothing is locked to a vendor because the handoff is a markdown file in your own folder.
+→ [docs/working-state.md](docs/working-state.md)
 
 ### Medical & Scientific Researchers
 Drop in clinical trial PDFs and academic papers. The Curator extracts Entities
@@ -458,7 +540,7 @@ For most second-brain users, the loop is: ingest sources → admire the Obsidian
 
 **My Curator MCP** is the bridge that opens that synapse layer to a frontier model. From v2.3 onwards, The Curator ships a local MCP server that exposes your wiki to any [Model Context Protocol](https://modelcontextprotocol.io/)-compatible client — most importantly **Claude Desktop with Opus or Sonnet**, but also VS Code with an MCP-aware coding agent, [LM Studio](https://lmstudio.ai/) with a local model, or any other MCP client. From v2.5.2+, the bridge is **read+write** — Claude can save what you discussed, clean up wiki problems, and manage dismissals without you ever leaving the conversation.
 
-This is not "another way to read your files." It's a *graph-native* access path. Eighteen dedicated tools — eleven read tools (eight retrieval, three explicitly graph-shaped, including reaching past a summary to the original source document it was built from) and seven health/authoring tools (compile, scan/fix Health, manage dismissals), of which four actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`) while the other three only scan and report — let the model:
+This is not "another way to read your files." It's a *graph-native* access path. Twenty dedicated tools — twelve read tools (eight retrieval, three explicitly graph-shaped, including reaching past a summary to the original source document it was built from, plus `get_working_state`) and eight health/authoring tools (compile, scan/fix Health, manage dismissals, `save_working_state`), of which five actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`) while the other three only scan and report — let the model:
 
 - Pull a topology overview of any domain — central hubs, cluster shape, orphan sample, top tags — in one call
 - Traverse multi-hop neighbourhoods around any concept or entity
@@ -496,7 +578,7 @@ That is not a chat interface. That is a frontier model doing **deep research ove
 
 When you join a Shared Brain (see [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)), the collective wiki appears on your machine as a `shared-<slug>/` domain. **MCP read tools work fully on it** — Claude can `search_wiki`, `get_node`, `get_index`, `search_cross_domain` across the collective just like any other domain. This is where the cohort/team use cases get powerful: a research team can ask *"across our shared brain, which papers contradict each other on X?"* and Claude reads everyone's combined reading to surface the answer with citations.
 
-**The four mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from Sync. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
+**The five mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from Sync. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
 
 ### Why this is first-of-its-kind
 
@@ -583,8 +665,14 @@ Create multiple conversations per domain. Delete old ones. Pick up any thread la
 - Click **Sync now** at the start and end of every work session — it pulls remote changes first, then pushes yours. One button, both directions.
 - Need a one-way operation? Open the **Advanced** disclosure in Sync for **Push only** and **Pull only** buttons.
 
-What syncs: wiki pages, chat history, domain schemas.
+What syncs: wiki pages, chat history, domain schemas, and working state (`state/`).
 What stays local: source files, API keys, app code.
+
+> **Why working state syncs, and why it never collides.** Each handoff is written to a
+> per-machine path, so two computers never write the same file and the pull strategy has no
+> conflicting hunk to resolve away. Save on the laptop, resume on the desktop — a read that names
+> a workstream but no machine returns the most recently written one. See
+> [docs/working-state.md](docs/working-state.md).
 
 See [docs/sync.md](docs/sync.md) for the full guide, including token permissions and troubleshooting.
 
@@ -688,6 +776,7 @@ the-curator/
 │       ├── CLAUDE.md       Domain schema (instructions for the AI)
 │       ├── raw/            Your original uploaded files (local only)
 │       ├── wiki/           Auto-generated knowledge pages
+│       ├── state/          Working state — the agent handoff (syncs; MCP-written)
 │       └── conversations/  Saved chat threads
 ├── scripts/                Maintenance utilities (dedup, repair, bulk-reingest)
 ├── images/                 App icon in multiple sizes
@@ -707,6 +796,7 @@ the-curator/
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect the wiki to Claude Desktop (or any MCP client) for frontier-model research over your graph |
 | [AI Wiki Health Guide](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and the privacy tradeoffs |
 | [System Check](docs/system-check.md) | Settings → System Check: confirm the app setup (key, folder, credentials, sync) + an optional AI connection test |
+| [Working state](docs/working-state.md) | **v3.17.0** — carry build context between coding sessions, agents, models and machines; what belongs in state vs. on a wiki page |
 | [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup of your full wiki across your own computers (wizard, token permissions, troubleshooting) |
 | [Sync with a coding agent](docs/sync-via-coding-agent.md) | Automated sync setup via Claude Code / Cursor / opencode / Aider — one copy-paste prompt |
 | [Shared Brain — User Guide](docs/shared-brain-user-guide.md) | **v3.0.0-beta+** — step-by-step for contributors AND admins; daily workflow; troubleshooting |

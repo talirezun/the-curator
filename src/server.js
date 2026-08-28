@@ -17,6 +17,7 @@ import compileRouter from './routes/compile.js';
 import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
 import ingestQueueRouter from './routes/ingest-queue.js';
+import memoryRouter from './routes/memory.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
@@ -164,6 +165,7 @@ app.use('/api/compile', compileRouter);
 app.use('/api/sharedbrain', sharedbrainRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
 app.use('/api/ingest-queue', ingestQueueRouter);
+app.use('/api/memory', memoryRouter);
 
 // Version endpoint — used by the UI to display the current app version.
 // Also reports on-disk version (from package.json) so the UI can detect

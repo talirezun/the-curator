@@ -2,9 +2,13 @@
  * Persistent app configuration — stored in .curator-config.json in the user-data
  * directory (see src/brain/paths.js; the project root for a repo install).
  * Priority order for domainsPath:
- *   1. .curator-config.json  (set via UI)
- *   2. DOMAINS_PATH env var  (set in .env)
- *   3. <user-data dir>/domains (default — see src/brain/paths.js)
+ *   1. --domains-path, when this process was launched with it (MCP only —
+ *      installed by mcp/server.js via setCliDomainsDir; see that function)
+ *   2. .curator-config.json  (set via UI)
+ *   3. DOMAINS_PATH env var  (set in .env)
+ *   4. <user-data dir>/domains (default — see src/brain/paths.js)
+ *
+ * (Two TEST-ONLY seams sit above all of these — see getDomainsDir.)
  */
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
@@ -52,6 +56,60 @@ export function __setDomainsDirOverride(p) {
   _domainsDirOverride = p || null;
 }
 
+// ── PRODUCTION launch override — NOT the test seam above (v3.16.2) ───────────
+//
+// Deliberately a SEPARATE mechanism from `__setDomainsDirOverride`, and the two
+// must never be merged. That one is documented and guarded (test-paths.js §4)
+// as "production code NEVER sets this — it stays null"; reusing it here would
+// make a test-only seam load-bearing in production and destroy the guarantee
+// that assertion exists to make. Different name, no dunder prefix, own rung.
+//
+// ── THE BUG THIS CLOSES ─────────────────────────────────────────────────────
+// The MCP server is launched as `node mcp/server.js --domains-path <X>` (the
+// generated Claude Desktop config always passes it). MCP READS honoured that
+// arg — mcp/storage/local.js ranks it at rung 2. MCP WRITES did not: they go
+// through writePage/domainPath/wikiPath in files.js, which resolve HERE, and
+// this function had no rung for the arg at all. So one process resolved two
+// different trees. Measured before the fix: `compile_to_wiki` returned
+// `ok: true` with a summary_path, wrote the page under whatever this function
+// resolved on its own, wrote .mcp-write-log.jsonl under <X> (that goes through
+// the read adapter), and a follow-up get_node on the returned path reported
+// NOT FOUND. Three trees, one operation, and a success report over it.
+//
+// ── PRECEDENCE, AND WHY IT IS EXACTLY HERE ──────────────────────────────────
+// This rung sits directly BELOW the two test seams and directly ABOVE the
+// stored/env/default rungs, which is byte-for-byte the position the read
+// adapter already gives the same arg (mcp/storage/local.js: test env var, then
+// the arg, then the stored setting, then the env fallback, then the default).
+// Reads and writes must agree, so the ONLY correct answer is to copy the
+// resolver that already ships and is already exercised — not to invent a
+// ranking. Putting it below the stored setting instead would leave the two
+// disagreeing whenever a user has both, which is the exact live case that
+// produced the bug report.
+//
+// ── WHY THE APP IS PROVABLY UNAFFECTED ──────────────────────────────────────
+// This stays null unless somebody calls the setter, and the ONLY caller in the
+// whole tree is mcp/server.js, which runs in its own child process. The web
+// server never imports it, so for every existing app caller this function is
+// short-circuited at a null check and resolves byte-identically to before.
+let _cliDomainsDir = null;
+
+/**
+ * Install the `--domains-path` value this process was launched with.
+ *
+ * PRODUCTION mechanism, called exactly once, by mcp/server.js, before the
+ * storage adapter is created and before any tool can run. Pass null/empty to
+ * clear (tests do; production never does).
+ *
+ * Must be called BEFORE anything resolves a domains path. That ordering is not
+ * fragile in practice — server.js calls it at module scope, on the line above
+ * createStorageAdapter, and every tool handler runs later, on a request — but
+ * it is a real constraint, so do not move the call below the adapter.
+ */
+export function setCliDomainsDir(p) {
+  _cliDomainsDir = p || null;
+}
+
 /** Returns the resolved, absolute path to the domains folder. */
 export function getDomainsDir() {
   // In-process test override (set by __setDomainsDirOverride).
@@ -63,6 +121,11 @@ export function getDomainsDir() {
   // never set in production. The legacy DOMAINS_PATH (below, loses to config)
   // remains for the documented developer fallback.
   if (process.env.CURATOR_TEST_DOMAINS_DIR) return path.resolve(process.env.CURATOR_TEST_DOMAINS_DIR);
+  // PRODUCTION launch override — the `--domains-path` this process was started
+  // with (MCP only). Ranked here, below both test seams and above the stored
+  // setting, to mirror the read adapter exactly so MCP reads and writes cannot
+  // resolve different trees. Null in the app. See setCliDomainsDir above.
+  if (_cliDomainsDir) return path.resolve(_cliDomainsDir);
   const cfg = readRaw();
   if (cfg.domainsPath) return path.resolve(cfg.domainsPath);
   if (process.env.DOMAINS_PATH) return path.resolve(process.env.DOMAINS_PATH);
@@ -79,7 +142,12 @@ export function setDomainsDir(newPath) {
 /** Returns config object for the UI. */
 export function getConfig() {
   const cfg = readRaw();
-  const source = cfg.domainsPath ? 'ui'
+  // Mirrors getDomainsDir's rungs, in the same order, so this can never report
+  // a source that disagrees with the folder reported beside it. The 'cli' arm
+  // is unreachable in the app (only the MCP child installs that override) and
+  // exists so the two do not drift if a future caller ever changes that.
+  const source = _cliDomainsDir ? 'cli'
+               : cfg.domainsPath ? 'ui'
                : process.env.DOMAINS_PATH ? 'env'
                : 'default';
   return {

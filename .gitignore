@@ -83,3 +83,17 @@ docs/apple-developer-enrolment.md
 # file was created next to tracked source and nothing excluded it.
 .openrouter-catalogue.json
 .openrouter-qualifications.json
+
+# Per-installation machine identity (v3.17.0, working state). Same repo-mode
+# reasoning as the block above — but this one matters MORE, because the whole
+# point of the file is that it is UNIQUE PER INSTALL: committing it would ship
+# one machine's identity to every clone, so two installs would resolve to the
+# same `state/<scope>/<machine>/` path and silently overwrite each other's
+# handoff via `git pull -X theirs`. That is precisely the data-loss bug this
+# file exists to PREVENT (two Macs both named MacBook-Pro.local).
+# This is the FIFTH instance of the class — .write-lock (v3.0.15), .DS_Store
+# (v3.0.16), the ingest queue (v3.3.0), the OpenRouter sidecars (v3.16.1).
+# Every time: a new runtime file appeared beside tracked source and nothing
+# excluded it. If you add another runtime artefact, add it here in the same
+# change, not in the release that discovers it.
+.curator-install-id

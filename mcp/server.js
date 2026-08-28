@@ -20,10 +20,33 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createStorageAdapter } from './storage/local.js';
 import { registerTools } from './tools/index.js';
+import { setCliDomainsDir } from '../src/brain/config.js';
 
 const args = process.argv.slice(2);
 const domainsPathIdx = args.indexOf('--domains-path');
 const domainsPath = domainsPathIdx !== -1 ? args[domainsPathIdx + 1] : null;
+
+// ── ONE SOURCE FOR READS AND WRITES — DO NOT MOVE THIS BELOW THE ADAPTER ─────
+//
+// MCP READS resolve through createStorageAdapter below, which honours
+// `--domains-path` directly. MCP WRITES do not touch that adapter at all: the
+// write tools import writePage/scanWiki/fixIssue from src/brain, and those
+// resolve through getDomainsDir() in src/brain/config.js — which, until this
+// line existed, had no rung for the arg and therefore silently resolved a
+// DIFFERENT folder. compile_to_wiki reported `ok: true` with a summary_path,
+// wrote the page into one tree, the audit log into another, and a follow-up
+// get_node on the path it had just returned said NOT FOUND.
+//
+// Installing the arg into config.js makes the two resolvers agree by
+// construction rather than by comment. It must happen BEFORE the adapter is
+// built (the adapter snapshots its base at construction) and before any tool
+// can run. Nothing else in the tree calls this setter, so the web server is
+// untouched: `getDomainsDir()` there still short-circuits on a null override.
+//
+// A missing/blank value is a no-op — launching without the arg is legitimate
+// (the app's own self-test and manual runs do it), and in that case both sides
+// fall through to the stored setting exactly as they always have.
+setCliDomainsDir(domainsPath);
 
 const storage = createStorageAdapter({ domainsPath });
 

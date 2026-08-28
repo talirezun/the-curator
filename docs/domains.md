@@ -17,6 +17,7 @@ domains/<slug>/
 ├── CLAUDE.md            ← the schema (system prompt for Claude in this domain)
 ├── raw/                 ← uploaded source files (gitignored)
 ├── conversations/       ← saved chat threads (JSON)
+├── state/               ← working state (optional — see below)
 └── wiki/
     ├── index.md         ← master page catalog
     ├── log.md           ← chronological ingest log
@@ -26,6 +27,14 @@ domains/<slug>/
 ```
 
 Three built-in domains ship with the app — **AI / Tech**, **Business / Finance**, **Personal Growth** — but you can create as many as you like.
+
+### `state/` — working state, not wiki content
+
+Since v3.17.0 a domain may also carry a `state/` folder. It's a genuine **sibling** of `wiki/`, not a path inside it — a standing project brief plus per-machine session handoffs that a coding agent reads and writes over MCP (`get_working_state`, `save_working_state`), so a build session on one machine can hand its context to the next session on any machine, harness, or model. There's no view of it in the app's UI, and no HTTP route for it.
+
+It deliberately sits **outside the wiki graph**: nothing in `state/` goes through `writePage`, so none of it carries frontmatter or `[[wikilinks]]`, none of it is scanned by Wiki Health, none of it is folded into `index.md`, and none of it counts toward a domain's page counts (those are all computed by walking `wiki/` only). Where the wiki's merge model *accumulates* — every ingest adds to a page's bullets and nothing is dropped — working state *supersedes*: each save overwrites the previous handoff, because yesterday's resolved blocker should not be resurrected by today's read.
+
+Nothing needs to create the folder by hand — the first save makes `state/` and every path segment under it on demand. See [`working-state.md`](working-state.md) for the full layout, the two MCP tools, and how it's kept safe to read back into a conversation.
 
 ---
 

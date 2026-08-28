@@ -177,7 +177,7 @@ This shell **is** the user-facing app as of v3.9.0. The pieces below are at diff
 - **Domains** (`views/domains.js`) — the Health panel described in its own top comment is real, and this release adds three more pieces. **Domain lifecycle** (create/rename/delete) is wired to the pre-existing `POST`/`PUT`/`DELETE /api/domains[/:domain]` routes — see [api-reference.md](api-reference.md) for the exact contract, including the display-name-only rename case where the slug does not change. **A wiki browse list** is the one place this release adds real server-side surface: `GET /api/wiki/:domain/list` (`src/brain/wiki-read.js` + `src/routes/wiki.js`, new) is a readdir-only inventory built on health.js's `listMd` rather than a fresh readdir — see [api-reference.md](api-reference.md) for the full contract and its deliberate title-from-slug trade-off. **The browse reader renders rich markdown**, through the same single renderer chat answers use (`shared/markdown.js` — see above). Until v3.8.0 it showed the page's escaped markdown SOURCE in a `<pre>` block instead, because the renderer lived inside `views/chat.js` and copying a security-sensitive escape-first renderer into a second file is exactly the "two hand-maintained copies of a guard" shape that produced the v3.2.0 CRITICAL; lifting it into a module both views import removed the dilemma rather than picking a side of it. Finally, the semantic-duplicate scan gained **per-pair Preview / Flip / Skip** actions alongside the pre-existing batch "merge all high-confidence pairs" bar, which was previously the only semantic-dupe action this shell offered — parity with the `/old` Health tab.
 - **Shared Brain** (`views/shared.js`) — the connected state and the enabled/disabled flag states are real, and the five-step setup wizard now exists too, in its own module (`views/shared-brain-wizard.js`): a port of the shipping app's `#sharedbrain-wizard` (both the admin "start a new brain" and contributor "join with an invite token" paths, including the GitHub PAT and Shared Brain admin-token steps — the highest-risk credential surface in this shell), restyled to the `/next` design system under the rule "port the FLOW verbatim, restyle the CHROME only." This release adds the admin-only GDPR Article 17 **revoke-a-contributor** flow and **admin-token generate/rotate** to the connected card — both ported from the shipping app (CLAUDE.md's v3.0.5 entry) and previously entirely absent from this shell. Its own header cross-references the specific `/old`-frontend bugs each behavioural rule exists to keep from regressing. It has no test coverage of its own yet — the offline suite that exercises this behaviour (`test-sharedbrain-hardening.js`) still asserts only against the `/old` frontend's `app.js`. One real gap remains, and it's about an *existing* connection rather than initial setup: `views/shared.js`'s own copy says changing which domains an already-connected brain contributes from needs the access token re-entered, which this shell doesn't handle outside the setup wizard yet.
 - **First-run guidance** (`views/onboarding.js`, v3.8.0) — real, and deliberately **not** a port of the `/old` frontend's blocking 4-step modal. It is a non-blocking, dismissible panel: no scrim, no `role="dialog"`, no focus trap, and it never steals focus on the automatic path. `app.js`'s `boot()` calls `maybeShowOnboarding()` (not awaited, and wrapped in `try/catch`, because `boot()` returning is what sets the `window.__curatorBooted` sentinel the `<head>` guard treats as proof of a healthy load). Every step **points** at the surface that already owns the job — API key → first domain → first ingest, in that order — and embeds no input and `POST`s nothing; step 2 navigates to Domains rather than adding a second `POST /api/domains` call site, which `test-next-chat-compile.js` pins at exactly one for the whole tree. Dismissal is `localStorage` (`curator-next-onboarding-dismissed-v1`) and **fails safe by showing** — a storage throw re-shows the guidance rather than silently hiding first-run setup — which is the opposite direction from the AI-disclosure consent gate, on purpose. It is re-findable from Settings ("Show setup guide"). It is **not** a registered view: like `views/mcp-wizard.js` and `views/shared-brain-wizard.js`, it calls no `registerView()` and owns no rail slot.
-- **Agent memory** (`views/memory.js`) — a genuine stub. There is no backend for it at all. It renders a "this feature doesn't exist yet" card describing the intended design (read-only Done/Decided/Blocked rollups composed from MCP write scopes) so the rail's shape — your brain → your team's brain → your agents' brain — is honest about what's coming without implying any of it is built.
+- **Agent memory** (`views/memory.js`) — **a stub view over a real backend, since v3.17.0.** The distinction matters and the card itself now draws it: the working-state store (`src/brain/working-state.js`) ships and is live, reached by coding agents through the MCP's `get_working_state` / `save_working_state` tools; what does not exist is any *view* of it in this shell, and there is no HTTP route either. So this screen renders a card saying there is nothing to browse here and pointing at the coding agent instead — which is narrower and more accurate than the pre-v3.17.0 card, which said the feature did not exist and described a rollup UI (Done/Decided/Blocked composed from MCP write scopes) that was never built and is still not built. The rail's shape — your brain → your team's brain → your agents' brain — is now backed by something on all three. See [working-state.md](working-state.md) and the store's own section below.
 
 ### The cutover happened in v3.9.0 — what is still outstanding
 
@@ -218,6 +218,8 @@ the-curator/
 │   │   ├── ingest-queue.js     Batch-ingest queue: disk-persisted, sequential worker, pause/cancel/resume (v3.3.0+)
 │   │   ├── raw-store.js        Raw-source resolution/extraction — the `resolveRawSource` chokepoint (v3.5.0)
 │   │   ├── wiki-read.js        Single-page read + backlinks (`getWikiPage`) for the reader panel (v3.2.0+)
+│   │   ├── working-state.js    Portable working state — domains/<project>/state/ (v3.17.0). Store only;
+│   │   │                       the MCP tool layer wraps it. Never renders a prompt, never calls an LLM.
 │   │   ├── chat.js             Chat pipeline (multi-turn, persistent)
 │   │   ├── compile.js          Conversation → wiki pages (v2.5.0)
 │   │   ├── health.js           Wiki health scanner + auto-fix logic
@@ -241,14 +243,15 @@ the-curator/
 │           │                    markdown.js — the ONE Markdown renderer of this shell, used by chat.js + domains.js
 │           │                    (v3.8.0; guarded by scripts/test-next-markdown.js — see above)
 │           └── views/          One file + one same-named CSS file per rail item (chat, domains, ingest,
-│                                settings, shared, sync — real; memory — stub, no backend yet). views/README.md
-│                                documents the contract for adding a new one.
+│                                settings, shared, sync — real; memory — a stub VIEW over a real backend:
+│                                the working-state store ships and is reached over MCP, but nothing renders
+│                                it here). views/README.md documents the contract for adding a new one.
 ├── mcp/                        My Curator MCP — read+write surface to the wiki for Claude Desktop / any MCP client
 │   ├── server.js               stdio entry point (spawned as child process by the MCP client)
 │   ├── graph.js                Wiki parser: frontmatter, [[wikilinks]], backlinks, tag inventory (cached)
 │   ├── util.js                 Slug + domain validators, resolveDomainArg shared helper
 │   ├── storage/local.js        Filesystem adapter (resolveInsideBase chokepoint, audit-log writer)
-│   └── tools/                  Tool modules (11 read + 7 write = 18 tools as of v3.5.0)
+│   └── tools/                  Tool modules (12 read + 8 write = 20 tools as of v3.17.0)
 │       ├── index.js            Registration hub + response-size guard (400 KB)
 │       ├── domains.js, index-tool.js, search.js, nodes.js, connected.js,
 │       │   summary.js, cross.js, overview.js, tags.js, backlinks.js, raw-source.js
@@ -257,7 +260,9 @@ the-curator/
 │       │                       get_raw_source (v3.5.0 — the original document behind a summary, text-extracted only)
 │       ├── compile.js          Write tool (v2.5.2): compile_to_wiki — research → wiki pages
 │       ├── health.js           Write tools (v2.5.2): scan_wiki_health, fix_wiki_issue, scan_semantic_duplicates
-│       └── dismissed.js        Write tools (v2.5.2): get_health_dismissed, dismiss_wiki_issue, undismiss_wiki_issue
+│       ├── dismissed.js        Write tools (v2.5.2): get_health_dismissed, dismiss_wiki_issue, undismiss_wiki_issue
+│       └── working-state.js    v3.17.0: get_working_state (read) + save_working_state (write) — wraps
+│                               src/brain/working-state.js. Reads/writes domains/<project>/state/, NOT wiki/.
 ├── domains/
 │   └── <domain>/
 │       ├── CLAUDE.md           Domain schema (system prompt for the LLM)
@@ -338,11 +343,16 @@ Verified in source, in the order the code actually checks:
 
 1. `__setDomainsDirOverride(dir)` — in-process test override, highest precedence.
 2. `CURATOR_TEST_DOMAINS_DIR` env var — cross-process test override (needed because `__setDomainsDirOverride` can't reach a spawned child, e.g. `test-sharedbrain-routes.js`'s server-on-3334).
-3. `.curator-config.json`'s `domainsPath`, if set (the UI's "change knowledge base location" writes here).
-4. `DOMAINS_PATH` env var (developer fallback in `.env`).
-5. The default: `getDefaultDomainsDir()` in `paths.js` — `<user-data dir>/domains`, which in a repo install is `<APP_ROOT>/domains`, identical to every version before v3.1.0.
+3. `setCliDomainsDir(dir)` — the `--domains-path` this *process* was launched with. **v3.17.0; production, not a test seam** — a deliberately separate mechanism from rung 1, called exactly once, only by `mcp/server.js`, before the storage adapter is built. It is `null` in the web app, which never imports the setter, so every app caller short-circuits past it and resolves byte-identically to before.
+4. `.curator-config.json`'s `domainsPath`, if set (the UI's "change knowledge base location" writes here).
+5. `DOMAINS_PATH` env var (developer fallback in `.env`).
+6. The default: `getDefaultDomainsDir()` in `paths.js` — `<user-data dir>/domains`, which in a repo install is `<APP_ROOT>/domains`, identical to every version before v3.1.0.
 
-Rungs 1–2 are test-only and always `null` in production, so production's real behaviour is unchanged: config beats the env var, exactly as before this release. `paths.js` only changed what rung 5 resolves *relative to* — from a hardcoded `path.join(PROJECT_ROOT, 'domains')` computed inline to `getUserDataDir()`'s output, which is `APP_ROOT` until a bundle exists.
+Rungs 1–2 are test-only and always `null` in production; rung 3 is null in the app. So the web app's real behaviour is unchanged: config beats the env var, exactly as before this release.
+
+**Rung 3 closes a live bug, and it is the bug this section previously described as already fixed.** MCP *reads* have honoured `--domains-path` since v3.1.0 — `mcp/storage/local.js` ranks it at rung 2 of its own resolver. MCP *writes* never did: they go through `writePage`/`domainPath`/`wikiPath` in `files.js`, which resolve **here**, and until v3.17.0 this function had no rung for the arg at all. One process therefore resolved two different trees. Measured before the fix: `compile_to_wiki` returned `ok: true` with a `summary_path`, wrote the page under whatever this function resolved on its own, wrote `.mcp-write-log.jsonl` under the CLI path (the audit log goes through the read adapter), and a follow-up `get_node` on the very path just returned reported **not found**. Three trees, one operation, and a success report over it. The new rung sits **exactly** where the read adapter already puts the same argument — below the test seams, above the stored setting — because reads and writes must agree, and the only correct answer was to copy the resolver that already ships rather than invent a ranking. Placing it below the stored setting instead would leave the two disagreeing whenever a user has both, which is the exact live case that produced the report.
+
+⚠️ **Two descriptions of one fact had drifted, in this file, fifteen lines apart.** The "Update" paragraph below has claimed since v3.1.1 that the CLI arg outranks config "in both the app and the MCP" — while the numbered list directly above it, headed *"verified in source, in the order the code actually checks"*, listed no CLI rung at all, correctly. The list was right and the prose was wrong, and the prose was the half people read. The claim is true only as of v3.17.0; the paragraph is left standing below because its reasoning about the *config-vs-env* ordering is still correct and still load-bearing. `paths.js` only changed what rung 5 resolves *relative to* — from a hardcoded `path.join(PROJECT_ROOT, 'domains')` computed inline to `getUserDataDir()`'s output, which is `APP_ROOT` until a bundle exists.
 
 The same file (`config.js`) resolves `.curator-config.json` itself via `getCuratorConfigFile()` — called **per read/write, not cached at module load**, so both test seams stay effective for any module that imports `config.js` before a test sets them.
 
@@ -352,7 +362,7 @@ Before v3.1.0, `mcp/storage/local.js` re-derived the config file's location inde
 
 As of v3.1.0, `mcp/storage/local.js` imports `getCuratorConfigFile()` and `getDefaultDomainsDir()` directly from `src/brain/paths.js` — the exact functions `config.js` calls. There is now one place that decides "where is `.curator-config.json`," used by both the web app and the MCP child process Claude Desktop spawns. This matters because a silent divergence here is a *silent* failure mode with no error to surface: if the MCP resolved a different absolute path than the UI, Claude Desktop would read and write a wiki the user never sees in the browser — no crash, no warning, just two different "second brains" that happen to share a name. Routing both through one module removes that possibility by construction rather than by convention.
 
-**Update:** for one release after v3.1.0 landed, one divergence remained — `config.js`'s `getDomainsDir()` ranked `.curator-config.json`'s `domainsPath` **above** the `DOMAINS_PATH` env var, while `mcp/storage/local.js`'s own `resolveDomainsPath()` ranked `DOMAINS_PATH` **above** config. It was flagged (not fixed) at the time: both files' header comments cross-referenced it explicitly so it couldn't be "fixed" by accident while touching either one, and CLAUDE.md's v3.1.0 entry called the split out as pre-existing and increasingly urgent. Investigating the git history turned up no functional reason for the MCP's ordering — `config.js`'s config-first precedence has been the app's rule since `getDomainsDir()` was first written (April 2026); `mcp/storage/local.js` was written later, independently, and simply never got reconciled with it. The two resolvers now agree end-to-end: **`--domains-path` CLI arg → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default**, in both the app and the MCP. Config outranks the env var in both places because `.curator-config.json`'s `domainsPath` is what the Settings UI's "change knowledge base location" panel actually writes — a user's explicit, current choice — while `DOMAINS_PATH` is a `.env` fallback documented for developers and non-macOS users who haven't touched Settings. A user who somehow has both set now gets the same folder from Claude Desktop as they see in their own browser. The CLI arg still sits above both — it's supplied explicitly by the generated Claude Desktop config, so it represents even more specific intent than either. Blast radius of the old bug was narrow in practice (the generated config always passes `--domains-path` explicitly, so only a hand-edited config with that flag removed, plus both `DOMAINS_PATH` and a *different* `domainsPath` set, could have hit it) but the fix removes a real, if rare, "the MCP reads a different wiki than the app shows" failure mode. See the header comment at the top of `mcp/storage/local.js` for the full reasoning.
+**Update:** for one release after v3.1.0 landed, one divergence remained — `config.js`'s `getDomainsDir()` ranked `.curator-config.json`'s `domainsPath` **above** the `DOMAINS_PATH` env var, while `mcp/storage/local.js`'s own `resolveDomainsPath()` ranked `DOMAINS_PATH` **above** config. It was flagged (not fixed) at the time: both files' header comments cross-referenced it explicitly so it couldn't be "fixed" by accident while touching either one, and CLAUDE.md's v3.1.0 entry called the split out as pre-existing and increasingly urgent. Investigating the git history turned up no functional reason for the MCP's ordering — `config.js`'s config-first precedence has been the app's rule since `getDomainsDir()` was first written (April 2026); `mcp/storage/local.js` was written later, independently, and simply never got reconciled with it. The two resolvers agree end-to-end on **`--domains-path` CLI arg → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default** — the config-vs-env half from v3.1.1, and the CLI-arg half only from **v3.17.0**, when `setCliDomainsDir()` gave `getDomainsDir()` a rung for it (see the ⚠️ note above: this paragraph asserted the CLI half a release-and-a-half before it was true). Config outranks the env var in both places because `.curator-config.json`'s `domainsPath` is what the Settings UI's "change knowledge base location" panel actually writes — a user's explicit, current choice — while `DOMAINS_PATH` is a `.env` fallback documented for developers and non-macOS users who haven't touched Settings. A user who somehow has both set now gets the same folder from Claude Desktop as they see in their own browser. The CLI arg still sits above both — it's supplied explicitly by the generated Claude Desktop config, so it represents even more specific intent than either. Blast radius of the old bug was narrow in practice (the generated config always passes `--domains-path` explicitly, so only a hand-edited config with that flag removed, plus both `DOMAINS_PATH` and a *different* `domainsPath` set, could have hit it) but the fix removes a real, if rare, "the MCP reads a different wiki than the app shows" failure mode. See the header comment at the top of `mcp/storage/local.js` for the full reasoning.
 
 ### Named user-data locations and the credential-file list
 
@@ -1201,7 +1211,7 @@ Both routes, and the MCP's `get_raw_source` tool, funnel through **`src/brain/ra
 
 **A summary's `source:` can also name a web page** (`medium.com/@author`) rather than a local file — found in real data, not hypothesised. That value is classified as `external-source` and reported to the caller **as inert text — never fetched**. Turning an LLM-authored, sync-delivered string into an outbound HTTP request would make it an SSRF primitive; neither `raw-store.js` nor the wiki routes import an HTTP client.
 
-**`get_raw_source` (MCP, v3.5.0)** returns extracted plain text, byte-capped well under the MCP response budget — never raw bytes. PDFs are text-extracted first; anything that doesn't decode as text comes back as `text: null` with `text_unavailable: "binary"` rather than mangled bytes or a corrupted JSON-RPC stream (the same class of failure the v2.5.3 stdout-pollution fix closed). See [§ Module reference](#module-reference) below and the MCP section that follows for where this sits among the other 17 tools.
+**`get_raw_source` (MCP, v3.5.0)** returns extracted plain text, byte-capped well under the MCP response budget — never raw bytes. PDFs are text-extracted first; anything that doesn't decode as text comes back as `text: null` with `text_unavailable: "binary"` rather than mangled bytes or a corrupted JSON-RPC stream (the same class of failure the v2.5.3 stdout-pollution fix closed). See [§ Module reference](#module-reference) below and the MCP section that follows for where this sits among the other 19 tools.
 
 An append-only manifest, `<domain>/wiki/.raw-manifest.jsonl`, records filename/size/sha256/ingest-date for every raw file — deliberately placed *inside* `wiki/` so it syncs even though the blobs themselves never do, mirroring the `.health-dismissed.jsonl` precedent. It leaks nothing new: the filename is already present in the synced `source:` field. A manifest write failure can never fail an ingest.
 
@@ -1231,11 +1241,15 @@ spawn(node, [mcp/server.js, --domains-path <abs>])
       │
       ▼
 mcp/server.js
+      ├─ setCliDomainsDir(domainsPath)           src/brain/config.js  (v3.17.0)
+      │     Makes READS and WRITES resolve one tree. MUST stay above the
+      │     adapter: the adapter snapshots its base at construction, and
+      │     every tool handler runs later, on a request.
       ├─ createStorageAdapter({ domainsPath })   storage/local.js
       ├─ registerTools(server, storage)          tools/index.js
       └─ StdioServerTransport.connect()
 
-Tool call (any of 18 tools):
+Tool call (any of 20 tools):
       │
       ▼
 tools/index.js — CallToolRequestSchema handler
@@ -1243,19 +1257,32 @@ tools/index.js — CallToolRequestSchema handler
       ├─ Stringify result → enforceSizeLimit (400 KB cap; trims heavy arrays)
       └─ Return { content: [{ type: 'text', text }] }
 
-Read tools (v2.3.0+ through v3.5.0, 11 tools)
+Read tools (v2.3.0+ through v3.17.0, 12 tools)
       ├─ Walk markdown via storage.listWikiFiles / readFile
       │    Cached per-process graph (mcp/graph.js, 10-min TTL)
-      └─ get_raw_source (v3.5.0) is the one exception: it does NOT go
-           through storage.readFile (which forces utf8 and would mangle a
-           PDF) — it calls raw-store.js's resolveRawSource + text extractor
-           directly, and returns extracted text only, never binary bytes.
+      ├─ get_raw_source (v3.5.0) is one exception: it does NOT go
+      │    through storage.readFile (which forces utf8 and would mangle a
+      │    PDF) — it calls raw-store.js's resolveRawSource + text extractor
+      │    directly, and returns extracted text only, never binary bytes.
+      └─ get_working_state (v3.17.0) is the other: it reads state/, not
+           wiki/, and goes to the filesystem DIRECTLY — never through
+           graph.js, whose cache invalidates on FILE COUNT, which an
+           in-place overwrite of current.md never changes. A cached read
+           could serve state up to the TTL out of date, and stale state is
+           worse than no state. Every file read is byte-capped at the
+           source, so a hand-edited or synced 10 MB current.md cannot
+           reach enforceSizeLimit.
 
-Write tools (v2.5.2+, 7 tools)
+Write tools (v2.5.2+, 8 tools)
       ├─ resolveDomainArg(args, storage, getDefaultDomain)
       │     Explicit domain → user's defaultDomain → error
       │     Validated via isValidDomain + storage.listDomains()
       ├─ Per-tool guards (caps, slug regex, REFUSED_FILES, preview gate)
+      ├─ save_working_state (v3.17.0) does NOT use resolveDomainArg or
+      │     writePage: it wraps src/brain/working-state.js, which runs its
+      │     own checkProjectWritable (must be a real domain, must not be a
+      │     read-only shared-* mirror) and its own resolveInsideState
+      │     containment. It writes state/, never wiki/.
       │
       └─ compile_to_wiki:
          │   importsFromBrain: writePage, syncSummaryEntities, appendLog
@@ -1329,7 +1356,8 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 
 | Export | Description |
 |--------|-------------|
-| `getDomainsDir()` | Resolved absolute path to the domains folder. Precedence: in-process test override → `CURATOR_TEST_DOMAINS_DIR` (env, test-only) → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default (`paths.js`'s `getDefaultDomainsDir()`). The two test rungs are always inert in production, so production behaviour is unchanged from before v3.1.0: config beats the env var. |
+| `getDomainsDir()` | Resolved absolute path to the domains folder. Precedence: in-process test override → `CURATOR_TEST_DOMAINS_DIR` (env, test-only) → `setCliDomainsDir()`'s value (**v3.17.0**, production, MCP-only) → `.curator-config.json`'s `domainsPath` → `DOMAINS_PATH` env var → default (`paths.js`'s `getDefaultDomainsDir()`). The two test rungs are always inert in production and the CLI rung is null in the web app, so app behaviour is unchanged from before v3.1.0: config beats the env var. |
+| `setCliDomainsDir(dir)` | **v3.17.0.** Installs the `--domains-path` this process was launched with. Called once, only by `mcp/server.js`, at module scope on the line above `createStorageAdapter` — it must run before anything resolves a domains path, and before the adapter, which snapshots its base at construction. Deliberately **not** the `__setDomainsDirOverride` test seam: that one is guarded by `test-paths.js` §4 as "production never sets this", and reusing it would destroy the guarantee that assertion exists to make. A missing or blank value is a no-op, so launching the MCP without the arg still falls through to the stored setting exactly as before. |
 | `setDomainsDir(newPath)` | Persists a new domains path to `.curator-config.json` |
 | `getConfig()` | Returns `{ domainsPath, domainsPathSource }` for the UI |
 | `getApiKeys()` | Returns `{ geminiApiKey, anthropicApiKey }` from the config file |
@@ -1487,6 +1515,38 @@ Raw-source resolution and text extraction — see [§ Raw source retrieval](#dat
 | `looksLikeExternalSource(value)` | Classification only — a web-page-shaped `source:` is reported as text and never fetched (SSRF avoidance). |
 | `readRawSourceText(absPath, maxChars)` | Extracts text (PDF via `pdf-parse`, else `readFile`), byte-capped with character-boundary-safe truncation; refuses anything that doesn't decode as text rather than emitting mojibake. |
 | `hashRawSource(absPath)` | Streamed sha256, opt-in (`?hash=1` on the route) since it reads the whole file. |
+
+### `src/brain/working-state.js` (v3.17.0)
+
+Portable working state — the store behind "carry the build context from this session into the next one, on any machine, in any harness, with any model". Full user-facing treatment in [working-state.md](working-state.md); this section covers where it sits in the system and the three decisions that constrain everything else about it.
+
+It is **the store only**. It exposes plain functions, never renders a prompt and never calls an LLM; the MCP tool layer wraps it, and there is **no HTTP route and no in-app view**. It is written to be imported inside the MCP stdio child, so it must keep stdout pure — `console.error` only, per the v2.5.3 stdout-pollution rule. Its reads go to the filesystem directly and deliberately **not** through `mcp/graph.js`, whose cache invalidates on **file count**: an in-place overwrite of `current.md` never changes the count, so a cached read could serve state up to the cache TTL out of date, and stale state is worse than no state.
+
+**Layout is `domains/<project>/state/`** — `project.md` (the standing brief, returned on every read), `<scope>/<machine>/current.md` (the handoff, overwritten each save), `<scope>/<machine>/journal.jsonl` (append-only, one line per save). `state/` is a **sibling** of `wiki/` and is never written through `writePage`: that function redirects non-canonical paths into `entities/`/`concepts/`/`summaries/` and flattens to the basename, so the `(project, scope)` pair is inexpressible there.
+
+**Three decisions, each measured rather than preferred:**
+
+1. **State supersedes; knowledge accumulates.** `mergeWikiPage`'s union merge is correct for knowledge and wrong for state — a resolved blocker would be resurrected by the next write, because a union has no way to express *no longer true*. Hence a separate store with overwrite semantics. The corollary is a boundary users need stated: a failure whose value is the **pattern across incidents** is knowledge and belongs on a wiki page via `compile_to_wiki`, where it compounds and is graphed; only the recent scope-local tail lives in state.
+2. **The `<machine>` segment is load-bearing.** `state/` matches none of `DOMAINS_GITIGNORE_RULES`, so it syncs, and `sync.pull()` resolves with `git pull --no-rebase -X theirs` — which on a **conflicting hunk** keeps origin and discards the local write, silently. Two machines writing the same `current.md` would destroy each other's handoff with no error. Per-machine paths mean no conflicting hunk ever arises. Proven against real git. Cross-machine handoff is recovered on the **read** side instead: a scope with no machine named returns the most recently written machine and lists the rest, which also degrades gracefully when a hostname changes.
+3. **Sanitisation runs on write *and* on read.** The feature's premise is that an agent acts on text a previous agent wrote, so "instruction-ness" cannot be neutralised — that is the product. What is neutralised is **impersonation of a higher-authority channel**: a `<` opening a protocol-shaped tag, a `:` closing a line-initial chat role marker, and (write side only) a `#` opening a Markdown heading. The read side is not belt-and-braces — the file read was not necessarily written locally: it arrives over Personal Sync, is hand-editable in Obsidian, and inside a `shared-*` mirror can be written by another person. A write-only guard would be a guard applied to an instance rather than a class. The read side cannot apply the heading rule (it cannot tell our headings from a forged one without parsing), so a **legitimately-shaped forged heading survives a read** — mitigated structurally instead: writes into `shared-*` mirrors are refused, and every read reports the machine and mtime the content came from.
+
+**Containment** reuses `resolveInsideWiki` from `wiki-read.js` with a non-wiki root (the function is root-agnostic despite its name; `raw-store.js` set this precedent) rather than keeping a second hand-maintained copy — the v3.2.0 CRITICAL shape. Segment names are additionally validated as single safe path segments, and containment is re-resolved **after** `mkdir` so a symlinked scope/machine directory arriving over sync is caught before the write. `current.md` goes through `writeFileAtomic`, which also refuses to write through a symlink; `journal.jsonl` is `appendFile`, never an atomic rewrite (atomic-write.js's own invariant 5 — a rewrite loses concurrent appends and a JSONL log is already crash-safe at line granularity).
+
+**No lock is taken, deliberately.** The write target is per-`(scope, machine)`, so the only racers are two savers on the same machine for the same scope; the atomic rename makes that last-writer-wins on a file defined as "supersedes", and both journal lines land. Presenting `acquireFileLock` as mutual exclusion would be false — it double-grants, including across processes.
+
+**A save is never refused for being over budget.** An agent near the end of its context that has its handoff rejected loses the handoff entirely. Instead trailing items are dropped from whichever list is largest, and the drop is recorded **in the document, in the result, and in the journal** — trimmed loudly rather than truncated silently.
+
+| Export | Description |
+|--------|-------------|
+| `saveWorkingState(project, input)` | Overwrites `current.md` for `(project, scope, machine)` and appends one journal line. `input` carries a required `headline` plus `nowState`, `nextSteps`, `decisions`, `observations`, `traps`, `openQuestions`, and optional `scope` / `machine` / `harness` / `model`. Returns `{ok:true, …}` or `{ok:false, reason, message}` — **never throws**. The journal append is best-effort and never fails the save. |
+| `saveProjectBrief(project, input)` | Overwrites `state/project.md` from `brief` / `decisions` / `workingModel` / `pointers`. Separate from the above on purpose: this tier is deliberate and rare, and it is returned on every read, so it must not churn with sessions. |
+| `readWorkingState(project, opts)` | Always returns the brief. With `opts.scope`, also that scope's `current.md`, the machines holding state under it, and recent journal entries; without one, the scope index. Never throws; every file read is byte-capped at the source. |
+| `listWorkingScopes(project)` | Every `(scope, machine)` pair with state, newest first, each with its last write time, age and latest headline. A hard requirement rather than a convenience — an agent told "carry on with the auth work" cannot otherwise resolve that to a scope slug it has never seen. |
+| `machineId(override)` | This machine's path segment, resolved **per call** (a module-scope `const X = getter()` is the v3.1.0 import-order bug this repo has a source guard against). An unusable hostname falls back to a literal rather than throwing — losing the machine distinction is a merge risk, refusing to save loses the handoff. |
+| `sanitiseBlock` / `sanitiseLine` / `sanitiseList` / `sanitiseObservations` / `neutraliseProtocol` / `escapeHeadings` | The sanitiser surface described above. None throws on any input. `neutraliseProtocol` is idempotent by construction, which matters because it runs on every read. |
+| `resolveInsideState(project, relPath)` | The single path chokepoint into `state/`. Nothing else may build one. |
+
+**Refusal reasons** are returned, not thrown: `invalid-project`, `unknown-project` (the name is not a real domain — a folder with no `CLAUDE.md` is `rm -rf`'d by `sync.pull()`'s ghost-domain prune, so state saved there would be silently deleted), `readonly` (a `shared-*` mirror), `invalid-scope`, `invalid-machine`, `missing-headline`, `empty-brief`, `unsafe-path`, `io`.
 
 ### `src/brain/wiki-read.js` (v3.2.0+)
 

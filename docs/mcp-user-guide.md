@@ -28,7 +28,7 @@ That's the difference between *"I have a folder of notes"* and *"I have a querya
 
 ## What it does
 
-My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools that explore your knowledge graph, and seven health/authoring tools (v2.5.2+) that let Claude maintain and *update* the wiki on your behalf. Four of those seven actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`); the other three only scan and report.
+My Curator exposes **twenty tools** to Claude Desktop — twelve read tools that explore your knowledge graph and your own prior working state, and eight health/authoring tools (v2.5.2+) that let Claude maintain and *update* the wiki on your behalf. Five of those eight actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`); the other three only scan and report.
 
 ### Read tools (since v2.3.0)
 
@@ -45,6 +45,7 @@ My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools th
 | `get_backlinks` | Find every page that links TO a given page |
 | `get_summary` | Pull a source summary page |
 | `get_raw_source` | Retrieve the *original* document a summary was built from — extracted text, never binary (v3.5.0) |
+| `get_working_state` | Resume a previous session's handoff — brief, decisions, next steps, journal — possibly left by a different tool, model, or machine |
 
 ### Write tools (v2.5.2+)
 
@@ -57,12 +58,13 @@ My Curator exposes **eighteen tools** to Claude Desktop — eleven read tools th
 | `get_health_dismissed` | List previously-skipped Health issues |
 | `dismiss_wiki_issue` | Permanently silence an issue so it stops surfacing on future scans |
 | `undismiss_wiki_issue` | Restore a dismissed issue |
+| `save_working_state` | Write this session's handoff (Track 7) so the next session — possibly a different tool, model, or machine — can resume cold |
 
 The key idea: a frontier model doesn't just *read* your wiki — it can *traverse* it AND *grow* it. Hubs, clusters, tags, and bidirectional links are exposed as first-class structured data, so the model can reason about your knowledge as a graph; and the write tools mean a research session in Claude Desktop can end with the conclusions saved permanently — no need to switch to The Curator app to commit them.
 
 ### Write tools on Shared Brain mirrors (`v3.0.0-beta+`)
 
-When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. **The four mutating tools — `compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue` — refuse on these mirrors** with a clear steer:
+When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), the collective wiki appears on your machine as a `shared-<slug>` domain. **The five mutating tools — `compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state` — refuse on these mirrors** with a clear steer:
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
 
@@ -127,7 +129,7 @@ reads or validates `claude_desktop_config.json` — see Troubleshooting below.
 
 ## The My Curator Claude skill — best results out of the box (v2.5.7+)
 
-The MCP exposes 18 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
+The MCP exposes 20 tools. Used naively, Claude works — but used *well*, Claude grounds every wikilink in your existing slugs, refuses speculative writes on fresh domains, three-tier-tracks Health fixes, and treats domains as siloed. Doing that consistently means typing detailed instructions into every conversation.
 
 The **My Curator skill** packages that playbook into a single markdown file you install once. After install, every Claude conversation that touches the my-curator MCP automatically follows the rules — no detailed prompting needed.
 
@@ -481,7 +483,7 @@ The one way they can still drift apart is the one described just above: the `--d
 
 **Privacy.** Everything stays on your machine. There is no network component. No telemetry.
 
-**Security.** Every tool validates its `domain` and `slug` arguments before touching disk, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The eleven graph-reading tools are strictly read-only, as are three of the seven health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — fourteen of the eighteen never change anything on disk. Of the four that do (v2.5.2+), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all four refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
+**Security.** Every tool validates its `domain` and `slug` arguments before touching disk, and the filesystem adapter refuses to resolve any path outside your domains folder — even if a prompt injection tries to steer the model toward `../../../etc/passwd`, the request returns "Invalid slug" without ever touching disk. The twelve read tools are strictly read-only, as are three of the eight health/authoring tools (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`) — fifteen of the twenty never change anything on disk. Of the five that do (v2.5.2+, plus `save_working_state`), `compile_to_wiki` is hard-capped at 50 KB/page and 10 pages/call and is idempotent per conversation; all five refuse a read-only Shared Brain mirror outright, and every write is recorded locally in `.mcp-write-log.jsonl` — see "Safety features" below. `get_raw_source` (v3.5.0) is read-only and returns extracted text only; it never emits raw file bytes.
 
 **What a slug is allowed to contain (widened in v3.9.1).** Lowercase letters, digits, hyphens, underscores, and **interior dots** — so `claude-sonnet-3.5`, `gemini-2.5-flash`, `industry-5.0`, `apache-2.0-license` and `express.js` are all addressable. Before v3.9.1 every dot was refused, and the effect was silently self-contradictory: `search_wiki` and `get_index` would happily *show* you those pages, and then `get_node`, `get_backlinks`, `get_connected_nodes`, `get_summary` and `get_raw_source` would all answer *"Invalid slug"* for the exact slug they had just advertised. Across the six real domains it was measured on, that made **73 of 4,751 pages discoverable but unreadable**, and `get_raw_source` unusable for every summary whose source file was actually present.
 

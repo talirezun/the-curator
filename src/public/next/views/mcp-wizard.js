@@ -69,12 +69,13 @@
 //      "restart the app" — that error is shown as itself.
 //
 //   7. The tool count is stated correctly and the WRITE tools are named.
-//      Counted from mcp/tools/index.js: 18 tools, of which 4 mutate the
-//      wiki (the four guarded by refuseIfReadonly — compile_to_wiki,
-//      fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue). The
-//      /next MCP section said "seventeen tools, ten read and seven write",
-//      wrong on all three numbers. scripts/test-next-mcp-wizard.js imports
-//      the real tool table and fails if these constants drift from it.
+//      Counted from mcp/tools/index.js: 20 tools, of which 5 mutate
+//      something (the five guarded by refuseIfReadonly — compile_to_wiki,
+//      fix_wiki_issue, dismiss_wiki_issue, undismiss_wiki_issue,
+//      save_working_state). The /next MCP section said "seventeen tools,
+//      ten read and seven write", wrong on all three numbers.
+//      scripts/test-next-mcp-wizard.js imports the real tool table and
+//      fails if these constants drift from it.
 //
 //   8. domains_dir_exists === false blocks setup before step 1, matching
 //      the shipping landing screen's disabled CTA.
@@ -112,9 +113,9 @@ import { createLoadingGate, settleGate } from '../shared/loading-gate.js';
 // creates is covered by scripts/test-next-mcp-wizard.js, which imports the
 // real tool table and the real refuseIfReadonly call sites and fails if
 // either number moves without this constant moving with it.
-const TOOL_TOTAL = 18;
-const TOOL_WRITE = 4;
-const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 14
+const TOOL_TOTAL = 20;
+const TOOL_WRITE = 5;
+const TOOL_READ = TOOL_TOTAL - TOOL_WRITE; // 15
 
 // ── State ────────────────────────────────────────────────────────────────
 

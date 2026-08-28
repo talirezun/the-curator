@@ -48,20 +48,37 @@
  * builtins and logs nothing, so it is safe for this stdio child process (stdout
  * is reserved for JSON-RPC frames).
  *
- * SCOPE — this resolver governs READS ONLY. Every MCP read tool (list_domains,
+ * SCOPE — this resolver governs READS. Every MCP read tool (list_domains,
  * search_wiki, get_node, etc.) goes through createStorageAdapter() here, so it
  * honours the --domains-path CLI arg above. MCP WRITE tools (compile_to_wiki
  * and the health-fix tools in mcp/tools/compile.js and mcp/tools/health.js) do
  * NOT go through this adapter — they import writePage/scanWiki/fixIssue etc.
  * directly from src/brain/files.js and src/brain/health.js, which resolve the
- * domains dir via src/brain/config.js's getDomainsDir() and so never see the
- * CLI arg at all. In one process, reads and writes can therefore target
- * DIFFERENT folders whenever a --domains-path was passed and it doesn't match
- * whatever getDomainsDir() resolves to on its own (config/env/default) — e.g.
- * a --domains-path pointing at an old location while Settings has since moved
- * to a new one. This is a real, demonstrated gap, not merely theoretical.
- * Unifying the two paths is a separate change with its own blast radius and is
- * deliberately out of scope here.
+ * domains dir via src/brain/config.js's getDomainsDir().
+ *
+ * ── v3.16.2: THAT SPLIT WAS A LIVE DEFECT, AND IT IS NOW CLOSED ─────────────
+ * getDomainsDir() had NO rung for the CLI arg, so in one process reads and
+ * writes resolved DIFFERENT folders whenever --domains-path disagreed with what
+ * getDomainsDir() computed on its own — e.g. an arg pointing at an old location
+ * while Settings had since moved. Measured: compile_to_wiki returned
+ * `ok: true` with a summary_path, wrote the page into the folder getDomainsDir()
+ * chose, wrote .mcp-write-log.jsonl into the folder THIS resolver chose (the
+ * audit log goes through the adapter), and a follow-up get_node on the path it
+ * had just returned reported NOT FOUND.
+ *
+ * mcp/server.js now installs the arg into config.js (setCliDomainsDir) BEFORE
+ * this adapter is constructed, at the rung directly below the test seams and
+ * above the stored setting — i.e. the same position this resolver gives it. The
+ * two ladders are therefore equivalent by construction on every input.
+ *
+ * THIS LADDER IS DELIBERATELY LEFT IN PLACE rather than delegated to
+ * getDomainsDir(): scripts/test-paths.js §9 pins these four rungs as source
+ * lines AND drives them behaviourally, and deleting them would take that guard
+ * with them. The agreement is instead asserted behaviourally — test-paths.js §1
+ * and §9(a)-(c), plus scripts/test-mcp-domains-path.js, which adds the case
+ * §9(d) was missing: with the CLI arg supplied, the app-side resolver must
+ * agree too. That missing companion assertion is precisely why this shipped.
+ * If you ever DO unify them, update those pins in the same change.
  */
 
 import fs from 'node:fs/promises';

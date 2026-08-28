@@ -1,12 +1,12 @@
 ---
 name: my-curator
 description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and handles Shared Brain mirrors correctly (read-only locally; contributions go through the user's personal opted-in domain + Sync-tab Push). Always calls list_domains and get_index before composing any write.
-allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue
+allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__get_working_state mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue mcp__my-curator__save_working_state
 ---
 
 # My Curator — second brain playbook
 
-This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 18 tools — 11 for reading the wiki, and 7 in the health/authoring group, of which 4 actually mutate it (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`). This playbook tells you how to use them well, in the order that produces the best results.
+This skill is the canonical playbook for working with the user's **My Curator** second brain through the **my-curator MCP**. The MCP exposes 20 tools — 12 for reading (the wiki graph plus your own prior working state), and 8 in the health/authoring group, of which 5 actually mutate something (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`). This playbook tells you how to use them well, in the order that produces the best results.
 
 ## §1 — What the second brain is
 
@@ -58,9 +58,9 @@ Before you do anything, know which domain you're working in.
 
 Some domains in `list_domains` may be **Shared Brain mirrors** — named like `shared-<slug>` (e.g. `shared-cohort`, `shared-team`). These are local read-only copies of a collective wiki the user contributes to as part of a cohort, team, or research group (see [`docs/shared-brain-user-guide.md`](../../docs/shared-brain-user-guide.md) for the user-facing model).
 
-**Reading a mirror is unrestricted.** All eleven read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `get_raw_source`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
+**Reading a mirror is unrestricted.** All twelve read tools work normally on `shared-*` domains — `get_node`, `get_index`, `search_wiki`, `search_cross_domain`, `get_graph_overview`, `get_connected_nodes`, `get_backlinks`, `get_tags`, `get_summary`, `get_raw_source`, `get_working_state`, `list_domains`. This is where the cohort use cases get powerful: you can be asked *"across our shared brain, which papers contradict each other on X?"* and you answer by traversing the collective wiki.
 
-**Writing to a mirror is refused.** All four *mutating* tools — `compile_to_wiki`, `fix_wiki_issue` (which is also where the `scan_semantic_duplicates` merge is applied, as `type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue` — check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
+**Writing to a mirror is refused.** All five *mutating* tools — `compile_to_wiki`, `fix_wiki_issue` (which is also where the `scan_semantic_duplicates` merge is applied, as `type=semanticDupe`), `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state` — check the target domain's `CLAUDE.md` frontmatter for `readonly: true`. If true, they refuse with this exact error:
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
 
@@ -364,6 +364,7 @@ Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the u
 | `get_backlinks` | Incoming-link list | "Every source that mentions X" | Yes |
 | `get_summary` | Pull a summary page | When user references a specific source | Yes |
 | `get_raw_source` | Pull the original document a summary was built from — verbatim text, never binary | Escalation only — exact quotes/figures. See §4.1 | Yes (usually reports the file isn't on this machine, since raw sources never sync) |
+| `get_working_state` | Resume a previous session's handoff (brief, decisions, next steps, journal) | "carry on", "where did we leave off" — call first, before re-reading code | Yes (read-only) |
 | `compile_to_wiki` | Save findings as wiki pages | THE write tool — follow §5 | **No — refused.** Redirect to personal opted-in domain per §3.3 |
 | `scan_wiki_health` | Find structural issues | "Check my wiki" | Yes (read-only scan) |
 | `fix_wiki_issue` | Apply ONE Health fix | After scan, per issue | **No — refused.** Fixes don't propagate from mirrors |
@@ -371,6 +372,17 @@ Persistent dismissals: `dismiss_wiki_issue` writes to a file synced across the u
 | `get_health_dismissed` | List previously dismissed | "What have I skipped?" | Yes (read-only) |
 | `dismiss_wiki_issue` | Permanently skip an issue | When user says "leave alone" | **No — refused** on mirrors |
 | `undismiss_wiki_issue` | Restore a dismissal | When user changes their mind | **No — refused** on mirrors |
+| `save_working_state` | Write this session's handoff for the next session to resume | Save early and often — after a decision settles, a trap is found, or a step completes | **No — refused.** Writes `domains/<project>/state/`, not the wiki, but the same mirror guard applies |
+
+> **The two working-state tools have their own playbook.** This skill covers the WIKI —
+> what knowledge to write and how to ground it. Carrying build state between sessions is a
+> different discipline (when to save, what a handoff must contain, the writing standard) and
+> lives in the `curator-continuity` skill. Install both if you code with the Curator; this
+> skill alone is enough to call the tools, but not to use them well.
+>
+> The boundary that matters: a failure whose value is the PATTERN across incidents is
+> KNOWLEDGE — compile it to a wiki page here, where it compounds and is graphed. Only the
+> recent, scope-local tail belongs in working state, where the next save overwrites it.
 
 ## §8 — Quality rules (the don'ts)
 
@@ -419,7 +431,7 @@ For sample dialogues that show end-to-end flows for each scenario, see [examples
 
 **This skill targets Curator v3.0.0-beta.1 and later.** If you're working with The Curator, the following features are covered by this version of the skill:
 
-- The 18 MCP tools (11 read + 7 write, list in §7)
+- The 20 MCP tools (12 read + 8 in the write group, of which 5 mutate — list in §7)
 - `get_raw_source` and the compiled-first/verbatim-on-escalation rule (§4.1) — requires Curator v3.5.0 or later; on an earlier version this tool simply won't be in the list, and every other reading pattern in §4 still works
 - Shared Brain mirror domains (`shared-*`) — §3.1 read/write contract, §3.2 indirect-write model, §3.3 dialogue scripts
 - Health on mirrors — scan allowed, fix refused (§6)

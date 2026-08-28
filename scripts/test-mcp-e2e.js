@@ -30,7 +30,7 @@
  *
  * WHY OFFLINE, NOT LIVE
  * ─────────────────────
- * 17 of the 18 tools make no LLM call, so this needs no credentials. OFFLINE
+ * 19 of the 20 tools make no LLM call, so this needs no credentials. OFFLINE
  * gates every push AND every fork PR; the LIVE job runs only on push-to-main.
  * Gating the MCP contract on the weaker of the two would be a downgrade.
  * Precedent for an OFFLINE suite that spawns a child: test-mcp-setup-contract,
@@ -274,8 +274,8 @@ ok(JSON.stringify(wireNames) === JSON.stringify(srcNames),
   'tools/list NAME SET === the `tools` array in mcp/tools/index.js (catches add/remove/rename; a count would not)');
 // The count is a separate, weaker check kept only because CLAUDE.md and the
 // /next wizard both quote a number at users; if it moves, those must move too.
-ok(srcNames.length === 18,
-  `registry holds 18 tools (got ${srcNames.length}) — if this moves, CLAUDE.md and the /next MCP wizard copy must move with it`);
+ok(srcNames.length === 20,
+  `registry holds 20 tools (got ${srcNames.length}) — if this moves, CLAUDE.md and the /next MCP wizard copy must move with it`);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('§3  Every read tool answers over the wire');
@@ -440,7 +440,7 @@ ok(!asJson(smallOv)?._truncated,
   'a small domain enumerated with bodies is NOT trimmed (the guard is a cap, not a blanket)');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('§8  READ-ONLY MIRROR — the four mutating tools refuse, over the wire');
+section('§8  READ-ONLY MIRROR — all five mutating tools refuse, over the wire');
 // test-sharedbrain-mcp-guard.js covers refuseIfReadonly IN-PROCESS. This
 // exercises the same contract through the transport, which is also what pulls
 // src/brain/files.js and health.js onto the executed import graph — so §0's
@@ -454,7 +454,24 @@ const MUTATORS = [
   ['fix_wiki_issue',       { domain: MIRROR, type: 'folderPrefixLinks', issue: { file: 'entities/mirror-page.md', link: 'alpha' } }],
   ['dismiss_wiki_issue',   { domain: MIRROR, type: 'orphans', issue: { slug: 'mirror-page' } }],
   ['undismiss_wiki_issue', { domain: MIRROR, type: 'orphans', issue: { slug: 'mirror-page' } }],
+  // v3.17.0's mutator. Added because this array was the ONLY place the
+  // over-the-wire mirror refusal is exercised, and a new mutating tool that
+  // is simply absent from a hand-listed array is the guard-goes-blind shape
+  // this repo keeps re-hitting — the count says four, the truth is five, and
+  // nothing goes red. `headline` is required by the tool, but the readonly
+  // refusal fires BEFORE argument validation, which is exactly why the
+  // comment above about `summary_content` matters: supply a VALID payload so
+  // this proves the refusal, not an argument error wearing its clothes.
+  ['save_working_state',   { project: MIRROR, scope: 'e2e', headline: 'E2E probe' }],
 ];
+// NOT ENFORCED HERE, measured rather than assumed: this loop proves the tool
+// REFUSES, not WHICH layer refused. Removing mcp/tools/working-state.js's
+// refuseIfReadonly entirely (0 call sites) leaves every assertion below GREEN,
+// because src/brain/working-state.js refuses mirrors too and its message also
+// matches /read-only Shared Brain mirror/ — only the wording differs
+// ("Domain 'x' is..." from the MCP layer vs '"x" is...' from the store).
+// The MCP-layer guard is pinned by WHICH guard answered in
+// scripts/test-mcp-working-state.js; do not read this section as covering it.
 for (const [name, args] of MUTATORS) {
   const f = await callTool(name, args);
   const text = rawText(f);

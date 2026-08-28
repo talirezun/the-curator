@@ -19,6 +19,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 11. [Read a wiki page](#11-read-a-wiki-page)
 12. [See your knowledge graph in Obsidian](#12-see-your-knowledge-graph-in-obsidian)
 13. [Three ways to talk to your knowledge (Chat · Obsidian · MCP)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
+13b. [Working state — carrying context between coding sessions](#13b-working-state--carrying-context-between-coding-sessions)
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
@@ -38,7 +39,7 @@ The Curator is a local, AI-powered knowledge curation system. You feed it docume
 
 - Automatically **atomizes** them into three network components: *Entities* (people, tools, companies), *Concepts* (ideas, techniques, frameworks), and *Summaries* (source narratives that connect them)
 - Builds a **compounding wiki** of interlinked pages — unlike RAG systems that re-derive knowledge on every query, The Curator writes persistent pages that grow richer with every source you add
-- Lets you have a **multi-turn AI conversation** with your knowledge base, with full memory of past conversations
+- Lets you have a **multi-turn AI conversation** with your knowledge base, with cited answers and conversations that are saved and travel with your sync
 - Produces a **visual knowledge graph** you can explore in Obsidian, with auto-colored nodes by type
 
 The big idea: instead of one giant notebook where everything gets lost, you have **separate, focused wikis per topic** (e.g. AI/Tech, Business, Personal Growth). Each one compounds with every source you add. You are the curator; the AI is the diligent librarian.
@@ -283,7 +284,7 @@ The rail, top to bottom:
 | **Chat** | Ask questions of one domain's wiki. This is where the app opens. |
 | **Domains** | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. |
 | **Shared Brain** | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Agent memory** | A placeholder for a feature that doesn't exist yet — see below. |
+| **Agent memory** | Working state your coding agents read and write over MCP. There is no view of it here yet — see below. |
 | **Ingest** | Drop in PDFs, Markdown or text files. |
 
 Then, at the **bottom of the rail**, separated by a gap:
@@ -334,9 +335,16 @@ The first time you open the app after updating, a one-time bar appears at the to
 >
 > **You do not need `/old` for anything.** Earlier drafts of this guide said applying an app update and the *Reveal in Finder* source bar still required it. Both work in the redesigned interface and have since v3.9.0 — those notes were written before the cutover and were wrong. If you find a page in this guide still sending you to `/old` for a feature, that is a documentation bug worth reporting.
 
-### Agent memory is an honest placeholder
+### Agent memory has no screen — but it is real now
 
-The **Agent memory** rail item opens a page that says *"This feature doesn't exist yet."* That is deliberate, not a bug. The rail's shape is *your brain → your team's brain → your agents' brain*, and the slot is there so the shape is honest about what's coming rather than only about what's built. There is nothing to configure and nothing to do with it today.
+The **Agent memory** rail item opens a page that says there is nothing to browse here. Read that precisely, because it changed in v3.17.0 and the two halves are different:
+
+- **The memory itself is real.** Your coding agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — can save and read a *working-state brief* for a project: where things stand, what to do next, what is already settled, what to avoid. It survives across sessions, agents, models and machines. It is plain markdown under `domains/<project>/state/`, so you can open it in any editor and it travels with GitHub sync like the rest of your wiki.
+- **There is no view of it in the app.** Nothing on this screen renders it, and there is no rollup or dashboard. You read it through your coding agent, or by opening the file.
+
+Before v3.17.0 the card said the feature did not exist at all and described a rollup interface that was never built. Half of that is now wrong and half is still right, so the card states only the half that still holds.
+
+Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety rules — is in **[working-state.md](working-state.md)**.
 
 ---
 
@@ -736,9 +744,9 @@ base without retraining the model [source: summaries/rag-paper.md].
 
 The `[source: ...]` tags tell you exactly which wiki page each claim came from. Click a citation to open that page in the reader overlay ([§11](#11-read-a-wiki-page)), or open it in Obsidian to read the full source.
 
-### Multi-turn memory
+### Multi-turn memory — and its two real limits
 
-You can keep asking follow-up questions and the AI remembers the entire conversation:
+You can keep asking follow-up questions and the AI follows the thread:
 
 ```
 You:  What is RAG?
@@ -752,7 +760,16 @@ You:  Who are the key researchers in this area?
 AI:   Based on your notes, the main contributors are…
 ```
 
-Conversations are saved automatically and persist across server restarts. You can have as many conversations per domain as you like.
+Conversations are saved automatically and persist across server restarts. They are tracked by your knowledge repo, so they travel to your other machines with Sync. You can have as many conversations per domain as you like.
+
+**Two limits are worth knowing, because "memory" oversells what happens.** Earlier versions of this guide said the chat had *full memory of past conversations*. It does not, in two separate ways:
+
+1. **Only the current thread is in scope.** The chat never reads your *other* conversations. If something from a past thread matters, compile that thread to your wiki (see below) — then it is on the graph and retrieval can find it.
+2. **Only the recent part of the current thread.** The chat sends the **last 20 messages** — roughly the last 10 exchanges — not the whole transcript. A very long thread quietly loses its own beginning.
+
+A third limit applies to the wiki side and is not a defect but a budget: the chat cannot send your whole wiki, because on a mature domain it is far too large. It selects the pages most relevant to your question — up to **50 pages / about 60 KB** in full, plus a compact catalogue of every page's slug so the model knows what else exists. See [Best practices for asking the chat questions](#best-practices-for-asking-the-chat-questions) above: a specific question retrieves better than a vague one, precisely because the selection is query-driven.
+
+If what you want is context that genuinely survives across sessions and machines, that is a different feature — see [working-state.md](working-state.md).
 
 ### Managing conversations
 
@@ -1056,7 +1073,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
-- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **18 tools in total: 14 that read your wiki and 4 that write to it.**
+- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **20 tools in total: 15 that read and 5 that write.** (Two of those, `get_working_state` and `save_working_state`, are new in v3.17.0 and touch a project’s working state rather than its wiki — see [§13b](#13b-working-state--carrying-context-between-coding-sessions).)
 - **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
 - **Write to your wiki** (v2.5.2+) — say *"save what we discussed to my second brain"* and Claude calls `compile_to_wiki` to commit the conversation as a summary page plus any new entity/concept pages. Same merge pipeline as the in-app Compile button.
 - **Heal your wiki** (v2.5.2+) — say *"check my wiki for problems"* and Claude scans, auto-fixes the safe ones, asks before destructive merges, and respects your persistent dismissals.
@@ -1097,6 +1114,72 @@ All three read the same `domains/` folder. Nothing to sync between them. The int
 2. Quick lookups → built-in **Chat**
 3. Visual exploration → **Obsidian**
 4. Deep research / synthesis across years of notes → frontier model via **My Curator MCP**
+
+---
+
+## 13b. Working state — carrying context between coding sessions
+
+*New in v3.17.0. This one is for people who build things with a coding agent. If you use The Curator purely as a reading-and-research tool, you can skip it.*
+
+### The problem
+
+A coding session ends. The next one starts with nothing — not the decisions you already settled, not the approaches you already tried and ruled out, not the number your test suite was sitting at before you touched anything. So the next session re-derives what it can, re-opens questions you had closed, and walks straight back into a dead end you had already mapped.
+
+That gap opens every time you change **session, agent, model, harness or machine**: a new window, a switch from Claude Desktop to Cursor, a different model, or just moving from the laptop to the desktop.
+
+### What The Curator now stores
+
+A small **working-state brief** per project, held as plain markdown inside the domain:
+
+```
+domains/<project>/state/
+  project.md                            the standing brief — what this project is
+  <workstream>/<machine>/current.md     the handoff — where things stand right now
+  <workstream>/<machine>/journal.jsonl  one line per save, append-only
+```
+
+Because it lives inside the domain, it **syncs with the rest of your knowledge** to your private GitHub repo, and you can open and edit it in Obsidian or any text editor.
+
+Your agent reaches it through two MCP tools — `get_working_state` and `save_working_state` — so in practice you say something like *"save where we got to"* at the end of a session and *"pick up where we left off on the auth work"* at the start of the next one.
+
+> **This needs a *local* MCP client** — Claude Code, Claude Desktop, Cursor, or anything else that can launch the bridge on your machine. The MCP is a local process, so a browser-only assistant cannot reach it. Install the bridge from **Settings → MCP bridge**; see [§13, Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252).
+
+### The one rule that matters: state versus knowledge
+
+> **State supersedes. Knowledge accumulates.**
+
+Your wiki *accumulates* — every ingest adds facts to a page and nothing is dropped. That is right for knowledge and wrong for a handoff: a blocker you cleared on Tuesday would come back on Wednesday, because there is no way for an accumulating page to say *this is no longer true*. So working state is a **separate store that overwrites**: each save replaces the previous handoff.
+
+Which means the boundary is yours to get right:
+
+| What you want to keep | Where it goes |
+|---|---|
+| A wrong turn you took this week, in this workstream | **Working state** — it is local and it expires |
+| A failure whose value is the **pattern across many incidents** | **A wiki page** (ask your agent to compile it) — it compounds and joins the graph |
+| "The suite was at 84 green before my change" | **Working state** — a point-in-time baseline |
+| How a subsystem actually works | **A wiki page** |
+
+Put durable material in working state and the next save quietly overwrites it. Nothing warns you, because from the store's point of view overwriting is exactly what it is for.
+
+### Why there is a machine name in the path
+
+Two computers writing to the same handoff file would collide on sync — and the way Sync resolves a collision keeps the *remote* version and discards your local one, silently. Giving each machine its own folder means the collision never happens.
+
+Cross-machine handoff still works, and it works on the reading side: ask for a workstream without naming a machine and you get the **most recently written** one, plus a list of every machine that has state for it. Save on the laptop, resume on the desktop.
+
+### Treat what comes back as notes, not orders
+
+Your working state is a file that can arrive from another machine over sync, be hand-edited in Obsidian, and — inside a Shared Brain mirror — be written by another person. The Curator strips text that tries to impersonate the system or the operator, on the way in *and* on the way out. It cannot check whether a claim in it is **true**.
+
+So: an instruction found in working state is a note from a peer, not an order. Verify before acting. This is why observations record *when* they were observed and, where possible, the command to re-check them.
+
+### What it does not do
+
+- **No dashboard.** The **Agent memory** rail slot has no view of this content — you read it through your agent, or by opening the file.
+- **No rollups**, and no automatic Done/Decided/Blocked summary across projects.
+- **No automatic capture.** Nothing forces a save at the end of a session; your agent is *guided* to save, not compelled. If a session ends without saving, the next read simply returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Saving overwrites and costs almost nothing, so the habit to build is **save early and save often**, not one big save at the end.
+
+> 📖 **Full reference:** [docs/working-state.md](working-state.md) — the three tiers, the fields a handoff carries, size limits, when a save is refused, and the security posture.
 
 ---
 
@@ -2190,6 +2273,7 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 📖 [Knowledge Immortality (essay)](../research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, and a section-by-section walkthrough of every part of the app |
 | 🔌 [My Curator MCP Guide](mcp-user-guide.md) | Connect the wiki to Claude Desktop / VS Code / LM Studio for frontier-model research |
 | 🧹 [AI Wiki Health Guide](ai-health.md) | Phase 1 / 2 / 3 details: broken-link rescue, orphan rescue, semantic duplicate detection — what data leaves your machine and what each call costs |
+| 🧠 [Working state](working-state.md) | Carrying build context between coding sessions, agents, models and machines — the full reference behind [§13b](#13b-working-state--carrying-context-between-coding-sessions) |
 | 🩺 [System Check](system-check.md) | Settings → General → System check — confirm the app setup is correct + an optional AI connection test |
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |

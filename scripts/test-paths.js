@@ -355,13 +355,17 @@ try {
 const configSrc = read('src/brain/config.js');
 const iOverride = configSrc.indexOf('_domainsDirOverride');
 const iTestEnv  = configSrc.indexOf('CURATOR_TEST_DOMAINS_DIR');
+// NOT indexOf('_cliDomainsDir'): that matches the module-level DECLARATION, which sits
+// ~1800 chars ABOVE the test-env rung, so the ordering assertion below would compare the
+// wrong offset and pass for the wrong reason. Anchor on the rung statement itself.
+const iCliArg   = configSrc.indexOf('if (_cliDomainsDir) return');
 const iCfgPath  = configSrc.indexOf('cfg.domainsPath');
 const iLegacy   = configSrc.indexOf('process.env.DOMAINS_PATH');
 const iDefault  = configSrc.indexOf('return getDefaultDomainsDir();');
-ok(iOverride > -1 && iTestEnv > -1 && iCfgPath > -1 && iLegacy > -1 && iDefault > -1,
-  'getDomainsDir still contains all five precedence rungs');
-ok(iOverride < iTestEnv && iTestEnv < iCfgPath && iCfgPath < iLegacy && iLegacy < iDefault,
-  'precedence order is unchanged: override > CURATOR_TEST_DOMAINS_DIR > config > DOMAINS_PATH > default');
+ok(iOverride > -1 && iTestEnv > -1 && iCliArg > -1 && iCfgPath > -1 && iLegacy > -1 && iDefault > -1,
+  'getDomainsDir still contains all six precedence rungs');
+ok(iOverride < iTestEnv && iTestEnv < iCliArg && iCliArg < iCfgPath && iCfgPath < iLegacy && iLegacy < iDefault,
+  'precedence order is unchanged: override > CURATOR_TEST_DOMAINS_DIR > CLI --domains-path > config > DOMAINS_PATH > default');
 ok(/return getDefaultDomainsDir\(\);/.test(configSrc),
   'config.js takes its default domains dir from paths.js');
 

@@ -25,6 +25,7 @@ Compared to alternatives:
 | Wiki pages (`wiki/`) | Yes | This is your knowledge — the whole point |
 | Chat conversations (`conversations/`) | Yes | So you can continue threads on any machine |
 | Domain schemas (`CLAUDE.md`) | Yes | So the AI behaves consistently everywhere |
+| Working state (`state/`) | Yes | Deliberate, not an oversight — the whole point of a session handoff is that it follows you to your next machine, harness, or model. See below for the one thing to know about how it stays safe from a silent overwrite |
 | Raw source files (`raw/`) | No | These can be large; re-ingest from the original file if needed. A per-domain manifest of what was ingested (filename, size, ingest date) DOES sync inside `wiki/`, so on a second machine a summary page can still tell you what its source was called and when it arrived, even though the file itself isn't there — see the reader overlay's "Reveal in Finder" bar or [mcp-user-guide.md](mcp-user-guide.md)'s `get_raw_source` section |
 | AI provider API keys (`.curator-config.json`, or `.env` if you use the developer fallback) | No | Never synced — they stay on each machine only, for every provider. Add your key again on each computer |
 | App code (`src/`, `package.json`, etc.) | No | The app is installed separately on each computer |
@@ -37,6 +38,16 @@ Compared to alternatives:
 | Obsidian leftovers (`*.base`, `Untitled.md`, `Untitled 1.md`) | No | Empty stub notes Obsidian auto-creates when a wikilink resolves to nothing or the vault root is pointed at the wrong folder (v3.5.1) |
 
 > The authoritative list is `DOMAINS_GITIGNORE_RULES` in [`src/brain/sync.js`](../src/brain/sync.js). The app rewrites `domains/.gitignore` from it on every push and pull, so an install configured before a rule was added picks it up automatically.
+
+### Working state and why its path has a machine name in it
+
+Sync resolves any conflicting hunk with `git pull --no-rebase -X theirs` — on a genuine content conflict it keeps the incoming (origin) version and discards your local edit **silently**: no conflict markers, no warning, nothing to resolve by hand. That's fine for a wiki page, where the usual failure is two machines editing the *same* page, which is rare. It would be a real problem for working state, whose entire job is to be overwritten on every save — if two machines both wrote a handoff to the same file between syncs, one machine's session context would vanish without a trace.
+
+That's why the handoff and its journal live at `state/<scope>/<machine>/current.md` — a real path segment for the machine, not decoration. Two machines never write the same file, so there's never a conflicting hunk to silently resolve away, and each machine's handoff survives independently.
+
+**The one exception:** `state/project.md`, the standing project brief, has *no* machine segment — one file per project, because the brief belongs to the project rather than to any one machine. Edit it from two machines between syncs and you're back in the conflicting-hunk case above: the loser's edit is dropped with no warning. In practice this is a small risk (the brief changes rarely, and only one function ever writes it), but if you hand-edit it in Obsidian, sync soon after — the same advice this guide already gives for any wiki page.
+
+Because `state/` syncs, an agent saving working state adds to your pending-changes count exactly like an ingest or a chat message does. If you see the Sync badge tick up between sessions with no ingest to explain it, a saved handoff is a normal cause, not a bug — see [`working-state.md`](working-state.md) for what's actually being written.
 
 ---
 

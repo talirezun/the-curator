@@ -1,4 +1,336 @@
 /* View: Agent memory — owned by views/memory.js.
-   No view-specific rules yet — the current stub uses only shell-shared
-   classes. Add Agent-memory-specific styling (incl. the square marker
-   that distinguishes it from knowledge domains) here as it's built. */
+
+   Quiet by construction. The handoff document is the only thing at full
+   contrast; every control, stamp and disclosure sits a step back so the
+   text an agent wrote is what the eye lands on.
+
+   No hardcoded animation durations anywhere in this file: every transition
+   uses var(--t-state), which resolves through the --dur-* tokens and is
+   therefore neutralised under prefers-reduced-motion by tokens/motion.css.
+   A literal `0.16s ease` here would silently bypass that (v3.9.2). */
+
+/* ── Sidebar: project list ───────────────────────────────────────────── */
+
+.mem-row-list { display: flex; flex-direction: column; gap: 2px; }
+
+.mem-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-state);
+}
+.mem-row:hover { background: var(--surface-hover); }
+.mem-row.active { background: var(--accent-tint); }
+.mem-row:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+
+/* THE SQUARE MARKER. Domains use a round dot (.dm-row-dot, border-radius
+   50%); agent memory is a different KIND of thing and the rail puts the two
+   one above the other, so the shape carries the distinction. 2px of radius
+   keeps it from reading as a rendering artefact — it is still unmistakably
+   a square next to a circle. */
+.mem-row-mark {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--accent);
+}
+/* A project with no state at all: outlined, not filled. "Nothing here yet"
+   should look different from "something here", without being invisible. */
+.mem-row-mark-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+
+.mem-row-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.mem-row-name {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-row.active .mem-row-name { color: var(--text); }
+.mem-row-meta {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-row-quiet .mem-row-name { color: var(--text-3); }
+
+.mem-sidebar-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+}
+.mem-sidebar-foot svg { flex: none; margin-top: 1px; }
+
+.mem-error-text { color: var(--danger-text); }
+
+/* ── Main: project header ────────────────────────────────────────────── */
+
+.mem-project-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+.mem-project-mark {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 2px;                      /* square — same rule as the rows */
+  background: var(--accent);
+}
+.mem-project-name { font: var(--type-h3); color: var(--text); }
+
+.mem-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+}
+.mem-badge-quiet { background: var(--surface-inset); color: var(--text-3); border: 1px solid var(--border-subtle); }
+.mem-badge-attn  { background: var(--attention-tint); color: var(--attention-text); border: 1px solid var(--attention-text); }
+
+/* ── Controls: scope / machine ───────────────────────────────────────── */
+
+.mem-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 14px;
+}
+.mem-ctl { display: inline-flex; align-items: center; gap: 7px; }
+.mem-ctl-label {
+  font: var(--type-eyebrow);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); }
+.mem-ctl-note { font-size: var(--text-2xs); color: var(--text-faint); }
+
+.mem-select {
+  height: var(--control-sm);
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.mem-select:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+/* ── The handoff document ────────────────────────────────────────────── */
+
+.mem-doc-card {
+  padding: 18px 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  max-width: var(--prose-max);
+}
+.mem-doc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.mem-doc-stamp { font-size: var(--text-2xs); color: var(--text-faint); }
+
+/* The one-line headline the agent wrote, promoted out of the document's
+   preamble (see splitHandoffPreamble in memory.js). It is the only part of
+   that preamble that says something the controls above do not. */
+.mem-doc-headline {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  line-height: var(--leading-snug);
+  margin-bottom: 3px;
+}
+.mem-doc-who { font-size: var(--text-2xs); color: var(--text-faint); margin-bottom: 14px; }
+.mem-doc-headline:last-child, .mem-doc-who:last-child { margin-bottom: 0; }
+
+.mem-doc-empty { border-style: dashed; }
+.mem-doc-empty-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-2); margin-bottom: 5px; }
+.mem-doc-empty-body { font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+
+/* A quiet, non-alarming note. Truncation and read-side sanitisation are
+   facts worth stating, not failures worth shouting about. */
+.mem-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-inset);
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.mem-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+
+/* Rendered markdown. `.chat-md-h` is emitted by shared/markdown.js (the
+   shared renderer, not chat.js's own markup) — styled here SCOPED under
+   .mem-doc so nothing leaks into or out of any other view. */
+.mem-doc { color: var(--text-2); font-size: var(--text-sm); line-height: var(--leading-relaxed); }
+.mem-doc > *:first-child { margin-top: 0; }
+.mem-doc > *:last-child { margin-bottom: 0; }
+.mem-doc p { margin: 0 0 10px; }
+.mem-doc .chat-md-h {
+  margin: 18px 0 7px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.mem-doc > .chat-md-h:first-child { margin-top: 0; }
+.mem-doc ul, .mem-doc ol { margin: 0 0 10px; padding-left: 20px; }
+.mem-doc li { margin: 0 0 4px; }
+.mem-doc strong { color: var(--text); font-weight: var(--weight-semibold); }
+.mem-doc code {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-inset);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+  color: var(--text);
+}
+.mem-doc pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  overflow-x: auto;                     /* wide code scrolls in its OWN box */
+}
+.mem-doc pre code { padding: 0; background: none; }
+/* Wikilinks arrive from shared/markdown.js as inert spans (never links —
+   a bare [[slug]] cannot be resolved to a folder without guessing). Render
+   them as what they are: a referenced page name, not a broken link. */
+.mem-doc .chat-wikilink { color: var(--text-link); }
+
+/* ── Disclosures ─────────────────────────────────────────────────────── */
+
+.mem-fold {
+  margin-top: 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  max-width: var(--prose-max);
+}
+.mem-fold-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  border-radius: var(--radius-lg);
+  transition: color var(--t-state);
+}
+.mem-fold-summary::-webkit-details-marker { display: none; }
+.mem-fold-summary:hover { color: var(--text); }
+.mem-fold-summary:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.mem-fold-summary svg { flex: none; color: var(--text-faint); transition: transform var(--t-state); }
+.mem-fold[open] > .mem-fold-summary svg { transform: rotate(90deg); }
+.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-faint); }
+.mem-fold-body { padding: 2px 16px 15px; }
+
+.mem-quiet { margin: 0 0 9px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.mem-quiet:last-child { margin-bottom: 0; }
+.mem-about-list { margin: 0 0 10px; padding-left: 18px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.mem-about-list li { margin-bottom: 5px; }
+.mem-about-list b { color: var(--text-2); font-weight: var(--weight-medium); }
+
+/* ── Journal ─────────────────────────────────────────────────────────── */
+
+.mem-j-framing { margin-bottom: 10px; font-size: var(--text-xs); }
+.mem-j-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.mem-j-row {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.mem-j-row:last-child { border-bottom: none; }
+.mem-j-when { flex: none; width: 108px; font-size: var(--text-2xs); color: var(--text-faint); padding-top: 1px; }
+.mem-j-body { flex: 1; min-width: 0; }
+.mem-j-headline { font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-snug); }
+.mem-j-meta { margin-top: 2px; font-size: var(--text-2xs); color: var(--text-faint); }
+/* NOT `--attention-text`, and the reason is the same defect one layer down.
+   The store produces THREE outcomes here — real loss, a deliberate replace,
+   and ordinary normalisation (a value filled in and disclosed) — and the
+   commonest by far is the third. `renderJournal` was fixed to say which one
+   happened, but the colour was amber for all three, so "we recorded the save
+   time because you sent none" still LOOKED like a problem. That is the label
+   bug ("N field(s) rejected by the sanitiser") surviving in the palette after
+   it was removed from the words.
+
+   It is NOT painted three ways here because it CANNOT be: `renderJournal`
+   emits one class, `.mem-j-rej`, for all three; the classification lives only
+   in the note text, and CSS cannot select on text. So this is deliberately
+   neutral rather than a guess — the loss case still says "some content was
+   dropped or truncated" in its own first clause, which is the signal a reader
+   and a keyword classifier both bucket on. Amber should come back for the
+   loss case ALONE, the moment the view emits a modifier class to carry it;
+   restoring it here without one re-warns on every normalisation.
+
+   `--text-3`, not `--text-faint`: this is a disclosure the skill instructs a
+   model to read, so it sits above the timestamp and the harness meta, not
+   level with them. */
+.mem-j-rej { margin-top: 3px; font-size: var(--text-2xs); color: var(--text-3); line-height: var(--leading-normal); }
+.mem-j-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.mem-j-more { flex: none; }
+
+/* .btn-xs is declared in sync.css/settings.css as a shared-looking utility,
+   but each view owns its own CSS file (views/README) — re-declared here so
+   an edit there can never silently change this view's button. */
+.btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
+
+.mem-inline-error {
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--danger-text);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+  max-width: var(--prose-max);
+}
+
+/* ── Narrow viewports ────────────────────────────────────────────────── */
+
+@media (max-width: 820px) {
+  /* The journal's fixed timestamp gutter is the only thing here that cannot
+     reflow — stack it above the headline instead of squeezing both. */
+  .mem-j-row { flex-direction: column; gap: 2px; }
+  .mem-j-when { width: auto; }
+  .mem-controls { gap: 8px 12px; }
+  .mem-select { max-width: 46vw; }
+}

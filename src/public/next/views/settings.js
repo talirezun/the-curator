@@ -3611,8 +3611,8 @@ function renderMcp() {
     // "seventeen tools, ten read and seven write", which was wrong on all
     // three numbers and never mentioned that Claude can WRITE at all.
     // scripts/test-next-mcp-wizard.js pins these against the real table.
-    '<p class="view-body">Exposes your graph to any MCP client — eighteen tools: fourteen that read your wiki, ' +
-    'and four that write to it (compiling a conversation into pages, and fixing health issues) without leaving ' +
+    '<p class="view-body">Exposes your graph to any MCP client — twenty tools: fifteen that read your wiki, ' +
+    'and five that write to it (compiling a conversation into pages, saving an agent\'s working state, and fixing health issues) without leaving ' +
     'Claude. Write tools refuse on <code class="mono">shared-*</code> mirrors by design. The Curator does not ' +
     'need to be running: the bridge is a separate process the client launches on demand.</p>' +
     '<div class="settings-btn-row">' +

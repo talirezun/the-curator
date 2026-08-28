@@ -37,7 +37,7 @@
  *   - Anything about the actual MCP bridge or Claude Desktop.
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -86,7 +86,7 @@ function assertStrippedSane(stripped, label, mustContain) {
 const wizCode = assertStrippedSane(stripComments(wiz), 'mcp-wizard.js',
   ["async function getJson(url, init)", "export function openMcpWizard(opts)", "role=\"dialog\""]);
 const settingsCode = assertStrippedSane(stripComments(settings), 'settings.js',
-  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "eighteen tools"]);
+  ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty tools"]);
 const wizCssCode = assertStrippedSane(stripComments(wizCss), 'mcp-wizard.css',
   [".mcpw-scrim {", "rgba(5,5,10,0.68)"]);
 
@@ -544,9 +544,17 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
   // read/write boundary the MCP itself enforces). Counted from the real
   // tool modules, with comment lines excluded so a mention in prose cannot
   // inflate it.
-  const toolFiles = ['compile.js', 'health.js', 'dismissed.js', 'domains.js', 'index-tool.js',
-    'search.js', 'nodes.js', 'connected.js', 'summary.js', 'cross.js', 'overview.js',
-    'tags.js', 'backlinks.js', 'raw-source.js'];
+  // ENUMERATED FROM DISK, never a hardcoded list. A literal list is the v3.14.0
+  // FN_NAMES shape: a NEW tool module is simply absent from it, so the count comes
+  // back LOW and the assertion keeps PASSING — the guard goes blind instead of red.
+  // That is exactly what happened when working-state.js landed: the true mutator
+  // count was 5 while this still read 4 and stayed green. The number it protects is
+  // user-facing copy that CLAUDE.md records has already been wrong twice.
+  const toolFiles = readdirSync(path.join(ROOT, 'mcp/tools'))
+    .filter((f) => f.endsWith('.js') && f !== 'index.js')
+    .sort();
+  ok(toolFiles.length >= 15,
+    `refuseIfReadonly sweep enumerates the tool dir from disk (found ${toolFiles.length} modules)`);
   let realWrite = 0;
   for (const f of toolFiles) {
     const src = readFileSync(path.join(ROOT, 'mcp/tools', f), 'utf8');
@@ -556,17 +564,21 @@ section('8. Tool counts pinned against the REAL mcp/tools/index.js (defect 7)');
     }
   }
 
-  ok(realTotal === 18, `sanity: mcp/tools/index.js registers 18 tools (got ${realTotal})`);
-  ok(realWrite === 4, `sanity: 4 tools call refuseIfReadonly (got ${realWrite})`);
+  ok(realTotal === 20, `sanity: mcp/tools/index.js registers 20 tools (got ${realTotal})`);
+  ok(realWrite === 5, `sanity: 5 tools call refuseIfReadonly (got ${realWrite})`);
 
   ok(TOOL_TOTAL === realTotal, `the wizard's TOOL_TOTAL (${TOOL_TOTAL}) matches the real table (${realTotal})`);
   ok(TOOL_WRITE === realWrite, `the wizard's TOOL_WRITE (${TOOL_WRITE}) matches the real guard count (${realWrite})`);
   ok(TOOL_READ === realTotal - realWrite, `TOOL_READ (${TOOL_READ}) is the remainder`);
 
   // The settings.js prose is spelled out in words, so it is checked in words.
-  ok(/eighteen tools/i.test(settingsCode), 'settings.js says "eighteen tools"');
-  ok(/fourteen that read/i.test(settingsCode), 'settings.js says "fourteen that read"');
-  ok(/four that write/i.test(settingsCode), 'settings.js says "four that write"');
+  // The label is DERIVED from the pattern, never typed twice. Caught here: an
+  // earlier edit changed the label to "twenty" while the regex still tested
+  // "eighteen", so the assertion reported a number it was not checking — a
+  // guard that lies about what it verified is worse than no guard.
+  for (const phrase of ['twenty tools', 'fifteen that read', 'five that write']) {
+    ok(new RegExp(phrase, 'i').test(settingsCode), `settings.js says "${phrase}"`);
+  }
   ok(!/seventeen tools/i.test(settingsCode), 'the old, wrong "seventeen tools" claim is gone');
 
   // The SHIPPING frontend states the same count in two places, and it has now

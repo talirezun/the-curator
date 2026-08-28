@@ -27,6 +27,10 @@ import { getHealthDismissedDefinition,       getHealthDismissedHandler }       f
 import { dismissWikiIssueDefinition,         dismissWikiIssueHandler }         from './dismissed.js';
 import { undismissWikiIssueDefinition,       undismissWikiIssueHandler }       from './dismissed.js';
 
+// Track 7 — portable working state. One read, one write.
+import { getWorkingStateDefinition,          getWorkingStateHandler }          from './working-state.js';
+import { saveWorkingStateDefinition,         saveWorkingStateHandler }         from './working-state.js';
+
 export const tools = [
   // ── Read tools (v2.3.0+) ────────────────────────────────────────────────────
   { definition: listDomainsDefinition,      handler: listDomainsHandler },
@@ -41,6 +45,9 @@ export const tools = [
   { definition: getSummaryDefinition,       handler: getSummaryHandler },
   // Track 7 Part II — the original document behind a summary. Read-only.
   { definition: getRawSourceDefinition,     handler: getRawSourceHandler },
+  // Track 7 — resume a previous session's work. Read-only; reads state/,
+  // never the wiki graph, so it is unaffected by graph.js's file-count cache.
+  { definition: getWorkingStateDefinition,  handler: getWorkingStateHandler },
   // ── Write tools (v2.5.2+) ───────────────────────────────────────────────────
   { definition: compileToWikiDefinition,          handler: compileToWikiHandler },
   { definition: scanWikiHealthDefinition,         handler: scanWikiHealthHandler },
@@ -49,6 +56,9 @@ export const tools = [
   { definition: getHealthDismissedDefinition,     handler: getHealthDismissedHandler },
   { definition: dismissWikiIssueDefinition,       handler: dismissWikiIssueHandler },
   { definition: undismissWikiIssueDefinition,     handler: undismissWikiIssueHandler },
+  // Track 7 — writes domains/<project>/state/, not the wiki. Carries
+  // refuseIfReadonly like every other mutator here.
+  { definition: saveWorkingStateDefinition,       handler: saveWorkingStateHandler },
 ];
 
 // Response size cap. 1 MB of JSON is ~250 000 tokens — alone it would saturate
