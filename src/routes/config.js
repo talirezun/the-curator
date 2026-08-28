@@ -23,8 +23,72 @@ import {
   endUpdate,
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
+import { wikiPath } from '../brain/files.js';
+import { stat as fsStat } from 'node:fs/promises';
+import {
+  assembleProbePrompt,
+  estimateQualification,
+  qualifyModel,
+  isCancelledError,
+  QUALIFY_DEFAULT_RUNS,
+  QUALIFY_MIN_RUNS,
+} from '../brain/openrouter-qualify.js';
 
 const execAsync = promisify(exec);
+
+// ── BOOT: re-admit the persisted OpenRouter catalogue ───────────────────────
+//
+// This module is imported by `src/server.js` during boot, so this runs once,
+// before any request is served — which is what makes "a user who syncs and then
+// restarts does not silently lose their models" true.
+//
+// IT IS NOT A TRUSTED LOAD. Every persisted spec goes back through
+// `setOpenRouterCatalogue` -> `defineOfferableModel({dynamic:true})`, the same
+// admission the network path uses, so a model that has since become
+// inadmissible is dropped rather than grandfathered, and a hand-edited file
+// cannot promote an entry into the lane that WRITES the user's wiki.
+//
+// WRAPPED, because a throw at module scope in a route file takes down every
+// route in it — the failure shape `paths.js`'s per-call resolution rule and this
+// file's own namespace-import comment both exist to avoid. A corrupt cache file
+// must cost the user a re-sync, never a boot.
+try {
+  if (typeof llmModule.restoreOpenRouterCatalogue === 'function') {
+    const r = llmModule.restoreOpenRouterCatalogue();
+    if (r && r.restored) {
+      // stderr, never stdout (v2.5.3: the MCP child reserves stdout for
+      // JSON-RPC; this file is not on that graph, but the rule is house-wide).
+      console.error(`[config] restored ${r.admitted} OpenRouter model(s) from the persisted catalogue` +
+        (r.refused ? ` (${r.refused} refused on re-admission)` : ''));
+    }
+  }
+} catch (err) {
+  console.error(`[config] could not restore the persisted OpenRouter catalogue: ${err && err.message}`);
+}
+
+// ── BOOT: re-admit the user's own model qualifications ──────────────────────
+//
+// SEPARATE try/catch from the catalogue restore above, deliberately: these are
+// two independent caches and one being corrupt must not cost the user the other.
+// A shared block would let a malformed qualifications file silently discard a
+// perfectly good 190-model catalogue.
+//
+// The same "not a trusted load" posture applies — `restoreLocalQualifications`
+// drops any record that is not structurally sound, and a record only ever grants
+// the build lane through `isLocallyQualified`, which re-checks live that the
+// model is still offerable, still chat-only, and still one WE have never
+// measured. A hand-edited file cannot promote a model we found unfit.
+try {
+  if (typeof llmModule.restoreLocalQualifications === 'function') {
+    const q = llmModule.restoreLocalQualifications();
+    if (q && q.restored) {
+      console.error(`[config] restored ${q.count} local model qualification(s)` +
+        (q.dropped ? ` (${q.dropped} malformed record(s) dropped)` : ''));
+    }
+  }
+} catch (err) {
+  console.error(`[config] could not restore local model qualifications: ${err && err.message}`);
+}
 // The CODE root — package.json + the git checkout the auto-updater operates on.
 // Never user data (see src/brain/paths.js).
 const PROJECT_ROOT = APP_ROOT;
@@ -624,6 +688,54 @@ router.get('/api-keys', (_req, res) => {
       anthropic:  keys.anthropicApiKey  ? offerableFor('anthropic')  : [],
       openrouter: keys.openrouterApiKey ? offerableFor('openrouter') : [],
     },
+    // Provenance for the OpenRouter half of `offerable` above — when the live
+    // catalogue was fetched and how many entries it holds. Deliberately NOT a
+    // second catalogue surface: the models themselves stay in `offerable`, and
+    // this only answers "how fresh is that list", which the sync button needs in
+    // order to say anything truthful about its own last run. Key-gated exactly
+    // like `offerable`, and ADDITIVE — `/old` reads `models` and the
+    // `hasXKey` booleans and ignores unknown fields (the v3.12.0 precedent that
+    // added `offerable` itself).
+    openrouterCatalogue: keys.openrouterApiKey && typeof llmModule.getOpenRouterCatalogueMeta === 'function'
+      ? llmModule.getOpenRouterCatalogueMeta()
+      : null,
+    // ── THE USER'S OWN MEASUREMENTS ──────────────────────────────────────────
+    // Records produced by "Test on my wiki", keyed by model id so the picker can
+    // join them onto `offerable` without a second request.
+    //
+    // A SEPARATE FIELD, NOT A MUTATION OF `offerable`. The catalogue entries are
+    // frozen and are serialised verbatim; more importantly, a locally-qualified
+    // model must keep reporting `suitability: 'chat-only'` on the wire, so the
+    // UI can badge "you measured this" differently from "we measured this".
+    // Folding the qualification into `suitability` would collapse two different
+    // epistemic claims into one badge — the thing this whole design exists to
+    // prevent.
+    //
+    // `qualifies` is computed SERVER-SIDE from the same predicate the build-lane
+    // gate uses, rather than left for the client to re-derive from the counts. A
+    // client-side re-derivation would be a second copy of a money-relevant rule
+    // and could disagree with the server about whether a pin will be accepted —
+    // this repo's named dead-data shape, in the direction where the user sees a
+    // button that is guaranteed to 400.
+    //
+    // Key-gated exactly like `offerable`, and ADDITIVE (the `/old` shell reads
+    // `models` plus the hasXKey booleans and ignores unknown fields).
+    qualifications: keys.openrouterApiKey && typeof llmModule.listLocalQualifications === 'function'
+      ? llmModule.listLocalQualifications().map(r => ({
+          ...r,
+          // Whether this record CURRENTLY grants the build lane. Recomputed on
+          // every read, never stored, because it depends on the live catalogue:
+          // a model that has left the eligible list stops qualifying the instant
+          // it leaves, while the evidence the user paid for is kept and shown.
+          qualifies: typeof llmModule.isLocallyQualified === 'function'
+            ? llmModule.isLocallyQualified('openrouter', r.modelId)
+            : false,
+          stillOffered: typeof llmModule.isOfferableModel === 'function'
+            ? llmModule.isOfferableModel('openrouter', r.modelId)
+            : false,
+        }))
+      : [],
+    minRunsToQualify: QUALIFY_MIN_RUNS,
   });
 });
 
@@ -886,10 +998,20 @@ router.post('/api-keys/model', guardConcurrent('change the AI model'), (req, res
     // know WHICH pick was refused and that it is still usable in chat —
     // otherwise the refusal reads as the picker being broken.
     if (!clearing && !isBuildLaneAllowed(provider, model)) {
+      // The message now names the WAY OUT as well as the rule, because for an
+      // OpenRouter model there is one: measure it on your own wiki. Without that
+      // sentence the refusal reads as a dead end on the exact screen the user
+      // opened in order to change their model.
+      const canBeMeasured = provider === 'openrouter'
+        && typeof llmModule.getLocalQualification === 'function'
+        && !llmModule.getLocalQualification(model);
       return res.status(400).json({
-        error: `"${model}" is measured as chat-only, so it cannot be the model that builds your wiki ` +
-               '(ingest, Health and Compile). Pick a general-purpose model here — ' +
-               'you can still choose this one per-conversation in chat.',
+        error: `"${model}" has not been measured for building a wiki, so it cannot be the model that ` +
+               'runs ingest, Health and Compile. You can still choose it per-conversation in chat.' +
+               (canBeMeasured
+                 ? ` To use it here, run "Test on my wiki" on its row first — that measures it against ` +
+                   `your own pages ${QUALIFY_MIN_RUNS} times and reports what it actually did.`
+                 : ' Pick a general-purpose model here instead.'),
       });
     }
     const stored = setSelectedModel(provider, clearing ? '' : model);
@@ -907,6 +1029,378 @@ router.post('/api-keys/model', guardConcurrent('change the AI model'), (req, res
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── OpenRouter catalogue sync ───────────────────────────────────────────────
+
+/**
+ * POST /api/config/openrouter/sync
+ *
+ * Refresh the live OpenRouter chat catalogue: fetch the provider's public model
+ * list, run it through the eligibility filter, admit what survives, persist it,
+ * and report the funnel that explains every loss.
+ *
+ * ── THIS ROUTE IS THE MISSING JOIN, AND THAT IS THE WHOLE POINT ─────────────
+ * `fetchOpenRouterCatalogue`, `openRouterRecordToSpec` and
+ * `setOpenRouterCatalogue` all shipped fully tested with ZERO production
+ * callers, so the app offered 3 OpenRouter models out of a catalogue of
+ * hundreds. Nothing else in the tree calls the sync; if this handler is deleted
+ * the feature silently reverts to that state, which is why the suite asserts on
+ * the ROUTE and not merely on the brain function.
+ *
+ * ── guardConcurrent IS LOAD-BEARING, NOT COPIED FOR SYMMETRY ────────────────
+ * A successful sync REPLACES `_openrouterCatalogue` and REBUILDS the dynamic
+ * price and free registries wholesale. Mid-ingest that changes what
+ * `getProviderInfo` will resolve for the next call and what `chargeForItem`
+ * will price the last one at — the same reasoning that put the guard on
+ * `/api-keys/model` (a mid-run model change plans the outline on one model and
+ * writes Phase-2 batches on another) and on `/api-keys/active`.
+ *
+ * ── THE KEY GATE IS CONFIG-SCOPED, AND THE KEY IS NEVER SENT ANYWHERE ───────
+ * `getApiKeys()`, never `getEffectiveKey()` — the v3.0.13 rule: a provider the
+ * user Disconnected in Settings must not be usable, whatever lingers in `.env`.
+ * The gate exists because `offerable.openrouter` on GET /api-keys is itself
+ * key-gated, so syncing without a saved key would populate state no screen can
+ * show.
+ *
+ * The key is read for TRUTHINESS ONLY and is never passed onward: OpenRouter's
+ * `/models` endpoint is public and unauthenticated (verified live 2026-08-27),
+ * so no credential enters this code path at all. That is a stronger property
+ * than redaction — there is nothing to redact — and the suite asserts it by
+ * spying on every outbound request.
+ */
+router.post('/openrouter/sync', guardConcurrent('sync the OpenRouter model catalogue'), async (_req, res) => {
+  try {
+    const keys = getApiKeys();
+    if (!keys.openrouterApiKey) {
+      return res.status(400).json({
+        error: 'No OpenRouter key is saved in Settings — connect one before syncing the model list.',
+      });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: `Could not read your saved API keys: ${err.message}` });
+  }
+
+  if (typeof llmModule.syncOpenRouterCatalogue !== 'function') {
+    // Same degradation posture as the namespace import at the top of this file:
+    // a missing export must produce a real message, never a bare 500.
+    return res.status(500).json({
+      error: 'The OpenRouter model sync is unavailable in this build. Restart The Curator, then try again.',
+    });
+  }
+
+  try {
+    const r = await llmModule.syncOpenRouterCatalogue();
+    res.json({
+      ok: true,
+      syncedAt: r.syncedAt,
+      total: r.total,
+      eligible: r.eligible,
+      admitted: r.admitted,
+      refused: r.refused,
+      // Models the provider lists that we have already hand-measured, so the
+      // fetched copy is dropped in favour of the measured one. Reported so the
+      // arithmetic on screen adds up without calling our own defaults refused.
+      superseded: Number.isFinite(r.superseded) ? r.superseded : 0,
+      // False means "this session only" — the models work now but a restart
+      // loses them. Surfaced rather than swallowed so the UI can say so.
+      persisted: r.persisted !== false,
+      funnel: Array.isArray(r.funnel) ? r.funnel : [],
+    });
+  } catch (err) {
+    // A FAILED SYNC HAS ALREADY LEFT THE PREVIOUS CATALOGUE INTACT — nothing is
+    // replaced until fetch AND build have both succeeded — so the message says
+    // so. Without that sentence a user reads a red error beside a still-working
+    // model list and cannot tell which of the two to believe.
+    const msg = (err && err.message) ? String(err.message) : 'Unknown error';
+    const status = (err && (err.code === 'OPENROUTER_EMPTY_CATALOGUE'
+                         || err.code === 'OPENROUTER_NO_ELIGIBILITY'))
+      ? 502
+      : (Number.isInteger(err?.status) && err.status >= 400 && err.status < 600 ? 502 : 500);
+    res.status(status).json({
+      error: msg,
+      // The catalogue that is still loaded, so the UI never has to guess whether
+      // the failure cost the user their models.
+      unchanged: true,
+      ...(typeof llmModule.getOpenRouterCatalogueMeta === 'function'
+        ? { catalogue: llmModule.getOpenRouterCatalogueMeta() }
+        : {}),
+    });
+  }
+});
+
+// ── On-wiki model qualification ─────────────────────────────────────────────
+
+/**
+ * Shared preflight for both qualification routes.
+ *
+ * Every clause is a refusal the user can act on, and the ORDER is chosen so the
+ * cheapest and most likely failure is reported first.
+ *
+ * THE DOMAIN IS VALIDATED BY MEMBERSHIP, NOT BY A REGEX. `wikiPath`/`rawPath`
+ * build their paths with a bare `path.join(getDomainsDir(), domain, ...)`, so a
+ * `domain` of `../..` would escape. `listDomains()` is the same chokepoint
+ * health.js uses (`assertDomain`), and membership in a directory listing is a
+ * stronger guarantee than any pattern.
+ */
+async function preflightQualify(body) {
+  const provider = 'openrouter';
+  const modelId = body && typeof body.model === 'string' ? body.model : '';
+  const domain = body && typeof body.domain === 'string' ? body.domain : '';
+
+  if (!modelId) return { error: 'model is required.', status: 400 };
+  // `domain` is OPTIONAL and is resolved below — an earlier version required it
+  // here, which made every call from the Settings picker (which sends only a
+  // model) fail with "domain is required". Found by driving the real UI, not by
+  // reading: the two halves were each correct and disagreed about the contract.
+
+  // CONFIG-SCOPED, never getEffectiveKey/.env — the v3.0.13 rule. A provider the
+  // user Disconnected in Settings must not be usable, whatever lingers in .env,
+  // and `offerable.openrouter` is gated the same way, so a probe without a saved
+  // key would measure a model no screen can offer.
+  let keys;
+  try { keys = getApiKeys(); } catch (err) {
+    return { error: `Could not read your saved API keys: ${err.message}`, status: 500 };
+  }
+  if (!keys.openrouterApiKey) {
+    return { error: 'No OpenRouter key is saved in Settings — connect one before testing a model.', status: 400 };
+  }
+
+  // ── THE MODEL MUST BE ELIGIBLE RIGHT NOW ─────────────────────────────────
+  // Not "was in some catalogue once". A measurement of a model we do not offer
+  // could never be acted on, so taking the user's money and an hour of their
+  // time to produce one would be dishonest. Never echoes the caller's string
+  // back: this repo has a recorded log-forgery finding from doing exactly that.
+  if (!llmModule.isOfferableModel(provider, modelId)) {
+    return {
+      error: `That model is not in your current OpenRouter model list. Sync the list in Settings, then try again.`,
+      status: 400,
+    };
+  }
+
+  // Measuring a model we have ALREADY hand-measured, or one already in the build
+  // lane, is spending for nothing — our verdict governs either way (see
+  // isLocallyQualified). Refuse rather than let it run and then quietly not count.
+  if (llmModule.isBuildLaneModel(provider, modelId)
+      && typeof llmModule.isLocallyQualified === 'function'
+      && !llmModule.isLocallyQualified(provider, modelId)) {
+    return {
+      error: `"${modelId}" is already measured for building your wiki — there is nothing to test.`,
+      status: 400,
+    };
+  }
+
+  let domains;
+  try { domains = await listDomains(); } catch (err) {
+    return { error: `Could not read your domains: ${err.message}`, status: 500 };
+  }
+  if (!domains.length) {
+    return { error: 'You have no domains yet, so there is no wiki to measure a model against.', status: 400 };
+  }
+
+  // ── THE DOMAIN IS OPTIONAL, AND THE DEFAULT IS THE BIGGEST WIKI ──────────
+  // A measurement is only worth what its prompt is worth, and the prompt is
+  // ~99% the user's own index and slug inventory. Measuring against a nearly
+  // empty domain produces exactly the toy probe `docs/model-lifecycle.md`
+  // forbids. So when the caller does not name one we pick the domain with the
+  // LARGEST index.md — the cheapest available proxy for "most realistic
+  // prompt", one stat() per domain rather than a full assembly each.
+  //
+  // Deliberately NOT `getDefaultDomain()`: that setting means "which domain do
+  // MCP write tools assume", which is a different question and is frequently a
+  // small scratch domain.
+  const chosen = domain || await largestDomainByIndex(domains);
+  if (!domains.includes(chosen)) {
+    return { error: 'Unknown domain.', status: 404 };
+  }
+
+  return { provider, modelId, domain: chosen, apiKey: keys.openrouterApiKey };
+}
+
+/**
+ * The domain whose index.md is largest. Ties break by name so two calls agree.
+ * An unreadable domain counts as 0 rather than failing the request — one bad
+ * folder must not make the feature unreachable.
+ */
+async function largestDomainByIndex(domains) {
+  let best = domains[0];
+  let bestSize = -1;
+  for (const d of domains) {
+    let size = 0;
+    try { size = (await fsStat(path.join(wikiPath(d), 'index.md'))).size; } catch { size = 0; }
+    if (size > bestSize || (size === bestSize && d.localeCompare(best) < 0)) { best = d; bestSize = size; }
+  }
+  return best;
+}
+
+/**
+ * Turn a prompt-assembly failure into a message the user can act on.
+ *
+ * `QUALIFY_NO_SOURCE` and `QUALIFY_DOMAIN_TOO_THIN` are REFUSALS BY DESIGN, not
+ * errors: they are how the module keeps its central promise that the probe uses
+ * a REAL prompt. Both already carry a full explanation, so they pass through
+ * verbatim at 400. Anything else is a genuine failure and gets a 500.
+ */
+function qualifyPromptStatus(err) {
+  return (err && (err.code === 'QUALIFY_NO_SOURCE' || err.code === 'QUALIFY_DOMAIN_TOO_THIN')) ? 400 : 500;
+}
+
+/**
+ * GET /api/config/openrouter/qualify/estimate?model=<id>&domain=<name>
+ *
+ * FREE. No network, no LLM, no spend — it assembles the real prompt from the
+ * user's own wiki (read-only) and reports what a run would cost in TIME and in
+ * MONEY. This is the app's established confirm-before-spend pattern (Health
+ * scans and the ingest queue both do it) and it is more load-bearing here than
+ * in either, because the cost that hurts is measured in minutes.
+ *
+ * NOT guarded by guardConcurrent, deliberately: it is a read-only estimate, and
+ * refusing it mid-ingest would deny the user the one screen that tells them what
+ * a run would cost — the same reasoning `/api-keys/validate` is exempted on.
+ */
+router.get('/openrouter/qualify/estimate', async (req, res) => {
+  const pre = await preflightQualify({ model: req.query.model, domain: req.query.domain });
+  if (pre.error) return res.status(pre.status).json({ error: pre.error });
+
+  let prompt;
+  try {
+    prompt = await assembleProbePrompt(pre.domain);
+  } catch (err) {
+    return res.status(qualifyPromptStatus(err)).json({ error: err.message, code: err.code || null });
+  }
+
+  const runs = QUALIFY_DEFAULT_RUNS;
+  // ── FREE AND UNPRICED ARE ASKED SEPARATELY, AND IN THIS ORDER ────────────
+  // `getModelPrice` returns null for a FREE model BY DESIGN, so reading price
+  // first would report every free model as "cost unknown" — which is the exact
+  // defect v3.15.0 found on Health's spend button, where the one model whose
+  // cost is known exactly was the one labelled unknown.
+  const isFree = typeof llmModule.isFreeModel === 'function'
+    ? llmModule.isFreeModel(pre.modelId) : false;
+  const price = (!isFree && typeof llmModule.getModelPrice === 'function')
+    ? llmModule.getModelPrice(pre.modelId) : null;
+
+  const estimate = estimateQualification({ prompt, runs, modelId: pre.modelId, isFree, price });
+  res.json({
+    ok: true,
+    ...estimate,
+    domain: pre.domain,
+    sourceName: prompt.sourceName,
+    indexChars: prompt.indexChars,
+    entityCount: prompt.entityCount,
+    conceptCount: prompt.conceptCount,
+    // The record this run would REPLACE, if any — so the confirm can say "you
+    // already measured this on 28 Aug" rather than letting a user pay twice.
+    existing: typeof llmModule.getLocalQualification === 'function'
+      ? llmModule.getLocalQualification(pre.modelId)
+      : null,
+  });
+});
+
+/**
+ * POST /api/config/openrouter/qualify   (SSE: start | run | done | error)
+ *
+ * Measure one model against the user's own wiki and store the result.
+ *
+ * ── guardConcurrent IS LOAD-BEARING ─────────────────────────────────────────
+ * A completed run can promote a model into the BUILD LANE, which changes what
+ * `resolveProviderDefault` returns for every subsequent ingest, Health scan and
+ * Compile call. That is the same hazard `/api-keys/model` is guarded for — a
+ * mid-run change plans an outline on one model and writes Phase-2 batches on
+ * another — reached through a different door. It also spends the user's key
+ * concurrently with whatever is already spending it.
+ *
+ * ── IT DOES *NOT* registerWrite, AND THAT IS DELIBERATE ────────────────────
+ * The probe writes NO wiki page: it assembles a prompt read-only and calls a
+ * model. Registering it would hold the process-wide write gate for up to an
+ * hour, blocking Sync, Update and Delete — a far worse outcome than the risk it
+ * would remove. The accepted consequence is named rather than hidden: a user who
+ * starts an ingest during a probe may 429 it, and a 429 is recorded as
+ * NOT_MEASURED, which is neither a defect nor a pass.
+ *
+ * ── CANCELLATION IS A FEATURE, NOT A NICETY ────────────────────────────────
+ * Measured per-call latency ranges from 38 s to 382 s, so nine runs is anywhere
+ * from ~6 minutes to ~57. A user who cannot abort a run they started by accident
+ * will kill the server instead, and this app has a documented history of a stuck
+ * operation reading as "my click didn't register". Closing the SSE connection
+ * aborts the in-flight call and settles the run as CANCELLED — which is stored
+ * as its own outcome and NEVER as a model defect.
+ */
+router.post('/openrouter/qualify', guardConcurrent('test a model on your wiki'), async (req, res) => {
+  const pre = await preflightQualify(req.body || {});
+  if (pre.error) return res.status(pre.status).json({ error: pre.error });
+
+  const runs = Number.isFinite(Number(req.body && req.body.runs))
+    ? Math.max(1, Math.min(QUALIFY_DEFAULT_RUNS, Math.trunc(Number(req.body.runs))))
+    : QUALIFY_DEFAULT_RUNS;
+
+  let prompt;
+  try {
+    prompt = await assembleProbePrompt(pre.domain);
+  } catch (err) {
+    return res.status(qualifyPromptStatus(err)).json({ error: err.message, code: err.code || null });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => {
+    res.write(`event: ${event.type}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  // The client hanging up IS the cancel. There is no separate cancel endpoint,
+  // and that is the simpler contract: the connection carrying the progress is
+  // the connection that owns the run, so there is no id to get wrong and no way
+  // for a cancel to land on somebody else's run.
+  const controller = new AbortController();
+  let clientGone = false;
+  req.on('close', () => { clientGone = true; controller.abort(); });
+
+  try {
+    const { record } = await qualifyModel({
+      modelId: pre.modelId,
+      domain: pre.domain,
+      apiKey: pre.apiKey,
+      runs,
+      prompt,
+      signal: controller.signal,
+      onProgress: send,
+    });
+
+    // ── A CANCELLED RUN IS NOT STORED ───────────────────────────────────────
+    // It measured nothing conclusive, and persisting it would overwrite a real
+    // earlier measurement with a stub — losing evidence the user already paid
+    // for, to record that they changed their mind.
+    let stored = null;
+    if (!record.cancelled) {
+      stored = typeof llmModule.recordLocalQualification === 'function'
+        ? llmModule.recordLocalQualification(record)
+        : { stored: false, reason: 'unavailable in this build' };
+    }
+
+    if (!clientGone) {
+      send({
+        type: 'stored',
+        record,
+        stored,
+        // Recomputed through the REAL gate rather than re-derived from the
+        // counts here: one definition of "may this build", read by the UI and by
+        // the pin route alike, so the button the user sees next cannot disagree
+        // with the server about whether it will be accepted.
+        qualifies: typeof llmModule.isLocallyQualified === 'function'
+          ? llmModule.isLocallyQualified(pre.provider, pre.modelId)
+          : false,
+      });
+    }
+  } catch (err) {
+    if (!clientGone && !isCancelledError(err)) {
+      send({ type: 'error', error: (err && err.message) || 'Unknown error', code: (err && err.code) || null });
+    }
+  } finally {
+    res.end();
   }
 });
 

@@ -1551,7 +1551,25 @@ Returns masked API key status, the active provider, and the model-picker catalog
     ],
     "anthropic": [],
     "openrouter": []
-  }
+  },
+  "openrouterCatalogue": { "syncedAt": "2026-08-28T09:14:02.117Z", "source": "network", "count": 189 },
+  "qualifications": [
+    {
+      "modelId": "moonshotai/kimi-k2.6",
+      "domain": "articles",
+      "measuredAt": "2026-08-28T10:31:44.902Z",
+      "sourceName": "the-energy-and-water-footprint.pdf",
+      "runsCompleted": 9,
+      "counts": { "raw": 9, "repaired": 0, "unrepairable": 0, "unusable": 0, "notMeasured": 0, "failed": 0 },
+      "pages": { "median": 25, "min": 18, "max": 33, "n": 9 },
+      "latencyMs": { "mean": 41200, "min": 33100, "max": 58800, "n": 9 },
+      "spendUsd": 0.005, "spendComplete": true, "spendIsLowerBound": false,
+      "outcome": "NO_DEFECT_FOUND",
+      "qualifies": true,
+      "stillOffered": true
+    }
+  ],
+  "minRunsToQualify": 9
 }
 ```
 
@@ -1600,6 +1618,11 @@ Returns masked API key status, the active provider, and the model-picker catalog
   Settings key** reports `offerable.<provider>: []`, even if `.env` has a key for it — a
   Disconnected provider must not appear pickable. `offerable.<provider>` is always an array
   (possibly empty); the endpoint never throws or omits the field if a provider has no entries.
+  - **`offerable.openrouter` grows after a catalogue sync.** It holds the three hand-measured entries
+    until [`POST /api/config/openrouter/sync`](#post-apiconfigopenroutersync) has run, and those plus
+    every admitted catalogue entry afterwards (189 on one measured run). Every fetched entry is
+    `suitability: "chat-only"` with `jsonRaw: null` — *never measured here* — and the merged array is
+    re-sorted cheapest-first, because concatenating two ordered lists does not produce an ordered one.
   - `id` / `label` — model id and a short display label.
   - `input` / `output` — current USD price per 1M tokens (reflects an active promotion if any).
   - `standardInput` / `standardOutput` — the price once any promotion ends (equal to `input`/
@@ -1621,6 +1644,31 @@ Returns masked API key status, the active provider, and the model-picker catalog
 Every provider key in these three maps (`models`, `selectedModels`, `offerable`) is present for
 each provider the app knows how to talk to. Adding a provider **appends** a key; it never
 re-orders or removes one.
+
+- `openrouterCatalogue` — provenance for the OpenRouter half of `offerable`: `{syncedAt, source,
+  count}`, or `null`. **Additive** (`/old` reads `models` and the `hasXKey` booleans and ignores
+  unknown fields). Key-gated exactly like `offerable`, so it is `null` without a saved OpenRouter
+  key. `source` is `"network"` after a sync in this process, `"disk"` after a boot restore, and
+  `null` when nothing has been loaded; `syncedAt` may be `null` on a restore from a file written
+  without one. It answers *how fresh is that list* and nothing else — the models themselves stay in
+  `offerable`. See [POST /api/config/openrouter/sync](#post-apiconfigopenroutersync).
+
+- `qualifications` — the user's **own** measurements (the record shown above is illustrative), from
+  [POST /api/config/openrouter/qualify](#post-apiconfigopenrouterqualify), keyed by model id so the
+  picker can join them onto `offerable` without a second request. **A separate field, never a
+  mutation of `offerable`**: a locally-qualified model keeps reporting `suitability: "chat-only"` on
+  the wire, so a UI can badge *you measured this* apart from *we measured this*. Folding it into
+  `suitability` would collapse two different epistemic claims into one badge.
+  - `qualifies` — whether this record **currently** grants the build lane. Computed **server-side**
+    from the same predicate the pin route enforces, and recomputed on every read rather than stored,
+    because it depends on the live catalogue: a model that leaves the eligible list stops qualifying
+    the instant it leaves. A client-side re-derivation from the counts would be a second copy of a
+    money-relevant rule and could offer a button guaranteed to `400`.
+  - `stillOffered` — whether the id is still in the catalogue. A record whose model has gone is
+    **kept and shown as void**, not deleted: the measurement cost real money and up to an hour.
+  - Key-gated exactly like `offerable` (`[]` without a saved OpenRouter key) and **additive**.
+- `minRunsToQualify` — the floor for promotion (**9**). Fewer completed runs are measured and stored
+  honestly, with the run count, and qualify nothing.
 
 ## POST /api/config/api-keys
 
@@ -1723,7 +1771,8 @@ Refuses with `400`:
 | `model` present but not a string | — |
 | The provider has no key **saved in Settings** | Config-scoped (`getApiKeys()`), never `.env`. Both ends of the contract agree — you can only store a selection for a provider you have connected, and it is only honoured while that key stays connected, so a Disconnect cannot leave a live orphaned selection. |
 | The model is not in that provider's catalogue | The refusal deliberately **does not echo the submitted string** — this repo has a recorded log-forgery finding from echoing an attacker-controlled value into a user-facing message. |
-| The model is measured **`chat-only`** | Refused as a build model, naming the model and stating that it remains selectable per-conversation in chat. Safe to name here because this branch is only reached after the id has been confirmed to be one of our own catalogue ids. |
+| The model is not allowed in the build lane | Refused as a build model, naming the model and stating that it remains selectable per-conversation in chat. Safe to name here because this branch is only reached after the id has been confirmed to be one of our own catalogue ids. For an OpenRouter model with **no** local record, the message also names the way out — measure it on your own wiki — because without that sentence the refusal reads as a dead end on the exact screen the user opened in order to change their model. |
+| — | The gate is `isBuildLaneModel`, which has **two** independent clauses: hand-measured (`suitability !== 'chat-only'`) **or** [locally qualified](#post-apiconfigopenrouterqualify). So a `chat-only` model the user has measured on their own wiki is accepted here, and one they have not is refused. |
 
 Also returns **`409`** while any write is in progress (`guardConcurrent`). That is not symmetry with
 its `/active` sibling — the stored selection is consulted **fresh on every LLM call**, and a
@@ -1735,6 +1784,211 @@ and make the queue's per-item spend arithmetic wrong.
 Write-time validation exists to give the user an actionable `400`. It is deliberately **not** the
 only gate: the model layer re-checks on read, because a stored id can stop being offerable — or be
 re-classified `chat-only` — *after* it was validly written.
+
+## POST /api/config/openrouter/sync
+
+Refresh the live OpenRouter **chat** catalogue: fetch the provider's public model list, run it
+through the eligibility filter, admit what survives, persist it, and report the funnel that explains
+every loss. No body.
+
+This is the only route that populates the chat-lane overlay. Until it is called, an OpenRouter user
+is offered the three hand-measured models and nothing else.
+
+**Requires an OpenRouter key saved in Settings.** The gate is config-scoped (`getApiKeys()`, never
+`getEffectiveKey()`), so a key that exists only in `.env` does not satisfy it — the v3.0.13 rule.
+The key is read for **truthiness only and is never sent anywhere**: OpenRouter's `/models` endpoint
+is public and unauthenticated, so no credential enters this code path at all.
+
+**Carries `guardConcurrent`**, so it returns **409** while any write is running (an ingest, a Wiki
+Health fix, a compile). That refusal is correct rather than defensive: a successful sync replaces the
+catalogue and rebuilds the dynamic price and free registries, which mid-run changes what
+`getProviderInfo` resolves for the next call and what the batch queue prices the last one at.
+
+### Success — 200
+
+```json
+{
+  "ok": true,
+  "syncedAt": "2026-08-28T09:14:02.117Z",
+  "total": 387,
+  "eligible": 193,
+  "admitted": 189,
+  "refused": 2,
+  "superseded": 2,
+  "persisted": true,
+  "funnel": [
+    { "rule": "json_mode",        "before": 387, "after": 329 },
+    { "rule": "knowable_price",   "before": 329, "after": 327 },
+    { "rule": "not_moving_alias", "before": 327, "after": 314 },
+    { "rule": "output_ceiling",   "before": 314, "after": 253 },
+    { "rule": "context_window",   "before": 253, "after": 194 },
+    { "rule": "not_expiring",     "before": 194, "after": 193 },
+    { "rule": "text_output",      "before": 193, "after": 193 }
+  ]
+}
+```
+
+The figures above are **one measured run (28 August 2026)**, not a fixed shape to assert against:
+OpenRouter's catalogue moved by seven records inside five hours on the day it was recorded.
+
+- `total` — records OpenRouter listed.
+- `eligible` — records where **nothing in the published metadata disqualifies the model**. It does
+  **not** mean the model works; metadata can say a model *accepts* structured output and cannot say
+  the output *parses*. Every admitted entry is `suitability: "chat-only"` for exactly this reason.
+- `admitted` — entries that became offers, i.e. what `offerable.openrouter` gained.
+- `refused` — of the models that passed eligibility, how many failed to become an offer, at the
+  mapper or at admission. Losses attributed to a rule are already in `funnel` and are deliberately
+  **not** double-counted here.
+- `superseded` — models the provider lists that The Curator has already hand-measured, so the
+  fetched copy was dropped in favour of the measured one. Not a refusal and not a loss.
+- `persisted` — `false` means the sync succeeded over the network but could not be written to disk:
+  the models work for this session and are lost on restart. Absent is treated as `true`.
+- `funnel` — `{rule, before, after}` per rule, in the fixed evaluation order. Each rejected model is
+  attributed to the **first** rule it fails, so the cascade is reproducible.
+
+### Errors
+
+| Status | When | Body |
+|---|---|---|
+| **400** | No OpenRouter key saved in Settings | `{ "error": "No OpenRouter key is saved in Settings — connect one before syncing the model list." }` |
+| **409** | A write is in progress (`guardConcurrent`) | The standard concurrency refusal |
+| **502** | `OPENROUTER_EMPTY_CATALOGUE`, `OPENROUTER_NO_ELIGIBILITY`, or an upstream HTTP failure | `{ error, unchanged: true, catalogue }` |
+| **500** | The sync export is missing from the build, or config could not be read | `{ error }` |
+
+**Every failure leaves the previous catalogue intact**, and the error body says so:
+`unchanged: true`, plus `catalogue` carrying the `{syncedAt, source, count}` still loaded — so a
+client never has to guess whether a failed refresh cost the user their models. `setOpenRouterCatalogue`
+is reached only after fetch *and* build have both succeeded.
+
+Two failure modes are worth naming because they look like successes:
+
+- **Zero records is refused, not accepted.** The fetcher returns `[]` rather than throwing when the
+  response body is not the shape it expects. An empty array flowing into admission would wipe a
+  working catalogue on an HTTP 200 with a changed body shape, with every layer reporting success.
+- **An unevaluated expiry check is refused.** The eligibility module is pure and cannot read a clock;
+  the route injects one and then verifies the module reports it *landed*. If it did not, nothing is
+  changed — *"we could not check"* must never be served as *"we checked"*.
+
+---
+
+## GET /api/config/openrouter/qualify/estimate
+
+What a qualification run would cost, **before anything is spent**. Free: no network, no LLM call.
+It assembles the real ingest outline prompt from the user's own wiki, read-only, and reports the
+time and money a run would take.
+
+**Query parameters**
+
+| Parameter | Required | Description |
+|---|---|---|
+| `model` | yes | The OpenRouter model id to measure. |
+| `domain` | no | Which wiki to measure against. Omitted, the server picks the domain with the **largest `index.md`** — the cheapest proxy for *most realistic prompt*. Deliberately **not** the MCP default domain, which answers a different question and is often a small scratch domain. |
+
+```json
+{
+  "ok": true,
+  "modelId": "moonshotai/kimi-k2.6",
+  "domain": "articles",
+  "runs": 9,
+  "minRunsToQualify": 9,
+  "promptChars": 341005,
+  "inputTokensPerRun": 85251,
+  "totalInputTokens": 767259,
+  "cost": { "kind": "priced", "usd": 0.383, "note": "Input only. Output is what we are measuring …" },
+  "time": { "fastestSeconds": 342, "slowestSeconds": 3438, "note": "We cannot predict how slow …" },
+  "sourceName": "the-energy-and-water-footprint.pdf",
+  "indexChars": 127666,
+  "entityCount": 607,
+  "conceptCount": 2685,
+  "existing": null
+}
+```
+
+Figures above are illustrative: every one of them is derived from the caller's own wiki and the
+model's own published price, so no two installs see the same payload.
+
+- `cost.kind` is **tri-state and never coerced**: `"free"` (`usd: 0` — the one case where zero is the
+  truth), `"priced"` (a real figure, **input only**, explicitly a floor because output tokens are
+  what the run is measuring), or `"unknown"` (`usd: null` — no published price; **never** rendered as
+  `$0.00`). Freeness is asked *before* price, because `getModelPrice()` returns `null` for a free
+  model by design and reading them in the other order reports every free model as *cost unknown*.
+- `time` leads the confirm deliberately: measured per-call latency across candidates ranged from
+  **38 s to 382 s**, so nine runs is roughly 6 minutes to an hour, at well under a dollar a run. It is a
+  **range across models already measured** (`QUALIFY_OBSERVED_CALL_SECONDS`), not a prediction for
+  this one — later measurement recorded a single call at 491 s, above the top of the frozen range.
+- `existing` — the record this run would **replace**, or `null`, so a confirm can say *you already
+  measured this on 28 Aug* rather than letting a user pay twice.
+- **Not** `guardConcurrent`-guarded, deliberately: it is read-only, and refusing it mid-ingest would
+  deny the user the one screen that says what a run would cost.
+
+Refuses with `400`: no `model`; no OpenRouter key **saved in Settings** (config-scoped, never
+`.env`); the model is not currently offerable; the model is already a build-lane model (nothing to
+measure); no domains exist; `QUALIFY_NO_SOURCE` (no readable source document in the domain's
+`raw/`); or `QUALIFY_DOMAIN_TOO_THIN` (the assembled prompt is below the realistic-prompt floor).
+The last two are **refusals by design** — they are how the module keeps its promise that the probe
+uses a real prompt — and carry a `code` alongside the message. Unknown domain returns `404`.
+
+---
+
+## POST /api/config/openrouter/qualify
+
+Measure one OpenRouter model against the user's own wiki, `runs` times, and store the result.
+Server-Sent Events.
+
+```json
+// Request
+{ "model": "moonshotai/kimi-k2.6", "domain": "articles", "runs": 9 }
+```
+
+`domain` and `runs` are optional; `runs` is clamped to 1–9 and defaults to 9. **Fewer than 9
+completed runs is measured and stored honestly but qualifies nothing** — `minRunsToQualify` is the
+floor, not a suggestion.
+
+**Events**
+
+| Event | Payload |
+|---|---|
+| `start` | `{modelId, domain, runs, promptChars, sourceName, minRunsToQualify}` |
+| `run` | `{run, of, outcome, parseClass, usable, pageCount, latencyMs, budgetBurn, errorClass, etaMs}` — `etaMs` is a **real projection from real measurements**, replacing the pre-run range as soon as there is anything to project from. |
+| `done` | `{record, qualifies}` |
+| `stored` | `{record, stored, qualifies}` — `qualifies` is recomputed through the **same predicate the pin route uses**, so the button the user sees next cannot disagree with the server. |
+| `error` | `{error, code}` |
+
+**The record**
+
+- `outcome` — `NO_DEFECT_FOUND` | `DEFECT_OBSERVED` | `NOT_MEASURED` | `CANCELLED`. The vocabulary is
+  deliberate: **`NO_DEFECT_FOUND` is the strongest thing that may be emitted, and it is weaker than
+  "passed"**. By the rule of three, 9 clean runs are consistent with a true failure rate up to ~33%
+  at 95% confidence. The word *verified* is never used.
+- `counts` — `{raw, repaired, unrepairable, unusable, notMeasured, failed}`. **`repaired` is not a
+  defect** (`claude-haiku-4-5`, the shipping Anthropic default, fences its JSON 3 of 3 and depends
+  entirely on the repair path); `unrepairable` and `unusable` are, and they are kept apart because
+  they are different failures with different causes.
+- `pages` / `latencyMs` — `{median|mean, min, max, n}`. **Latency is recorded and shown, never
+  auto-rejected**: a transient upstream slowdown must not permanently disqualify a good model, but a
+  user pinning a model that takes minutes per call should see that first.
+- `spendUsd` with `spendComplete` and `spendIsLowerBound` — the same tri-state discipline as
+  everywhere else. Identical prompts across runs can hit an upstream cache a real ingest will not, so
+  measured spend is flagged as a floor rather than quoted as the cost of ingesting.
+- `domain`, `sourceName`, `promptSha256`, `measuredAt` — **which wiki, which document, and when**. An
+  aggregator id routes over upstream hosts that change, so a record is a statement about a moment,
+  never a global claim about a model.
+- A **rate-limited** run is `NOT_MEASURED` — neither a defect nor a pass.
+
+**Cancellation is closing the connection.** There is no cancel endpoint and no run id: `req.on('close')`
+aborts the in-flight call. A cancelled run settles as `CANCELLED` and is **not stored**, so it can
+never overwrite an earlier real measurement with a stub, and it is never recorded as a model defect.
+
+**Guarded by `guardConcurrent`** (`409` while any write is in progress), because a completed run can
+change what the build lane resolves for every subsequent ingest, Health scan and Compile. It does
+**not** `registerWrite`: it writes no wiki page, and holding the process-wide write gate for up to an
+hour would block Sync, Update and Delete. The named consequence is that a
+[catalogue refresh](#post-apiconfigopenroutersync) started *during* a running qualification is not
+refused.
+
+Refusals are the same set as the estimate endpoint above, with the same status codes.
+
+---
 
 ## POST /api/config/api-keys/validate
 

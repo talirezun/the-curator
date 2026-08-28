@@ -272,10 +272,31 @@
  */
 
 import { readFileSync } from 'node:fs';
+// §39 forces a TIMEZONE on a child process. v3.14.0's lesson: a date helper
+// exercised through the ambient locale passes every same-process assertion on
+// a machine east of Greenwich and fails elsewhere, so the zone must be forced
+// in a process that has not already resolved one.
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
-import { OFFERABLE_MODELS } from '../src/brain/llm.js';
+import {
+  OFFERABLE_MODELS,
+  // v3.15.2 — the REAL runtime-admission path. §36 below mints its
+  // "fetched from the provider's catalogue" fixtures through this rather
+  // than hand-writing entry literals, so the discriminator the UI reads
+  // (`suitability === 'chat-only'` + `jsonRaw === null`) is asserted against
+  // what the shipping admission function actually PRODUCES. A hand-written
+  // literal would assert the fixture agrees with the fixture.
+  setOpenRouterCatalogue,
+  listOfferableModels,
+} from '../src/brain/llm.js';
+// §39 mints its fetched-entry NOTE through the SHIPPING record-to-spec
+// function rather than typing one. The note is the thing under test — the
+// picker must strip one sentence of it and keep the rest — so a hand-written
+// literal would assert this file agrees with itself while the real wording
+// drifted away underneath.
+import { openRouterRecordToSpec } from '../src/brain/openrouter-adapter.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -394,6 +415,12 @@ const stubState = {
   // real handler and then inspect the real markup it produced.
   modelPickBusy: null,
   modelPickError: {},
+  // v3.15.2 — the catalogue-refresh control's three fields. Same live-object
+  // rule: onSyncCatalogue (action sandbox) mutates these and
+  // renderCatalogueSync (render sandbox) reads them off the same identity.
+  catalogueSyncBusy: null,
+  catalogueSync: {},
+  catalogueSyncError: {},
 };
 
 // ── THE EXTRACTION MANIFEST ───────────────────────────────────────────────
@@ -405,7 +432,16 @@ const stubState = {
 // §6's whole claim is "the shipping escaper handles this input"; a local
 // stand-in would prove something about the stand-in instead.
 const APP_FN_NAMES = ['escapeHtml'];
-const RENDER_CONSTS = ['PROVIDER_ROWS', 'MODEL_SUITABILITY_BADGES', 'ACTIVATION_SKIP_REASONS'];
+const RENDER_CONSTS = ['PROVIDER_ROWS', 'MODEL_SUITABILITY_BADGES', 'ACTIVATION_SKIP_REASONS',
+  // v3.16.0 — the four lane states. Extracted, never re-declared here: §39
+  // drives the real predicate against the real rows, and a local copy of the
+  // string values would keep passing after the module renamed one.
+  'MODEL_LANES',
+  // v3.15.2 — the chat-lane fold threshold. Extracted rather than duplicated
+  // as a literal here: §36 asserts the fold appears strictly above it and
+  // not at it, and a hardcoded 8 in this file would keep passing after the
+  // module moved to a different number.
+  'CHAT_LANE_COLLAPSE_AT'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -413,7 +449,23 @@ const RENDER_FN_NAMES = [
   // provider's identity (v3.10.1) — §30 depends on that being the real one.
   'providerLabel',
   'formatIsoDay', 'formatTokenCount', 'formatModelPrice',
+  // v3.15.2 — the catalogue-refresh surface. formatSyncedAt is the one that
+  // must never emit a raw ISO string at a user; renderCatalogueSync is the
+  // panel; renderModelLanes is the lane split renderModelPicker delegates to.
+  'formatSyncedAt', 'renderCatalogueSync', 'renderModelLanes',
+  // v3.16.0 — the SINGLE SOURCE OF TRUTH for a row's lane, plus the note
+  // filter it drives. renderModelLanes and renderModelOption both call these,
+  // so omitting them is a ReferenceError at extraction rather than a failing
+  // assertion — which is exactly what §0's unresolved-callee detector exists
+  // to convert into a named failure.
+  'qualificationFor', 'modelLaneOf', 'laneBuildsWiki',
+  'splitSentences', 'withoutLaneClaim',
   'renderModelPickerScope', 'renderModelOption',
+  // On-wiki qualification (this release). renderModelOption DELEGATES to both,
+  // so omitting them is what made this suite report an UNRESOLVED callee rather
+  // than crash — the v3.14.0 detector doing its job. formatDuration is the
+  // helper renderQualification and renderQualifyPanel both call.
+  'formatDuration', 'renderQualification', 'renderQualifyPanel',
   // v3.15.0. renderModelPicker DELEGATES to this when a keyed provider's
   // catalogue is empty — the OpenRouter state for this release. Omitting it
   // is what made this suite CRASH with a ReferenceError instead of failing;
@@ -482,7 +534,12 @@ const RENDER_INJECTED = Object.keys(RENDER_INJECTED_VALUES);
  * argument list down there — is exactly the positional coupling this refactor
  * removes.
  */
-const ACTION_FN_NAMES = ['modelPickErrorMessage', 'onPickModel'];
+const ACTION_FN_NAMES = ['modelPickErrorMessage', 'onPickModel',
+  // v3.15.2 — the catalogue refresh. Same not-optimistic invariant as
+  // onPickModel, and a sharper failure mode if it breaks: the list it must
+  // not clear reads as "this provider has no models", which is a lie about
+  // capability rather than a missing update.
+  'catalogueSyncErrorMessage', 'onSyncCatalogue'];
 const ACTION_INJECTED_VALUES = {
   state: stubState,
   fetch: (...args) => { fetchCalls.push(args); return fetchImpl(...args); },
@@ -492,6 +549,12 @@ const ACTION_INJECTED_VALUES = {
   render: () => {
     renderSnapshots.push(
       renderModelPicker(rowFor(renderProviderId), stubState.keys, true, false));
+    // The sync panel is a SIBLING of the picker, so it is not inside the
+    // markup above and would be unobservable without its own capture. Pushed
+    // to a separate array so every existing renderSnapshots index is
+    // unchanged.
+    syncSnapshots.push(
+      renderCatalogueSync(rowFor(renderProviderId), stubState.keys, false));
   },
   isCurrentMount: () => mountIsCurrent,
   // Mirrors the REAL loadKeys (settings.js): it refetches, then renders on
@@ -504,6 +567,8 @@ const ACTION_INJECTED_VALUES = {
     if (mountIsCurrent) {
       renderSnapshots.push(
         renderModelPicker(rowFor(renderProviderId), stubState.keys, true, false));
+      syncSnapshots.push(
+        renderCatalogueSync(rowFor(renderProviderId), stubState.keys, false));
     }
   },
 };
@@ -523,7 +588,10 @@ const {
   escapeHtml, PROVIDER_ROWS, providerLabel, formatIsoDay, formatTokenCount,
   formatModelPrice, renderModelPicker, renderModelPickerScope, renderModelOption,
   renderEmptyModelPicker, renderActivationNotice, classifyActivationOutcome,
-  ACTIVATION_SKIP_REASONS, renderProviders,
+  ACTIVATION_SKIP_REASONS, renderProviders, MODEL_SUITABILITY_BADGES,
+  formatSyncedAt, renderCatalogueSync, renderModelLanes, CHAT_LANE_COLLAPSE_AT,
+  MODEL_LANES, qualificationFor, modelLaneOf, laneBuildsWiki,
+  splitSentences, withoutLaneClaim, renderQualifyPanel,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -1605,15 +1673,60 @@ section('§6  Hostile model fields are escaped through the REAL escapeHtml (M4)'
 section('§7  Rendered order is the DELIVERED order (cheapest first)');
 // ═════════════════════════════════════════════════════════════════════════
 {
+  // ── WHAT "DELIVERED ORDER" MEANS NOW THAT THE LIST IS LANE-GROUPED ──────
+  // v3.15.2 splits a mixed-lane catalogue into a build group and a chat-only
+  // group (renderModelLanes), so `rendered === delivered` is no longer the
+  // right shape of claim for such a provider — but the property it protected
+  // is UNCHANGED and is asserted here in the form that still expresses it:
+  // this view never re-sorts. Concretely, the rendered order must be exactly
+  // the delivered order filtered by lane, build lane first. That is violated
+  // by any sort, any reversal and any drop, and it degenerates to the
+  // original `rendered === delivered` for a single-lane provider — which is
+  // asserted separately below, so the flat path keeps its own strict check
+  // rather than inheriting the weaker one.
+  const isChatLane = (m) => m && typeof m === 'object' && m.suitability === 'chat-only';
+  let flatProviders = 0;
+  let groupedProviders = 0;
   for (const prov of POPULATED) {
     const html = renderModelPicker(rowFor(prov), keysFor(prov));
     const rendered = idsInOrder(html);
     const delivered = WIRE[prov].map((m) => escapeHtml(m.id));
     ok(rendered.length === delivered.length,
       `"${prov}": every delivered model is rendered (${rendered.length}/${delivered.length})`);
-    ok(rendered.join('|') === delivered.join('|'),
-      `"${prov}": rendered in delivered order, unsorted by this view`);
+    // Set equality, order aside: catches a drop that a same-length reorder
+    // would hide, and an invented id that a length check alone would not.
+    ok([...rendered].sort().join('|') === [...delivered].sort().join('|'),
+      `"${prov}": the rendered ids are exactly the delivered ids — none dropped, none invented, none duplicated`);
+
+    const build = WIRE[prov].filter((m) => !isChatLane(m)).map((m) => escapeHtml(m.id));
+    const chat = WIRE[prov].filter(isChatLane).map((m) => escapeHtml(m.id));
+    ok(rendered.join('|') === build.concat(chat).join('|'),
+      `"${prov}": rendered in delivered order within each lane, build lane first — unsorted by this view`);
+
+    if (build.length === 0 || chat.length === 0) {
+      flatProviders++;
+      // The SINGLE-LANE path renders flat, with no grouping at all, so the
+      // original strict claim still applies to it verbatim.
+      ok(rendered.join('|') === delivered.join('|'),
+        `"${prov}": single-lane catalogue renders flat, byte-for-byte the delivered order`);
+      ok(!html.includes('model-lane-head'),
+        `"${prov}": single-lane catalogue renders NO lane headings — grouping is conditional, not unconditional`);
+    } else {
+      groupedProviders++;
+      ok(html.includes('model-lane-head-build') && html.includes('model-lane-head-chat'),
+        `"${prov}": mixed-lane catalogue renders both lane headings`);
+      // The build lane must come FIRST in the markup. A grouping that put
+      // ~190 chat-only models above the three that can build the wiki would
+      // satisfy every assertion above and defeat the entire point.
+      ok(html.indexOf('model-lane-head-build') < html.indexOf('model-lane-head-chat'),
+        `"${prov}": the build lane is rendered ABOVE the chat-only lane`);
+    }
   }
+  // Neither arm may be vacuous. Both are reached by the real catalogue today
+  // (gemini is mixed, anthropic is build-only); if that ever stops being true
+  // this says so instead of quietly asserting nothing.
+  ok(flatProviders > 0, `at least one real provider exercises the FLAT path (${flatProviders})`);
+  ok(groupedProviders > 0, `at least one real provider exercises the GROUPED path (${groupedProviders})`);
   // Control: the delivered order is actually cheapest-first, so §7 is
   // asserting something the user cares about and not just "unchanged".
   //
@@ -2274,6 +2387,7 @@ function tagNamesIn(html) {
 const fetchCalls = [];
 let fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
 let renderSnapshots = [];
+let syncSnapshots = [];
 let renderProviderId = 'gemini';
 let loadKeysCalls = 0;
 let loadKeysImpl = async () => {};
@@ -2284,12 +2398,13 @@ const actions = new Function(
   ACTION_FN_NAMES.map((n) => extractFunction(settings, n, 'settings.js')).join('\n') + '\n' +
   'return { ' + ACTION_FN_NAMES.join(', ') + ' };'
 )(...ACTION_INJECTED.map((n) => ACTION_INJECTED_VALUES[n]));
-const { onPickModel, modelPickErrorMessage } = actions;
+const { onPickModel, modelPickErrorMessage, onSyncCatalogue, catalogueSyncErrorMessage } = actions;
 
 /** Reset every injected seam between sections. */
 function resetActionHarness(provider) {
   fetchCalls.length = 0;
   renderSnapshots = [];
+  syncSnapshots = [];
   loadKeysCalls = 0;
   loadKeysImpl = async () => {};
   mountIsCurrent = true;
@@ -2297,6 +2412,9 @@ function resetActionHarness(provider) {
   stubState.modelPickBusy = null;
   stubState.modelPickError = {};
   stubState.modelPickerOpen = { [provider]: true };
+  stubState.catalogueSyncBusy = null;
+  stubState.catalogueSync = {};
+  stubState.catalogueSyncError = {};
 }
 /** A response object with the shape onPickModel actually consumes. */
 function reply(status, body) {
@@ -3065,6 +3183,1008 @@ section('§33  An unknown active provider degrades honestly, never to a wrong na
         `activeProvider=${bad}: the echoed id is escaped, not injected`);
     }
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§34  formatSyncedAt — a timestamp a person reads, never a raw ISO');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // The rule this exists to hold: a machine-readable instant must never reach
+  // the screen. Every rejection path returns '' rather than echoing its input,
+  // which is the OPPOSITE of formatIsoDay's contract — see both docblocks for
+  // why they differ, and §34b below for the assertion that they still do.
+  for (const junk of ['', '   ', 'not-a-date', 'tomorrow', '2026-13-45T99:99:99Z',
+                      null, undefined, 42, {}, [], NaN]) {
+    ok(formatSyncedAt(junk) === '',
+      `formatSyncedAt(${JSON.stringify(junk)}) returns '' rather than echoing an unusable value`);
+  }
+
+  // A real instant renders as day-month-year plus a 24h clock, built by hand
+  // so the shape cannot move under a different locale.
+  const iso = new Date(2026, 7, 28, 14, 32, 11).toISOString();
+  const out = formatSyncedAt(iso);
+  ok(out === '28 Aug 2026, 14:32', `a real instant renders as '28 Aug 2026, 14:32' (got '${out}')`);
+  ok(!/[TZ]|\d{4}-\d{2}-\d{2}/.test(out),
+    'the rendered timestamp contains no ISO artefact — no T, no Z, no YYYY-MM-DD');
+
+  // Zero-padding on BOTH clock fields. `9:5` would be a different time to a
+  // reader who skims, and the single-digit path is the one a hand-rolled
+  // formatter forgets.
+  ok(formatSyncedAt(new Date(2026, 0, 5, 9, 5, 0).toISOString()) === '5 Jan 2026, 09:05',
+    'single-digit hours and minutes are zero-padded (09:05, not 9:5)');
+
+  // §34b — the two formatters must NOT converge. formatIsoDay takes a
+  // date-only string naming the day a PRICE changes and deliberately does not
+  // convert zones (converting is an off-by-one lie about money west of
+  // Greenwich); formatSyncedAt takes an instant and must. A refactor that
+  // "unified" them would silently reintroduce that bug, so the difference is
+  // pinned as behaviour rather than left in a comment.
+  ok(formatIsoDay('2027-01-01') === '1 Jan 2027',
+    'control: formatIsoDay still renders a date-only price date without zone conversion');
+  ok(formatIsoDay('nonsense') === 'nonsense',
+    'control: formatIsoDay ECHOES unparseable input while formatSyncedAt returns \'\' — different contracts, both still in force');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§35  The refresh control: who gets it, when it is offered, what it claims');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  stubState.catalogueSync = {};
+  stubState.catalogueSyncError = {};
+  stubState.catalogueSyncBusy = null;
+
+  // Offered only to a provider that publishes a refreshable catalogue, and
+  // only when its key is SAVED. The route needs both; a control that can only
+  // produce a refusal is worse than no control.
+  const orKeys = keysFor('openrouter');
+  ok(renderCatalogueSync(rowFor('openrouter'), orKeys, false) !== '',
+    'a keyed OpenRouter row is offered the refresh control');
+  for (const prov of PROVIDERS) {
+    if (prov === 'openrouter') continue;
+    ok(renderCatalogueSync(rowFor(prov), keysFor(prov), false) === '',
+      `"${prov}" has no refreshable catalogue, so no control is rendered`);
+  }
+  // Fails SAFE for an id the lookup does not know — including the two
+  // prototype names, which on a plain object literal would resolve TRUTHY and
+  // hand a control to a provider the server has never heard of.
+  for (const bad of ['zzz-mystery-provider', '__proto__', 'constructor', 'toString']) {
+    ok(renderCatalogueSync({ id: bad, name: bad, available: true }, keysFor('openrouter'), false) === '',
+      `unknown provider id "${bad}" is offered no refresh control`);
+  }
+  const noKey = keysFor('gemini'); // openrouter key absent
+  ok(renderCatalogueSync(rowFor('openrouter'), noKey, false) === '',
+    'no saved key ⇒ no refresh control (config-scoped, v3.0.13\'s rule)');
+  ok(renderCatalogueSync(rowFor('openrouter'), null, false) === '' &&
+     renderCatalogueSync(null, orKeys, false) === '',
+    'a missing payload or row renders nothing rather than throwing');
+  ok(renderCatalogueSync({ id: 'openrouter', name: 'OpenRouter', available: false }, orKeys, false) === '',
+    'an unavailable provider row is offered no refresh control');
+
+  // ── THE CLAIM THE WHOLE CONTROL EXISTS TO MAKE ─────────────────────────
+  const panel = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  ok(panel.includes('chat only') || panel.includes('chat</strong> only') || panel.includes('<strong>chat only</strong>'),
+    'the panel states that fetched models are chat only');
+  ok(/never been measured/.test(panel),
+    'the panel states that fetched models have never been measured against the ingest prompt');
+  ok(/cannot build\s+your wiki/.test(panel.replace(/\s+/g, ' ')),
+    'the panel states plainly that fetched models cannot build the wiki');
+  ok(panel.includes('data-sync-catalogue="openrouter"'),
+    'the button carries the provider on itself, so the handler never has to infer it from position');
+
+  // ── THE SUMMARY-HAZARD, CLOSED STRUCTURALLY ────────────────────────────
+  // v3.0.1-beta.18: an interactive control inside a <summary> toggles its own
+  // section. The fix here is structural, not two suppression calls — so the
+  // assertion is that no <summary> in this panel CONTAINS a control at all,
+  // and that the panel is not itself inside the picker's <details>.
+  const summaries = [...panel.matchAll(/<summary[^>]*>([\s\S]*?)<\/summary>/g)].map((m) => m[1]);
+  for (const inner of summaries) {
+    ok(!/<button|<input|<a\s|<select/i.test(inner),
+      'no <summary> in the refresh panel contains an interactive control');
+  }
+  ok(!panel.includes('<details class="model-picker"'),
+    'the refresh panel is not nested inside the model picker\'s own disclosure');
+  // And renderProviders emits it BETWEEN the row and the picker — a sibling,
+  // so there is no propagation path from the button to any <summary>.
+  {
+    const all = renderProviders.length >= 0 && (() => {
+      stubState.keys = keysFor('openrouter');
+      return renderProviders();
+    })();
+    const iRow = all.indexOf('data-replace="openrouter"');
+    const iSync = all.indexOf('data-catalogue-sync="openrouter"');
+    const iPicker = all.indexOf('data-model-picker="openrouter"');
+    const iEmpty = all.indexOf('data-model-picker-empty="openrouter"');
+    const iList = iPicker === -1 ? iEmpty : iPicker;
+    ok(iRow !== -1 && iSync !== -1 && iList !== -1, 'renderProviders emits row, sync panel and model list for OpenRouter');
+    ok(iRow < iSync && iSync < iList,
+      'the sync panel sits BETWEEN the provider row and the model list — a sibling of both');
+  }
+
+  // ── DISABLED STATES: two layers, and neither is the guarantee ──────────
+  stubState.catalogueSyncBusy = 'openrouter';
+  const busyPanel = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  ok(busyPanel.includes('Refreshing…') && busyPanel.includes('disabled'),
+    'mid-flight the button reads "Refreshing…" and is disabled');
+  stubState.catalogueSyncBusy = null;
+  const crossPanel = renderCatalogueSync(rowFor('openrouter'), orKeys, true);
+  ok(crossPanel.includes('disabled'),
+    'a write in flight elsewhere disables the button (the 409 is the real guarantee; this is layer two)');
+  ok(crossPanel.includes('cross-write:'),
+    'the disabled button explains WHY, using the shared cross-write wording');
+  ok(!renderCatalogueSync(rowFor('openrouter'), orKeys, false).includes('disabled'),
+    'control: with nothing in flight the button is enabled — the disable assertions above are not vacuous');
+
+  // ── THE THREE TIMESTAMP STATES, and the one that is easy to get wrong ──
+  // No result and no fetched models: honestly "not refreshed yet".
+  stubState.catalogueSync = {};
+  const fresh = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  ok(fresh.includes('Not refreshed yet'),
+    'never refreshed, nothing fetched in the list ⇒ says so');
+  ok(!/Last refreshed/.test(fresh), '…and does NOT claim a refresh time it does not have');
+
+  // A result in hand: the time is rendered, formatted.
+  const at = new Date(2026, 7, 28, 14, 32, 0).toISOString();
+  stubState.catalogueSync = { openrouter: { syncedAt: at, total: 417, eligible: 286, admitted: 183, refused: 3 } };
+  const synced = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  okContains(synced, formatSyncedAt(at), 'a completed refresh renders its timestamp');
+  ok(!synced.includes(at), 'the raw ISO instant never reaches the markup');
+  okContains(synced, '417 listed by OpenRouter', 'the catalogue total is reported');
+  okContains(synced, '286 met our requirements', 'the eligible count is reported');
+  okContains(synced, '183 added here', 'the admitted count is reported');
+  okContains(synced, '3 refused', 'a non-zero refused count is reported');
+
+  // REPORTED OR ABSENT, NEVER INFERRED. A figure the server did not send must
+  // not render as 0 — "none" and "we were not told" are different facts, and
+  // collapsing them is the defect v3.15.0 found in eight places.
+  stubState.catalogueSync = { openrouter: { syncedAt: at, admitted: 5 } };
+  const partial = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  okContains(partial, '5 added here', 'a reported figure still renders when its siblings are missing');
+  ok(!/listed by OpenRouter/.test(partial), 'an ABSENT total renders nothing — not "0 listed"');
+  ok(!/met our requirements/.test(partial), 'an ABSENT eligible count renders nothing — not "0 met"');
+  ok(!/\brefused\b/.test(partial), 'an ABSENT refused count renders nothing — not "0 refused"');
+  // Zero refusals is a real, reported fact and is deliberately NOT printed:
+  // "0 refused" is noise beside "183 added". Asserted so the omission is a
+  // decision on record rather than an accident.
+  stubState.catalogueSync = { openrouter: { syncedAt: at, admitted: 5, refused: 0 } };
+  ok(!/\brefused\b/.test(renderCatalogueSync(rowFor('openrouter'), orKeys, false)),
+    'a reported ZERO refusals is not printed — nothing was rejected, so there is nothing to report');
+
+  // An unreadable timestamp on an otherwise-successful refresh: say a refresh
+  // happened, do not invent a time for it, do not claim "never".
+  stubState.catalogueSync = { openrouter: { syncedAt: 'garbage', admitted: 5 } };
+  const badTime = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  ok(!badTime.includes('Not refreshed yet'),
+    'a refresh with an unreadable timestamp is never described as "not refreshed yet"');
+  ok(/no usable time came with it/.test(badTime),
+    '…it says the time is unusable and the list may be out of date');
+  ok(!badTime.includes('garbage'), 'the unreadable timestamp itself never reaches the screen');
+
+  // ── §35b THE DURABLE TIMESTAMP: the SERVER'S meta is the primary source ──
+  // The catalogue is persisted and re-admitted at boot, so
+  // `GET /api/config/api-keys` carries `openrouterCatalogue.syncedAt` and it
+  // survives a browser reload AND an app restart. This view must prefer it —
+  // one answer to "when", not two that can drift.
+  {
+    const serverIso = new Date(2026, 5, 1, 8, 15, 0).toISOString();
+    const sessionIso = new Date(2026, 7, 28, 14, 32, 0).toISOString();
+    stubState.catalogueSync = { openrouter: { syncedAt: sessionIso, admitted: 1 } };
+    const metaKeys = keysFor('openrouter', {
+      openrouterCatalogue: { syncedAt: serverIso, source: 'disk', count: 183 },
+    });
+    const html = renderCatalogueSync(rowFor('openrouter'), metaKeys, false);
+    okContains(html, formatSyncedAt(serverIso),
+      'the SERVER\'s syncedAt is rendered — it survives a reload and a restart');
+    okOmits(html, formatSyncedAt(sessionIso),
+      '…and the session copy does NOT also render, so there is exactly one answer to "when"');
+
+    // A fresh page load: no session record at all, meta alone carries it.
+    stubState.catalogueSync = {};
+    const reloaded = renderCatalogueSync(rowFor('openrouter'), metaKeys, false);
+    okContains(reloaded, formatSyncedAt(serverIso),
+      'after a reload, with no session record, the timestamp still renders from the payload');
+    ok(!reloaded.includes('Not refreshed yet'),
+      '…and a reloaded, already-populated catalogue is never called "not refreshed yet"');
+    ok(!reloaded.includes(serverIso), 'the raw ISO from the payload never reaches the markup');
+
+    // count === 0 with a key saved is a REAL state: nothing has been fetched.
+    const emptyMeta = keysFor('openrouter', {
+      openrouterCatalogue: { syncedAt: null, source: null, count: 0 },
+    });
+    ok(renderCatalogueSync(rowFor('openrouter'), emptyMeta, false).includes('Not refreshed yet'),
+      'meta reporting count 0 and no time ⇒ "not refreshed yet", the honest first-run state');
+
+    // Meta absent entirely (an older backend) must fall back, not throw.
+    const noMeta = keysFor('openrouter', { openrouterCatalogue: undefined });
+    ok(renderCatalogueSync(rowFor('openrouter'), noMeta, false).includes('Not refreshed yet'),
+      'a backend that sends no catalogue meta degrades to the derived path rather than throwing');
+    for (const junk of [null, 'a string', 42, []]) {
+      const j = keysFor('openrouter', { openrouterCatalogue: junk });
+      ok(typeof renderCatalogueSync(rowFor('openrouter'), j, false) === 'string',
+        `a malformed openrouterCatalogue (${JSON.stringify(junk)}) renders without throwing`);
+    }
+  }
+
+  // ── §35c SESSION-ONLY, and only on an explicit false ────────────────────
+  {
+    const at2 = new Date(2026, 7, 28, 14, 32, 0).toISOString();
+    stubState.catalogueSync = { openrouter: { syncedAt: at2, admitted: 5, persisted: false } };
+    const warn = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+    ok(/session only/.test(warn),
+      'persisted:false warns that the models are loaded for this session only');
+    okContains(warn, 'restart will lose them', '…and says what will happen');
+    // ABSENT must not become "it failed" — the fact-vs-absence rule again.
+    stubState.catalogueSync = { openrouter: { syncedAt: at2, admitted: 5 } };
+    ok(!/session only/.test(renderCatalogueSync(rowFor('openrouter'), orKeys, false)),
+      'an ABSENT persisted field renders no warning — "we were not told" is not "it failed"');
+    stubState.catalogueSync = { openrouter: { syncedAt: at2, admitted: 5, persisted: true } };
+    ok(!/session only/.test(renderCatalogueSync(rowFor('openrouter'), orKeys, false)),
+      'control: persisted:true renders no warning');
+    // `superseded` closes the arithmetic — without it the counts read as if
+    // The Curator had refused its own measured defaults.
+    stubState.catalogueSync = { openrouter: { syncedAt: at2, total: 417, admitted: 183, superseded: 3 } };
+    okContains(renderCatalogueSync(rowFor('openrouter'), orKeys, false), '3 already measured',
+      'a superseded count is reported, so the arithmetic on screen adds up');
+    stubState.catalogueSync = { openrouter: { syncedAt: at2, admitted: 183, superseded: 0 } };
+    ok(!/already measured/.test(renderCatalogueSync(rowFor('openrouter'), orKeys, false)),
+      'a reported ZERO superseded is not printed — nothing was superseded, so there is nothing to report');
+  }
+
+  // THE DEGRADED RELOAD CASE. No meta, no session record, but the list
+  // carries runtime-admitted models. Claiming "never refreshed" there would
+  // be false; saying nothing would let a stale list look fresh.
+  stubState.catalogueSync = {};
+  const fetchedEntry = {
+    id: 'zz/fetched', label: 'Fetched', suitability: 'chat-only', jsonRaw: null,
+    input: 1, output: 2, standardInput: 1, standardOutput: 2, maxOutput: 32768,
+    thinks: false, tokenizerFactor: 1, note: 'n', free: false, dominated: false,
+  };
+  const reloadKeys = keysFor('openrouter', {
+    offerable: Object.assign({}, WIRE, { openrouter: WIRE.openrouter.concat([fetchedEntry]) }),
+  });
+  const reload = renderCatalogueSync(rowFor('openrouter'), reloadKeys, false);
+  ok(!reload.includes('Not refreshed yet'),
+    'a list that already contains fetched models is never described as "not refreshed yet"');
+  ok(/may be out of date/.test(reload),
+    '…it says instead that the list may be out of date, so a stale list is visible as possibly stale');
+
+  // ── THE FUNNEL, when one is sent ──────────────────────────────────────
+  stubState.catalogueSync = { openrouter: { syncedAt: at, admitted: 3,
+    funnel: [{ rule: 'no JSON mode', before: 417, after: 368 }, { rule: 'unknowable price', before: 368, after: 363 }] } };
+  const withFunnel = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  okContains(withFunnel, 'no JSON mode', 'a funnel rule name is rendered');
+  okContains(withFunnel, '49 removed', 'the funnel reports how many a rule removed, derived from before/after');
+  okContains(withFunnel, '368 left', '…and how many survived it');
+  ok(!withFunnel.includes('<script'), 'funnel content is escaped');
+  const XSS_RULE = '<img src=x onerror=alert(1)>';
+  stubState.catalogueSync = { openrouter: { syncedAt: at, admitted: 3, funnel: [{ rule: XSS_RULE }] } };
+  {
+    // Asserted on the RAW markup. A "de-escaping" step in the assertion is
+    // how an XSS check gives a FALSE POSITIVE (v3.13.0) — and how one gives a
+    // false NEGATIVE, which is what a naive entity-strip does here: it turns
+    // correctly-escaped `&lt;img …` back into `<img …` and then reports a
+    // hole that does not exist. So: the dangerous literal must be ABSENT, and
+    // the escaped form must be PRESENT (or the miss proves nothing).
+    const hostile = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+    ok(!hostile.includes(XSS_RULE), 'a hostile funnel rule name is not emitted raw');
+    okContains(hostile, '&lt;img src=x onerror=alert(1)&gt;',
+      '…it is emitted ESCAPED, so the miss above is real and not the value having vanished');
+  }
+
+  // ── THE REFUSAL, where the user is looking ────────────────────────────
+  stubState.catalogueSync = {};
+  stubState.catalogueSyncError = { openrouter: 'Cannot refresh while a write is running. The model list was NOT changed.' };
+  const errPanel = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+  ok(errPanel.includes('role="alert"'),
+    'a refusal is announced — role="alert", not a silent style change');
+  okContains(errPanel, 'was NOT changed', 'the refusal states that nothing changed');
+  ok(errPanel.indexOf('data-sync-catalogue') < errPanel.indexOf('role="alert"'),
+    'the refusal renders BELOW the button that produced it, in the surface the user clicked in');
+  stubState.catalogueSyncError = { openrouter: XSS_RULE };
+  {
+    const hostileErr = renderCatalogueSync(rowFor('openrouter'), orKeys, false);
+    ok(!hostileErr.includes(XSS_RULE), 'a server-supplied refusal message is not emitted raw');
+    okContains(hostileErr, '&lt;img src=x onerror=alert(1)&gt;',
+      '…it is emitted ESCAPED — the server\'s message is untrusted text, not markup');
+  }
+  stubState.catalogueSyncError = {};
+  ok(!renderCatalogueSync(rowFor('openrouter'), orKeys, false).includes('role="alert"'),
+    'control: with no error there is no alert — the assertions above are not matching an always-present box');
+  stubState.catalogueSync = {};
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§36  Models admitted through the REAL runtime path are chat-only, marked, and unpinnable');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // Minted by the SHIPPING admission function, not by hand. A literal fixture
+  // would assert that this file agrees with itself; this asserts that the UI's
+  // discriminator matches what src/brain/llm.js actually produces.
+  const specFor = (n, extra) => Object.assign({
+    id: 'zzsynth/model-' + n, label: 'Synth ' + n, maxOutput: 32768,
+    thinks: false, tokenizerFactor: 1, suitability: 'chat-only',
+    note: 'Admitted from the provider catalogue for test purposes.',
+    price: { input: 0.5 + n, output: 1 + n },
+  }, extra || {});
+
+  const N = 12; // strictly above CHAT_LANE_COLLAPSE_AT, so the fold engages
+  const admitted = setOpenRouterCatalogue(Array.from({ length: N }, (_, i) => specFor(i)));
+  ok(admitted.admitted === N, `the real admission function admitted all ${N} synthetic entries`);
+
+  const live = JSON.parse(JSON.stringify(listOfferableModels('openrouter')));
+  const fetched = live.filter((m) => m.id.startsWith('zzsynth/'));
+  ok(fetched.length === N, 'every synthetic entry reaches the merged catalogue');
+  for (const m of fetched) {
+    ok(m.suitability === 'chat-only',
+      `${m.id}: the real admission path forces suitability chat-only`);
+    ok(m.jsonRaw === null,
+      `${m.id}: the real admission path leaves jsonRaw NULL — nobody measured it, so nothing claims a verdict`);
+  }
+  // The static, hand-measured OpenRouter entries are untouched by a refresh
+  // and remain build-lane. This is the property the whole two-tier claim
+  // rests on, read off the same merged list the wire carries.
+  const staticIds = WIRE.openrouter.map((m) => m.id);
+  const stillBuild = live.filter((m) => staticIds.includes(m.id) && m.suitability !== 'chat-only');
+  ok(staticIds.length > 0 && stillBuild.length > 0,
+    `the hand-measured entries survive a refresh as build-lane models (${stillBuild.length}/${staticIds.length})`);
+
+  const k = keysFor('openrouter', { offerable: Object.assign({}, WIRE, { openrouter: live }) });
+  const html = renderModelPicker(rowFor('openrouter'), k, true, false);
+
+  // ── TIER 2 IS LABELLED, PER ROW, AND THE LABEL IS TRUE ────────────────
+  for (const m of fetched) {
+    const li = liFor(html, m.id);
+    ok(li !== '', `${m.id}: rendered`);
+    okContains(li, 'never measured here',
+      `${m.id}: badged as never measured against our ingest prompt`);
+    okContains(li, MODEL_SUITABILITY_BADGES['chat-only'],
+      `${m.id}: also carries the chat-only verdict badge`);
+    // REQUIREMENT: a fetched model must never be offered as the BUILD model.
+    // The route 400s on it; the UI must not produce the click.
+    ok(!li.includes('data-pick-model='),
+      `${m.id}: offers NO "Use this" control — the server refuses this pin, so the UI never invites it`);
+    okContains(li, 'model-pick-state-chat', `${m.id}: says "chat only" where the button would have been`);
+  }
+  // …and the hand-measured ones DO offer it, so the assertion above is about
+  // the lane and not about the button having disappeared everywhere.
+  const buildLi = liFor(html, stillBuild.find((m) => m.id !== (k.selectedModels && k.selectedModels.openrouter)).id);
+  ok(buildLi.includes('data-pick-model=') || buildLi.includes('model-pick-state">Selected'),
+    'control: a hand-measured build-lane model still offers the pick control');
+
+  // gemini-3.5-flash-lite is the OTHER kind of chat-only: MEASURED, and found
+  // unfit. It must be unpinnable too, and must NOT be badged "never measured".
+  {
+    const gHtml = renderModelPicker(rowFor('gemini'), keysFor('gemini'), true, false);
+    const measuredChatOnly = WIRE.gemini.filter((m) => m.suitability === 'chat-only');
+    ok(measuredChatOnly.length > 0, 'the real Gemini catalogue contains a MEASURED chat-only model — this case is not hypothetical');
+    for (const m of measuredChatOnly) {
+      const li = liFor(gHtml, m.id);
+      ok(!li.includes('data-pick-model='),
+        `${m.id}: a measured-unfit model is also unpinnable as the build model`);
+      ok(!li.includes('never measured here'),
+        `${m.id}: is NOT badged "never measured" — it was measured, and nine live runs say so`);
+      ok(typeof m.jsonRaw === 'boolean',
+        `${m.id}: carries a measured jsonRaw verdict, which is what separates the two tiers`);
+    }
+  }
+
+  // ── THE FOLD IS ABOUT LENGTH, AND THE BUILD LANE IS NEVER FOLDED ──────
+  ok(N > CHAT_LANE_COLLAPSE_AT, `the fixture (${N}) is above CHAT_LANE_COLLAPSE_AT (${CHAT_LANE_COLLAPSE_AT}) — the fold case is real`);
+  ok(html.includes('model-lane-fold'), 'a long chat-only lane folds behind a disclosure');
+  ok(html.indexOf('model-lane-head-build') < html.indexOf('model-lane-fold'),
+    'the build lane renders ABOVE the fold, unfolded');
+  const foldSummary = /<summary class="model-lane-fold-summary">([\s\S]*?)<\/summary>/.exec(html);
+  ok(foldSummary !== null, 'the fold has a summary');
+  ok(!/<button|<input|<a\s|<select/i.test(foldSummary[1]),
+    'the fold\'s <summary> contains NO control — the beta.18 hazard cannot apply');
+  okContains(foldSummary[1], String(N), 'the collapsed fold names how many models it hides');
+
+  // Exactly at the threshold it does NOT fold — so the constant is a real
+  // boundary and not a value that happens to be below every fixture.
+  setOpenRouterCatalogue(Array.from({ length: CHAT_LANE_COLLAPSE_AT }, (_, i) => specFor(i)));
+  const atLimit = JSON.parse(JSON.stringify(listOfferableModels('openrouter')));
+  const atHtml = renderModelPicker(rowFor('openrouter'),
+    keysFor('openrouter', { offerable: Object.assign({}, WIRE, { openrouter: atLimit }) }), true, false);
+  ok(!atHtml.includes('model-lane-fold'),
+    `exactly ${CHAT_LANE_COLLAPSE_AT} chat-only models do NOT fold — the threshold is strict`);
+  ok(atHtml.includes('model-lane-head-chat'),
+    '…but they are still lane-labelled, so the honesty claim does not depend on the fold');
+
+  // ── PRICE IS NEVER FOLDED ─────────────────────────────────────────────
+  // A spending decision needs its price unfolded. The row's own <details>
+  // holds the measured evidence; the price lives in the summary.
+  for (const m of fetched.slice(0, 3)) {
+    const li = liFor(atHtml.includes(m.id) ? atHtml : html, m.id);
+    if (!li) continue;
+    const bodyStart = li.indexOf('model-row-body');
+    const priceAt = li.indexOf('model-price');
+    ok(priceAt !== -1 && (bodyStart === -1 || priceAt < bodyStart),
+      `${m.id}: the price renders OUTSIDE the row's disclosure`);
+  }
+
+  // ── EXACTLY ONE "cheapest" MARKER ACROSS BOTH GROUPS ──────────────────
+  // Grouping must not renumber: two "cheapest" badges, one of them false, on
+  // a screen whose purpose is comparing spend would be the worst possible
+  // regression from a layout change.
+  const cheapCount = (html.match(/model-badge-cheapest/g) || []).length;
+  ok(cheapCount === 1, `exactly one "cheapest" badge across both lanes (got ${cheapCount})`);
+  const firstDelivered = escapeHtml(live[0].id);
+  ok(liFor(html, live[0].id).includes('model-badge-cheapest'),
+    `the cheapest badge sits on the FIRST delivered model (${firstDelivered}), not on the first row of a group`);
+
+  // The three markers stay separate — never merged, per the standing rule.
+  ok(!/model-badge-(default|chosen)[^"]*cheapest/.test(html),
+    '"in use", "your choice" and "cheapest" remain three independent markers');
+
+  // ── A REFUSED ENTRY NEVER REACHES THE PICKER ──────────────────────────
+  {
+    const quiet = console.error;
+    console.error = () => {};
+    const r = setOpenRouterCatalogue([specFor(0), Object.assign(specFor(1), { suitability: 'general', jsonRaw: true })]);
+    console.error = quiet;
+    ok(r.refused === 1 && r.admitted === 1,
+      'a fetched entry declaring a BUILD-lane suitability is refused by the admission function, not by this view');
+    const after = listOfferableModels('openrouter').map((m) => m.id);
+    ok(!after.includes('zzsynth/model-1'),
+      'the refused entry is absent from the catalogue the picker renders');
+  }
+
+  // Leave no residue for any later section, and prove the reset took.
+  setOpenRouterCatalogue([]);
+  ok(listOfferableModels('openrouter').every((m) => !m.id.startsWith('zzsynth/')),
+    'the synthetic catalogue is cleared — later sections see the shipping list');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§37  onSyncCatalogue — the list moves ONLY on success, and never to empty');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const syncedIso = new Date(2026, 7, 28, 9, 0, 0).toISOString();
+  const populated = keysFor('openrouter');
+
+  // ── THE HAPPY PATH ────────────────────────────────────────────────────
+  resetActionHarness('openrouter');
+  stubState.keys = populated;
+  fetchImpl = async () => reply(200, {
+    ok: true, syncedAt: syncedIso, total: 417, eligible: 286, admitted: 183, refused: 3,
+    funnel: [{ rule: 'no JSON mode', before: 417, after: 368 }],
+  });
+  await onSyncCatalogue('openrouter', null);
+  ok(fetchCalls.length === 1, 'a refresh issues exactly one request');
+  ok(fetchCalls[0][0] === '/api/config/openrouter/sync', 'it POSTs to the sync route');
+  ok(fetchCalls[0][1].method === 'POST', '…with method POST');
+  ok(loadKeysCalls === 1, 'the model list is refetched — the response is a report, not the list');
+  ok(stubState.catalogueSyncBusy === null, 'the busy flag is cleared');
+  ok(stubState.catalogueSync.openrouter.syncedAt === syncedIso, 'the reported time is stored verbatim');
+  ok(stubState.catalogueSync.openrouter.admitted === 183, 'the reported counts are stored');
+  ok(Array.isArray(stubState.catalogueSync.openrouter.funnel), 'the funnel is stored when sent');
+  ok(stubState.catalogueSync.openrouter.superseded === undefined,
+    'a field the server did not send stays undefined (superseded) — never defaulted');
+  ok(!stubState.catalogueSyncError.openrouter, 'no error is left behind on success');
+  // Mid-flight the button was busy and the previous list was still rendered.
+  ok(syncSnapshots.length >= 1 && syncSnapshots[0].includes('Refreshing…'),
+    'the first render after the click shows the busy state');
+
+  // A response missing a count must NOT be defaulted to 0 — that is the
+  // fact-vs-absence collapse this release exists to stop repeating.
+  resetActionHarness('openrouter');
+  stubState.keys = populated;
+  fetchImpl = async () => reply(200, { ok: true, syncedAt: syncedIso, admitted: 4 });
+  await onSyncCatalogue('openrouter', null);
+  ok(stubState.catalogueSync.openrouter.total === undefined,
+    'an unreported total stays undefined — never coerced to 0');
+  ok(stubState.catalogueSync.openrouter.refused === undefined,
+    'an unreported refused count stays undefined — never coerced to 0');
+  ok(stubState.catalogueSync.openrouter.funnel === null,
+    'an absent funnel is null, not an empty array that would render as "no rules removed anything"');
+  ok(stubState.catalogueSync.openrouter.persisted === undefined,
+    'an unreported persisted flag stays undefined — it must never become a false "could not save" warning');
+
+  // The two extra facts the route DOES send are carried through unchanged.
+  resetActionHarness('openrouter');
+  stubState.keys = populated;
+  fetchImpl = async () => reply(200, { ok: true, syncedAt: syncedIso, admitted: 183, superseded: 3, persisted: false });
+  await onSyncCatalogue('openrouter', null);
+  ok(stubState.catalogueSync.openrouter.superseded === 3, 'a reported superseded count is stored');
+  ok(stubState.catalogueSync.openrouter.persisted === false,
+    'a reported persisted:false is stored, so the session-only warning can be rendered');
+
+  // ── THE 409, AND THE LIST THAT MUST NOT MOVE ──────────────────────────
+  resetActionHarness('openrouter');
+  stubState.keys = populated;
+  const before = stubState.keys.offerable.openrouter;
+  fetchImpl = async () => reply(409, {
+    error: 'Cannot refresh the model list while a write operation is running: articles (ingest).',
+    conflict: 'write_in_progress',
+  });
+  await onSyncCatalogue('openrouter', null);
+  ok(loadKeysCalls === 0, 'a refused refresh does NOT refetch');
+  ok(stubState.keys.offerable.openrouter === before,
+    'a refused refresh leaves the rendered list byte-identical — same array identity, nothing cleared');
+  ok(stubState.keys.offerable.openrouter.length > 0,
+    'the list is NOT emptied — an empty list reads as "this provider has no models", which is a lie about capability');
+  ok(!stubState.catalogueSync.openrouter,
+    'no success record is written for a refusal');
+  const msg409 = stubState.catalogueSyncError.openrouter;
+  okContains(msg409, 'articles (ingest)', 'the server\'s own message is used verbatim — it names the running operation');
+  okContains(msg409, 'was NOT changed', '…and is extended with the fact the user most needs: nothing changed');
+  // The refusal is rendered, in the panel, on the last render.
+  const lastSync = syncSnapshots[syncSnapshots.length - 1] || '';
+  ok(lastSync.includes('role="alert"'), 'the refusal is rendered with role="alert" on the surface that was clicked');
+  okContains(lastSync, 'articles (ingest)', '…carrying the server\'s own wording');
+  ok(!lastSync.includes('Refreshing…'), 'the busy state is gone once the refusal lands');
+  // The MODEL LIST is still fully rendered beside the refusal.
+  const lastList = renderSnapshots[renderSnapshots.length - 1] || '';
+  for (const m of WIRE.openrouter) {
+    ok(lastList.includes('data-model-id="' + escapeHtml(m.id) + '"'),
+      `after a refusal, ${m.id} is still listed`);
+  }
+
+  // ── OTHER FAILURE SHAPES, all leaving the list alone ──────────────────
+  for (const [label, impl] of [
+    ['a 500 with a JSON body', async () => reply(500, { error: 'OpenRouter is unreachable.' })],
+    ['a non-JSON body (a proxy HTML page)', async () => reply(502, '__NOT_JSON__')],
+    ['a thrown transport error', async () => { throw new TypeError('Failed to fetch'); }],
+  ]) {
+    resetActionHarness('openrouter');
+    stubState.keys = keysFor('openrouter');
+    const listBefore = stubState.keys.offerable.openrouter;
+    fetchImpl = impl;
+    await onSyncCatalogue('openrouter', null);
+    ok(loadKeysCalls === 0, `${label}: no refetch`);
+    ok(stubState.keys.offerable.openrouter === listBefore, `${label}: the list is untouched`);
+    ok(stubState.catalogueSyncBusy === null, `${label}: the busy flag is cleared, so the button is not stuck`);
+    const m = stubState.catalogueSyncError.openrouter;
+    ok(typeof m === 'string' && m.length > 0, `${label}: a legible refusal is produced`);
+    ok(!/Unexpected token/.test(m), `${label}: never an "Unexpected token '<'" — the body is read defensively`);
+    okContains(m, 'unchanged', `${label}: says the list is unchanged`);
+  }
+
+  // ── AN UNKNOWN PROVIDER ISSUES NO REQUEST ─────────────────────────────
+  for (const bad of ['gemini', 'anthropic', 'zzz-mystery-provider', '__proto__', 'constructor', 'toString', '', undefined]) {
+    resetActionHarness('openrouter');
+    stubState.keys = keysFor('openrouter');
+    fetchImpl = async () => reply(200, { ok: true });
+    await onSyncCatalogue(bad, null);
+    ok(fetchCalls.length === 0, `onSyncCatalogue("${bad}") issues no request — refuse rather than guess`);
+    ok(loadKeysCalls === 0, `onSyncCatalogue("${bad}") does not refetch`);
+  }
+  // Control: the one real provider IS accepted, so the loop above is not
+  // passing because the handler refuses everything.
+  resetActionHarness('openrouter');
+  stubState.keys = keysFor('openrouter');
+  fetchImpl = async () => reply(200, { ok: true, syncedAt: syncedIso });
+  await onSyncCatalogue('openrouter', null);
+  ok(fetchCalls.length === 1, 'control: "openrouter" IS accepted by the same gate');
+
+  // ── A STALE MOUNT WRITES NOTHING ──────────────────────────────────────
+  resetActionHarness('openrouter');
+  stubState.keys = keysFor('openrouter');
+  mountIsCurrent = false;
+  fetchImpl = async () => reply(200, { ok: true, syncedAt: syncedIso, admitted: 9 });
+  await onSyncCatalogue('openrouter', null);
+  ok(!stubState.catalogueSync.openrouter, 'a result landing after the view was left is discarded');
+  ok(loadKeysCalls === 0, '…and no refetch is issued into a dead mount');
+  mountIsCurrent = true;
+
+  // ── THE MESSAGE COMPOSER, on its own ──────────────────────────────────
+  okContains(catalogueSyncErrorMessage(409, null), 'was NOT changed',
+    'a 409 with no body still says nothing changed');
+  okContains(catalogueSyncErrorMessage(200, { conflict: 'write_in_progress' }), 'was NOT changed',
+    'a conflict flagged in the body is treated as a conflict even without the status');
+  okContains(catalogueSyncErrorMessage(0, {}), 'unchanged',
+    'a bodyless failure still states the list is unchanged');
+  ok(catalogueSyncErrorMessage(500, { error: 'Rate limited by OpenRouter.' }).startsWith('Rate limited'),
+    'a server message is used verbatim and leads');
+
+  resetActionHarness('gemini');
+  stubState.keys = null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§38  CLASS INVARIANT — no binary provider ternary in the refresh path');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // v3.10.1: `p.id === 'gemini' ? A : B` has no third arm, so any third
+  // provider fell into the Anthropic branch — rendering one provider's masked
+  // key beside another's name, and POSTing one provider's key into another's
+  // slot. The rule since is that provider-conditional behaviour is a LOOKUP.
+  // Enforced here for the two functions this release adds, by reading their
+  // real source rather than trusting a comment.
+  for (const fn of ['renderCatalogueSync', 'onSyncCatalogue']) {
+    const src = stripCommentsAndLiterals(extractFunction(settings, fn, 'settings.js'));
+    ok(!/===\s*['"`]?\w+['"`]?\s*\?/.test(src) || !/\bid\s*===/.test(src),
+      `${fn}: no binary provider ternary`);
+  }
+
+  // ── THE PROTOTYPE-KEY DEFENCE IS THREE LAYERS, AND THAT IS RECORDED ────
+  // MEASURED, not assumed. `renderCatalogueSync` refuses an inherited name
+  // like 'constructor' three independent ways, and NO SINGLE-LINE MUTATION
+  // TURNS THIS SUITE RED, because each layer masks the other two:
+  //   1. SYNC_BY_PROVIDER is null-prototype  → the lookup resolves undefined
+  //   2. the test is `!== true`, not truthy  → a function fails it anyway
+  //   3. HAS_KEY_BY_PROVIDER is null-prototype too
+  // Defeating any ONE leaves the suite at 0 failures; defeating any TWO also
+  // leaves it at 0; defeating all THREE yields 4 behavioural failures naming
+  // __proto__, constructor and toString. That is real defence in depth, not
+  // a dead guard — but it means a source grep for `Object.create(null)` would
+  // be asserting that a LINE EXISTS, which proves nothing about behaviour and
+  // is the decorative-guard shape this repo keeps finding. So it is not
+  // written. The BEHAVIOURAL claim lives in §35 (prototype ids are offered no
+  // control) and holds under every one of those mutations, which is the
+  // property that actually matters.
+  //
+  // `onSyncCatalogue`'s own KNOWN table is DIFFERENT and IS independently
+  // provable: it is read with a bare `!KNOWN[provider]`, with nothing in
+  // front of it, so making it a plain object literal yields 7 behavioural
+  // failures. §37 covers that directly.
+  ok(true,
+    'recorded: renderCatalogueSync\'s prototype refusal is 3-layer and only a TRIPLE mutation reds it (measured: 1 layer → 0, 2 → 0, 3 → 4)');
+
+  // And the tables are FUNCTION-LOCAL, so no new module-level identifier
+  // enters the extraction sandbox — where a missing binding is a crash, not a
+  // failing assertion (the v3.11.0 FN_NAMES shape).
+  ok(!/^const SYNC_BY_PROVIDER/m.test(settings),
+    'the sync-capability table is function-local, not a module const');
+  // And the tables are FUNCTION-LOCAL, so no new module-level identifier
+  // enters the extraction sandbox — where a missing binding is a crash, not a
+  // failing assertion (the v3.11.0 FN_NAMES shape).
+  ok(!/^const SYNC_BY_PROVIDER/m.test(settings),
+    'the sync-capability table is function-local, not a module const');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build lane');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT THIS SECTION EXISTS FOR ──────────────────────────────────
+// Observed live, surviving a full reload: a model the user had qualified on
+// their own wiki — and which was BUILDING THAT WIKI at that moment — rendered
+//
+//     in use · your choice · you measured this on your wiki
+//     chat only — not for ingest
+//     note: "…never measured against The Curator's ingest prompt, so nothing
+//            here says how it would build a wiki."
+//
+// all in one row, on the surface whose entire purpose is telling a user what
+// builds their wiki and what it costs. Four expressions answered "which lane?"
+// and only the pick control carried the local-qualification disjunct.
+//
+// ── HOW THE CORPUS IS BUILT, AND WHY IT CANNOT BE VACUOUS ───────────────
+// Nothing in this suite previously carried `qualifies: true`, so every
+// assertion about a locally-qualified row would have run over an empty set.
+// The fixture is therefore built through the SHIPPING path end to end:
+//   1. a synthetic OpenRouter API record ->  the REAL openRouterRecordToSpec,
+//      which produces the REAL multi-sentence note (free-tier data policy,
+//      hidden reasoning tokens, and the lane claim this row must lose);
+//   2. that spec ->  the REAL setOpenRouterCatalogue, so the entry the picker
+//      sees carries `suitability: 'chat-only'` and `jsonRaw: null` because the
+//      admission function put them there, not because this file typed them;
+//   3. a `qualifications` record with `qualifies: true` — the shape the ROUTE
+//      sends, computed server-side from `isLocallyQualified`, which is why the
+//      client fixture supplies it rather than re-deriving it.
+// Every claim below is then checked against a NEGATIVE CONTROL: the same
+// entry, same note, same catalogue, WITHOUT the qualification. If the control
+// does not reproduce the contradiction, the corpus cannot express the bug and
+// the section says so.
+{
+  // FOUR fetched entries, because ONE cannot express the states under test:
+  //   REC    qualified, IN USE and PINNED — the row seen live. Being pinned,
+  //          its control is "Selected", so it cannot also prove the BUTTON.
+  //   REC2   qualified but NOT pinned — the row that proves a qualified model
+  //          is offered the build control the server will accept.
+  //   PLAIN1/2  unqualified chat-only, so the chat lane is NON-EMPTY. Without
+  //          them `renderModelLanes` renders FLAT (one lane present) and every
+  //          grouping assertion below would be measuring a screen with no
+  //          groups on it — which the anti-vacuity check at the end of the
+  //          class invariant caught while this fixture had only REC.
+  const rec = (id, extra) => Object.assign({
+    id, name: 'ZZ ' + id,
+    pricing: { internal_reasoning: '0.000002' },
+    top_provider: { max_completion_tokens: 32768 },
+    supported_parameters: ['response_format', 'structured_outputs'],
+    reasoning: { default_enabled: true },
+  }, extra || {});
+  const REC = { id: 'zzlane/qualified:free' };
+  const REC2 = { id: 'zzlane/qualified-2:free' };
+  const PLAIN = ['zzlane/plain-1:free', 'zzlane/plain-2:free'];
+  const SPEC_IDS = [REC.id, REC2.id, ...PLAIN];
+
+  const mintedAll = SPEC_IDS.map((id) => openRouterRecordToSpec(rec(id)));
+  ok(mintedAll.every((r) => r.ok === true),
+    'corpus: the SHIPPING record-to-spec function admitted all four fixtures (' +
+      mintedAll.map((r) => (r.ok ? 'ok' : r.reason)).join(', ') + ')');
+  const minted = mintedAll[0];
+  const RAW_NOTE = minted.ok ? minted.spec.note : '';
+
+  // ── POSITIVE CONTROL FOR THE FILTER ────────────────────────────────────
+  // The note filter's markers are a COPY of wording that lives in
+  // openrouter-adapter.js, which a browser module cannot import. This is the
+  // assertion that converts a reword there into a red here rather than into a
+  // silently-dead filter and a re-shipped contradiction.
+  okContains(RAW_NOTE, 'never measured against',
+    'corpus: the REAL adapter note still contains the lane claim the filter targets — the filter has something to remove');
+  ok(withoutLaneClaim(RAW_NOTE) !== RAW_NOTE,
+    'corpus: withoutLaneClaim actually CHANGES the real note (it is not a no-op over this input)');
+  // …and it is SURGICAL. These two sentences are money facts a local ingest
+  // run does not touch, and a blanket note-suppression would delete them.
+  okContains(RAW_NOTE, 'data policy', 'corpus: the real note also carries the free-tier data-policy fact');
+  okContains(RAW_NOTE, 'billed as output', 'corpus: …and the hidden-reasoning-tokens cost fact');
+  okContains(withoutLaneClaim(RAW_NOTE), 'data policy',
+    'the filter KEEPS the free-tier data-policy fact — it removes a lane claim, not the note');
+  okContains(withoutLaneClaim(RAW_NOTE), 'billed as output',
+    'the filter KEEPS the hidden-reasoning cost fact');
+  okOmits(withoutLaneClaim(RAW_NOTE), 'never measured against',
+    'the filter REMOVES the "never measured against our ingest prompt" claim');
+  okOmits(withoutLaneClaim(RAW_NOTE), 'nothing here says how it would build',
+    'the filter removes the whole sentence, not half of it');
+  ok(splitSentences(RAW_NOTE).length >= 3,
+    `corpus: the real note is genuinely multi-sentence (${splitSentences(RAW_NOTE).length}) — a one-sentence note would make the surgical claim vacuous`);
+
+  const admitted = setOpenRouterCatalogue(mintedAll.filter((r) => r.ok).map((r) => r.spec));
+  ok(admitted.admitted === SPEC_IDS.length,
+    'corpus: the real admission function admitted all four fixtures into the catalogue');
+  const live = JSON.parse(JSON.stringify(listOfferableModels('openrouter')));
+  const entry = live.find((m) => m.id === REC.id);
+  ok(!!entry, 'corpus: the fixture reaches the merged catalogue the picker renders');
+  ok(entry && entry.suitability === 'chat-only' && entry.jsonRaw === null,
+    'corpus: it arrives chat-only with jsonRaw NULL because the ADMISSION FUNCTION put them there');
+
+  const qualFor = (modelId) => Object.assign({}, QUAL, { modelId });
+  const QUAL = {
+    modelId: REC.id,
+    qualifies: true,
+    outcome: 'NO_DEFECT_FOUND',
+    runsCompleted: 9,
+    counts: { raw: 9, repaired: 0, unrepairable: 0, unusable: 0 },
+    pages: { median: 23, min: 19, max: 27 },
+    latencyMs: { mean: 53000 },
+    spendUsd: 0,
+    domain: 'articles',
+    sourceName: 'routing-note.md',
+    measuredAt: '2026-08-28T09:58:37.225Z',
+    stillOffered: true,
+  };
+
+  // The row exactly as it was seen live: qualified, IN USE, and the user's pick.
+  const QUALS = [QUAL, qualFor(REC2.id)];
+  const keysWith = (quals) => keysFor('openrouter', {
+    offerable: Object.assign({}, WIRE, { openrouter: live }),
+    models: { gemini: defaultModelFor('gemini'), anthropic: defaultModelFor('anthropic'), openrouter: REC.id },
+    selectedModels: { openrouter: REC.id },
+    qualifications: quals,
+    minRunsToQualify: 9,
+  });
+
+  const html = renderModelPicker(rowFor('openrouter'), keysWith(QUALS), true, false);
+  const li = liFor(html, REC.id);
+  const li2 = liFor(html, REC2.id);
+  ok(li !== '' && li2 !== '', 'both qualified models render rows');
+
+  // ── NEGATIVE CONTROL FIRST: the corpus CAN express the defect ──────────
+  const ctrlHtml = renderModelPicker(rowFor('openrouter'), keysWith([]), true, false);
+  const ctrlLi = liFor(ctrlHtml, REC.id);
+  okContains(ctrlLi, MODEL_SUITABILITY_BADGES['chat-only'],
+    'CONTROL: without the qualification the SAME entry is badged "chat only — not for ingest"');
+  okContains(ctrlLi, 'never measured against',
+    'CONTROL: …and its note still carries the lane claim');
+  // The pick-control control is read off the UNPINNED row: `isSelected` is
+  // tested BEFORE the lane (deliberately — see renderModelOption), so the
+  // pinned row renders "Selected" in both directions and could never show
+  // this difference.
+  okContains(liFor(ctrlHtml, REC2.id), 'model-pick-state-chat',
+    'CONTROL: without the qualification the unpinned entry offers no build control');
+  okOmits(liFor(ctrlHtml, REC2.id), 'data-pick-model=',
+    'CONTROL: …and no "Use this" button');
+  okContains(ctrlHtml, 'model-lane-head-chat',
+    'CONTROL: …and it is filed under the Chat only lane');
+
+  // ── THE ROW NOW STATES ONE LANE ────────────────────────────────────────
+  okOmits(li, MODEL_SUITABILITY_BADGES['chat-only'],
+    'a locally-qualified row does NOT carry "chat only — not for ingest"');
+  okOmits(li, 'never measured against',
+    'a locally-qualified row does NOT carry the "never measured against our ingest prompt" note');
+  okOmits(li, 'nothing here says how it would build',
+    'a locally-qualified row does NOT deny that anything is known about how it would build a wiki');
+  okOmits(li, 'model-pick-state-chat',
+    'a locally-qualified row does NOT say "chat only" where the pick control goes');
+  okOmits(li, 'never measured here',
+    'a locally-qualified row is NOT badged "never measured here" — it was measured, by the user');
+
+  // …and it still says the true things, including the ones seen live.
+  okContains(li, 'you measured this on your wiki', 'it IS badged as measured BY THE USER');
+  okContains(li, 'in use', 'it still reports that it is the model in use');
+  okContains(li, 'your choice', 'it still reports that it is the pinned choice');
+  okContains(li, 'model-pick-state">Selected',
+    'the PINNED qualified row reads "Selected" — a control whose only outcome is re-writing its own value is not offered');
+  okContains(li2, 'data-pick-model=',
+    'an UNPINNED qualified row offers the build-model control, because the server accepts this pin');
+  okOmits(li, 'data-qualify-model=', 'it is not offered a "Test on my wiki" button it has already passed');
+  okOmits(li2, 'data-qualify-model=', '…nor is the unpinned one');
+
+  // ── THE TWO PROVENANCES STAY DISTINCT ─────────────────────────────────
+  // The whole reason the build lane grew a third state is that "we measured
+  // this across documents" and "you ran nine of these on one document" are
+  // different claims. Un-badging the contradiction must not quietly relabel
+  // the row as if WE had measured it.
+  okContains(li, 'No defect found in 9 runs',
+    'the headline still reports what the USER ran, in runs, not a verdict of ours');
+  okContains(li, 'articles', 'the scope stamp still names WHICH wiki it was measured against');
+  okContains(li, 'routing-note.md', 'the scope stamp still names WHICH document');
+  ok(!/verif(y|ied|ication)/i.test(li),
+    'the word "verified" appears nowhere on the row — this is a screen, not a guarantee');
+  okContains(li, 'This is a screen, not a guarantee',
+    'the caveat that N clean runs is not a proof survives the fix');
+  // A hand-measured build-lane row must NOT pick up the user's badge.
+  {
+    const handMeasured = live.find((m) => m.suitability !== 'chat-only');
+    if (handMeasured) {
+      okOmits(liFor(html, handMeasured.id), 'you measured this on your wiki',
+        `${handMeasured.id}: a hand-measured model is NOT relabelled as the user's measurement`);
+    } else {
+      ok(false, 'expected at least one hand-measured OpenRouter model in the live catalogue');
+    }
+  }
+
+  // ── THE LANE GROUPING MOVED WITH IT ───────────────────────────────────
+  const buildAt = html.indexOf('model-lane-head-build');
+  const chatAt = html.indexOf('model-lane-head-chat');
+  const rowAt = html.indexOf('data-model-id="' + escapeHtml(REC.id) + '"');
+  ok(buildAt !== -1 && chatAt !== -1, 'both lanes render (the fixture keeps the catalogue mixed)');
+  ok(buildAt < rowAt && rowAt < chatAt,
+    'the qualified model sits in the BUILD group, not under "These cannot run ingest…"');
+  // …and the build group stops claiming WE measured all of them.
+  const buildNote = html.slice(buildAt, chatAt);
+  okContains(buildNote, 'you</strong> measured',
+    'the build lane names the USER as the source for the locally-qualified one');
+  ok(!/Measured by The Curator against its real ingest prompt\. Any of these/.test(buildNote),
+    'the build lane no longer asserts The Curator measured every model in it');
+  // With no locally-qualified model present the original sentence is restored
+  // BYTE-FOR-BYTE, so this change costs nothing on every other catalogue.
+  okContains(ctrlHtml.slice(ctrlHtml.indexOf('model-lane-head-build'), ctrlHtml.indexOf('model-lane-head-chat')),
+    'Measured by The Curator against its real ingest prompt. Any of these can run ingest, ' +
+    'Health scans and Compile — the price and the limits beside each one are things we observed.',
+    'CONTROL: with no locally-qualified model the build-lane note is unchanged from before this fix');
+
+  // ── A FAILED RECORD MUST NOT PROMOTE ANYTHING ─────────────────────────
+  {
+    const bad = Object.assign({}, QUAL, { qualifies: false, outcome: 'DEFECT_OBSERVED',
+      counts: { raw: 0, repaired: 0, unrepairable: 9, unusable: 0 } });
+    const badLi = liFor(renderModelPicker(rowFor('openrouter'), keysWith([bad]), true, false), REC.id);
+    okContains(badLi, MODEL_SUITABILITY_BADGES['chat-only'],
+      'a DEFECT_OBSERVED record leaves the model chat-only');
+    okContains(badLi, 'failed on your wiki', '…and says so on the row');
+    okContains(badLi, 'never measured against',
+      '…and its catalogue note is untouched, because nothing overturned it');
+  }
+  // A truthy-but-not-true `qualifies` is a wire anomaly and must FAIL CLOSED —
+  // this is a lane that spends money.
+  for (const junk of [1, 'yes', {}, [], 'true']) {
+    const li2 = liFor(renderModelPicker(rowFor('openrouter'),
+      keysWith([Object.assign({}, QUAL, { qualifies: junk })]), true, false), REC.id);
+    okContains(li2, MODEL_SUITABILITY_BADGES['chat-only'],
+      `qualifies: ${JSON.stringify(junk)} does NOT promote into the build lane — only \`true\` does`);
+  }
+
+  // ── CLASS INVARIANT: EVERY LANE SURFACE AGREES, FOR EVERY MODEL ───────
+  // This is the guard that would have caught the shipped defect, and it is
+  // BEHAVIOURAL: it computes the lane once with the real predicate and then
+  // reads the four surfaces off the real markup. Any ONE of them drifting —
+  // the badge, the note, the control, the grouping — reds it, naming the model
+  // and the surface. A source grep would only have proved a line exists.
+  {
+    const quals = QUALS;
+    const ctx = { quals: Object.assign(Object.create(null),
+      Object.fromEntries(quals.map((q) => [q.modelId, q]))) };
+    const allHtml = renderModelPicker(rowFor('openrouter'), keysWith(quals), true, false);
+    const bIdx = allHtml.indexOf('model-lane-head-build');
+    const cIdx = allHtml.indexOf('model-lane-head-chat');
+    let checked = 0;
+    for (const m of live) {
+      const lane = modelLaneOf(m, qualificationFor(ctx, m));
+      const builds = laneBuildsWiki(lane);
+      const row = liFor(allHtml, m.id);
+      if (!row) { ok(false, `${m.id}: expected a rendered row`); continue; }
+      const at = allHtml.indexOf('data-model-id="' + escapeHtml(m.id) + '"');
+      ok(row.includes(MODEL_SUITABILITY_BADGES['chat-only']) === !builds,
+        `${m.id} [${lane}]: the chat-only BADGE matches the lane`);
+      // `isSelected` is tested before the lane, so the PINNED row reads
+      // "Selected" in either lane. Stated exactly rather than skipped, so the
+      // assertion covers every row including that one.
+      ok(row.includes('model-pick-state-chat') === (!builds && m.id !== REC.id),
+        `${m.id} [${lane}]: the pick CONTROL matches the lane`);
+      ok((bIdx < at && at < cIdx) === builds,
+        `${m.id} [${lane}]: the lane GROUPING matches the lane`);
+      ok(row.includes('never measured against') === (!builds && typeof m.note === 'string' && m.note.includes('never measured against')),
+        `${m.id} [${lane}]: the NOTE's lane claim matches the lane`);
+      checked++;
+    }
+    ok(checked === live.length && live.length > 1,
+      `the invariant ran over the whole catalogue (${checked}/${live.length}) and it holds both lanes`);
+    // Both arms of the invariant are populated, or three of the four
+    // assertions above would be a one-sided tautology.
+    const builds = live.filter((m) => laneBuildsWiki(modelLaneOf(m, qualificationFor(ctx, m))));
+    ok(builds.length > 0 && builds.length < live.length,
+      `the corpus contains BOTH lanes (${builds.length} build / ${live.length - builds.length} chat) — neither loop arm is empty`);
+    ok(builds.some((m) => m.id === REC.id) && builds.some((m) => m.id === REC2.id),
+      'and BOTH locally-qualified models are build-lane rows — this section is not vacuous');
+    ok(live.filter((m) => modelLaneOf(m, qualificationFor(ctx, m)) === MODEL_LANES.BUILD_LOCAL).length === 2,
+      'exactly the two qualified fixtures are in BUILD_LOCAL — the promotion is not leaking to their unqualified siblings');
+  }
+
+  // ── PROTOTYPE IDS CANNOT BORROW A LANE ────────────────────────────────
+  // An OpenRouter id is a third party's string. A plain-object lookup would
+  // hand `qualificationFor` a FUNCTION for `constructor`, and `fn.qualifies`
+  // is undefined — but a future map built with `{}` would be one edit away
+  // from a real promotion, so the refusal is asserted rather than assumed.
+  for (const evil of ['__proto__', 'constructor', 'toString']) {
+    const ctx = { quals: Object.assign(Object.create(null), { real: QUAL }) };
+    ok(qualificationFor(ctx, { id: evil }) === null,
+      `qualificationFor refuses the prototype key "${evil}"`);
+    ok(modelLaneOf({ suitability: 'chat-only', jsonRaw: null, id: evil },
+      qualificationFor(ctx, { id: evil })) === MODEL_LANES.CHAT_UNMEASURED,
+      `a model id of "${evil}" resolves to CHAT_UNMEASURED, never into the build lane`);
+  }
+
+  // ── THE STAMP IS AN INSTANT, AND IT NEVER REACHES A USER RAW ──────────
+  okOmits(li, '2026-08-28T09:58:37.225Z',
+    'the measurement stamp does NOT render the raw ISO instant');
+  ok(!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(li),
+    'no ISO instant of any shape survives into the rendered row');
+  okContains(li, formatSyncedAt(QUAL.measuredAt),
+    'the stamp renders through formatSyncedAt — the same helper the catalogue date uses');
+  ok(formatIsoDay(QUAL.measuredAt) === QUAL.measuredAt,
+    'CONTROL: formatIsoDay ECHOES this instant unchanged — which is exactly how the raw ISO reached the screen');
+
+  // Forced-timezone child processes. Same instant, two zones: the rendering
+  // must differ (it is a local clock) and NEITHER may contain an ISO artefact.
+  {
+    const fnSrc = extractFunction(settings, 'formatSyncedAt', 'settings.js');
+    const probe = fnSrc + `
+      const out = formatSyncedAt(${JSON.stringify(QUAL.measuredAt)});
+      process.stdout.write(out);`;
+    const runs = {};
+    for (const TZ of ['UTC', 'America/Los_Angeles']) {
+      const r = spawnSync(process.execPath, ['-e', probe],
+        { encoding: 'utf8', env: Object.assign({}, process.env, { TZ }) });
+      ok(r.status === 0, `the stamp probe runs under TZ=${TZ}`);
+      runs[TZ] = r.stdout;
+      ok(!/[TZ]|\d{4}-\d{2}-\d{2}/.test(runs[TZ]),
+        `under TZ=${TZ} the stamp carries no ISO artefact (got '${runs[TZ]}')`);
+    }
+    ok(runs.UTC === '28 Aug 2026, 09:58',
+      `under TZ=UTC the instant renders as its UTC clock (got '${runs.UTC}')`);
+    ok(runs['America/Los_Angeles'] === '28 Aug 2026, 02:58',
+      `under TZ=America/Los_Angeles it renders as THAT clock (got '${runs['America/Los_Angeles']}') — an instant follows the reader, unlike a price date`);
+    ok(runs.UTC !== runs['America/Los_Angeles'],
+      'the two zones genuinely differ — the probe is measuring the conversion, not a constant');
+    // The buggy form, run the same way, to prove the assertions above are not
+    // green for a reason unrelated to the fix.
+    const buggy = extractFunction(settings, 'formatIsoDay', 'settings.js') + `
+      process.stdout.write(formatIsoDay(${JSON.stringify(QUAL.measuredAt)}));`;
+    const bad = spawnSync(process.execPath, ['-e', buggy],
+      { encoding: 'utf8', env: Object.assign({}, process.env, { TZ: 'UTC' }) });
+    ok(bad.status === 0 && bad.stdout === QUAL.measuredAt,
+      'POSITIVE CONTROL: the previously-used formatter emits the raw ISO verbatim under a forced TZ');
+  }
+
+  // The confirm panel's "you already measured this on …" is the SAME class and
+  // is fixed in the same change — a guard applied to one instance of a class
+  // is this repo's most-repeated shape.
+  {
+    const panel = renderQualifyPanel({
+      modelId: REC.id, phase: 'confirm',
+      estimate: { runs: 9, domain: 'articles', promptChars: 341005,
+        time: { fastestSeconds: 360, slowestSeconds: 3420, note: '' },
+        existing: { measuredAt: QUAL.measuredAt } },
+    }, 9);
+    okOmits(panel, QUAL.measuredAt, 'the re-measure confirm does not echo a raw ISO either');
+    okContains(panel, formatSyncedAt(QUAL.measuredAt), '…it renders through the same instant formatter');
+  }
+
+  // Leave no residue for any later section, and prove the reset took.
+  setOpenRouterCatalogue([]);
+  ok(listOfferableModels('openrouter').every((m) => !SPEC_IDS.includes(m.id)),
+    'the synthetic catalogue is cleared — later sections see the shipping list');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

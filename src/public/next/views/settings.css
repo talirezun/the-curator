@@ -803,3 +803,229 @@
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
+
+/* ── The catalogue refresh control (v3.15.2) ────────────────────────────────
+   A sibling of the provider row and of the model picker, pulled up against
+   both so the three read as one block about one provider. Deliberately NOT
+   inside .model-picker: that section is collapsed by default, and a control
+   whose refusal can only be seen after expanding something is the
+   invisible-refusal shape (v3.6.0/v3.8.0).
+
+   Every colour is a semantic token and every transition uses --t-state, so
+   both themes come from color.css and prefers-reduced-motion is already
+   handled by tokens/motion.css zeroing the duration tokens. */
+.catalogue-sync {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 13px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  margin-top: -4px;
+}
+.catalogue-sync-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.catalogue-sync-status {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.catalogue-sync-status strong { color: var(--text); font-weight: var(--weight-semibold); }
+.catalogue-sync-btn { flex: none; white-space: nowrap; }
+.catalogue-sync-counts {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+/* The lane claim. Recessed but not faint — it is the sentence that stops a
+   user believing a fetched model can build their wiki, so it must survive a
+   skim. --text-2, not --text-3. */
+.catalogue-sync-note {
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.catalogue-sync-note strong { color: var(--attention-text); font-weight: var(--weight-semibold); }
+.catalogue-sync-error { margin: 0; }
+
+.catalogue-funnel { font-size: var(--text-2xs); }
+.catalogue-funnel-summary {
+  cursor: pointer;
+  color: var(--text-3);
+  list-style: none;
+  padding: 2px 0;
+}
+.catalogue-funnel-summary::-webkit-details-marker { display: none; }
+.catalogue-funnel-summary:hover { color: var(--text-2); }
+.catalogue-funnel-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.catalogue-funnel-list {
+  list-style: none;
+  margin: 5px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.catalogue-funnel-list li {
+  display: flex;
+  gap: 9px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.catalogue-funnel-rule { color: var(--text-2); }
+.catalogue-funnel-count { color: var(--text-3); white-space: nowrap; }
+
+/* ── The two lanes inside one model list (v3.15.2) ──────────────────────────
+   A fetched catalogue can list ~190 models of which a handful build the wiki.
+   The heading carries the lane so the rows do not have to repeat it, and the
+   build lane is never folded — it is the shortest group and the one that
+   decides what an ingest costs. */
+.model-lane-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 12px 3px 0;
+}
+.model-lane-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+.model-lane-head-build .model-lane-title { color: var(--success-text); }
+.model-lane-head-chat .model-lane-title { color: var(--attention-text); }
+.model-lane-count { font-size: var(--text-2xs); color: var(--text-3); margin-left: auto; }
+.model-lane-note {
+  margin: 3px 3px 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+/* The badge is quoted inline in that note, so it must sit on the text
+   baseline rather than float as a pill in its own line box. */
+.model-lane-note .model-badge { display: inline-block; vertical-align: baseline; }
+
+.model-lane-fold { margin-top: 4px; }
+.model-lane-fold-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 3px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+}
+.model-lane-fold-summary::-webkit-details-marker { display: none; }
+.model-lane-fold-summary:hover { color: var(--text); }
+.model-lane-fold-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.model-lane-fold-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--t-state);
+}
+.model-lane-fold[open] > .model-lane-fold-summary svg { transform: rotate(90deg); }
+/* Once open, the group's own heading takes over, so the fold's summary must
+   not double as a second heading directly above it. */
+.model-lane-fold-body > .model-lane-head { padding-top: 0; }
+
+/* "Never measured here" is a DIFFERENT claim to the amber flags: those mean
+   "we measured this and here is the finding", this one means "there is no
+   finding". Neutral, outlined, deliberately not amber — an absence of
+   evidence must not be dressed as a warning about evidence. */
+.model-badge-unmeasured {
+  background: transparent;
+  color: var(--text-3);
+  border: 1px dashed var(--border-strong);
+}
+/* Where a build-lane row shows its "Use this" button, a chat-only row states
+   the rule instead. Recessed, because it is an explanation and not an action
+   the user has failed to take. */
+.model-pick-state-chat {
+  color: var(--text-3);
+  font-weight: var(--weight-regular);
+  cursor: help;
+}
+/* The free-routing open question. Same recessed paragraph frame as the scope
+   line it sits beside; never the amber tint, which would read as a warning
+   about a specific finding when the honest content is that there is none. */
+.model-picker-free-note { margin-top: 9px; }
+/* "Loaded for this session only" — the refresh worked but could not be saved,
+   so the models vanish on restart. Amber: this IS a finding about a thing that
+   went wrong, unlike .catalogue-sync-note beside it, which states a rule. */
+.catalogue-sync-warn { color: var(--attention-text); }
+
+/* ── ON-WIKI MODEL QUALIFICATION ─────────────────────────────────────────────
+   The user's own measurement of a model against their own wiki.
+
+   THE PALETTE CARRIES THE EPISTEMIC DISTINCTION, so it is not decoration.
+   "you measured this on your wiki" must never look like a hand-measured
+   verdict: it is a different claim (nine runs, one corpus, one moment) and the
+   whole reason the build lane grew a THIRD state rather than widening
+   `suitability` is so this screen can keep the two apart. Outlined and
+   accent-tinted rather than solid, so it reads as "yours" beside our badges. */
+.model-badge-local {
+  background: transparent;
+  color: var(--accent-text, var(--text-2));
+  border: 1px solid var(--accent-border, var(--border-strong));
+}
+
+/* The result block, and the live confirm/progress panel, both live in the model
+   row BODY. Recessed frame so the evidence never competes with the price and
+   the badges on the row itself, which is where a spending decision is made. */
+.model-qual {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-sunken);
+}
+.model-qual-head { margin: 0 0 5px; font-weight: var(--weight-medium); }
+.model-qual-facts { margin: 0 0 5px; font-size: 12px; color: var(--text-2); }
+/* WHICH wiki and WHEN. Quiet, but never hidden: a measurement without its scope
+   is a claim about the model, which it is not. */
+.model-qual-stamp { margin: 0; font-size: 12px; color: var(--text-3); }
+/* The rule-of-three caveat and the stale-catalogue note. Same recessed weight —
+   they qualify the number rather than warn about it. */
+.model-qual-caveat { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+
+/* A LEFT RULE, NOT A FILL. The outcome is a fact about what happened, and a
+   filled panel would read as a status banner about the app. */
+.model-qual-clean   { border-left: 3px solid var(--success); }
+/* Amber, not red: a defect found is the feature WORKING. It is the single most
+   valuable thing this can tell a user, and it is not an error state. */
+.model-qual-defect  { border-left: 3px solid var(--attention-text, var(--border-strong)); }
+/* "Clean but short of the bar" and "not measured" are neither good news nor
+   bad, so neither gets a colour that implies one. */
+.model-qual-short,
+.model-qual-unmeasured { border-left: 3px solid var(--border-strong); }
+.model-qual-confirm,
+.model-qual-running { border-left: 3px solid var(--accent-border, var(--border-strong)); }
+
+/* TIME LEADS THE CONFIRM. It is the binding constraint (measured: 6 to 57
+   minutes for nine runs, against $0.08-$0.38), so it is the one line that is
+   not recessed. */
+.model-qual-time { margin: 6px 0 0; font-size: 13px; }
+.model-qual-cost { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
+.model-qual-actions { display: flex; gap: 8px; margin-top: 9px; }
+
+/* The probe control sits beside the "chat only" state, never inside the row's
+   <summary> — the v3.0.1-beta.18 hazard, where a control inside a summary
+   toggles its own section on click. */
+.model-qualify-btn { margin-left: 8px; }

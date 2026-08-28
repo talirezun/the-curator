@@ -681,8 +681,27 @@ section('§5b. POST /api-keys/model — a chat-only model cannot be pinned as th
     // THE REFUSAL.
     const bad = await pinModel({ provider: chatOnly.provider, model: chatOnly.id });
     ok(bad.status === 400, `pinning the chat-only model "${chatOnly.id}" is REFUSED with 400 (got ${bad.status})`);
-    ok(typeof bad.body.error === 'string' && /chat-only/i.test(bad.body.error),
-      'the refusal SAYS it is a chat-only verdict — a user who is not told why reads the picker as broken');
+    // v3.16.0: the refusal no longer says "chat-only". That word is an internal
+    // field name, and since local qualification shipped it would also be a FALSE
+    // PERMANENCE claim — the model is not barred, it is NOT YET MEASURED. What
+    // this assertion protects is the INTENT, which is stronger than the old
+    // literal: the user must be told the REASON in their own language, and for
+    // an OpenRouter model must be told the WAY OUT, or the refusal reads as a
+    // dead end on the very screen they opened to change their model.
+    ok(typeof bad.body.error === 'string' && bad.body.error.length > 20,
+      'the refusal carries a real message, not an empty string or a bare code');
+    ok(/measur/i.test(bad.body.error),
+      'the refusal SAYS WHY — it names measurement as the missing thing, in user language');
+    ok(/ingest|Health|Compile|build/i.test(bad.body.error),
+      'the refusal names WHAT the model cannot do, not just that it was refused');
+    ok(bad.body.error.includes(chatOnly.id),
+      'the refusal names the MODEL the user actually picked');
+    // The way-out clause is OpenRouter-specific: for a Gemini/Anthropic chat-only
+    // model there is no probe to offer, so demanding it everywhere would be wrong.
+    if (chatOnly.provider === 'openrouter') {
+      ok(/your own wiki|on my wiki|measure it/i.test(bad.body.error),
+        'an OpenRouter refusal names the WAY OUT (measure it on your own wiki), so it is not a dead end');
+    }
     ok(/still choose this one per-conversation in chat|in chat/i.test(bad.body.error || ''),
       'the refusal also says the model is still usable in CHAT — the lane is a restriction on one job, not a ban');
     ok((bad.body.error || '').includes(chatOnly.id),

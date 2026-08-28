@@ -160,7 +160,7 @@ The app uses an AI provider to read your documents and power chat. You need an A
 |---|---|---|
 | **Google Gemini** | Yes, with strict daily quotas | Recommended. The lowest pay-as-you-go cost, and the app's default. |
 | **Anthropic Claude** | No — paid only | Roughly 10× the Gemini bill for the same workload. |
-| **OpenRouter** | Some models are free, with a daily request cap | One key onto many vendors. **It can build your wiki**, on three hand-measured models, and its default is the cheapest route to that job of the three providers. Because saving its key also makes it the active provider, read [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) before you do. |
+| **OpenRouter** | Some models are free, with a daily request cap | One key onto many vendors. **It can build your wiki**, on three hand-measured models, and its default is the cheapest route to that job of the three providers. Because saving its key also makes it the active provider, read [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) before you do. |
 
 
 > ⚠️ **About "free" — read this before you commit to free-tier-only usage.**
@@ -202,7 +202,7 @@ Two things make this easy to stay on top of:
 - **The word `active` beside a row in Settings → Providers & keys is always the truth** about which provider is live. Check it after saving a key.
 - **To flip back without re-pasting or deleting anything**, click **Set active** on the row you want. That button appears on any provider that has a key saved, has a model able to build your wiki, and isn't already active. The switch is instant.
 
-**Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → API keys](#api-keys) and [§16b](#openrouter--one-key-three-measured-models-and-two-different-rules).
+**Chat is a separate lane and is unaffected.** Chat sends its own per-message model, so switching your active provider does not change what answers your chat messages — and picking an OpenRouter model in the chat composer does not change what builds your wiki. See [§16 → API keys](#api-keys) and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
 ---
 
@@ -670,7 +670,7 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three. With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
+- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three measured ones plus, once you have refreshed the list, everything else OpenRouter offers that passes the structural checks (see [Refreshing the model list](#refreshing-the-model-list)). With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
@@ -1347,7 +1347,7 @@ Under each connected provider's row there is a collapsible **model list** — th
 
 > **The active provider is chosen first, then its model.** A model you pin under a provider only takes effect while that provider is the active one; pinning under the *other* provider stores a preference that sits dormant until you **Set active** on it. So switching providers also switches which pinned model is running — see [§16b](#16b-choosing-your-ai-model).
 
-You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-three-measured-models-and-two-different-rules) explains what makes OpenRouter different from the other two.
+You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) explains what makes OpenRouter different from the other two.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
 
@@ -1428,7 +1428,7 @@ The **Choose folder** button greys out while anything is writing to your wiki. T
 
 For most of its life The Curator ran exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still what you get if you never touch anything. But it also meant that if you wanted more capability out of a big wiki, and were willing to pay for it on your own key, there was no way to ask.
 
-Now there is. **Seventeen hand-measured models** are on offer: seven Gemini, seven Anthropic and three OpenRouter. Every one of them was measured by hand against The Curator's real ingest prompt before being offered, and all seventeen can build your wiki. The third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) below.
+Now there is. **Seventeen hand-measured models** are on offer: seven Gemini, seven Anthropic and three OpenRouter. Every one of them was measured by hand against The Curator's real ingest prompt before being offered, and **sixteen of the seventeen can build your wiki** — the exception is `gemini-3.5-flash-lite`, which was measured and found unfit for ingest specifically, and is offered for chat with that reason on its row. On top of those seventeen, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
 
@@ -1545,15 +1545,17 @@ Two examples, because the principle matters more than the specifics:
 
 **A flag on the build lane is now a rule, not just a label.** Until this release, "chat only — not for ingest" was a badge and nothing more: you could pin such a model as your Settings model and the app would let you, while the warning sat on the same screen. That is fixed. The app now **refuses** to make a chat-only model your build model, tells you why, and reminds you it is still available in chat — and if you had already pinned one, it quietly runs the provider's default for ingest instead. Nothing about chat changed: a chat-only model stays fully pickable in the composer, which is the whole point of the label.
 
-### OpenRouter — one key, three measured models, and two different rules
+### OpenRouter — one key, two lanes, and a model list you refresh
 
 **OpenRouter is an aggregator**, not a vendor: one key, one account, and models from many different companies behind it. That is genuinely useful — it is the cheapest route into this app, and one of the models it reaches is free — and it is why it plays by slightly different rules from the other two.
 
-**How many models that actually means here: three.** OpenRouter's own catalogue is very large, but The Curator offers only what someone has measured against its real ingest prompt, and that is three routes (below). There is no larger list to unlock: the app is built to hold a bigger chat-only catalogue read from your own account, but **nothing fills it in this release**, so three is what you get in both the Settings picker and the chat composer.
+**How many models that actually means here depends on the lane, and the gap is enormous.** A set of OpenRouter routes has been measured against The Curator's real ingest prompt, and only a measured model may **build your wiki** — either measured by us, or [measured by you against your own wiki](#test-a-model-on-your-own-wiki). For **chat**, the app fetches OpenRouter's own live catalogue on demand and offers everything that survives a set of structural checks. On one measured refresh (28 August 2026) that turned 387 models listed by OpenRouter into **189 added here**, taking the picker from 3 models to 192.
+
+Those figures are a measurement, not a promise, and this guide will not print a standing number: OpenRouter's catalogue moved by **seven records inside five hours** on the day this was written. What is stable is the *method* — see [Refreshing the model list](#refreshing-the-model-list) below — and the split it produces: **OpenRouter tells us what a model costs; only we can measure whether it does our job.**
 
 **⚠ Read this first: OpenRouter can now build your wiki — and saving its key switches you over to it.**
 
-This changed in this release. Ingest, Wiki Health scans and Compile all run on models measured by hand against The Curator's real ingest prompt, and **three OpenRouter routes have now been measured that way** (see [The three measured models](#the-three-measured-models-and-which-to-pick) below). So:
+Ingest, Wiki Health scans and Compile all run on models measured against The Curator's real ingest prompt, and **several OpenRouter routes have been measured that way** (see [The measured models](#the-measured-models-and-which-to-pick) below). Since v3.16.0 you can also [measure one yourself, against your own wiki](#test-a-model-on-your-own-wiki). So:
 
 - OpenRouter is available for **chat**, as before.
 - It is now **also** available for ingest, Wiki Health and Compile.
@@ -1564,9 +1566,11 @@ This changed in this release. Ingest, Wiki Health scans and Compile all run on m
 
 If OpenRouter is your **only** key, you can now run the whole app on it, which was not true before.
 
-#### The three measured models, and which to pick
+#### The measured models, and which to pick
 
-Each was run **nine times** against The Curator's real ingest prompt — the full thing, roughly 341,000 characters assembled from a real wiki, not a toy test — and the same prompt, byte for byte, went to all three, so these numbers compare to each other honestly.
+Each was run **nine times** against The Curator's real ingest prompt — the full thing, roughly 341,000 characters assembled from a real wiki, not a toy test — and the same prompt, byte for byte, went to every candidate, so these numbers compare to each other honestly.
+
+The three below are the ones with published numbers in this guide and cover the three reasons you'd pick differently — best all-round, cheapest, and free. More OpenRouter routes have since been measured and admitted the same way — a Kimi route and a GLM route, each with its own measured trade-off written on its row — and several that measured *clean* were still refused, because their price varies by which endpoint serves the request and this app will not quote a number it would be making up. The list in Settings is the live one, and this guide deliberately doesn't print a running count of it.
 
 | Model | What it's for | Measured |
 |---|---|---|
@@ -1590,14 +1594,40 @@ The consequences are not symmetrical.
 
 So the build lane admits only what has been measured, and the chat lane admits what your key unlocks, **labelled as unmeasured**. Two different bets, two different downsides.
 
-#### Why the app can't just test a model for you when you pick it
+#### Can the app just test a model for you? Now, mostly, yes — on your own wiki
 
-The obvious idea — probe the model, and let it in if the probe passes — was considered and rejected, and the reasons are worth knowing because they explain why the measured list stays small.
+The obvious idea — probe the model, and let it in if the probe passes — was rejected in the previous release, and one of the four reasons turned out to be about a **brand-new install** rather than about testing as such. The other three still hold, and they are why testing works the way it does.
 
-- **A model's published capabilities say it *accepts* structured output. They cannot say the output *parses*.** The Curator's own list is the proof: one Gemini model advertises structured output, honours the request, and in 2 of 9 real runs returned data that neither the parser nor the repair pass could fix. In an aggregator's catalogue it looks perfectly capable — because it is. The defect is in what comes back.
-- **A test on a fresh install would be a toy test.** A real ingest prompt is roughly 285,000 characters, about **90% of which is your own wiki index and page list**. A new install has neither. And a small synthetic prompt is precisely the kind that passes green while a real one fails — that is not hypothetical, it is how a 100%-reproducible failure once survived a release here.
-- **One run cannot see a 2-in-9 problem.** At that rate a single test passes a broken model about **78%** of the time. Catching it reliably takes around nine runs of a very large prompt, before you have ingested anything.
-- **And some of what's recorded is comparative.** "A model at the same price measured better on every axis" is a statement about a *relationship*, which no single model's test can produce. A machine can honestly report *"7 of 7 clean, 14 pages planned"*. It cannot write the verdict.
+- **A model's published capabilities say it *accepts* structured output. They cannot say the output *parses*.** *Still true, and it is why a test has to exist at all.* The Curator's own list is the proof: one Gemini model advertises structured output, honours the request, and in 2 of 9 real runs returned data that neither the parser nor the repair pass could fix. Worse, one OpenRouter model measured during this work clears **every** structural check, is genuinely fast, and returned unusable data in **9 of 9** runs.
+- **A test on a fresh install would be a toy test — but that is about the *prompt*, not about testing.** A real ingest prompt is about **341,000 characters**, and only about **3,500** of that is The Curator's own scaffolding. The rest is *your* material: your wiki index, your page list, and your own source document. A brand-new install has none of it. **But if you want to build your wiki with a different model, you already have a wiki** — so your own index *is* the realistic prompt. That is exactly what a test uses, and if a domain is too thin to produce one, the app **refuses to test** rather than measuring something meaningless.
+- **One run cannot see a 2-in-9 problem.** *Still true.* At that rate a single test passes a broken model about **78%** of the time. That is why **nine runs is the minimum** to promote one. Fewer runs are measured and reported honestly, with the run count — they simply do not promote anything.
+- **And some of what's recorded is comparative.** *Still true, and it is the strictest rule the test obeys.* "A model at the same price measured better on every axis" is a statement about a *relationship*, which no single model's test can produce. So the test reports **facts and never a verdict**: *"9 of 9 clean, median 25 pages, 41 s average, $0.005 spent."* It does not rank models, does not recommend one, and does not write the little description you see on a row.
+
+#### Test a model on your own wiki
+
+If a model is offered for chat but not for building, you can measure it yourself and — if it comes back clean — use it for ingest, Wiki Health and Compile.
+
+**What happens, in order**
+
+1. **A free estimate first.** No AI call, no cost: the app builds the real prompt from your own wiki and tells you what a test would take. If you don't name a domain it uses the one with the **biggest index**, because a bigger wiki makes a more realistic prompt.
+2. **The confirmation leads with *time*, not money.** That is deliberate, and it is the number that will surprise you. Measured across real candidates, one call took anywhere from **38 seconds to over 8 minutes**, so the estimate quotes roughly **6 minutes to an hour** for nine runs, and real runs landed across that whole span — a few minutes on the fastest candidates, three quarters of an hour on the slowest. The money stayed under a dollar either way. Money is not the binding constraint here; your afternoon is.
+3. **Nine runs of your real ingest prompt.** The same prompt, byte for byte, every time — so the runs are comparable to each other — sent the same way a real ingest sends it.
+4. **You can stop at any time.** Closing the panel cancels the run. A cancelled test is **not saved**, so it can never overwrite a real earlier result with a stub, and it is never recorded as the model's fault.
+
+**How to read the result — this is the part worth understanding**
+
+- **"Repaired" is not a failure.** Some models wrap their answer in a code block; The Curator unwraps it and carries on. `claude-haiku-4-5` — the app's own Anthropic default — does this on **3 out of 3** runs, so every Anthropic ingest already depends on that repair step. A model is only rejected for output that **couldn't be repaired**, or output that repaired fine and still wasn't usable.
+- **You will never see the word "verified", and that is on purpose.** Nine clean runs are consistent with a failure rate as high as about **1 in 3** (12 runs, about 1 in 4). So the app tells you what it *observed* and how many runs it observed it over, and leaves the inference to you. A clean result reads as *no problem found*, never *passed*.
+- **A rate-limited run counts as neither.** It is recorded as *not measured* — not a defect and not a pass. Free models especially draw on a shared pool, so a "no" from the queue is not a fact about the model.
+- **Slowness is shown, never used to reject.** A model having a bad hour must not disqualify it forever — but a model that genuinely takes minutes per call is something you should see **before** you pin it, because an ingest is 40-plus calls. One model tested clean and took **over 8 minutes for a single call** — roughly ten times the fastest — while another answered in under a minute and was broken in **9 of 9** runs. Speed and correctness are separate things and are reported separately.
+- **The cost shown is a floor.** Testing sends the *same* prompt nine times, which can pick up a discount a real ingest — new document each time, growing index — will not.
+
+**What a passing result actually gives you.** The model becomes usable for ingest, Wiki Health and Compile **on your machine, on your evidence** — and it is badged as *you measured this*, not as *we measured this*. Those are different claims and the app keeps them apart deliberately. Two consequences follow:
+
+- **A result is tied to a wiki, a document and a date**, and all three are shown. A model reached through an aggregator can be routed differently next month, so a measurement is a statement about a moment.
+- **If the model later disappears from your model list, the promotion lapses** — but the result is **kept** and shown as no longer applicable. You paid real time for that evidence; it isn't thrown away because a refresh came back short.
+
+**What it cannot do.** It cannot overturn a finding of ours. If The Curator has already measured a model and found it wanting, nine clean runs on your wiki do not promote it — you have sampled the good 78%, not disproved the bad 22%. And a failing result is **saved too**, on purpose: knowing a model failed 9 of 9 is worth keeping, so you don't spend the same 40 minutes again next month.
 
 #### What's checked automatically, and what a human measures
 
@@ -1620,12 +1650,49 @@ Some models are ruled out structurally, because of something the app *can't* do 
 - **"Auto" router models whose price is unknown until after the call.** Every price in this app is shown to you **before** you choose. A model that can't be priced in advance can't be shown honestly, so it isn't shown.
 - **Moving aliases** that quietly resolve to whatever the vendor considers newest. Pin one and what you picked can change underneath you.
 - **Models that can't write enough in one go** to produce an ingest outline at all.
+- **Models with a smaller context window than a model The Curator already ships.** The floor is 200,000 tokens, and that number is not rounded for tidiness: it is exactly the window of `claude-haiku-4.5`, one of the app's own defaults. The rule is *we will not offer a model that is worse on context than something you can already pick here*. It is a deliberate trade with a cost — it excludes some perfectly good models, including one The Curator does ship (`ibm-granite/granite-4.0-h-micro`, at 131,000), which survives as a hand-measured entry rather than a fetched one.
+- **Models retiring within the next 30 days.** One model in a measured refresh published a retirement date **three days** out. Offering it would hand you something that stops working inside the release's own lifetime.
 - **Models whose price changes above a certain prompt size** — some double their rate on long prompts. Those are allowed **for chat only**, where prompts are small and bounded, and never for ingest, which is exactly where a long prompt would cross the threshold and where quoting half the real rate would matter most.
+
+#### Refreshing the model list
+
+The three measured models are shipped with the app. Everything else OpenRouter offers has to be **fetched**, because that catalogue changes without a release of ours — free models in particular churn from month to month.
+
+**Where it is:** Settings → *Providers & keys* → OpenRouter → **Refresh model list**. It appears only once an OpenRouter key is saved in Settings; a key that lives only in `.env` does not count, deliberately (same rule as the model picker — a provider you Disconnected must not stay usable).
+
+**What it does, in one click:** fetches OpenRouter's public model list, runs every entry through the structural checks described above and below, and adds the survivors to the **chat** lane. Nothing it fetches can ever reach the build lane — that is enforced in the code, not promised here, and the row for a fetched model shows the rule where the *Use this* button would otherwise be.
+
+**What you see afterwards.** A line of counts — how many OpenRouter listed, how many met the requirements, how many were added, how many were already measured here, how many were refused — and a **Why models were left out** disclosure showing, rule by rule, how many each check removed. One measured run:
+
+| Check | Removed | Left |
+|---|---|---|
+| listed by OpenRouter | — | 387 |
+| structured-output mode | 58 | 329 |
+| price knowable in advance | 2 | 327 |
+| not a moving alias | 13 | 314 |
+| output ceiling big enough | 61 | 253 |
+| context window at least 200,000 | 59 | 194 |
+| not retiring within 30 days | 1 | 193 |
+
+Of those 193, **189 were added** and 2 were models The Curator had already measured by hand — so the shipped entry was kept and the fetched copy dropped. Your own numbers will differ, and they should: this is a snapshot of somebody else's catalogue on one afternoon.
+
+**It sticks.** The list is saved on your machine and reloaded when The Curator starts, so a refresh is not something you repeat every session. It is *re-checked* on the way back in rather than trusted because it was on disk, so a model that has since stopped qualifying is dropped rather than quietly kept. If the app could not save the list, it says so on the panel — the models work for this session and are gone after a restart, and the fix is to refresh again once you have restarted.
+
+**A failed refresh costs you nothing.** If OpenRouter is unreachable, slow, or returns something the app cannot read, the refresh fails with a message and **your existing model list is left exactly as it was**. It is never emptied, because "OpenRouter has no models" is not a state that exists, whereas "we could not read the answer" very much is.
+
+**Why it is sometimes refused with an error about a write in progress.** The button is disabled, and the server refuses the request outright, while an ingest, a Wiki Health fix or another write is running. That is correct behaviour, not a fault: replacing the model catalogue mid-run can change which model the next call in that run resolves to, and what the last one gets priced at. Wait for the run to finish and click again.
+
+**When to use it.** After you first save an OpenRouter key; when you want a model that has been released since; and if a model you were using has disappeared — free ones come and go. There is no automatic refresh, on purpose: fetching a fresh catalogue is a change to what your money can be spent on, so it happens when you ask for it.
+
+**And the honest limit on all of it.** Passing every check above means *nothing in OpenRouter's published metadata disqualifies this model*. It does not mean the model works. The catalogue can say a model **accepts** structured-output mode; it cannot say the output **parses** — the app's own list contains a model that advertises full support and returned unrepairable data in 2 of 9 real runs. That is why fetched models carry a **never measured here** badge and are confined to chat, where a bad answer costs you one visible answer and nothing is written to your wiki.
+
 
 #### Free models — real, useful, and not unlimited
 
-Some models on OpenRouter genuinely cost nothing. Three things to know:
+Some models on OpenRouter genuinely cost nothing. Refreshing the model list will bring a good many of them in, and they are pickable in chat like any other. Five things to know:
 
+- **A free model is never chosen for you.** It is never the pinned default and never a rung on the fallback chain the app walks when a model disappears. You can select one; nothing will select one on your behalf.
+- **Availability is shared, and it varies wildly between siblings.** Free routes draw on a common upstream pool. Over one ten-round availability poll, one free model answered 8 times out of 8 while three of its siblings answered 0 out of 8 and returned "temporarily rate-limited upstream" throughout. A free model is a real option, not a guaranteed one — nothing is billed, and nothing is promised.
 - **There is a daily cap on requests**, which rises once you have bought credits. This guide deliberately **does not print the numbers**: they're OpenRouter's to change, and the app shows you the real figures it reads back from your own key instead of a number written down here months ago.
 - **It matters more than it sounds for ingest.** A large document is **40+ separate AI calls** — one real run measured 42. A daily cap counted in requests can therefore mean roughly *one* large ingest per day on a free account. If you hit a limit mid-ingest, that is the cap, not a broken app.
 - **A negative balance blocks free models too.** Counter-intuitive, but it's how the provider works: if your account is in arrears, even free models return errors until you top up.
@@ -1676,7 +1743,8 @@ Also remember that a **thinks** model bills its invisible reasoning as output to
 
 ### What isn't available
 
-- **A larger OpenRouter model list** — not in this release. Three OpenRouter models are measured and offered, and that is the whole list in both the Settings picker and the chat composer. The app carries the machinery to hold a bigger chat-only catalogue read from your own account, but **nothing populates it in this build**, so there is no larger list waiting to appear. (OpenRouter itself *can* run ingest, Health and Compile — see [OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules) above.)
+- **Automatic catalogue refresh** — the OpenRouter chat list is fetched when you press **Refresh model list**, and never on its own. Nothing goes stale silently (the panel says when it was last refreshed), but if a model appeared today you will not see it until you ask. See [Refreshing the model list](#refreshing-the-model-list).
+- **Promotion by refresh** — the fetched chat catalogue is large, but it is *unmeasured*, and a refresh can never move a model into the build lane. Promoting one is a deliberate act with nine real runs behind it: either we measure it and ship it, or [you measure it on your own wiki](#test-a-model-on-your-own-wiki). A local result is also confined to your machine — it does not travel with Sync, and it cannot overturn a finding of ours.
 - **OpenRouter in the old interface at `/old`** — not supported at all, deliberately.
 - **Local models** — not supported for The Curator's own calls. The **Local model** row in Settings is a placeholder marked *"not available in this build."* (You *can* point a local model at your wiki through the MCP bridge — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252) — but that is the model reading your wiki, not The Curator calling it.)
 - **OpenAI** — the same: a placeholder row, nothing to configure.
@@ -1957,7 +2025,7 @@ You are on Gemini's free tier and have hit a daily/per-minute quota — see [§1
 
 The Curator is **free software**. The only thing that costs money is the AI provider you call for the features that actually invoke an LLM. There are three providers you can plug in — Gemini, Claude, or OpenRouter — and a clear split between which features use tokens and which don't.
 
-The cost figures throughout this section are for **Gemini and Claude**, the two providers these numbers were originally measured across, and ingest is where nearly all the money goes. **OpenRouter can now build your wiki too**, and its pinned default is cheaper than either column here — roughly a third of the cheapest Gemini option on input. All three of its models sit below the cheap end of this section's range, and one of them is free, so treating these figures as an upper bound for OpenRouter is safe. Its own caveats — a daily request cap and shared-pool availability on free models, and what happens when an account goes into arrears — are in [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules).
+The cost figures throughout this section are for **Gemini and Claude**, the two providers these numbers were originally measured across, and ingest is where nearly all the money goes. **OpenRouter can now build your wiki too**, and its pinned default is cheaper than either column here — roughly a third of the cheapest Gemini option on input. All three of its models sit below the cheap end of this section's range, and one of them is free, so treating these figures as an upper bound for OpenRouter is safe. Its own caveats — a daily request cap and shared-pool availability on free models, and what happens when an account goes into arrears — are in [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
 ### Which features use tokens
 
@@ -1986,7 +2054,7 @@ So when you see a bill, the dominant line item is **ingest**. Chat and Health As
 
 > Gemini has a free tier *and* the cheapest paid tier *and* the largest context window. That is why it is the default. Claude Haiku 4.5 is the right choice if you specifically want Anthropic — for example because you already have a corporate Anthropic account, or you prefer Anthropic's privacy stance — but expect a roughly 10× higher bill for the same workload.
 
-> **OpenRouter is absent from this comparison because it was not measured the same way, not because it cannot do the work.** It **can** run ingest as of this release, and its pinned default (`upstage/solar-pro4`, $0.03/$0.12 per 1M tokens) is cheaper on both axes than either column above. What is missing is a like-for-like end-to-end cost run of the kind the two columns are built from, so putting a third column here would be comparing a measured figure against an estimate. Its per-model prices, coverage and free-tier caveats are in [§16b → OpenRouter](#openrouter--one-key-three-measured-models-and-two-different-rules).
+> **OpenRouter is absent from this comparison because it was not measured the same way, not because it cannot do the work.** It **can** run ingest as of this release, and its pinned default (`upstage/solar-pro4`, $0.03/$0.12 per 1M tokens) is cheaper on both axes than either column above. What is missing is a like-for-like end-to-end cost run of the kind the two columns are built from, so putting a third column here would be comparing a measured figure against an estimate. Its per-model prices, coverage and free-tier caveats are in [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
 > ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen Gemini and Anthropic models the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. (The three OpenRouter models all sit below the cheap end of that span.) Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
 

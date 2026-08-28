@@ -647,6 +647,15 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     'minimax/minimax-m3:free':        943718,
     'ibm-granite/granite-4.0-h-micro': 117900,
     'upstage/solar-pro4':              131072,
+    // Added 2026-08-28, read from `top_provider.max_completion_tokens` on the
+    // live catalogue in the same session that measured their notes. Both clear
+    // the 24,576-token outline budget with room, and the DERIVED floor
+    // assertion below proves that independently of these figures — this map's
+    // job is the OTHER direction, an upward digit typo that no derivation can
+    // see (a 10x typo on solar-pro4's ceiling once shipped at 1144 passed / 0
+    // failed across six suites).
+    'z-ai/glm-5.3-flash':              131072,
+    'moonshotai/kimi-k2-0905':         100352,
   });
 
   // Counters so the SPLIT between the two arms is visible rather than inferred.
@@ -897,6 +906,78 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
       `HAND_TYPED_CEILINGS entry "${id}" corresponds to a live self-declared ceiling — a stale expectation is deleted, not left asserting about nothing`);
   }
 
+  // ── OPENROUTER PRICES: A REVIEW GATE ON THE VALUE, NOT JUST THE COPY ──────
+  // The loop above already proves `entry.input === getModelPrice(id).input` —
+  // that the entry did not keep a SECOND copy of the price. It cannot notice
+  // both copies being wrong together, because there is only ever one source.
+  //
+  // For Gemini and Anthropic that is acceptable: one id has one published rate.
+  // For OpenRouter it is not, and this session is why. An OpenRouter id routes
+  // over many upstream endpoints at DIFFERENT prices, so "the price of the
+  // model" is not well-defined from the catalogue alone — it is whatever the
+  // endpoint that served you charges. Measured on cold (uncached) calls:
+  //   qwen/qwen3-235b-a22b-2507  billed 1.64x its cheapest endpoint's rate
+  //   moonshotai/kimi-k2.6       billed 0.57x its catalogue headline
+  // Both were REFUSED for that; neither could have been caught by any
+  // assertion that only compares our copy against our own table.
+  //
+  // So the figures below are pinned as a REVIEW GATE, exactly like
+  // HAND_TYPED_CEILINGS and for the same reason: there is no second source to
+  // derive from, so changing one must be seen by a person. Each was confirmed
+  // against `usage.cost` on a cold probe run to six decimal places.
+  const OPENROUTER_VERIFIED_PRICES = Object.freeze({
+    'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
+    'upstage/solar-pro4':              { input: 0.03,  output: 0.12  },
+    'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
+    'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
+  });
+  {
+    const orPaid = OFFERABLE_MODELS.openrouter.filter(m => !m.free);
+    // Non-vacuous: if this list ever empties, every assertion below passes by
+    // iterating nothing. Declared rather than assumed.
+    ok(orPaid.length > 0, `the OpenRouter price gate has ${orPaid.length} paid entries to check`);
+    for (const m of orPaid) {
+      ok(Object.hasOwn(OPENROUTER_VERIFIED_PRICES, m.id),
+        `${m.id}: has a bill-verified price pinned in this file — an OpenRouter id routes over endpoints at different rates, so its price must be confirmed against a cold call's usage.cost, not read off the catalogue and trusted`);
+      const want = OPENROUTER_VERIFIED_PRICES[m.id];
+      if (want) {
+        eq(m.input, want.input, `${m.id}: input price matches the figure confirmed against the bill`);
+        eq(m.output, want.output, `${m.id}: output price matches the figure confirmed against the bill`);
+      }
+    }
+    // Both directions, same rule as the ceilings: an expectation for a model
+    // that has been withdrawn is as much a review failure as a missing one.
+    const paidIds = new Set(orPaid.map(m => m.id));
+    for (const id of Object.keys(OPENROUTER_VERIFIED_PRICES)) {
+      ok(paidIds.has(id),
+        `OPENROUTER_VERIFIED_PRICES entry "${id}" corresponds to a live paid OpenRouter entry — a stale expectation is deleted, not left asserting about nothing`);
+    }
+  }
+
+  // ── THE 200,000-TOKEN CONTEXT FLOOR IS NOT ENFORCEABLE HERE, AND SAYING SO
+  //    IS THE POINT ──────────────────────────────────────────────────────────
+  // A build-lane model must hold this repo's real ingest prompt, which is
+  // ~78,000 provider-counted tokens today and grows with the user's own wiki
+  // (the index and the slug inventory are ~90% of it). The floor applied when
+  // admitting the entries above is 200,000 tokens — parity with
+  // `anthropic/claude-haiku-4.5`, which has exactly that and which this app
+  // ships as a default. `qwen/qwen3-30b-a3b-instruct-2507` was refused on it:
+  // measured clean, exactly priced, fastest of everything tested, and its
+  // serving endpoint carries a 128,000-token window.
+  //
+  // NOT ENFORCED, deliberately and visibly: an offerable entry carries
+  // `maxOutput` and NO context-window field, so there is nothing here to assert
+  // against. Adding one would change `GET /api/config/api-keys` → `offerable`,
+  // which is a public wire contract, and that belongs in its own change with
+  // its own UI review rather than riding along with a catalogue addition.
+  // Until then the floor is a REVIEW-TIME check against the live catalogue's
+  // `top_provider.context_length`, recorded in llm.js's refusal block. This
+  // assertion exists to keep that gap NAMED rather than discovered.
+  for (const m of OFFERABLE_MODELS.openrouter) {
+    ok(!Object.hasOwn(m, 'contextWindow'),
+      `${m.id}: carries no context-window field — if one is ever added, replace this with a real 200,000-token floor assertion instead of leaving the check to review`);
+  }
+
   // The four models on Anthropic's NEWER tokenizer. Measured at 1.329x more
   // input tokens on real Curator prose, which is why claude-opus-5's $5/1M is
   // really ~$6.65 against a Haiku baseline — a cost estimate computed from
@@ -944,6 +1025,14 @@ section('11. OFFERABLE_MODELS — complete, frozen, cheapest-first, measured');
     // outline prompt; deterministic to the token on a byte-identical prompt.
     'ibm-granite/granite-4.0-h-micro': 1.036,
     'minimax/minimax-m3:free':         1.015,
+    // Measured 2026-08-28 in a SECOND session whose prompt was 343,716 chars,
+    // not the first session's 341,005 — the `articles` domain grew between
+    // them. The factor is a RATIO against that session's own upstage/solar-pro4
+    // figure (74,521 prompt tokens = 1.0), which is why these are comparable to
+    // the two above despite a different absolute baseline: 76,155/74,521 and
+    // 77,550/74,521. Deterministic to the token across a byte-identical prompt.
+    'moonshotai/kimi-k2-0905':         1.022,
+    'z-ai/glm-5.3-flash':              1.041,
   };
   for (const [id, factor] of Object.entries(MEASURED_TOKENIZER_PREMIUM)) {
     ok(Object.hasOwn(byId, id), `${id}: is offerable (a premium recorded for a model nobody can pick is dead data)`);

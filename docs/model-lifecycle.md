@@ -188,7 +188,7 @@ For most of its life The Curator could run exactly **two** models — one per pr
 
 **The defaults do not change.** `gemini-2.5-flash-lite` and `claude-haiku-4-5` remain pinned, and remain the cheapest thing on their provider. Picking a stronger model is a deliberate act, and the price is on screen when you do it.
 
-The hand-measured catalogue holds **17 models — 7 Gemini, 7 Anthropic and 3 OpenRouter**. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because the design there provides for a *second*, larger chat-lane list read from the provider's live catalogue rather than hand-typed here. **That overlay is not populated in this release** — `setOpenRouterCatalogue()` has no caller outside its own tests, so `listOfferableModels('openrouter')` returns exactly the three hand-measured entries above and 17 is the whole offer on both lanes. Those three were admitted the same way every other entry was, by measurement against the real ingest prompt.
+The hand-measured catalogue holds **seven Gemini and seven Anthropic entries, plus a set of OpenRouter routes that grows as candidates are measured** — this document deliberately prints no running total, because the OpenRouter half moves with measurement; read `listOfferableModels(provider)` for the live list. Almost every entry may enter the build lane; `gemini-3.5-flash-lite` is the hand-measured exception, offered as `chat-only`. Gemini Pro is deliberately absent (a different price class again, and nothing in the list measured coverage-starved), as are `claude-opus-4-7` and `claude-opus-4-6` (real and documented, but never probed — see `AWAITING_MEASUREMENT` below). **OpenRouter** is additionally described in [its own section](#openrouter--a-third-provider-whose-catalogue-moves-without-us), because a *second*, much larger chat-lane list is read from the provider's live catalogue rather than hand-typed here. **That overlay is populated on demand**, by `POST /api/config/openrouter/sync` — so `listOfferableModels('openrouter')` returns the hand-measured entries above until a user refreshes, and those plus every admitted catalogue entry afterwards. A fetched entry is `chat-only` by construction and can never be promoted by a refresh; the one route out of that lane is a user's own [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages), which is a **third lane state** and never entry into this hand-measured one. The OpenRouter entries here were admitted the same way every other entry was, by measurement against the real ingest prompt.
 
 ### Where a user picks, and what each choice governs (v3.13.0)
 
@@ -315,7 +315,17 @@ The answer is **two admission standards over one catalogue, split by lane**. It 
 | **Build** — ingest, AI Health scans, Compile | Writes pages into the user's wiki | **Hand-measured against the real ingest outline prompt.** Unchanged from the standard the 14 hand-measured models were held to. |
 | **Chat** | Answers one question | Whatever the user's key unlocks, after the structural filters below — **clearly labelled as unmeasured**. |
 
-> **Status in this release: the chat lane's live-catalogue overlay is BUILT BUT NOT POPULATED.** Everything in this section describes the admission design and the structural filters it applies — all of it real code, all of it exercised by tests. What does not exist yet is a **caller**: `setOpenRouterCatalogue()` is invoked nowhere outside its own test suites, so no live catalogue is ever fetched at runtime and `listOfferableModels('openrouter')` returns the three hand-measured build-lane entries and nothing else. Both lanes therefore offer the same three models today. Read what follows as **the contract a future catalogue fetch must satisfy**, not as a description of models a user can pick right now.
+> **Status: the chat lane's live-catalogue overlay is POPULATED, on demand.** The previous release shipped `fetchOpenRouterCatalogue()`, `openRouterRecordToSpec()` and `setOpenRouterCatalogue()` fully tested with **zero production callers**, so both lanes offered the same three models. `POST /api/config/openrouter/sync` is the join, driven by **Refresh model list** in Settings; it fetches, filters, admits, persists, and reports the funnel below. On one measured run (28 August 2026) it took `listOfferableModels('openrouter')` from **3 entries to 192**. Nothing is fetched until a user asks — there is no automatic refresh — and nothing fetched can reach the build lane.
+>
+> **No standing catalogue count appears in this document, and that is deliberate.** OpenRouter's list moved by **seven records inside five hours** on the day it was measured. Any absolute number here would be wrong within the week; the *method* is what is stable, so every figure below is dated.
+
+### The fetched catalogue is persisted, and re-checked on the way back in
+
+A refresh writes the admitted **specs** to `<user-data>/.openrouter-catalogue.json` — a sidecar, deliberately *not* `.curator-config.json`, which is the credential store: it is 538 bytes, `chmod 0600`, atomically rewritten on every Settings save, and putting a few hundred kilobytes of third-party data in the blast radius of every key write is not a trade worth making for a list that one unauthenticated GET can rebuild. Persistence is **best-effort**: a disk failure never fails a sync that already succeeded over the network, and the panel says the models are loaded for this session only.
+
+At boot the file is fed **back through the same admission function** the network path uses. A persisted entry gets no more trust than a freshly fetched one, which has three consequences, all intended: a model that has since become inadmissible is **dropped rather than grandfathered**; a hand-edited file claiming `suitability: 'general'` **cannot promote itself** into the lane that writes the wiki; and the price and free registries are rebuilt from the reload, so they cannot drift from what is offered. A corrupt or unreadable file restores nothing and never throws.
+
+**Specs are persisted, not built entries.** An entry carries price *getters* that resolve promotional windows at read time; `JSON.stringify` would flatten one into today's number and freeze a promotional price past its expiry.
 
 ### Why the standards differ: the consequence is asymmetric
 
@@ -325,30 +335,141 @@ So the lanes are not "strict" and "lax". They are two different bets with two di
 
 ### What the app refuses structurally, before anyone measures anything
 
-From the live catalogue, four classes are refused by construction rather than by judgement, because in each case the refusal follows from something the app cannot do rather than from a preference:
+From the live catalogue, models are refused by construction rather than by judgement, because in each case the refusal follows from something the app cannot do rather than from a preference. The rules are applied in a fixed order and each rejected model is attributed to the **first** rule it fails, so the funnel the user sees is reproducible:
 
 - **No JSON mode at all.** Ingest asks for structured output. A model whose published parameters include no way to request it cannot serve the build lane, and the app will not pretend otherwise. (This is candidacy, not a guarantee — see below.)
 - **Router ids whose price is published as unknown.** An aggregator can offer meta-models that decide *at request time* which real model serves you, and whose price is therefore unknowable until after the call. Every cost surface in this app quotes a price **before** you choose. A model whose price cannot be stated before the call is incompatible with that, so it is refused rather than displayed with a blank.
 - **Moving aliases.** Some ids are pointers that resolve to whatever the vendor currently considers newest. Pinning one means what you picked can change underneath you with no signal — the exact silent-swap the app refuses one layer down by forbidding provider substitution on every request.
-- **No published output ceiling.** The Phase-1 ingest outline requests a large output budget, and a model whose ceiling is below it is structurally unable to serve one however well it scores on anything else. Real examples exist in the live catalogue at 4,000 and 7,372 tokens — both pass every other filter.
+- **An output ceiling below 24,576 tokens, or none published at all.** That figure is what the Phase-1 ingest outline actually requests; a model beneath it is structurally unable to serve one however well it scores on anything else. Real examples exist in the live catalogue at 4,000 and 7,372 tokens — both pass every other filter. "No ceiling published" and "a ceiling of zero" get **different reason codes**: the first is *the API did not say*, the second is *the API said no*, and collapsing the two is the fact-vs-absence bug this repo keeps finding.
+- **A context window below 200,000 tokens.** This is a **parity rule, not a round number**, and it is the one rule here that is policy rather than capability. `claude-haiku-4.5` — one of the app's own shipped defaults — publishes exactly 200,000, so the rule is *we will not offer an OpenRouter model that is worse on context than a model we already ship*. It costs something real and the cost is recorded rather than discovered later: the measured requirement is only about 110,000 tokens (prompt plus output floor), and the floor ejects the whole meta-llama family and `ibm-granite/granite-4.0-h-micro` at 131,000 — which is the app's own OpenRouter fallback rung and measured 9/9 clean. Granite survives as a **hand-measured static entry**; it simply cannot be admitted through the fetched path.
+- **A declared retirement date within 30 days.** `moonshotai/kimi-k2.5` passed every other rule and expired **three days** after the fetch. A risk flag is the right shape for a fact the user should weigh; it is the wrong shape for a model that will stop existing inside the release's own lifetime. ⚠ **This rule needs an injected clock and cannot read one itself** — see [Purity and the clock](#purity-and-the-clock) below.
 
 **Tiered (long-context) pricing is a fifth refusal, and only for the build lane.** Some models change their rate above a prompt-size threshold — one common case doubles both rates above 200,000 prompt tokens. The Curator's price model is a single `{input, output}` pair, and every consumer of it assumes one rate per model. A flat entry would therefore quote **half the real rate on exactly the largest ingests**, which is where a user spends most — and no ordering assertion would notice, because array order survives a doubling. Such a model is admitted **chat-only, structurally**: the factory refuses to build it as anything else. That is safe for the specific reason that chat's prompt is bounded and small — on the order of 20k tokens against a threshold an order of magnitude higher — so the flat rate quoted for chat is the rate actually billed. The build lane, the only lane that can cross a threshold, cannot reach these models at all.
 
-**What the filters narrow to, and what they do not decide.** They are a large reduction and still leave hundreds of candidates. The API narrows the field; it does not choose. That is the point of the next section.
+**A seventh rule exists and is OFF by default: text output.** A model whose declared output modalities exclude text raises a **high-severity risk flag** but is not rejected, because the field is frequently absent and treating "did not say" as "cannot" would eject models on silence. It can be switched to a rejection deliberately.
 
-### Why measurement cannot be automated — the load-bearing argument
+**What one measured run looked like (28 August 2026).** Each row is *models entering the rule* → *models leaving it*:
 
-The obvious idea is to qualify a model on demand: the user picks one, the app probes it, and if the probe passes it enters the build lane. It was considered and **rejected**, for reasons that are worth stating in full because they are the reason the build lane is small.
+| Rule | In | Out | Dropped |
+|---|---|---|---|
+| `json_mode` | 387 | 329 | 58 |
+| `knowable_price` | 329 | 327 | 2 |
+| `not_moving_alias` | 327 | 314 | 13 |
+| `output_ceiling` | 314 | 253 | 61 |
+| `context_window` | 253 | 194 | 59 |
+| `not_expiring` | 194 | 193 | 1 |
+| `text_output` | 193 | 193 | 0 |
 
-**Metadata says a model ACCEPTS JSON mode. It cannot say the JSON PARSES.** Those are different claims, and this project's own catalogue is the proof. `gemini-3.5-flash-lite` advertises structured output and honours the request — and in 2 of 9 live runs against the real ingest prompt it returned JSON that neither `JSON.parse` nor the `jsonrepair` fallback could recover: a dropped object key, unrecoverable because repair would have to invent it. In an aggregator's metadata that model looks fully JSON-capable, because it is. The defect is in what comes back, not in what is supported.
+193 eligible → **189 admitted**, with **2 superseded** (models the provider lists that The Curator has already hand-measured, so the measured entry is kept and the fetched copy dropped — reported separately so the arithmetic on screen adds up rather than looking as though the app refused its own defaults).
 
-**A probe a new user could run would be a toy probe.** A realistic ingest outline prompt measured about **285,000 characters**, of which roughly **90% is the user's own index and slug inventory**. A fresh install has neither, so the only prompt it could probe with is the small synthetic one [this document already forbids](#verify-a-chain-against-the-live-api-not-against-memory) — and forbids for a measured reason: a trivial prompt returns a shape that passes green while a real prompt returns one that fails. That is not hypothetical here; it is how a 100%-reproducible failure survived a release.
+**What the filters narrow to, and what they do not decide.** They are a large reduction and still leave a large candidate set. The API narrows the field; it does not choose. That is the point of the next section.
 
-**One probe cannot see a 2-in-9 defect.** At roughly a 22% failure rate, a single run passes a broken model about **78%** of the time. Catching it reliably takes on the order of nine runs — on a prompt of that size, before the user has ingested anything.
+### `eligible` is not `measured` — the line this whole design rests on
 
-**And two of the recorded fields are comparative by nature.** `suitability` and `note` say things like *"a same-priced sibling measured better on every axis"* — a claim about a relationship between models, which no single model's probe can produce. A machine can honestly emit *"7/7 clean JSON, 14 pages planned"*. It cannot write the verdict.
+`eligible: true` means **"nothing in the published metadata disqualifies this model"**. It is a fact about metadata: checkable, reproducible, derivable from a payload with no network and no clock. It is the *absence of a disqualifier*, which is not the *presence of a qualification*.
 
-**One more, specific to an aggregator:** an OpenRouter id routes over upstream hosts that can change. A measurement can therefore go stale **without the id changing** — so even a measurement taken correctly is a statement about a moment, which is another reason the build lane is entered deliberately and by hand rather than automatically.
+`suitability` is the other thing entirely, and it requires measurement — nine real runs against the real ingest prompt. The eligibility module is written so it cannot blur the two: it never scores, never ranks, never recommends, and never emits the words *good*, *capable*, *reliable* or *measured*. Everything it produces is a fact plus a structured reason code.
+
+Two consequences that must not be tidied away:
+
+- **`response_format` in `supported_parameters` says the endpoint ACCEPTS the parameter, never that the output PARSES.** `gemini-3.5-flash-lite` — demoted here for returning JSON that neither the parser nor `jsonrepair` could recover in 2 of 9 runs — advertises full support.
+- **Hidden reasoning spend is risk-flagged, never rejected, and the reason is measured.** `upstage/solar-pro4` (9/9 clean, the shipping default) and `nex-agi/nex-n2-mini` (0/3, entire 24,576-token output budget spent on hidden reasoning, nothing parseable returned) publish **byte-identical** reasoning metadata: `mandatory: false` with `default_enabled` absent. 59 of the 193 eligible models in the measured snapshot carry that shape — just under a third. A filter that cannot separate the best measured model from the worst measured model is not a filter, so this is a prompt to measure, not a rejection signal.
+
+### Purity and the clock
+
+`src/brain/openrouter-eligibility.js` is **pure**: no network, no filesystem, no `Date.now()`, no `Math.random()`. Every threshold is injected via `opts`, and the current instant is `opts.now`.
+
+That purity has one sharp edge, and it is the reason the sync route has a guard nobody would think to add. With no clock injected, the expiry rule **cannot evaluate anything, so it abstains** — silently, and without rejecting. Measured on the live catalogue: **194 eligible with no clock, 193 with one**, and the model that differs expired three days later. A caller that forgets `opts.now` therefore ships an expiring model while every layer reports success.
+
+So `syncOpenRouterCatalogue()` injects the clock at the impure boundary (it already touches the network), and then **reads back the module's own report of whether the clock landed** rather than trusting that the option name was spelt correctly. If it did not land, the sync **refuses and changes nothing** — "we could not check" must never be served as "we checked". `clockSupplied` is tri-state: a report that does not say is `null`, never `true`.
+
+### Why measurement cannot be automated *for a fresh install* — and what changes once you have a wiki
+
+The obvious idea is to qualify a model on demand: the user picks one, the app probes it, and if the probe passes it enters the build lane. Three of the four objections below still hold, and they shape everything about how qualification works. **Exactly one of them turned out to be a statement about a *fresh install* rather than about probing as such** — and correcting it is what made [on-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages) possible.
+
+**Metadata says a model ACCEPTS JSON mode. It cannot say the JSON PARSES.** *Still holds — and is why a probe has to exist at all.* Those are different claims, and this project's own catalogue is the proof. `gemini-3.5-flash-lite` advertises structured output and honours the request — and in 2 of 9 live runs against the real ingest prompt it returned JSON that neither `JSON.parse` nor the `jsonrepair` fallback could recover: a dropped object key, unrecoverable because repair would have to invent it. In an aggregator's metadata that model looks fully JSON-capable, because it is. The defect is in what comes back, not in what is supported. `z-ai/glm-4.7` is the same shape and worse: it clears every structural filter this app has, it is **fast**, and it returned unrepairable output in **9 of 9** runs.
+
+**A probe a *new install* could run would be a toy probe — but that is a claim about the PROMPT, not about probing.** A realistic ingest outline prompt measured **341,005 characters**, and the fixed scaffold The Curator contributes to it is about **3,500 characters** — roughly **1%**. Everything else is the user's own material: their `index.md`, their entity and concept filenames, and their own source document. A fresh install has none of it, so the only prompt it could assemble is the small synthetic one [this document forbids](#verify-a-chain-against-the-live-api-not-against-memory), and forbids for a measured reason: a trivial prompt returns a shape that passes green while a real prompt returns one that fails.
+
+But **a user who wants to ingest with a different model has a wiki by definition** — that is what they are proposing to spend it on. Their own index *is* the realistic prompt. So this objection rules out probing at install time and rules out nothing else, and the rest of this argument was reasoned about a case that is not the one that matters. What follows from it is a hard requirement rather than a permission: a qualification run assembles the **real** `buildOutlinePrompt` from a real domain, read-only, and **refuses** if the domain is too thin to produce one. It never synthesises a prompt in order to have something to measure.
+
+**One probe cannot see a 2-in-9 defect.** *Still holds, and is the reason nine runs is a floor and not a default.* At roughly a 22% failure rate, a single run passes a broken model about **78%** of the time. Fewer than nine runs are recorded honestly, with their run count on screen — and qualify nothing.
+
+**And two of the recorded fields are comparative by nature.** *Still holds, and is the strictest rule the qualifier obeys.* `suitability` and `note` say things like *"a same-priced sibling measured better on every axis"* — a claim about a relationship between models, which no single model's probe can produce. So a qualification run emits **facts and never a verdict**: *"9 of 9 raw JSON, median 25 pages, 41 s mean, $0.005"*. It does not rank, recommend, compare, or write a `suitability` string. A model promoted by a local run keeps reporting `suitability: 'chat-only'` on the wire, and is badged as measured *by the user* rather than by us.
+
+**One more, specific to an aggregator:** an OpenRouter id routes over upstream hosts that can change. A measurement can therefore go stale **without the id changing** — which is why every local record is stamped with **which wiki**, **which source document** and **when**, and why it is invalidated the moment the model leaves the eligible catalogue.
+
+### On-wiki qualification — measuring a model against your own pages
+
+An eligible OpenRouter model that has only ever been offered for chat can be promoted into the **build lane** (ingest, Wiki Health, Compile) by measuring it against the user's own wiki. `src/brain/openrouter-qualify.js` is the measurer; `POST /api/config/openrouter/qualify` drives it.
+
+**What a run actually does**
+
+1. **A free estimate first** — `GET /api/config/openrouter/qualify/estimate`. No network, no LLM, no spend: it assembles the real prompt read-only and reports what a run would cost. If no domain is named it picks the one with the **largest `index.md`** — the cheapest available proxy for *most realistic prompt*, and deliberately **not** the MCP default domain, which is a different question and is often a small scratch domain.
+2. **The confirm leads with TIME, not money.** The estimate quotes a **range across models already measured** — 38 s to 382 s per call, so about **6 minutes to an hour** for nine runs — and later measurement widened the top of it further (one candidate took **491 s** for a single call). Money over the same span stayed under a dollar a run. A user quoted a price and not a duration will start a run they cannot afford in the only currency that matters. The estimate says plainly that it cannot predict *this* model; once run 1 lands, a real projection from a real measurement replaces the range.
+3. **Nine runs of the real prompt, through the production adapter.** The prompt is assembled **once** and reused byte-identically, so the runs are comparable to each other. It deliberately does **not** go through `generateText`: that would apply the offerable allow-list and silently demote the candidate to the provider default (measuring `upstage/solar-pro4` nine times and filing it under the candidate's name), fold in the retry loop and fallback chain (confounding latency, spend *and* model identity), and convert `finish_reason: "length"` into a throw — turning the most expensive failure mode into an opaque error instead of a measurement.
+4. **The run is cancellable, and closing the connection is the cancel.** There is no separate cancel endpoint and no run id to get wrong: the connection carrying the progress owns the run. A cancelled run settles as `CANCELLED`, is **never** stored, and is never recorded as a model defect — persisting it would overwrite a real earlier measurement with a stub.
+
+**How each run is classified.** Three parse classes — `raw` (bare `JSON.parse` succeeded), `repaired` (the repair pass recovered it), `unrepairable` — plus an **independent usability gate**, because the two fail separately: a `raw` run can still be unusable (an empty `pages` array parses perfectly and plans nothing). The gate is ingest's own `usablePageArray`, imported rather than re-implemented, so it cannot drift from what ingest actually accepts.
+
+**The honesty rules, which *are* the feature**
+
+- **`repaired` is not a failure.** `claude-haiku-4-5` — the shipping Anthropic default — fences its outline in a markdown code block **3 times out of 3**, so a raw parse fails on 100% of its responses and every Anthropic ingest already depends on the repair path. Rejecting on `repaired` would reject the model this app ships. Only `unrepairable` and *parsed-but-unusable* are defects.
+- **The word "verified" is never used.** The strongest outcome the summariser may emit is `NO_DEFECT_FOUND`, and it is deliberately weaker than "passed". By the rule of three, 9 clean runs are consistent with a true failure rate up to about **33%** at 95% confidence (12 runs, about 25%). What is shown is what was observed, with the run count beside it. `DEFECT_OBSERVED` is the stronger claim of the two, because a defect was actually seen.
+- **A rate-limited run is `NOT_MEASURED`** — neither a defect nor a pass. Free ids draw on a shared upstream pool, so whether one answers is not a property of the user's account: over one ten-minute poll, one free model answered 8 of 8 while three of its free siblings answered 0 of 8, same account, same moment. Classifying that as a failure would blame the model for the queue.
+- **Latency is recorded and shown, never auto-rejected.** A transient upstream slowdown must not permanently disqualify a good model — but a user about to pin a model that takes minutes per call deserves to see that before they do. `deepseek/deepseek-v4-flash-0731` produced clean JSON and took **491 seconds for a single outline call** — about 10× the control's 48 s median — while `z-ai/glm-4.7` was **fast (34–64 s) and broken in 9 of 9 runs**. Speed and correctness are independent axes, so neither is allowed to stand in for the other.
+- **Spend is a floor, not a forecast.** An identical prompt on every run can hit an upstream prompt cache that a real ingest — different source each time, growing index — will not. On the reference harness 2 of 9 runs came back 75% cache-discounted, pulling a nine-run total **17% below list price**. Reported spend is therefore flagged as a lower bound rather than quoted as the cost of ingesting.
+- **A defect record is stored too.** `z-ai/glm-4.7` failing 9 of 9 is the most valuable thing this feature can tell a user; discarding it would invite them to pay for the same six minutes again next week.
+
+**Promotion is a THIRD lane state, not entry into the hand-measured lane.** This is the heart of it. *"We measured this across many documents"* and *"you ran nine of these last Tuesday"* are different epistemic claims and must never wear the same badge. `isBuildLaneModel` is therefore two **separate** disjuncts — the hand-measured clause is byte-unchanged, and `isLocallyQualified` is its own clause — so widening one can never silently widen the other, and the two claims stay distinguishable on screen and on the wire.
+
+`isLocallyQualified` refuses at every step, and each refusal closes a different hole:
+
+| Clause | What it refuses |
+|---|---|
+| OpenRouter only | The other catalogues are hand-typed and complete; there is no *never measured here* entry to fill. |
+| The id must be offerable **right now** | The invalidation rule, checked **live** rather than pruned: a model that leaves the eligible catalogue stops granting the lane the instant it leaves, with no cleanup step that could be skipped. |
+| The entry must still be `chat-only` | If a model is ever hand-measured into the build lane, that verdict governs and this predicate is not consulted. |
+| `jsonRaw === null` — **we** have never measured it | A local run may fill a gap in our knowledge; it **may not overturn a negative finding of ours.** A user who gets nine clean runs on `gemini-3.5-flash-lite` has not refuted the 2-in-9 defect; they have sampled the other 78%. |
+| The record must show no defect over at least nine completed runs | `isPassingRecord` — and it also rejects a malformed record, a missing count, a `NaN`, or a count hand-edited to a string, because the record file is local and hand-editable. |
+
+**Invalidation keeps the evidence and withdraws the lane.** A record whose model has left the catalogue is **not deleted** — a qualification cost the user real money and up to an hour, and destroying that evidence because a catalogue fetch came back short would be unrecoverable. The record survives and is shown as void, and `GET /api/config/api-keys` reports `qualifies` and `stillOffered` per record, recomputed on every read.
+
+**Where the records live.** `<user-data>/.openrouter-qualifications.json`, written atomically through `paths.js` and never inside `domains/` (Personal Sync's git work-tree — the v3.3.0 rule). One record per model: a re-run **replaces** its predecessor rather than accumulating, because keeping both and taking the best would let a user re-roll a failing model until it passed. Boot restore is not a trusted load — a malformed record is dropped, not repaired, and every record still has to pass the live predicate above.
+
+**Two consequences that are known and deliberate**
+
+- **A qualification run does not hold the write lock.** It writes no wiki page: it assembles a prompt read-only and calls a model. Registering it as a write would hold the process-wide gate for up to an hour, blocking Sync, Update and Delete — worse than the risk it removes. The route *is* `guardConcurrent`-guarded, so it cannot start while a write is running; but a **catalogue refresh started during a running qualification is not refused**. The accepted cost is named rather than hidden: a concurrent ingest may 429 a run, and a 429 is `NOT_MEASURED`.
+- **If the persisted catalogue is missing at boot, a pin to a locally-qualified model falls back to a hand-measured model.** The model is no longer offerable, so the lane predicate answers no — the fail-safe direction, costing the user less than they asked for rather than more. A refresh restores it.
+
+### What a second measurement session found, and why it changed the method
+
+A second session on 2026-08-28 measured **nine more OpenRouter candidates** against the real prompt (343,716 chars this time — the `articles` domain had grown, so `tokenizerFactor` is a ratio against that session's own `solar-pro4` control). `upstage/solar-pro4` was re-run as a **positive control** and reproduced its recorded behaviour, 9 of 9 raw JSON, at a median of 25 pages against the 23 recorded previously — the run-to-run spread of one model, not a change in it.
+
+**Two were admitted. Seven were refused, and the refusals split into two very different kinds.**
+
+Four failed on generation or availability:
+
+| Model | Result |
+|---|---|
+| `z-ai/glm-4.7` | **0 of 9 parseable — all 9 unrepairable** by both `JSON.parse` and `jsonrepair`. It clears every structural filter, is **fast** (34–64 s), and is priced like a serious model ($0.40/$1.75). Only the real prompt caught it. |
+| `minimax/minimax-m3` | **0 of 9 parseable, all 9 unrepairable** — while its **free** sibling `minimax/minimax-m3:free` is shipped on 8 of 9 raw plus 1 repaired. |
+| `deepseek/deepseek-v4-flash-0731` | Abandoned after **2** runs: the first took **491 seconds** for a single outline call (~10× the control's 48 s median) and the second never returned a body inside the adapter's 600-second ceiling. A latency defect, not a JSON one. |
+| `z-ai/glm-5.2:free` | 3 of 3 attempts HTTP 429 before any work began — `NOT_MEASURED`, which is neither a defect nor a pass. **A model we could not measure may not be offered.** |
+
+The `minimax` pair is the one to carry forward: **same base model, opposite result, and the *paid* route is the broken one.** Reliability here is a property of the **route**, not of the model's identity — which contradicts the natural assumption that a paid tier is the safer one, and means no measurement of one id may ever be carried across to a sibling id. And `glm-4.7` was **fast and broken** while `deepseek` was **slow and clean**, which is exactly why latency is reported beside correctness rather than standing in for it.
+
+**The other three passed every JSON, ceiling and reasoning test and were refused on facts about the id itself** — the finding that changed the method:
+
+| Model | Refused on |
+|---|---|
+| `qwen/qwen3-235b-a22b-2507` | **Price honesty.** 9 of 9 raw JSON, median 23 pages, ~40 s. Its cheapest JSON-capable endpoint publishes $0.0875/$0.35, but the one cold call billed **$0.011801** — a different endpoint's $0.14/$0.80 exactly, **1.64× what a table entry would have quoted, on the first request.** |
+| `moonshotai/kimi-k2.6` | **Price honesty, in the opposite direction.** 9 of 9 raw JSON, median 25 pages, the fastest wide planner tested (22–38 s). 19 JSON-capable endpoints spanning $0.5372–$1.0900 on input (2.03×); the cold run billed $0.5372 while the catalogue headline reads $0.95. Over-quoting is the safe direction and it is **still a number we would be making up.** |
+| `qwen/qwen3-30b-a3b-instruct-2507` | **Context floor.** Measured clean and the fastest of everything tested (13–22 s), price exact on all 8 runs that started. But the endpoint that bills it at $0.04815 carries a **128,000**-token window, below the 200,000 floor every build-lane model clears; the endpoints offering 262,144 cost 2–3× more. The cheap price and the large window are not available at the same time. |
+
+**What the session added to the method.** The first session verified that a computed price matched `usage.cost` and treated it as a confirmation. It is a **filter**, and the sharpest one available: **three of the five candidates that passed every quality test failed it or the context floor.** It costs nothing — the probe already records the reported cost — and **only a cold run can perform it**, because a cached run bills a fraction and matches nothing.
+
+**Admitted:** `moonshotai/kimi-k2-0905` — the widest outlines measured on OpenRouter (21–44 pages, median 30) at 25–43 s — and `z-ai/glm-5.3-flash`, clean and wide (median 27) but **slow and thinking**: 120–231 s per call against 23–88 s for the default, a 9th run that never returned inside the 600-second ceiling, and 79–86% of its entire output budget spent on reasoning the user never sees. Both carry those measurements in their `note`, because an entry whose weakness is only in a changelog is an entry the user cannot weigh.
 
 ### What the provider tells us, and what we measure
 
@@ -365,6 +486,10 @@ This is the honest narrowing of *"never offer an unmeasured model"*. It is not *
 | `note` — the reason behind the verdict, shown verbatim | **Written by a human from measured numbers.** |
 
 The price half is not taken on trust either: the aggregator's published prices were checked against this project's own independently hand-verified table and **matched on all five models compared**. That is a reason to read prices from the API rather than re-typing them, not a reason to skip the check.
+
+**The headline price is not always the price, and the filter knows it.** Some catalogue entries carry pricing *overrides* — a higher rate above a prompt-size threshold, or a rate that varies by UTC time window. The eligibility module resolves an **effective price at the app's real ingest prompt size** (~85,000 tokens, derived from a measured ~341,000-character prompt at roughly 4 chars/token) and raises a high-severity flag when that effective rate exceeds the headline. Every failure direction on price resolves to the **higher** number — an unknown clock quotes a time-windowed model at its most expensive window, an unknown prompt size at its most expensive tier — so a user is never under-quoted.
+
+Two limits on that, stated rather than implied: **the price rendered on a model row is the headline price**, not the effective one; and a tiered model is admitted **chat-only by construction**, where prompts are bounded and small enough that the headline rate is the rate billed. The internal risk flags (tiered-above-headline, time-variable price, unstated reasoning default, per-endpoint variance) are **not currently surfaced in the UI** — they exist for the admission decision and for whoever next reads a funnel.
 
 Everything the aggregator reports is still held to the same structural standard as a hand-typed entry. A catalogue entry goes through the **same admission function** the hand-measured models use, so it must carry a label, a price posture, an output ceiling, a `thinks` verdict and a note, or it does not become an offer. Refusal is **per entry, not all-or-nothing**: one malformed record in a large response is dropped and the rest are admitted, because refusing the lot would hand a third party a switch that disables the feature.
 
@@ -426,7 +551,7 @@ A build-lane model writes a whole wiki, so none was admitted on catalogue metada
 
 ### The state of the build lane in this release
 
-**OpenRouter is now a full build-lane provider.** Three models were measured and admitted, and `upstage/solar-pro4` is pinned as the default. Every consequence below is a *change* from the previous release, where the lane was empty:
+**OpenRouter is a full build-lane provider.** Models have been measured and admitted against the real ingest prompt, and `upstage/solar-pro4` is pinned as the default. Since v3.16.0 a user can also promote an eligible chat-only route themselves, by measuring it against their own wiki — see [On-wiki qualification](#on-wiki-qualification--measuring-a-model-against-your-own-pages). That is a **third lane state**, badged apart from the hand-measured one, and it is invalidated the moment the model leaves the eligible catalogue. Every consequence below is a *change* from the previous release, where the lane was empty:
 
 - **OpenRouter can run ingest, Health and Compile.** There is a pinned model id to send, and a one-rung fallback chain behind it.
 - **It can be made the active provider**, from **Settings → Providers & keys → Set active**, like any other provider.
@@ -466,6 +591,8 @@ When releasing a new version that updates a model default:
    - If the price is **promotional**, put the **standard** price here and the discount in `PROMOTIONAL_PRICES` with its expiry. Never write a promotional number into the standard table — see [Promotional prices expire](#promotional-prices-expire--the-app-handles-the-date-itself).
 4. **Add its output ceiling** to `ANTHROPIC_MODEL_MAX_OUTPUT_TOKENS` or `GEMINI_MODEL_MAX_OUTPUT_TOKENS`. Caps are **not** monotonic with recency — look it up, never infer it from a version word.
 5. **To make it user-selectable, add an `OFFERABLE_MODELS` entry** — but only after probing it live with the **real** ingest outline prompt. Record what you measured: `thinks`, `jsonRaw`, `tokenizerFactor`, a `suitability` verdict and the `note` explaining it. The factory refuses an incomplete entry at module load, so an under-specified model does not merely fail a test — the app refuses to boot. If you cannot probe it yet, add it to `AWAITING_MEASUREMENT` with the reason instead.
+
+   ⚠ **A user's on-wiki qualification is not a substitute for this step.** It grants the build lane for that one user, on their own evidence, under its own badge — it never writes an `OFFERABLE_MODELS` entry, never sets `jsonRaw`, and cannot promote a model whose `jsonRaw` we have already measured. Hand-measuring a route later is what turns it from *the user measured this* into *we measured this*, and at that point the hand-measured verdict governs and the local record stops being consulted.
 6. **Bump `package.json` version** and push. End users pull via the existing auto-updater.
 7. Note the model change in [`CLAUDE.md`](../CLAUDE.md) "Git History of Major Fixes" table.
 

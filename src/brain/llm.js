@@ -17,13 +17,23 @@ import { getEffectiveKey, getActiveProvider, getApiKeys, getSelectedModel } from
 // substrings the recovery classifiers below key on. They are DECLARED in the
 // adapter, beside the neutralisers that must strip them, and imported here so
 // the load-time guard beside `is429`/`is503` can prove the two ends still agree.
-// The import direction is the only one available — the adapter has no imports
-// at all, so it cannot reach back into this file without forming a cycle.
+// The import direction is the only one available — the adapter's sole import is
+// the (itself import-free) eligibility module, so it cannot reach back into this
+// file without forming a cycle.
 import {
   OpenRouterAdapter,
   RETRY_CLASSIFIER_TOKENS,
   MODEL_NOT_FOUND_CLAUSES,
+  fetchOpenRouterCatalogue,
+  buildOpenRouterCatalogue,
 } from './openrouter-adapter.js';
+// User-data path + atomic write for the persisted OpenRouter catalogue. `fs` is
+// already on the MCP child's import graph (config.js), so this adds no new
+// capability to that process; `userDataPath` is resolved PER CALL, never
+// snapshotted at module load (v3.1.0).
+import { readFileSync } from 'fs';
+import { userDataPath } from './paths.js';
+import { writeFileAtomicSync } from './atomic-write.js';
 
 /**
  * The providers this module can dispatch to.
@@ -654,6 +664,33 @@ const MODEL_PRICES_USD_PER_MTOK = {
   // v3.3.0's inert budget cap.
   'ibm-granite/granite-4.0-h-micro': { input: 0.017, output: 0.112 },
   'upstage/solar-pro4':              { input: 0.03,  output: 0.12  },
+  //
+  // ── ADDED 2026-08-28. THE PRICE OF AN OPENROUTER ID IS A PROPERTY OF THE
+  //    ENDPOINT THAT SERVES IT, NOT OF THE ID ────────────────────────────────
+  // The two figures below are the CHEAPEST JSON-capable endpoint's published
+  // rate, and both were confirmed against the BILL on a cold (uncached) call:
+  // computed cost equalled `usage.cost` to six decimal places on every
+  // cold run in the probe (glm-5.3-flash 2 cold runs, kimi-k2-0905 3).
+  //
+  // That check is not a formality here, and two rejected candidates are why.
+  // `qwen/qwen3-235b-a22b-2507` publishes $0.0875/$0.35 on its cheapest
+  // endpoint and BILLED $0.011801 for 77,823 in / 1,132 out — which is
+  // Parasail's $0.14/$0.80 to the last decimal, i.e. 1.64x what that table
+  // entry would have quoted, on the very first call. `moonshotai/kimi-k2.6`
+  // went the other way: the catalogue headline is $0.95/$4.00, it billed
+  // Decart's $0.5372/$2.2618, and one of its 19 endpoints charges $1.09.
+  // Neither has a number this table could state truthfully, so neither is here.
+  //
+  // What makes these two safe is STRUCTURAL, not luck:
+  //   moonshotai/kimi-k2-0905 has exactly ONE endpoint, so its price cannot
+  //     route anywhere else — the same property `ibm-granite/granite-4.0-h-micro`
+  //     has, and `upstage/solar-pro4` has in effect (2 endpoints, both $0.03).
+  //   z-ai/glm-5.3-flash has three endpoints at $0.075 and twelve at $0.150,
+  //     and billed the $0.075 tier on both cold runs. That is the observed
+  //     figure and it is what is quoted — but it is the ONE entry here whose
+  //     price could double without the id changing, so its note says so.
+  'z-ai/glm-5.3-flash':              { input: 0.075, output: 0.25  },
+  'moonshotai/kimi-k2-0905':         { input: 0.60,  output: 2.50  },
 };
 
 // Frozen at definition: this table is exported through `__testing` for the
@@ -1500,6 +1537,93 @@ export const OFFERABLE_MODELS = Object.freeze({
    *   dots-studio/dots-3-note-preview:free  carries `expiration_date`
    *                            2026-09-30, i.e. it retires inside this release's
    *                            own lifetime.
+   *
+   * ── SECOND SESSION, 2026-08-28 — 9 more candidates, 2 admitted ───────────
+   * Same harness, same method, one difference worth knowing: the assembled
+   * prompt was 343,716 chars this time (341,005 in the first session, the
+   * `articles` domain having grown), so the prompt-token BASELINE moved and
+   * `tokenizerFactor` is a RATIO against that session's own solar-pro4 figure
+   * (74,521 prompt tokens = 1.0) rather than against the first session's.
+   * upstage/solar-pro4 was re-run as a positive control and reproduced its
+   * recorded behaviour — 9/9 raw JSON — at a median of 25 pages against the 23
+   * recorded in v3.15.0, which is the run-to-run spread of the same model, not
+   * a change in it.
+   *
+   * SEVEN REFUSED. The first four are generation or availability defects; the
+   * last three passed on JSON and were refused on facts about the ID ITSELF,
+   * which is the lesson of this session:
+   *
+   *   z-ai/glm-4.7             0 of 9 runs parseable — all 9 UNREPAIRABLE by
+   *                            both JSON.parse and jsonrepair. It passes every
+   *                            structural filter, is fast (34-64s), and is
+   *                            priced like a serious model ($0.40/$1.75). Only
+   *                            the real prompt caught it.
+   *   minimax/minimax-m3       0 of 9 runs parseable, all 9 UNREPAIRABLE — and
+   *                            its FREE sibling `minimax/minimax-m3:free` is
+   *                            SHIPPED above on 8/9 raw + 1 repaired. Same base
+   *                            model, opposite result. RECORD THIS: reliability
+   *                            here is a property of the ROUTE, not of the
+   *                            model's identity, so no measurement of one id
+   *                            may ever be carried across to a sibling id.
+   *   deepseek/deepseek-v4-flash-0731  Abandoned after 2 runs. The first took
+   *                            491 SECONDS for a single outline call (~10x the
+   *                            control's median 48s) and the second never
+   *                            returned a body inside the adapter's 600-second
+   *                            ceiling. Not a JSON defect — a latency one.
+   *   z-ai/glm-5.2:free        3 of 3 attempts HTTP 429 before any work began.
+   *                            NOT_MEASURED — which is neither a defect nor a
+   *                            pass. A model we could not measure may not be
+   *                            offered, the same verdict openai/gpt-oss-20b got
+   *                            above.
+   *   qwen/qwen3-235b-a22b-2507  MEASURED CLEAN — 9/9 raw JSON, 20-29 pages,
+   *                            median 23, no reasoning tokens, ~40s. Refused on
+   *                            PRICE HONESTY. Its cheapest JSON-capable
+   *                            endpoint (GMICloud) publishes $0.0875/$0.35, but
+   *                            the one cold call billed $0.011801 for 77,823 in
+   *                            / 1,132 out, which is Parasail's $0.14/$0.80
+   *                            exactly — 1.64x what a table entry would have
+   *                            quoted, on the first request. An id that can
+   *                            silently route off its cheapest endpoint has no
+   *                            single number this app can put in front of a
+   *                            user before they spend, which is the same harm
+   *                            TIERED_PRICE_MODELS exists to refuse, arriving
+   *                            through a different door.
+   *   moonshotai/kimi-k2.6     MEASURED CLEAN — 9/9 raw JSON, 20-43 pages,
+   *                            median 25, no reasoning tokens, and the fastest
+   *                            wide planner tested (22-38s). Refused for the
+   *                            same reason in the opposite direction: 19
+   *                            JSON-capable endpoints spanning $0.5372 to
+   *                            $1.0900 on input (2.03x), and the cold run
+   *                            billed Decart's $0.5372/$2.2618 while the
+   *                            catalogue headline reads $0.95/$4.00. Quoting
+   *                            the headline over-states by 77% today and
+   *                            under-states on the $1.09 endpoint tomorrow.
+   *                            Over-quoting is the safe direction and it is
+   *                            still a number we would be making up.
+   *   qwen/qwen3-30b-a3b-instruct-2507  MEASURED CLEAN and CHEAP — 8/8 of the
+   *                            runs that started returned raw JSON (a 9th was
+   *                            429'd before it began), 17-25 pages, no
+   *                            reasoning tokens, and the fastest of everything
+   *                            tested at 13-22s. Its price was exact on all 8
+   *                            runs. Refused on CONTEXT: the endpoint that
+   *                            serves and bills it at $0.04815 (StreamLake)
+   *                            carries a 128,000-token context window and a
+   *                            32,000-token completion ceiling. The four
+   *                            endpoints that do offer 262,144 cost $0.09-$0.13,
+   *                            so the cheap price and the large window are not
+   *                            available at the same time. 128,000 is below the
+   *                            200,000 floor every other build-lane model
+   *                            clears, and a wiki whose index outgrows it
+   *                            starts failing on the largest domains — the ones
+   *                            most likely to be reaching for a second opinion.
+   *
+   * WHAT THIS SESSION ACTUALLY ADDED TO THE METHOD. The first session verified
+   * that a computed price matched `usage.cost`. That check was treated as a
+   * confirmation; it turns out to be a FILTER, and the sharpest one available.
+   * Three of the five candidates that passed every JSON, ceiling and reasoning
+   * test failed it or the context floor. Cost the check nothing — the probe
+   * already records `reported_cost_usd` — and only a COLD run can perform it,
+   * because a cached run bills a fraction and matches nothing.
    */
   openrouter: Object.freeze([
     defineOfferableModel('openrouter', {
@@ -1543,6 +1667,46 @@ export const OFFERABLE_MODELS = Object.freeze({
         'Gemini option at roughly a third of its price ($0.03/$0.12 against $0.10/$0.40). No hidden ' +
         'reasoning tokens in any run, so the whole output budget goes to the answer.',
     }),
+    defineOfferableModel('openrouter', {
+      id: 'z-ai/glm-5.3-flash',
+      label: 'GLM 5.3 Flash',
+      maxOutput: 131072,
+      thinks: true, jsonRaw: true, tokenizerFactor: 1.041,
+      suitability: 'caution',
+      note:
+        'Clean but SLOW, and it thinks. 8 of 9 runs returned a body and all 8 parsed as raw JSON with ' +
+        'no jsonrepair and nothing unrepairable, planning 25-28 outline pages (median 27) — wider ' +
+        'than the pinned default. Two measured costs to weigh first. (1) SPEED: those 8 runs took ' +
+        '120-231 seconds each (median 188s) against 23-88s (median 48s) for upstage/solar-pro4 on the ' +
+        'byte-identical prompt, and the 9th never came back at all — the adapter\'s 600-second body ' +
+        'ceiling elapsed. Ingest makes one such call to plan a document and one per content batch ' +
+        'after it, so a document that takes a minute on the default can take five here, and roughly ' +
+        '1 call in 9 will time out and be retried. (2) HIDDEN REASONING: every run spent 4,976-9,781 ' +
+        'tokens on reasoning the user never sees — 79-86% of its entire output — billed as output ' +
+        'and drawn from the same 24,576-token budget as the answer. Priced $0.075/$0.25 on the ' +
+        'cheapest of its 15 endpoints, which is what it billed on both cold runs; 12 of those 15 ' +
+        'charge $0.150/$0.50, so this is the one entry here whose real rate could double without ' +
+        'the model id changing.',
+    }),
+    defineOfferableModel('openrouter', {
+      id: 'moonshotai/kimi-k2-0905',
+      label: 'Kimi K2 0905',
+      maxOutput: 100352,
+      thinks: false, jsonRaw: false, tokenizerFactor: 1.022,
+      suitability: 'caution',
+      note:
+        'The widest outlines measured on OpenRouter — 21-44 pages, median 30, against the pinned ' +
+        'default\'s median 25 on the byte-identical prompt — with no hidden reasoning tokens in any ' +
+        'of 9 runs and 25-43 second latency. All 9 were usable: 8 parsed as raw JSON and 1 needed ' +
+        'jsonrepair. ⚠ THAT ONE REPAIRED RUN IS THE REASON THIS IS FLAGGED, and it is not an ' +
+        'ordinary repair. It ran away: it consumed the ENTIRE 24,576-token output budget ' +
+        '(finishReason "length"), took 467 seconds instead of ~30, planned 903 pages instead of ~30, ' +
+        'and cost $0.107 against ~$0.048 for a normal run. jsonrepair salvaged the truncated JSON so ' +
+        'nothing was lost, but a 903-page plan is a generation defect and ingest would try to write ' +
+        'it. Budget for that happening about once in nine documents. Also the dearest OpenRouter ' +
+        'option here at $0.60/$2.50 — 20x the pinned default on input, which is ~98% of an outline ' +
+        'call\'s tokens. Its price at least cannot surprise you: it has exactly one endpoint.',
+    }),
   ]),
 });
 
@@ -1567,6 +1731,12 @@ export const OFFERABLE_MODELS = Object.freeze({
  * and again on the built entry. See both for the reasoning.
  */
 let _openrouterCatalogue = Object.freeze([]);
+
+// Provenance of whatever is in `_openrouterCatalogue` right now. Declared HERE,
+// beside the thing they describe, so there is no order in which one can be read
+// without the other having been initialised.
+let _openrouterCatalogueSyncedAt = null;
+let _openrouterCatalogueSource = null; // 'network' | 'disk' | null
 
 /**
  * Replace the live OpenRouter chat catalogue.
@@ -1616,9 +1786,33 @@ export function setOpenRouterCatalogue(specs) {
   // figure is measured is the worst available combination (v3.9.0).
   _dynamicFree.clear();
 
+  // ── A HAND-MEASURED ID IS NEVER SUPERSEDED BY A FETCHED ONE ───────────────
+  // FOUND BY THE FIRST LIVE SYNC, not by reading: OpenRouter's public catalogue
+  // of course lists the very models we hand-measured, so 2 of the 3 static
+  // entries came back as dynamic specs too. `listOfferableModels` concatenates
+  // `[...static, ...dynamic]`, so the picker rendered `upstage/solar-pro4`
+  // TWICE — once as the pinned build-lane default ("9 of 9 runs returned raw
+  // JSON… 14-36 outline pages") and once, immediately below, as "Chat only —
+  // never measured against The Curator's ingest prompt". Two rows, one id,
+  // contradicting each other about whether the model has been measured, on the
+  // screen where a user picks what to spend money through.
+  //
+  // Routing was never at risk — `findOfferableModel` uses `.find()` and static
+  // comes first, and `registerDynamicPrice` already refuses a statically-priced
+  // id — so this was a pure reporting defect, which is exactly the kind this
+  // repo keeps finding late. The static entry wins because it carries a real
+  // measurement and the fetched one explicitly carries none.
+  //
+  // Counted SEPARATELY from `refused`: nothing failed here. Folding it into the
+  // refusal tally would report our own shipping defaults as rejected models
+  // every time a user syncs.
+  const staticIds = new Set((OFFERABLE_MODELS.openrouter || []).map(e => e.id));
+
   const out = [];
   let refused = 0;
+  let superseded = 0;
   for (const spec of Array.isArray(specs) ? specs : []) {
+    if (spec && typeof spec.id === 'string' && staticIds.has(spec.id)) { superseded++; continue; }
     try {
       // `{dynamic: true}` is what makes the overlay's chat-lane claim structural
       // rather than a comment — see defineOfferableModel.
@@ -1655,7 +1849,492 @@ export function setOpenRouterCatalogue(specs) {
   }
 
   _openrouterCatalogue = Object.freeze(out);
-  return { admitted: out.length, refused };
+  // SAME LIFECYCLE ARGUMENT AS THE PRICE AND FREE REGISTRIES ABOVE. This is the
+  // only writer of `_openrouterCatalogue`, so provenance is cleared here and
+  // re-stated by whichever caller actually knows it (`syncOpenRouterCatalogue`
+  // -> 'network', `restoreOpenRouterCatalogue` -> 'disk'). Left un-cleared, a
+  // direct call — a test tearing down, or any future caller — would leave a
+  // `syncedAt` describing a catalogue that is no longer loaded, i.e. a UI
+  // reading "synced 2 minutes ago" over a list that had just been emptied.
+  _openrouterCatalogueSyncedAt = null;
+  _openrouterCatalogueSource = null;
+  return { admitted: out.length, refused, superseded };
+}
+
+// ── PERSISTENCE: the synced catalogue survives a restart ─────────────────────
+//
+// WHY A SIDECAR FILE AND NOT `.curator-config.json`. Three reasons, and the
+// first is the decisive one:
+//   1. That file is the CREDENTIAL store — API keys, chmod 0600, rewritten
+//      atomically on every Settings save and every onboarding step. Appending a
+//      ~200 KB fetched catalogue to it puts hundreds of kilobytes of third-party
+//      data in the blast radius of every key write. A truncated write there
+//      costs the user their API keys.
+//   2. It is 538 bytes today and is `sha256`-verified byte-for-byte across live
+//      test runs precisely BECAUSE it should not move for reasons unrelated to
+//      credentials.
+//   3. The catalogue is public, non-secret, and fully re-derivable from one
+//      unauthenticated GET. Losing it costs one button press; losing a key does
+//      not.
+// So: `<user-data>/.openrouter-catalogue.json`, resolved through `paths.js` like
+// every other user-data path (v3.1.0's rule), never inside `domains/` (which is
+// Personal Sync's git work-tree — the v3.3.0 rule that kept the ingest queue
+// out of the user's public GitHub repo).
+const OPENROUTER_CATALOGUE_FILENAME = '.openrouter-catalogue.json';
+
+function openRouterCataloguePath() {
+  // Resolved PER CALL, never snapshotted at module load — v3.1.0's source-guard
+  // rule, because a snapshot makes every test override import-order dependent.
+  return userDataPath(OPENROUTER_CATALOGUE_FILENAME);
+}
+
+export function getOpenRouterCatalogueMeta() {
+  return {
+    syncedAt: _openrouterCatalogueSyncedAt,
+    source: _openrouterCatalogueSource,
+    count: _openrouterCatalogue.length,
+  };
+}
+
+/**
+ * Persist the admitted catalogue. Best-effort by design: a disk failure must
+ * never fail a sync that already succeeded over the network and is already live
+ * in memory. The user's models work this session either way; the only cost of a
+ * failed write is that they work again after a restart.
+ */
+function persistOpenRouterCatalogue(specs, syncedAt) {
+  try {
+    writeFileAtomicSync(
+      openRouterCataloguePath(),
+      JSON.stringify({ version: 1, syncedAt, specs }, null, 0),
+      'utf8',
+    );
+    return true;
+  } catch (err) {
+    // stderr, never stdout — this module is imported by the MCP child process,
+    // which reserves stdout for JSON-RPC frames (v2.5.3).
+    console.error(`[llm] could not persist the OpenRouter catalogue: ${err && err.message}`);
+    return false;
+  }
+}
+
+/**
+ * ── Re-admit a persisted catalogue at boot ───────────────────────────────────
+ *
+ * A PERSISTED ENTRY GETS NO MORE TRUST THAN A FRESHLY FETCHED ONE. The stored
+ * specs are fed back through `setOpenRouterCatalogue`, i.e. through
+ * `defineOfferableModel({dynamic: true})` — the SAME admission function, with
+ * the SAME chat-only constraint and the SAME price-posture requirements. Three
+ * consequences, all deliberate:
+ *   • A model that has since become inadmissible is DROPPED on reload rather
+ *     than grandfathered in by having once been on disk.
+ *   • A hand-edited file claiming `suitability: 'general'` cannot promote itself
+ *     into the lane that WRITES the user's wiki — the file is not a trusted
+ *     input just because it is local. Every entry is refused per-entry and
+ *     counted, exactly as a network response would be.
+ *   • The price and free registries are rebuilt from the reload, so they cannot
+ *     drift from what is offered.
+ *
+ * Returns `{restored:false}` and touches NOTHING when the file is absent,
+ * unreadable or malformed. Never throws: it is called at boot, and a corrupt
+ * cache file must not be able to stop the app from starting.
+ */
+export function restoreOpenRouterCatalogue() {
+  let raw;
+  try {
+    raw = readFileSync(openRouterCataloguePath(), 'utf8');
+  } catch {
+    return { restored: false, reason: 'no persisted catalogue' };
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch {
+    return { restored: false, reason: 'persisted catalogue is not valid JSON' };
+  }
+  if (!parsed || !Array.isArray(parsed.specs) || parsed.specs.length === 0) {
+    return { restored: false, reason: 'persisted catalogue has no entries' };
+  }
+  const { admitted, refused } = setOpenRouterCatalogue(parsed.specs);
+  _openrouterCatalogueSyncedAt = typeof parsed.syncedAt === 'string' ? parsed.syncedAt : null;
+  _openrouterCatalogueSource = 'disk';
+  return { restored: true, admitted, refused, syncedAt: _openrouterCatalogueSyncedAt };
+}
+
+/**
+ * ── THE LIVE SYNC: the one thing that joins the fetcher to the picker ────────
+ *
+ * fetch -> eligibility filter -> record-to-spec mapper -> admission -> persist.
+ *
+ * A FAILED SYNC LEAVES THE PREVIOUS CATALOGUE INTACT. `setOpenRouterCatalogue`
+ * is reached only after a fetch AND a build have both succeeded, so a network
+ * error, a timeout, a cancel or an unreadable eligibility report all throw with
+ * the user's existing models still selectable. The alternative — clearing on
+ * failure — would let one transient 503 read to the user as "OpenRouter no
+ * longer offers anything", on the screen where they choose what to spend money
+ * through.
+ *
+ * AN EMPTY FETCH IS A FAILURE, NOT AN ANSWER, and this is the sharp edge.
+ * `fetchOpenRouterCatalogue` returns `[]` — it does NOT throw — when the response
+ * body is not the shape it expects (`Array.isArray(body?.data)` false). That is
+ * the right call there: reporting what the provider said is its whole job. But
+ * an empty array flowing on into admission would wipe a working catalogue to
+ * nothing on an HTTP 200 with a changed body shape, and every layer would report
+ * success. OpenRouter publishing genuinely zero models is not a state that
+ * exists; a body we cannot read is. So zero records REFUSES, before anything is
+ * replaced.
+ *
+ * @param {object} [opts]
+ * @param {Function} [opts.fetchImpl]  injected for offline tests
+ * @param {string}   [opts.baseUrl]
+ * @param {AbortSignal} [opts.signal]
+ * @param {number}   [opts.timeoutMs]
+ * @param {object}   [opts.eligibility]  passed through to the eligibility filter
+ * @returns {Promise<{syncedAt:string,total:number,eligible:number,admitted:number,refused:number,persisted:boolean,funnel:Array}>}
+ */
+export async function syncOpenRouterCatalogue(opts = {}) {
+  const records = await fetchOpenRouterCatalogue({
+    fetchImpl: opts.fetchImpl || null,
+    ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
+    signal: opts.signal || null,
+    ...(Number.isFinite(opts.timeoutMs) ? { timeoutMs: opts.timeoutMs } : {}),
+  });
+
+  if (!Array.isArray(records) || records.length === 0) {
+    const e = new Error(
+      'OpenRouter returned no models. Nothing was changed — your existing model list is untouched. ' +
+      'This usually means a temporary problem at OpenRouter; try again in a moment.',
+    );
+    e.code = 'OPENROUTER_EMPTY_CATALOGUE';
+    throw e;
+  }
+
+  // ── THE CLOCK IS INJECTED HERE, AT THE IMPURE BOUNDARY ────────────────────
+  // `openrouter-eligibility.js` is deliberately pure: it may not call
+  // `Date.now()`, so with no `opts.now` it cannot evaluate `expiration_date` and
+  // ABSTAINS rather than rejecting. Measured on the live catalogue: 194 eligible
+  // with no clock, 193 with one — and the single differing model expires three
+  // days after this was written. Shipping a model that dies inside this
+  // release's own lifetime is precisely what v3.15.0 rejected another model for.
+  //
+  // This function already touches the network, so it is the right place for the
+  // wall clock; `opts.now` stays overridable so a suite can pin a date without
+  // the module ever reading a clock itself.
+  const eligibilityOpts = { ...(opts.eligibility || {}) };
+  if (eligibilityOpts.now === undefined) eligibilityOpts.now = new Date();
+
+  // Throws OPENROUTER_NO_ELIGIBILITY rather than admitting an unfiltered list.
+  const built = buildOpenRouterCatalogue(records, { eligibility: eligibilityOpts });
+
+  // ── A TYPO IN AN OPTION NAME MUST FAIL LOUDLY, NOT DEGRADE ────────────────
+  // Options are passed by STRING NAME, and the module's author has already been
+  // bitten twice by that: a misspelt `contextField` silently selected the
+  // OPTIMISTIC field instead of erroring, and a malformed `expiration_date`
+  // raised zero risk flags — indistinguishable from the field being absent. So
+  // the one option this path depends on is verified to have LANDED, by reading
+  // the module's own report rather than by trusting that we spelt it right.
+  // Refusing is the fail-safe direction: an unevaluated expiry ships models
+  // that are about to die, and "we could not check" must never be served as
+  // "we checked".
+  if (built.clockSupplied !== true) {
+    const e = new Error(
+      'The model catalogue could not be checked for expiring models, so nothing was changed. ' +
+      'Your existing model list is untouched. This is a bug in The Curator, not a problem with OpenRouter — ' +
+      'please report it.',
+    );
+    e.code = 'OPENROUTER_EXPIRY_UNEVALUATED';
+    throw e;
+  }
+
+  const { admitted, refused: admissionRefused, superseded } = setOpenRouterCatalogue(built.specs);
+  const syncedAt = new Date().toISOString();
+  _openrouterCatalogueSyncedAt = syncedAt;
+  _openrouterCatalogueSource = 'network';
+
+  // Persist the SPECS, not the built entries: entries carry price GETTERS that
+  // JSON.stringify would flatten into today's number, freezing a promotional
+  // price past its expiry. Specs are plain data and are re-admitted through the
+  // same factory on the way back in.
+  const persisted = persistOpenRouterCatalogue(built.specs, syncedAt);
+
+  return {
+    syncedAt,
+    total: built.total,
+    eligible: built.eligible,
+    admitted,
+    // ONE NUMBER, ONE MEANING: of the models that PASSED eligibility, how many
+    // failed to become an offer — whether at the mapper or at admission. It is
+    // deliberately not "everything the funnel dropped": those losses are already
+    // attributed, rule by rule, in `funnel`, and adding them here would double-
+    // count them on screen.
+    refused: built.mapperRefused + admissionRefused,
+    // Models the provider lists that we have ALREADY hand-measured. Not a
+    // refusal and not a loss — the better entry is already on offer.
+    superseded,
+    persisted,
+    funnel: built.funnel,
+  };
+}
+
+// ── THE THIRD LANE: LOCALLY-QUALIFIED MODELS ─────────────────────────────────
+//
+// There are now three answers to "may this model build the user's wiki", not
+// two, and keeping them three is the whole design:
+//
+//   HAND-MEASURED  `suitability !== 'chat-only'` on a static-table entry. We
+//                  measured it, across documents and against siblings, and a
+//                  human wrote the verdict. Unchanged by this release.
+//
+//   CHAT-ONLY      Everything admitted at runtime from the provider catalogue,
+//                  plus hand-measured entries we found unfit. Unchanged.
+//
+//   LOCALLY        A catalogue entry the USER measured against THEIR OWN wiki,
+//   QUALIFIED      nine times, with no defect observed. New here.
+//
+// ── WHY A SEPARATE DISJUNCT AND NOT A WIDER `suitability` TEST ──────────────
+// Widening `suitability !== 'chat-only'` — or letting a qualification rewrite
+// `suitability` on the entry — would defeat the two layers that exist to stop a
+// FETCHED entry reaching the build lane (`defineOfferableModel`'s `opts.dynamic`
+// refusal, and `setOpenRouterCatalogue`'s post-build re-check). Those layers are
+// the release-defining guarantee of v3.15.0 and they are untouched here: nothing
+// in `_openrouterCatalogue` can still make `entry.suitability !== 'chat-only'`
+// true. This adds a SECOND, independent reason, sourced from evidence the user
+// paid for, and leaves the first exactly as strict as it was.
+//
+// It also keeps the two claims DISTINGUISHABLE ON SCREEN, which is the deeper
+// reason. `suitability` is serialised onto the wire and rendered as a badge. If
+// a user-probed model carried `'general'` it would badge IDENTICALLY to a
+// hand-measured one, collapsing "we measured this across many documents and
+// models" into "you ran nine of these last Tuesday". Those are different
+// epistemic claims and the UI must never state them the same way.
+//
+// ── WHAT MAY BE LOCALLY QUALIFIED, AND WHAT MAY NOT ────────────────────────
+// Only an OpenRouter entry that WE HAVE NEVER MEASURED (`jsonRaw === null`,
+// llm.js's own documented marker for "not measured here"). A local run must not
+// be able to override our own NEGATIVE finding: `gemini-3.5-flash-lite` is
+// chat-only with `jsonRaw: false` because nine live runs against the real
+// outline prompt produced JSON neither the parser nor the repair pass could fix
+// in 2 of them. A user who happens to get nine clean runs on their own wiki has
+// not refuted that; they have sampled the other 78%. So a measured-bad model
+// stays chat-only whatever any local record says.
+const OPENROUTER_QUALIFICATIONS_FILENAME = '.openrouter-qualifications.json';
+
+/**
+ * modelId -> record. Populated by `recordLocalQualification` (a completed run)
+ * and by `restoreLocalQualifications` (boot). Empty by default, so the default
+ * state of this module is "no model is locally qualified", which is what makes a
+ * partially-wired feature harmless.
+ */
+let _localQualifications = new Map();
+
+function localQualificationsPath() {
+  // Resolved PER CALL, never snapshotted at module load — v3.1.0's source-guard
+  // rule, because a snapshot makes every test override import-order dependent.
+  return userDataPath(OPENROUTER_QUALIFICATIONS_FILENAME);
+}
+
+/**
+ * Structural validation of a record read from disk or handed in.
+ *
+ * `isPassingRecord` (openrouter-qualify.js) owns whether the EVIDENCE is good
+ * enough. This owns whether the OBJECT is a record at all, so a truncated write
+ * or a hand-edited file degrades to "not qualified" rather than to a throw at
+ * boot or a TypeError inside a predicate. Deliberately two functions: the
+ * evidence rule is a measurement question and belongs with the measurer; the
+ * shape rule is a persistence question and belongs here.
+ */
+function isRecordShaped(r) {
+  return !!r && typeof r === 'object'
+    && typeof r.modelId === 'string' && r.modelId.length > 0
+    && typeof r.domain === 'string' && r.domain.length > 0
+    && typeof r.measuredAt === 'string' && r.measuredAt.length > 0
+    && !!r.counts && typeof r.counts === 'object';
+}
+
+function persistLocalQualifications() {
+  try {
+    const records = [..._localQualifications.values()];
+    writeFileAtomicSync(
+      localQualificationsPath(),
+      JSON.stringify({ version: 1, records }, null, 0),
+      'utf8',
+    );
+    return true;
+  } catch (err) {
+    // stderr, never stdout — this module is imported by the MCP child process,
+    // which reserves stdout for JSON-RPC frames (v2.5.3).
+    console.error(`[llm] could not persist local model qualifications: ${err && err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Store the outcome of one completed qualification run.
+ *
+ * ONE RECORD PER MODEL — a re-run REPLACES its predecessor rather than
+ * accumulating, because the newer measurement is the one that describes the
+ * current routing. Keeping both and taking the best would let a user re-roll a
+ * failing model until it passed, which is the opposite of a measurement.
+ *
+ * A DEFECT RECORD IS STORED TOO, and that is deliberate: `z-ai/glm-4.7` failing
+ * 9 of 9 is the most valuable thing this feature can tell a user, and throwing
+ * it away would invite them to pay for the same 6 minutes again next week.
+ */
+export function recordLocalQualification(record) {
+  if (!isRecordShaped(record)) {
+    return { stored: false, reason: 'not a qualification record' };
+  }
+  _localQualifications.set(record.modelId, record);
+  const persisted = persistLocalQualifications();
+  return { stored: true, persisted, modelId: record.modelId };
+}
+
+/**
+ * Re-admit persisted qualifications at boot.
+ *
+ * Never throws: it is called at startup and a corrupt cache must not be able to
+ * stop the app from starting. A malformed record is DROPPED, not repaired —
+ * the file is local and hand-editable, and "we could not read it" must resolve
+ * to "not qualified", which is the direction that costs the user a re-run rather
+ * than a wiki built by a model nothing measured.
+ */
+export function restoreLocalQualifications() {
+  let raw;
+  try {
+    raw = readFileSync(localQualificationsPath(), 'utf8');
+  } catch {
+    return { restored: false, reason: 'no persisted qualifications' };
+  }
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch {
+    return { restored: false, reason: 'persisted qualifications are not valid JSON' };
+  }
+  if (!parsed || !Array.isArray(parsed.records)) {
+    return { restored: false, reason: 'persisted qualifications have no records' };
+  }
+  const next = new Map();
+  let dropped = 0;
+  for (const r of parsed.records) {
+    if (isRecordShaped(r)) next.set(r.modelId, r); else dropped++;
+  }
+  _localQualifications = next;
+  return { restored: true, count: next.size, dropped };
+}
+
+/** The record for one model, or null. Never throws. */
+export function getLocalQualification(modelId) {
+  if (typeof modelId !== 'string') return null;
+  // `Object.hasOwn`-equivalent by construction: a Map cannot resolve
+  // `__proto__` / `constructor` through a prototype, which is the v3.0.9
+  // prototype-key shape this repo has hit before.
+  return _localQualifications.get(modelId) || null;
+}
+
+/** Every stored record, newest measurement irrelevant — the UI sorts. */
+export function listLocalQualifications() {
+  return [..._localQualifications.values()];
+}
+
+/** Test seam and Disconnect path: forget everything measured. */
+export function clearLocalQualifications() {
+  _localQualifications = new Map();
+  return persistLocalQualifications();
+}
+
+/**
+ * ── HOW MANY RUNS A LOCAL QUALIFICATION NEEDS ───────────────────────────────
+ *
+ * Nine. One run cannot distinguish a model that emits clean JSON from one that
+ * got lucky, and the defect class this exists to catch showed up in this
+ * project's own Gemini catalogue at 2-in-9 — so a single probe passes such a
+ * model about 78% of the time, laundering a coin-flip into a badge.
+ *
+ * FEWER RUNS ARE RECORDED BUT QUALIFY NOTHING: a short record is real evidence
+ * of something and is shown with its run count; it simply does not satisfy
+ * `isPassingRecord`.
+ */
+export const QUALIFY_MIN_RUNS = 9;
+
+/**
+ * Does this record's EVIDENCE justify the build lane?
+ *
+ * ── WHY THIS LIVES IN llm.js AND NOT BESIDE THE MEASURER ────────────────────
+ * It is part of the definition of the lane, and the lane has exactly one home.
+ * The mechanical reason is also decisive: `openrouter-qualify.js` imports
+ * `ingest.js` (for the real `buildOutlinePrompt` and `usablePageArray`) and
+ * `ingest.js` imports THIS file, so importing the predicate the other way would
+ * close a module cycle — the same architecture constraint that already forces
+ * `providerCanBuild` to live in `routes/config.js` rather than in
+ * `brain/config.js`. `openrouter-qualify.js` re-exports this so callers have one
+ * name for it, and there is exactly one definition.
+ *
+ * THE DECISION RULE: any unrepairable output, any parsed-but-unusable output,
+ * any outright call failure, any abort, or fewer than `QUALIFY_MIN_RUNS`
+ * completed runs — refused. The asymmetry is deliberate: a false rejection costs
+ * a candidate; a false acceptance ships a model that silently writes broken
+ * wikis and bills the user for it.
+ *
+ * `repaired` IS NOT A DEFECT and is deliberately absent from the checks below.
+ * `claude-haiku-4-5`, the shipping Anthropic default, fences its outline JSON
+ * 3 times out of 3 — a raw parse fails on 100% of its responses and every
+ * Anthropic ingest already depends on the repair path. Rejecting on `repaired`
+ * would reject the model this app ships.
+ *
+ * EVERY FAILURE DIRECTION IS CLOSED — a malformed record, a missing count, a
+ * NaN, a count hand-edited to a string, a non-object — all false. That matters
+ * because the record file is local and hand-editable: structural validity is the
+ * part that CAN be checked, so it is checked.
+ */
+export function isPassingRecord(record) {
+  if (!record || typeof record !== 'object') return false;
+  if (record.outcome !== 'NO_DEFECT_FOUND') return false;
+  if (!Number.isFinite(record.runsCompleted) || record.runsCompleted < QUALIFY_MIN_RUNS) return false;
+  const c = record.counts;
+  if (!c || typeof c !== 'object') return false;
+  for (const k of ['unrepairable', 'unusable', 'failed']) {
+    if (!Object.hasOwn(c, k)) return false;
+    if (!Number.isFinite(c[k]) || c[k] !== 0) return false;
+  }
+  if (record.aborted) return false;
+  if (record.cancelled) return false;
+  if (typeof record.modelId !== 'string' || !record.modelId) return false;
+  if (typeof record.domain !== 'string' || !record.domain) return false;
+  if (typeof record.measuredAt !== 'string' || !record.measuredAt) return false;
+  return true;
+}
+
+/**
+ * ── THE THIRD LANE PREDICATE ────────────────────────────────────────────────
+ *
+ * Every clause is a REFUSAL, and each closes a different hole:
+ *
+ *  1. OpenRouter only. The other providers' catalogues are hand-typed and
+ *     complete; there is no "never measured here" entry to qualify.
+ *  2. The id must be OFFERABLE RIGHT NOW. This is the invalidation rule, and it
+ *     is a LIVE CHECK rather than a prune: a model that has left the eligible
+ *     catalogue stops granting the lane the instant it leaves, with no cleanup
+ *     step that could be skipped. Deliberately NOT implemented by deleting the
+ *     record — a qualification cost the user real money and up to an hour, and
+ *     destroying that evidence because a catalogue fetch came back short would
+ *     be unrecoverable. The record survives and is shown as void.
+ *  3. The entry must still be `chat-only`. If a model is ever hand-measured into
+ *     the build lane, that verdict governs and this predicate is not consulted.
+ *  4. `jsonRaw === null` — WE have never measured it. A local run may fill a
+ *     gap in our knowledge; it may not overturn a negative finding of ours.
+ *  5. The record must be structurally sound AND show no defect over at least
+ *     `QUALIFY_MIN_RUNS` runs (`isPassingRecord`).
+ *
+ * FAILS CLOSED at every step, so the cost of any doubt is that the user spends
+ * less than they asked for — the same direction as `applyModelOverride`.
+ */
+export function isLocallyQualified(provider, modelId) {
+  if (provider !== 'openrouter') return false;
+  if (typeof modelId !== 'string' || !modelId) return false;
+  const record = _localQualifications.get(modelId);
+  if (!record) return false;
+  const entry = findOfferableModel(provider, modelId);
+  if (entry === null) return false;                       // no longer eligible
+  if (entry.suitability !== 'chat-only') return false;    // hand-measured wins
+  if (entry.jsonRaw !== null) return false;               // we measured it ourselves
+  return isPassingRecord(record);
 }
 
 /**
@@ -1672,7 +2351,60 @@ export function listOfferableModels(provider) {
   const stat = OFFERABLE_MODELS[provider] || Object.freeze([]);
   if (provider !== 'openrouter') return stat;
   if (_openrouterCatalogue.length === 0) return stat;
-  return Object.freeze([...stat, ..._openrouterCatalogue]);
+  // ── THE MERGE IS THE ONLY PLACE THE ORDER CAN BE ESTABLISHED ─────────────
+  // This used to be a bare `[...stat, ...dynamic]`. Both halves are internally
+  // cheapest-first — the static table is hand-ordered and asserted so; the
+  // dynamic half arrives in OpenRouter's own arbitrary API order — but a
+  // concatenation of two ordered lists is NOT ordered. After a sync, ~190
+  // entries sat after the static three in provider order, so `renderModelPicker`'s
+  // "cheapest-first, asserted upstream" became false and its `cheapest` badge,
+  // computed as INDEX 0, was correct only by the accident that index 0 happened
+  // to be a free entry. A `cheapest` badge on a model that is not cheapest is a
+  // false statement on a SPENDING surface.
+  //
+  // SORTED HERE, NOT AT ADMISSION, and that is forced rather than preferred:
+  // `setOpenRouterCatalogue` only ever sees the DYNAMIC half, so sorting there
+  // cannot order the merged list — it would leave the same defect and add a
+  // second sort to keep in step with this one, which is the v3.2.0
+  // two-hand-maintained-copies shape. This function is the documented accessor
+  // every consumer reads, so ordering here makes an unsorted list unobservable.
+  return Object.freeze([...stat, ..._openrouterCatalogue].sort(compareOfferablePrice));
+}
+
+/**
+ * Order two offerable entries cheapest-first for display.
+ *
+ * ── FREE IS A CLASS, NOT A NUMBER ────────────────────────────────────────────
+ * A free entry's price is `null` BY DESIGN (membership, never `{0,0}` — a
+ * truthy zero makes a budget cap inert). `null` in arithmetic coerces to 0, so
+ * `a.input - b.input` on a free entry silently compares 0 and "works" — the
+ * exact coercion §11 of test-chat-model.js found already sitting in a green
+ * assertion, passing only because free genuinely happened to be cheapest.
+ * Correct by accident is how these survive, so no `null` ever reaches a
+ * subtraction here: freeness is decided by MEMBERSHIP first and the arithmetic
+ * runs only between two entries that both carry numbers.
+ *
+ * FREE SORTS FIRST — the same answer §11 already pinned for the static table
+ * ("a free model must not be listed after a paid one"), so the runtime merge and
+ * the hand-typed table state one rule, not two.
+ *
+ * AN ENTRY THAT IS NEITHER FREE NOR PRICED SORTS LAST. `defineOfferableModel`
+ * refuses to build one, so this is unreachable today; it is written down anyway
+ * because the fail-safe direction on a spend surface is that an entry we cannot
+ * price must never be badged the cheapest thing on offer.
+ *
+ * Compared on the price billed TODAY (`input`/`output` are getters that resolve
+ * a live promotion), because that is the number rendered beside the badge.
+ */
+function compareOfferablePrice(a, b) {
+  const rank = (e) => (e.free === true ? 0 : (typeof e.input === 'number' ? 1 : 2));
+  const ra = rank(a), rb = rank(b);
+  if (ra !== rb) return ra - rb;
+  if (ra !== 1) return 0;                  // free-vs-free / unpriced-vs-unpriced: stable
+  if (a.input !== b.input) return a.input - b.input;
+  const ao = typeof a.output === 'number' ? a.output : 0;
+  const bo = typeof b.output === 'number' ? b.output : 0;
+  return ao - bo;
 }
 
 /**
@@ -1734,7 +2466,20 @@ export function isBuildLaneModel(provider, modelId) {
   // here would be a hand-maintained copy of the membership test — the v3.2.0
   // CRITICAL's shape, and there is a standing offline guard against it.
   const entry = findOfferableModel(provider, modelId);
-  return entry !== null && entry.suitability !== 'chat-only';
+  if (entry === null) return false;
+  // CLAUSE 1 — the hand-measured lane, BYTE-UNCHANGED. This test is deliberately
+  // NOT widened: `suitability !== 'chat-only'` still means exactly what it meant
+  // before, and the two layers that stop a FETCHED entry ever satisfying it
+  // (defineOfferableModel's `opts.dynamic` refusal and setOpenRouterCatalogue's
+  // post-build re-check) are untouched and still independently provable.
+  if (entry.suitability !== 'chat-only') return true;
+  // CLAUSE 2 — the third lane, a SEPARATE reason sourced from evidence the user
+  // paid for on their own wiki. Kept as its own disjunct precisely so that
+  // widening one can never silently widen the other, and so the two claims stay
+  // distinguishable on screen: a locally-qualified model still reports
+  // `suitability: 'chat-only'` on the wire, and the UI badges it as measured by
+  // the user rather than by us. See isLocallyQualified for what it refuses.
+  return isLocallyQualified(provider, modelId);
 }
 
 /**
@@ -3209,6 +3954,11 @@ export const __testing = {
   // NO price (getModelPrice must stay null) and that a dynamic entry can never
   // shadow a hand-verified static one.
   registerDynamicPrice,
+  // Exposed so the ordering suite can drive the REAL comparator with a free
+  // (null-priced) entry directly — the coercion bug it exists to prevent is
+  // invisible when only the sorted OUTPUT is inspected, because `null - n`
+  // silently yields the right answer whenever free happens to be cheapest.
+  compareOfferablePrice,
   dynamicPrices: _dynamicPrices,
   // Exposed so the suite can attempt to build a deliberately under-specified
   // entry and assert the factory REFUSES it — proving "a model may not be

@@ -1049,6 +1049,21 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // mutation being protected FROM an in-flight write. /update already refuses
     // while writes are active, so the pair is closed from both sides.
     //
+    // 11th (openrouter/qualify, this release): runs the on-wiki model probe.
+    // It CARRIES guardConcurrent and needs no exemption. It is in the
+    // concurrency class for the same reason api-keys/model is — a completed run
+    // can promote a model into the BUILD LANE, changing what
+    // resolveProviderDefault returns for every subsequent ingest, Health scan
+    // and Compile call, which mid-run is the "plans on one model, writes on
+    // another" hazard reached through a different door. It also spends the
+    // user's key concurrently with whatever is already spending it.
+    //
+    // Its sibling GET /openrouter/qualify/estimate is NOT counted here: it is a
+    // GET, and GETs are never in the mutating set. It is also deliberately
+    // unguarded — it is a read-only estimate and refusing it mid-ingest would
+    // deny the user the one screen that says what a run would cost, the same
+    // reasoning api-keys/validate is exempted on.
+    //
     // 9th (api-keys/validate, v3.15.0): a READ-ONLY key check. The count moved
     // 8 -> 9 in this release and that is exactly what this tripwire is for —
     // it does not assert "eight is correct", it asserts "the set of routes has
@@ -1058,7 +1073,7 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // a read-only POST trips it and must be exempted by name rather than being
     // waved through by a cleverer classifier that could also wave through a
     // genuinely destructive one.
-    expectedMutatingCount: 9,
+    expectedMutatingCount: 11,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also

@@ -147,8 +147,9 @@ This is the shift from a file cabinet to a neural network.
 - **Auto-update** — check for updates in Settings; the app pulls the latest version, rebuilds the Dock app, and restarts automatically
 - **One-command installer** — auto-detects and installs Node.js, builds the Dock app, opens on completion
 - Supports **Google Gemini** (recommended, very cheap), **Anthropic Claude**, and **OpenRouter** (now cheapest of the three for building a wiki — see below)
-- **Choose your model** — 17 hand-measured models: 7 Gemini, 7 Anthropic and 3 OpenRouter, plus
-  plus three measured OpenRouter models, one of them free.
+- **Choose your model** — a hand-measured catalogue spanning Gemini, Anthropic and OpenRouter (one
+  of them free), almost all of which can build your wiki, plus a much larger **chat-only** list you
+  can fetch from OpenRouter's live catalogue with one click.
   **One model builds your brain; you choose freely when talking to it.** A single durable choice in
   **Settings → Providers & keys** governs everything that *writes* to your wiki — ingest, Health
   scans and Compile — deliberately as one setting rather than three, while the chat composer's
@@ -158,21 +159,32 @@ This is the shift from a file cabinet to a neural network.
   ceiling, hidden reasoning spend, and how thoroughly it plans a wiki — so the cost is visible at
   the moment of choosing. **The defaults are unchanged and remain the cheapest on each provider**;
   a user who picks nothing runs exactly what they ran before. See [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model)
-- **OpenRouter — one key, three measured models, and two different rules.** The build lane (ingest,
+- **OpenRouter — one key, two lanes, and a chat list you refresh yourself.** The build lane (ingest,
   Health, Compile) admits only models hand-measured against the real ingest prompt; the chat lane
-  admits whatever your key unlocks, labelled as unmeasured. The reason is asymmetric consequence:
-  a bad chat answer costs one answer you can see, a bad ingest writes wrong pages into your wiki
-  permanently and you already paid for it. **Three OpenRouter models have now been measured for the
-  build lane** — nine runs each against the real ingest prompt — so OpenRouter can build a wiki as
-  of this release, and its pinned default is **the cheapest route The Curator offers** ($0.03/$0.12
-  per 1M tokens, roughly a third of the cheapest Gemini option). ⚠ **Because it can build, saving an
-  OpenRouter key now makes it your active provider** — ordinary last-saved-wins, the same as the
-  other two — so your next ingest is built by it. That is a change from the previous release, where
-  the key was saved but not activated. Free models exist and are subject to a daily request cap and
-  a shared upstream pool; the app shows the real limits it reads back from
-  your own key rather than a number written down here. `/old` does not support OpenRouter — a
-  stated limit, since its files are frozen. See
-  [User Guide §16b](docs/user-guide.md#openrouter--one-key-three-measured-models-and-two-different-rules)
+  admits what OpenRouter's live catalogue offers, after structural filtering, labelled as
+  unmeasured. The reason is asymmetric consequence: a bad chat answer costs one answer you can see,
+  a bad ingest writes wrong pages into your wiki permanently and you already paid for it.
+  **OpenRouter routes have been measured for the build lane** — nine runs each against the
+  real ingest prompt — so OpenRouter can build a wiki, and its pinned default is **the cheapest
+  route The Curator offers** ($0.03/$0.12 per 1M tokens, roughly a third of the cheapest Gemini
+  option). **And you can measure one yourself:** if a model is offered for chat but not for
+  building, *Test on my wiki* runs your **real** ingest prompt — assembled from your own index and
+  pages, because that is ~99% of what a real prompt is — nine times, and reports what it actually
+  did. Nine is the minimum, the confirmation leads with **time** rather than money (8 to 57 minutes,
+  measured), you can stop at any point, and the result is badged as *you measured this* rather than
+  *we measured this* — a separate claim, kept separate on purpose. It never says *verified*: it
+  reports what it observed and over how many runs, and it cannot overturn a finding of ours. For chat, **Settings → Refresh model list** fetches OpenRouter's own catalogue and adds
+  everything that survives the checks: on one measured refresh, 387 listed models became 189 added,
+  taking the picker from 3 to 192. No standing count is printed here — that catalogue moved by seven
+  records inside five hours on the day it was measured — and passing the checks means *nothing in
+  the metadata disqualifies this model*, never that it works, which is exactly why fetched models
+  are chat-only. ⚠ **Because it can build, saving an OpenRouter key makes it your active provider**
+  — ordinary last-saved-wins, the same as the other two — so your next ingest is built by it. Free
+  models exist, are never picked for you, and are subject to a daily request cap and a shared
+  upstream pool; the app shows the real limits it reads back from your own key rather than a number
+  written down here. `/old` does not support OpenRouter — a stated limit, since its files are
+  frozen. See
+  [User Guide §16b](docs/user-guide.md#openrouter--one-key-two-lanes-and-a-model-list-you-refresh)
 - Four AI-tuned domain templates to start from — Tech/AI, Business/Finance, Personal Growth, Generic — plus unlimited custom domains, no terminal or file editing required
 - Mac Dock app — double-click to launch, no terminal needed
 
@@ -430,7 +442,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 | **Google Gemini 2.5 Flash Lite** *(default, recommended)* | Yes — 15 RPM, 1,000 requests/day, 250k tokens/min ([details](https://ai.google.dev/gemini-api/docs/rate-limits)) | $0.10/M input · $0.40/M output | **~€5/month** at heavy use (50 articles × ~10 pages, plus daily chat) |
 | **Anthropic Claude Haiku 4.5** | No | $1/M input · $5/M output | ~10× the Gemini bill for the same workload |
 
-**Those two rows are the defaults, not the only options.** You can pick a different model per provider — 17 hand-measured models are offered for building your wiki — 7 Gemini, 7 Anthropic and 3 OpenRouter, one of the OpenRouter models free — and the span across the measured fourteen is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
+**Those two rows are the defaults, not the only options.** You can pick a different model per provider — the catalogue spans Gemini, Anthropic and OpenRouter (one of the OpenRouter routes is free), almost all of it usable for building your wiki, and you can add to it by measuring an OpenRouter model against your own wiki — and the span across the measured fourteen Gemini and Anthropic models is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
 
 **About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
 

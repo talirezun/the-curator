@@ -68,6 +68,20 @@
  *     for the key in hand; that is the only honest source.
  */
 
+// ── THE ONE IMPORT, AND WHY IT DOES NOT FORM A CYCLE ────────────────────────
+// This module was deliberately import-free so it could never reach back into
+// `llm.js` (which imports it). That property is PRESERVED, not abandoned:
+// `openrouter-eligibility.js` is itself import-free, so adapter -> eligibility
+// is a leaf edge and no cycle exists. The alternative — re-deriving the
+// admissibility rules here — is the two-hand-maintained-copies shape this repo
+// names as the cause of the v3.2.0 CRITICAL, on a spend surface.
+//
+// NAMESPACE import for the reason recorded at the top of `src/routes/config.js`:
+// a named import of an export that is absent or renamed throws a SyntaxError AT
+// MODULE LOAD and takes down every consumer of this file. `buildOpenRouterCatalogue`
+// turns the missing case into a named refusal instead.
+import * as eligibilityModule from './openrouter-eligibility.js';
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 /** Default wire endpoint. Overridable so this class can serve a local server. */
@@ -606,9 +620,11 @@ function classifyTransportFailure(err, callerSignal, linkSignal) {
 
 /**
  * An abort error `llm.js`'s `isAbortError()` recognises. Built here rather than
- * imported because this module has NO imports — llm.js imports it, so reaching
- * back would form a cycle. Both tags are set: `name` for the standard test and
- * `curatorAborted` for the duck-typed one, so it matches on either.
+ * imported because llm.js imports THIS module, so reaching back would form a
+ * cycle. (This file's single import, `openrouter-eligibility.js`, is itself
+ * import-free, so it is a leaf edge and changes nothing about that direction.)
+ * Both tags are set: `name` for the standard test and `curatorAborted` for the
+ * duck-typed one, so it matches on either.
  */
 function makeAdapterAbortError() {
   const e = new Error('OpenRouter request cancelled.');
@@ -817,6 +833,140 @@ export function openRouterRecordToSpec(record) {
         `${tiered ? 'Its published rate CHANGES above a prompt-size threshold, so it is chat-only: chat prompts are bounded and small enough that the quoted flat rate is the rate billed. ' : ''}` +
         `Chat only — never measured against The Curator's ingest prompt, so nothing here says how it would build a wiki.`,
     },
+  };
+}
+
+/**
+ * ── records -> admissible specs, with the funnel that explains the losses ────
+ *
+ * THE GAP THIS CLOSES. `fetchOpenRouterCatalogue` and `openRouterRecordToSpec`
+ * shipped together and had, between them, ZERO production callers: nothing
+ * joined "what OpenRouter publishes" to "what the user may pick". The visible
+ * consequence was a picker offering 3 OpenRouter models out of a catalogue of
+ * hundreds, while a public README promised "hundreds of models".
+ *
+ * ── THE ELIGIBILITY FILTER IS IMPORTED, NEVER RE-IMPLEMENTED ────────────────
+ * `openrouter-eligibility.js` owns every admissibility rule (JSON mode, knowable
+ * price, moving aliases, output ceiling, context window, expiry, text output)
+ * and the ordered funnel that attributes each loss to the FIRST rule it failed.
+ * Re-deriving any of that here would create two hand-maintained copies of one
+ * guard — this repo's named cause of the v3.2.0 CRITICAL — and the copies would
+ * drift silently on the question of which models a user is allowed to spend
+ * money through.
+ *
+ * NAMESPACE import, not a named one, and the reason is the same one recorded at
+ * the top of `src/routes/config.js`: a static `import { filterCatalogue }` of an
+ * export that is absent (or renamed while both files are being edited) throws a
+ * SyntaxError AT MODULE LOAD and takes down every consumer of this file —
+ * `llm.js`, and therefore the whole app and the MCP child. A namespace import
+ * degrades to `undefined`, which the explicit check below turns into a named,
+ * recoverable refusal.
+ *
+ * THE MISSING-FILTER CASE REFUSES, IT DOES NOT PASS EVERYTHING THROUGH. Failing
+ * open would admit ~380 unfiltered ids — routers with unknowable prices, moving
+ * aliases, models with no JSON mode — straight into a spend surface. "We could
+ * not check" and "we checked and it passed" are different facts and must not
+ * collapse into the same outcome; this is the same rule the app applies to a
+ * fallback model's cost tier, where an unrecognised tier resolves to `unknown`
+ * and warns rather than resolving to `similar`.
+ *
+ * DEDUPLICATION BY ID, FIRST WINS. `defineOfferableModel` would happily build
+ * two entries with the same id; `findOfferableModel` resolves with `.find()`, so
+ * the second would be permanently unreachable while still occupying a row in the
+ * picker and a slot in the admitted tally. One id, one offer.
+ *
+ * @param {Array<object>} records   the `data` array from `fetchOpenRouterCatalogue()`
+ * @param {object} [opts]
+ * @param {object} [opts.eligibility]  passed through to `filterCatalogue`
+ * @param {object} [opts.eligibilityModule]  test seam; defaults to the real module
+ * @returns {{total:number, eligible:number, specs:Array<object>,
+ *            funnel:Array<{rule:string, before:number, after:number}>,
+ *            mapperRefused:number, mapperRefusals:Array<{id:string, reason:string}>}}
+ */
+export function buildOpenRouterCatalogue(records, opts = {}) {
+  const eligibility = opts.eligibilityModule || eligibilityModule;
+  const filter = eligibility && eligibility.filterCatalogue;
+  if (typeof filter !== 'function') {
+    throw new OpenRouterError(
+      'OPENROUTER_NO_ELIGIBILITY',
+      'The OpenRouter eligibility filter is unavailable, so no model can be admitted. ' +
+      'Refusing to offer an unfiltered catalogue.',
+    );
+  }
+
+  const list = Array.isArray(records) ? records : [];
+  const report = filter(list, opts.eligibility);
+
+  // Defensive about the SHAPE of a module another change may be editing: a
+  // report we cannot read is the same fact as a filter we cannot call.
+  if (!report || !Array.isArray(report.eligible)) {
+    throw new OpenRouterError(
+      'OPENROUTER_NO_ELIGIBILITY',
+      'The OpenRouter eligibility filter returned an unreadable report, so no model can be admitted.',
+    );
+  }
+
+  const eligibleIds = new Set();
+  for (const ev of report.eligible) {
+    if (ev && typeof ev.id === 'string' && ev.id.length > 0) eligibleIds.add(ev.id);
+  }
+
+  const specs = [];
+  const mapperRefusals = [];
+  const seen = new Set();
+  for (const record of list) {
+    const id = record && typeof record.id === 'string' ? record.id.trim() : '';
+    if (!id || !eligibleIds.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    // PER-ENTRY, NEVER ALL-OR-NOTHING: one malformed record in a 380-element
+    // response must not take the feature down. `openRouterRecordToSpec` already
+    // returns a refusal rather than throwing, but a future edit to it might not,
+    // so the call is wrapped too.
+    let mapped;
+    try {
+      mapped = openRouterRecordToSpec(record);
+    } catch (err) {
+      mapped = { ok: false, reason: `mapper threw: ${err && err.message}` };
+    }
+    if (mapped && mapped.ok) specs.push(mapped.spec);
+    else mapperRefusals.push({ id, reason: (mapped && mapped.reason) || 'unknown' });
+  }
+
+  // `{rule, before, after}` is the wire shape the Settings funnel renders. The
+  // eligibility module's own field names (`in`/`out`) are NOT reused verbatim:
+  // `in` is a reserved word in enough contexts that it invites `report.in`-style
+  // mistakes downstream, and `before`/`after` states the cascade in the language
+  // the screen uses.
+  const funnel = Array.isArray(report.funnel)
+    ? report.funnel.map(f => ({
+        rule: String(f && f.rule),
+        before: Number(f && f.in),
+        after: Number(f && f.out),
+      }))
+    : [];
+
+  // ── DID THE CLOCK ACTUALLY ARRIVE? ────────────────────────────────────────
+  // The eligibility module is PURE and may not read a clock, so `opts.now`
+  // defaults to null and expiry is then NOT EVALUATED — it does not reject, it
+  // abstains. Silently. Measured on the live catalogue: 194 eligible with no
+  // clock, 193 with one, and the model that differs expires three days from the
+  // day this was written. An option passed by string name that degrades instead
+  // of erroring on a typo is the exact fact-vs-absence class this repo keeps
+  // finding, so the module's own report of whether it got a clock is read back
+  // and surfaced. TRI-STATE: a report that does not say is `null`, never `true`
+  // — "we could not confirm" must not resolve to "confirmed".
+  const clockSupplied = (report.opts && typeof report.opts.clockSupplied === 'boolean')
+    ? report.opts.clockSupplied
+    : null;
+
+  return {
+    total: Number.isFinite(report.total) ? report.total : list.length,
+    eligible: eligibleIds.size,
+    specs,
+    funnel,
+    clockSupplied,
+    mapperRefused: mapperRefusals.length,
+    mapperRefusals,
   };
 }
 
