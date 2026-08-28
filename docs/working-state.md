@@ -97,7 +97,21 @@ This is the least obvious part of the layout and the most load-bearing.
 
 Personal Sync's git work-tree is your domains folder, and `pull()` resolves with
 `git pull --no-rebase -X theirs`. On a **conflicting hunk** that strategy keeps origin's
-version and discards the local one — silently, reporting success. Two machines writing
+version and discards the local one — silently, reporting success.
+
+**That is the milder of two outcomes**, and until v3.17.2 it was the only one documented.
+`-X theirs` is not "take their whole file": it is a conflict *preference* inside an ordinary
+three-way line merge, so it governs only hunks **both** sides changed. Where one machine
+re-sends a section **unchanged** since the merge base, the other machine's edit applies
+cleanly and the merge **splices**. Measured on real git, the survivor carried one machine's
+headline, provenance line and timestamp with the *other* machine's `## Firm decisions`
+substituted in — `Auto-merging`, exit 0, no conflict marker, clean tree. A document that
+existed on neither computer, well formed and internally coherent, whose own header attests
+to a decision its named author never made. Nothing flags it: the forgery checks detect a
+*malformed* file, and a spliced one is not malformed. And the capture discipline makes it
+**likelier rather than rarer**, because a save must be complete rather than a delta, so
+unchanged sections are re-sent verbatim — exactly the condition for a clean merge.
+Reproduced in `scripts/test-working-state-sync.js` §2b. Two machines writing
 to the same `current.md` would therefore destroy each other's handoff on alternate
 pulls, with no error and no conflict marker to notice.
 
@@ -118,7 +132,7 @@ writer to the brief must revisit this rather than inherit the tier-2 reasoning.
 
 **The `<machine>` segment is not a bare hostname.** It was, and that was measured to
 fail: two clones with the same default macOS hostname both wrote
-`state/main/talis-macbook-pro/`, and the second machine's next sync pull silently
+`state/main/alices-macbook-pro/`, and the second machine's next sync pull silently
 destroyed the first's handoff *and* its journal — the exact collision this segment
 exists to prevent, defeated by hostname collision alone. The segment is now
 `<hostname-slug>-<install-id>`, where the install id is a short random value generated

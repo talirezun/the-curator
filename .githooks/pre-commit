@@ -1,0 +1,85 @@
+#!/bin/sh
+# pre-commit — public-repo hygiene for The Curator.
+#
+# Three guarantees, in order of how expensive the mistake would be:
+#   1. no credential-shaped string enters the public tree
+#   2. no internal working document is ever staged
+#   3. (maintainer only, opt-in) the commit is authored by the maintainer
+#
+# TRACKED, unlike the pre-v3.17.2 copies in .git/hooks/. A fresh clone had NO
+# protection at all until it ran a skill that lives outside the repo — which is
+# the one moment protection matters most. Enable with:
+#
+#     git config core.hooksPath .githooks
+#
+# Escape hatch: git commit --no-verify
+
+fail() { printf '\n\033[31mpre-commit refused:\033[0m %s\n' "$1" >&2; shift; for l in "$@"; do printf '  %s\n' "$l" >&2; done; printf '\n  Override (rarely right): git commit --no-verify\n\n' >&2; exit 1; }
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$STAGED" ] && exit 0
+
+# ── 1. internal working documents ──────────────────────────────────────────
+# These carry unreleased strategy, private plans and session state. They are
+# gitignored, but `git add -f` and a stray `git add <path>` both bypass that,
+# which is exactly the case this hook is the backstop for.
+#
+# The pre-v3.17.2 pattern anchored HANDOFF and BOOT-PROMPT so tightly that it
+# matched only the bare filenames: HANDOFF-MEMORY-LAYER-2.md, BOOT-PROMPT-
+# MEMORY-LAYER.md and docs/apple-developer-enrolment.md all walked past it.
+# Four of the six internal documents then in the tree were unguarded.
+INTERNAL='^(HANDOFF|BOOT-PROMPT)[^/]*\.md$|(^|/)[^/]*-(PLAN|UPGRADE|roadmap|proposal)\.md$|(^|/)apple-developer-enrolment\.md$'
+BLOCKED=$(printf '%s\n' "$STAGED" | grep -iE "$INTERNAL")
+if [ -n "$BLOCKED" ]; then
+  fail "an internal working document is staged." \
+       "These must never reach the public repo:" \
+       "$(printf '%s' "$BLOCKED" | sed 's/^/    /')"
+fi
+
+# ── 2. credentials ─────────────────────────────────────────────────────────
+# Scans STAGED CONTENT, not the worktree. Synthetic fixtures are allow-listed
+# by EXACT value — a new token shape is refused even inside scripts/.
+#
+# The allow-list is resolved relative to this hook so it works from .githooks/
+# or from .git/hooks/; the second path is the pre-v3.17.2 location.
+ALLOW="$(dirname "$0")/secret-allowlist"
+[ -f "$ALLOW" ] || ALLOW=".git/hooks/secret-allowlist"
+PATTERN='AIza[0-9A-Za-z_-]{35}|sk-ant-[0-9A-Za-z_-]{20,}|sk-or-v1-[0-9A-Za-z_-]{20,}|(github_pat_|ghp_|gho_|ghu_|ghs_|ghr_)[0-9A-Za-z_]{20,}|sbat_[0-9a-f]{40}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+HITS=$(git diff --cached -U0 | grep '^+' | grep -oE "$PATTERN" | sort -u)
+if [ -n "$HITS" ]; then
+  if [ -f "$ALLOW" ]; then
+    HITS=$(printf '%s\n' "$HITS" | grep -vxFf "$ALLOW")
+  fi
+  if [ -n "$HITS" ]; then
+    fail "a credential-shaped string is staged." \
+         "$(printf '%s' "$HITS" | sed 's/^/    /')" \
+         "If this is a synthetic test fixture, add the EXACT value to" \
+         "  $ALLOW"
+  fi
+fi
+
+# ── 3. authorship — OPT-IN, and that is deliberate ─────────────────────────
+# The pre-v3.17.2 hook hardcoded the maintainer and refused every other
+# identity. Correct while the hook was untracked and personal; wrong the
+# moment it ships, because a contributor who enables core.hooksPath could not
+# then commit to their OWN fork. So it fires only when explicitly armed:
+#
+#     git config curator.enforceAuthor "talirezun@users.noreply.github.com"
+#
+# Unset (the contributor default) skips this check entirely. Guards 1 and 2
+# are universal and always run.
+EXPECT_EMAIL=$(git config --get curator.enforceAuthor || true)
+if [ -n "$EXPECT_EMAIL" ]; then
+  AE=$(git var GIT_AUTHOR_IDENT | sed 's/.*<//; s/>.*//')
+  CE=$(git var GIT_COMMITTER_IDENT | sed 's/.*<//; s/>.*//')
+  if [ "$AE" != "$EXPECT_EMAIL" ] || [ "$CE" != "$EXPECT_EMAIL" ]; then
+    fail "author/committer identity does not match curator.enforceAuthor." \
+         "expected  $EXPECT_EMAIL" \
+         "author    $AE" \
+         "committer $CE" \
+         "Fix with:  git config user.email '$EXPECT_EMAIL'" \
+         "Or unset:  git config --unset curator.enforceAuthor"
+  fi
+fi
+
+exit 0

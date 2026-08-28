@@ -1,0 +1,37 @@
+#!/bin/sh
+# commit-msg — attribution hygiene.
+#
+# The Curator is a PUBLIC repo with a single maintainer. Commits must be
+# attributed to that maintainer and to nobody else. Assistants, bots and
+# tooling do not get a byline.
+#
+# TRACKED in .githooks/ since v3.17.2 — before that, hooks lived only in
+# .git/hooks/ and a fresh clone had no protection until it ran a skill stored
+# outside the repo. Enable with:  git config core.hooksPath .githooks
+#
+# Deliberate escape hatch: `git commit --no-verify`.
+
+MSG_FILE="$1"
+fail() { printf '\n\033[31mcommit-msg refused:\033[0m %s\n' "$1" >&2; shift; for l in "$@"; do printf '  %s\n' "$l" >&2; done; printf '\n  Override (rarely right): git commit --no-verify\n\n' >&2; exit 1; }
+
+# Ignore comment lines — they are stripped from the final message anyway.
+BODY=$(grep -v '^#' "$MSG_FILE")
+
+if printf '%s' "$BODY" | grep -qiE '^[[:space:]]*co-authored-by:'; then
+  fail "a Co-Authored-By trailer is present." \
+       "This repo attributes every commit to its single maintainer." \
+       "Offending line(s):" \
+       "$(printf '%s' "$BODY" | grep -inE '^[[:space:]]*co-authored-by:' | sed 's/^/    /')"
+fi
+
+if printf '%s' "$BODY" | grep -qiE 'generated with|co-created with|authored by (claude|chatgpt|copilot|gemini)|🤖'; then
+  fail "a third-party attribution phrase is present." \
+       "Tooling does not get a byline in this repo." \
+       "$(printf '%s' "$BODY" | grep -inE 'generated with|co-created with|authored by (claude|chatgpt|copilot|gemini)|🤖' | sed 's/^/    /')"
+fi
+
+if [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ]; then
+  fail "the commit message is empty."
+fi
+
+exit 0

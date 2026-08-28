@@ -41,6 +41,24 @@
  * never write the same file, so there is no conflicting hunk and nothing is
  * discarded. Do not collapse this segment.
  *
+ * THE DISCARD IS THE MILDER OF TWO OUTCOMES, and until v3.17.2 it was the only
+ * one recorded here. `-X theirs` is not "take their whole file" — it is a
+ * conflict PREFERENCE inside an ordinary three-way line merge, so it governs
+ * only hunks BOTH sides changed. Where one machine re-sends a section UNCHANGED
+ * since the merge base, the other side's edit applies cleanly and the merge
+ * SPLICES. Measured on real git: the survivor carried machine A's headline,
+ * provenance line and timestamp with machine B's `## Firm decisions`
+ * substituted in — `Auto-merging`, exit 0, no conflict marker, clean tree. A
+ * document that existed on neither computer, well formed and internally
+ * coherent, whose own header attests to a decision its named author never made.
+ *
+ * Nothing flags it. `headingsSuspect` and `sanitisedOnRead` both detect a
+ * MALFORMED file, and a spliced one is not malformed. And the capture
+ * discipline makes it MORE likely rather than less: the skill requires every
+ * save to be COMPLETE rather than a delta, so unchanged sections are re-sent
+ * verbatim — exactly the condition under which they merge cleanly instead of
+ * conflicting. Reproduced in `scripts/test-working-state-sync.js` §2b.
+ *
  * THAT ARGUMENT COVERS TIERS 2 AND 3 ONLY. `state/project.md` has NO machine
  * segment — it is one file per project, by design, because the brief is the
  * project's, not the machine's. So two machines that both edit the brief DO
@@ -249,8 +267,8 @@ export function slugSegment(input) {
 // INSTALLATION IDENTITY — the fix for the worst defect in this module.
 //
 // MEASURED, end-to-end, with real git and the real MCP server: two clones on
-// two machines both resolved the hostname to `talis-macbook-pro`, so both
-// wrote `state/main/talis-macbook-pro/`. The second machine's
+// two machines both resolved the hostname to `alices-macbook-pro`, so both
+// wrote `state/main/alices-macbook-pro/`. The second machine's
 // `git pull --no-rebase -X theirs` then reported `Merge made by the 'ort'
 // strategy`, left `git status` clean, printed no conflict marker — and the
 // second machine's ENTIRE handoff was gone. `machineCount: 1`.
@@ -699,9 +717,20 @@ export function sanitiseLine(raw, { maxChars = MAX_HEADLINE_CHARS, label = 'fiel
   const r = applyWriteRules(t, { headings: true });
   t = r.text;
   for (const n of rulesNotes(label, r)) notes.push(n);
-  if (t.length > maxChars) {
-    notes.push(`${label}: truncated to ${maxChars} chars (was ${t.length})`);
-    t = t.slice(0, maxChars).trimEnd() + '…';
+  // Truncate by CODE POINT, not by UTF-16 code unit. `String.slice` cuts
+  // between the halves of a surrogate pair, so a headline or bullet ending in
+  // an emoji or a CJK-extension character yielded a LONE SURROGATE — an
+  // ill-formed string that reaches disk as U+FFFD and crosses JSON-RPC and
+  // res.json to every consumer. Measured before the fix: a 200-char headline
+  // ending in an emoji carried 0xD83E at index 199 and `isWellFormed()` was
+  // false. It was reachable on MAX_HEADLINE_CHARS and on MAX_ITEM_CHARS —
+  // i.e. on EVERY bullet of all five lists. `Array.from` iterates code points,
+  // so a pair is one element and can never be split. This also makes the note
+  // below true: `maxChars` now counts characters, which is what it says.
+  const points = Array.from(t);
+  if (points.length > maxChars) {
+    notes.push(`${label}: truncated to ${maxChars} chars (was ${points.length})`);
+    t = points.slice(0, maxChars).join('').trimEnd() + '…';
   }
   return { text: t, notes };
 }
@@ -861,22 +890,30 @@ function renderObs(o) {
   return `- ${o.statement} — observed ${o.observedAt}${back}`;
 }
 
-function sectionBody(sec, data, omitted) {
+// `maxBytes` is threaded in rather than read from a constant. It used to
+// hardcode MAX_STATE_BYTES, so a BRIEF trimmed at MAX_BRIEF_BYTES (32 KB)
+// wrote "over the 48 KB state budget" into the document — the wrong number
+// AND the wrong tier — while the API `notes` correctly said "brief size
+// budget". The document and the API disagreed about the same trim.
+// The three presence-checking callers below pass no budget and discard the
+// rendered text, so the default is only ever used where it cannot be read.
+function sectionBody(sec, data, omitted, maxBytes = MAX_STATE_BYTES) {
   if (sec.kind === 'prose') return data[sec.key] || '';
   const items = data[sec.key] || [];
   if (!items.length) return '';
   const lines = sec.kind === 'obs' ? items.map(renderObs) : items.map(i => `- ${i}`);
   const n = omitted[sec.key] || 0;
-  if (n) lines.push(`- _(${n} more omitted — over the ${Math.round(MAX_STATE_BYTES / 1024)} KB state budget)_`);
+  const budgetLabel = maxBytes === MAX_BRIEF_BYTES ? 'brief' : 'state';
+  if (n) lines.push(`- _(${n} more omitted — over the ${Math.round(maxBytes / 1024)} KB ${budgetLabel} budget)_`);
   return lines.join('\n');
 }
 
-function renderDoc(title, subtitle, provenance, sections, data, omitted) {
+function renderDoc(title, subtitle, provenance, sections, data, omitted, maxBytes) {
   const parts = [`# ${title}`, ''];
   if (subtitle) parts.push(`> ${subtitle}`, '');
   if (provenance) parts.push(`_${provenance}_`, '');
   for (const sec of sections) {
-    const body = sectionBody(sec, data, omitted);
+    const body = sectionBody(sec, data, omitted, maxBytes);
     if (!body) continue;
     parts.push(`## ${sec.heading}`, '', body, '');
   }
@@ -895,7 +932,7 @@ function renderDoc(title, subtitle, provenance, sections, data, omitted) {
 function renderWithinBudget(title, subtitle, provenance, sections, data, maxBytes) {
   const omitted = {};
   const listKeys = sections.filter(s => s.kind !== 'prose').map(s => s.key);
-  let doc = renderDoc(title, subtitle, provenance, sections, data, omitted);
+  let doc = renderDoc(title, subtitle, provenance, sections, data, omitted, maxBytes);
   let guard = 0;
   while (Buffer.byteLength(doc, 'utf8') > maxBytes && guard++ < 5000) {
     let biggest = null, biggestLen = 0;
@@ -909,7 +946,7 @@ function renderWithinBudget(title, subtitle, provenance, sections, data, maxByte
     if (!biggest) break;                       // only prose left — see below
     data[biggest] = data[biggest].slice(0, -1);
     omitted[biggest] = (omitted[biggest] || 0) + 1;
-    doc = renderDoc(title, subtitle, provenance, sections, data, omitted);
+    doc = renderDoc(title, subtitle, provenance, sections, data, omitted, maxBytes);
   }
   // Last resort: prose alone is over budget. Per-field caps make this
   // unreachable with the shipped constants, but a hard byte ceiling must not
@@ -1526,14 +1563,25 @@ async function resolveExisting(parentAbs, wanted) {
 /**
  * D7 — directory entries this module cannot address.
  *
- * Entries that fail `isSafeSegment` (over 64 chars, containing a space,
- * non-ASCII like `projekt-é`, leading `_`, dot-prefixed) were dropped by
- * BOTH the index and named reads with no signal at all: content unreachable
- * AND uncounted. This module's own doctrine is that a fact and its absence
- * must not collapse into one value, and a silent drop is exactly that
- * collapse. We report a COUNT and keep refusing the names — accepting them
- * would put unvalidated segments back into path construction, which is a
- * different and worse bug.
+ * The rule is `isSafeSegment`'s and nothing else's: a name must start with a
+ * letter or digit, then contain only letters, digits, dot, hyphen or
+ * underscore, be 1–64 characters, contain no `..`, and not be all dots. So
+ * `my scope` (space), `projekt-é` (non-ASCII), `_handoff` and `-handoff`
+ * (leading underscore / hyphen), a 65-character name, and `a..b` all fail.
+ *
+ * A DOT-PREFIXED name is NOT among them, and the distinction matters: every
+ * readdir site in this module filters `!e.name.startsWith('.')` BEFORE
+ * calling this function (the one directly above is the nearest example), so
+ * a dotfile is skipped entirely and never reaches the count. Saying
+ * otherwise sends a user hunting for a hidden entry that was never being
+ * reported — the same wrong claim `unlistedReason` carried until v3.17.1.
+ *
+ * Entries that fail that rule were dropped by BOTH the index and named
+ * reads with no signal at all: content unreachable AND uncounted. This
+ * module's own doctrine is that a fact and its absence must not collapse
+ * into one value, and a silent drop is exactly that collapse. We report a
+ * COUNT and keep refusing the names — accepting them would put unvalidated
+ * segments back into path construction, which is a different and worse bug.
  */
 function splitAddressable(entries) {
   const safe = [], unsafe = [];

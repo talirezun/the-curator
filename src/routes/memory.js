@@ -187,9 +187,14 @@ router.get('/', async (_req, res) => {
         distinctScopeCount: distinctScopes,
         savedCopies: idx.ok ? idx.total : 0,
         scopesTruncated: idx.ok ? idx.truncated : false,
-        // The store counts directory entries it will NOT address (a name over
-        // 64 chars, or carrying a space, a non-ASCII character, or a leading
-        // dot/underscore) and writes an actionable reason naming the fix.
+        // The store counts directory entries it will NOT address and writes
+        // an actionable reason naming the fix. The rule is `isSafeSegment`'s
+        // — read it in src/brain/working-state.js rather than restating it
+        // here, because a third hand-maintained copy is a third thing that
+        // can drift. (Two already did: this comment and the splitAddressable
+        // docblock both named "a leading dot" as a cause, which cannot
+        // happen — every readdir site filters dot-prefixed names BEFORE the
+        // addressability split, so such an entry is skipped, not counted.)
         // Dropping it is how a screen comes to say "Nothing saved for this
         // project yet" while a real handoff sits on disk unread — a confident
         // false negative, and the advice that follows it writes to the slugged

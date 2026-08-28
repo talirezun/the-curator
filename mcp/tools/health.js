@@ -323,7 +323,12 @@ export const scanSemanticDuplicatesDefinition = {
       },
       max_pairs: {
         type: 'integer',
-        description: "Cap candidate pairs (default from user's AI Health settings). Lower = cheaper. Range 10–500.",
+        // 500 is the DEFAULT (config.js semanticDupeMaxPairs), not the ceiling.
+        // Describing it as the range trained the model away from legal values
+        // the schema and the handler both accept — a description contradicting
+        // its own schema is worse on a MODEL-READ surface than one that is
+        // merely vague, because the model believes it.
+        description: "Cap candidate pairs. Lower = cheaper. Default 500 (from the user's AI Health settings); range 10–2000.",
         minimum: 10,
         maximum: 2000,
       },

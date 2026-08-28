@@ -1610,7 +1610,7 @@ saved is a real answer — it is what a user sees before their first agent sessi
       "ageSeconds": 5421,
       "headline": "Docs pass — nine false claims corrected, tests green",
       "newestScope": "main",
-      "newestMachine": "talis-macbook-pro-9f3c1a20"
+      "newestMachine": "alices-macbook-pro-9f3c1a20"
     }
   ],
   "total": 6,
@@ -1689,7 +1689,7 @@ the agent would describe the same file differently.
   },
   "scope": null,
   "scopes": [
-    { "scope": "main", "machine": "talis-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "bytes": 3598, "ageSeconds": 5421, "headline": "Docs pass — nine false claims corrected" }
+    { "scope": "main", "machine": "alices-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "bytes": 3598, "ageSeconds": 5421, "headline": "Docs pass — nine false claims corrected" }
   ],
   "scopeCount": 3,
   "distinctScopeCount": 2,
@@ -1722,14 +1722,14 @@ directory entries the store will not address, counted rather than silently skipp
   "brief": { "present": true, "…": "…" },
   "scope": "main",
   "machines": [
-    { "machine": "talis-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "ageSeconds": 5421 }
+    { "machine": "alices-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "ageSeconds": 5421 }
   ],
   "machineCount": 1,
   "machinesTruncated": false,
   "unlistedMachines": 0,
   "installIdAvailable": true,
   "installIdUnavailableReason": null,
-  "machine": "talis-macbook-pro-9f3c1a20",
+  "machine": "alices-macbook-pro-9f3c1a20",
   "machineIsThisMachine": true,
   "machineIsThisHost": true,
   "current": {

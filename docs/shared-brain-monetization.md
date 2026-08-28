@@ -147,7 +147,7 @@ flowchart TB
 | **Read-only** | Pull the collective wiki, read everything, query via Claude (MCP) | Free or small one-time fee |
 | **Contributor (read+write)** | Pull + Push their own reading and synthesis into the collective | Recurring monthly fee |
 
-**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. Do not sell "your name on the page": Provenance carries the shortened UUID only, and name attribution is not implemented (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-provenance-attribution--uuids-always-name-attribution-is-unimplemented)).
+**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. Do not sell "your name on the page": Provenance carries the shortened UUID only, and name attribution is not implemented (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-attribution--uuids-on-collective-pages-always-the-real-name-only-if-you-opt-in)).
 
 > ✅ **Read-only membership is first-class as of v3.0.4.** A read-only PAT
 > shows a yellow notice in the join wizard but the member can continue,

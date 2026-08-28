@@ -31,11 +31,52 @@ Node.js 18+ is required (the code uses native `fetch`, `node:test`-era APIs, and
 ESM). The app is loopback-only by design — see the Security note in
 [README.md](README.md).
 
+### Git hooks (v3.17.2)
+
+This is a public repo, so the hooks guard the two mistakes that cannot be undone
+once pushed. They live in **`.githooks/`** and are tracked — before v3.17.2 they
+existed only in each machine's untracked `.git/hooks/`, which meant a fresh clone
+had no protection at all, at the one moment protection matters most.
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Two guards run for everyone:
+
+- **No credential-shaped string** may enter a commit. Scans staged *content*, not
+  the worktree. Synthetic fixtures are allow-listed by EXACT value in
+  `.githooks/secret-allowlist` — a new token *shape* is refused even inside
+  `scripts/`. If you add a fixture, assemble the prefix from parts or rename it
+  rather than allow-listing it; allow-listing teaches the next person to
+  allow-list.
+- **No internal working document** may be staged. These are gitignored, but
+  `git add -f` and a stray `git add <path>` both bypass gitignore, which is
+  exactly what this backstops.
+
+A third guard is **opt-in and off by default**, so that enabling `core.hooksPath`
+never stops you committing to your own fork:
+
+```bash
+# maintainer only
+git config curator.enforceAuthor "talirezun@users.noreply.github.com"
+```
+
+Unset, the authorship check is skipped entirely. `commit-msg` separately refuses a
+`Co-Authored-By` trailer or a tooling byline — every commit here is attributed to
+the single maintainer.
+
+`pre-merge-commit` is a one-line shim that execs `pre-commit`. It used to be a
+byte-identical 63-line copy, which is the two-hand-maintained-copies shape that
+produced this repo's v3.2.0 CRITICAL.
+
+Escape hatch, rarely the right answer: `git commit --no-verify`.
+
 ---
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (107 suites total — 90 OFFLINE
+The Curator has an extensive battle-test suite (109 suites total — 92 OFFLINE
 + 14 LIVE_CI + 3 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the

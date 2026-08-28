@@ -1,0 +1,7 @@
+#!/bin/sh
+# pre-merge-commit — identical policy to pre-commit.
+#
+# Deliberately a SHIM, not a copy. Before v3.17.2 these were two byte-identical
+# 63-line files, which is the two-hand-maintained-copies shape that produced
+# this repo's v3.2.0 CRITICAL: one copy gets fixed, the other silently does not.
+exec "$(dirname "$0")/pre-commit" "$@"

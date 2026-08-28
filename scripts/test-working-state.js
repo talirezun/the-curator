@@ -136,8 +136,8 @@ section('1. Segment safety, slugs and machine identity');
   assert(slugSegment('') === null && slugSegment(null) === null,
     'slugSegment refuses empty/non-string');
   assert(isSafeSegment(machineId()), 'machineId() yields a safe segment', machineId());
-  assert(machineId('Talis-MacBook-Pro.local') === 'talis-macbook-pro',
-    'machineId strips .local and slugifies', machineId('Talis-MacBook-Pro.local'));
+  assert(machineId('Alices-MacBook-Pro.local') === 'alices-macbook-pro',
+    'machineId strips .local and slugifies', machineId('Alices-MacBook-Pro.local'));
   assert(machineId('../../evil') === 'evil', 'machineId cannot produce traversal');
   assert(machineId('///') === null, 'machineId returns null for unusable input (caller refuses)');
 }
@@ -1381,7 +1381,7 @@ section('25. D8 — no absolute filesystem path reaches the caller');
 section('26. D9 — two installations on ONE hostname must not collide');
 {
   // MEASURED with real git: two clones both resolved the hostname to
-  // `talis-macbook-pro`, both wrote state/main/talis-macbook-pro/, and the
+  // `alices-macbook-pro`, both wrote state/main/alices-macbook-pro/, and the
   // second machine's `git pull -X theirs` silently destroyed the first's
   // handoff AND clobbered journal.jsonl — with a clean `git status`.
   const id1 = installId();

@@ -1,6 +1,6 @@
 ---
 name: my-curator
-description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and handles Shared Brain mirrors correctly (read-only locally; contributions go through the user's personal opted-in domain + Sync-tab Push). Always calls list_domains and get_index before composing any write.
+description: Use when interacting with the user's My Curator second brain via the my-curator MCP. Activates for READ ("what does my wiki say about X", "deep research my second brain", "find every source that mentions Y", "what does our cohort wiki say"), WRITE ("save to my wiki", "compile our findings", "put this in my projects domain"), Shared Brain contribution ("save to our shared brain", "contribute to the cohort wiki"), and maintenance ("check my wiki", "find broken links", "scan for duplicate pages"). Enforces atomic decomposition (entities, concepts, summaries), grounds every wikilink in an existing slug before writing, refuses speculative links on fresh domains, respects per-domain siloing, and handles Shared Brain mirrors correctly (read-only locally; contributions go through the user's personal opted-in domain, then a Push from the app's Shared Brain view). Always calls list_domains and get_index before composing any write.
 allowed-tools: mcp__my-curator__list_domains mcp__my-curator__get_index mcp__my-curator__get_graph_overview mcp__my-curator__get_tags mcp__my-curator__search_wiki mcp__my-curator__search_cross_domain mcp__my-curator__get_node mcp__my-curator__get_connected_nodes mcp__my-curator__get_backlinks mcp__my-curator__get_summary mcp__my-curator__get_raw_source mcp__my-curator__get_working_state mcp__my-curator__compile_to_wiki mcp__my-curator__scan_wiki_health mcp__my-curator__fix_wiki_issue mcp__my-curator__scan_semantic_duplicates mcp__my-curator__get_health_dismissed mcp__my-curator__dismiss_wiki_issue mcp__my-curator__undismiss_wiki_issue mcp__my-curator__save_working_state
 ---
 
@@ -64,6 +64,8 @@ Some domains in `list_domains` may be **Shared Brain mirrors** — named like `s
 
 > *"Domain 'shared-cohort' is a read-only Shared Brain mirror. Direct writes here would not propagate to other contributors and would be overwritten on the next pull. To contribute, call this tool on your personal opted-in domain (e.g. 'work-ai'), then run 'Push contributions' from the Sync tab."*
 
+That text is quoted verbatim from the code, and its **last few words are stale**: since the v3.9.0 cutover, **Push contributions** lives in the **Shared Brain** rail view, not in Sync. The refusal itself is correct — only its closing signpost is out of date. If you relay this refusal to a user, say **Shared Brain**. (The old Sync-tab location survives in the `/old` escape-hatch shell, which is not where a current user is.)
+
 `scan_wiki_health`, `scan_semantic_duplicates` and `get_health_dismissed` are **not** guarded, and that is correct — they only read. Scanning a mirror to answer *"is the collective wiki healthy?"* is supported; it is applying a fix that is refused.
 
 ### §3.2 — How to actually contribute to a Shared Brain via MCP
@@ -84,13 +86,13 @@ What you (Claude via MCP) do        Where it happens     What it does
    To push them to the                                   the Curator app.
    cohort wiki, click
    'Push contributions' in
-   your Sync tab."
+   the Shared Brain view."
 
 ──────────────────────── steps below are NOT MCP-driven ────────────────────────
 
 3. (User) opens Curator             Curator app          The local LLM
-   Sync tab → clicks                                     pre-processes the
-   "Push contributions"                                  changed pages into
+   Shared Brain view →                                   pre-processes the
+   clicks "Push contributions"                           changed pages into
                                                          DeltaSummaries and
                                                          uploads them to
                                                          shared storage.
@@ -109,7 +111,7 @@ What you (Claude via MCP) do        Where it happens     What it does
                                                          pages.
 ```
 
-**The MCP tools push/pull/synthesize are not exposed in v3.0.0-beta.1.** Steps 3-5 only happen via the Curator app's Sync tab. This is intentional: those operations consume LLM tokens (paid) and credentials (PAT); they should fire on explicit user action, not as a side-effect of "save this".
+**There are no push/pull/synthesize MCP tools — that has been true in every release so far.** Steps 3-5 only happen in the Curator app's **Shared Brain** view (they lived in the Sync tab before the v3.9.0 cutover). This is intentional: those operations consume LLM tokens (paid) and credentials (PAT); they should fire on explicit user action, not as a side-effect of "save this".
 
 ### §3.3 — Dialogue scripts for common user requests
 
@@ -119,7 +121,7 @@ When the user says one of these phrases, follow the matching script.
 
 1. **Identify the personal opted-in domain.** Call `list_domains` if you don't already know. Look for personal domains (NOT starting with `shared-`) — the user opted ONE of them into the shared brain. Typical names: `work-ai`, `work`, `cohort-contributions`, `research`. If multiple personal domains exist and it's unclear which feeds the shared brain, **ask the user**: *"You have personal domains `work-ai` and `research`. Which one feeds the shared brain you want me to contribute to?"*
 2. **Compile to that personal domain** using the full §5 writing playbook (get_index → ground links → compile_to_wiki).
-3. **Tell the user how the contribution reaches the cohort**: *"I've saved this to your `work-ai` domain. To make it appear in the shared brain for your cohort, open the Curator Sync tab and click **Push contributions**. The admin will then run synthesis (usually weekly) and everyone will see it on their next Pull."*
+3. **Tell the user how the contribution reaches the cohort**: *"I've saved this to your `work-ai` domain. To make it appear in the shared brain for your cohort, open the Curator app's **Shared Brain** view and click **Push contributions**. The admin will then run synthesis (usually weekly) and everyone will see it on their next Pull."*
 
 #### "What does our cohort wiki / shared brain say about X?"
 
@@ -141,8 +143,8 @@ But **fixing is refused** (Health fix tools would write to the mirror). Tell the
 
 #### "Push my contributions" / "Run synthesis" / "Pull updates"
 
-These are NOT MCP operations in v3.0.0-beta.1. Tell the user:
-> *"Push, Pull, and Run synthesis live in the Curator app's Sync tab — they're not exposed via MCP yet (planned for v3.x). Open the app → Sync tab → click the appropriate button. I can prepare the contribution by compiling to your personal domain first — want me to do that?"*
+These are not MCP operations, in any release. Tell the user:
+> *"Push, Pull, and Run synthesis live in the Curator app's **Shared Brain** view — they're not exposed via MCP. Open the app → Shared Brain → click the appropriate button. I can prepare the contribution by compiling to your personal domain first — want me to do that?"*
 
 ## §4 — Reading workflow (deep research)
 
@@ -399,8 +401,8 @@ A compact reminder of what NOT to do:
 9. **Don't skip `get_index` on writes.** That's the #1 cause of broken links.
 10. **Don't compose first and check links after.** Ground links during composition by referring to the index.
 11. **Don't compile to a `shared-*` mirror.** Always redirect to the user's personal opted-in domain (§3.3). The mirror's writes don't propagate and would be overwritten on the next Pull.
-12. **Don't promise the user "I've added this to the shared brain"** when you've actually compiled to their personal domain. Be precise: *"Saved to your `work-ai` domain — it'll appear in the shared brain after you click **Push contributions** in the Sync tab and the admin runs synthesis."* The Push and synthesise steps aren't yours to do.
-13. **Don't try to call a "push" or "synthesize" MCP tool.** They don't exist in v3.0.0-beta.1. Those operations live in the Curator app's Sync tab. If the user asks you to push, tell them how to do it themselves.
+12. **Don't promise the user "I've added this to the shared brain"** when you've actually compiled to their personal domain. Be precise: *"Saved to your `work-ai` domain — it'll appear in the shared brain after you click **Push contributions** in the Shared Brain view and the admin runs synthesis."* The Push and synthesise steps aren't yours to do.
+13. **Don't try to call a "push" or "synthesize" MCP tool.** No release has ever had one. Those operations live in the Curator app's **Shared Brain** view. If the user asks you to push, tell them how to do it themselves.
 14. **Don't suggest fixing Health issues on a `shared-*` mirror.** Suggest the upstream fix (in the contributor's personal domain) and a Push + synthesise cycle.
 15. **Don't reach for `get_raw_source` as your default.** The wiki is compiled knowledge — answer from `get_node`/`get_summary` first, and escalate to the raw source only for verbatim quotes, exact figures, or a real gap in the summary (§4.1). Reaching for it by default turns a compiled second brain back into a retrieval-at-query-time system.
 16. **Don't treat "the original isn't on this machine" as an error.** Raw sources never sync — report the filename/date the tool gives you and move on.
@@ -431,8 +433,9 @@ For sample dialogues that show end-to-end flows for each scenario, see [examples
 
 **This skill targets Curator v3.0.0-beta.1 and later.** If you're working with The Curator, the following features are covered by this version of the skill:
 
-- The 20 MCP tools (12 read + 8 in the write group, of which 5 mutate — list in §7)
+- The 20 MCP tools (12 read + 8 in the write group, of which 5 mutate — list in §7). Two of those are newer than the baseline; see the next two bullets. On an older Curator the tool simply won't appear in the list, and everything else here still applies — so check the list you were given rather than this paragraph.
 - `get_raw_source` and the compiled-first/verbatim-on-escalation rule (§4.1) — requires Curator v3.5.0 or later; on an earlier version this tool simply won't be in the list, and every other reading pattern in §4 still works
+- `get_working_state` / `save_working_state` — requires Curator v3.17.0 or later. Below that there is no working-state store at all, and the tool count is 18 rather than 20
 - Shared Brain mirror domains (`shared-*`) — §3.1 read/write contract, §3.2 indirect-write model, §3.3 dialogue scripts
 - Health on mirrors — scan allowed, fix refused (§6)
 - Two-primitives model — invite token (metadata) vs PAT (per-contributor identity)

@@ -84,7 +84,8 @@
  *   --runs=N              runs per model                        (default 9)
  *   --domain=NAME         domain the prompt is assembled from   (default articles)
  *   --source=PATH         source document                       (default below)
- *   --out=DIR             directory for the JSONL + summary     (default scratchpad)
+ *   --out=DIR             directory for the JSONL + summary     (default: $CURATOR_PROBE_OUT,
+ *                                                               else <tmpdir>/curator-probe)
  *   --tag=NAME            basename for the output files         (default timestamp)
  *   --dry-run             assemble and report sizes; NO network, NO spend
  *   --self-test           offline classifier + leak-guard controls; NO network
@@ -131,8 +132,22 @@ if (args.help || args.h) {
   process.exit(0);
 }
 
-const DEFAULT_SCRATCH = '/private/tmp/claude-501/-Users-talirezun-second-brain/'
-  + '46de46d1-98dd-4682-8c04-2affeff6da0a/scratchpad';
+/**
+ * Where results land when --out is not given.
+ *
+ * This was hardcoded to one agent session's scratchpad — an absolute path
+ * carrying the maintainer's macOS username, his uid and a session UUID, in a
+ * PUBLIC repo, and functionally broken for everyone else because the
+ * directory exists on exactly one machine.
+ *
+ * The durable lesson is WHY it survived every personal-data sweep: the
+ * username was hyphen-encoded inside the path segment
+ * (`-Users-<name>-second-brain`), so it matched no `/Users/<name>/` pattern
+ * anyone was grepping for. When scanning for leaked paths, search for the
+ * bare username too, not only for path-shaped strings containing it.
+ */
+const DEFAULT_SCRATCH = process.env.CURATOR_PROBE_OUT
+  || path.join(os.tmpdir(), 'curator-probe');
 
 /**
  * The live snapshot directory, at module scope so the SINGLE cleanup in the

@@ -197,10 +197,16 @@ async function main() {
   console.log('\n[6] classifyNpmError — corrupted-cache pattern');
   {
     const { classifyNpmError } = await import('../src/routes/config.js');
+    // Shape-faithful reproduction of the field-reported npm output. The
+    // username is a PLACEHOLDER: the original was pasted verbatim from a
+    // community member's bug report and published the reporter's real macOS
+    // username — the one class of leak they cannot remediate themselves.
+    // Nothing here asserts on the name; the classifier keys on EACCES /
+    // errno -13 / "permission denied, rename".
     const realError = 'Command failed: npm install --silent --no-audit --no-fund\n' +
       'npm error code EACCES\n' +
       'npm error syscall rename\n' +
-      'npm error path /Users/robingood/.npm/_cacache/tmp/abc-XYZ\n' +
+      'npm error path /Users/alice/.npm/_cacache/tmp/abc-XYZ\n' +
       'npm error errno -13\n' +
       'npm error EACCES: permission denied, rename ...';
     const c = classifyNpmError(realError, 'abc1234', 'def5678');

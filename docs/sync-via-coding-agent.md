@@ -27,7 +27,7 @@ The token lands in `.sync-config.json` (gitignored, local-only) — same as the 
 - A coding agent that can **run shell commands** in the Curator project folder and make local HTTP requests.
 - **GitHub access**, one of:
   - The **GitHub CLI** (`gh`) installed and authenticated (`gh auth login`) — the smoothest, fully-automatic path, **or**
-  - You're willing to create a **Personal Access Token** in the browser when the agent asks (see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token-wizard-step-2) for the exact permissions).
+  - You're willing to create a **Personal Access Token** in the browser when the agent asks (see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token) for the exact permissions).
 
 ---
 
@@ -105,7 +105,7 @@ The agent does **not** need access to your API keys, your `domains/` content, or
 ## Notes & caveats
 
 - **Empty repo is mandatory.** A repo created with a README/.gitignore/license will reject the first push. If the agent reuses an existing non-empty repo, tell it to use `mode: "pull"` first (to absorb the remote), or create a fresh empty repo.
-- **`gh auth token` is broad.** The token the GitHub CLI hands out has the CLI's full scope, not a repo-scoped fine-grained token. It works fine for sync, but if you want the tightest security, have the agent stop at step 3 and create a **fine-grained** token (Contents: Read and write, single repo) instead — see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token-wizard-step-2).
+- **`gh auth token` is broad.** The token the GitHub CLI hands out has the CLI's full scope, not a repo-scoped fine-grained token. It works fine for sync, but if you want the tightest security, have the agent stop at step 3 and create a **fine-grained** token (Contents: Read and write, single repo) instead — see [sync.md](sync.md#step-4--create-and-enter-a-personal-access-token).
 - **The token is stored locally.** `.sync-config.json` is gitignored and never leaves your machine — same as the wizard.
 - **One write path.** The agent calls the same `/api/sync/setup` endpoint the wizard uses, so there's no parallel or untested logic — the git init/commit/push happens inside The Curator exactly as designed.
 - **After setup, daily use is unchanged.** Click **Sync now** in the Sync view (or have your agent `POST /api/sync/sync`). See [sync.md → Daily workflow](sync.md#daily-workflow).
