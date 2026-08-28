@@ -1032,6 +1032,51 @@ export const AWAITING_MEASUREMENT = Object.freeze({
 const OFFERABLE_SUITABILITY = Object.freeze(['general', 'chat-only', 'caution']);
 
 /**
+ * ── MEASURED MEDIAN LATENCY, INCLUDING FOR MODELS WE DID NOT ADMIT ──────────
+ *
+ * Median wall-clock for ONE ingest outline call, in milliseconds, keyed by model
+ * id. `defineOfferableModel` reads it for any entry that does not carry its own
+ * `medianLatencyMs`, so it reaches the RUNTIME OpenRouter catalogue as well as
+ * the hand-typed table.
+ *
+ * THAT REACH IS THE POINT, AND IT CAME FROM A LIVE REPORT. The maintainer picked
+ * `deepseek/deepseek-v4-flash-0731` in the chat composer and got a bare spinner
+ * for minutes; he reported the app as broken. It was not — the conversation
+ * record shows the model answered and was billed and attributed correctly. It is
+ * simply the slowest thing we have ever measured, and we had measured it: this
+ * very file's refusal notes record it. The number existed and never reached the
+ * one screen where it would have changed his mind. A model can be REFUSED for
+ * the build lane and still be freely pickable for CHAT, so its measurement has
+ * to survive the refusal — which is why this map is keyed by id and is separate
+ * from the offer table.
+ *
+ * ONLY RUNS THAT PRODUCED A USABLE RESULT COUNT. `z-ai/glm-4.7` returned in a
+ * median of 34s and `minimax/minimax-m3` in 6s — and both produced JSON that
+ * nothing could repair in 9 of 9 runs. Publishing those as speed figures would
+ * advertise a fast FAILURE as a fast model, so a model with no usable run gets
+ * NO ENTRY HERE rather than a number. Absent means unmeasured, and every surface
+ * omits the clause rather than rendering a zero.
+ *
+ * Figures are transcribed from the probe records of the 2026-08-27/28 sessions
+ * (and, where an entry's own `note` states a median, from the note, so the field
+ * and the paragraph beneath it on screen cannot disagree).
+ */
+const MEASURED_LATENCY_MS = Object.freeze({
+  // ── Offered for the build lane ──
+  'upstage/solar-pro4': 48000,          // 18 usable runs, 24-88s
+  'z-ai/glm-5.3-flash': 188000,         // 8 usable of 9; the entry's own note states median 188s
+  'moonshotai/kimi-k2-0905': 33000,     // 9 usable runs, 25-43s plus one 467s runaway
+  // ── MEASURED AND REFUSED for the build lane; still pickable for chat ──
+  // Every one of these was probed with the identical prompt and turned down for
+  // a reason recorded beside OFFERABLE_MODELS.openrouter. None of those reasons
+  // makes the timing untrue, and the timing is what a user feels.
+  'deepseek/deepseek-v4-flash-0731': 382000, // the single usable run of 2; the other never returned inside the adapter's 600s ceiling
+  'qwen/qwen3-235b-a22b-2507': 40000,   // 9 usable runs, 31-50s
+  'moonshotai/kimi-k2.6': 22000,        // 9 usable runs, 18-38s
+  'qwen/qwen3-30b-a3b-instruct-2507': 16000, // 8 usable of 9, 13-22s
+});
+
+/**
  * Build one frozen OFFERABLE_MODELS entry, or REFUSE to build it.
  *
  * This is the structural half of "a model may not be offerable unless it is
@@ -1073,6 +1118,117 @@ function defineOfferableModel(provider, spec, opts = {}) {
     `\`suitability\` must be one of ${OFFERABLE_SUITABILITY.join(' | ')}`);
   need(typeof spec.note === 'string' && spec.note.trim().length > 0,
     'missing `note` — the measured reason shown to the user. A model nobody has measured must not be offered at all');
+
+  // ── MEASUREMENTS PROMOTED OUT OF PROSE ────────────────────────────────────
+  // Outline coverage and latency were measured for these models and then
+  // recorded ONLY inside `note`, as English. Both surfaces need them to build a
+  // one-line summary, and the alternative — regexing a number back out of a
+  // paragraph — is parsing prose as an API: it fails silently the day someone
+  // rewords a sentence, and it fails by producing a NUMBER rather than an error.
+  // So they are fields.
+  //
+  // EVERY ONE IS OPTIONAL AND ABSENT MEANS UNMEASURED. Never 0, never a
+  // midpoint invented from a range, never a value carried across from a sibling
+  // id (the v3.16.0 minimax-m3 finding: the free and paid routes of one base
+  // model measured 8/9 and 0/9). A summary clause whose field is absent is
+  // OMITTED — it does not render "0 pages", which would state a measurement
+  // nobody took. Gemini and Anthropic carry no latency figure at all for exactly
+  // this reason: those sessions did not record one.
+  //
+  // TRANSCRIBED FROM EACH ENTRY'S OWN `note`, never from a fresher session, so
+  // the derived line and the paragraph it summarises cannot disagree on screen.
+  const pageField = (v, name) => {
+    if (v === undefined || v === null) return null;
+    need(Number.isInteger(v) && v > 0,
+      `\`${name}\` must be a positive integer or absent — absent means UNMEASURED, and 0 would assert a measurement of zero pages`);
+    return v;
+  };
+  const outlinePagesLow = pageField(spec.outlinePagesLow, 'outlinePagesLow');
+  const outlinePagesHigh = pageField(spec.outlinePagesHigh, 'outlinePagesHigh');
+  const outlinePagesMedian = pageField(spec.outlinePagesMedian, 'outlinePagesMedian');
+  need((outlinePagesLow === null) === (outlinePagesHigh === null),
+    'outline coverage must carry BOTH `outlinePagesLow` and `outlinePagesHigh` or neither — half a range cannot be rendered honestly');
+  need(outlinePagesLow === null || outlinePagesLow <= outlinePagesHigh,
+    '`outlinePagesLow` exceeds `outlinePagesHigh`');
+  need(spec.medianLatencyMs === undefined || spec.medianLatencyMs === null ||
+    (Number.isFinite(spec.medianLatencyMs) && spec.medianLatencyMs > 0),
+    '`medianLatencyMs` must be a positive number or absent — absent means UNMEASURED, and 0 would claim an instant response');
+
+  // ── TWO PROVIDER-PUBLISHED FACTS: OPTIONAL, ADDITIVE, ABSENT MEANS ABSENT ─
+  // Carried so a picker can offer a "Newest" and a "Largest context" sort.
+  //
+  // OPTIONAL IS STRUCTURAL, NOT LAZINESS. `OFFERABLE_MODELS`'s shape is a
+  // declared public contract (see the table's docblock) and this factory THROWS
+  // AT MODULE LOAD on a malformed entry — so requiring either field would make
+  // all fourteen hand-typed Gemini and Anthropic entries, and all five
+  // hand-measured OpenRouter ones, fail to build. The module would refuse to
+  // load and the app would not boot. A hand-measured table records what we
+  // measured; it is not a release calendar and never was.
+  //
+  // NEITHER MAY EVER BE DERIVED, AND `maxOutput` IS NOT A CONTEXT WINDOW. It is
+  // the OUTPUT ceiling — a different fact. Across the 374 live models publishing
+  // both, `max_completion_tokens < context_length` in 374 of 374 cases, so
+  // substituting one for the other would rank every model by the wrong number
+  // while looking entirely plausible on screen.
+  //
+  // `createdUnixSec` IS RANGE-CHECKED AS SECONDS BECAUSE THE UNIT IS THE BUG.
+  // A milliseconds value (1.7e12) is roughly the year 55000 and would sit at the
+  // top of "Newest" forever; a 0 is 1970-01-01 and would sit at the bottom.
+  // Neither is missing data — both are FABRICATED DATES that render as real
+  // ones, which is the failure mode a nullable numeric field invites. So they
+  // fail to build rather than reaching a screen. The window is deliberately wide:
+  // this is a units tripwire, not an opinion about when models are released.
+  const CREATED_MIN_UNIX_SEC = 946684800;   // 2000-01-01T00:00:00Z
+  const CREATED_MAX_UNIX_SEC = 4102444800;  // 2100-01-01T00:00:00Z
+  need(spec.createdUnixSec === undefined || spec.createdUnixSec === null
+    || (Number.isFinite(spec.createdUnixSec)
+      && spec.createdUnixSec >= CREATED_MIN_UNIX_SEC
+      && spec.createdUnixSec <= CREATED_MAX_UNIX_SEC),
+    '`createdUnixSec` must be a plausible epoch-SECONDS value or absent — absent means the provider publishes no release date. 0 is 1970 and a milliseconds value is the year 55000; both are fabricated dates that would rank as though real');
+  need(spec.contextLength === undefined || spec.contextLength === null
+    || (Number.isInteger(spec.contextLength) && spec.contextLength > 0),
+    '`contextLength` must be a positive integer of INPUT tokens or absent — absent means unpublished, and 0 is what OpenRouter publishes for "unknown", which is not a size. It is never `maxOutput`, which is the OUTPUT ceiling');
+
+  // ── A FLAG THE USER CANNOT SEE THE REASON FOR IS NOT A WARNING ────────────
+  // `suitability: 'caution'` and `dominated` put a badge on a row, and the badge
+  // word ('caution', 'out-performed') says a verdict without saying why. Until
+  // now the WHY lived only in the multi-paragraph `note`, which both surfaces
+  // are about to fold behind a disclosure — and a warning you have to open
+  // something to discover is not a warning.
+  //
+  // So a flagged model must carry a SHORT reason that renders unfolded.
+  // Required HERE, at module load, rather than asserted in a suite: flagging a
+  // model without saying why becomes impossible rather than merely discouraged,
+  // which is the same standard `note` itself is held to.
+  //
+  // IT IS THE HEADLINE OF `note`, NOT A SECOND DESCRIPTION OF THE MODEL. That
+  // distinction is what keeps this from being the two-hand-maintained-copies
+  // shape this repo keeps hitting, and the length cap is what enforces it
+  // structurally — a field that cannot exceed one line cannot grow into a rival
+  // account of the model. It is deliberately NOT derived from the other fields:
+  // `moonshotai/kimi-k2-0905` is flagged for a runaway generation that happens
+  // about once in nine documents and `minimax/minimax-m3:free` for a shared
+  // upstream pool, and NEITHER is visible in any number here. A derived reason
+  // would have rendered a confident, complete-looking line for both while
+  // omitting the actual warning.
+  //
+  // DYNAMIC ENTRIES ARE EXEMPT. A fetched catalogue entry is `chat-only` by
+  // construction and nobody measured it, so there is no reason to state; the
+  // 'chat only — not for ingest' badge is its own reason. Requiring one would
+  // force the catalogue builder to invent a caveat, which is the failure this
+  // whole factory exists to prevent.
+  const CAUTION_REASON_MAX = 120;
+  const flagged = spec.suitability === 'caution' || Object.hasOwn(DOMINATED_MODELS, spec.id);
+  if (spec.cautionReason !== undefined && spec.cautionReason !== null) {
+    need(typeof spec.cautionReason === 'string' && spec.cautionReason.trim().length > 0,
+      '`cautionReason` must be a non-empty string when present');
+    need(spec.cautionReason.length <= CAUTION_REASON_MAX,
+      `\`cautionReason\` is ${spec.cautionReason.length} chars, over the ${CAUTION_REASON_MAX}-char cap. It is the one-line HEADLINE of \`note\`, shown unfolded beside the price; if it needs more room it belongs in \`note\``);
+    need(!/[\r\n]/.test(spec.cautionReason),
+      '`cautionReason` must be a single line — it renders inline beside the price');
+  }
+  need(!flagged || opts.dynamic || (typeof spec.cautionReason === 'string' && spec.cautionReason.trim().length > 0),
+    'is FLAGGED (`suitability: "caution"` or listed in DOMINATED_MODELS) but carries no `cautionReason`. The badge states a verdict; without this the reason for it is only inside `note`, which both pickers fold behind a disclosure — and a warning the user must open something to discover is not a warning');
 
   // A MOVING ALIAS IS NEVER OFFERABLE. Applies to every provider and every
   // admission path, because it is decidable from the id alone. See
@@ -1245,6 +1401,62 @@ function defineOfferableModel(provider, spec, opts = {}) {
     standardPriceFromIso: promo ? promo.standardFromIso : null,
     /** True when a same-priced sibling measured better — see DOMINATED_MODELS. */
     dominated: Object.hasOwn(DOMINATED_MODELS, spec.id),
+    /**
+     * ── MEASURED OUTLINE COVERAGE: how detailed a wiki this plans ───────────
+     * Pages this model planned from ONE source against the real ingest outline
+     * prompt. `Low`/`High` are the observed range and travel together; `Median`
+     * is present only where a median was actually computed (the OpenRouter
+     * sessions recorded per-run page counts; the Gemini and Anthropic sessions
+     * recorded a range only).
+     *
+     * `null` means UNMEASURED and MUST render as an omitted clause, never as 0
+     * and never as an invented midpoint of the range.
+     */
+    outlinePagesLow,
+    outlinePagesHigh,
+    outlinePagesMedian,
+    /**
+     * Median wall-clock for one outline call, in milliseconds, or `null` when
+     * that session did not record timings. It is a Curator-shaped fact rather
+     * than a provider benchmark: ingest makes one such call to plan a document
+     * and one per content batch after it, so this multiplies.
+     */
+    medianLatencyMs: (Number.isFinite(spec.medianLatencyMs) && spec.medianLatencyMs > 0)
+      ? spec.medianLatencyMs
+      // `Object.hasOwn`, never a bare index: `MEASURED_LATENCY_MS['__proto__']`
+      // returns the prototype OBJECT, which is truthy, and the id is
+      // caller-controlled on the dynamic path. Same guard, same reason, as the
+      // price lookup below.
+      : (Object.hasOwn(MEASURED_LATENCY_MS, spec.id) ? MEASURED_LATENCY_MS[spec.id] : null),
+    /**
+     * Provider-published release date, epoch SECONDS, or `null` when none is
+     * published — which is every hand-typed entry in this table.
+     *
+     * `null` means UNKNOWN and must never be rendered or ranked as 1970. A
+     * surface that sorts on this GROUPS the unknowns and states how many, rather
+     * than handing them a date nobody published. See `orderModels` in
+     * views/settings.js, which is the only consumer today.
+     */
+    createdUnixSec: Number.isFinite(spec.createdUnixSec) ? spec.createdUnixSec : null,
+    /**
+     * Published context window, in INPUT tokens, or `null` when unpublished.
+     *
+     * Read from the CONSERVATIVE `top_provider.context_length`, never the
+     * optimistic headline `context_length` — see openRouterRecordToSpec for the
+     * 39-of-387 disagreement that makes the choice matter.
+     *
+     * A DIFFERENT FACT FROM `maxOutput`, which is the OUTPUT ceiling. The two
+     * must never substitute for one another: across the 374 live models
+     * publishing both, output < context in 374 of 374 cases.
+     */
+    contextLength: Number.isInteger(spec.contextLength) ? spec.contextLength : null,
+    /**
+     * One-line headline of `note`, required for any flagged model, shown
+     * UNFOLDED beside the price on both pickers. See the requirement in
+     * defineOfferableModel for why this is a field and not a derivation.
+     */
+    cautionReason: (typeof spec.cautionReason === 'string' && spec.cautionReason.trim())
+      ? spec.cautionReason.trim() : null,
   };
 
   // Resolved at READ time, so a promotion expiring mid-process cannot serve a
@@ -1303,6 +1515,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash Lite 2.5',
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
+      outlinePagesLow: 18, outlinePagesHigh: 20,
       note:
         'The default, and the cheapest model on either provider. Measured 3/3 clean raw JSON, no ' +
         'hidden reasoning tokens, and the widest outline coverage of any Gemini model probed ' +
@@ -1313,6 +1526,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash Lite 3.1',
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 5, outlinePagesHigh: 12,
+      cautionReason:
+        'Dearer than the default and plans thinner outlines.',
       note:
         '2.5x the input and 3.75x the output price of the default, and measured THINNER than it: ' +
         '5-12 outline pages where the default plans 18-20 on the same source. Clean JSON (3/3) and ' +
@@ -1324,6 +1540,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash 2.5',
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
+      outlinePagesLow: 17, outlinePagesHigh: 19,
       note:
         'Clean raw JSON 3/3 and 17-19 outline pages — coverage on a par with the default at 3x the ' +
         'input price. Spends 1,700-2,629 hidden reasoning tokens per call: those are billed as ' +
@@ -1334,6 +1551,8 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash Lite 3.5',
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'chat-only',
+      cautionReason:
+        '2 of 9 ingest runs returned JSON that nothing could repair.',
       note:
         'Not recommended for ingest. 2 of 9 live runs against the real ingest outline prompt ' +
         'returned JSON that neither JSON.parse nor jsonrepair could repair (a dropped object key, ' +
@@ -1346,6 +1565,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash 3.7',
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 12, outlinePagesHigh: 16,
+      cautionReason:
+        'Thinner outlines than the far cheaper default, and the promotional price doubles when it ends.',
       note:
         'PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from ' +
         '2027-01-01 — the standard price is what standardInput/standardOutput carry, and it applies ' +
@@ -1358,6 +1580,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash 3.6',
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 12, outlinePagesHigh: 16,
+      cautionReason:
+        'Same price and coverage as Flash 3.7, but spends more hidden reasoning.',
       note:
         'PROMOTIONAL PRICE: $0.75/$3.75 per 1M tokens through 2026-12-31, then $1.50/$7.50 from ' +
         '2027-01-01. Measured 3/3 clean raw JSON and 12-16 outline pages. Spends 1,293-1,573 hidden ' +
@@ -1369,6 +1594,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Flash 3.5',
       thinks: true, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 8, outlinePagesHigh: 14,
+      cautionReason:
+        'The dearest Gemini here, and it plans thinner outlines than the default.',
       note:
         'The most expensive Gemini model here and not the strongest: 15x the input and 22.5x the ' +
         'output price of the default, yet measured THINNER than it at 8-14 outline pages against ' +
@@ -1382,6 +1610,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Haiku 4.5',
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'general',
+      outlinePagesLow: 5, outlinePagesHigh: 13,
       note:
         'The default and the cheapest Anthropic model. No hidden reasoning tokens, but it wraps its ' +
         'ingest-outline JSON in ```json fences 3/3, so every ingest on it depends on the jsonrepair ' +
@@ -1395,6 +1624,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Sonnet 5',
       thinks: true, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'general',
+      outlinePagesLow: 16, outlinePagesHigh: 18,
       note:
         'The strongest value here: cheaper than both Sonnet 4.6 and 4.5 while measuring better than ' +
         'either — 7/7 clean raw JSON, a steady 16-18 outline pages, and a 128,000 output ceiling. ' +
@@ -1408,6 +1638,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Sonnet 4.6',
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
+      outlinePagesLow: 17, outlinePagesHigh: 17,
       note:
         'The most predictable model measured: 3/3 clean raw JSON, no hidden reasoning tokens at all, ' +
         'a 128,000 output ceiling and a steady 17-page outline every run. At $3/$15 it is 50% dearer ' +
@@ -1419,6 +1650,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Sonnet 4.5',
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 15, outlinePagesHigh: 16,
+      cautionReason:
+        'Behind the same-priced Sonnet 4.6 on three measured axes.',
       note:
         'Same $3/$15 as claude-sonnet-4-6 but behind it on three measured axes: half the output ' +
         'ceiling (64,000 vs 128,000), fenced JSON rather than raw, and 15-16 outline pages against ' +
@@ -1430,6 +1664,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Opus 5',
       thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'general',
+      outlinePagesLow: 25, outlinePagesHigh: 27,
       note:
         'The richest planner measured — 25-27 outline pages where the default plans 5-13 on the same ' +
         'source — with 3/3 clean raw JSON, no hidden reasoning tokens and a 128,000 output ceiling. ' +
@@ -1442,6 +1677,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Opus 4.8',
       thinks: false, jsonRaw: true, tokenizerFactor: 1.329,
       suitability: 'caution',
+      outlinePagesLow: 19, outlinePagesHigh: 20,
+      cautionReason:
+        'Plans thinner outlines than Opus 5 at the identical price.',
       note:
         'Priced identically to claude-opus-5 ($5/$25), same 128,000 ceiling, same clean raw JSON, no ' +
         'thinking, same 1.329x tokenizer premium — but measured 19-20 outline pages against opus-5\'s ' +
@@ -1454,6 +1692,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       label: 'Opus 4.5',
       thinks: false, jsonRaw: false, tokenizerFactor: 1.0,
       suitability: 'caution',
+      outlinePagesLow: 12, outlinePagesHigh: 13,
+      cautionReason:
+        'Out-performed by Opus 5 at the identical price.',
       note:
         'Dominated by claude-opus-5 at the identical $5/$25: half the output ceiling (64,000 vs ' +
         '128,000), fenced JSON rather than raw, and 12-13 outline pages against 25-27 — thinner than ' +
@@ -1566,10 +1807,19 @@ export const OFFERABLE_MODELS = Object.freeze({
    *                            model's identity, so no measurement of one id
    *                            may ever be carried across to a sibling id.
    *   deepseek/deepseek-v4-flash-0731  Abandoned after 2 runs. The first took
-   *                            491 SECONDS for a single outline call (~10x the
+   *                            382 SECONDS for a single outline call (~8x the
    *                            control's median 48s) and the second never
    *                            returned a body inside the adapter's 600-second
    *                            ceiling. Not a JSON defect — a latency one.
+   *                            ⚠ THIS ROW READ "491 SECONDS" AND THAT NUMBER
+   *                            WAS IN NO RUN. The probe records hold 381,987 ms
+   *                            and 600,008 ms; 491s is their mean, written up as
+   *                            if it were the first call's time. Corrected while
+   *                            transcribing it into MEASURED_LATENCY_MS, where
+   *                            the figure is now 382,000 — the ONE run that
+   *                            produced a usable result, which is the only run a
+   *                            latency may be quoted from. The verdict is
+   *                            unchanged; only the number was wrong.
    *   z-ai/glm-5.2:free        3 of 3 attempts HTTP 429 before any work began.
    *                            NOT_MEASURED — which is neither a defect nor a
    *                            pass. A model we could not measure may not be
@@ -1632,6 +1882,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       maxOutput: 943718, free: true,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.015,
       suitability: 'caution',
+      outlinePagesLow: 15, outlinePagesHigh: 40, outlinePagesMedian: 21,
+      cautionReason:
+        'Free models share an upstream pool — availability is real but not promised.',
       note:
         'FREE, and the widest outlines measured on OpenRouter: 15-40 pages (median 21) against the ' +
         'real ingest prompt, with no hidden reasoning tokens in any of 9 runs. Two measured caveats. ' +
@@ -1647,6 +1900,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       maxOutput: 117900,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.036,
       suitability: 'caution',
+      outlinePagesLow: 7, outlinePagesHigh: 13, outlinePagesMedian: 9,
+      cautionReason:
+        'The thinnest outlines measured here — a less detailed wiki from the same source.',
       note:
         'The cheapest paid model here and the cheapest The Curator offers anywhere: $0.017/$0.112 per ' +
         '1M tokens, roughly a sixth of the cheapest Gemini option on input. Perfectly clean — 9 of 9 runs ' +
@@ -1660,6 +1916,7 @@ export const OFFERABLE_MODELS = Object.freeze({
       maxOutput: 131072,
       thinks: false, jsonRaw: true, tokenizerFactor: 1.0,
       suitability: 'general',
+      outlinePagesLow: 14, outlinePagesHigh: 36, outlinePagesMedian: 23,
       note:
         'The pinned OpenRouter default. 9 of 9 runs returned raw JSON that parsed WITHOUT jsonrepair ' +
         '— stricter than our own Anthropic default, which fences its JSON 3/3 and depends entirely on ' +
@@ -1673,6 +1930,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       maxOutput: 131072,
       thinks: true, jsonRaw: true, tokenizerFactor: 1.041,
       suitability: 'caution',
+      outlinePagesLow: 25, outlinePagesHigh: 28, outlinePagesMedian: 27,
+      cautionReason:
+        'Far slower than the default, and most of its output is hidden reasoning you never see.',
       note:
         'Clean but SLOW, and it thinks. 8 of 9 runs returned a body and all 8 parsed as raw JSON with ' +
         'no jsonrepair and nothing unrepairable, planning 25-28 outline pages (median 27) — wider ' +
@@ -1694,6 +1954,9 @@ export const OFFERABLE_MODELS = Object.freeze({
       maxOutput: 100352,
       thinks: false, jsonRaw: false, tokenizerFactor: 1.022,
       suitability: 'caution',
+      outlinePagesLow: 21, outlinePagesHigh: 44, outlinePagesMedian: 30,
+      cautionReason:
+        'Runs away about once in nine documents, planning hundreds of pages instead of ~30.',
       note:
         'The widest outlines measured on OpenRouter — 21-44 pages, median 30, against the pinned ' +
         'default\'s median 25 on the byte-identical prompt — with no hidden reasoning tokens in any ' +

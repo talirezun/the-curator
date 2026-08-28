@@ -73,3 +73,13 @@ docs/apple-developer-enrolment.md
 # getIngestQueueDir()); this line is only a fallback for a repo-mode install
 # where the user-data dir happens to be this repo root.
 .ingest-queue/
+
+# Runtime state written by the OpenRouter catalogue + on-wiki qualification
+# features (v3.16.0). In REPO mode `getUserDataDir()` resolves to the app root,
+# so these land here beside .curator-config.json and must be ignored for the
+# same reason: they are per-machine runtime state, not source. This repo has
+# shipped this exact class three times — .write-lock (v3.0.15), .DS_Store
+# (v3.0.16) and the ingest queue (v3.3.0) — each time because a new runtime
+# file was created next to tracked source and nothing excluded it.
+.openrouter-catalogue.json
+.openrouter-qualifications.json

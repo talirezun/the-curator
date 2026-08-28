@@ -1966,6 +1966,96 @@ section('8. setOpenRouterCatalogue — per-entry refusal, and the static table s
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════
+section('10. The mapper carries two PUBLISHED facts — and refuses to widen on them');
+// ═════════════════════════════════════════════════════════════════════════
+// `openRouterRecordToSpec` now carries `created` and the context window through
+// so a picker can rank by them. Two properties matter here and are asserted on
+// the REAL function.
+//
+//   (1) THEY ARE SORT KEYS, NOT ADMISSION RULES. A record that publishes neither
+//       is still admissible. Making them mandatory would silently shrink the set
+//       of models a user may spend money through.
+//   (2) THE CONTEXT FIGURE IS THE CONSERVATIVE ONE. `openrouter-eligibility.js`
+//       gates on `top_provider.context_length` (its DEFAULT `contextField`) and
+//       documents at length that the headline `context_length` is the MAXIMUM
+//       ACROSS PROVIDERS. The two disagree on 39 of 387 live records. Reading
+//       the headline here would give the picker a second, more optimistic
+//       opinion about a number the filter had already declined to trust.
+{
+  const { openRouterRecordToSpec } = adapterMod;
+  const rec = (extra) => Object.assign({
+    id: 'zzmap/model', name: 'ZZ Map',
+    pricing: { prompt: '0.0000005', completion: '0.000002' },
+    top_provider: { max_completion_tokens: 8192 },
+  }, extra || {});
+
+  // ── 10a. CARRIED THROUGH VERBATIM ──────────────────────────────────────
+  const full = openRouterRecordToSpec(rec({
+    created: 1767225600, top_provider: { max_completion_tokens: 8192, context_length: 200000 },
+  }));
+  ok(full.ok === true, 'control: the fixture is admissible');
+  ok(full.spec.createdUnixSec === 1767225600,
+    '`created` is carried as `createdUnixSec` — epoch SECONDS, with the unit in the name');
+  ok(full.spec.contextLength === 200000, 'and the context window as `contextLength`');
+  ok(full.spec.maxOutput === 8192 && full.spec.contextLength !== full.spec.maxOutput,
+    'and it is a DIFFERENT number from the output ceiling on the same spec');
+
+  // ── 10b. THEY NEVER REFUSE A RECORD ───────────────────────────────────
+  const bare = openRouterRecordToSpec(rec());
+  ok(bare.ok === true,
+    'a record publishing NEITHER fact is still admitted — these are sort keys, and a model with no release date is not a model we cannot offer');
+  ok(!Object.hasOwn(bare.spec, 'createdUnixSec') && !Object.hasOwn(bare.spec, 'contextLength'),
+    'and the keys are OMITTED rather than written as null or 0');
+  for (const [what, extra] of [
+    ['null', { created: null, top_provider: { max_completion_tokens: 8192, context_length: null } }],
+    ['zero', { created: 0, top_provider: { max_completion_tokens: 8192, context_length: 0 } }],
+    ['a string', { created: '1767225600', top_provider: { max_completion_tokens: 8192, context_length: '200000' } }],
+    ['negative', { created: -5, top_provider: { max_completion_tokens: 8192, context_length: -1 } }],
+  ]) {
+    const r = openRouterRecordToSpec(rec(extra));
+    ok(r.ok === true && !Object.hasOwn(r.spec, 'createdUnixSec') && !Object.hasOwn(r.spec, 'contextLength'),
+      `a published ${what} is treated as UNKNOWN — admitted, with no key, never coerced into a value`);
+  }
+
+  // ── 10c. THE CONSERVATIVE CONTEXT FIELD, AND NO FALLBACK TO THE HEADLINE ─
+  const straddle = openRouterRecordToSpec(rec({
+    context_length: 1024000,
+    top_provider: { max_completion_tokens: 8192, context_length: 32768 },
+  }));
+  ok(straddle.ok && straddle.spec.contextLength === 32768,
+    'when the two published context fields DISAGREE, the conservative top_provider figure is the one carried');
+  ok(straddle.spec.contextLength !== 1024000,
+    'and the optimistic headline maximum never reaches the wire — one opinion about one number');
+  const headlineOnly = openRouterRecordToSpec(rec({ context_length: 512000 }));
+  ok(headlineOnly.ok && !Object.hasOwn(headlineOnly.spec, 'contextLength'),
+    'and when ONLY the headline field exists (6 of 387 live records) there is NO fallback to it — unrecognised must never resolve to optimistic');
+
+  // ── 10d. THE FUNNEL IS UNCHANGED ──────────────────────────────────────
+  // The sharpest guard here: adding a field to a mapper that sits on a spend
+  // surface must not move the admitted set by one model. Asserted as a
+  // RELATIONSHIP over a fixture built to contain both shapes.
+  const records = [];
+  for (let i = 0; i < 12; i++) {
+    records.push(rec({
+      id: 'zzfunnel/m' + i, name: 'M' + i,
+      supported_parameters: ['response_format', 'structured_outputs'],
+      top_provider: { max_completion_tokens: 40000, context_length: 200000 },
+      // Half publish a date, half publish none — so the funnel is measured over
+      // a corpus that actually contains both cases.
+      ...(i % 2 === 0 ? { created: 1767225600 } : {}),
+    }));
+  }
+  const built = adapterMod.buildOpenRouterCatalogue(records, { eligibility: { now: new Date('2026-08-28T00:00:00Z') } });
+  ok(built.specs.length === 12 && built.mapperRefused === 0,
+    `all ${built.specs.length} records survive the mapper — a record with no date is refused by nothing`);
+  ok(built.specs.filter((s) => Object.hasOwn(s, 'createdUnixSec')).length === 6,
+    'exactly the 6 that published a date carry one');
+  ok(built.specs.filter((s) => !Object.hasOwn(s, 'createdUnixSec')).length === 6,
+    'and exactly the 6 that did not carry nothing — control: the corpus contains BOTH shapes, so the assertion above is not vacuous');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 section('9. Isolation proof');
 eq(fingerprint(), FINGERPRINT_BEFORE,
   'the real .curator-config.json / .sync-config.json / .sharedbrain-config.json are byte-identical (sha256 + size) before and after this run');

@@ -183,6 +183,7 @@ import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel } from 
 // stub would let a bespoke re-implementation in the view pass unnoticed, which
 // is mutation M4.
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
+import { formatModelSummary, formatDurationMs } from '../src/public/next/shared/model-summary.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -291,7 +292,7 @@ function scanTags(html) {
 const FN_NAMES = [
   'normalizeOfferable', 'offerableEntries', 'resolveChatModel',
   'formatPricePerM', 'formatLivePrice', 'formatIsoDay', 'formatPromotionRise',
-  'isFlaggedModel', 'renderModelOptionHtml', 'renderModelMenuHtml',
+  'renderModelOptionHtml', 'renderModelMenuHtml',
   // §10 — the ANSWER label (which model actually wrote a message).
   'modelDisplayLabel', 'neutralProviderLabel', 'describeAnswerModel',
   'assistantEyebrowHtml',
@@ -300,7 +301,7 @@ const FN_NAMES = [
 ];
 
 /** Bindings the sandbox supplies to the extracted code, in call order. */
-const INJECTED = ['escapeHtml', 'formatUsdHonest'];
+const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary'];
 
 // ── §11's SECOND EXTRACTION SITE, declared here so §0 can see it ──────────
 // §11.1 lifts the REAL `chargeForItem` out of the server module and asserts
@@ -328,13 +329,13 @@ const sandbox = new Function(
   extractConst(chatSrc, 'SUITABILITY_LABELS') + '\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
   'return { SUITABILITY_LABELS, ' + FN_NAMES.join(', ') + ' };'
-)(escapeHtmlStub, formatUsdHonest);
+)(escapeHtmlStub, formatUsdHonest, formatModelSummary);
 
 const {
   SUITABILITY_LABELS,
   normalizeOfferable, offerableEntries, resolveChatModel,
   formatPricePerM, formatLivePrice, formatIsoDay, formatPromotionRise,
-  isFlaggedModel, renderModelOptionHtml, renderModelMenuHtml,
+  renderModelOptionHtml, renderModelMenuHtml,
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
   messageUsageTokens, messageCostUsd, assistantCostHtml,
@@ -818,9 +819,18 @@ const promotedEntries = [];
 const dominatedEntries = [];
 const generalEntries = [];
 {
+  // FIXTURE PARTITIONING ONLY — not an assertion about production behaviour.
+  // `isFlaggedModel` used to live in chat.js and gated the inline note; it was
+  // DELETED with that note (see §7), because re-deriving "is this flagged" in
+  // the view is how a badge and its prose drift apart. The composer now shows a
+  // reason because llm.js REQUIRES one on a flagged entry, which §7 asserts
+  // against the real catalogue. This local copy exists solely to split the
+  // corpus so those assertions can be shown non-vacuous.
+  const isFlaggedFixture = (e) =>
+    e.dominated === true || (e.suitability !== undefined && e.suitability !== 'general');
   for (const p of ALL_PROVIDERS) {
     for (const e of REAL[p]) {
-      if (isFlaggedModel(e)) flaggedEntries.push({ p, e }); else generalEntries.push({ p, e });
+      if (isFlaggedFixture(e)) flaggedEntries.push({ p, e }); else generalEntries.push({ p, e });
       if (e.promotionUntilIso) promotedEntries.push({ p, e });
       if (e.dominated === true) dominatedEntries.push({ p, e });
     }
@@ -1249,21 +1259,125 @@ section('§6c  Suitability vocabulary matches Settings, word for word');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§7  Measured notes — every flagged model shows its reason, verbatim');
+section('§7  The row summarises — it no longer dumps the measured note');
 // ═════════════════════════════════════════════════════════════════════════
+// THE CHANGE THIS SECTION GUARDS. The row used to render `entry.note` inline
+// for every flagged model. Once the live OpenRouter catalogue landed, every
+// fetched chat-only entry is flagged, so the dropdown became several screens of
+// two-hundred-word paragraphs — the maintainer's report. The note is not
+// shortened and not truncated: it is shown whole behind Settings' per-model
+// expand, and this row carries the derived one-liner instead.
+//
+// The property that must survive the change is that a FLAGGED model still shows
+// WHY, with nothing to open. That is enforced upstream — `defineOfferableModel`
+// refuses to build a `caution`/`dominated` entry without a `cautionReason` — and
+// asserted here against the REAL catalogue, on the rendered HTML.
 {
+  ok(flaggedEntries.length >= 8,
+    `corpus check: ${flaggedEntries.length} flagged entries — the assertions below are not carried by one lucky model`);
+
   for (const { p, e } of flaggedEntries) {
     const html = renderModelOptionHtml(p, e, null);
-    ok(typeof e.note === 'string' && e.note.length > 0, `${e.id}: flagged entry carries a note in the real catalogue`);
-    ok(html.includes('chat-mm-note'), `${e.id}: flagged → a note element is rendered`);
-    ok(html.includes(escapeHtmlStub(e.note)), `${e.id}: the note is rendered VERBATIM (escaped, not paraphrased or truncated)`);
-    ok(html.includes('is-warn'), `${e.id}: flagged → a warning badge is rendered`);
+    // 1. THE REASON IS ON THE ROW, UNFOLDED.
+    ok(typeof e.cautionReason === 'string' && e.cautionReason.trim().length > 0,
+      `${e.id}: flagged entry carries a cautionReason in the real catalogue (llm.js refuses to build one without)`);
+    const reasonText = e.cautionReason.trim().replace(/([^.])\.$/, '$1');
+    ok(html.includes(escapeHtmlStub(reasonText)),
+      `${e.id}: the flag's REASON is rendered on the collapsed row — a warning you must open something to find is not a warning`);
+    ok(html.includes('chat-mm-note'), `${e.id}: flagged -> a summary element is rendered`);
+    ok(html.includes('is-warn'), `${e.id}: flagged -> a warning badge is rendered`);
+
+    // 2. THE FULL NOTE IS GONE FROM THIS SURFACE. This is the fix itself, and
+    // it is asserted on the note's own TAIL rather than the whole string: a
+    // renderer that truncated the note would still contain its opening, and
+    // truncating a measured claim is the one outcome forbidden outright.
+    const tail = e.note.slice(-60);
+    ok(!html.includes(escapeHtmlStub(tail)),
+      `${e.id}: the multi-paragraph note is NOT dumped into the dropdown row`);
+    ok(html.length < 1400,
+      `${e.id}: the whole row is ${html.length} bytes — a row that regrew past a paragraph has re-acquired the defect`);
   }
+
+  // 3. THIS SURFACE IS THE COMPACT ONE, AND THAT IS THE DESIGN.
+  // A dropdown opened mid-thought needs the model, the price and any warning.
+  // Measured COVERAGE is what you consult after narrowing to a candidate, so it
+  // is Settings-only (asserted there, in test-next-model-picker.js §21) and is
+  // dropped here. Both surfaces call ONE builder with a `compact` flag, so they
+  // agree on vocabulary while differing on density — which is the intent.
+  {
+    const coverageOnly = generalEntries.filter(({ e }) =>
+      (e.outlinePagesLow || e.outlinePagesMedian) && !Number.isFinite(e.medianLatencyMs));
+    ok(coverageOnly.length >= 5,
+      `corpus check: ${coverageOnly.length} UNFLAGGED entries whose ONLY measurement is coverage`);
+    for (const { p, e } of coverageOnly) {
+      const html = renderModelOptionHtml(p, e, null);
+      ok(!html.includes('chat-mm-note'),
+        `${e.id}: coverage alone does NOT put a line in the dropdown — that belongs in Settings`);
+      ok(!/pages per source/.test(html), `${e.id}: and the words never appear here`);
+    }
+    // …while the SAME entry does summarise in the full density, which is what
+    // makes the compact flag a real distinction rather than a dead parameter.
+    for (const { e } of coverageOnly) {
+      ok(/pages per source/.test(formatModelSummary(e)),
+        `${e.id}: the full (Settings) density DOES carry its coverage`);
+    }
+    // An unflagged model with a LATENCY figure still summarises here: four
+    // words, and the fact a live bug report proved a user needs before
+    // choosing rather than after.
+    const withLatency = generalEntries.filter(({ e }) => Number.isFinite(e.medianLatencyMs));
+    ok(withLatency.length >= 1, `corpus check: ${withLatency.length} UNFLAGGED entry carries latency`);
+    for (const { p, e } of withLatency) {
+      ok(renderModelOptionHtml(p, e, null).includes('measured at about'),
+        `${e.id}: unflagged but SLOW -> the call time survives into the compact row`);
+    }
+  }
+
+  // 4. A ROW WITH NOTHING MEASURED RENDERS NO SUMMARY ELEMENT AT ALL. This is
+  // the ~176-of-190 case: a fetched chat-only entry nobody has probed. It must
+  // collapse to name/id/price/badges rather than emitting an empty box or a
+  // fabricated line. Built through the REAL admission function so it is a real
+  // entry, not a hand-shaped object that could differ from one.
+  {
+    const unmeasured = {
+      id: 'vendor/never-probed', provider: 'openrouter', label: 'Never Probed',
+      suitability: 'chat-only', dominated: false, thinks: false,
+      input: 0.5, output: 1.5, standardInput: 0.5, standardOutput: 1.5,
+      note: 'Chat only — never measured against The Curator\'s ingest prompt.',
+      outlinePagesLow: null, outlinePagesHigh: null, outlinePagesMedian: null,
+      medianLatencyMs: null, cautionReason: null,
+    };
+    const html = renderModelOptionHtml('openrouter', unmeasured, null);
+    ok(!html.includes('chat-mm-note'), 'an entry with NOTHING measured renders no summary element');
+    ok(!/\b0 pages\b/.test(html) && !/about 0s\b/.test(html),
+      'and never renders a zero in place of an absent measurement');
+    ok(html.includes('data-model-id="vendor/never-probed"'), 'it is still selectable');
+  }
+
+  // 5. THE MEASURED LATENCY REACHES THE ROW — including for a model we probed
+  // and then REFUSED for the build lane. `deepseek/deepseek-v4-flash-0731` is
+  // the live report this clause exists for: picked in the composer, 382s per
+  // call, reported as broken. The number existed and reached no screen.
+  {
+    const slow = {
+      id: 'deepseek/deepseek-v4-flash-0731', provider: 'openrouter', label: 'DeepSeek V4 Flash',
+      suitability: 'chat-only', dominated: false, thinks: false,
+      input: 0.2, output: 0.8, standardInput: 0.2, standardOutput: 0.8,
+      note: 'Chat only.', medianLatencyMs: 382000,
+    };
+    const html = renderModelOptionHtml('openrouter', slow, null);
+    ok(html.includes('6m 22s'), 'a measured-then-refused model still shows its measured call time at pick time');
+  }
+
   // Flagged models are SHOWN, never filtered out of the menu.
   const { html } = menuFor(ALL_PROVIDERS);
   for (const { e } of flaggedEntries) {
     ok(html.includes('data-model-id="' + e.id + '"'), `${e.id}: flagged model is still selectable in the menu`);
   }
+  // The menu says where the full measurement went, once, for the whole list.
+  ok(html.includes('Settings'), 'the menu points at where the full note now lives');
+  ok(!/data-model-id="[^"]*"[^>]*>\s*<div class="chat-mm-foot"/.test(html),
+    'the footer is not itself an option row');
+
   // WORD-LEVEL PIN, not merely "a badge exists": the `dominated` flag renders
   // as the literal text "out-performed" on THIS surface, matching the word
   // settings.js's renderModelOption uses for the identical
@@ -1280,16 +1394,6 @@ section('§7  Measured notes — every flagged model shows its reason, verbatim'
     ok(html2.includes('>out-performed<'), `${e.id}: dominated entry renders the word "out-performed" (matches settings.js)`);
     ok(!html2.includes('>dominated<'), `${e.id}: dominated entry does NOT render the raw field name "dominated" as its label`);
   }
-  // The flag itself discriminates on BOTH inputs, independently.
-  ok(isFlaggedModel({ suitability: 'caution', dominated: false }) === true, 'suitability "caution" alone flags');
-  ok(isFlaggedModel({ suitability: 'chat-only', dominated: false }) === true, 'suitability "chat-only" alone flags');
-  ok(isFlaggedModel({ suitability: 'general', dominated: true }) === true, 'dominated alone flags');
-  ok(isFlaggedModel({ suitability: 'general', dominated: false }) === false, 'general + not dominated does NOT flag');
-  // An unflagged entry with a note does not render one — so §7's greens are
-  // caused by the flag, not by "every row renders its note".
-  const plain = generalEntries[0];
-  ok(!renderModelOptionHtml(plain.p, plain.e, null).includes('chat-mm-note'),
-    `control: unflagged "${plain.e.id}" renders no note element`);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -1302,6 +1406,13 @@ section('§8  Escaping — hostile catalogue strings cannot break out');
     provider: 'gemini',
     label: XSS,
     note: '<script>alert(2)</script>',
+    // The fields the summary interpolates. `cautionReason` is new user-facing
+    // wire content and is the one most likely to carry prose punctuation, so it
+    // gets the hostile string too — an escaping hole here would ship on every
+    // flagged row.
+    cautionReason: '<img src=x onerror=alert(3)>',
+    outlinePagesLow: 5, outlinePagesHigh: 9,
+    medianLatencyMs: 61000,
     suitability: '<b>caution</b>',
     dominated: true,
     thinks: true,
@@ -1343,7 +1454,15 @@ section('§8  Escaping — hostile catalogue strings cannot break out');
   ok(tags.every(t => t.attrs.every(a => /^[a-z][a-z0-9-]*$/i.test(a))),
     'every emitted attribute name is well-formed — no hostile value split into a new attribute');
   ok(!/<b>caution<\/b>/.test(html), 'hostile suitability does not emit raw markup');
-  ok(html.includes('&lt;script&gt;'), 'the note is present but escaped');
+  // The hostile `cautionReason` IS rendered (it is the summary's first clause)
+  // and is escaped. This replaces an assertion that the hostile NOTE was present
+  // and escaped — the note is no longer rendered on this surface at all, which
+  // the second assertion pins in the stronger direction: not raw, and not even
+  // escaped, because it is not here.
+  ok(html.includes('&lt;img src=x onerror=alert(3)&gt;'),
+    'the hostile cautionReason IS present and fully escaped — the new interpolated field is not an escaping hole');
+  ok(!html.includes('&lt;script&gt;'),
+    'the note is not rendered on this surface at all — not raw, and not escaped either');
   ok(html.includes('&quot;&gt;&lt;img'), 'the label is present but escaped');
   // Attribute integrity: exactly one data-model-id attribute, and the value
   // cannot terminate early into a new attribute.
@@ -2224,6 +2343,226 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     ok(u.inputTokens === 1, '§11.9 mutating the result cannot corrupt the message record');
     ok(messageUsageTokens(null) === null && messageUsageTokens({}) === null,
       '§11.9 a missing message or missing usage is null');
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12  The thinking clock — a wait you can see, and never a wait we invent');
+// ═════════════════════════════════════════════════════════════════════════
+// THE LIVE REPORT. The maintainer picked `deepseek/deepseek-v4-flash-0731`,
+// watched a bare numberless spinner for minutes, and reported the app as broken.
+// It was not — the stored conversation shows that model answered, was billed and
+// was attributed correctly. It is simply the slowest thing this project has ever
+// measured (382s per call), and nothing on screen said so.
+//
+// This is v3.0.17's ingest finding in a second place, so the fix follows that
+// precedent rather than inventing one. Two properties are guarded here and they
+// pull in opposite directions:
+//
+//   · the clock ALWAYS runs, because it measures the real call and is therefore
+//     always honest;
+//   · the expectation NEVER runs without a measurement, because ~176 of ~190
+//     models have none and inventing one is worse than silence.
+{
+  const INGEST_PATH = path.join(ROOT, 'src/public/next/views/ingest.js');
+  const ingestSrc = readFileSync(INGEST_PATH, 'utf8');
+
+  // ── 12a. THE TWO CLOCKS AGREE ─────────────────────────────────────────
+  // shared/model-summary.js re-implements ingest.js's `formatElapsedMs` because
+  // that one is private and this release does not own ingest.js. The equality
+  // is not left to a comment: ingest's copy is lifted out and both are driven
+  // over the shared domain (finite ms >= 0).
+  {
+    const ingestFmt = new Function(extractFunction(ingestSrc, 'formatElapsedMs') +
+      '\nreturn formatElapsedMs;')();
+    ok(typeof ingestFmt === 'function', 'control: ingest.js formatElapsedMs extracted and callable');
+    ok(ingestFmt(382000) === '6m 22s', 'control: the extracted ingest formatter really formats (382000 -> 6m 22s)');
+    let compared = 0, mismatch = null;
+    for (const ms of [0, 1, 999, 1000, 1001, 30000, 59000, 59999, 60000, 60001,
+                      90000, 188000, 382000, 3599000, 3600000, 7325000]) {
+      if (formatDurationMs(ms) !== ingestFmt(ms)) mismatch = `${ms}: '${formatDurationMs(ms)}' vs '${ingestFmt(ms)}'`;
+      compared++;
+    }
+    ok(mismatch === null, `the chat clock and the ingest clock agree on all ${compared} durations${mismatch ? ' — ' + mismatch : ''}`);
+    // The ONE deliberate divergence, asserted so it cannot be "tidied away":
+    // ingest coerces a non-finite input to "0s" (its input is always a real
+    // elapsed duration); the shared one returns '' (its input may be an ABSENT
+    // measurement, where "0s" is the lie this release exists to remove).
+    ok(ingestFmt(null) === '0s' && formatDurationMs(null) === '',
+      'and diverge ONLY on a non-finite input, deliberately: "0s" for an elapsing clock, "" for an absent measurement');
+  }
+
+  // ── 12b. THE BUBBLE ───────────────────────────────────────────────────
+  // `thinkingBodyHtml` reads module-level `let`s, so the sandbox declares them
+  // and hands back setters. Driving the REAL function, not a paraphrase.
+  const nowRef = { t: 0 };
+  const clock = new Function('escapeHtml', 'formatDurationMs', 'nowRef',
+    'let sendStartedAt = null;\n' +
+    'let sendLatencyHint = null;\n' +
+    extractConst(chatSrc, 'SLOW_TURN_NOTICE_AFTER_MS') + '\n' +
+    extractFunction(chatSrc, 'thinkingBodyHtml') + '\n' +
+    'const _origNow = Date.now;\n' +
+    'Date.now = () => nowRef.t;\n' +
+    'return {\n' +
+    '  SLOW_TURN_NOTICE_AFTER_MS,\n' +
+    '  set(startedAt, hint) { sendStartedAt = startedAt; sendLatencyHint = hint; },\n' +
+    '  html: () => thinkingBodyHtml(),\n' +
+    '  restore() { Date.now = _origNow; },\n' +
+    '};'
+  )(escapeHtmlStub, formatDurationMs, nowRef);
+  const NOW0 = 1000000;
+  const T = clock.SLOW_TURN_NOTICE_AFTER_MS;
+  ok(T === 20000, `the notice threshold is ${T}ms — pinned, so a silent change to it is visible here`);
+
+  const MEASURED = { label: 'DeepSeek V4 Flash', ms: 382000 };
+  const bubble = (elapsedMs, hint) => { clock.set(NOW0, hint); nowRef.t = NOW0 + elapsedMs; return clock.html(); };
+
+  // The clock is present and ticking from the very first paint.
+  ok(bubble(0, null).includes('id="chat-think-elapsed"'), 'the bubble carries an elapsed element');
+  ok(/id="chat-think-elapsed">0s</.test(bubble(0, null)), 'first paint shows 0s, not blank');
+  ok(/id="chat-think-elapsed">5s</.test(bubble(5000, null)), 'it renders the real elapsed time');
+  ok(/id="chat-think-elapsed">2m 3s</.test(bubble(123000, null)), 'and formats minutes the ingest way');
+
+  // The expectation is gated on BOTH the threshold and a measurement.
+  ok(!bubble(T - 1000, MEASURED).includes('chat-thinking-slow'),
+    'before the threshold: no expectation, even for a measured model');
+  const late = bubble(T + 1000, MEASURED);
+  ok(late.includes('chat-thinking-slow'), 'after the threshold: the measurement is stated');
+  ok(late.includes('6m 22s'), 'and it states the figure we actually measured');
+  ok(late.includes('DeepSeek V4 Flash'), 'naming the model it belongs to');
+  ok(!/error|sorry|problem|wrong|failed/i.test(late.replace(/onerror/g, '')),
+    'stated as a fact — no apology, no error vocabulary');
+
+  // ── 12c. THE ABSENCE RULE, which is the assertion most able to fail ───
+  // ~176 of ~190 models carry no latency. Their turns must get a live clock and
+  // NO expectation — not "0s", not "unknown", not a guess.
+  for (const elapsed of [T + 1000, T * 10, T * 60]) {
+    const h = bubble(elapsed, null);
+    const secs = Math.round(elapsed / 1000);
+    ok(!h.includes('chat-thinking-slow'), `an UNMEASURED model shows no expectation even after ${secs}s`);
+    ok(!/measured at about/.test(h), `…and never the words "measured at about" (${secs}s)`);
+    ok(!/\b0s per call\b/.test(h), `…and never "0s per call" (${secs}s)`);
+    ok(/id="chat-think-elapsed">/.test(h), `…while the clock itself keeps running (${secs}s)`);
+  }
+  // The label is server-supplied and is escaped.
+  ok(!bubble(T + 1000, { label: '<img src=x onerror=alert(1)>', ms: 61000 }).includes('<img src=x'),
+    'a hostile model label in the expectation is escaped');
+  clock.restore();
+
+  // ── 12d. THE HINT IS RESOLVED FROM MEASURED DATA ONLY ─────────────────
+  {
+    const mkHint = new Function('resolveChatModel', 'stateRef',
+      'const state = stateRef;\n' +
+      extractFunction(chatSrc, 'latencyHintForTurn') + '\n' +
+      'return latencyHintForTurn;'
+    );
+    const OFFER = {
+      openrouter: [
+        { id: 'slow/model', label: 'Slow', medianLatencyMs: 382000 },
+        { id: 'quiet/model', label: 'Quiet', medianLatencyMs: null },
+        { id: 'sub/second', label: 'Sub', medianLatencyMs: 400 },
+      ],
+    };
+    const mk = (over) => Object.assign({
+      chatModel: null, modelProvider: null, models: {},
+      offerable: OFFER, availableProviders: ['openrouter'],
+    }, over);
+    const call = (st) => mkHint(resolveChatModel, st)();
+
+    ok(call(mk({ chatModel: 'slow/model' })).ms === 382000,
+      'an explicitly picked, MEASURED model yields its measurement');
+    ok(call(mk({ chatModel: 'quiet/model' })) === null,
+      'an explicitly picked UNMEASURED model yields null — never a substitute figure');
+    ok(call(mk({ chatModel: 'sub/second' })) === null,
+      'a sub-second figure yields null rather than an expectation reading "0s"');
+    ok(call(mk({})) === null,
+      'with NO model named, null — the server picks the provider default and this view does not know which provider is active');
+    ok(call(mk({ modelProvider: 'openrouter', models: { openrouter: 'slow/model' } })).ms === 382000,
+      'with a provider named, the backend-supplied default id for it is used');
+    ok(call(mk({ modelProvider: 'openrouter', models: { openrouter: 'quiet/model' } })) === null,
+      'and that path obeys the absence rule too');
+    ok(call(mk({ chatModel: 'not/in/catalogue' })) === null,
+      'an id absent from the key-scoped catalogue yields null');
+    ok(call(mk({ modelProvider: 'openrouter', models: {} })) === null,
+      'a provider with no default id yields null');
+    ok(call(mk({ modelProvider: '__proto__', models: {} })) === null,
+      'a prototype-shaped provider name yields null, not the prototype object');
+  }
+
+  // ── 12e. THE CLOCK STOPS. Executed, not read. ─────────────────────────
+  // A timer that outlives its turn keeps a finished answer looking unfinished —
+  // the "button left permanently reading Fixing…" shape this repo has shipped
+  // once already. So the interval is actually created and actually cleared.
+  {
+    let live = 0, nextId = 1;
+    const realSet = globalThis.setInterval, realClear = globalThis.clearInterval;
+    globalThis.setInterval = () => { live++; return nextId++; };
+    globalThis.clearInterval = (id) => { if (id != null) live--; };
+    try {
+      const timers = new Function('isCurrentMount', 'latencyHintForTurn', 'formatDurationMs', 'documentRef',
+        'let sendStartedAt = null;\n' +
+        'let sendTimerId = null;\n' +
+        'let sendLatencyHint = null;\n' +
+        'const SLOW_TURN_NOTICE_AFTER_MS = 20000;\n' +
+        'const document = documentRef;\n' +
+        extractFunction(chatSrc, 'startSendClock') + '\n' +
+        extractFunction(chatSrc, 'stopSendClock') + '\n' +
+        'return { startSendClock, stopSendClock, snap: () => ({ sendStartedAt, sendTimerId, sendLatencyHint }) };'
+      )(() => true, () => ({ label: 'M', ms: 382000 }), formatDurationMs,
+        { getElementById: () => null });
+
+      ok(timers.snap().sendTimerId === null && live === 0, 'control: no timer before a send');
+      timers.startSendClock('tok');
+      ok(live === 1, 'starting a turn creates exactly one interval');
+      ok(timers.snap().sendStartedAt !== null, 'and records when it started');
+      ok(timers.snap().sendLatencyHint !== null, 'and captures the measurement at send time');
+      timers.startSendClock('tok');
+      ok(live === 1, 'starting again clears the previous interval first — never two clocks on one element');
+      timers.stopSendClock();
+      ok(live === 0, 'stopping clears the interval');
+      const after = timers.snap();
+      ok(after.sendStartedAt === null && after.sendTimerId === null && after.sendLatencyHint === null,
+        'and resets every field, so the next turn starts clean');
+      timers.stopSendClock();
+      ok(live === 0, 'stopping twice is harmless — the abandon path may fire after the finally');
+    } finally {
+      globalThis.setInterval = realSet; globalThis.clearInterval = realClear;
+    }
+  }
+
+  // ── 12f. EVERY EXIT PATH CALLS IT ─────────────────────────────────────
+  // ENFORCED: the `finally` of sendCurrentMessage (which no future `return`
+  // above it can skip) and onEnter's reset (the abandon path).
+  // NOT ENFORCED, and said plainly: this is a SOURCE scan, so a call that is
+  // present but unreachable is invisible to it. That is why 12e EXECUTES the
+  // clear rather than trusting this. The pair is the guarantee, not either half.
+  {
+    const fn = extractFunction(chatSrc, 'sendCurrentMessage');
+    const fi = fn.lastIndexOf('} finally {');
+    ok(fi !== -1, 'sendCurrentMessage has a finally block');
+    const fin = fn.slice(fi);
+    ok(/stopSendClock\(\)/.test(fin),
+      'the clock is stopped in the FINALLY — success, throw and early return all pass through it');
+    ok(/state\.sending = false;/.test(fin),
+      'control: that block is the one that also releases the send-lock (the slice is the right block)');
+    ok(/startSendClock\(mountToken\)/.test(fn), 'and started with the turn');
+    // `onEnter` is an object METHOD on the exported view, not a top-level
+    // function, so extractFunction cannot see it — brace-matched here instead.
+    // Stated rather than worked around silently: a manifest-based extractor
+    // that quietly skips a method is the FN_NAMES blind spot in a new costume.
+    const eStart = chatSrc.indexOf('onEnter(mountToken) {');
+    ok(eStart !== -1, 'control: the onEnter method is located in chat.js');
+    let depth = 0, eEnd = chatSrc.indexOf('{', eStart);
+    for (let i = eEnd; i < chatSrc.length; i++) {
+      if (chatSrc[i] === '{') depth++;
+      else if (chatSrc[i] === '}') { depth--; if (depth === 0) { eEnd = i + 1; break; } }
+    }
+    const enter = chatSrc.slice(eStart, eEnd);
+    ok(/state\.sending = false;/.test(enter),
+      'control: the extracted onEnter really is the block that resets the send-lock');
+    ok(/stopSendClock\(\)/.test(enter),
+      'and stopped on the ABANDON path too — a re-mount must be able to stop a previous mount timer');
   }
 }
 

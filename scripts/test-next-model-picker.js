@@ -280,6 +280,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
+import { formatModelSummary } from '../src/public/next/shared/model-summary.js';
 import {
   OFFERABLE_MODELS,
   // v3.15.2 — the REAL runtime-admission path. §36 below mints its
@@ -421,6 +422,11 @@ const stubState = {
   catalogueSyncBusy: null,
   catalogueSync: {},
   catalogueSyncError: {},
+  // v3.17.0 — the per-provider filter/sort the picker reads through
+  // `modelFilterFor`. Same live-object rule: §23 flips the sort here and
+  // re-renders, so the assertions run over the REAL render path rather than
+  // over `orderModels` called by hand.
+  modelFilter: null,
 };
 
 // ── THE EXTRACTION MANIFEST ───────────────────────────────────────────────
@@ -441,7 +447,12 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MODEL_SUITABILITY_BADGES', 'ACTIVATION_
   // as a literal here: §36 asserts the fold appears strictly above it and
   // not at it, and a hardcoded 8 in this file would keep passing after the
   // module moved to a different number.
-  'CHAT_LANE_COLLAPSE_AT'];
+  'CHAT_LANE_COLLAPSE_AT', 'MODEL_SORTS', 'MODEL_FILTER_MIN_ROWS',
+  // v3.17.0 — the two sorts that need a comparator. Extracted rather than
+  // re-declared here: the field NAMES are the contract between llm.js and the
+  // picker, and a local copy would keep passing after the wire field was
+  // renamed underneath it.
+  'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -485,6 +496,11 @@ const RENDER_FN_NAMES = [
   // what DECIDES whether a section is open — see §16 — so grepping its call
   // site would prove a line exists, not what it does.
   'renderProviderRow', 'renderProviders',
+  // v3.17.0 filter: the pure decision core plus its two render halves.
+  'modelSearchText', 'isCuratorMeasured', 'filterModels', 'orderModels', 'modelFilterFor',
+  'renderModelFilterBar', 'renderModelFilterEmpty',
+  // v3.17.0 — absence handling for the recency/size sorts.
+  'modelSortKey', 'countUnrankedForSort',
 ];
 
 /**
@@ -511,6 +527,11 @@ const RENDER_FN_NAMES = [
  */
 const RENDER_INJECTED_VALUES = {
   formatUsdHonest,
+  // The REAL shared builder, not a stub. renderModelOption's collapsed row is
+  // where a flagged model's reason has to appear now that the note is folded,
+  // and a stub would let this suite go green over a summary that never renders
+  // the reason at all.
+  formatModelSummary,
   icon: (name, size) => '<svg data-icon="' + name + '" width="' + size + '"></svg>',
   state: stubState,
   crossWriteBusy: () => false,                 // no write in flight
@@ -592,6 +613,9 @@ const {
   formatSyncedAt, renderCatalogueSync, renderModelLanes, CHAT_LANE_COLLAPSE_AT,
   MODEL_LANES, qualificationFor, modelLaneOf, laneBuildsWiki,
   splitSentences, withoutLaneClaim, renderQualifyPanel,
+  modelSearchText, isCuratorMeasured, filterModels, orderModels, modelFilterFor,
+  renderModelFilterBar, renderModelFilterEmpty, MODEL_SORTS, MODEL_FILTER_MIN_ROWS,
+  modelSortKey, countUnrankedForSort, MODEL_SORT_KEYS, MODEL_SORT_UNRANKED_LABEL,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -4185,6 +4209,698 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
   setOpenRouterCatalogue([]);
   ok(listOfferableModels('openrouter').every((m) => !SPEC_IDS.includes(m.id)),
     'the synthetic catalogue is cleared — later sections see the shipping list');
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§21  The collapsed row stands alone — reason and price unfolded, note folded');
+// ═════════════════════════════════════════════════════════════════════════
+// The note is folded behind this row's own <details> (it has been since the
+// picker shipped) and the composer no longer renders it at all. That makes the
+// COLLAPSED row the only thing many users will ever read about a model, so what
+// it must carry is not a matter of taste:
+//
+//   · the REASON for any warning badge, because a warning you must open
+//     something to discover is not a warning;
+//   · the PRICE, because folding a price defeats the whole screen;
+//   · NOT the note, which is the evidence and belongs behind the expand.
+//
+// Every assertion below scopes itself to the text INSIDE <summary>…</summary>.
+// A row-wide `includes()` would pass with the reason folded, which is exactly
+// the defect.
+{
+  /** Just the <summary> — what a user sees without opening anything. */
+  const summaryOf = (li) => {
+    const a = li.indexOf('<summary');
+    if (a === -1) {
+      // A row with nothing to expand renders flat; the whole row is visible.
+      const f = li.indexOf('<div class="model-row model-row-flat">');
+      return f === -1 ? '' : li.slice(f, li.indexOf('</div>', f) + 6);
+    }
+    const b = li.indexOf('</summary>', a);
+    return b === -1 ? '' : li.slice(a, b + 10);
+  };
+  /** The row BODY — what is behind the expand. */
+  const bodyOf = (li) => {
+    const a = li.indexOf('<div class="model-row-body">');
+    return a === -1 ? '' : li.slice(a);
+  };
+
+  // Harness self-check FIRST, so the greens below are a finding rather than a
+  // slicer that silently returns ''.
+  {
+    const probe = renderModelOption(WIRE.gemini[0], 1, '');
+    ok(summaryOf(probe).length > 40, 'control: the summary slicer returns real markup');
+    ok(bodyOf(probe).length > 40, 'control: the body slicer returns real markup');
+    ok(!summaryOf(probe).includes('model-row-body'), 'control: the two slices do not overlap');
+  }
+
+  let checkedFlagged = 0, checkedPrice = 0, checkedNote = 0;
+  for (const prov of ['gemini', 'anthropic', 'openrouter']) {
+    for (const m of (WIRE[prov] || [])) {
+      const li = renderModelOption(m, 1, '');
+      const head = summaryOf(li);
+      const body = bodyOf(li);
+
+      // (a) THE REASON IS UNFOLDED.
+      if (m.suitability === 'caution' || m.dominated === true) {
+        ok(typeof m.cautionReason === 'string' && m.cautionReason.trim().length > 0,
+          `${m.id}: flagged entry carries a cautionReason`);
+        const reason = m.cautionReason.trim().replace(/([^.])\.$/, '$1');
+        ok(head.includes(escapeHtml(reason)),
+          `${m.id}: the flag's REASON is in the COLLAPSED row, not behind the expand`);
+        checkedFlagged++;
+      }
+
+      // (b) THE PRICE IS UNFOLDED. Free rows render the word instead.
+      const hasPrice = head.includes('model-price');
+      ok(hasPrice, `${m.id}: the price is in the COLLAPSED row — a spending decision is never folded`);
+      ok(!body.includes('model-price'), `${m.id}: the price is NOT duplicated into the body`);
+      checkedPrice++;
+
+      // (c) THE NOTE STAYS BEHIND THE EXPAND. Asserted on the note's TAIL: a
+      // renderer that truncated it into the summary would still contain its
+      // opening, and truncating a measured claim is forbidden outright.
+      if (typeof m.note === 'string' && m.note.length > 80) {
+        ok(!head.includes(escapeHtml(m.note.slice(-60))),
+          `${m.id}: the multi-paragraph note is not hoisted into the collapsed row`);
+        ok(body.includes(escapeHtml(m.note.slice(-60))),
+          `${m.id}: the note is still shown WHOLE behind the expand — moved, never deleted`);
+        checkedNote++;
+      }
+    }
+  }
+  ok(checkedFlagged >= 8, `corpus: ${checkedFlagged} flagged rows checked — (a) is not vacuous`);
+  ok(checkedPrice >= 19, `corpus: ${checkedPrice} priced rows checked — (b) is not vacuous`);
+  ok(checkedNote >= 19, `corpus: ${checkedNote} rows with a long note checked — (c) is not vacuous`);
+
+  // (d) ABSENT IS NOT ZERO, on the real screen. One shipping model has NO page
+  // measurement at all; several have no latency. Their rows must omit the
+  // clause rather than render a zero.
+  {
+    const noPages = ['gemini', 'anthropic', 'openrouter']
+      .flatMap((p) => WIRE[p] || []).filter((m) => m.outlinePagesLow == null && m.outlinePagesMedian == null);
+    ok(noPages.length >= 1, `corpus: ${noPages.length} shipping model has NO page measurement — (d) can fire`);
+    for (const m of noPages) {
+      const head = summaryOf(renderModelOption(m, 1, ''));
+      ok(!/\bpages per source\b/.test(head), `${m.id}: no coverage clause where nothing was measured`);
+      ok(!/\b0 pages\b/.test(head), `${m.id}: and never "0 pages"`);
+    }
+    const noLat = ['gemini', 'anthropic', 'openrouter']
+      .flatMap((p) => WIRE[p] || []).filter((m) => m.medianLatencyMs == null);
+    ok(noLat.length >= 14, `corpus: ${noLat.length} shipping models have NO latency — the common case is represented`);
+    for (const m of noLat) {
+      const head = summaryOf(renderModelOption(m, 1, ''));
+      ok(!/measured at about/.test(head), `${m.id}: no speed clause where nothing was measured`);
+    }
+    const withLat = ['gemini', 'anthropic', 'openrouter']
+      .flatMap((p) => WIRE[p] || []).filter((m) => Number.isFinite(m.medianLatencyMs));
+    ok(withLat.length >= 3, `corpus: ${withLat.length} shipping models DO carry latency — the omission above discriminates`);
+    for (const m of withLat) {
+      ok(/measured at about/.test(summaryOf(renderModelOption(m, 1, ''))),
+        `${m.id}: a MEASURED model does show its call time`);
+    }
+  }
+
+  // (e) A row with nothing measured renders no summary line at all — the
+  // ~176-of-190 fetched case. Built from a real WIRE row so the shape is real.
+  {
+    const bare = Object.assign({}, WIRE.gemini[0], {
+      id: 'vendor/never-probed', suitability: 'chat-only', dominated: false,
+      outlinePagesLow: null, outlinePagesHigh: null, outlinePagesMedian: null,
+      medianLatencyMs: null, cautionReason: null,
+    });
+    const li = renderModelOption(bare, 1, '');
+    ok(!li.includes('model-row-derived'),
+      'a model with NOTHING measured renders no summary element rather than an empty one');
+    ok(li.includes('model-price'), 'and still shows its price');
+  }
+
+  // (f) THE SUMMARY IS ESCAPED. `cautionReason` is new user-facing wire
+  // content and reaches the collapsed row of every flagged model.
+  {
+    const hostile = Object.assign({}, WIRE.gemini[0], {
+      id: 'x-hostile', suitability: 'caution', dominated: false,
+      cautionReason: '<img src=x onerror=alert(1)>',
+      outlinePagesLow: 3, outlinePagesHigh: 4, outlinePagesMedian: null, medianLatencyMs: 90000,
+    });
+    const li = renderModelOption(hostile, 1, '');
+    ok(!li.includes('<img src=x'), 'a hostile cautionReason emits no raw <img> tag');
+    ok(li.includes('&lt;img src=x onerror=alert(1)&gt;'), 'it is present, and fully escaped');
+  }
+
+  // (g) BOTH SURFACES BUILD THE SAME LINE FROM THE SAME MODULE. Settings and
+  // the composer import one builder (shared/model-summary.js), so — unlike the
+  // badge wording, whose two tables can only be kept in step by a comment —
+  // this is enforced rather than requested. Pinned in BOTH directions so a
+  // future edit that inlines a private copy in either view goes red.
+  {
+    const settingsSrc = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+    const chatSrc2 = readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8');
+    for (const [name, src] of [['settings.js', settingsSrc], ['chat.js', chatSrc2]]) {
+      ok(/import \{[^}]*formatModelSummary[^}]*\} from '\.\.\/shared\/model-summary\.js';/.test(src),
+        `${name} imports formatModelSummary from the shared module`);
+      ok(!/function formatModelSummary\b/.test(src),
+        `${name} does NOT define its own copy of it`);
+    }
+    for (const m of (WIRE.openrouter || [])) {
+      const expected = formatModelSummary(m);
+      if (!expected) continue;
+      ok(summaryOf(renderModelOption(m, 1, '')).includes(escapeHtml(expected)),
+        `${m.id}: the collapsed row renders exactly the shared builder's output`);
+    }
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§22  The filter — search first, and never a ranking we cannot support');
+// ═════════════════════════════════════════════════════════════════════════
+// A synced OpenRouter catalogue is ~190 models. Grouping does not answer "I know
+// I want Kimi", so the picker gains a filter. What it must NOT gain is a ranking
+// we have no data for — see the "most capable" note at the end of this section.
+//
+// CORPUS. 190 synthetic chat-only entries (the real catalogue's shape: 6 free,
+// several vendors, none measured) plus the 19 REAL static entries, which are the
+// only measured ones. Built this way so the three assertions the orchestrator
+// named are non-vacuous BY CONSTRUCTION: there is a free model, an unmeasured
+// model and a measured one, and the counts are asserted before anything is
+// filtered.
+{
+  const VENDORS = ['moonshotai', 'z-ai', 'qwen', 'deepseek', 'upstage', 'minimax', 'ibm-granite'];
+  const synthetic = [];
+  for (let i = 0; i < 190; i++) {
+    const v = VENDORS[i % VENDORS.length];
+    const free = i % 32 === 0; // 6 of 190
+    synthetic.push({
+      id: v + '/model-' + i, provider: 'openrouter', label: v + ' Model ' + i,
+      suitability: 'chat-only', dominated: false, thinks: false,
+      // jsonRaw NULL is llm.js's own marker for NOT MEASURED, and it is what the
+      // measured-only filter reads.
+      jsonRaw: null, maxOutput: 32768, tokenizerFactor: 1,
+      free, input: free ? null : 0.1 + i, output: free ? null : 0.4 + i,
+      standardInput: free ? null : 0.1 + i, standardOutput: free ? null : 0.4 + i,
+      outlinePagesLow: null, outlinePagesHigh: null, outlinePagesMedian: null,
+      medianLatencyMs: null, cautionReason: null,
+      note: 'Chat only — never measured against The Curator\'s ingest prompt.',
+      promotionUntilIso: null, standardPriceFromIso: null,
+    });
+  }
+  const measured = (WIRE.openrouter || []).concat(WIRE.gemini || []);
+  // The server ships cheapest-first with free at the front (free bills nothing).
+  const CORPUS = synthetic.filter((m) => m.free)
+    .concat(measured, synthetic.filter((m) => !m.free));
+
+  ok(CORPUS.length >= 190, `corpus: ${CORPUS.length} models — real scale, not a 4-row fixture`);
+  const freeCount = CORPUS.filter((m) => m.free === true).length;
+  ok(freeCount >= 6, `corpus contains ${freeCount} FREE models`);
+  ok(CORPUS.filter((m) => isCuratorMeasured(m)).length >= 12,
+    `corpus contains ${CORPUS.filter(isCuratorMeasured).length} MEASURED models`);
+  ok(CORPUS.filter((m) => !isCuratorMeasured(m)).length >= 190,
+    'corpus contains ~190 UNMEASURED models — the common case dominates, as in production');
+
+  // ── 22a. SEARCH ───────────────────────────────────────────────────────
+  const F = (over) => Object.assign({ q: '', sort: 'cheapest', measuredOnly: false }, over);
+  ok(filterModels(CORPUS, F({})).length === CORPUS.length, 'an empty search filters nothing');
+  const kimi = filterModels(CORPUS, F({ q: 'kimi' }));
+  ok(kimi.length > 0 && kimi.every((m) => /kimi/i.test(m.id + m.label)),
+    `searching "kimi" narrows to ${kimi.length} rows and every one matches`);
+  ok(kimi.length < CORPUS.length, 'and it is genuinely a narrowing, not a no-op');
+  const vendor = filterModels(CORPUS, F({ q: 'moonshotai' }));
+  ok(vendor.length > 0 && vendor.every((m) => m.id.startsWith('moonshotai/')),
+    `a VENDOR name works through the same box (${vendor.length} rows) — no separate 49-entry vendor control needed`);
+  // Multi-term narrows rather than widens.
+  const two = filterModels(CORPUS, F({ q: 'moonshotai kimi' }));
+  ok(two.length <= vendor.length && two.every((m) => /kimi/i.test(m.id)),
+    'two terms AND together');
+  ok(filterModels(CORPUS, F({ q: 'KIMI' })).length === kimi.length, 'search is case-insensitive');
+  ok(filterModels(CORPUS, F({ q: 'zzzz-no-such-model' })).length === 0, 'a miss returns nothing');
+  // A model with no label is still findable by id — absent is not a match and
+  // not a crash.
+  ok(filterModels([{ id: 'a/b' }], F({ q: 'a/b' })).length === 1,
+    'a model with no label still matches on its id');
+  ok(filterModels(CORPUS, F({ q: '   ' })).length === CORPUS.length,
+    'a whitespace-only query is not a filter');
+
+  // ── 22b. MEASURED-ONLY — absent is ABSENT, never a zero score ─────────
+  const onlyMeasured = filterModels(CORPUS, F({ measuredOnly: true }));
+  ok(onlyMeasured.length >= 12 && onlyMeasured.length < 40,
+    `"Measured by The Curator" narrows ${CORPUS.length} to ${onlyMeasured.length}`);
+  ok(onlyMeasured.every((m) => typeof m.jsonRaw === 'boolean'),
+    'every model in the measured view carries a real measurement marker');
+  ok(!onlyMeasured.some((m) => m.jsonRaw === null || m.jsonRaw === undefined),
+    'NO unmeasured model appears in the measured-only view');
+  ok(onlyMeasured.some((m) => m.jsonRaw === false),
+    'and a model we measured and found UNFIT is still "measured" — the filter is about evidence, not about passing');
+  const combined = filterModels(CORPUS, F({ q: 'gemini', measuredOnly: true }));
+  ok(combined.length > 0 && combined.every((m) => isCuratorMeasured(m) && /gemini/i.test(m.id)),
+    'search and the measured filter compose');
+
+  // ── 22c. FREE IS A CLASS, NOT A NUMBER ───────────────────────────────
+  // A free model's price is `null` BY DESIGN. `null - 5` coerces to `0 - 5`, so
+  // a naive comparator ranks free cheapest by ARITHMETIC ACCIDENT — right by
+  // luck in one direction and wrong in the other. `orderModels` never does
+  // arithmetic: it takes the server's asserted order or its exact reverse.
+  const cheapest = orderModels(CORPUS, 'cheapest');
+  const dearest = orderModels(CORPUS, 'dearest');
+  ok(cheapest.length === CORPUS.length && dearest.length === CORPUS.length,
+    'ordering never drops a model');
+  ok(cheapest.every((m, i) => m === CORPUS[i]),
+    'the cheapest view IS the delivered order — no second opinion about which model is cheapest');
+  ok(dearest.every((m, i) => m === CORPUS[CORPUS.length - 1 - i]),
+    'the dearest view is its exact reverse');
+  ok(cheapest.slice(0, freeCount).every((m) => m.free === true),
+    'free models are at the cheapest end');
+  ok(dearest.slice(-freeCount).every((m) => m.free === true),
+    'and at the DEAREST end they are LAST — the assertion a null-as-zero comparator fails');
+  ok(!dearest.slice(0, freeCount).some((m) => m.free === true),
+    'a free model never leads the most-expensive-first view');
+  ok(CORPUS.every((m, i) => m === (cheapest[i])), 'ordering is non-destructive — the input array is untouched');
+  ok(orderModels(CORPUS, 'nonsense').every((m, i) => m === CORPUS[i]),
+    'an unknown sort falls back to delivered order rather than to an arbitrary one');
+  ok(orderModels(null, 'dearest').length === 0, 'a missing list is empty, never a throw');
+
+  // ── 22d. A MISS EXPLAINS ITSELF AND OFFERS THE WAY BACK ───────────────
+  // An unexplained empty list reads as "the feature is broken" — a misreading
+  // this repo has shipped.
+  {
+    const e1 = renderModelFilterEmpty('openrouter', F({ q: 'zzzz' }));
+    ok(/zzzz/.test(e1), 'the empty state names what was searched for');
+    ok(/data-model-filter-clear="openrouter"/.test(e1), 'and offers a Clear control');
+    ok(e1.replace(/<[^>]*>/g, '').trim().length > 20, 'and is a sentence, not a bare box');
+    const e2 = renderModelFilterEmpty('openrouter', F({ measuredOnly: true }));
+    ok(/not measured any model/i.test(e2),
+      'a measured-only miss explains THAT cause rather than blaming the search box');
+    ok(/data-model-filter-clear/.test(e2), 'and still offers the way back');
+    // Escaped: the query is user input rendered back at them.
+    ok(!renderModelFilterEmpty('openrouter', F({ q: '<img src=x onerror=alert(1)>' })).includes('<img src=x'),
+      'a hostile query is escaped in the empty state');
+  }
+
+  // ── 22e. THE BAR ─────────────────────────────────────────────────────
+  {
+    const bar = renderModelFilterBar('openrouter', F({ q: 'kimi' }), 4, 209);
+    ok(/type="search"/.test(bar), 'search is a real search input');
+    ok(/data-model-filter-q="openrouter"/.test(bar), 'and is provider-scoped');
+    ok(/aria-label="Search models"/.test(bar), 'and is labelled for a screen reader');
+    ok(/4 of 209/.test(bar), 'the count reports the narrowing, which is the feedback that it worked');
+    ok(/value="kimi"/.test(bar), 'the current query round-trips');
+    ok(!renderModelFilterBar('openrouter', F({}), 209, 209).includes(' of '),
+      'an unfiltered bar reports a plain total, not "209 of 209"');
+    // Exactly THREE controls. Six chips above a list is not an improvement on a
+    // long list; this assertion is what stops the bar growing into one.
+    const controls = (bar.match(/<input|<select/g) || []).length;
+    ok(controls === 3, `the bar carries exactly 3 controls (found ${controls}) — search, sort, measured`);
+    ok(!renderModelFilterBar('openrouter', F({ q: '"><img src=x>' }), 1, 2).includes('<img src=x'),
+      'a hostile query cannot break out of the input value attribute');
+  }
+
+  // ── 22f. STRUCTURAL SAFETY ───────────────────────────────────────────
+  {
+    const src = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
+    // NOT PERSISTED. A filter that survived a reload would make a user's next
+    // visit mysteriously show a subset of their models.
+    ok(!/localStorage[^\n]*modelFilter|modelFilter[^\n]*localStorage/.test(src),
+      'the filter is never written to localStorage — it is a session convenience');
+    // NOT IN A <summary>. An interactive control inside one toggles its own
+    // section on click (v3.0.1-beta.18); the structural fix is to keep controls
+    // out, never to suppress the event.
+    // Asserted on RENDERED OUTPUT, not on source. The first draft of this
+    // scanned the source with `<summary>[\s\S]*?</summary>` — which, over a
+    // file of string-concatenated markup, spans arbitrary function boundaries
+    // and reports a match that is not a real element. Worse, it went RED for
+    // the WRONG reason and in doing so surfaced a REAL defect it was not
+    // looking for: `filterHtml` was computed and never inserted into the
+    // returned markup at all. Every assertion in this section passed anyway,
+    // because they drive the pure core directly and never the real render.
+    // That is this repo's dead-data shape, found inside its own guard — so the
+    // check now drives renderModelPicker and splits its actual output.
+    // Built by the suite's OWN fixture helper, so the payload is the shape every
+    // other section drives — never a hand-shaped object that could differ.
+    const big = keysFor('openrouter', {
+      offerable: Object.assign({}, WIRE, { openrouter: CORPUS }),
+    });
+    const html = renderModelPicker(rowFor('openrouter'), big, true, false);
+    ok(html.length > 500, 'control: the picker rendered real markup for a 202-model catalogue');
+    const sumStart = html.indexOf('<summary');
+    const sumEnd = html.indexOf('</summary>');
+    ok(sumStart !== -1 && sumEnd > sumStart, 'control: the rendered picker has a <summary>');
+    const summaryHtml = html.slice(sumStart, sumEnd);
+    const bodyHtml = html.slice(sumEnd);
+    ok(/data-model-filter-q/.test(bodyHtml),
+      'the filter bar IS rendered — it reaches the returned markup, not just a local variable');
+    ok(!/data-model-filter/.test(summaryHtml),
+      'and no filter control is inside the <summary>');
+    ok(/data-model-filter-sort/.test(bodyHtml) && /data-model-filter-measured/.test(bodyHtml),
+      'all three controls reach the DOM');
+    // Below the threshold the bar is furniture and stays away.
+    const small = Object.assign({}, big, { offerable: Object.assign({}, WIRE, { openrouter: CORPUS.slice(0, 5) }) });
+    ok(!/data-model-filter-q/.test(renderModelPicker(rowFor('openrouter'), small, true, false)),
+      'a short list renders no filter bar — a control panel that out-weighs its list is the clutter it solves');
+    // NO "MOST CAPABLE" SORT. Deliberate, and the evidence is this week's:
+    // z-ai/glm-4.7 returned 0 raw and 9 unrepairable while passing every
+    // metadata filter and being FAST; minimax/minimax-m3 failed 0/9 while its
+    // own free sibling measured 8/9. Price, size, recency and vendor each
+    // predicted the OPPOSITE of what happened. A capability ranking over ~176
+    // never-probed models would be a machine-written verdict about models
+    // nobody has measured, which is the one thing this architecture refuses.
+    ok(!/capab/i.test(src.match(/const MODEL_SORTS[\s\S]{0,200}/)?.[0] || ''),
+      'MODEL_SORTS offers no capability ranking');
+    // v3.17.0 — this used to pin `length === 2` with the claim "the only sorts
+    // are the two the price data actually supports". That claim was TRUE and is
+    // now false: the record-to-spec mapper carries `createdUnixSec` and
+    // `contextLength`, so two more sorts rank a PUBLISHED fact. The assertion is
+    // updated rather than deleted, and the property it protects is unchanged —
+    // every sort must name a field some model actually carries. §23 proves the
+    // two new ones handle the models that carry neither.
+    ok(MODEL_SORTS.length === 4 && ['cheapest', 'dearest', 'newest', 'largest-context']
+      .every((v) => MODEL_SORTS.includes(v)),
+      'the sorts are exactly the four backed by a delivered field: two price, two published facts');
+    ok(Object.keys(MODEL_SORT_KEYS).every((k) => MODEL_SORTS.includes(k)),
+      'every comparator sort is a declared sort — no orphan key nothing can select');
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§23  Newest / Largest context — ranking a published fact, and REFUSING to invent one');
+// ═════════════════════════════════════════════════════════════════════════
+// Two sorts the maintainer asked for, which could not exist until the
+// record-to-spec mapper carried `created` and `context_length` onto the wire.
+// The feature is two <option>s; the DIFFICULTY is entirely the absence.
+//
+// ── WHY THE ABSENCE IS THE WHOLE TEST ──────────────────────────────────
+// `null` becomes `0` in arithmetic. A plain `b.createdUnixSec - a.createdUnixSec`
+// therefore files every model with no published date at 1970-01-01 and ranks it
+// dead last, confidently and silently. Defaulting the other way (`|| Date.now()`)
+// puts undated models FIRST in a view called "Newest". Both fabricate a value
+// and present it as a measurement — the class this repo has shipped eight
+// separate bugs from.
+//
+// ── HOW THE CORPUS IS BUILT, AND WHY IT CANNOT BE VACUOUS ──────────────
+// It must contain a STATIC entry with no date AND a FETCHED entry with one, or
+// every absence assertion below is a tautology over an empty set. So:
+//   1. FETCHED rows are minted through the SHIPPING path end to end — a
+//      synthetic OpenRouter API record -> the REAL `openRouterRecordToSpec` ->
+//      the REAL `setOpenRouterCatalogue` -> `listOfferableModels`. The
+//      `createdUnixSec` these carry is the one the shipping mapper produced,
+//      never a literal this file typed.
+//   2. STATIC rows are the REAL hand-measured table (`WIRE`), which publishes
+//      neither field and is not being changed to.
+// Both halves are counted before anything is sorted, and the counts are
+// asserted, so a corpus that lost one half fails here rather than passing
+// vacuously twenty assertions later.
+{
+  // Dates chosen far apart and in NON-delivered order, so a comparator that
+  // silently no-ops (returns the input order) cannot pass by luck.
+  const DAY = 86400;
+  const REC_2024 = 1735689600 - 365 * DAY; // ~2024-01-02
+  const REC_2026 = 1767225600;             // 2026-01-01
+  const REC_2025 = 1735689600;             // 2025-01-01
+  const rec = (id, created, ctx, maxOut) => ({
+    id, name: 'ZZ ' + id, created,
+    pricing: { prompt: '0.0000005', completion: '0.000002' },
+    top_provider: { max_completion_tokens: maxOut, context_length: ctx },
+    supported_parameters: ['response_format', 'structured_outputs'],
+  });
+  // ctx and maxOut deliberately DIFFERENT per row, and ordered so that ranking
+  // by maxOutput gives a DIFFERENT answer than ranking by contextLength — which
+  // is what makes the substitution mutation detectable rather than a coin flip.
+  const RECORDS = [
+    rec('zzsort/old-huge:x', REC_2024, 1000000, 8192),
+    rec('zzsort/new-small:x', REC_2026, 32768, 100000),
+    rec('zzsort/mid-medium:x', REC_2025, 200000, 16384),
+  ];
+  const mintedAll = RECORDS.map((r) => openRouterRecordToSpec(r));
+  ok(mintedAll.every((r) => r.ok === true),
+    'corpus: the SHIPPING record-to-spec function admitted all three fixtures (' +
+      mintedAll.map((r) => (r.ok ? 'ok' : r.reason)).join(', ') + ')');
+
+  // ── 23a. THE MAPPER CARRIES BOTH FACTS, AND OMITS WHAT IS UNPUBLISHED ──
+  {
+    const spec = mintedAll[1].spec;
+    ok(spec.createdUnixSec === REC_2026,
+      'the mapper carries `created` through VERBATIM as epoch seconds — the fact the sort ranks on');
+    ok(spec.contextLength === 32768,
+      'and carries the context window through as `contextLength`');
+    ok(spec.contextLength !== spec.maxOutput,
+      'context and output ceiling are DIFFERENT numbers on the same spec — they are two facts, not one');
+    // The conservative field, matching openrouter-eligibility.js's default.
+    // The headline `context_length` is the MAXIMUM ACROSS PROVIDERS; ranking on
+    // it would sort by a figure the eligibility filter already declined to trust.
+    const straddle = openRouterRecordToSpec(Object.assign(
+      rec('zzsort/straddle:x', REC_2025, 32768, 8192), { context_length: 1024000 }));
+    ok(straddle.ok && straddle.spec.contextLength === 32768,
+      'when the headline and top_provider context fields DISAGREE (39 of 387 live records), the CONSERVATIVE one wins');
+    ok(straddle.ok && straddle.spec.contextLength !== 1024000,
+      'and the optimistic headline figure never reaches the wire');
+    // ABSENT MEANS THE KEY IS NOT THERE — not null, not 0.
+    const bare = openRouterRecordToSpec({
+      id: 'zzsort/bare:x', name: 'Bare',
+      pricing: { prompt: '0.0000005', completion: '0.000002' },
+      top_provider: { max_completion_tokens: 8192 },
+    });
+    ok(bare.ok === true, 'a record publishing NEITHER fact is still admissible — these are sort keys, not admission rules');
+    ok(!Object.hasOwn(bare.spec, 'createdUnixSec'),
+      'and the mapper OMITS the key entirely rather than writing null or 0');
+    ok(!Object.hasOwn(bare.spec, 'contextLength'),
+      'same for the context window — absent is absent');
+    // And it does NOT fall back to the optimistic headline field when the
+    // conservative one is missing (6 of 387 live records are exactly this shape).
+    const headlineOnly = openRouterRecordToSpec(Object.assign(
+      { id: 'zzsort/headline-only:x', name: 'H',
+        pricing: { prompt: '0.0000005', completion: '0.000002' },
+        top_provider: { max_completion_tokens: 8192 } },
+      { context_length: 512000 }));
+    ok(headlineOnly.ok && !Object.hasOwn(headlineOnly.spec, 'contextLength'),
+      'a record with ONLY the headline context field carries NO context size — unrecognised never resolves to optimistic');
+    // A zero is what OpenRouter publishes for "unknown". It is not a size and
+    // not a date, and must not survive as one.
+    const zeroed = openRouterRecordToSpec(rec('zzsort/zero:x', 0, 0, 8192));
+    ok(zeroed.ok && !Object.hasOwn(zeroed.spec, 'createdUnixSec') && !Object.hasOwn(zeroed.spec, 'contextLength'),
+      'a published ZERO is treated as unknown, not as 1970-01-01 and not as a zero-token window');
+  }
+
+  // ── 23b. THE FACTORY ACCEPTS THEM OPTIONALLY AND ADDITIVELY ────────────
+  // OFFERABLE_MODELS' shape is a declared public contract and
+  // defineOfferableModel THROWS AT MODULE LOAD, so a required field would make
+  // every hand-typed entry unbuildable and the app would not boot.
+  {
+    const statics = (OFFERABLE_MODELS.gemini || []).concat(
+      OFFERABLE_MODELS.anthropic || [], OFFERABLE_MODELS.openrouter || []);
+    ok(statics.length >= 19, `control: ${statics.length} hand-measured entries built — the module loaded`);
+    ok(statics.every((e) => Object.hasOwn(e, 'createdUnixSec') && e.createdUnixSec === null),
+      'EVERY hand-typed entry carries `createdUnixSec: null` — the field is additive and absent means unpublished');
+    ok(statics.every((e) => Object.hasOwn(e, 'contextLength') && e.contextLength === null),
+      'and `contextLength: null` — a table of measurements is not a release calendar or a spec sheet');
+    ok(statics.every((e) => e.createdUnixSec !== 0 && e.contextLength !== 0),
+      'and NEITHER is 0 — a zero would rank as a real, terrible value rather than as unknown');
+    // The units tripwire. A milliseconds value and a zero are both fabricated
+    // dates that render as real ones, so they fail to BUILD.
+    const admitted = setOpenRouterCatalogue([
+      { id: 'zzunit/ms:free', label: 'MS', maxOutput: 8192, free: true, thinks: false,
+        tokenizerFactor: 1, suitability: 'chat-only', note: 'n', createdUnixSec: 1786680361000 },
+      { id: 'zzunit/zero:free', label: 'Z', maxOutput: 8192, free: true, thinks: false,
+        tokenizerFactor: 1, suitability: 'chat-only', note: 'n', createdUnixSec: 0 },
+      { id: 'zzunit/neg:free', label: 'N', maxOutput: 8192, free: true, thinks: false,
+        tokenizerFactor: 1, suitability: 'chat-only', note: 'n', contextLength: -1 },
+      { id: 'zzunit/good:free', label: 'G', maxOutput: 8192, free: true, thinks: false,
+        tokenizerFactor: 1, suitability: 'chat-only', note: 'n',
+        createdUnixSec: REC_2025, contextLength: 65536 },
+    ]);
+    ok(admitted.refused === 3,
+      `a milliseconds date, a 0 date and a negative context are each REFUSED at build time (refused=${admitted.refused})`);
+    ok(admitted.admitted === 1, 'control: the well-formed entry in the same batch IS admitted — the refusal is per-entry, not a dead batch');
+    const good = listOfferableModels('openrouter').find((e) => e.id === 'zzunit/good:free');
+    ok(!!good && good.createdUnixSec === REC_2025 && good.contextLength === 65536,
+      'and a plausible seconds value round-trips through the real admission path unchanged');
+    setOpenRouterCatalogue([]);
+  }
+
+  // ── 23c. THE CORPUS — both halves, counted before anything is sorted ────
+  const admittedN = setOpenRouterCatalogue(mintedAll.map((r) => r.spec));
+  ok(admittedN.admitted === 3, 'corpus: all three fetched specs admitted through the REAL runtime path');
+  const fetched = listOfferableModels('openrouter').filter((e) => e.id.startsWith('zzsort/'));
+  const staticRows = (WIRE.openrouter || []).concat(WIRE.gemini || []);
+  const CORPUS = staticRows.concat(fetched);
+  ok(fetched.length === 3 && fetched.every((e) => Number.isFinite(e.createdUnixSec) && Number.isFinite(e.contextLength)),
+    `corpus: ${fetched.length} FETCHED rows, every one carrying BOTH facts`);
+  ok(staticRows.length >= 12 && staticRows.every((e) => e.createdUnixSec === null && e.contextLength === null),
+    `corpus: ${staticRows.length} STATIC rows, every one carrying NEITHER — the absence assertions below are non-vacuous BY CONSTRUCTION`);
+  // Delivered order puts the undated static rows FIRST, which is the arrangement
+  // a no-op comparator would preserve and pass on.
+  ok(!!CORPUS[0] && CORPUS[0].createdUnixSec === null
+    && !!CORPUS[CORPUS.length - 1] && CORPUS[CORPUS.length - 1].createdUnixSec !== null,
+    'control: delivered order leads with an UNDATED row, so a comparator that does nothing cannot pass by luck');
+
+  // ── 23d. ORDERING — ranked by the fact, unranked never invented ─────────
+  {
+    const newest = orderModels(CORPUS, 'newest');
+    ok(newest.length === CORPUS.length, 'sorting never drops a model — a sort is not a filter');
+    ok(new Set(newest.map((m) => m.id)).size === new Set(CORPUS.map((m) => m.id)).size,
+      'and never duplicates one');
+    const dated = newest.filter((m) => m.createdUnixSec !== null);
+    const undated = newest.filter((m) => m.createdUnixSec === null);
+    // ── NEVER DEREFERENCE A ROW THAT MAY NOT EXIST ────────────────────
+    // FOUND BY MUTATION, not by reading: dropping `createdUnixSec` from the
+    // mapper empties `dated`, and a bare `dated[0].id` then threw a TypeError
+    // that KILLED THE RUN — four honest REDs printed, and every assertion after
+    // them silently never ran. A crash proves nothing; it is the v3.15.0
+    // "assertion crashed and hid every assertion after it" shape. `idAt` turns
+    // the same mutation into a named behavioural failure.
+    const idAt = (arr, i) => (Array.isArray(arr) && arr[i] && typeof arr[i].id === 'string') ? arr[i].id : '(no such row)';
+    ok(dated.length === 3 && undated.length === staticRows.length, 'control: the split is the one the corpus was built for');
+    ok(newest.slice(0, dated.length).every((m) => m.createdUnixSec !== null),
+      'every DATED model comes first');
+    ok(dated.every((m, i) => i === 0 || dated[i - 1].createdUnixSec >= m.createdUnixSec),
+      'and they are ordered newest-first by the published date');
+    ok(idAt(dated, 0) === 'zzsort/new-small:x' && idAt(dated, dated.length - 1) === 'zzsort/old-huge:x',
+      'the 2026 model leads and the 2024 model trails — the ranking is real, not the delivered order');
+    // THE TWO MUTATIONS THIS SECTION EXISTS FOR.
+    ok(newest.slice(-undated.length).every((m) => m.createdUnixSec === null),
+      'and every UNDATED model trails — it is NOT ranked at 1970-01-01 among the dated ones (epoch-0 mutation)');
+    ok(!undated.some((m, i) => newest.indexOf(m) < newest.indexOf(dated[dated.length - 1])),
+      'and NOT ranked as "now", which would put the undated models at the TOP of a view called Newest');
+    ok(undated.every((m, i) => m === staticRows[i]),
+      'the unranked block keeps its DELIVERED cheapest-first order — no second opinion is invented for it either');
+
+    const largest = orderModels(CORPUS, 'largest-context');
+    const sized = largest.filter((m) => m.contextLength !== null);
+    ok(sized.every((m, i) => i === 0 || sized[i - 1].contextLength >= m.contextLength),
+      'largest-context ranks by the published context window, descending');
+    ok(idAt(sized, 0) === 'zzsort/old-huge:x',
+      'the 1,000,000-token model leads');
+    // THE SUBSTITUTION MUTATION. maxOutput is present on EVERY row, so using it
+    // would make the unranked block vanish and the ranking look complete.
+    ok(idAt(sized, 0) !== idAt(largest.slice().sort((a, b) => (b.maxOutput || 0) - (a.maxOutput || 0)), 0),
+      'and it is NOT the model with the largest maxOutput — the OUTPUT ceiling is a different fact and is never substituted');
+    ok(largest.slice(-staticRows.length).every((m) => m.contextLength === null),
+      'every model with no published context window trails, unranked — never ranked at 0 and never at its output ceiling');
+    ok(largest.filter((m) => m.contextLength === null).length === staticRows.length,
+      'control: the unranked block is NON-EMPTY, so the assertion above is not vacuous');
+
+    // Ordering is non-destructive and never throws on hostile input.
+    ok(CORPUS[0] === staticRows[0], 'ordering leaves the input array untouched');
+    ok(orderModels(CORPUS, '__proto__').every((m, i) => m === CORPUS[i]),
+      'a prototype key is not a sort — it falls back to delivered order rather than resolving through the chain');
+    ok(orderModels(null, 'newest').length === 0, 'a missing list is empty, never a throw');
+    ok(orderModels([{ id: 'a' }, null], 'newest').length === 2, 'a null row is unranked, not a crash');
+    ok(modelSortKey({ createdUnixSec: 0 }, 'newest') === null,
+      'modelSortKey: a 0 is UNKNOWN, never a usable key');
+    ok(modelSortKey({ createdUnixSec: REC_2025 }, 'largest-context') === null,
+      'and one sort never reads the other sort’s field');
+    ok(countUnrankedForSort(CORPUS, 'newest') === staticRows.length,
+      'countUnrankedForSort reports exactly the rows the sort could not rank');
+    ok(countUnrankedForSort(CORPUS, 'cheapest') === 0,
+      'and reports 0 for a price sort, which ranks everything');
+    // ── ONE PREDICATE, TWO CONSUMERS ──────────────────────────────────
+    // This is the partition's provable contract. The bar says "N with no
+    // release date" and the order puts N rows at the end; if those two numbers
+    // came from different predicates the screen could describe a block that is
+    // not the block it is pointing at. Asserted as an identity rather than as
+    // two equal integers, so a count that is right by coincidence still fails.
+    for (const srt of ['newest', 'largest-context']) {
+      const out = orderModels(CORPUS, srt);
+      const n = countUnrankedForSort(CORPUS, srt);
+      ok(n > 0, `control: ${srt} has a NON-EMPTY unranked block (${n}) — the identity below is not vacuous`);
+      ok(out.slice(out.length - n).every((m) => modelSortKey(m, srt) === null),
+        `${srt}: the trailing block the bar counts is EXACTLY the set the sort could not rank`);
+      ok(out.slice(0, out.length - n).every((m) => modelSortKey(m, srt) !== null),
+        `${srt}: and nothing ranked is counted as unranked`);
+    }
+    // ── NOT INDEPENDENTLY MUTATION-PROVABLE, AND SAID SO ──────────────
+    // Replacing the partition with a naive `(b[f] || 0) - (a[f] || 0)` leaves
+    // this suite at 1535/0. It is not a missed assertion: the two forms emit a
+    // byte-identical order, because no legal key can be <= 0. The property the
+    // partition really carries is the identity asserted just above (one
+    // predicate behind both the order and the count), plus the fact that the
+    // naive form is one character from `|| Date.now()` — which IS caught, by
+    // the nine assertions the "absent -> now" mutation reds. Recorded here so
+    // nobody reads the green as proof the line is load-bearing.
+    ok(true, 'NOTE: the partition-vs-naive-comparator ORDER is not independently provable — see the comment above');
+  }
+
+  // ── 23e. THE BAR — two options, three controls, an honest count ─────────
+  {
+    const F = (over) => Object.assign({ q: '', sort: 'cheapest', measuredOnly: false }, over);
+    const bar = renderModelFilterBar('openrouter', F({ sort: 'newest' }), 20, 20, 12);
+    ok(/value="newest"/.test(bar) && /value="largest-context"/.test(bar),
+      'both new sorts are offered');
+    ok(/Newest first/.test(bar) && /Largest context first/.test(bar),
+      'and are labelled in the language a person uses, not the field name');
+    ok(/value="newest"[^>]*selected/.test(bar), 'the current sort round-trips as selected');
+    // RESTRAINT: two <option>s inside the <select> that already exists. The
+    // maintainer's directive was "not too many information"; this is the
+    // structural expression of it.
+    const controls = (bar.match(/<input|<select/g) || []).length;
+    ok(controls === 3, `the bar still carries exactly 3 controls (found ${controls}) — no new chip, column or badge`);
+    // The absence is STATED, on the count line that already exists.
+    ok(/12 with no release date/.test(bar),
+      'the count states how many rows the sort could not rank, and why');
+    ok(/20 models/.test(bar), 'alongside the ordinary total — it is a clause, not a replacement');
+    const barCtx = renderModelFilterBar('openrouter', F({ sort: 'largest-context' }), 20, 20, 12);
+    ok(/12 with no context size/.test(barCtx), 'and names the RIGHT missing fact for the other sort');
+    ok(!/with no release date/.test(barCtx), 'never the other one');
+    // Nothing to report ⇒ nothing said.
+    ok(!/with no/.test(renderModelFilterBar('openrouter', F({ sort: 'newest' }), 20, 20, 0)),
+      'a sort that ranked everything says nothing — the clause appears only when there is an absence');
+    ok(!/with no/.test(renderModelFilterBar('openrouter', F({ sort: 'cheapest' }), 20, 20, 12)),
+      'and a PRICE sort never claims an unranked block, whatever it is handed');
+    ok(!/undefined|NaN|null/.test(renderModelFilterBar('openrouter', F({ sort: 'newest' }), 20, 20, undefined)),
+      'a missing count degrades to silence, never to "undefined models"');
+  }
+
+  // ── 23f. THE REAL RENDER — the rows actually MOVE in the DOM ───────────
+  // Driven through renderModelPicker, not through orderModels by hand. The
+  // v3.16.0 finding this guards against: `filterHtml` was computed and never
+  // inserted, and every assertion passed because they drove the pure core.
+  {
+    const keys = keysFor('openrouter', {
+      offerable: Object.assign({}, WIRE, { openrouter: CORPUS }),
+    });
+    // `data-model-id` is on every rendered ROW; `data-pick-model` is only on the
+    // pick BUTTON, which the pinned row does not have (it renders a
+    // non-actionable "Selected"). Reading the button would silently sample a
+    // SUBSET of the list and could report an unchanged order for a list that
+    // moved — measured: 11 buttons for 15 rows.
+    const idsInOrder = (html) => (html.match(/data-model-id="([^"]+)"/g) || [])
+      .map((m) => m.slice('data-model-id="'.length, -1));
+
+    stubState.modelFilter = { openrouter: { q: '', sort: 'cheapest', measuredOnly: false } };
+    const cheapHtml = renderModelPicker(rowFor('openrouter'), keys, true, false);
+    const cheapIds = idsInOrder(cheapHtml);
+    ok(cheapIds.length === CORPUS.length,
+      `control: the real render emitted one row per model (${cheapIds.length} of ${CORPUS.length}) — nothing is dropped before the sort is even applied`);
+
+    stubState.modelFilter = { openrouter: { q: '', sort: 'newest', measuredOnly: false } };
+    const newHtml = renderModelPicker(rowFor('openrouter'), keys, true, false);
+    const newIds = idsInOrder(newHtml);
+    ok(newIds.length === cheapIds.length, 'switching the sort changes the ORDER and not the membership');
+    ok(newIds.join() !== cheapIds.join(),
+      'and the rendered order genuinely CHANGED — the sort reaches the DOM, it is not a local variable');
+    // Within the chat lane (where every fetched row lives) the 2026 model must
+    // precede the 2024 one. Asserted on rendered positions, not on an array.
+    ok(newHtml.indexOf('zzsort/new-small:x') < newHtml.indexOf('zzsort/old-huge:x'),
+      'in the RENDERED markup the 2026 model appears above the 2024 one');
+    ok(cheapHtml.indexOf('zzsort/new-small:x') > cheapHtml.indexOf('zzsort/old-huge:x'),
+      'control: in the cheapest view it is the other way round, so the assertion above is measuring the sort');
+    ok(newHtml.includes('with no release date'),
+      'and the rendered picker STATES the unranked count — the honesty reaches the screen, not just the helper');
+    ok(/value="newest"[^>]*selected/.test(newHtml), 'with the sort control showing the active choice');
+
+    stubState.modelFilter = { openrouter: { q: '', sort: 'largest-context', measuredOnly: false } };
+    const ctxHtml = renderModelPicker(rowFor('openrouter'), keys, true, false);
+    ok(ctxHtml.indexOf('zzsort/old-huge:x') < ctxHtml.indexOf('zzsort/new-small:x'),
+      'largest-context renders the 1,000,000-token model above the 32,768-token one');
+    ok(ctxHtml.includes('with no context size'), 'and names the right absence');
+    // A model that cannot be ranked is still REACHABLE — a sort must never hide
+    // a model, which would read as a broken picker.
+    const undatedId = (staticRows[0] && staticRows[0].id) || '(none)';
+    ok(newHtml.includes(undatedId) && ctxHtml.includes(undatedId),
+      'an unranked model is still RENDERED in both views — grouped, never excluded');
+    stubState.modelFilter = null;
+    setOpenRouterCatalogue([]);
+  }
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

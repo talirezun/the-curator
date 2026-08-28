@@ -785,6 +785,43 @@ export function openRouterRecordToSpec(record) {
     ? record.top_provider.max_completion_tokens : null;
   if (!Number.isFinite(cap) || cap <= 0) return no('no published output ceiling (top_provider.max_completion_tokens)');
 
+  // ── TWO PUBLISHED FACTS, CARRIED FOR SORTING ONLY ─────────────────────────
+  // Neither is an admissibility rule and NEITHER MAY REFUSE A RECORD. They are
+  // sort keys: a model whose release date the provider does not publish is a
+  // model we cannot rank by date, not a model we cannot offer.
+  //
+  // `created` IS EPOCH SECONDS, and the field is named for its unit. Measured on
+  // the live catalogue: 387 of 387 records publish a finite value, spanning
+  // 2023-05-28 to 2026-08-28. The failure this field invites is a seconds value
+  // read as milliseconds — which renders as the year 55000 — or a zero, which
+  // renders as 1970-01-01 and sorts as the oldest thing we have. Both are
+  // fabricated dates that look exactly like real ones, so the unit is in the
+  // name and the range is checked again in `defineOfferableModel`.
+  //
+  // CONTEXT COMES FROM `top_provider.context_length`, THE CONSERVATIVE FIELD,
+  // AND NEVER FROM THE HEADLINE `context_length`. That is the same field
+  // `openrouter-eligibility.js` gates admission on (its DEFAULT `contextField`),
+  // and the two disagree on 39 of 387 live records — the headline figure is the
+  // MAXIMUM ACROSS PROVIDERS, so ranking on it would sort models by an
+  // optimistic number the eligibility filter had already declined to trust.
+  // Two opinions about one figure, on precisely the axis that module wrote sixty
+  // lines to warn about.
+  //
+  // AND IT DOES NOT FALL BACK TO THE HEADLINE WHEN THE CONSERVATIVE FIELD IS
+  // ABSENT. 6 live records publish `context_length` with no
+  // `top_provider.context_length`; a fallback would rank those six as though we
+  // knew their size. All six already fail the eligibility filter's
+  // CONTEXT_UNKNOWN rule and never reach this function — verified by running the
+  // real `buildOpenRouterCatalogue` over the live catalogue, where 0 of the 191
+  // admitted specs lacked either field — so the fallback would buy nothing and
+  // spend the one guarantee this field has. Unrecognised never resolves to
+  // optimistic, which is that module's own rule.
+  const createdRaw = record.created;
+  const created = Number.isFinite(createdRaw) && createdRaw > 0 ? createdRaw : null;
+  const ctxRaw = record.top_provider && typeof record.top_provider === 'object'
+    ? record.top_provider.context_length : null;
+  const contextLength = Number.isFinite(ctxRaw) && ctxRaw > 0 ? ctxRaw : null;
+
   // Tiered detection: PRESENCE only. See the shape note above.
   const ov = pricing.overrides;
   const tiered = Array.isArray(ov) ? ov.length > 0 : (!!ov && typeof ov === 'object' && Object.keys(ov).length > 0);
@@ -815,6 +852,12 @@ export function openRouterRecordToSpec(record) {
       // rather than letting 1.0 imply a probe that never happened.
       tokenizerFactor: 1,
       maxOutput: cap,
+      // ABSENT MEANS ABSENT. The key is OMITTED rather than set to null or 0, so
+      // a record that published nothing produces a spec that carries nothing —
+      // and `defineOfferableModel` records `null` (unknown) rather than a figure
+      // nobody published. `created` is seconds; see the block above.
+      ...(created !== null ? { createdUnixSec: created } : {}),
+      ...(contextLength !== null ? { contextLength } : {}),
       ...(free ? { free: true } : { price }),
       ...(tiered ? { tiered: true } : {}),
       // ⚠ The `free` clause used to read "a request cap applies and rises once

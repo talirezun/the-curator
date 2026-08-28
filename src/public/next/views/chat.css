@@ -327,6 +327,19 @@
   color: var(--text-3);
   font: var(--type-body-sm);
 }
+/* The elapsed clock (v3.0.17's ingest pattern, second home). Tabular figures so
+   a ticking second does not shift the text beside it every tick. */
+#chat-think-elapsed { font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+/* What we measured for the model in flight, once elapsed passes the bound.
+   Deliberately NOT amber and NOT animated: nothing has gone wrong, and styling
+   a fact as a warning is how a user learns to distrust the whole surface. Same
+   recessed treatment as the composer's other measured detail. */
+.chat-thinking-slow {
+  margin-top: 4px;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  color: var(--text-3);
+}
 
 .chat-spinner {
   width: 13px; height: 13px;
@@ -515,14 +528,33 @@
 }
 .chat-mm-price { font-size: 11px; color: var(--text-2); }
 .chat-mm-rise { font-size: 10px; color: var(--attention-text); }
-/* The measured reason, VERBATIM from the server catalogue — deliberately
-   wrapped in full rather than clamped. */
+/* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
+   model's whole measured `note`, which is now shown in full behind Settings'
+   per-model expand. Class name kept so the composer and its suite do not churn
+   on a rename in a change whose whole point is that the ROW got shorter.
+
+   STILL WRAPPED IN FULL, NEVER CLAMPED, and that is load-bearing: the first
+   clause of this line is `cautionReason`, the reason for a warning badge on the
+   same row. A `-webkit-line-clamp` here would hide the tail of a warning behind
+   an ellipsis on a narrow composer, which is the same defect as folding it. The
+   line is short by construction now, so there is nothing to gain by truncating
+   it and a warning to lose. */
 .chat-mm-note {
   font-size: 10.5px;
   line-height: var(--leading-snug);
   color: var(--text-3);
   white-space: normal;
   text-wrap: pretty;
+}
+/* One line for the whole menu, saying where the full measurements went. Not a
+   row: it carries no `data-model-id`, so the option handler cannot reach it. */
+.chat-mm-foot {
+  padding: 6px 9px 2px;
+  font-size: 10px;
+  line-height: var(--leading-snug);
+  color: var(--text-3);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
 }
 
 /* ── SHARED MARKDOWN RENDERER — reader body content ───────────────────

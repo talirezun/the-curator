@@ -2209,6 +2209,258 @@ section('16. Source guards — model override threaded, validated only at the ch
     'the /next composer model picker is enabled now that the backend honours a model');
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════
+section('19. Promoted measurements — the fields both pickers summarise from');
+// ═════════════════════════════════════════════════════════════════════════
+// Outline coverage and latency were measured and then recorded ONLY inside
+// `note`, as English. Both pickers now build a one-line summary from them, and
+// the alternative — regexing a number back out of a paragraph — fails silently
+// the day someone rewords a sentence, and fails by producing a NUMBER rather
+// than an error. So they are fields, and this section is what keeps the fields
+// honest.
+{
+  const ALL = [];
+  for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
+  ok(ALL.length >= 19, `corpus: ${ALL.length} static offerable entries`);
+
+  // ── 19a. THE FIELD AND THE NOTE BENEATH IT CANNOT DISAGREE ────────────
+  // The strongest guard available, and it is mechanical rather than a promise:
+  // every page range is transcribed from the entry's OWN note, so the note must
+  // still contain it. A future edit that "corrects" a field from a fresher
+  // measurement session without touching the prose goes RED naming the model —
+  // which is exactly the drift that made a computed cross-model comparison
+  // unsafe (upstage/solar-pro4 reads "median 23" in its note and measured 25 in
+  // the second session).
+  let rangeChecked = 0;
+  for (const { e } of ALL) {
+    if (e.outlinePagesLow === null) continue;
+    const lo = e.outlinePagesLow, hi = e.outlinePagesHigh;
+    // Both separators the notes actually use: "5-13" and "5 to 13". A
+    // single-value range ("a steady 17-page outline") is matched as itself.
+    const re = lo === hi
+      ? new RegExp('\\b' + lo + '(?:-|\\s)page')
+      : new RegExp('\\b' + lo + '\\s*(?:-|–|to)\\s*' + hi + '\\b');
+    ok(re.test(e.note), `${e.id}: the ${lo}-${hi} page range in the FIELD also appears in its own note`);
+    rangeChecked++;
+  }
+  ok(rangeChecked >= 18, `corpus: ${rangeChecked} entries carry a page range — 19a is not vacuous`);
+
+  let medianChecked = 0;
+  for (const { e } of ALL) {
+    if (e.outlinePagesMedian === null) continue;
+    ok(new RegExp('median\\s+' + e.outlinePagesMedian + '\\b', 'i').test(e.note),
+      `${e.id}: the median in the FIELD (${e.outlinePagesMedian}) also appears in its own note`);
+    ok(e.outlinePagesLow === null ||
+       (e.outlinePagesMedian >= e.outlinePagesLow && e.outlinePagesMedian <= e.outlinePagesHigh),
+      `${e.id}: the median lies inside its own measured range`);
+    medianChecked++;
+  }
+  ok(medianChecked >= 5, `corpus: ${medianChecked} entries carry a median — the median assertions are not vacuous`);
+
+  // NOT ENFORCED, and said plainly rather than implied away: there is no
+  // equivalent note-anchor for latency. Two of the three figures were recorded
+  // outside the entry's own note (one in a SIBLING entry's note, one only in
+  // the probe records), so a blanket assertion would fail on correct data. What
+  // IS pinned is the one case where the note states a median itself.
+  for (const { e } of ALL) {
+    const m = /median\s+(\d+)s\b/.exec(e.note || '');
+    if (!m || e.medianLatencyMs === null) continue;
+    ok(Math.round(e.medianLatencyMs / 1000) === Number(m[1]),
+      `${e.id}: the latency FIELD (${e.medianLatencyMs}ms) matches the "median ${m[1]}s" its own note states`);
+  }
+
+  // ── 19b. ABSENT IS NOT ZERO ───────────────────────────────────────────
+  // The single most load-bearing property. Gemini and Anthropic recorded no
+  // latency at all, and one model recorded no page count — those must be null,
+  // never 0, because 0 is a truthy-looking measurement that renders.
+  const noPages = ALL.filter(({ e }) => e.outlinePagesLow === null);
+  const noLatency = ALL.filter(({ e }) => e.medianLatencyMs === null);
+  ok(noPages.length >= 1, `corpus: ${noPages.length} entry with NO page measurement — the absent-case assertions can fire`);
+  ok(noLatency.length >= 14, `corpus: ${noLatency.length} entries with NO latency — the common case is represented`);
+  for (const { e } of ALL) {
+    for (const f of ['outlinePagesLow', 'outlinePagesHigh', 'outlinePagesMedian', 'medianLatencyMs']) {
+      ok(e[f] === null || (Number.isFinite(e[f]) && e[f] > 0),
+        `${e.id}.${f} is either null (unmeasured) or a positive number — never 0`);
+    }
+    ok((e.outlinePagesLow === null) === (e.outlinePagesHigh === null),
+      `${e.id}: page range is both-or-neither`);
+  }
+
+  // ── 19c. A FLAG WITHOUT A REASON CANNOT EXIST ─────────────────────────
+  // Both pickers fold the note behind a disclosure, so a badge whose reason
+  // lives only in that note states a verdict the user must open something to
+  // understand. llm.js refuses to BUILD such an entry; this asserts the result
+  // over the real table and, below, that the refusal is real.
+  const flagged = ALL.filter(({ e }) => e.suitability === 'caution' || e.dominated === true);
+  ok(flagged.length >= 8, `corpus: ${flagged.length} flagged entries`);
+  for (const { e } of flagged) {
+    ok(typeof e.cautionReason === 'string' && e.cautionReason.trim().length > 0,
+      `${e.id}: FLAGGED -> carries a cautionReason`);
+    ok(e.cautionReason.length <= 120, `${e.id}: cautionReason is one line, ${e.cautionReason.length} <= 120 chars`);
+    ok(!/[\r\n]/.test(e.cautionReason), `${e.id}: cautionReason is single-line`);
+    // ANTI-TRUNCATION. The reason is the HEADLINE of the note, not its opening
+    // sentence clipped — a measured claim cut mid-thought can invert its
+    // meaning, which is the whole reason the note is moved rather than
+    // shortened.
+    ok(!e.note.startsWith(e.cautionReason.slice(0, 40)),
+      `${e.id}: cautionReason is not the note's first 40 chars copied — it is a headline, not a truncation`);
+  }
+  const unflagged = ALL.filter(({ e }) => !(e.suitability === 'caution' || e.dominated === true));
+  ok(unflagged.length >= 5, `corpus: ${unflagged.length} UNFLAGGED entries — the flag discriminates`);
+
+  // ── 19d. THE FACTORY REFUSES, at module load, not in a test ───────────
+  // ALREADY on llm.js's __testing surface — exposed for exactly this purpose
+  // ("assert the factory REFUSES it"). No new production surface is added.
+  const define = llmTesting.defineOfferableModel;
+  const build = (over) => define('openrouter', {
+    id: 'test/probe', label: 'Probe', maxOutput: 8192, price: { input: 1, output: 2 },
+    thinks: false, tokenizerFactor: 1.0, suitability: 'chat-only', note: 'A note.',
+    ...over,
+  });
+  const throws = (over, why) => {
+    let msg = null;
+    try { build(over); } catch (err) { msg = err.message; }
+    ok(msg !== null, why + ' — REFUSED at build time' + (msg === null ? ' (IT WAS ACCEPTED)' : ''));
+    return msg;
+  };
+  ok(build({}) !== null, 'control: a well-formed chat-only spec DOES build — the refusals below are not "everything throws"');
+  throws({ suitability: 'caution', jsonRaw: true }, 'a `caution` entry with no cautionReason');
+  throws({ outlinePagesLow: 0, outlinePagesHigh: 9 }, 'outlinePagesLow of 0 — absent is null, never zero');
+  throws({ outlinePagesLow: 5 }, 'half a page range');
+  throws({ outlinePagesLow: 9, outlinePagesHigh: 5 }, 'an inverted page range');
+  throws({ medianLatencyMs: 0 }, 'a latency of 0 — that would claim an instant response');
+  throws({ cautionReason: 'x'.repeat(121) }, 'a cautionReason over the one-line cap');
+  throws({ cautionReason: 'two\nlines' }, 'a multi-line cautionReason');
+  // And the exemption is real: a DYNAMIC entry cannot be caution (the overlay
+  // forces chat-only) and must not be forced to invent a reason it never
+  // measured.
+  {
+    let ok1 = true;
+    try { define('openrouter', { id: 'v/dyn', label: 'D', maxOutput: 4096, price: { input: 1, output: 2 },
+      thinks: false, tokenizerFactor: 1.0, suitability: 'chat-only', note: 'Chat only.' }, { dynamic: true }); }
+    catch { ok1 = false; }
+    ok(ok1, 'a fetched chat-only entry builds with NO cautionReason — the catalogue is never asked to invent a caveat');
+  }
+
+  // ── 19e. THE LATENCY MAP REACHES THE RUNTIME CATALOGUE ────────────────
+  // The live report: `deepseek/deepseek-v4-flash-0731` was measured at 382s,
+  // REFUSED for the build lane, and is still freely pickable for chat. Its
+  // measurement has to survive the refusal or the picker says nothing about the
+  // slowest model we have ever run.
+  {
+    const spec = (id) => ({ id, label: id, maxOutput: 65536, price: { input: 0.2, output: 0.8 },
+      thinks: false, tokenizerFactor: 1.0, suitability: 'chat-only',
+      note: 'Chat only — never measured against The Curator\'s ingest prompt.' });
+    const res = setOpenRouterCatalogue([
+      spec('deepseek/deepseek-v4-flash-0731'), spec('vendor/never-probed'),
+      spec('z-ai/glm-4.7'), spec('__proto__'),
+    ]);
+    ok(res.admitted === 4, `all four probe entries admitted (${res.admitted})`);
+    const byId = new Map(listOfferableModels('openrouter').map(e => [e.id, e]));
+    ok(byId.get('deepseek/deepseek-v4-flash-0731').medianLatencyMs === 382000,
+      'a MEASURED-then-REFUSED model carries its latency into the runtime catalogue');
+    ok(byId.get('vendor/never-probed').medianLatencyMs === null,
+      'a model nobody probed carries null — not 0, not an average of its neighbours');
+    // z-ai/glm-4.7 returned in a median of 34s and produced unrepairable JSON in
+    // 9 of 9 runs. Publishing 34s would advertise a fast FAILURE as a fast
+    // model, so it is deliberately absent from the map.
+    ok(byId.get('z-ai/glm-4.7').medianLatencyMs === null,
+      'a model with NO usable run has no latency — a fast failure is not a fast model');
+    ok(byId.get('__proto__').medianLatencyMs === null,
+      'a prototype key resolves to null, not to the prototype object (Object.hasOwn, not a bare index)');
+    setOpenRouterCatalogue([]);
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('20. Two PUBLISHED facts — optional, additive, and never derived');
+// ═════════════════════════════════════════════════════════════════════════
+// `createdUnixSec` and `contextLength` exist so a picker can offer "Newest" and
+// "Largest context". They are provider-PUBLISHED, not Curator-MEASURED, which
+// is why they are optional: the hand-typed table records what we measured, and
+// a table of measurements is not a release calendar.
+//
+// THE CONTRACT THIS SECTION PROTECTS. `defineOfferableModel` THROWS AT MODULE
+// LOAD, and `OFFERABLE_MODELS`'s shape is declared public (src/routes/config.js
+// serialises it verbatim). So a field added here must be additive: if either of
+// these were required, all 19 hand-typed entries would fail to build, the module
+// would refuse to load, and the app would not boot.
+{
+  const ALL = [];
+  for (const [prov, list] of Object.entries(OFFERABLE_MODELS)) for (const e of list) ALL.push({ prov, e });
+  ok(ALL.length >= 19, `control: ${ALL.length} static entries BUILT — the module loaded with the fields added`);
+
+  // ── 20a. ADDITIVE: every hand-typed entry carries them as UNKNOWN ──────
+  ok(ALL.every(({ e }) => Object.hasOwn(e, 'createdUnixSec') && Object.hasOwn(e, 'contextLength')),
+    'both fields are present on every entry, so no consumer has to test for their existence');
+  ok(ALL.every(({ e }) => e.createdUnixSec === null && e.contextLength === null),
+    'and every hand-typed entry carries NULL for both — nobody typed a release date into a measurement table');
+  ok(!ALL.some(({ e }) => e.createdUnixSec === 0 || e.contextLength === 0),
+    'NEVER 0. A zero date is 1970-01-01 and a zero context is a zero-token window; both rank as real, terrible values instead of as unknown');
+  ok(!ALL.some(({ e }) => e.createdUnixSec === undefined || e.contextLength === undefined),
+    'and never undefined, which JSON.stringify DROPS from the wire — a consumer would then see the field absent on some rows and null on others');
+
+  // ── 20b. THE OUTPUT CEILING IS NOT THE CONTEXT WINDOW ──────────────────
+  // Measured on the live catalogue: across the 374 models publishing both,
+  // max_completion_tokens < context_length in 374 of 374 cases. `maxOutput` is
+  // present on EVERY entry, so deriving context from it would make the field
+  // look complete on every row — a filled-in column of the wrong fact.
+  ok(ALL.every(({ e }) => Number.isFinite(e.maxOutput) && e.maxOutput > 0),
+    'control: every entry HAS a maxOutput, which is exactly what makes it a tempting substitute');
+  ok(!ALL.some(({ e }) => e.contextLength !== null && e.contextLength === e.maxOutput),
+    'no entry’s context window is a copy of its output ceiling');
+
+  // ── 20c. THE UNITS TRIPWIRE — a fabricated date fails to BUILD ─────────
+  // Driven through the REAL runtime admission path, so the refusal asserted is
+  // the one production takes. `setOpenRouterCatalogue` catches per entry, so a
+  // bad row is dropped and named rather than taking the catalogue down.
+  {
+    const base = (id, extra) => Object.assign({
+      id, label: 'ZZ', maxOutput: 8192, free: true, thinks: false,
+      tokenizerFactor: 1, suitability: 'chat-only', note: 'n',
+    }, extra || {});
+    const OK_SEC = 1767225600; // 2026-01-01
+    const cases = [
+      ['a milliseconds timestamp (the year 55000)', { createdUnixSec: OK_SEC * 1000 }],
+      ['epoch 0 (1970-01-01)', { createdUnixSec: 0 }],
+      ['a negative date', { createdUnixSec: -1 }],
+      ['a date before 2000, which no LLM has', { createdUnixSec: 100 }],
+      ['NaN', { createdUnixSec: NaN }],
+      ['a zero context window', { contextLength: 0 }],
+      ['a negative context window', { contextLength: -32768 }],
+      ['a fractional context window', { contextLength: 32768.5 }],
+    ];
+    let refusedAll = 0;
+    for (const [what, extra] of cases) {
+      const r = setOpenRouterCatalogue([base('zzfact/' + refusedAll + ':free', extra)]);
+      ok(r.refused === 1 && r.admitted === 0, `REFUSED at build time: ${what}`);
+      refusedAll++;
+    }
+    // The positive control. Without it every refusal above could be an artefact
+    // of the fixture rather than of the field under test.
+    const good = setOpenRouterCatalogue([
+      base('zzfact/good:free', { createdUnixSec: OK_SEC, contextLength: 200000 }),
+      base('zzfact/absent:free'),
+    ]);
+    ok(good.admitted === 2 && good.refused === 0,
+      'control: a plausible seconds date + a positive context ARE admitted, and so is an entry carrying NEITHER');
+    // Never a bare `.get(id).field`: if a mutation stops the entry being
+    // admitted, a bare dereference throws and KILLS THE RUN, hiding every
+    // assertion after it. `??` turns it into a named behavioural failure.
+    const byId = new Map(listOfferableModels('openrouter').map((e) => [e.id, e]));
+    const fieldOf = (id, f) => (byId.get(id) ? byId.get(id)[f] : '(entry absent)');
+    ok(fieldOf('zzfact/good:free', 'createdUnixSec') === OK_SEC,
+      'and the good value round-trips unchanged — the range check is a tripwire, not a transform');
+    ok(fieldOf('zzfact/good:free', 'contextLength') === 200000, 'as does the context window');
+    ok(fieldOf('zzfact/absent:free', 'createdUnixSec') === null
+      && fieldOf('zzfact/absent:free', 'contextLength') === null,
+      'and an entry publishing neither carries null for both — absent is absent, on the dynamic path too');
+    setOpenRouterCatalogue([]);
+  }
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

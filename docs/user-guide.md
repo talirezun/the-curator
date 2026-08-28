@@ -670,7 +670,7 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `dominated`, `thinks`). One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three measured ones plus, once you have refreshed the list, everything else OpenRouter offers that passes the structural checks (see [Refreshing the model list](#refreshing-the-model-list)). With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
+- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `out-performed`, `thinks`) plus a short line naming the reason and, when measured, the typical time per call. One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three measured ones plus, once you have refreshed the list, everything else OpenRouter offers that passes the structural checks (see [Refreshing the model list](#refreshing-the-model-list)). With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
@@ -716,6 +716,8 @@ Under the composer, a line reminds you: *"Answers cite the pages they came from.
 4. Type your question in the box at the bottom
 5. Press **Send** or use `Cmd + Enter` (Mac) / `Ctrl + Enter` (Windows)
 6. Wait for the reply — usually 10–30 seconds
+
+> **While it's thinking, a ticking clock next to the spinner counts up the seconds.** Past about 20 seconds, if the model you picked has a measured typical call time on record, the app says so once (e.g. *"…measured at about 6m 22s per call in our testing."*) so a genuinely slow model doesn't read as a hang. For a model with no such measurement, the clock still keeps ticking — it's timing the real call — but no claim is made about how long it should take.
 
 > **No domains yet?** Chat says so and offers a **Go to Domains** button. Chat has no create-domain form of its own — there is exactly one place domains are created, and it's [§10](#10-manage-your-domains).
 >
@@ -1533,7 +1535,21 @@ In **Settings**, each row can carry any combination of:
 | **chat only — not for ingest** | Measured *unfit for ingest specifically.* Chat is unaffected. | Fine for chat. You **cannot** make it your Settings model — the app refuses, and says why. |
 | **out-performed** | Another model at **exactly the same price** measured better on every axis tested. | Pick the sibling named in the note instead. You're paying the same either way. |
 
-The **chat composer** menu shows a shorter set on the same data: **caution**, **chat only**, **dominated** (the composer's word for *out-performed*), and **thinks**. It also shows the full measured note on any flagged model, so a warning is never a badge you can't interpret.
+The **chat composer** menu shows the same badge words — **caution**, **chat only**, **out-performed**, **thinks** — and, beneath them, a one-line summary instead of the full note: the reason for a warning always leads (it's a required field on any flagged model, never optional), followed by how fast that model answered when it was last measured, if it was. Settings shows the same one-line summary on the collapsed row, plus the full note one click away — see below.
+
+### Rows are short by default now, and the note is one click away
+
+Each model used to print its full measured note — several sentences — directly in the list. Once OpenRouter's live catalogue landed, nearly every fetched model carries a flag (none of them has been measured against ingest yet), so the list became a wall of paragraphs. Nothing was shortened or deleted: the note is unchanged and still shown in full, just no longer inline.
+
+A collapsed row now shows only what a choice needs — the model, its id, the price billed today, any promotional-rise notice, its badges, and a short derived line (the reason for a warning, then how fast it answered when measured, when either is known). Click the row to open it and read the full note plus any other measured detail. The **warning reason never hides behind that click** — if a row is flagged, the reason is on the collapsed row itself.
+
+**Settings and the chat composer deliberately show different amounts.** Settings is a screen you open to manage models and can afford a fuller row; the composer is a menu you open mid-conversation to switch one, so it drops the extra detail and keeps just the warning and the speed. Both use the same words for the same badges and the same underlying measurements — they just show different amounts of them. This is intentional, not a discrepancy to fix.
+
+**Finding a model in a long list.** Once a provider's list runs past a handful of models (an OpenRouter catalogue after a refresh, typically), Settings adds a search box, a sort, and a checkbox above that provider's list:
+
+- **Search** matches a model's id or name, including the vendor prefix (`moonshotai/…`) — so typing a vendor name works without a separate vendor menu.
+- **Sort** offers **cheapest** (default), **dearest**, **newest**, and **largest context window**. There is deliberately no "most capable" sort — we have real capability data for a small fraction of the catalogue, and this week's own measurements showed price, size, recency and vendor each predicting the *opposite* of what actually happened on a real test (a fast, well-priced model that returned nothing usable in 9 of 9 runs; a paid model that failed where its own free sibling passed). Ranking the rest by a proxy would be a confident-looking guess dressed up as a measurement. A model with no published date or context size just isn't ranked by that sort — it keeps its normal place at the end, and the bar tells you how many.
+- **Measured** narrows the list to models The Curator itself has actually run against its ingest prompt — not a model you tested yourself on your own wiki, which is a real but different measurement and stays badged separately.
 
 ### Why some models are flagged
 

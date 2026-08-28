@@ -29,6 +29,7 @@ import { renderMarkdown } from '../shared/markdown.js';
 // cheapest model measures ~$0.0000015, so that is this surface's ORDINARY case,
 // not an edge case. See shared/format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
@@ -370,6 +371,12 @@ registerView('chat', {
     //     disabled "Compiling… NN%" button that the run itself re-enables.
     //     There is no path to a permanently-stuck disabled button.
     state.sending = false;
+    // The abandon path. The clock is module-level precisely so it can be
+    // stopped from a DIFFERENT mount than the one that started it: the previous
+    // mount's send is still in flight (this view never aborts the fetch), and
+    // its interval would otherwise keep ticking against a thinking bubble this
+    // fresh mount is not showing.
+    stopSendClock();
 
     // app.js's consumeChatScopeRequest() contract: this MUST be called
     // exactly once, synchronously, right here — before renderShell/boot,
@@ -793,6 +800,9 @@ async function sendCurrentMessage() {
   const requestedModelAtSend = state.chatModel;
 
   state.sending = true;
+  // Started BEFORE the first render, so the bubble's very first paint already
+  // carries "0s" rather than blank-then-jump.
+  startSendClock(mountToken);
   state.thread.push({ role: 'user', content: text });
   ta.value = '';
   autosize(ta);
@@ -894,6 +904,10 @@ async function sendCurrentMessage() {
     renderThreadOnly(mountToken);
   } finally {
     state.sending = false;
+    // EVERY exit path — resolved, thrown, or returned early as irrelevant —
+    // passes through here, which is the only placement that cannot be skipped by
+    // a future `return` added above it. See stopSendClock.
+    stopSendClock();
     if (isCurrentMount(mountToken)) {
       renderComposerBusy(false, mountToken);
       focusComposer();
@@ -1683,6 +1697,147 @@ const SUITABILITY_LABELS = Object.assign(Object.create(null), {
   caution: 'caution',
 });
 
+// ── THE THINKING CLOCK ────────────────────────────────────────────────────
+// The maintainer picked `deepseek/deepseek-v4-flash-0731` in the composer and
+// watched a bare, numberless spinner for minutes, then reported the app as
+// broken. It was not: the stored conversation shows that model answered, was
+// billed and was attributed correctly. It is simply the slowest thing this
+// project has ever measured — 382 seconds for one call.
+//
+// This is v3.0.17's report, in a second place. That release put an elapsed
+// clock on INGEST after "nothing happens and then suddenly something happens";
+// chat never got one, and a ticking number is the whole difference between
+// "this is alive" and "this is hung". The behaviour and the vocabulary here
+// deliberately match ingest.js's (module-level timer, one-second tick, the same
+// "6m 22s" formatting) rather than inventing a second pattern.
+//
+// MODULE LEVEL, NOT `state`. `state` is reassigned WHOLESALE by every onEnter,
+// and this interval must keep ticking and — far more importantly — must be
+// CLEARABLE across a re-mount. A timer that survives its own turn writing into
+// a live thread is the "button left permanently reading Fixing…" shape this
+// repo has already shipped once.
+let sendStartedAt = null;
+let sendTimerId = null;
+// What we measured for the model serving THIS turn: `{label, ms}` or null.
+// Captured at send time because the composer stays live during the call.
+let sendLatencyHint = null;
+
+// After this long, a turn stops looking slow and starts looking broken — so if
+// we have a measurement for the model in flight, we state it. Once, as a fact.
+//
+// TWENTY SECONDS, and the number is chosen from the data rather than taste. The
+// fastest models measured here answer an ingest outline in 13-22s and a chat
+// turn in a small fraction of that, so an ordinary answer never reaches this
+// and the notice does not become wallpaper. The slowest measured 382s, which is
+// far past the point where a reasonable person concludes the app has hung. The
+// bound has to sit above normal and well below panic; 20s is that gap.
+const SLOW_TURN_NOTICE_AFTER_MS = 20000;
+
+/**
+ * What we measured for the model that will serve this turn — `{label, ms}` — or
+ * null when we cannot name the model or have never measured it.
+ *
+ * NULL IS THE COMMON CASE AND MUST STAY CHEAP. Roughly 14 ids carry a latency
+ * figure against a synced catalogue of ~190, so most turns have nothing to say
+ * and say nothing. There is no fallback here — not an average, not a guess from
+ * price or context length, not the provider's other models. Inventing an
+ * expectation is worse than silence, because the user would act on it.
+ *
+ * IT ALSO RETURNS NULL WHEN NO MODEL IS NAMED. With `state.chatModel` unset the
+ * server picks the provider's default, and which provider is "active" is a
+ * server-side fact this view does not hold — so we would be quoting a
+ * measurement for a model that may not be the one running. `state.modelProvider`
+ * being set is the case where we DO know the id (`state.models[provider]` is the
+ * backend's own default for it), and that path is taken.
+ */
+function latencyHintForTurn() {
+  let row = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
+  if (!row && typeof state.modelProvider === 'string' && state.modelProvider) {
+    const defaultId = state.models && Object.hasOwn(state.models, state.modelProvider)
+      ? state.models[state.modelProvider] : null;
+    row = resolveChatModel(defaultId, state.offerable, state.availableProviders);
+  }
+  if (!row) return null;
+  const ms = row.entry.medianLatencyMs;
+  // `>= 1000` for the same reason shared/model-summary.js's speedClause uses it:
+  // below a second the formatter renders "0s", and a notice reading "measured at
+  // about 0s per call" would be the zero-for-absent claim in a new place.
+  if (!Number.isFinite(ms) || ms < 1000) return null;
+  return { label: row.entry.label || row.entry.id, ms };
+}
+
+/**
+ * The markup inside the trailing "thinking…" bubble.
+ *
+ * Rendered fresh on every `renderThreadOnly`, so it reads the live clock rather
+ * than starting from blank — otherwise any re-render (a compile card landing, a
+ * sidebar refresh) would visibly reset a running timer to zero.
+ */
+function thinkingBodyHtml() {
+  const elapsedMs = sendStartedAt == null ? 0 : Math.max(0, Date.now() - sendStartedAt);
+  const slow = sendLatencyHint && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS
+    // NOT an error, an apology or an animation — a fact, stated once, in the
+    // recessed colour the composer already uses for measured detail. It names
+    // what WE measured and does not promise this turn will match it.
+    ? '<div class="chat-thinking-slow">' +
+        escapeHtml(sendLatencyHint.label + ' measured at about ' +
+          formatDurationMs(sendLatencyHint.ms) + ' per call in our testing.') +
+      '</div>'
+    : '';
+  return (
+    '<div class="chat-thinking"><span class="chat-spinner"></span> thinking… ' +
+      '<span class="mono" id="chat-think-elapsed">' + escapeHtml(formatDurationMs(elapsedMs)) + '</span>' +
+    '</div>' +
+    '<div id="chat-think-slow">' + slow + '</div>'
+  );
+}
+
+/**
+ * Start the clock for a turn. Idempotent: clears any previous interval first,
+ * so two sends can never leave two timers writing to one element.
+ */
+function startSendClock(token) {
+  stopSendClock();
+  sendStartedAt = Date.now();
+  sendLatencyHint = latencyHintForTurn();
+  sendTimerId = setInterval(() => {
+    // Same mount gate as ingest's tick. An abandoned mount's in-flight send is
+    // still running (this view does not abort the fetch), and its clock must
+    // not write into a LATER mount's thread.
+    if (!isCurrentMount(token) || sendStartedAt == null) return;
+    const elapsedMs = Math.max(0, Date.now() - sendStartedAt);
+    const el = document.getElementById('chat-think-elapsed');
+    if (el) el.textContent = formatDurationMs(elapsedMs);
+    const slotEl = document.getElementById('chat-think-slow');
+    // Written every tick rather than once at the crossing: `renderThreadOnly`
+    // may have replaced the node since, and re-deriving from elapsed is
+    // idempotent. `sendLatencyHint` null => this stays empty forever, which is
+    // the absence rule — an unmeasured model gets a live clock and no claim.
+    if (slotEl && sendLatencyHint && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS && !slotEl.firstChild) {
+      const note = document.createElement('div');
+      note.className = 'chat-thinking-slow';
+      note.textContent = sendLatencyHint.label + ' measured at about ' +
+        formatDurationMs(sendLatencyHint.ms) + ' per call in our testing.';
+      slotEl.appendChild(note);
+    }
+  }, 1000);
+}
+
+/**
+ * Stop and fully reset the clock.
+ *
+ * CALLED ON EVERY EXIT PATH — success, error and abandonment — because a timer
+ * that outlives its turn keeps a finished answer looking unfinished. In
+ * `sendCurrentMessage` it lives in the `finally`, beside the `state.sending`
+ * reset it mirrors, so no future `return` can skip it; and in `onEnter`'s reset
+ * beside the same flag, which is the abandon path.
+ */
+function stopSendClock() {
+  if (sendTimerId != null) { clearInterval(sendTimerId); sendTimerId = null; }
+  sendStartedAt = null;
+  sendLatencyHint = null;
+}
+
 /**
  * Re-scope the server's `offerable` map to the providers that actually have a
  * SAVED Settings key, into a null-prototype object.
@@ -2208,20 +2363,38 @@ function formatPromotionRise(entry) {
 }
 
 /**
- * Does this entry carry a measured caveat the user must see before picking it?
- * `suitability !== 'general'` OR `dominated` — both come straight from the
- * server's measured catalogue. Flagged models are SHOWN, never filtered out:
- * the contract is an honest label, not a curated-down list.
+ * One selectable row. Every interpolated value is server-supplied → escaped.
+ *
+ * ── WHY THIS ROW NO LONGER CARRIES THE FULL `note` ──────────────────────────
+ * It used to render `entry.note` inline for every FLAGGED model — and once the
+ * live OpenRouter catalogue landed, every fetched chat-only entry is flagged, so
+ * a dropdown became several screens of two-hundred-word paragraphs. That was the
+ * maintainer's report. The note is not shortened and not truncated: it is shown
+ * whole in Settings, behind that screen's existing per-model disclosure, and
+ * what stands here is the derived one-liner from shared/model-summary.js.
+ *
+ * THE SUMMARY IS NOT OPTIONAL FOR A FLAGGED MODEL. `defineOfferableModel`
+ * refuses to build a `caution` or `dominated` entry without a `cautionReason`,
+ * and that string is the summary's first clause — so the reason for a warning
+ * badge is on screen with nothing to open, which is the property this row is
+ * required to have. `isFlaggedModel` was deleted with the inline note: it
+ * existed only to gate that note, and re-deriving "is this flagged" here is how
+ * the badge and the prose drift apart.
+ *
+ * WHY THERE IS NO DISCLOSURE ON THIS SURFACE. The menu is `role="listbox"` and
+ * every row is a `<button role="option">`. A `<details>` inside a button is
+ * invalid content and would put an interactive control inside an interactive
+ * control — the v3.0.1-beta.18 hazard, in the shape that cannot be fixed with
+ * `stopPropagation` because it breaks the listbox's own semantics. So the
+ * composer summarises and Settings discloses, and the menu carries one footer
+ * line saying so.
  */
-function isFlaggedModel(entry) {
-  if (!entry) return false;
-  return entry.dominated === true || (entry.suitability !== undefined && entry.suitability !== 'general');
-}
-
-/** One selectable row. Every interpolated value is server-supplied → escaped. */
 function renderModelOptionHtml(provider, entry, selectedId) {
   const isActive = entry.id === selectedId;
-  const flagged = isFlaggedModel(entry);
+  // COMPACT on this surface. A dropdown opened mid-thought needs the model, the
+  // price and any warning — not the measured coverage, which is what Settings'
+  // denser row and its expand are for. Same builder, same words, less of them.
+  const summary = formatModelSummary(entry, { compact: true });
   const rise = formatPromotionRise(entry);
   const badges = [];
   if (entry.suitability !== undefined && entry.suitability !== 'general') {
@@ -2253,9 +2426,7 @@ function renderModelOptionHtml(provider, entry, selectedId) {
       '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
       '<span class="chat-mm-price mono">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
       (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
-      (flagged && typeof entry.note === 'string' && entry.note
-        ? '<span class="chat-mm-note">' + escapeHtml(entry.note) + '</span>'
-        : '') +
+      (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '') +
     '</button>'
   );
 }
@@ -2275,7 +2446,21 @@ function renderModelMenuHtml(offerable, availableProviders, selectedId) {
     html += '<div class="chat-mm-group">' + escapeHtml(PROVIDER_LABELS[p] || p) + '</div>';
     for (const entry of list) { html += renderModelOptionHtml(p, entry, selectedId); rows++; }
   }
-  return rows ? html : '';
+  // ── WHERE THE FULL MEASUREMENT WENT ──────────────────────────────────────
+  // Each row now carries a derived one-liner instead of the model's whole
+  // measured `note` (see renderModelOptionHtml). The note still exists, whole
+  // and verbatim, behind Settings' per-model expand — so this says so once for
+  // the menu rather than leaving the reader to guess that the evidence was
+  // deleted rather than moved.
+  //
+  // A PLAIN DIV, CARRYING NO `data-model-id`. The option handler binds to
+  // `[data-model-id]` only, so nothing here is clickable and nothing can be
+  // selected by mistake; it sits alongside the existing `.chat-mm-group`
+  // headers, which are already non-option children of this listbox.
+  const foot = rows
+    ? '<div class="chat-mm-foot">Full measurements for each model: Settings → API keys</div>'
+    : '';
+  return rows ? html + foot : '';
 }
 
 function renderModelDropdownHtml() {
@@ -2575,7 +2760,7 @@ function renderThreadOnly(token) {
   }).join('') + (state.sending ? (
     '<div class="chat-msg chat-msg-assistant chat-msg-thinking">' +
       '<div class="chat-msg-eyebrow mono">THE CURATOR</div>' +
-      '<div class="chat-thinking"><span class="chat-spinner"></span> thinking…</div>' +
+      thinkingBodyHtml() +
     '</div>'
   ) : '');
 

@@ -756,6 +756,82 @@
    the name above it rather than as a new item. */
 .model-row-cost { padding-left: 18px; }
 
+/* ── The filter bar. Search is primary and takes the width; the sort and the
+   measured toggle are compact companions. One row, wrapping on a narrow
+   viewport, so it never out-weighs the list it controls. */
+.model-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+.model-filter-q {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: var(--type-body-sm);
+}
+.model-filter-sort {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--text-xs);
+}
+.model-filter-measured {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.model-filter-count {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* An empty result SAYS SO and offers the way back. An unexplained empty list
+   reads as "the feature is broken" — a misreading this repo has shipped. */
+.model-filter-empty {
+  padding: 14px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.model-filter-empty p {
+  margin: 0 0 8px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+/* The derived one-liner on the COLLAPSED row (next/shared/model-summary.js).
+   Indented to the same 18px gutter as the cost line so name / summary / price
+   read as one stack under the chevron.
+
+   It sits ABOVE the price deliberately: its first clause is the reason for a
+   warning badge, and the eye travels down from the badges that raised the
+   question. Sized between `.model-id` and `.model-note` — it is a summary, not
+   a caption and not the evidence. Never clamped: see chat.css's `.chat-mm-note`
+   for why truncating a line that opens with a warning is the same defect as
+   folding it. */
+.model-row-derived {
+  padding-left: 18px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
 .model-name { font-size: 13px; font-weight: var(--weight-medium); color: var(--text); }
 .model-id { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
 

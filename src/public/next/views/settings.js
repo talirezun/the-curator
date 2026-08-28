@@ -163,6 +163,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // the model list are money the user will be billed; a local formatter here
 // would be a second hand-maintained copy of that rule. See format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
+import { formatModelSummary } from '../shared/model-summary.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -568,6 +569,10 @@ function freshState() {
     // that they read the reset button as "my click didn't register" and
     // retried a refused write.
     modelPickError: {},
+    // Per-provider model filter, SESSION ONLY. Reset by freshState on every
+    // onEnter and written to no storage — a filter that survived a reload would
+    // make a user's next visit mysteriously show a subset of their models.
+    modelFilter: {},
     // ── "Test this key" (v3.15.0, OpenRouter only) ────────────────────────
     // Which provider's key check is in flight, or null. Separate from
     // `keysBusy` on purpose: keysBusy gates the MUTATING controls (save,
@@ -2388,7 +2393,28 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
     qualify: state.qualify,
     minRuns: Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9,
   };
-  const items = renderModelLanes(list, defaultId, ctx);
+  // ── FILTER, THEN RENDER ────────────────────────────────────────────────
+  // Applied to the DELIVERED list, so the lane grouping and every row below it
+  // sees exactly the models that survived. `orderModels` reverses rather than
+  // re-sorts — see its docblock for why a client-side price comparator would be
+  // both a second opinion and an arithmetic bug on free models.
+  const filter = modelFilterFor(p.id);
+  const visible = orderModels(filterModels(list, filter), filter.sort);
+  const filterActive = !!filter.q || filter.measuredOnly;
+  // The bar appears only where it earns its pixels. Below the threshold the
+  // whole list fits on screen and a search box is furniture; it stays rendered
+  // whenever a filter is ACTIVE, so a user who narrowed a long list and is now
+  // looking at three rows still has the control that got them there.
+  const filterHtml = (list.length >= MODEL_FILTER_MIN_ROWS || filterActive)
+    ? renderModelFilterBar(p.id, filter, visible.length, list.length,
+        // Counted over what is VISIBLE, not over the whole catalogue: the number
+        // has to describe the list the user is looking at, or it explains a
+        // block of rows that a search has already removed.
+        countUnrankedForSort(visible, filter.sort))
+    : '';
+  const items = visible.length === 0
+    ? renderModelFilterEmpty(p.id, filter)
+    : renderModelLanes(visible, defaultId, ctx);
 
   // ── THE FREE-ROUTING OPEN QUESTION, said once per list ─────────────────
   // Rendered whenever ANY listed model bills nothing — derived from `m.free`,
@@ -2477,6 +2503,10 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
         }) +
         errHtml +
         freeNote +
+        // INSIDE the body, never the <summary> — an interactive control in a
+        // <summary> toggles its own section on click (v3.0.1-beta.18), and the
+        // structural fix is to keep controls out rather than suppress the event.
+        filterHtml +
         items +
       '</div>' +
     '</details>'
@@ -2515,6 +2545,339 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
  * hiding four rows costs a click and buys nothing. The build group is NEVER
  * folded: it is the shortest and the most consequential.
  */
+/**
+ * ── THE FILTER: a pure decision core, and the reason it is pure ────────────
+ *
+ * A synced OpenRouter catalogue is ~190 models. Grouping alone does not answer
+ * "I know I want Kimi" — the maintainer asked for a filter, and the honest
+ * answer is mostly SEARCH.
+ *
+ * These three functions decide WHAT is shown and IN WHAT ORDER, and nothing
+ * else: no DOM, no state, no fetch. That is the v3.11.0 loading-gate shape
+ * (`shouldShowLoader` / `settleDelayMs`) and it exists so the two rules below
+ * can be driven exhaustively offline rather than inspected through markup.
+ */
+
+/** Everything a search should match: the id, the label, and the vendor prefix. */
+function modelSearchText(m) {
+  if (!m || typeof m !== 'object') return '';
+  const id = typeof m.id === 'string' ? m.id : '';
+  const label = typeof m.label === 'string' ? m.label : '';
+  // The vendor is already inside the id (`moonshotai/kimi-k2-0905`), so typing a
+  // vendor works with no vendor field and no 49-entry dropdown. A separate
+  // vendor control would be a second way to do what one input already does.
+  return (id + ' ' + label).toLowerCase();
+}
+
+/**
+ * Has THE CURATOR measured this model against its real ingest prompt?
+ *
+ * `jsonRaw` is llm.js's own marker and its docblock is explicit: a boolean means
+ * measured, `null` means NOT measured and is legal only on a chat-only entry.
+ * So this is reading a field for what it means, never inferring provenance.
+ *
+ * DELIBERATELY EXCLUDES a model the USER qualified on their own wiki. That is a
+ * real measurement and it is badged as such on the row, but "we measured this
+ * across documents and against its siblings" and "you ran nine of these on one
+ * document last Tuesday" are different claims, and a filter named "Measured by
+ * The Curator" must not quietly answer the second question.
+ */
+function isCuratorMeasured(m) {
+  return !!m && typeof m === 'object' && typeof m.jsonRaw === 'boolean';
+}
+
+/**
+ * The visible subset. Absent fields are never treated as a match or a miss by
+ * accident: a model with no label still matches on its id, and `measuredOnly`
+ * reads the marker rather than guessing from price, size, vendor or recency.
+ */
+function filterModels(list, f) {
+  const rows = Array.isArray(list) ? list : [];
+  const q = (f && typeof f.q === 'string' ? f.q : '').trim().toLowerCase();
+  const measuredOnly = !!(f && f.measuredOnly);
+  return rows.filter((m) => {
+    if (measuredOnly && !isCuratorMeasured(m)) return false;
+    if (!q) return true;
+    // Every whitespace-separated term must match, so "kimi 0905" narrows rather
+    // than widening — the behaviour a user expects from a search box.
+    return q.split(/\s+/).every((t) => modelSearchText(m).includes(t));
+  });
+}
+
+/**
+ * ── ORDER: the delivered order, or its exact reverse. NEVER a comparator ──
+ *
+ * THIS IS THE WHOLE DESIGN AND IT IS NOT LAZINESS. The route ships this list
+ * cheapest-first and that ordering is asserted server-side against the real
+ * price table, promotions resolved. Writing a client-side price comparator here
+ * would create a SECOND opinion about which model is cheapest — and it would be
+ * a wrong one, twice over:
+ *
+ *   · A FREE model's price is `null` BY DESIGN (membership, never 0 — a truthy
+ *     zero re-arms v3.3.0's inert budget cap). `null - 5` coerces to `0 - 5`, so
+ *     a naive comparator ranks free as cheapest by ARITHMETIC ACCIDENT rather
+ *     than because it is free. It happens to look right in the cheapest view and
+ *     is wrong in the dearest one, where free would sort to the top.
+ *   · A promoted price expires. The server resolves that at read time; a
+ *     client-side comparator would sort on whichever figure it happened to hold.
+ *
+ * Reversing a total order someone else computed introduces no opinion at all,
+ * and there is no arithmetic to get wrong: free lands last in the dearest view
+ * because it was first in the cheapest one, which is the correct answer arrived
+ * at without ever touching a null.
+ */
+const MODEL_SORTS = Object.freeze(['cheapest', 'dearest', 'newest', 'largest-context']);
+
+/**
+ * ── THE TWO SORTS THAT DO NEED A COMPARATOR, AND WHAT THEY REFUSE TO INVENT ──
+ *
+ * Price is a total order the server already computed, so it is reversed and
+ * never re-derived (above). Recency and size are not: nobody has ordered the
+ * list by them, so these two comparators are the only arithmetic in this file —
+ * and both are on a field that is legitimately ABSENT for a large share of rows.
+ *
+ * ABSENT IS NOT ZERO, AND THIS IS THE WHOLE DIFFICULTY. `null` becomes `0` in
+ * arithmetic, so a plain `b.createdUnixSec - a.createdUnixSec` files every model
+ * with no published date at 1970-01-01 and ranks it dead last — confidently,
+ * silently, and looking exactly like a real answer. Defaulting the other way
+ * (`|| Date.now()`) is worse: it puts the undated models FIRST in a view called
+ * "Newest". Both are a fabricated value presented as a measurement, which is the
+ * fact-vs-absence class this repo has now shipped eight separate bugs from.
+ *
+ * SO A MODEL WITH NO KEY IS NOT RANKED AT ALL. `orderModels` partitions: rows
+ * that carry the fact are sorted by it, descending; rows that do not keep their
+ * delivered (cheapest-first) order and follow as a contiguous block, and the
+ * filter bar's existing count states how many they are. Nothing is hidden — a
+ * user searching for a model still finds it — and nothing is given a number
+ * nobody published.
+ *
+ * WHICH ROWS THOSE ARE, MEASURED rather than assumed: every entry fetched from
+ * OpenRouter's catalogue carries both facts (191 of 191 admitted specs on the
+ * live catalogue), and every HAND-MEASURED entry — all 14 Gemini and Anthropic
+ * models and all 5 static OpenRouter ones — carries neither, because a table of
+ * things we measured is not a release calendar. The unranked block is therefore
+ * the models The Curator measured itself, which is a coherent group rather than
+ * a scattering of holes.
+ *
+ * NO `maxOutput` SUBSTITUTION. It is the OUTPUT ceiling and the context window
+ * is the INPUT side: across the 374 live models publishing both, output is
+ * strictly smaller in 374 of 374 cases. It is present on every row, so using it
+ * would make the unranked block vanish and the sort look complete — a filled-in
+ * column of the wrong fact, which is the proxy-for-a-measurement move this
+ * architecture refuses.
+ */
+const MODEL_SORT_KEYS = Object.freeze({
+  newest: 'createdUnixSec',
+  'largest-context': 'contextLength',
+});
+
+/**
+ * How many rows this sort cannot rank, so the bar can say so. Zero for the
+ * price sorts, which rank everything.
+ */
+const MODEL_SORT_UNRANKED_LABEL = Object.freeze({
+  newest: 'with no release date',
+  'largest-context': 'with no context size',
+});
+
+/**
+ * The sort key, or `null` when this model does not carry it.
+ *
+ * `Object.hasOwn`, never a bare index: a sort value of `__proto__` or
+ * `constructor` resolves through the prototype chain and would hand this a
+ * function where a field name belongs — the v3.0.9 shape. The value itself must
+ * be a finite POSITIVE number: 0 is what OpenRouter publishes for an unknown
+ * context window and what a milliseconds/seconds mix-up produces for a date, and
+ * neither is a measurement.
+ */
+function modelSortKey(m, sort) {
+  if (!m || typeof m !== 'object') return null;
+  if (typeof sort !== 'string' || !Object.hasOwn(MODEL_SORT_KEYS, sort)) return null;
+  const v = m[MODEL_SORT_KEYS[sort]];
+  return (typeof v === 'number' && Number.isFinite(v) && v > 0) ? v : null;
+}
+
+/** Rows this sort has to leave unranked — what the bar reports. */
+function countUnrankedForSort(list, sort) {
+  if (typeof sort !== 'string' || !Object.hasOwn(MODEL_SORT_KEYS, sort)) return 0;
+  const rows = Array.isArray(list) ? list : [];
+  let n = 0;
+  for (let i = 0; i < rows.length; i++) if (modelSortKey(rows[i], sort) === null) n++;
+  return n;
+}
+/**
+ * Below this, the list fits and a filter bar is furniture. Above it, hunting
+ * begins. Gemini ships 7 and Anthropic 7; a synced OpenRouter catalogue is ~190.
+ */
+const MODEL_FILTER_MIN_ROWS = 12;
+function orderModels(list, sort) {
+  const rows = Array.isArray(list) ? list.slice() : [];
+  if (sort === 'dearest') return rows.reverse();
+  // 'cheapest' AND any unrecognised value: the delivered order, untouched.
+  if (typeof sort !== 'string' || !Object.hasOwn(MODEL_SORT_KEYS, sort)) return rows;
+
+  // Partition FIRST, so no comparator ever sees a null. The unranked keep their
+  // delivered order and trail as one block; they are never dropped, because a
+  // sort is not a filter and a model that vanishes when you change the ordering
+  // reads as a broken picker.
+  const ranked = [], unranked = [];
+  for (let i = 0; i < rows.length; i++) {
+    (modelSortKey(rows[i], sort) === null ? unranked : ranked).push(rows[i]);
+  }
+  // ── WHY THE PARTITION, WHEN A NAIVE COMPARATOR MEASURES THE SAME ────────
+  // Stated because it would otherwise look like an over-elaboration a later
+  // edit could "simplify". MEASURED: a naive `(b[f] || 0) - (a[f] || 0)` emits a
+  // BYTE-IDENTICAL id sequence to this partition, for both fields — because no
+  // legal key can be <= 0 (defineOfferableModel refuses a 0 date and a 0 context
+  // window, verified), so a coerced null always lands exactly where an unranked
+  // row belongs anyway. The equivalence is therefore CONDITIONAL on those two
+  // guards, not a property of the comparator. The partition is kept because it
+  // is the same predicate `countUnrankedForSort` uses, so the bar's "12 with no
+  // release date" and the order it describes can never disagree; and because the
+  // naive form is one character from `|| Date.now()`, which is NOT equivalent
+  // (measured: it puts every undated model at the top of "Newest") and which
+  // nothing about a comparator's shape would warn you about.
+  //
+  // Descending — "Newest" and "Largest" both mean biggest-first. Array.prototype
+  // .sort is stable (ES2019), so ties keep the delivered cheapest-first order
+  // rather than an arbitrary one.
+  ranked.sort((a, b) => modelSortKey(b, sort) - modelSortKey(a, sort));
+  return ranked.concat(unranked);
+}
+
+/**
+ * Merge one axis of a provider's filter, leaving the others alone.
+ *
+ * Null-prototype container so a provider id of `__proto__` or `constructor`
+ * cannot write through the prototype chain — the v3.0.9 shape, and these ids
+ * are ours rather than a third party's, which is exactly the assumption that
+ * stops holding when a fourth provider is added.
+ */
+function setModelFilter(provider, patch) {
+  if (typeof provider !== 'string' || !provider) return;
+  if (!state.modelFilter || Object.getPrototypeOf(state.modelFilter) !== null) {
+    state.modelFilter = Object.assign(Object.create(null), state.modelFilter || {});
+  }
+  const cur = modelFilterFor(provider);
+  state.modelFilter[provider] = Object.assign({}, cur, patch || {});
+}
+
+/** Quote a provider id for use inside an attribute selector. */
+function cssEscapeAttr(v) {
+  return String(v === undefined || v === null ? '' : v).replace(/["\\]/g, '\\$&');
+}
+
+/** This provider's session filter. Never persisted — see renderModelFilterBar. */
+function modelFilterFor(provider) {
+  const all = state.modelFilter && typeof state.modelFilter === 'object' ? state.modelFilter : null;
+  const f = all && Object.hasOwn(all, provider) ? all[provider] : null;
+  return {
+    q: f && typeof f.q === 'string' ? f.q : '',
+    sort: f && MODEL_SORTS.includes(f.sort) ? f.sort : 'cheapest',
+    measuredOnly: !!(f && f.measuredOnly),
+  };
+}
+
+/**
+ * ── THE BAR: one obvious input, and everything else small ─────────────────
+ *
+ * Search is the primary control and gets the width. The sort is a native
+ * <select> and the measured filter a checkbox, both compact — six filter chips
+ * above a list is not an improvement on a long list, and a control panel that
+ * out-weighs the thing it controls is the clutter it was meant to solve.
+ *
+ * NO VENDOR CONTROL, DELIBERATELY: the vendor is inside the id, so the search
+ * box already does it.
+ *
+ * "NEWEST" AND "LARGEST CONTEXT" ARE OPTIONS IN THE EXISTING SORT, NOT NEW
+ * CONTROLS. They were previously absent for a real reason — the record-to-spec
+ * mapper carried neither `created` nor `context_length` onto the wire, so the
+ * only fields present were price and `maxOutput`, and `maxOutput` is the OUTPUT
+ * ceiling, a different fact whose substitution would be the
+ * proxy-for-a-measurement move this architecture refuses. The mapper now carries
+ * both (`createdUnixSec`, `contextLength`), read from the CONSERVATIVE context
+ * field, so the two sorts rank a published fact rather than a stand-in.
+ *
+ * THEY ADD NO PIXELS TO A ROW. A collapsed row shows what a CHOICE needs —
+ * which model, what it costs, any warning. A release date is not that; it is a
+ * sort key, and it stays one. Two <option>s inside the <select> that already
+ * exists is the whole surface: the bar still carries exactly three controls, and
+ * an assertion in test-next-model-picker.js §22e holds it to that.
+ *
+ * WHAT THE COUNT SAYS. A model with no published date cannot be ranked by date,
+ * so it is not ranked at all — it trails in delivered order and the count states
+ * how many. See `orderModels` for why the alternatives (1970, or now) are both a
+ * fabricated value wearing the clothes of a measurement.
+ *
+ * NOTHING HERE IS PERSISTED. A filter is a per-session convenience; storing it
+ * would make a user's next visit mysteriously show a subset of their models.
+ *
+ * IT LIVES IN THE SECTION BODY, never in a <summary>. An interactive control
+ * inside a <summary> toggles its own section on click (v3.0.1-beta.18), and the
+ * structural fix is to keep controls out of it rather than to suppress the
+ * event — a suppression a later edit can drop.
+ */
+function renderModelFilterBar(provider, f, shown, total, unranked) {
+  const pid = escapeHtml(String(provider));
+  const opt = (v, label) => '<option value="' + v + '"' +
+    (f.sort === v ? ' selected' : '') + '>' + label + '</option>';
+  // ── THE ROWS THIS SORT COULD NOT RANK, STATED ────────────────────────────
+  // Only ever a positive integer, and only for a sort that has an absence to
+  // report. Reusing the count span rather than adding an element is the
+  // restraint: it is one clause on a line that already exists, and it appears
+  // only while the sort it explains is selected.
+  const n = Number.isInteger(unranked) && unranked > 0 ? unranked : 0;
+  const why = (typeof f.sort === 'string' && Object.hasOwn(MODEL_SORT_UNRANKED_LABEL, f.sort))
+    ? MODEL_SORT_UNRANKED_LABEL[f.sort] : '';
+  const unrankedNote = (n > 0 && why) ? ' · ' + String(n) + ' ' + why : '';
+  return (
+    '<div class="model-filter">' +
+      '<input type="search" class="model-filter-q" data-model-filter-q="' + pid + '"' +
+        ' placeholder="Search models…" aria-label="Search models"' +
+        ' value="' + escapeHtml(f.q) + '">' +
+      '<select class="model-filter-sort" data-model-filter-sort="' + pid + '" aria-label="Sort models">' +
+        opt('cheapest', 'Cheapest first') + opt('dearest', 'Most expensive first') +
+        opt('newest', 'Newest first') + opt('largest-context', 'Largest context first') +
+      '</select>' +
+      '<label class="model-filter-measured">' +
+        '<input type="checkbox" data-model-filter-measured="' + pid + '"' +
+          (f.measuredOnly ? ' checked' : '') + '>' +
+        'Measured by The Curator' +
+      '</label>' +
+      // The count is the feedback that the controls did something. It is also
+      // what makes an empty result legible rather than alarming.
+      '<span class="mono model-filter-count">' +
+        escapeHtml((shown === total ? String(total) + ' models'
+                                    : String(shown) + ' of ' + String(total)) + unrankedNote) +
+      '</span>' +
+    '</div>'
+  );
+}
+
+/**
+ * The empty result.
+ *
+ * A filtered list that matches nothing must SAY SO and offer the way back. An
+ * unexplained empty list reads as "the feature is broken" — this repo has
+ * shipped that exact misreading before, and the fix is a sentence and a button,
+ * not a cleverer layout. The button is a sibling of nothing interactive and
+ * carries the provider id, so one delegated handler clears one provider.
+ */
+function renderModelFilterEmpty(provider, f) {
+  const what = f.measuredOnly && f.q
+    ? 'No model matches “' + escapeHtml(f.q) + '” among the ones The Curator has measured.'
+    : (f.measuredOnly
+        ? 'The Curator has not measured any model for this provider yet.'
+        : 'No model matches “' + escapeHtml(f.q) + '”.');
+  return (
+    '<div class="model-filter-empty">' +
+      '<p>' + what + '</p>' +
+      '<button type="button" class="btn btn-secondary btn-xs" data-model-filter-clear="' +
+        escapeHtml(String(provider)) + '">Clear filters</button>' +
+    '</div>'
+  );
+}
+
 function renderModelLanes(list, defaultId, ctx) {
   // ── ONE LANE DECISION PER MODEL, FROM THE SHARED PREDICATE ────────────
   // Never a second `suitability === 'chat-only'` test here. This is the site
@@ -3055,6 +3418,31 @@ function renderModelOption(m, index, defaultId, ctx) {
   // The nested <details> lives in the OUTER section's body, never in its
   // <summary>, so the v3.0.1-beta.18 control-inside-summary hazard does not
   // apply: clicking a model row toggles that model, not its provider.
+  // ── THE COLLAPSED ROW MUST STAND ON ITS OWN ─────────────────────────────
+  // The note is folded, so a row that showed only a badge would state a verdict
+  // ('caution', 'out-performed') with its reason one click away — and a warning
+  // you have to open something to discover is not a warning. This derived line
+  // is what closes that: its first clause is `cautionReason`, which
+  // `defineOfferableModel` REQUIRES for any flagged model, so the reason is
+  // always unfolded. The rest is measured coverage and speed, read from
+  // structured fields and omitted where nothing was measured.
+  //
+  // SHARED WITH THE COMPOSER, NOT COPIED. Both pickers import the same builder
+  // (shared/model-summary.js), so the two surfaces cannot come to describe one
+  // model differently — the drift that put 'dominated' on one screen and
+  // 'out-performed' on the other, and that this file's own badge comment can
+  // only ask the next editor to avoid.
+  //
+  // NOT FILTERED FOR A LOCALLY-QUALIFIED ROW, unlike `noteHtml` above.
+  // `withoutLaneClaim` removes only the sentence saying nobody has measured this
+  // model for ingest, which a local run disproves. `cautionReason` never makes a
+  // lane claim: it records what WE measured (gemini-3.5-flash-lite returned
+  // unrepairable JSON in 2 of 9 ingest runs), which stays true however many runs
+  // the user does on their own wiki.
+  const derived = formatModelSummary(m);
+  const derivedHtml = derived
+    ? '<span class="model-row-line model-row-derived">' + escapeHtml(derived) + '</span>'
+    : '';
   const expandable = factsHtml || noteHtml || qualHtml;
   const summaryInner = (
     '<span class="model-row-line">' +
@@ -3063,6 +3451,7 @@ function renderModelOption(m, index, defaultId, ctx) {
       '<code class="mono model-id">' + escapeHtml(m.id || '') + '</code>' +
       badges.join('') +
     '</span>' +
+    derivedHtml +
     '<span class="model-row-line model-row-cost">' + priceHtml + riseHtml + '</span>'
   );
 
@@ -3411,6 +3800,51 @@ function wireProviderListeners() {
       // the user is looking at. This records it for the NEXT repaint.
       if (el.open) state.modelPickerOpen[el.dataset.modelPicker] = true;
       else delete state.modelPickerOpen[el.dataset.modelPicker];
+    });
+  });
+  // ── THE FILTER CONTROLS ────────────────────────────────────────────────
+  // `input`, not `change`, so the list narrows as you type — the whole point of
+  // a search box at 190 rows.
+  //
+  // FOCUS IS RESTORED BY ID AFTER THE RE-RENDER. render() replaces the subtree,
+  // so the element the user is typing into is destroyed on every keystroke and
+  // focus would fall to <body>. Restoring by SELECTOR rather than by holding the
+  // node is the only thing that works, because the captured node cannot survive
+  // the replacement — the v3.8.0 lesson, where an a11y defect was reachable only
+  // on the accessible path. The caret is restored too, so typing mid-string
+  // does not jump to the end.
+  document.querySelectorAll('[data-model-filter-q]').forEach((el) => {
+    el.addEventListener('input', () => {
+      const pid = el.dataset.modelFilterQ;
+      const caret = el.selectionStart;
+      setModelFilter(pid, { q: el.value });
+      render(myMountToken);
+      const again = document.querySelector('[data-model-filter-q="' + cssEscapeAttr(pid) + '"]');
+      if (again) {
+        again.focus();
+        try { again.setSelectionRange(caret, caret); } catch { /* not all inputs support it */ }
+      }
+    });
+  });
+  document.querySelectorAll('[data-model-filter-sort]').forEach((el) => {
+    el.addEventListener('change', () => {
+      setModelFilter(el.dataset.modelFilterSort, { sort: el.value });
+      render(myMountToken);
+    });
+  });
+  document.querySelectorAll('[data-model-filter-measured]').forEach((el) => {
+    el.addEventListener('change', () => {
+      setModelFilter(el.dataset.modelFilterMeasured, { measuredOnly: !!el.checked });
+      render(myMountToken);
+    });
+  });
+  document.querySelectorAll('[data-model-filter-clear]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      // Clears every axis, not just the search text: the empty state can be
+      // caused by the checkbox alone, and a "Clear filters" button that leaves
+      // one filter applied is the control that looks broken.
+      setModelFilter(btn.dataset.modelFilterClear, { q: '', measuredOnly: false });
+      render(myMountToken);
     });
   });
   document.querySelectorAll('[data-save-key]').forEach((btn) => {
