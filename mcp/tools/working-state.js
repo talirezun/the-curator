@@ -282,12 +282,42 @@ const LOSSY_NOTE_RE = /\b(dropped|omitted|truncated)\b/i;
 const REPLACED_NOTE_RE = /\boverwrote\b/i;
 
 /**
+ * A note about the STORAGE LAYOUT rather than about the caller's input — the
+ * third thing `notes` can carry, and the only one that is a standing risk
+ * instead of a description of this call.
+ *
+ * It exists because the hostname-collision fallback used to be completely
+ * silent (MEASURED with a read-only user-data dir: `notes: []`,
+ * `notes_meaning: "No notes — every field was stored exactly as supplied."`,
+ * 0 stderr) while the user was standing in the layout that cost a real handoff
+ * and its journal. Routed through `notes` deliberately: inventing a separate
+ * channel for it would be a field nobody reads, which is the failure this
+ * whole change is about. But it must not be classified as an input
+ * normalisation — nothing about the input was normalised, and telling the
+ * caller "the save is complete" and nothing else is how it stayed invisible.
+ *
+ * Matched on the store's own note prefix, so the store keeps ownership of the
+ * wording; the suite pins the prefix against a REAL degraded save, so a reword
+ * there goes RED here rather than silently demoting the warning.
+ */
+const MACHINE_IDENTITY_NOTE_RE = /^machine identity:/i;
+
+/**
  * Candidate scope names for a scope that was not found.
  *
  * Suggestion only, and deliberately so: resolving a near-match for the caller
  * would open a DIFFERENT work-stream than the one named, which is a
  * correctness bug wearing a helpfulness costume. Bounded by the index cap
  * upstream, and to 3 here.
+ *
+ * AN EXACT MATCH IS NEVER A SUGGESTION. It used to score HIGHEST, which read
+ * as "Did you mean 'adyen-adapter'?" to a caller who had just spelled
+ * 'adyen-adapter' correctly — a suggestion to do the thing that had already
+ * been done, in the same payload as a claim that the scope did not exist. The
+ * gate above should stop that shape reaching here at all; this is the second
+ * layer, and it is the one that holds for any future caller of this helper,
+ * because "the name you sent is in the list" can only ever mean the miss was
+ * about something else.
  */
 function nearScopeNames(wanted, names) {
   const w = String(wanted || '').toLowerCase();
@@ -296,13 +326,35 @@ function nearScopeNames(wanted, names) {
   const scored = [];
   for (const n of names) {
     const c = String(n).toLowerCase();
-    if (c === w) { scored.push([3, n]); continue; }
+    if (c === w) continue;
     if (c.startsWith(w) || w.startsWith(c)) { scored.push([2, n]); continue; }
     if (w.length >= 3 && (c.includes(w) || w.includes(c))) { scored.push([1, n]); continue; }
     if (c.split('-').some((t) => wTokens.has(t))) scored.push([0, n]);
   }
   scored.sort((a, b) => b[0] - a[0] || String(a[1]).localeCompare(String(b[1])));
   return scored.slice(0, 3).map(([, n]) => n);
+}
+
+/**
+ * "The caller named a MACHINE that has no state, under a scope that does."
+ *
+ * The one discriminator this file needs and did not have. The gate it replaces
+ * tested only `!out.current?.present` — whether anything was found — never WHY
+ * nothing was found, so it treated an absent machine as an absent scope and
+ * then reported the scope as missing while the same payload listed the two
+ * machines that hold it.
+ *
+ * Both terms are load-bearing. `requestedMachine` is set by the store ONLY on
+ * the machine-miss return, so it is what says a machine was named and not
+ * found; `machineCount > 0` is what says the scope itself is not empty. When
+ * the count is zero the scope really does have nothing under it, and that IS a
+ * scope miss — it falls through to the scope-list branch on purpose, so a
+ * caller who guessed both wrong still gets the route back.
+ */
+function isMachineMiss(state, out) {
+  return state?.requestedMachine !== undefined
+    && state.requestedMachine !== null
+    && (out?.machineCount || 0) > 0;
 }
 
 /**
@@ -335,6 +387,35 @@ function buildReport(project, state, out, missing) {
         + `${state.machine ? ` (machine: ${state.machine})` : ''}, saved ${out.current.savedAt}.`
         + briefClause;
     }
+
+    // A MISSING MACHINE IS NOT A MISSING SCOPE.
+    //
+    // MEASURED: asking for a machine that has no state under a scope that
+    // exists on two others returned, in ONE payload, the store's correct
+    // `message` ("No state under scope 'adyen-adapter' on machine 'ghost-box'
+    // — 2 other machine(s) do have state here") next to
+    // `report: "No saved state under scope 'adyen-adapter' in 'projA'. …
+    // Did you mean 'adyen-adapter'?"` and `scope_not_found: true`. The payload
+    // asserted the scope both exists and does not, and the FALSE half was
+    // `report` — the field this tool's own description trains the model to
+    // read first.
+    //
+    // The store already gets this right and says why in its own comment ("the
+    // scope HAS state, this machine does not"). So the report DEFERS to the
+    // store's sentence rather than composing a second one: two hand-written
+    // descriptions of one fact is how the contradiction happened, and one of
+    // them being derived removes the drift instead of re-balancing it. The
+    // composed fallback below exists only so a missing `message` degrades to a
+    // true sentence rather than falling through to the scope-miss branch.
+    if (isMachineMiss(state, out)) {
+      if (out.message) return `${out.message}${briefClause}`;
+      const where = (out.machines || []).map((m) => `'${m.machine}'`).slice(0, 10).join(', ');
+      return `Scope '${state.scope}' in '${project}' exists, but nothing is saved under machine `
+        + `'${out.requestedMachine}'. ${out.machineCount} other machine(s) do have state here`
+        + `${where ? `: ${where}` : ''}. Omit \`machine\` to read the most recently written one.`
+        + briefClause;
+    }
+
     // Not found. The save path already lists real domains when it refuses an
     // unknown project; the read path owes the same courtesy for an unknown
     // scope, or a wrong guess is a dead end with no route back.
@@ -363,12 +444,34 @@ function buildReport(project, state, out, missing) {
   // that asserts absence, so the sentence counts what it claims to count. The
   // field keeps its name and meaning (callers read it); when the two differ,
   // BOTH facts are stated rather than one being dropped.
+  //
+  // THE FIRST FIX FOR THAT WAS ITSELF WRONG PAST THE INDEX CAP, and in two
+  // independent ways, because it derived the work-stream count from the CAPPED
+  // `scopes` array. MEASURED on a seeded project of 78 distinct scopes across
+  // 82 pairs on 6 machines: "56 saved work-streams in 'projB' (82 saved copies
+  // across machines)" — 56 is the distinct count OF THE 60-ROW SLICE and is
+  // true of nothing. And on a ONE-MACHINE project with 70 scopes it produced
+  // "60 saved work-streams … (70 saved copies across machines)": a
+  // multi-machine explanation for a tree that has never seen a second machine,
+  // invented purely by the cap.
+  //
+  // `distinctScopeCount` is computed by the store over the UNCAPPED pair list,
+  // so the count is now a fact rather than a property of the slice — and the
+  // "copies" clause becomes sound at the same time, because pairs > distinct
+  // scopes holds if and only if some scope really is saved on more than one
+  // machine. What truncation affects is the LIST, and that is stated as what
+  // it is instead of being folded into a number.
   if (out.scopeCount) {
-    const streams = new Set((out.scopes || []).map((r) => r.scope).filter(Boolean)).size || out.scopeCount;
-    const copies = streams !== out.scopeCount
-      ? ` (${out.scopeCount} saved copies across machines)`
+    const pairs = out.scopeCount;
+    const streams = Number.isFinite(out.distinctScopeCount) && out.distinctScopeCount > 0
+      ? out.distinctScopeCount
+      : new Set((out.scopes || []).map((r) => r.scope).filter(Boolean)).size || pairs;
+    const copies = streams !== pairs ? ` (${pairs} saved copies across machines)` : '';
+    const listed = (out.scopes || []).length;
+    const capped = out.scopesTruncated
+      ? ` The list below is the ${listed} most recently written of ${pairs} — naming a scope always finds it, even one that is not listed.`
       : '';
-    return `${streams} saved work-stream${streams === 1 ? '' : 's'} in '${project}'${copies}.`
+    return `${streams} saved work-stream${streams === 1 ? '' : 's'} in '${project}'${copies}.${capped}`
       + ` Call again with \`scope\` to open one.` + briefClause;
   }
   if (briefHere) {
@@ -465,7 +568,27 @@ export async function getWorkingStateHandler(args, storage) {
 
   if (state.brief) out.brief = state.brief;
   out.scope = state.scope ?? null;
-  if (state.scopes) { out.scopes = state.scopes; out.scopeCount = state.scopeCount; out.scopesTruncated = state.scopesTruncated; }
+  if (state.scopes) {
+    out.scopes = state.scopes;
+    out.scopeCount = state.scopeCount;
+    out.scopesTruncated = state.scopesTruncated;
+    // Pairs AND work-streams. The two differ whenever one scope is saved on
+    // more than one machine, which is the feature working; a consumer given
+    // only the pair count re-derives the other from the capped array and gets
+    // it wrong, which is exactly what `report` used to do.
+    if (state.distinctScopeCount !== undefined) out.distinctScopeCount = state.distinctScopeCount;
+  }
+  // DIRECTORY ENTRIES THIS MODULE WILL NOT ADDRESS.
+  //
+  // The store counts them (a name over 64 chars, or carrying a space, a
+  // non-ASCII character, or a leading hyphen/underscore) and writes an actionable
+  // sentence naming the fix. Neither field was copied here, so over MCP the
+  // model was never told that state exists on disk and is being skipped —
+  // content unreachable AND uncounted, which is the collapse the store added
+  // these fields to refuse, re-created one layer up. Same shape, and the same
+  // fix, as `machineCount`/`machinesTruncated` below.
+  if (state.unlistedEntries !== undefined) out.unlistedEntries = state.unlistedEntries;
+  if (state.unlistedReason) out.unlistedReason = state.unlistedReason;
   // Pass the machine-list TRUTH through, not just the (possibly capped) array.
   // The store bounds `machines` after a newest-first sort, so a scope written
   // from many machines can return fewer than exist. Copying only the array is
@@ -476,8 +599,43 @@ export async function getWorkingStateHandler(args, storage) {
     out.machines = state.machines;
     if (state.machineCount !== undefined) out.machineCount = state.machineCount;
     if (state.machinesTruncated !== undefined) out.machinesTruncated = state.machinesTruncated;
+    // The machine-level twin of `unlistedEntries` — same store helper, same
+    // silent-drop it exists to refuse, and it was dropped here for the same
+    // reason the other two were: the payload is assembled field by field, so a
+    // field nobody names is a field nobody sees.
+    //
+    // `!== undefined`, NOT truthiness: `0` is the answer "we looked, and every
+    // machine directory here is addressable", which is a different statement
+    // from "nobody looked". A truthy gate collapses the two — which is the
+    // very collapse these fields were added to refuse, so it is worth the
+    // extra three characters to get right.
+    if (state.unlistedMachines !== undefined) out.unlistedMachines = state.unlistedMachines;
   }
-  if (state.machine) { out.machine = state.machine; out.machineIsThisMachine = state.machineIsThisMachine; }
+  if (state.machine) {
+    out.machine = state.machine;
+    out.machineIsThisMachine = state.machineIsThisMachine;
+    // D9's second, separate fact: whether the folder merely SHARES this
+    // hostname. It cannot be folded into `machineIsThisMachine` — that is the
+    // whole point of there being two flags, because a hostname match is
+    // exactly what installation collision makes unprovable — and dropping it
+    // left an MCP caller unable to tell "another installation on a
+    // same-named machine" from "an unrelated machine". Found by this
+    // release's own class guard, not by the report that prompted it.
+    if (state.machineIsThisHost !== undefined) out.machineIsThisHost = state.machineIsThisHost;
+  }
+  // The machine that was ASKED FOR and is not there. The store computes it
+  // precisely so the response can name the thing that is actually absent;
+  // dropping it left the payload describing the absence of something else.
+  if (state.requestedMachine !== undefined) out.requestedMachine = state.requestedMachine;
+  // Whether machine identity is collision-guarded at all. Reported wherever
+  // machine identity is reported, because a bare-hostname folder is shared
+  // with any other computer of the same name and a sync merge picks one.
+  if (state.installIdAvailable !== undefined) {
+    out.installIdAvailable = state.installIdAvailable;
+    if (state.installIdUnavailableReason) {
+      out.installIdUnavailableReason = state.installIdUnavailableReason;
+    }
+  }
   if (state.current) out.current = state.current;
 
   if (state.journal) {
@@ -510,8 +668,16 @@ export async function getWorkingStateHandler(args, storage) {
   // lands exactly where the caller is already stuck. Fields reuse the names the
   // scope-less read already returns, with the same element shape — `out.scope`
   // stays the discriminator between an index read (null) and a targeted one.
+  //
+  // …AND IT MUST BE A SCOPE MISS. `!out.current?.present` alone is not that
+  // test: an absent MACHINE under a present scope satisfies it too, and this
+  // block then flagged `scope_not_found` on a scope that demonstrably exists,
+  // listed the scopes "that DO exist" (including the one just asked for), and
+  // suggested the caller's own correct input back to them. `isMachineMiss`
+  // sends that case to the report branch that names the machine instead, and
+  // leaves this one to do the job it was written for.
   let missing = null;
-  if (state.scope && !out.current?.present) {
+  if (state.scope && !out.current?.present && !isMachineMiss(state, out)) {
     const index = await listWorkingScopes(project.value);
     const rows = index.ok ? (index.scopes || []) : [];
     const names = [...new Set(rows.map((r) => r.scope).filter(Boolean))];
@@ -519,7 +685,10 @@ export async function getWorkingStateHandler(args, storage) {
       out.scope_not_found = true;
       out.scopes = rows;
       out.scopeCount = index.total;
+      if (index.distinctScopeCount !== undefined) out.distinctScopeCount = index.distinctScopeCount;
       out.scopesTruncated = index.truncated;
+      if (index.unlistedEntries) out.unlistedEntries = index.unlistedEntries;
+      if (index.unlistedReason) out.unlistedReason = index.unlistedReason;
       const didYouMean = nearScopeNames(state.scope, names);
       // Suggestions only. Nothing is opened on the caller's behalf: silently
       // resolving 'pricing' to 'pricing-model' would hand back a DIFFERENT
@@ -706,12 +875,18 @@ export async function saveWorkingStateHandler(args, storage) {
     // the wording), so a new note kind is covered without editing a list —
     // and the store bans loss vocabulary from any note that is not a loss,
     // which is what makes deriving it from the text sound.
+    // Whether this installation's machine identity is collision-guarded.
+    // Always present, so "no warning" is a stated fact rather than an absence
+    // the caller has to interpret.
+    install_id_available: result.installIdAvailable !== false,
     notes_meaning: notes.length
       ? (notes.some((n) => LOSSY_NOTE_RE.test(n))
         ? 'Some input was DROPPED, OMITTED or TRUNCATED — read `notes` and re-save what matters.'
         : notes.some((n) => REPLACED_NOTE_RE.test(n))
           ? 'Nothing you sent was dropped — but this save REPLACED a larger saved handoff because replace: true was set, and that text is not recoverable.'
-          : 'These notes record how your input was NORMALISED (for example a missing timestamp filled in). Nothing was dropped; the save is complete.')
+          : notes.some((n) => MACHINE_IDENTITY_NOTE_RE.test(n))
+            ? 'Nothing you sent was dropped and the save is complete — but read `notes`: this installation has no persisted machine id, so state is stored under the bare hostname and another computer with the same hostname can replace it through sync.'
+            : 'These notes record how your input was NORMALISED (for example a missing timestamp filled in). Nothing was dropped; the save is complete.')
       : 'No notes — every field was stored exactly as supplied.',
     report:
       `Saved working state for '${result.project}' / scope '${result.scope}' (machine: ${result.machine}). ` +
@@ -721,7 +896,9 @@ export async function saveWorkingStateHandler(args, storage) {
           ? ` ${notes.length} note(s): some input was dropped or truncated — see \`notes\`.`
           : notes.some((n) => REPLACED_NOTE_RE.test(n))
             ? ` ${notes.length} note(s): it replaced a LARGER saved handoff, which is not recoverable — see \`notes\`.`
-            : ` ${notes.length} note(s) about how your input was normalised — nothing was dropped.`)
+            : notes.some((n) => MACHINE_IDENTITY_NOTE_RE.test(n))
+              ? ` ${notes.length} note(s): nothing was dropped, but this machine has no persisted id — see \`notes\`.`
+              : ` ${notes.length} note(s) about how your input was normalised — nothing was dropped.`)
         : ''),
   };
 }

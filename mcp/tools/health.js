@@ -347,12 +347,35 @@ export async function scanSemanticDuplicatesHandler(args, storage) {
   if (estimate_only) {
     try {
       const est = await estimateSemanticDuplicateScan(domain.value, maxPairs);
+      // Build this line from fields the PRODUCER actually returns. The previous
+      // version read `est.batches`, `est.estimatedInputTokens` and
+      // `est.estimatedOutputTokens` — health-ai.js has never emitted any of the
+      // three — so `.toLocaleString()` on undefined THREW and `estimate_only`
+      // was 100% broken over MCP from v3.9.1 until v3.17.1. What hid it is that
+      // `estimatedUsd?.` on the same line WAS optional-chained while its three
+      // siblings were not: one guarded field reads as a guarded line.
+      // It matters more than a cosmetic string, because the tool description
+      // tells the caller to run `estimate_only` FIRST to see the cost before
+      // paying it — so the documented cost gate failed, and the natural
+      // recovery (call again without the flag) is to spend the money unseen.
+      const n = (v) => (typeof v === 'number' ? v.toLocaleString('en-US') : 'unknown');
+      // A fact and its ABSENCE stay distinguishable: `estimatedUsd: null` means
+      // EITHER a free model OR no published price, and `costNote` is the field
+      // that says which. Collapsing both to "$?" would report a free scan as an
+      // unknown cost — the shape v3.15.0 removed from eight other places.
+      const cost = est.costNote
+        ? est.costNote
+        : (typeof est.estimatedUsd === 'number' ? `~$${est.estimatedUsd.toFixed(4)}` : 'cost unknown');
+      const scope = est.truncated
+        ? `${n(est.candidatePairs)} of ${n(est.totalCandidates)} candidate pairs (capped)`
+        : `${n(est.candidatePairs)} candidate pairs`;
       return {
         ok: true,
         domain: domain.value,
         estimate_only: true,
         estimate: est,
-        report: `Estimate: ${est.candidatePairs} pairs across ${est.batches} batches. Approx ${est.estimatedInputTokens.toLocaleString()} input + ${est.estimatedOutputTokens.toLocaleString()} output tokens (~$${est.estimatedUsd?.toFixed(4) || '?'}).`,
+        report: `Estimate for '${domain.value}': ${scope} across ${n(est.pageCount)} pages. `
+          + `Approx ${n(est.estimatedTokens)} tokens on ${est.model || 'the configured model'}. ${cost}`,
       };
     } catch (err) {
       return { ok: false, error: `Estimate failed: ${err.message}` };

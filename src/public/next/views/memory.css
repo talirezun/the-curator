@@ -57,9 +57,21 @@
   white-space: nowrap;
 }
 .mem-row.active .mem-row-name { color: var(--text); }
+/* --text-2, not --text-faint. MEASURED, in both themes, composited against
+   the real surface behind it (.sidebar is --surface):
+
+     --text-faint  2.26 dark / 2.34 light   — half the 4.5:1 AA floor
+     --text-3      4.27 dark / 4.14 light   — still under it
+     --text-2      8.34 dark / 7.26 light   — clears it
+
+   --text-3 does NOT reach the floor anywhere in this file (3.87–4.38 across
+   the five surfaces measured), so --text-2 is the only existing token that
+   does. Hierarchy is carried by SIZE and position instead: this stays at
+   --text-2xs under a --text-sm name, which is what makes it read as
+   secondary. Sub-threshold contrast is not a hierarchy device. */
 .mem-row-meta {
   font-size: var(--text-2xs);
-  color: var(--text-faint);
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -74,7 +86,11 @@
   padding: 8px 10px;
   border-radius: var(--radius-md);
   background: var(--surface-inset);
-  color: var(--text-faint);
+  /* The READ-ONLY NOTICE — and it was the least legible element on a screen
+     whose defining property is being read-only (2.29 dark / 2.18 light, the
+     worst pair in the file). --text-2 measures 8.45 dark / 6.79 light on
+     --surface-inset. */
+  color: var(--text-2);
   font-size: var(--text-2xs);
   line-height: var(--leading-normal);
 }
@@ -119,18 +135,32 @@
   gap: 10px 14px;
   margin-bottom: 14px;
 }
-.mem-ctl { display: inline-flex; align-items: center; gap: 7px; }
+/* min-width: 0 is load-bearing, not tidiness. A flex item defaults to
+   min-width: auto — a content-based floor — so .mem-ctl refused to shrink
+   below its widest child and .mem-select's own `max-width: 100%` then
+   resolved against a box that was ALREADY overflowing. Measured at a 640px
+   viewport: the select's right edge landed at 651 and the main column grew a
+   horizontal scrollbar (scrollWidth 319 vs clientWidth 308). Both boxes need
+   it — the <select> is itself a flex item whose intrinsic minimum is its
+   longest option, and machine ids are long and hex-suffixed. */
+.mem-ctl { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .mem-ctl-label {
+  flex: none;
   font: var(--type-eyebrow);
   font-size: var(--text-2xs);
-  color: var(--text-faint);
+  /* 2.31 dark / 2.26 light at --text-faint; 8.55 / 7.02 at --text-2, over
+     --canvas. See the note on .mem-row-meta for why not --text-3. */
+  color: var(--text-2);
 }
-.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); }
-.mem-ctl-note { font-size: var(--text-2xs); color: var(--text-faint); }
+.mem-ctl-static { font-size: var(--text-xs); color: var(--text-2); min-width: 0; overflow-wrap: anywhere; }
+/* A truncation disclosure sits beside the new "not addressable" note and
+   states the same class of fact, so it is held to the same legibility. */
+.mem-ctl-note { font-size: var(--text-2xs); color: var(--text-2); }
 
 .mem-select {
   height: var(--control-sm);
   max-width: 100%;
+  min-width: 0;                          /* see .mem-ctl — both are required */
   padding: 0 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
@@ -158,7 +188,9 @@
   gap: 12px;
   margin-bottom: 12px;
 }
-.mem-doc-stamp { font-size: var(--text-2xs); color: var(--text-faint); }
+/* 2.26 dark / 2.34 light at --text-faint; 8.34 / 7.26 at --text-2, on
+   --surface. When a handoff was saved is provenance, not decoration. */
+.mem-doc-stamp { font-size: var(--text-2xs); color: var(--text-2); }
 
 /* The one-line headline the agent wrote, promoted out of the document's
    preamble (see splitHandoffPreamble in memory.js). It is the only part of
@@ -170,7 +202,8 @@
   line-height: var(--leading-snug);
   margin-bottom: 3px;
 }
-.mem-doc-who { font-size: var(--text-2xs); color: var(--text-faint); margin-bottom: 14px; }
+/* Which harness and which model wrote this — same reasoning as the stamp. */
+.mem-doc-who { font-size: var(--text-2xs); color: var(--text-2); margin-bottom: 14px; }
 .mem-doc-headline:last-child, .mem-doc-who:last-child { margin-bottom: 0; }
 
 .mem-doc-empty { border-style: dashed; }
@@ -194,6 +227,23 @@
 }
 .mem-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
+/* THE "state on disk that is not being read" NOTE.
+   Louder than a .mem-note on purpose: the rest of the screen is about to
+   affirm the opposite (a static "Scope main" label, or an empty state), and
+   this is the sentence that stops that being read as the whole truth.
+
+   Measured on --attention-tint composited over --canvas: --text-2 is 7.19
+   dark / 6.30 light (AA 4.5 floor), the bold lead 14.40 / 15.86, and the
+   amber border 9.01 / 3.46 against the 3:1 floor that applies to a graphical
+   boundary rather than to text. Colour is never the only signal here — the
+   lead sentence says it in words. */
+.mem-note-loud {
+  color: var(--text-2);
+  border-color: var(--attention);
+  background: var(--attention-tint);
+}
+.mem-note-loud b { color: var(--text); font-weight: var(--weight-semibold); }
+
 /* Rendered markdown. `.chat-md-h` is emitted by shared/markdown.js (the
    shared renderer, not chat.js's own markup) — styled here SCOPED under
    .mem-doc so nothing leaks into or out of any other view. */
@@ -207,7 +257,23 @@
   font-weight: var(--weight-semibold);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: var(--text-faint);
+  /* --text, NOT --text-2, and this is the one place in the file where the
+     AA fix and the hierarchy point at DIFFERENT tokens.
+
+     These are the handoff's own section headings — "Firm decisions — do not
+     re-litigate", "Traps and dead ends" — and they are how the document is
+     scanned at all. .mem-doc's body is --text-2, so setting a heading to
+     --text-2 would paint it the SAME colour as the text it heads, while
+     being SMALLER than it (--text-xs against --text-sm): legible, and a
+     worse hierarchy than before. --text is the only token that puts the
+     heading ABOVE its own body, which is what a heading is for.
+
+     Measured on --surface: --text-faint 2.26 dark / 2.34 light (the defect),
+     --text-2 8.34 / 7.26 (AA, but flat against the body), --text 16.71 /
+     18.27. It also makes this file's own header claim — "the handoff
+     document is the only thing at full contrast" — true, which it was not
+     while the document's headings were the faintest text on the screen. */
+  color: var(--text);
 }
 .mem-doc > .chat-md-h:first-child { margin-top: 0; }
 .mem-doc ul, .mem-doc ol { margin: 0 0 10px; padding-left: 20px; }
@@ -260,7 +326,10 @@
 .mem-fold-summary:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 .mem-fold-summary svg { flex: none; color: var(--text-faint); transition: transform var(--t-state); }
 .mem-fold[open] > .mem-fold-summary svg { transform: rotate(90deg); }
-.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-faint); }
+/* --text-2: 8.34 dark / 7.26 light on --surface. Same reasoning as
+   .mem-row-meta — the entry count and the age are information, and
+   --text-3 does not clear 4.5:1 on any surface in this file. */
+.mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); }
 .mem-fold-body { padding: 2px 16px 15px; }
 
 .mem-quiet { margin: 0 0 9px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
@@ -280,32 +349,54 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 .mem-j-row:last-child { border-bottom: none; }
-.mem-j-when { flex: none; width: 108px; font-size: var(--text-2xs); color: var(--text-faint); padding-top: 1px; }
+.mem-j-when { flex: none; width: 108px; font-size: var(--text-2xs); color: var(--text-2); padding-top: 1px; }
 .mem-j-body { flex: 1; min-width: 0; }
 .mem-j-headline { font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-snug); }
-.mem-j-meta { margin-top: 2px; font-size: var(--text-2xs); color: var(--text-faint); }
-/* NOT `--attention-text`, and the reason is the same defect one layer down.
-   The store produces THREE outcomes here — real loss, a deliberate replace,
+/* When a save happened, and which harness/model made it: the same
+   provenance the card states as .mem-doc-stamp / .mem-doc-who, so it is
+   held to the same 4.5:1 floor rather than being quietly a third of it. */
+.mem-j-meta { margin-top: 2px; font-size: var(--text-2xs); color: var(--text-2); }
+/* The store produces THREE outcomes here — real loss, a deliberate replace,
    and ordinary normalisation (a value filled in and disclosed) — and the
-   commonest by far is the third. `renderJournal` was fixed to say which one
-   happened, but the colour was amber for all three, so "we recorded the save
-   time because you sent none" still LOOKED like a problem. That is the label
-   bug ("N field(s) rejected by the sanitiser") surviving in the palette after
-   it was removed from the words.
+   commonest by far is the third. `renderJournal` says which one happened in
+   words; until now the COLOUR was identical for all three, so
+   "1 note — some content was dropped or truncated" and "1 note on how this
+   save was normalised — the content itself was stored in full" rendered in
+   the same grey. That was the label bug ("N field(s) rejected by the
+   sanitiser") surviving in the palette after it was removed from the words.
 
-   It is NOT painted three ways here because it CANNOT be: `renderJournal`
-   emits one class, `.mem-j-rej`, for all three; the classification lives only
-   in the note text, and CSS cannot select on text. So this is deliberately
-   neutral rather than a guess — the loss case still says "some content was
-   dropped or truncated" in its own first clause, which is the signal a reader
-   and a keyword classifier both bucket on. Amber should come back for the
-   loss case ALONE, the moment the view emits a modifier class to carry it;
-   restoring it here without one re-warns on every normalisation.
+   The previous note here said amber should return for the loss case ALONE,
+   the moment the view emitted a modifier class to carry it. It now does:
+   `renderJournal` adds `.mem-j-rej-loss` on the loss branch only, so the
+   other two keep this neutral treatment and no normalisation is re-warned
+   about.
 
    `--text-3`, not `--text-faint`: this is a disclosure the skill instructs a
    model to read, so it sits above the timestamp and the harness meta, not
    level with them. */
-.mem-j-rej { margin-top: 3px; font-size: var(--text-2xs); color: var(--text-3); line-height: var(--leading-normal); }
+.mem-j-rej {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+}
+.mem-j-rej svg { flex: none; margin-top: 1px; }
+
+/* REAL LOSS ONLY. Amber arrives as an icon and a rule — graphical objects,
+   held to 3:1 (measured 11.03 dark / 3.58 light for the icon, 8.78 / 3.58
+   for the rule) — while the TEXT moves to --text-2, 8.34 dark / 7.26 light,
+   clearing the 4.5:1 floor that applies to it. Colouring the text
+   --attention-text instead would have put it at 3.58 in the light theme:
+   below the floor, on the one note that reports something was lost. */
+.mem-j-rej-loss {
+  color: var(--text-2);
+  padding-left: 7px;
+  border-left: 2px solid var(--attention);
+}
+.mem-j-rej-loss svg { color: var(--attention-text); }
 .mem-j-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .mem-j-more { flex: none; }
 

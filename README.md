@@ -593,6 +593,8 @@ This is what makes the difference between "I have a folder of notes" and "I have
 > 📖 **Setup is under 2 minutes** from **Settings** inside the app — see **[docs/mcp-user-guide.md](docs/mcp-user-guide.md)** for the wizard, prompt patterns, and the privacy/security model.
 >
 > 💡 **The My Curator Claude skill (v2.5.7+):** drop **[claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md)** into Claude Code's `~/.claude/skills/` — or upload it to any Claude Desktop project's knowledge files — and every conversation that touches the my-curator MCP automatically follows the playbook: ground every wikilink, refuse speculative writes on fresh domains, three-tier-track Health fixes, respect domain siloing. No more typing detailed prompts every time. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-my-curator-claude-skill--best-results-out-of-the-box-v257).
+>
+> 🧭 **The Curator Continuity skill (v3.17.0+):** the same install, for the memory layer — drop **[claude-skills/curator-continuity/SKILL.md](claude-skills/curator-continuity/SKILL.md)** into `~/.claude/skills/` and your agent resumes from where the last session left off, and saves a handoff before it runs out of context. **Install it if you want working state at all:** nothing forces an agent to save, so an agent that hasn't been told the discipline never writes and the store stays empty. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170); what it stores is in [working-state.md](docs/working-state.md).
 
 ---
 

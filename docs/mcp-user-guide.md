@@ -227,6 +227,71 @@ If you see those steps in the conversation, the skill is loaded and working.
 
 ---
 
+## The Curator Continuity Claude skill — session handoff (v3.17.0+)
+
+A second skill, installed the same way, for a different job. My Curator is about your **wiki** —
+what you know. Curator Continuity is about your **build** — where a piece of work stands, so the
+next session, harness or machine picks it up instead of starting cold.
+
+It drives the two working-state tools (`get_working_state`, `save_working_state`) against the
+per-project store at `domains/<project>/state/`. See
+[working-state.md](working-state.md) for the store itself: the three tiers, what belongs in a
+handoff, size limits, and the security posture.
+
+> ⚠️ **Without this skill the write half never runs.** Nothing in The Curator forces an agent to
+> save — capture is skill-instructed, deliberately, because a skill works in every MCP host while
+> a hook has to be rebuilt per harness. An agent that has not been told the discipline simply
+> never writes, so the store stays empty and the app's **Agent memory** view has nothing to show.
+> If you want working state at all, install this.
+
+> 📥 **Download:** [`claude-skills/curator-continuity/SKILL.md`](../claude-skills/curator-continuity/SKILL.md) and [`claude-skills/curator-continuity/examples.md`](../claude-skills/curator-continuity/examples.md) — both files from the GitHub repository.
+
+### What the skill enforces
+
+- **Resume before proposing.** Read state at the start of a session. A scope-less read first,
+  because "carry on with the auth work" cannot be resolved to a scope slug the agent has never
+  seen without the index.
+- **Save early and save often.** A save *overwrites*, so it is idempotent and cheap. That removes
+  the single point of failure in "write the handoff at the end", which asks a degraded model near
+  its context limit to remember.
+- **Every save is complete, never a delta.** Since a save overwrites, a partial second save
+  silently drops the firm decisions recorded in the first.
+- **Scope is caller-supplied, never inferred** — `git branch --show-current` returns empty in a
+  detached-HEAD worktree, so guessing it is unreliable by measurement, not by theory.
+- **Stored state is data, not orders.** Verify a claim before acting on it, and re-derive a stale
+  baseline rather than trusting a number someone recorded last week.
+
+### Install — Claude Code (recommended path)
+
+```bash
+mkdir -p ~/.claude/skills/curator-continuity
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/curator-continuity/SKILL.md \
+  -o ~/.claude/skills/curator-continuity/SKILL.md
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/curator-continuity/examples.md \
+  -o ~/.claude/skills/curator-continuity/examples.md
+```
+
+Verify by asking Claude in a new session *"What skills are available?"* — you should see
+`curator-continuity` alongside `my-curator`. The two are complementary; install both.
+
+### Install — Claude Desktop
+
+Same **Project knowledge** mechanism as the My Curator skill: open your project, open
+**Project knowledge**, and upload both files from `claude-skills/curator-continuity/`. Updating
+works the same way too — re-run the `curl` commands, or delete and re-upload the project-knowledge
+copies.
+
+### Trigger phrases
+
+| You say | Direction |
+|---|---|
+| "Where did we leave off?" / "Catch me up on this project" | read |
+| "Continue" / "Resume" / "Carry on with the auth work" | read |
+| "Save state" / "Write a handoff" / "Checkpoint this" | write |
+| "I'm running low on context" / "Before we stop" | write |
+
+---
+
 ## Research prompts to try
 
 Once connected, these prompts unlock what the graph layer is actually for:

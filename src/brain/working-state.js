@@ -292,8 +292,21 @@ export function slugSegment(input) {
 // If the id can neither be read nor written (read-only home, permissions),
 // we fall back to the previous hostname-only behaviour rather than failing
 // the save — losing the collision guard costs a merge risk, refusing the
-// save loses the handoff outright, and those costs are not symmetric. The
-// fallback is reported (`installIdAvailable: false`) instead of being silent.
+// save loses the handoff outright, and those costs are not symmetric.
+//
+// THE FALLBACK IS REPORTED, and until this release it was not. MEASURED with
+// a `chmod 555` user-data dir: the save succeeded under a bare hostname,
+// `notes` was `[]`, `notes_meaning` read "every field was stored exactly as
+// supplied", and stderr was empty — nothing anywhere said the collision guard
+// was off, i.e. the user was returned to the exact layout that produced the
+// loss described above with no signal at all. Two docs promised otherwise
+// (docs/working-state.md: "falls back … AND SAYS SO"; CLAUDE.md: "A fallback
+// is reported (`installIdAvailable: false`) rather than being silent") while
+// the identifier appeared in NO code anywhere in the repo. It does now:
+// `installIdAvailable()` below, surfaced on every save result, on every read
+// that reports machine identity, and — where the degradation actually applies
+// — as a `note`, so it lands in the channel the caller already reads rather
+// than in a new one.
 // ─────────────────────────────────────────────────────────────────────────
 export const INSTALL_ID_FILENAME = '.curator-install-id';
 const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
@@ -345,6 +358,55 @@ export function installId() {
   _installIdCache = { dir, id };
   return id;
 }
+
+/**
+ * Whether this installation has a persisted identity, i.e. whether the
+ * hostname-collision guard is ARMED.
+ *
+ * `false` means `machineId()` degrades to the bare hostname, which is the
+ * pre-D9 layout: two computers whose hostnames slugify the same write to the
+ * SAME `state/<scope>/<machine>/` folder, and a `git pull -X theirs` merge
+ * then resolves the conflicting hunk in favour of origin without a conflict
+ * marker — one machine's handoff replaced by the other's, `git status` clean.
+ *
+ * Reported rather than thrown, and reported rather than left silent: the
+ * save must still succeed (see the block above for why that asymmetry is not
+ * negotiable), so the ONLY thing left to do about the risk is say it out loud.
+ */
+export function installIdAvailable() {
+  return installId() !== null;
+}
+
+/**
+ * The sentence a caller sees when the guard is off. ONE constant, used by the
+ * save note and by the read payload, because two hand-written descriptions of
+ * one fact is the drift shape this repo keeps paying for.
+ *
+ * TWO CONSTRAINTS SHAPE THE WORDING, and both were found by measurement rather
+ * than reasoned about:
+ *
+ *  1. LENGTH. The MCP layer bounds every note to REJECTION_CHARS (200) before
+ *     it reaches the caller. A first draft ran to 470 characters and arrived
+ *     cut off mid-clause at "...instead of <hostname>-<ins" — the fact
+ *     survived and the RISK, which is the entire reason the note exists, did
+ *     not. A warning that does not fit the channel it travels in is not a
+ *     warning. Raising the cap for one note would have been the easier change
+ *     and the wrong one: the cap protects a shared response budget, and this
+ *     sentence is perfectly sayable in 200 characters. The MCP suite asserts
+ *     the surviving text still carries the risk, so a reword that overflows
+ *     goes RED instead of quietly losing its point again.
+ *
+ *  2. VOCABULARY. A note that is not a loss may contain none of "dropped",
+ *     "omitted", "truncated", "rejected", "discarded" or "lost" — a consumer
+ *     buckets notes by exactly those substrings, so even a negated use lands
+ *     in the loss bucket — and it must not contain "overwrote", the marker for
+ *     a deliberate replacement. Nothing here was lost and nothing was
+ *     overwritten: an identity file could not be created.
+ */
+export const INSTALL_ID_UNAVAILABLE_NOTE =
+  'machine identity: no install-id file, so state is saved under the bare hostname. ' +
+  'Another computer with that name shares the folder and a sync merge can replace one handoff. ' +
+  'Make user-data writable.';
 
 /** TEST SEAM ONLY. Drops the cached id so a suite can move the user-data dir. */
 export function __resetInstallIdCache() {
@@ -1169,19 +1231,44 @@ export async function saveWorkingState(project, input = {}) {
   const check = await checkProjectWritable(project);
   if (!check.ok) return check;
 
-  const scope = slugSegment(input.scope === undefined || input.scope === null || input.scope === ''
-    ? DEFAULT_SCOPE : input.scope);
+  const scopeSupplied = !(input.scope === undefined || input.scope === null || input.scope === '');
+  const scopeRaw = scopeSupplied ? String(input.scope) : DEFAULT_SCOPE;
+  const scope = slugSegment(scopeRaw);
   if (!scope) {
     return { ok: false, reason: 'invalid-scope', message: `"${input.scope}" is not a usable scope name.` };
   }
+  const machineExplicit = input.machine !== undefined && input.machine !== null;
   const machine = machineId(input.machine);
   if (!machine) {
     return { ok: false, reason: 'invalid-machine', message: `"${input.machine}" is not a usable machine name.` };
   }
+  // Only meaningful for the AUTO-DETECTED machine. An explicit `machine` is a
+  // name the caller chose and is taken verbatim, so no install id was ever
+  // going to be appended to it and nothing about it has degraded — reporting
+  // a risk that does not apply to the write we just made would be noise, and
+  // noise is how a real warning gets ignored. The FIELD is still returned
+  // either way, because "is this installation identified?" is a true fact
+  // about the installation regardless of how this one call addressed it.
+  const idAvailable = installIdAvailable();
+  const idDegraded = !idAvailable && !machineExplicit;
 
   const savedAt = new Date().toISOString();
   const notes = [];
   const push = (ns) => { for (const n of ns) if (notes.length < MAX_NOTES && !notes.includes(n)) notes.push(n); };
+
+  // Pushed BEFORE the field sanitisers so it cannot be crowded out of the
+  // MAX_NOTES budget by per-field chatter. A silently-disarmed collision guard
+  // outranks a truncation notice.
+  if (idDegraded) push([INSTALL_ID_UNAVAILABLE_NOTE]);
+  // A scope containing a separator or an uppercase letter is normalised to a
+  // path segment, so `feature/auth` is SAVED and READ BACK as `feature-auth`.
+  // It round-trips, so refusing it would cost a handoff to buy tidiness — but
+  // the scope-less index will later show a name the caller never typed, and an
+  // agent that re-reads with the name it sent gets a miss. Say which name won.
+  if (scopeSupplied && scope !== scopeRaw) {
+    push([`scope: saved under "${scope}" — "${sanitiseLine(scopeRaw, { maxChars: 64, label: 'scope' }).text}" `
+      + 'is not usable as a folder name, so it was normalised. Read it back with the normalised name.']);
+  }
 
   const hl = sanitiseLine(input.headline, { label: 'headline' });
   push(hl.notes);
@@ -1326,6 +1413,11 @@ export async function saveWorkingState(project, input = {}) {
     sectionsWritten: STATE_SECTIONS.filter(s => sectionBody(s, data, omitted)).map(s => s.key),
     truncated: Object.keys(omitted).length > 0,
     journalWritten,
+    // Whether the hostname-collision guard is armed for this installation.
+    // Always present, never inferred from the note's absence — a fact and its
+    // absence must not collapse into one value, which is this module's own
+    // stated rule and the reason the silent fallback was a defect.
+    installIdAvailable: idAvailable,
     notes,
   };
 }
@@ -1584,7 +1676,7 @@ export async function listWorkingScopes(project) {
     scopeDirs = split.safe;
     unlisted += split.unlisted;
   } catch {
-    return { ok: true, project, scopes: [], total: 0, truncated: false, unlistedEntries: 0 };
+    return { ok: true, project, scopes: [], total: 0, distinctScopeCount: 0, truncated: false, unlistedEntries: 0 };
   }
 
   const pairs = [];
@@ -1613,6 +1705,15 @@ export async function listWorkingScopes(project) {
 
   pairs.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const total = pairs.length;
+  // Computed over the UNCAPPED pair list, and that is the whole point.
+  //
+  // `total` counts (scope, machine) PAIRS. Every consumer that wants to tell a
+  // human how many WORK-STREAMS exist was deriving that from the capped
+  // `scopes` array instead, so past MAX_INDEX_ENTRIES it under-reported: a
+  // seeded project with 78 distinct scopes across 82 pairs was described as
+  // "56 saved work-streams", a number that appears nowhere in the truth. The
+  // count must be taken before the slice or it is a count of the slice.
+  const distinctScopeCount = new Set(pairs.map(p => p.scope)).size;
   const shown = pairs.slice(0, MAX_INDEX_ENTRIES);
   const now = Date.now();
 
@@ -1633,14 +1734,27 @@ export async function listWorkingScopes(project) {
   for (const p of shown) delete p.mtimeMs;
 
   return {
-    ok: true, project, scopes: shown, total, truncated: total > shown.length,
+    ok: true, project, scopes: shown, total, distinctScopeCount, truncated: total > shown.length,
     // D7. A count is enough: it tells the caller that content exists which
     // this module will not address, without inventing a way to address it.
     unlistedEntries: unlisted,
     unlistedReason: unlisted
-      ? `${unlisted} directory entr${unlisted === 1 ? 'y is' : 'ies are'} not addressable ` +
-        '(a name over 64 chars, or containing a space, a non-ASCII character, or a leading dot/underscore). ' +
-        'They are on disk and are NOT read. Rename them to lowercase letters, digits, dot, hyphen or underscore to include them.'
+      ? `${unlisted} directory entr${unlisted === 1 ? 'y is' : 'ies are'} not addressable` +
+        // The rule is isSafeSegment's, stated exactly. The previous wording was
+        // wrong in the half that matters: it named "a leading dot" as a cause,
+        // which cannot happen (all four readdir sites filter dot-prefixed names
+        // BEFORE splitAddressable, so a dotfile is skipped and never counted);
+        // it omitted a leading HYPHEN and an embedded ".."; and its fix advice
+        // — "rename to letters, digits, dot, hyphen or underscore" — leads to
+        // names like `_handoff` that use only those characters and STILL fail,
+        // because the first character must be a letter or digit. Advice that
+        // does not work is worse than none: this string is rendered in the app
+        // and returned over MCP as the one instruction for recovering state
+        // that is sitting on disk unread.
+        ' — on disk, but NOT read. Rename them to be included: a name must start with ' +
+        'a letter or digit, then use only letters, digits, dot, hyphen or underscore, stay within ' +
+        '64 characters, and contain no "..". A name beginning with a dot is skipped entirely and ' +
+        'is never counted here.'
       : null,
   };
 }
@@ -1699,7 +1813,13 @@ export async function readWorkingState(project, opts = {}) {
     const index = await listWorkingScopes(project);
     out.scope = null;
     out.scopes = index.ok ? index.scopes : [];
+    // KEPT AS PAIRS, deliberately. Callers read `scopeCount` and the suites
+    // pin its meaning; renaming or redefining a shipped field to fix a
+    // sentence would be a worse trade than adding the number the sentence
+    // actually needs. Both facts are returned, so no consumer has to derive
+    // one from a capped array again.
     out.scopeCount = index.ok ? index.total : 0;
+    out.distinctScopeCount = index.ok ? (index.distinctScopeCount ?? 0) : 0;
     out.scopesTruncated = index.ok ? index.truncated : false;
     out.unlistedEntries = index.ok ? (index.unlistedEntries || 0) : 0;
     out.unlistedReason = index.ok ? (index.unlistedReason || null) : null;
@@ -1721,6 +1841,13 @@ export async function readWorkingState(project, opts = {}) {
   out.machineCount = inScopeIdx.total;
   out.machinesTruncated = inScopeIdx.truncated;
   out.unlistedMachines = inScopeIdx.unlistedMachines || 0;
+  // Machine identity is being reported from here down (`machines`,
+  // `machineCount`, and below `machine`/`machineIsThisMachine`), so this is
+  // where the caller must be told whether that identity is collision-guarded
+  // at all. Set BEFORE the machine-miss early return, so the degraded state is
+  // just as visible on the path where nothing was found.
+  out.installIdAvailable = installIdAvailable();
+  out.installIdUnavailableReason = out.installIdAvailable ? null : INSTALL_ID_UNAVAILABLE_NOTE;
 
   // D6: every path below is built from the scope's REAL directory name, not
   // from the slugged request — see resolveExisting.

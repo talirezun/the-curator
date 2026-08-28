@@ -149,12 +149,15 @@
 //     is exactly how Settings/Sync silently opted out of protection (see
 //     the isCurrentMount comment above). It is now REQUIRED and fails
 //     CLOSED on omission (isCurrentMount(undefined) is always false, and a
-//     console.warn names the offending call site) — every real view,
-//     including the three synchronous stub views (shared.js/memory.js/
-//     ingest.js, which have no staleness window of their own), passes the
-//     mountToken its onEnter received. That parameter is already sitting
-//     right there for free; there is no longer a way to opt out by
-//     forgetting one argument.
+//     console.warn names the offending call site) — every real view passes
+//     the mountToken its onEnter received, shared.js / memory.js /
+//     ingest.js included. (This comment used to call those three
+//     "synchronous stub views ... which have no staleness window of their
+//     own". They were, once. They are not now: each one awaits real fetches
+//     and guards its own continuations with isCurrentMount, so they pass
+//     the token because they need it, not as ceremony.) That parameter is
+//     already sitting right there for free; there is no longer a way to opt
+//     out by forgetting one argument.
 //   eyebrow(text)
 //     Small-caps label rendered above a view's <h1>. Escapes `text`.
 //   emptyCard({ title, body, actionHtml? })
@@ -705,10 +708,13 @@ const READER_TYPE_DOT = Object.assign(Object.create(null), {
 // mechanism exists to close, just in two files instead of none.
 //
 // Fixed by making the token REQUIRED, not advisory: every real caller now
-// passes one, including the three synchronous stub views (shared.js /
-// memory.js / ingest.js), which have no staleness window of their own but
-// pass their onEnter's mountToken anyway at zero real cost — one already-
-// available argument, not "ceremony". `guardMountToken` below fails CLOSED
+// passes one, shared.js / memory.js / ingest.js included. Those three were
+// once described here as "synchronous stub views ... with no staleness
+// window of their own"; that stopped being true as each was built out. All
+// three now await real fetches and guard their continuations with
+// isCurrentMount, so the token they pass is load-bearing rather than
+// ceremony — which is the stronger version of the same point.
+// `guardMountToken` below fails CLOSED
 // on omission (isCurrentMount(undefined) is always false — mountToken is a
 // real number by the time any view can call this) — a forgotten token
 // means nothing renders, a loud and immediately visible bug, not a quiet

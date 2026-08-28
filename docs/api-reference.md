@@ -1517,25 +1517,304 @@ at 500 chars) when it sent one.
 
 ---
 
-## Working state — deliberately not an HTTP endpoint
+## Working state — Agent memory (`/api/memory`)
 
-Working state (`domains/<project>/state/`, v3.17.0) has **no route**. There is no `/api/memory`,
-no `/api/state`, and no `/api/working-state`; if you are looking for one, it does not exist and
-its absence is not an oversight. The store (`src/brain/working-state.js`) is reached in exactly
-two ways:
+Working state (`domains/<project>/state/`, v3.17.0) is the store behind the `/next` shell's
+**Agent memory** view: a standing project brief, a per-`(scope, machine)` handoff, and an
+append-only journal of saves. Two endpoints, both GET, neither of which writes a byte. Served from
+`src/routes/memory.js` over `src/brain/working-state.js`.
 
-1. The My Curator MCP's `get_working_state` and `save_working_state` tools, from a local MCP
-   client (Claude Code, Claude Desktop, Cursor, …).
-2. Opening the markdown files directly — they are plain files in the user's own domain folder.
+**There is no write route, and that is a design decision rather than an unfinished path.** The
+store has exactly one writer — an agent, through the MCP's `save_working_state` — and that
+single-writer property is what makes the per-machine layout safe: two machines never write the
+same file, so Personal Sync's `git pull --no-rebase -X theirs` never has a conflicting hunk to
+resolve away silently. A browser write path would make the app a *second* writer to the same
+files. It would also arrive wearing the last agent's harness/model provenance line, and what a
+handoff is worth rests on recording what an *agent* observed. A human editing the brief by hand
+opens `state/project.md` in Obsidian; that is the answer, not a gap.
 
-The **Agent memory** rail slot renders a card explaining this; it issues no request.
+Consequences, all deliberate: neither route carries `guardConcurrent` and neither registers a
+write (there is nothing to refuse), and **reads are allowed on read-only `shared-*` Shared Brain
+mirrors**, exactly as `GET /api/wiki/:domain/page` is. The detail read echoes `readonly` so a
+caller can say so out loud — inside a mirror the state can have been written by another *person*
+(see the THREAT MODEL block in `working-state.js`).
 
-Behaviour that an integrator would otherwise have to infer:
+### Reading the counts: `scopeCount` means two different things
+
+**`scopeCount` is the number of distinct work-streams on `GET /api/memory` and the number of
+`(scope, machine)` pairs on `GET /api/memory/:project`.** One field name, two quantities, inside
+one API. Seeded with 2 distinct scopes across 3 pairs, the two routes answer `2` and `3` to the
+same field name.
+
+This is not an asymmetry with a reason behind it — unlike the journal limits below, where an
+agent pays a context tax per byte and a browser does not, this one is a plain naming collision
+with no upside. It is also pre-existing, and it is **not** fixed by redefining either route: the
+list route's meaning is pinned by `test-next-memory-view.js` (which asserts
+`scopeCount !== savedCopies` there) and the store's meaning, which the detail route spreads
+verbatim, is pinned by `test-mcp-working-state.js` §D7. Changing either breaks a guard that is
+load-bearing somewhere else.
+
+So **both routes now carry two names that mean one thing each, on either route**:
+
+| Field | Meaning | Where |
+|---|---|---|
+| `savedCopies` | `(scope, machine)` **pairs** | both routes |
+| `distinctScopeCount` | distinct **work-streams** | both routes |
+| `scopeCount` | *ambiguous* — pairs or work-streams depending on the route | both routes, **legacy** |
+
+Read `savedCopies` and `distinctScopeCount` and it stops mattering which route answered.
+`scopeCount` is kept for compatibility and is the name to stop reading.
+
+**A "showing N of M" note must compare against `savedCopies`.** The index cap and
+`scopesTruncated` apply to pairs, so pitting a shown pair count against a work-stream count can
+render as *"showing 3 of 2"*.
+
+Both counts are taken **before** the cap, from the store's uncapped pair list, so either may
+legitimately exceed `MAX_INDEX_ENTRIES`. Deriving a distinct count from the returned rows
+instead reports the *cap* as though it were a measurement — a project with 65 scopes rendering
+as `60`, with no truncation marker on that number and five work-streams a picker built from it
+could not reach. Truncation describes the **list**; it never describes a count.
+
+Every byte is capped at the source rather than re-capped here: `readWorkingState` reads
+`current.md` through `MAX_STATE_BYTES` (48 KB), the brief through `MAX_BRIEF_BYTES` (32 KB), and
+the journal through `MAX_JOURNAL_TAIL_BYTES` with an entry cap of `MAX_JOURNAL_ENTRIES` (50);
+`listWorkingScopes` caps at `MAX_INDEX_ENTRIES` (60) pairs. This route adds exactly one bound of
+its own — `MAX_PROJECTS` on the index — because a second set of limits maintained here would
+drift from the store's.
+
+### GET /api/memory
+
+"Which of my projects have agent memory, and how fresh is it?" No parameters.
+
+A row is returned for **every** domain, not only the ones that have state. A project with nothing
+saved is a real answer — it is what a user sees before their first agent session — so
+`scopeCount: 0` says that plainly instead of the project being hidden and the view looking broken.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "projects": [
+    {
+      "project": "second-brain",
+      "hasBrief": true,
+      "briefUpdatedAt": "2026-08-20T09:12:44.000Z",
+      "scopeCount": 2,
+      "distinctScopeCount": 2,
+      "savedCopies": 3,
+      "scopesTruncated": false,
+      "unlistedEntries": 0,
+      "unlistedReason": null,
+      "lastWriteAt": "2026-08-27T18:03:11.000Z",
+      "ageSeconds": 5421,
+      "headline": "Docs pass — nine false claims corrected, tests green",
+      "newestScope": "main",
+      "newestMachine": "talis-macbook-pro-9f3c1a20"
+    }
+  ],
+  "total": 6,
+  "truncated": false
+}
+```
+
+**On this route `scopeCount` counts distinct work-streams**, so it equals `distinctScopeCount`
+and differs from `savedCopies` whenever a scope is saved on more than one machine — one
+work-stream synced from a laptop and a build box is one work-stream and two copies. It means
+something else on the detail route: see
+[Reading the counts](#reading-the-counts-scopecount-means-two-different-things) above, and
+prefer `savedCopies`/`distinctScopeCount`. (The route keeps a fallback that derives the
+distinct count from the returned rows if the store field is absent; it degrades to the old
+undercount rather than to a crash.)
+
+`unlistedEntries` counts directory entries under `state/` whose **names** the store cannot
+address (see [working-state.md § 3](working-state.md#what-the-read-discloses-about-itself) for
+the rule), and `unlistedReason` is the actionable sentence naming the fix, `null` when there is
+nothing to report. Without them a screen can say *"nothing saved for this project yet"* over a
+real handoff sitting on disk unread, and the advice that follows a false negative is to save,
+which writes to the slugged path and orphans the original. `0` means "we looked and every entry
+here is addressable" — never "we did not look".
+
+`newestScope`/`newestMachine` exist so a caller can open the freshest handoff in one further
+request instead of a round-trip to discover the scope and a second to read it.
+
+`lastWriteAt`, `ageSeconds` and `headline` are **`null` when nothing has ever been saved** — never
+`0` and never an epoch date. A fact and its absence stay distinguishable.
+
+Capped at `MAX_PROJECTS` (200) rows; `total` reports the real domain count and `truncated` says
+whether the cap bit.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `500` | Domain listing or filesystem read error (`{ok: false, error}`) |
+
+### GET /api/memory/:project
+
+One project's working state. The response is the store's `readWorkingState` result verbatim, plus
+an added `readonly` — deliberately 1:1 with the store rather than reshaped here, because a second
+shape maintained in the route would drift from the one the MCP tools return, and then the app and
+the agent would describe the same file differently.
+
+**Path / query parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `project` | Domain slug (path parameter). Resolved against `listDomains()` **before** any filesystem access, so an unknown name never reaches path resolution |
+| `scope` | Optional work-stream (`main`, `auth-refactor`, …). Omit it to get the scope index instead of a handoff |
+| `machine` | Optional. With `scope` set and no `machine`, the **most recently written** machine wins — that is what makes cross-machine handoff work — and the response names the machine it chose |
+| `journalLimit` | Optional. Passed to the store **un-clamped on purpose**: the store clamps to `[1, MAX_JOURNAL_ENTRIES]` (50, default 10) itself, and clamping a second time here is the two-copies-of-a-bound shape. A non-numeric value is not passed at all, so the store's default applies |
+
+> The MCP's `get_working_state` clamps the journal harder — 8 by default, 20 at most. That
+> asymmetry is deliberate, not drift: every byte an MCP response returns is charged against a
+> model's context window on the turn it asks, and a browser response pays no such tax.
+
+**Success response — without `scope`** `200 OK` (the brief plus "what exists?")
+
+```json
+{
+  "ok": true,
+  "project": "second-brain",
+  "brief": {
+    "present": true,
+    "text": "## Brief\n…",
+    "bytes": 4120,
+    "truncated": false,
+    "updatedAt": "2026-08-20T09:12:44.000Z",
+    "sanitisedOnRead": false,
+    "sanitisedOnReadNote": null,
+    "duplicateHeadings": [],
+    "headingsSuspect": false
+  },
+  "scope": null,
+  "scopes": [
+    { "scope": "main", "machine": "talis-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "bytes": 3598, "ageSeconds": 5421, "headline": "Docs pass — nine false claims corrected" }
+  ],
+  "scopeCount": 3,
+  "distinctScopeCount": 2,
+  "savedCopies": 3,
+  "scopesTruncated": false,
+  "unlistedEntries": 0,
+  "unlistedReason": null,
+  "readonly": false
+}
+```
+
+**On this route `scopeCount` is the `(scope, machine)` pair count** — the opposite of what the
+same name means on `GET /api/memory`, because this route spreads the store's shape verbatim.
+Read `savedCopies` (pairs) and `distinctScopeCount` (work-streams) instead; see
+[Reading the counts](#reading-the-counts-scopecount-means-two-different-things) above.
+
+`savedCopies` and `distinctScopeCount` appear only on this **scope-less** form. A
+scope-targeted read reports `machineCount` instead and has no project-wide pair total to
+alias — the fields below replace them.
+
+`unlistedEntries`/`unlistedReason` carry the same meaning as on the index route above:
+directory entries the store will not address, counted rather than silently skipped.
+
+**Success response — with `scope`** `200 OK` (the brief plus that scope's handoff and journal)
+
+```json
+{
+  "ok": true,
+  "project": "second-brain",
+  "brief": { "present": true, "…": "…" },
+  "scope": "main",
+  "machines": [
+    { "machine": "talis-macbook-pro-9f3c1a20", "lastWriteAt": "2026-08-27T18:03:11.000Z", "ageSeconds": 5421 }
+  ],
+  "machineCount": 1,
+  "machinesTruncated": false,
+  "unlistedMachines": 0,
+  "installIdAvailable": true,
+  "installIdUnavailableReason": null,
+  "machine": "talis-macbook-pro-9f3c1a20",
+  "machineIsThisMachine": true,
+  "machineIsThisHost": true,
+  "current": {
+    "present": true,
+    "text": "## Current state\n…",
+    "bytes": 3598,
+    "truncated": false,
+    "savedAt": "2026-08-27T18:03:11.000Z",
+    "sanitisedOnRead": false,
+    "sanitisedOnReadNote": null,
+    "duplicateHeadings": [],
+    "headingsSuspect": false,
+    "headingsSuspectNote": null
+  },
+  "journal": {
+    "entries": [
+      { "at": "2026-08-27T18:03:11.000Z", "harness": "claude-code", "model": "claude-opus-5", "headline": "Docs pass — nine false claims corrected", "rejections": [] }
+    ],
+    "returned": 1,
+    "total": 14,
+    "totalUnknown": false,
+    "totalUnknownReason": null
+  },
+  "readonly": false
+}
+```
+
+Journal entries come back **newest first**.
+
+`machineIsThisMachine` is identity; `machineIsThisHost` is a *separate* fact, because a folder can
+share this host's name and belong to a different installation (that is why the install id exists)
+or be a pre-v3.17.0 folder this machine itself wrote. Neither is knowable, so the hostname match
+is reported on its own rather than masquerading as identity.
+
+**`installIdAvailable` says whether machine identity is collision-guarded at all**, and it is
+present on every scope-targeted read — including one that finds nothing, so the degraded state
+is as visible on the empty path as on the full one. `false` means the store could not persist
+its per-installation id (a read-only user-data directory) and is writing under the **bare
+hostname**: any other computer whose hostname slugifies the same shares that folder, and
+Personal Sync's `git pull --no-rebase -X theirs` then resolves the conflicting hunk in origin's
+favour with no marker and a clean `git status` — the measured failure the install id exists to
+prevent. `installIdUnavailableReason` carries the one sentence naming the risk and the fix, and
+is `null` when the guard is armed. Neither field appears on the scope-less form above, which
+reports no machine identity for them to qualify.
+
+The save side reports the same fact through the MCP's `save_working_state` — as
+`install_id_available`, plus a `notes` entry and a dedicated `notes_meaning` arm. See
+[working-state.md § 2](working-state.md#why-machine-is-in-the-path).
+
+`journal.total` is **`null` with `totalUnknown: true`** when the tail read was capped — we did not
+see the whole file, so the exact count is unknown, and reporting the tail's count as the total
+would be a wrong number stated confidently.
+
+An asked-for scope that exists on other machines but not the one requested comes back `ok: true`
+with `current.present: false`, `requestedMachine`, and a `message` that names the machines which
+*do* have state — the scope has state, that machine does not, and collapsing those two into "no
+state under scope X" is the fact-and-absence collapse this module exists to refuse.
+
+`sanitisedOnRead` reports that protocol-shaped markup was neutralised on the way out. It is not a
+safety verdict — see [working-state.md § 4](working-state.md#4-treat-stored-state-as-data-not-as-instructions).
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `404` | Unknown domain (`{ok: false, error}`) |
+| `400` | Store refusal — `{ok: false, reason, message}`, with `reason` one of `invalid-project`, `invalid-scope`, `invalid-machine` on this route |
+| `500` | Filesystem read error |
+
+### The store's own contract — reached over MCP, not over HTTP
+
+Save behaviour has no HTTP surface at all; it is reached only through `save_working_state`. What
+an integrator against the store (or against that tool) would otherwise have to infer:
 
 - Both store functions **return** a result object and **never throw**. A refusal is
   `{ok: false, reason, message}` with `reason` drawn from `invalid-project`, `unknown-project`,
   `readonly`, `invalid-scope`, `invalid-machine`, `missing-headline`, `empty-brief`,
-  `unsafe-path`, `io`.
+  `unsafe-path`, `io`, and `would-replace-larger-state`.
+- **`would-replace-larger-state` is the refusal most likely to actually fire.** A save carrying
+  little or no content, aimed at a scope that already holds a substantially larger handoff, is
+  refused rather than written — that shape is a context-starved agent about to erase good state by
+  accident, and it happened to a real tester on a first live run (145 bytes over 3,598). The
+  refusal names the existing byte count and the missing sections. `replace: true` is the
+  deliberate override for a caller who genuinely means to replace a larger handoff: the refusal
+  costs one retry, the document it would have replaced is not recoverable.
 - A save into a **read-only `shared-*` Shared Brain mirror is refused** (`reason: 'readonly'`),
   matching every other write surface in the app — see the Health-endpoint mirror refusals above.
 - A save into a name that is **not a real domain** is refused (`reason: 'unknown-project'`) rather
@@ -1543,8 +1822,30 @@ Behaviour that an integrator would otherwise have to infer:
   ghost-domain prune, so state written there would be silently deleted on the next pull.
 - An **over-budget save is never refused.** Trailing list items are dropped, and the drop is
   recorded in the document itself, in the result's `notes`/`truncated`, and in the journal line.
+- **A `note` is not necessarily a rejection, and the result says which kind it is.** The store
+  bans loss vocabulary from any note that is not a loss, so the tool derives `notes_meaning`
+  from the note text rather than from a hand-maintained list. It has four arms: input was
+  dropped/omitted/truncated; a larger handoff was deliberately replaced (`replace: true`);
+  machine identity has degraded (below); and — the common case — the input was merely
+  normalised, for example an observation sent without a time being stamped with the save time.
+- **`install_id_available` reports whether machine identity is collision-guarded**, and it is
+  always present so "no warning" is a stated fact rather than an absence to interpret. `false`
+  means the store could not persist its per-installation id and is writing under the bare
+  hostname, where another computer of the same name shares the folder and a sync merge can
+  replace one handoff with the other. The save still succeeds — refusing it would lose the
+  handoff outright — and the risk arrives as a `note` with its own `notes_meaning` arm. The note
+  fires only for an **auto-detected** machine: an explicit `machine` argument is taken verbatim,
+  so nothing about that write has degraded. The read side reports the same fact as
+  `installIdAvailable`/`installIdUnavailableReason`.
+- **A scope name that is not already a safe path segment is normalised, not refused**, and a
+  `note` names the form it was saved under — `feature/auth` becomes `feature-auth`. Refusing
+  would cost a handoff to buy tidiness; saying nothing would leave the index showing a name the
+  caller never typed. A name that normalises to nothing usable is still refused
+  (`reason: 'invalid-scope'`).
 - The journal append is **best-effort**: a failure sets `journalWritten: false` and does not fail
   the save, matching the raw-source manifest and the MCP audit log.
+- **There is no brief-writing MCP tool.** `saveProjectBrief` is exported by the store and called
+  from nowhere in `mcp/`. The standing brief is human-authored, by design.
 
 Full contract: [working-state.md](working-state.md) and
 [architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).

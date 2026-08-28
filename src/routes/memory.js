@@ -8,8 +8,12 @@
  * ─────────────────────────────────────────────────────────────────────────
  * WHY THERE IS NO WRITE ENDPOINT, AND WHY THAT IS NOT AN OVERSIGHT
  * ─────────────────────────────────────────────────────────────────────────
- * The working-state store has exactly one writer: an agent, through the MCP
- * tools (mcp/tools/working-state.js -> saveWorkingState / saveProjectBrief).
+ * The working-state store has exactly one writer: an agent, through the MCP's
+ * `save_working_state` (mcp/tools/working-state.js -> saveWorkingState). It is
+ * the ONLY mutating tool that reaches this store — `saveProjectBrief` is
+ * exported by working-state.js and called from nowhere in mcp/, deliberately:
+ * the standing brief is human-authored, which is the practice this feature
+ * automates (the handoff is the part that costs time, not the brief).
  * That single-writer property is what makes the per-machine layout safe (see
  * the LAYOUT block in working-state.js: two machines never touch the same
  * file, so `git pull -X theirs` has no conflicting hunk to resolve away).
@@ -115,13 +119,21 @@ async function briefStat(project) {
  *
  * Response:
  *   { ok, projects: [{ project, hasBrief, briefUpdatedAt, scopeCount,
- *                      savedCopies, scopesTruncated, lastWriteAt, ageSeconds,
- *                      headline, newestScope, newestMachine }],
+ *                      distinctScopeCount, savedCopies, scopesTruncated,
+ *                      lastWriteAt, ageSeconds,
+ *                      headline, newestScope, newestMachine,
+ *                      unlistedEntries, unlistedReason }],
  *     total, truncated }
  *
  * `scopeCount` counts DISTINCT SCOPES (work-streams); `savedCopies` counts
  * (scope, machine) pairs. See the comment at the derivation for why those are
  * two facts and not one.
+ *
+ * CAVEAT, stated rather than implied away: `scopeCount` does NOT mean the same
+ * thing on GET /:project, which spreads the store's shape and so reports the
+ * PAIR total under that name. Both routes carry `savedCopies` (pairs) and
+ * `distinctScopeCount` (work-streams); read those two and the route you are
+ * talking to stops mattering.
  */
 router.get('/', async (_req, res) => {
   try {
@@ -147,15 +159,45 @@ router.get('/', async (_req, res) => {
       // pair count, which is what the index cap and `scopesTruncated`
       // actually apply to. Collapsing them would make the truncation note
       // compare a scope count against a pair cap.
-      const distinctScopes = new Set(scopes.map((r) => r.scope).filter(Boolean)).size;
+      //
+      // The count must come from the UNCAPPED pair list. `idx.scopes` has
+      // already been sliced to MAX_INDEX_ENTRIES, so deriving from it reports
+      // the CAP as though it were a measurement: a project with 65 scopes
+      // rendered as "60 scopes", with no truncation marker on that number and
+      // five work-streams the picker could not reach. `distinctScopeCount` is
+      // computed in the store BEFORE the slice. The fallback keeps this route
+      // working against a store that predates the field, and it degrades to
+      // the old undercount rather than to a crash.
+      const distinctScopes = Number.isInteger(idx.distinctScopeCount)
+        ? idx.distinctScopeCount
+        : new Set(scopes.map((r) => r.scope).filter(Boolean)).size;
 
       projects.push({
         project,
         hasBrief: brief !== null,
         briefUpdatedAt: brief ? brief.updatedAt : null,
         scopeCount: distinctScopes,
+        // The same work-stream count under the UNAMBIGUOUS name. `scopeCount`
+        // means distinct scopes here and the pair total on GET /:project, so a
+        // consumer that reads it has to know which route answered. These two
+        // names mean one thing on both routes; the caveat on the docblock says
+        // to prefer them. Emitted here even though it duplicates `scopeCount`
+        // on this route, because a name that is only sometimes present is a
+        // worse contract than one that is redundant.
+        distinctScopeCount: distinctScopes,
         savedCopies: idx.ok ? idx.total : 0,
         scopesTruncated: idx.ok ? idx.truncated : false,
+        // The store counts directory entries it will NOT address (a name over
+        // 64 chars, or carrying a space, a non-ASCII character, or a leading
+        // dot/underscore) and writes an actionable reason naming the fix.
+        // Dropping it is how a screen comes to say "Nothing saved for this
+        // project yet" while a real handoff sits on disk unread — a confident
+        // false negative, and the advice that follows it writes to the slugged
+        // path and orphans the original. Forwarded so the caller can say what
+        // is true. 0 means "we looked and there were none", never "we did not
+        // look"; `unlistedReason` is null when there is nothing to report.
+        unlistedEntries: idx.ok ? (idx.unlistedEntries || 0) : 0,
+        unlistedReason: (idx.ok && idx.unlistedReason) ? idx.unlistedReason : null,
         // A fact and its ABSENCE stay distinguishable: null means "nothing
         // has ever been saved", never "saved at the epoch" or "0 seconds ago".
         lastWriteAt: newest ? newest.lastWriteAt : null,
@@ -229,7 +271,27 @@ router.get('/:project', async (req, res) => {
     }
 
     const readonly = await isDomainReadonly(project);
-    res.json({ ...state, readonly });
+
+    // ONE NAME, TWO QUANTITIES — resolved by adding an unambiguous one rather
+    // than by redefining either existing field.
+    //
+    // `scopeCount` means DISTINCT SCOPES on the index route (its docblock says
+    // so, and test-next-memory-view pins scopeCount !== savedCopies there) and
+    // the (scope, machine) PAIR total here, because this route spreads the
+    // store's own shape and the store's meaning is pinned by
+    // test-mcp-working-state §D7. Redefining either one breaks a guard that is
+    // load-bearing somewhere else, so neither is touched.
+    //
+    // Instead both routes now offer the SAME unambiguous pair-count name. A
+    // consumer comparing "showing N of M" is comparing pairs against a pair
+    // cap, and reading `savedCopies` gets that right on either route without
+    // knowing which one answered. `distinctScopeCount` (added by the store)
+    // rides along in the spread as the unambiguous work-stream count.
+    // `scopeCount` is kept for compatibility and is the name to stop reading.
+    const withCounts = (typeof state.scopeCount === 'number')
+      ? { ...state, savedCopies: state.scopeCount }
+      : state;
+    res.json({ ...withCounts, readonly });
   } catch (err) {
     console.error('Memory read error:', err);
     res.status(500).json({ ok: false, error: err.message });

@@ -94,10 +94,59 @@ function freshState() {
     scope: null,
     machine: null,
     journalLimit: JOURNAL_PAGE,
+
+    // WHICH DISCLOSURES THE USER HAS OPENED, by stable key.
+    //
+    // Every render re-emits the whole main pane, so a <details> written
+    // without `open` comes back CLOSED — and loadScope() re-renders. Measured:
+    // clicking "Show more" fetched all 15 entries, put them in the DOM, and
+    // shut the journal on top of them, so the button read as doing nothing.
+    // The same mechanism closed any fold the user had opened on every scope
+    // or machine change.
+    //
+    // A key is written here only when the user actually toggles one, so
+    // `undefined` still means "no opinion" and each fold keeps its own
+    // default (the brief opens when it is the only content there is).
+    openFolds: {},
   };
 }
 
 let state = freshState();
+
+/**
+ * The control that should hold focus after the next render, by id.
+ *
+ * setMain/setSidebar replace innerHTML, so the focused node does not survive
+ * a re-render and focus drops to <body> — the next Tab then restarts from the
+ * rail. Restored BY ID rather than by node, the same way views/onboarding.js
+ * does it (v3.8.0), because the node itself is gone.
+ *
+ * It persists across renders on purpose. A scope or machine change renders
+ * TWICE — once into the loading state, once with the result — and the machine
+ * <select> is absent from the first of those (state.detail is dropped before
+ * the fetch, deliberately, so the old machine list cannot be shown under the
+ * new scope). Clearing on the first miss would strand focus exactly in the
+ * case this exists for.
+ *
+ * It is bounded so a stale id can never steal focus later: only an id in
+ * FOCUSABLE_IDS is ever captured, and a miss is given up on as soon as no
+ * further render is coming (detailLoading false).
+ */
+let pendingFocusId = null;
+
+const FOCUSABLE_IDS = [
+  'mem-scope-select', 'mem-machine-select', 'mem-journal-more',
+  'mem-fold-brief', 'mem-fold-journal', 'mem-fold-about',
+];
+
+// Where focus goes when the exact control did not come back. "Show more" is
+// the case that matters: expanding the journal REMOVES the button (there is
+// no more to show), so restoring by id alone would drop focus every time it
+// worked. The journal's own summary is the nearest stable thing the user was
+// just inside.
+const FOCUS_FALLBACK = {
+  'mem-journal-more': '#mem-fold-journal',
+};
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
 // a local BEFORE the first await in every async function and threaded
@@ -318,9 +367,44 @@ export function splitHandoffPreamble(raw) {
 
 function render(token) {
   if (!isCurrentMount(token)) return;
+  captureFocus();
   renderSidebar(token);
   renderMain(token);
   wire(token);
+  restoreFocus();
+}
+
+/**
+ * Remember the focused control, if it is one of ours.
+ *
+ * Only overwrites a pending id when there is a real one to record, so the
+ * second render of a scope change — by which point focus has already been
+ * dropped to <body> by the first — cannot erase the target it is about to
+ * restore. Deliberately narrow: an id outside FOCUSABLE_IDS is ignored, so
+ * this can never reach out and grab focus from the rail or another view.
+ */
+function captureFocus() {
+  if (typeof document === 'undefined') return;
+  const active = document.activeElement;
+  const id = active && active.id;
+  if (id && FOCUSABLE_IDS.includes(id)) pendingFocusId = id;
+}
+
+function restoreFocus() {
+  if (!pendingFocusId || typeof document === 'undefined') return;
+  const el = document.getElementById(pendingFocusId) ||
+    (FOCUS_FALLBACK[pendingFocusId] ? document.querySelector(FOCUS_FALLBACK[pendingFocusId]) : null);
+  if (el && typeof el.focus === 'function') {
+    pendingFocusId = null;
+    // preventScroll: the element is already where the user left it; letting
+    // the browser scroll to it would undo the reading position that the
+    // re-render preserved.
+    try { el.focus({ preventScroll: true }); } catch { /* non-focusable in some engines */ }
+    return;
+  }
+  // Nothing to restore to. Keep the target only while another render is
+  // still coming; otherwise drop it so it cannot fire later out of context.
+  if (!state.detailLoading) pendingFocusId = null;
 }
 
 function renderSidebar(token) {
@@ -423,13 +507,35 @@ function renderProject() {
 
   const scopes = (read && read.scopes) || [];
   const hasBrief = !!(read && read.brief && read.brief.present);
+  const unlisted = unlistedCount(read);
+
+  // Placed immediately under the header, ABOVE the controls, in every state:
+  // it qualifies the claim the pickers below it are about to make. A static
+  // "Scope main" label affirms "there is exactly one scope", and it must not
+  // say that while a second scope directory sits unread on disk.
+  const unlistedNote = renderUnlistedNote(read, d);
 
   if (!scopes.length && !hasBrief) {
-    return header + renderEmptyProject() + renderAbout();
+    return header + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
+  }
+
+  // A brief with no handoff: the store says so (`message`) and the view used
+  // to drop it, so the page rendered the brief and simply never mentioned
+  // that the thing this screen exists to show is missing. Absence communicated
+  // by absence — and the SIDEBAR row for the same project says "brief only —
+  // no sessions yet", so the two surfaces disagreed about how much explaining
+  // was owed. This is also the documented happy path (write the brief, then
+  // let agents save), so it is a common first experience.
+  if (!scopes.length) {
+    return (
+      header + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
+      renderBrief(read, true) + renderAbout()
+    );
   }
 
   return (
     header +
+    unlistedNote +
     renderScopeControls(scopes) +
     renderHandoff() +
     // The brief opens only when there is no handoff to read — then it is the
@@ -440,7 +546,110 @@ function renderProject() {
   );
 }
 
-function renderEmptyProject() {
+/**
+ * How many directory entries the store can SEE but will not address.
+ *
+ * `unlistedEntries` is the store's own count (splitAddressable in
+ * working-state.js) and covers scope AND machine directories, so it is the
+ * one number that answers "is there state here we are not showing you".
+ * Absent on an older response, and absent from the scoped read — read
+ * defensively and treat anything non-numeric as zero.
+ */
+function unlistedCount(read) {
+  const n = read && read.unlistedEntries;
+  return typeof n === 'number' && n > 0 ? n : 0;
+}
+
+/**
+ * State that exists on disk and is deliberately not read.
+ *
+ * THE DEFECT THIS CLOSES. The store returns `unlistedEntries` and a
+ * `unlistedReason` naming exactly which naming rule was broken and how to
+ * undo it. This view read neither, and rendered "Nothing saved for this
+ * project yet — No agent has written a handoff here" over a handoff sitting
+ * on disk: a confident false negative, the worst shape this project has.
+ *
+ * The reason sentence is ECHOED from the store, never paraphrased. It is the
+ * store that decides what a nameable entry is, so a second copy of that rule
+ * written here would drift from the one actually enforced — and would then be
+ * telling the user to perform a rename that does not fix anything.
+ */
+function renderUnlistedNote(read, d) {
+  const n = unlistedCount(read);
+  const machines = d && typeof d.unlistedMachines === 'number' && d.unlistedMachines > 0
+    ? d.unlistedMachines : 0;
+  if (!n && !machines) return '';
+
+  const reason = (read && typeof read.unlistedReason === 'string' && read.unlistedReason)
+    ? read.unlistedReason
+    // Only reachable if the count arrives without the store's sentence. Says
+    // the fact and stops, rather than inventing the naming rule.
+    : n + ' director' + (n === 1 ? 'y entry is' : 'ies are') +
+      ' not addressable by name. They are on disk and are NOT read.';
+
+  const machineClause = machines
+    ? ' Under the scope shown below, ' + machines + ' machine folder' +
+      (machines === 1 ? ' is' : 's are') + ' also unreadable for the same reason.'
+    : '';
+
+  return (
+    '<div class="mem-note mem-note-loud">' + icon('alertTriangle', 13) +
+      '<span><b>Some state here is on disk but is not being read.</b> ' +
+      escapeHtml(reason + machineClause) + '</span></div>'
+  );
+}
+
+/**
+ * A project carrying a standing brief but no handoff.
+ *
+ * The store hands us the sentence (`message`); this used to be dropped on the
+ * floor. Rendered in the slot the handoff itself would occupy, so the missing
+ * thing is missing in the place you looked for it.
+ */
+function renderBriefOnlyNotice(read, unlisted) {
+  const msg = (read && typeof read.message === 'string' && read.message)
+    ? read.message
+    : 'No session state saved for this project yet — only the project brief.';
+  return (
+    '<div class="mem-doc-card mem-doc-empty">' +
+      '<div class="mem-doc-empty-title">No handoff saved yet</div>' +
+      '<div class="mem-doc-empty-body">' + escapeHtml(msg) +
+        (unlisted ? '' :
+          ' The brief below is what every agent read returns. A handoff appears here the first time ' +
+          'a coding agent saves its working state at the end of a session.') +
+      '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * @param unlistedEntries  the store's count, or nothing.
+ *   scripts/test-next-memory-view.js calls this with NO argument, so absent
+ *   must mean zero and must reproduce the original wording exactly.
+ */
+function renderEmptyProject(unlistedEntries) {
+  const unlisted = typeof unlistedEntries === 'number' && unlistedEntries > 0 ? unlistedEntries : 0;
+
+  // WHY THIS BRANCHES, and why the advice changes with it.
+  //
+  // With an unaddressable entry present, "No agent has written a handoff
+  // here" is false — one may well have, under a name this module will not
+  // resolve. The original advice was worse than the wrong sentence: a save
+  // lands on the SLUGGED path, so asking an agent to save does not recover
+  // the existing handoff, it strands it permanently under a name nothing
+  // will read again. Renaming is the only move that gets the content back.
+  if (unlisted) {
+    return (
+      '<div class="empty-card">' +
+        '<div class="empty-title">Nothing readable for this project yet</div>' +
+        '<div class="empty-body">No handoff could be read here — but this project’s ' +
+        '<span class="mono">state/</span> folder is not empty, and the note above says why. ' +
+        'Rename those entries so they can be read. Do not save over them: a new save is written under a ' +
+        'different, generated name and would leave what is already there stranded.</div>' +
+      '</div>'
+    );
+  }
+
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">Nothing saved for this project yet</div>' +
@@ -476,17 +685,34 @@ function renderScopeControls(scopes) {
           '<span class="mem-ctl-static mono">' + escapeHtml(state.scope) + '</span></span>'
         : '');
 
+  // "WHICH OF THESE IS MINE?" — on a feature whose whole premise is
+  // cross-machine continuity, two opaque hex-suffixed ids with neither marked
+  // was a real gap. The payload carries `machineIsThisMachine` for the
+  // SELECTED machine only, so that is the only entry that can be marked, and
+  // only on an explicit `true` — the same positive-evidence rule as the badge
+  // below. The negative case is already covered: an explicit `false` renders
+  // the amber "from <machine>" badge. An unselected entry is left unmarked
+  // because the response says nothing about it, and guessing would be the
+  // fact-and-absence collapse this view exists to refuse.
+  const selectedIsMine = !!(d && d.machineIsThisMachine === true);
+  const MINE = ' · this machine';
+
   const machineCtl = machines.length > 1
     ? '<label class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
         '<select class="mem-select" id="mem-machine-select">' +
-          machines.map((m) => '<option value="' + escapeHtml(m.machine) + '"' +
-            (d && m.machine === d.machine ? ' selected' : '') + '>' +
-            escapeHtml(m.machine) + ' · ' + escapeHtml(formatAge(m.ageSeconds) || 'unknown age') +
-          '</option>').join('') +
+          machines.map((m) => {
+            const sel = !!(d && m.machine === d.machine);
+            return '<option value="' + escapeHtml(m.machine) + '"' +
+              (sel ? ' selected' : '') + '>' +
+              escapeHtml(m.machine) + ' · ' + escapeHtml(formatAge(m.ageSeconds) || 'unknown age') +
+              (sel && selectedIsMine ? MINE : '') +
+            '</option>';
+          }).join('') +
         '</select></label>'
     : (d && d.machine
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
-          '<span class="mem-ctl-static mono">' + escapeHtml(d.machine) + '</span></span>'
+          '<span class="mem-ctl-static mono">' + escapeHtml(d.machine) +
+          (selectedIsMine ? MINE : '') + '</span></span>'
         : '');
 
   // "Written on another machine" is a real signal, not decoration: it tells
@@ -502,9 +728,17 @@ function renderScopeControls(scopes) {
   // The index cap applies to (scope, machine) PAIRS, so the note compares
   // pairs against pairs. Comparing the shown pair count against a work-stream
   // count would be apples to oranges and could read as "showing 3 of 2".
-  const truncated = (state.projectRead && state.projectRead.scopesTruncated)
+  //
+  // `savedCopies` is preferred over `scopeCount` because the two endpoints
+  // currently use `scopeCount` for two DIFFERENT quantities: the index route
+  // derives it as DISTINCT scopes, while the store's unscoped read sets it to
+  // the PAIR total. Reading whichever pair-count field is actually present
+  // keeps the note comparing pairs to pairs whichever way that name settles.
+  const pr = state.projectRead;
+  const pairTotal = pr && (typeof pr.savedCopies === 'number' ? pr.savedCopies : pr.scopeCount);
+  const truncated = (pr && pr.scopesTruncated)
     ? '<span class="mem-ctl-note">showing the ' + scopes.length + ' most recent saved copies of ' +
-      escapeHtml(String(state.projectRead.scopeCount || scopes.length)) + '</span>'
+      escapeHtml(String(pairTotal || scopes.length)) + '</span>'
     : '';
 
   if (!scopeCtl && !machineCtl && !elsewhere && !truncated) return '';
@@ -573,10 +807,17 @@ function renderHandoff() {
 }
 
 function renderBrief(read, openIt) {
+  // The user's own toggle wins over the default when they have expressed one;
+  // `undefined` (never touched) falls through to `openIt`, so the "this is the
+  // only content on the page" rule below still applies on first paint.
+  const remembered = state.openFolds ? state.openFolds.brief : undefined;
+  const isOpen = remembered === undefined ? !!openIt : remembered;
+  const openAttr = isOpen ? ' open' : '';
+
   if (!read || !read.brief || !read.brief.present) {
     return (
-      '<details class="mem-fold">' +
-        '<summary class="mem-fold-summary">' + icon('chevronRight', 14) +
+      '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
+        '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
           '<span>Standing brief</span><span class="mem-fold-meta">not written</span></summary>' +
         '<div class="mem-fold-body"><p class="mem-quiet">No standing brief for this project. It is the part that ' +
         'rarely changes — the goal, the firm decisions, the working model — and every agent read returns it, so it is ' +
@@ -587,8 +828,8 @@ function renderBrief(read, openIt) {
   const b = read.brief;
   const age = formatAge(b.updatedAt ? Math.max(0, Math.round((Date.now() - Date.parse(b.updatedAt)) / 1000)) : null);
   return (
-    '<details class="mem-fold"' + (openIt ? ' open' : '') + '>' +
-      '<summary class="mem-fold-summary">' + icon('chevronRight', 14) +
+    '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
+      '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
         '<span>Standing brief</span>' +
         '<span class="mem-fold-meta mono"' + (b.updatedAt ? ' title="' + escapeHtml(b.updatedAt) + '"' : '') + '>' +
           escapeHtml(age || 'updated') + '</span></summary>' +
@@ -608,10 +849,17 @@ function renderJournal() {
   const d = state.detail;
   if (!d || !d.journal) return '';
   const j = d.journal;
+  // Re-emitted on every render, or the fold shuts itself the moment its own
+  // "Show more" button re-renders the pane. Declared inline rather than via a
+  // shared helper: scripts/test-next-memory-view.js lifts this function by
+  // brace-matching and executes it with a fixed set of injected collaborators,
+  // so a module-level helper called from here would be a ReferenceError there
+  // (the v3.11.0 hardcoded-function-list blind spot).
+  const journalOpen = (state.openFolds && state.openFolds.journal) ? ' open' : '';
   if (!j.returned) {
     return (
-      '<details class="mem-fold">' +
-        '<summary class="mem-fold-summary">' + icon('chevronRight', 14) +
+      '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
+        '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
           '<span>Session journal</span><span class="mem-fold-meta">empty</span></summary>' +
         '<div class="mem-fold-body"><p class="mem-quiet">No saves recorded under this scope and machine yet.</p></div>' +
       '</details>'
@@ -668,9 +916,25 @@ function renderJournal() {
         // bucket exactly as "content was lost" does. The suite caught this
         // sentence on its first run. Say what happened, positively.
         : ' on how this save was normalised — the content itself was stored in full: ';
+    // THE MODIFIER CLASS the palette was waiting for (see memory.css's note on
+    // .mem-j-rej). All three outcomes rendered in one neutral grey, so a real
+    // loss looked exactly like "we recorded the save time because you sent
+    // none". The classification exists only in the note TEXT and CSS cannot
+    // select on text — so it is carried out here, as a class, and ONLY for the
+    // loss case. The other two keep the neutral treatment on purpose:
+    // re-warning on every normalisation is the defect this replaces.
+    //
+    // Amber arrives as an ICON plus a rule, not as the text colour. Colour is
+    // never the only signal (tokens/color.css: "status colour always ships
+    // with an icon or label"), and --attention-text measures 3.58:1 on the
+    // light surface, which is below the 4.5:1 floor for body text — while an
+    // icon and a border are graphical objects held to 3:1. The words stay at a
+    // fully legible token and the amber does the signalling.
     const rej = notes.length
-      ? '<div class="mem-j-rej">' + escapeHtml(notes.length + ' note' +
-          (notes.length === 1 ? '' : 's') + noteLabel + notes.join('; ')) + '</div>'
+      ? '<div class="mem-j-rej' + (lossy ? ' mem-j-rej-loss' : '') + '">' +
+          (lossy ? icon('alertTriangle', 12) : '') +
+          '<span>' + escapeHtml(notes.length + ' note' +
+          (notes.length === 1 ? '' : 's') + noteLabel + notes.join('; ')) + '</span></div>'
       : '';
     return (
       '<li class="mem-j-row">' +
@@ -706,8 +970,8 @@ function renderJournal() {
     : '';
 
   return (
-    '<details class="mem-fold">' +
-      '<summary class="mem-fold-summary">' + icon('chevronRight', 14) +
+    '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
+      '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
         '<span>Session journal</span>' +
         '<span class="mem-fold-meta mono">' + escapeHtml(String(j.returned)) + '</span></summary>' +
       '<div class="mem-fold-body">' +
@@ -733,8 +997,10 @@ function renderJournal() {
  */
 function renderAbout() {
   return (
-    '<details class="mem-fold mem-about">' +
-      '<summary class="mem-fold-summary">' + icon('chevronRight', 14) + '<span>How this works</span></summary>' +
+    '<details class="mem-fold mem-about" data-mem-fold="about"' +
+        ((state.openFolds && state.openFolds.about) ? ' open' : '') + '>' +
+      '<summary class="mem-fold-summary" id="mem-fold-about">' + icon('chevronRight', 14) +
+        '<span>How this works</span></summary>' +
       '<div class="mem-fold-body">' +
         '<p class="mem-quiet">Agent memory is three files per project, kept in <span class="mono">state/</span> ' +
         'beside that project’s wiki, and synced with it.</p>' +
@@ -765,6 +1031,16 @@ function wire(token) {
       const project = btn.dataset.memProject;
       if (project === state.activeProject) return;
       selectProject(project, token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  });
+
+  // Record which disclosures are open so the next render can re-open them.
+  // `toggle` fires only on a real change, never on parse, so emitting `open`
+  // in the markup above does not feed back into this.
+  document.querySelectorAll('[data-mem-fold]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      if (!state.openFolds) state.openFolds = {};
+      state.openFolds[el.dataset.memFold] = el.open;
     });
   });
 

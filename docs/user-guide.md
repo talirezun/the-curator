@@ -284,7 +284,7 @@ The rail, top to bottom:
 | **Chat** | Ask questions of one domain's wiki. This is where the app opens. |
 | **Domains** | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. |
 | **Shared Brain** | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Agent memory** | Working state your coding agents read and write over MCP. There is no view of it here yet — see below. |
+| **Agent memory** | Working state your coding agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. Read-only here; agents do the writing. |
 | **Ingest** | Drop in PDFs, Markdown or text files. |
 
 Then, at the **bottom of the rail**, separated by a gap:
@@ -335,16 +335,45 @@ The first time you open the app after updating, a one-time bar appears at the to
 >
 > **You do not need `/old` for anything.** Earlier drafts of this guide said applying an app update and the *Reveal in Finder* source bar still required it. Both work in the redesigned interface and have since v3.9.0 — those notes were written before the cutover and were wrong. If you find a page in this guide still sending you to `/old` for a feature, that is a documentation bug worth reporting.
 
-### Agent memory has no screen — but it is real now
+### Agent memory — what the screen shows
 
-The **Agent memory** rail item opens a page that says there is nothing to browse here. Read that precisely, because it changed in v3.17.0 and the two halves are different:
+The **Agent memory** rail item opens a browser for the working state your coding agents leave for
+each other. Everything on it is **read-only**: agents write this over MCP, and the app shows it.
 
-- **The memory itself is real.** Your coding agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — can save and read a *working-state brief* for a project: where things stand, what to do next, what is already settled, what to avoid. It survives across sessions, agents, models and machines. It is plain markdown under `domains/<project>/state/`, so you can open it in any editor and it travels with GitHub sync like the rest of your wiki.
-- **There is no view of it in the app.** Nothing on this screen renders it, and there is no rollup or dashboard. You read it through your coding agent, or by opening the file.
+- **The sidebar lists every domain**, in domain order, each with its work-stream count and how
+  long ago it was last written to (*"2 scopes · 5 hr ago"*). A domain with nothing saved is still
+  listed — dimmed, with a hollow marker, reading *"no state saved yet"* — because that is a real
+  answer, not a broken row. The screen **opens** on whichever project was written to most
+  recently, which is nearly always the one you just came from; the list itself does not reorder
+  between visits.
+- **The main column shows the current handoff** for one work-stream: the one-line headline, how
+  long ago it was saved, which harness and model saved it, and the document itself — where things
+  stand, what is next, what is settled, what to avoid, what is still open.
+- **A Scope and a Machine picker** appear when there is more than one of either. Ask for a
+  work-stream without picking a machine and you get the most recently written one; if that was a
+  different computer, a small **from &lt;machine&gt;** badge says so, because the next steps below it
+  were observed somewhere else and local paths may not match.
+- **The standing brief and the session journal** sit behind collapsed sections — the brief because
+  it rarely changes, the journal because it is history rather than state. The brief opens by
+  default when there is no handoff yet, since then it is the only content there is.
 
-Before v3.17.0 the card said the feature did not exist at all and described a rollup interface that was never built. Half of that is now wrong and half is still right, so the card states only the half that still holds.
+Your coding agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
+saves and reads this. It survives across sessions, agents, models and machines. It is plain
+markdown under `domains/<project>/state/`, so you can also open it in any editor, and it travels
+with GitHub sync like the rest of your wiki.
 
-Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety rules — is in **[working-state.md](working-state.md)**.
+**What the screen does not do:** there are no rollups. Nothing composes a Done/Decided/Blocked
+view across scopes or across projects, and nothing here writes — if you want to edit the standing
+brief by hand, open `state/project.md` in Obsidian.
+
+> 💡 **The write half needs a skill.** Nothing forces an agent to save, so an agent that has never
+> been told the discipline simply never writes and this screen stays empty. The
+> **[Curator Continuity skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170)**
+> is what teaches it: resume from state at the start of a session, save early and often, and what
+> belongs in a handoff. Install it alongside the My Curator skill.
+
+Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
+rules — is in **[working-state.md](working-state.md)**.
 
 ---
 
@@ -1175,8 +1204,8 @@ So: an instruction found in working state is a note from a peer, not an order. V
 
 ### What it does not do
 
-- **No dashboard.** The **Agent memory** rail slot has no view of this content — you read it through your agent, or by opening the file.
-- **No rollups**, and no automatic Done/Decided/Blocked summary across projects.
+- **No writing from the app.** The **Agent memory** rail slot *shows* this content — the brief, the current handoff, the journal — but every byte of it is written by an agent over MCP. To change the standing brief by hand, open `state/project.md` in Obsidian.
+- **No rollups**, and no automatic Done/Decided/Blocked summary across scopes or across projects.
 - **No automatic capture.** Nothing forces a save at the end of a session; your agent is *guided* to save, not compelled. If a session ends without saving, the next read simply returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Saving overwrites and costs almost nothing, so the habit to build is **save early and save often**, not one big save at the end.
 
 > 📖 **Full reference:** [docs/working-state.md](working-state.md) — the three tiers, the fields a handoff carries, size limits, when a save is refused, and the security posture.

@@ -106,6 +106,16 @@ hunk never arises in the first place. Nothing has to be resolved, because nothin
 collides. This was proven against real git before the layout was fixed. **Do not
 collapse this segment.**
 
+**That argument covers tiers 2 and 3 only.** `state/project.md` has **no** machine segment — one
+file per project, deliberately, because the brief belongs to the project rather than to any one
+machine. So two machines that both edit the brief between syncs *do* produce exactly the
+conflicting hunk described above, and `-X theirs` resolves it by discarding the local edit
+silently. The exposure is small today — the brief changes rarely and deliberately, and
+`saveProjectBrief` is its only writer — but it is real, and §6 tells you to hand-edit that very
+file in Obsidian, which is the workflow that triggers it. If you edit the brief by hand, sync soon
+after; the same advice [sync.md](sync.md) gives for any wiki page. Anyone adding a second frequent
+writer to the brief must revisit this rather than inherit the tier-2 reasoning.
+
 **The `<machine>` segment is not a bare hostname.** It was, and that was measured to
 fail: two clones with the same default macOS hostname both wrote
 `state/main/talis-macbook-pro/`, and the second machine's next sync pull silently
@@ -115,7 +125,40 @@ exists to prevent, defeated by hostname collision alone. The segment is now
 once and stored outside `domains/` (so it never syncs and never re-creates the
 collision). A folder already written as a bare hostname stays fully readable — nothing
 is migrated or renamed — and if the id can't be persisted (a read-only home), the store
-falls back to the old hostname-only behaviour and says so rather than failing the save.
+falls back to the old hostname-only behaviour rather than failing the save. Losing the
+collision guard costs a merge risk; refusing the save loses the handoff outright, and
+those are not the same size of loss.
+
+**That fallback is now stated out loud. It was not before.** Measured against a
+read-only user-data directory, the degraded save reported no notes, said *"every field was
+stored exactly as supplied"*, and wrote nothing to stderr — the user was standing in
+exactly the layout that had already destroyed a real handoff, with no signal anywhere.
+Two documents (this one included) promised otherwise while the identifier appeared in no
+code at all. What ships now:
+
+- **`installIdAvailable`** — a boolean on every save result and on every read that reports
+  machine identity, i.e. every read that names a scope. `false` means the guard is off.
+  It is always present, so *"no warning"* is a stated fact rather than an absence you have
+  to interpret. Over MCP the save spells it `install_id_available`; the read keeps
+  `installIdAvailable` and adds **`installIdUnavailableReason`**, the one sentence naming
+  the risk and the fix.
+- **A note on the save itself**, carried in the existing `notes` array rather than in a new
+  channel — a channel nobody reads is how this stayed invisible in the first place. It is
+  classified separately from an input normalisation: `notes_meaning` gains a fourth arm
+  saying nothing you sent was dropped *and* that another computer of the same name can
+  replace this state through sync. The note is pushed before the per-field notes so a
+  disarmed collision guard cannot be crowded out of the note budget by a truncation
+  notice.
+
+The note fires only for an **auto-detected** machine. An explicit `machine` argument is a
+name the caller chose and is taken verbatim — no install id was ever going to be appended
+to it, so nothing about that write has degraded, and warning about a risk that does not
+apply is how a real warning gets ignored. The *field* is returned either way, because
+"is this installation identified?" is true or false about the installation regardless of
+how one call addressed it.
+
+The scope-less index read carries neither field, deliberately: it reports no machine
+identity, so there is nothing there for them to qualify.
 
 Cross-machine handoff still works, and works by reading rather than by writing: a read
 that names a scope but no machine returns the **most recently written** machine's state
@@ -128,6 +171,16 @@ otherwise orphan your previous state behind a segment nobody would think to ask 
 A scope is a workstream inside a project — `main`, `auth-refactor`, `v4-migration`.
 Scopes are independent: each has its own handoff and its own journal per machine. If you
 save without naming one, it goes to `main`.
+
+**A scope name that is not already a safe path segment is normalised, and the save says
+which name won.** A scope is one directory name, so `feature/auth` is reduced to
+`feature-auth` and saved there. The save succeeds — refusing it would cost a handoff to
+buy tidiness — but a `note` on the result names the normalised form, because the scope
+index will later show a name the caller never typed, and an agent that re-reads with the
+name it sent would otherwise have no way to connect the two. (Reading with `feature/auth`
+does in fact resolve, since a read normalises the same way; the note exists for the agent
+that reads the index instead.) A name that normalises to nothing usable is refused
+outright as `invalid-scope`.
 
 ---
 
@@ -156,11 +209,78 @@ starting cold, told "carry on with the auth work", cannot resolve that to a scop
 it has never seen; without the index it would have to guess.
 
 Asking **with a scope** gets you the brief, that scope's `current.md`, the list of
-machines holding state under that scope, and the most recent journal entries (10 by
-default, 50 at most).
+machines holding state under that scope, and the most recent journal entries — over MCP,
+**8 by default and 20 at most**. Those are the tool's own limits, deliberately tighter than
+the store's own 10/50, because every byte an MCP response carries is charged against the
+model's context window on the turn it asks. See §5.
 
 Every read reports the machine the content came from and when it was written, so
 provenance is visible rather than assumed.
+
+#### What the read discloses about itself
+
+A read answers "what is here?" — but a *partial* answer that does not admit to being
+partial is worse than a short one, because the caller acts on it as though it were whole.
+So alongside the content, a read carries the facts a caller would otherwise have to infer
+from an array it can see the end of.
+
+| Field | On which read | What it says |
+|---|---|---|
+| `scopeCount` | scope-less | The number of `(scope, machine)` **pairs**. This is what the index cap ([§5](#5-limits)) and the truncation flag apply to. |
+| `distinctScopeCount` | scope-less | The number of distinct **work-streams**, counted over the *uncapped* pair list. |
+| `unlistedEntries` / `unlistedReason` | scope-less | Directory entries under `state/` that this store will not address, and the sentence naming the fix. |
+| `machineCount` / `machinesTruncated` | scope | How many machines really hold this scope, versus how many the returned list shows. |
+| `unlistedMachines` | scope | The same disclosure one level down: machine directories under this scope that cannot be addressed. |
+| `requestedMachine` | scope, on a machine miss | The machine that was asked for and is not there. |
+| `machineIsThisMachine` / `machineIsThisHost` | scope | Identity, and — separately — a mere hostname match. |
+| `installIdAvailable` / `installIdUnavailableReason` | scope | Whether machine identity is collision-guarded at all. |
+
+The names above are the store's, and they are what the MCP tools return. **The app's HTTP
+route reuses `scopeCount` for a different quantity** — its project-index endpoint reports
+distinct work-streams under that name while this one reports pairs. Both surfaces carry
+`distinctScopeCount` and `savedCopies`, which mean one thing each everywhere; anything
+consuming either surface should read those two and leave `scopeCount` alone. See
+[api-reference.md § Reading the counts](api-reference.md#reading-the-counts-scopecount-means-two-different-things).
+
+Three of the fields are worth their own sentence, because each fixes a place where the response
+previously stated something untrue rather than merely something incomplete.
+
+**Pairs and work-streams are two numbers, and the useful one is not a property of the
+cap.** One work-stream saved on a laptop and synced to a desktop is one work-stream and
+two pairs. Counting it as two is wrong and gets worse with every machine; but deriving the
+distinct count from the *returned list* is worse still, because past the cap it reports the
+cap. Measured on a seeded project of 78 distinct scopes across 82 pairs, that produced *"56
+saved work-streams"* — a number true of nothing, being the distinct count of a 60-row
+slice. And on a single-machine project of 70 scopes it produced a multi-machine explanation
+for a tree that had never seen a second machine. `distinctScopeCount` is therefore computed
+before the slice, and truncation is reported as what it is — a capped **list**, not a
+smaller count.
+
+**A missing machine is not a missing scope.** Asking for a scope that exists on two other
+machines used to return, in one payload, a correct `message` saying so next to a `report`
+claiming the scope did not exist, `scope_not_found: true`, and a *"did you mean…?"*
+suggestion echoing back the caller's own correct slug. The scope has state; that machine
+does not, and collapsing those into one answer is the fact-and-absence collapse this whole
+module exists to refuse. The two are now told apart by `requestedMachine` together with a
+non-zero `machineCount`, and the report defers to the store's own sentence rather than
+composing a second description of one fact. A caller who gets *both* wrong — an unknown
+scope *and* an unknown machine — still falls through to the scope-miss answer, so the route
+back is preserved.
+
+**An entry that cannot be addressed is counted, never silently skipped.** A scope or machine
+directory is read only if its name is a safe single path segment: it must start with a letter
+or a digit, may otherwise contain only letters, digits, dot, hyphen and underscore, must not
+run past 64 characters, and must not contain `..`. Anything else — a space, an accented
+character, a leading underscore or hyphen — is left on disk unread and *counted*. Dropping that
+count is how a surface comes to say *"nothing saved for this project yet"* over a real handoff
+— and the advice that follows a false negative is to save, which writes to the slugged path and
+orphans the original. `0` means "we looked, and every entry here is addressable"; it never
+means "nobody looked".
+
+One exclusion is not counted, and it is deliberate: a **dot-prefixed** directory is filtered out
+before the count, as a hidden file rather than as an unreadable name. So `unlistedEntries` is a
+count of names this store *would* have read had they been spellable, not of everything under
+`state/`.
 
 ### The sections a handoff carries
 
@@ -253,9 +373,13 @@ from another machine, it is hand-editable in Obsidian, and inside a `shared-*` m
 can have been written by another person. A write-only guard would be a guard applied to
 an instance rather than to a class.
 
-The read side applies the first two rules to the whole file but cannot apply the heading
-rule, because it cannot tell our own `##` headings from a forged one without parsing,
-and escaping all of them would mangle the document.
+The read side applies the control-character strip, both marker rules and the defanging rule to the
+whole file. The **heading** rule is the only one it cannot apply, because it cannot tell our own
+`##` headings from a forged one without parsing, and escaping all of them would mangle the
+document. So read-side coverage is three of the four rules, not two — and the control strip is
+genuinely load-bearing there rather than belt-and-braces: it is a no-op on every write path (both
+write-side sanitisers strip controls before calling it), so before it was added a NUL or an ANSI
+escape in a file that arrived over sync was handed to the reader verbatim.
 
 ### Stated rather than implied away
 
@@ -287,9 +411,14 @@ Every limit exists so a read is self-capping and cannot blow the MCP response bu
 | Items per list | 40 |
 | Headline | 200 chars |
 | Journal entries returned | Depends which surface asks — **agents over MCP: 8 by default, 20 at most**; **the in-app view: 10 by default, 50 at most** |
-
-The journal limits differ by surface and that is deliberate, not drift. The MCP tool clamps harder than the store because every byte it returns is carried in an agent's context window on the turn it asks; the in-app view is a human scrolling a page and pays no such tax. The store owns the higher ceiling and the tool narrows it — so an agent asking for 50 receives 20, which is a real answer, not an error. Documenting one number for both was wrong in one direction whichever number was chosen.
 | Scope index entries | 60 |
+
+The journal limits differ by surface and that is deliberate, not drift. The MCP tool clamps harder
+than the store because every byte it returns is carried in an agent's context window on the turn
+it asks; the in-app view is a human scrolling a page and pays no such tax. The store owns the
+higher ceiling (`DEFAULT_JOURNAL_ENTRIES` 10, `MAX_JOURNAL_ENTRIES` 50) and the tool narrows it —
+so an agent asking for 50 receives 20, which is a real answer, not an error. Documenting one
+number for both was wrong in one direction whichever number was chosen.
 
 An over-budget save is **never refused** — an agent near the end of its context that has
 its handoff rejected loses the handoff entirely. Instead the least is trimmed: trailing
@@ -305,6 +434,45 @@ scope-less "what exists?" answer, never a read that names a scope. A project wit
 than 60 (scope, machine) pairs still resolves any scope you name by its own directory,
 never by filtering the capped index — so a work-stream older than the newest 60 stays
 readable by name even though it has scrolled off the index.
+
+It is not a **counting** limit either. Every count a read reports is taken before the
+slice, so a truncated index still says truthfully how many work-streams and how many
+saved copies exist — what truncation affects is the list, and the response says which
+one is short. See [§3](#what-the-read-discloses-about-itself) for the fields.
+
+### What a handoff cannot do: it cures ignorance, not disagreement
+
+Every limit above is mechanical. This one is behavioural, and it is the one most likely
+to surprise you.
+
+A handoff reliably tells the next session what it does not know. It does not bind it.
+Measured against this project's own real handoff — the same document, saved through the
+store and read back through the read path — asking an open *"what should I do next?"*:
+
+| | no state | with state |
+|---|---|---|
+| named the correct top priority | **0 of 4** | **8 of 8** |
+| proposed something the handoff explicitly rules out | 3 of 4 | 3 of 8 |
+
+The first row is the effect worth relying on. The second is real, directional, and
+**nowhere near zero**: twice the model quoted the decision and overrode it in the same
+sentence — *"which is a deliberate decision to maintain a single writer. However…"*.
+Recording a decision stops the next session being ignorant of it. It does not stop the
+next session thinking it knows better.
+
+**Placement is what moved the number.** Every constraint filed in `decisions`, as a
+negative constraint carrying its reason, was respected in every run. The one ruled-out
+constraint that lived only inside a `traps` narrative was re-litigated until it was moved
+into `decisions` — after which it was respected 4 of 4. That is the evidence that §3's
+field discipline is load-bearing rather than stylistic: a constraint written as a story
+about what happened reads as history, and the same constraint written as a decision reads
+as a boundary. If you want something respected, file it in `decisions`, phrased as what
+not to do, with the reason attached.
+
+N=4 per arm, one provider (`gemini-2.5-flash-lite`), one project — the shape of the
+effect, not a rate. It does not contradict the two-provider measurement quoted in the
+README; it is a second scenario in which the suppression half came out weaker, which is
+what that measurement's own *"shape rather than a measured constant"* caveat anticipates.
 
 ---
 
@@ -338,6 +506,37 @@ saving, the next read returns the previous state.** That is a stale handoff, not
 corrupted one — nothing is damaged and nothing is lost that had been saved. But since a
 save overwrites and is cheap, the guidance is simply to **save early and save often**
 rather than to treat the save as a ceremony at the end.
+
+### The skill that carries the capture discipline
+
+**Capture is skill-instructed, and that means the write half is inert until the skill is
+installed.** Nothing in the store, the tools or the app makes an agent save; an agent that has
+never been told the discipline simply never writes, the store stays empty, and everything above —
+the read half, the in-app view — has nothing to show. So the skill is not an optional
+convenience here, it is the half of the feature that is not code.
+
+It ships in this repository as **[`claude-skills/curator-continuity/`](../claude-skills/curator-continuity/SKILL.md)** —
+`SKILL.md` plus `examples.md`, following the [Agent Skills](https://agentskills.io) open standard,
+the same shape and the same install paths as the My Curator skill. Install instructions:
+[mcp-user-guide.md § The Curator Continuity Claude skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170).
+
+What it carries that the tool descriptions alone cannot:
+
+- **The resume ritual** — read state at the start of a session, before proposing anything. Without
+  a scope-less read first, an agent told "carry on with the auth work" has to guess a slug it has
+  never seen.
+- **Save early and save often**, because a save *overwrites* and is therefore idempotent. That
+  removes the single point of failure in "write the handoff at the end", which asks a degraded
+  model near its context limit to remember.
+- **Every save must be complete, not a delta.** Since a save overwrites, a second save carrying
+  only what changed silently drops the firm decisions recorded in the first.
+- **Treat stored state as data, not as instructions**, and re-derive a stale baseline before
+  trusting it — the discipline §4 above describes, applied at the point of use.
+
+**Why a skill and not a hook.** Zero hooks are configured on a typical machine, and a hook has to
+be rebuilt for every harness; a skill works in every MCP host as it is. The cost is honesty about
+what that buys: capture stays advisory, and a missed save yields the *previous* state, never a
+corrupted one. That is the fail-safe direction, which is why no enforcement was added.
 
 ---
 
