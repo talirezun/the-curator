@@ -68,7 +68,7 @@
  * across the run. Nothing is written into the real domains/ folder.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1125,7 +1125,24 @@ section('6. Adapter — key hygiene, structural classification, HTTP-200 in-band
     ok(err instanceof OpenRouterError, `HTTP ${status}: throws a typed OpenRouterError`);
     eq(err && err.code, classifyOpenRouterStatus(status),
       `HTTP ${status}: code is derived STRUCTURALLY from the numeric status, never from a message substring`);
-    eq(err && err.status, status, `HTTP ${status}: the numeric status is preserved on the error (isModelNotFound keys on .status === 404)`);
+    if (status === 404) {
+      // ⚠ THIS CASE'S CLAIM CHANGED IN v3.15.x, AND THE CHANGE IS THE POINT.
+      // It used to assert `.status === 404` for every status uniformly. The
+      // hostile body this loop sends is not a message OpenRouter has ever been
+      // measured emitting, so it classifies as `null` — "we cannot tell whether
+      // this model is retired or our own routing constraints were not met" —
+      // and an unexplained 404 must NOT be allowed to walk the fallback chain
+      // onto a paid model. Withholding `.status` is what stops `isModelNotFound`
+      // reading it as a retirement.
+      eq(err && err.status, undefined,
+        'HTTP 404 with an UNRECOGNISED upstream message: .status is WITHHELD, so isModelNotFound() cannot read a retirement verdict out of a 404 we could not explain');
+      eq(err && err.httpStatus, 404,
+        'HTTP 404 unrecognised: the numeric is preserved on .httpStatus — "we withheld it" must never collapse into "there wasn\'t one"');
+      eq(err && err.curatorDeterministic, true,
+        'HTTP 404 unrecognised: tagged deterministic, so callLLM refuses the chain walk and generateText refuses the ~40s retry');
+    } else {
+      eq(err && err.status, status, `HTTP ${status}: the numeric status is preserved on the error (isModelNotFound keys on .status === 404)`);
+    }
     const blob = `${err && err.message}|${err && err.stack}`;
     if (blob.includes(CANARY)) leaks.push(status);
     ok(!blob.includes(CANARY), `HTTP ${status}: the API key does NOT appear in the error message or stack, even though the upstream body echoed it three ways`);
@@ -1147,11 +1164,20 @@ section('6. Adapter — key hygiene, structural classification, HTTP-200 in-band
     eq(err && err.retryAfterSeconds, 42, '429: Retry-After is parsed off the header');
   }
   {
-    const a = mkAdapter(async () => jsonRes(404, { error: { message: 'no such model', code: 404 } }));
+    // REPOINTED to the message a retired model ACTUALLY produces, captured live
+    // 2026-08-28 from `openai/gpt-3.5-turbo-0301`. The old fixture said "no such
+    // model", which OpenRouter has never been measured emitting — so this
+    // assertion's claim ("a retired model walks the fallback chain") was being
+    // proven against a string that could not occur. It still passed, because
+    // before the 404 split every 404 kept its status regardless of wording; the
+    // fixture's unreality was invisible until the wording started to matter.
+    const a = mkAdapter(async () => jsonRes(404, { error: { message: 'No endpoints found for openai/gpt-3.5-turbo-0301.', code: 404 } }));
     let err = null;
-    try { await a.createChatCompletion({ model: 'x/y', userPrompt: 'u', maxTokens: 10 }); } catch (e) { err = e; }
+    try { await a.createChatCompletion({ model: 'openai/gpt-3.5-turbo-0301', userPrompt: 'u', maxTokens: 10 }); } catch (e) { err = e; }
     eq(err && err.status, 404,
-      '404: .status is 404 — this is what isModelNotFound() keys on, so a retired model walks the fallback chain');
+      '404 RETIREMENT: .status is 404 — this is what isModelNotFound() keys on, so a retired model still walks the fallback chain (the v2.4.0 safety net is preserved)');
+    eq(err && err.curatorDeterministic, undefined,
+      '404 RETIREMENT: NOT tagged deterministic — tagging it would silently delete the safety net while appearing to fix a money bug');
   }
   // …and a NON-transient status must not be able to smuggle a retry token in
   // through the upstream's own prose. A 400 whose detail contains "503" would
@@ -1461,6 +1487,318 @@ section('6. Adapter — key hygiene, structural classification, HTTP-200 in-band
     try { await a.createChatCompletion({ model: 'x/y', userPrompt: 'u', maxTokens: 10 }); } catch (e) { err = e; }
     eq(err && err.code, 'OPENROUTER_NETWORK', 'a pre-response failure is typed OPENROUTER_NETWORK');
     ok(err && !err.message.includes(CANARY), 'and the key is redacted out of the network error too');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §6f. THE 404 SPLIT — a capability mismatch must not buy a paid substitution
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT ──────────────────────────────────────────────────────────────
+// Every OpenRouter request carries `provider: {allow_fallbacks:false,
+// require_parameters:true}`. MEASURED LIVE 2026-08-28 against the real endpoint:
+// when no upstream can satisfy those parameters OpenRouter answers **HTTP 404**
+// — not the 503 the adapter's own comment assumed — with "No endpoints found
+// that can handle the requested parameters". `isModelNotFound()` fires on that
+// twice over (`err.status === 404`, and `'404' + 'not found'` in our own prose),
+// so `callLLM` walked `FALLBACK_CHAINS.openrouter` onto the PAID
+// `ibm-granite/granite-4.0-h-micro`. A mismatch between what WE require and what
+// an upstream offers was being converted into a paid substitution the user never
+// asked for, silently, and reported as a successful answer.
+//
+// NOT PURELY LATENT. `_buildBody`'s ⚠ block already records that an ACCOUNT-LEVEL
+// data policy 404s a catalogued free model with nothing special sent
+// ("No endpoints found matching your data policy"). `minimax/minimax-m3:free` is
+// a shipped, offerable build-lane model. So a user on the free model whose
+// account carries a training policy would have been moved onto a paid model
+// today, on the shipped catalogue.
+//
+// ── THE THREE STRINGS BELOW ARE CAPTURED WIRE BYTES, NOT INVENTED ───────────
+// A fixture nobody has seen the provider emit proves nothing about the provider.
+// The §6b block above carried exactly that defect — it asserted retirement
+// behaviour against "no such model", a message OpenRouter has never produced —
+// and it passed for as long as wording did not matter. These are the real ones.
+// ═════════════════════════════════════════════════════════════════════════════
+section('6f. A 404 is three different facts, and only a retirement may spend');
+{
+  const WIRE_CONSTRAINT_PARAMS =
+    'No endpoints found that can handle the requested parameters. To learn more about ' +
+    'provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection';
+  const WIRE_CONSTRAINT_POLICY = 'No endpoints found matching your data policy (Free model training)';
+  const WIRE_RETIRED = 'No endpoints found for openai/gpt-3.5-turbo-0301.';
+
+  const { classifyNotFoundReason, ROUTING_CONSTRAINT_404_CLAUSES, MODEL_RETIRED_404_CLAUSES } = adapterMod;
+
+  // ── 6f-i. COMPLETENESS, before anything uses these ─────────────────────────
+  ok(typeof classifyNotFoundReason === 'function', 'COMPLETENESS: classifyNotFoundReason is exported from openrouter-adapter.js');
+  ok(Array.isArray(ROUTING_CONSTRAINT_404_CLAUSES) && ROUTING_CONSTRAINT_404_CLAUSES.length > 0,
+    'COMPLETENESS: ROUTING_CONSTRAINT_404_CLAUSES is a non-empty table');
+  ok(Array.isArray(MODEL_RETIRED_404_CLAUSES) && MODEL_RETIRED_404_CLAUSES.length > 0,
+    'COMPLETENESS: MODEL_RETIRED_404_CLAUSES is a non-empty table');
+  ok(Object.isFrozen(ROUTING_CONSTRAINT_404_CLAUSES) && Object.isFrozen(MODEL_RETIRED_404_CLAUSES),
+    'both tables are frozen — a money classifier must not be mutable at runtime');
+
+  // ── 6f-ii. The classifier, against the REAL captured wire strings ──────────
+  eq(classifyNotFoundReason(WIRE_CONSTRAINT_PARAMS), 'routing-constraint',
+    'the LIVE "requested parameters" 404 classifies as routing-constraint — OUR requirement, not a dead model');
+  eq(classifyNotFoundReason(WIRE_CONSTRAINT_POLICY), 'routing-constraint',
+    'the LIVE "data policy" 404 classifies as routing-constraint — reachable TODAY on the shipped free build-lane model');
+  eq(classifyNotFoundReason(WIRE_RETIRED), 'model-retired',
+    'the LIVE "No endpoints found for <id>." 404 classifies as model-retired — the case FALLBACK_CHAINS exists for');
+
+  // THE THIRD VALUE IS ITS OWN ANSWER. This repo's most expensive recurring
+  // defect is a fact and its absence collapsed into one value; "we could not
+  // tell" must be distinguishable from both verdicts, not folded into either.
+  eq(classifyNotFoundReason('no such model'), null,
+    'an UNMEASURED message classifies as null — not silently as a retirement');
+  eq(classifyNotFoundReason(''), null, 'an empty message (a non-JSON 404 body) is null, not a verdict');
+  eq(classifyNotFoundReason(null), null, 'a missing message is null');
+  eq(classifyNotFoundReason(undefined), null, 'undefined is null — absent and empty are both "we do not know"');
+  eq(classifyNotFoundReason(WIRE_RETIRED.toUpperCase()), 'model-retired', 'matching is case-insensitive');
+
+  // ── 6f-iii. The adapter's behaviour per class, via the REAL classifier ─────
+  // Driven through an INJECTED fetch, so what is asserted is the shipping
+  // adapter reacting to a synthetic HTTP response — never a re-implementation.
+  const CANARY6f = 'ZZCANARY6FZZ-not-a-real-credential-1a2b3c4d';
+  const mk404 = (message) => new OpenRouterAdapter({
+    apiKey: CANARY6f, timeoutMs: 5000,
+    fetchImpl: async () => ({
+      ok: false, status: 404,
+      headers: { get: () => null },
+      json: async () => ({ error: { message, code: 404 } }),
+    }),
+  });
+  const throwFrom = async (message, model = 'zz-vendor/zz-model') => {
+    try {
+      await mk404(message).createChatCompletion({ model, userPrompt: 'u', maxTokens: 10, responseFormat: 'json' });
+    } catch (e) { return e; }
+    return null;
+  };
+
+  const eConstraint = await throwFrom(WIRE_CONSTRAINT_PARAMS);
+  const ePolicy = await throwFrom(WIRE_CONSTRAINT_POLICY);
+  const eUnknown = await throwFrom('some wording nobody here has ever measured');
+  const eRetired = await throwFrom(WIRE_RETIRED, 'openai/gpt-3.5-turbo-0301');
+
+  for (const [label, e] of [['capability', eConstraint], ['data-policy', ePolicy], ['unclassifiable', eUnknown]]) {
+    // LAYER 1 — the structural tag callLLM and generateText both read.
+    eq(e && e.curatorDeterministic, true, `404 ${label}: tagged curatorDeterministic — the single fact that stops the chain walk and the ~40s retry`);
+    // LAYER 2 — no not-found signal is emitted AT ALL. Both halves are needed:
+    // fixing only the property leaves the prose able to re-invent the verdict
+    // for any caller that re-wraps the error and loses its properties.
+    eq(e && e.status, undefined, `404 ${label}: .status is WITHHELD — isModelNotFound() reads .status === 404 first, so leaving it would defeat layer 1's purpose if layer 1 were ever moved`);
+    eq(e && e.httpStatus, 404, `404 ${label}: the numeric survives on .httpStatus — withheld must never collapse into "there wasn't one"`);
+    const m = (e && e.message) || '';
+    ok(!/\b404\b/.test(m), `404 ${label}: the message carries no bare "404" token`);
+    ok(!/not\s*found/i.test(m) && !/not_found/i.test(m) && !/does not exist/i.test(m),
+      `404 ${label}: the message carries no not-found vocabulary — the echoed upstream detail is neutralised because the structural signal was withheld`);
+    ok(!m.includes(CANARY6f), `404 ${label}: no key bytes in the message`);
+  }
+
+  // ── 6f-iii-b. THE ECHOED DETAIL IS UNTRUSTED PROSE ─────────────────────────
+  //
+  // ⚠ ALSO FOUND BY MUTATION. Flipping the constraint branch's neutralisation
+  // off (`keepsStructural404: true`) left this suite GREEN, because the three
+  // MEASURED messages happen to contain no not-found vocabulary — "No endpoints
+  // found" is not "not found", and the numeric 404 lives in the JSON `code`
+  // field, never in `error.message`. So the neutralisation was untested and the
+  // assertions above were passing on an accident of wording.
+  //
+  // This is NOT a contrived input. OpenRouter is a proxy and echoes upstream
+  // vendors' own prose — `neutralizeNotFoundSignals` exists in the first place
+  // because Anthropic's `not_found_error` was measured arriving that way. A
+  // routing-constraint 404 whose detail quotes an upstream's own 404 is the
+  // ordinary shape of a proxied failure, not a hostile edge case.
+  //
+  // What it protects: `.status` is withheld on this branch, so the MESSAGE is
+  // the only thing left that could reconstruct a retirement verdict — for a
+  // caller that re-wraps this error and loses its properties, which is exactly
+  // the case ingest-queue.js's text fallback exists for.
+  {
+    const ADVERSARIAL =
+      'No endpoints found that can handle the requested parameters ' +
+      '(upstream returned 404 model_not_found: the model was not found and does not exist)';
+    eq(classifyNotFoundReason(ADVERSARIAL), 'routing-constraint',
+      'a constraint 404 whose detail QUOTES an upstream 404 still classifies as a constraint — the clause match is not defeated by extra prose');
+    const e = await throwFrom(ADVERSARIAL);
+    eq(e && e.curatorDeterministic, true, 'adversarial detail: still deterministic');
+    eq(e && e.status, undefined, 'adversarial detail: .status still withheld');
+    const m = e.message;
+    ok(!/\b404\b/.test(m),
+      'adversarial detail: the upstream\'s "404" is neutralised out of our message — with .status withheld, the prose is the only remaining route to a false retirement verdict');
+    ok(!/not\s*found/i.test(m) && !/not_found/i.test(m),
+      'adversarial detail: "model_not_found" and "was not found" are neutralised too — isModelNotFound reads the MESSAGE as well as the property');
+    ok(!/does not exist/i.test(m),
+      'adversarial detail: the "model" + "does not exist" clause is neutralised — isModelNotFound ANDs two independent includes, so every conjunct has to be broken');
+    ok(/requested parameters|Upstream said/i.test(m),
+      'CONTROL: the detail is still ECHOED, not deleted — neutralisation must not silently discard what the upstream told the user');
+  }
+
+  // ACTIONABILITY (the whole point of not silently substituting): the user is
+  // told WHICH model failed and WHAT it could not do, because "pick a different
+  // model" is only a usable instruction if they know why.
+  ok(eConstraint.message.includes('"zz-vendor/zz-model"'),
+    'the capability error NAMES the model that failed — threaded through _throwForStatus, which the 429 branch\'s own comment records as missing');
+  ok(/structured JSON output/i.test(eConstraint.message),
+    'the capability error names the CAPABILITY that could not be met');
+  ok(/data policy/i.test(ePolicy.message),
+    'the data-policy error names the account policy instead — a different cause gets a different instruction');
+  ok(/did not say why/i.test(eUnknown.message),
+    'the UNCLASSIFIABLE error says plainly that we do not know — it does not borrow the capability wording and assert a cause we did not measure');
+  ok(/pick another model/i.test(eConstraint.message) && /will not substitute/i.test(eConstraint.message),
+    'and every one of them states the recovery AND that The Curator declined to choose for the user');
+
+  // ── 6f-iv. THE RETIREMENT CONTROL — this is what makes the above mean anything
+  // Without it, "a constraint error does not walk" could be green simply because
+  // NOTHING walks any more, i.e. because the v2.4.0 safety net had been deleted.
+  eq(eRetired && eRetired.status, 404,
+    'CONTROL: a measured RETIREMENT keeps .status === 404 — isModelNotFound() still fires, so it still walks the fallback chain');
+  eq(eRetired && eRetired.curatorDeterministic, undefined,
+    'CONTROL: and it is NOT tagged deterministic — the fix must not silently disable the safety net it sits next to');
+  ok(/model not found/i.test(eRetired.message),
+    'CONTROL: its prose is unchanged and still says "model not found" — accurate, and llm.js\'s message half keys on it too');
+
+  // ── 6f-v. END TO END through the REAL callLLM: WHO GOT CALLED? ─────────────
+  //
+  // The assertions above are about one error object. This one is about MONEY: it
+  // drives the shipping `generateText` -> `callLLM` -> `callProvider` path with
+  // the real fallback chain and records EVERY model id dispatched. A walk is not
+  // an opinion here, it is a second entry in that array.
+  //
+  // The errors replayed are the ones the REAL adapter produced in 6f-iii — not
+  // hand-built look-alikes — so this proves the two halves of the fix compose.
+  {
+    const cfgPath = path.join(TMP_USER, '.curator-config.json');
+    const hadCfg = existsSync(cfgPath);
+    const prevCfg = hadCfg ? readFileSync(cfgPath) : null;
+    writeFileSync(cfgPath, JSON.stringify({
+      openrouterApiKey: `${OR_KEY_PREFIX}zzsynthetic0000000000000000000000000000000000000000000000000000`,
+      activeProvider: 'openrouter',
+    }), { mode: 0o600 });
+
+    const CHAIN = [DEFAULTS.openrouter, ...(llmTesting.FALLBACK_CHAINS.openrouter || [])];
+    ok(CHAIN.length >= 2,
+      'PRECONDITION: the OpenRouter chain has at least one fallback rung, so "did it walk?" is an answerable question at all');
+
+    // ⚠ PRECONDITIONS, AND THEY CAUGHT A REAL DEFECT IN THIS SECTION.
+    // The first draft called `generateText('s','u',64,'json','openrouter')`,
+    // reading argument 5 as the provider override. It is `onWait`. The provider
+    // lives in `opts.provider` (argument SIX), so the string was being installed
+    // as a progress callback and the dispatch resolved to whatever the config's
+    // activeProvider happened to be — which the synthetic config above sets to
+    // openrouter, so the section PASSED for a reason its own code did not state.
+    // Found by running the same call shape live and watching a Gemini model
+    // answer. Both halves are now asserted rather than assumed: a suite whose
+    // routing is accidental proves nothing about the router.
+    eq(getProviderInfo('openrouter').provider, 'openrouter',
+      'PRECONDITION: the synthetic key makes the openrouter override resolvable — otherwise every "dispatch" below would silently be a different provider entirely');
+    eq(getProviderInfo('openrouter').model, CHAIN[0],
+      'PRECONDITION: and it resolves to the build-lane default this section treats as chain rung 0');
+
+    // Drive it and report which models were dispatched.
+    const run = async (firstError) => {
+      const calls = [];
+      __setOpenRouterAdapterFactory(() => ({
+        createChatCompletion: async ({ model }) => {
+          calls.push(model);
+          if (calls.length === 1) throw firstError;
+          return { text: 'FALLBACK ANSWER', model, finishReason: 'stop', usage: null, providerName: null, generationId: null };
+        },
+      }));
+      let out = null, err = null;
+      // Argument 5 is `onWait`; the provider override is `opts.provider`
+      // (argument SIX). Passing it positionally silently routes elsewhere — see
+      // the preconditions above.
+      try { out = await llm.generateText('s', 'u', 64, 'json', null, { provider: 'openrouter' }); }
+      catch (e) { err = e; }
+      __setOpenRouterAdapterFactory(null);
+      return { calls, out, err };
+    };
+
+    // POSITIVE CONTROL FIRST. If this does not walk, every "did not walk"
+    // assertion below is vacuous and must not be believed.
+    const P = await run(eRetired);
+    eq(P.calls.length, 2,
+      'POSITIVE CONTROL: a RETIREMENT walks the chain — exactly two models were dispatched');
+    eq(P.calls[0], CHAIN[0], 'POSITIVE CONTROL: the first dispatch is the default build model');
+    eq(P.calls[1], CHAIN[1], 'POSITIVE CONTROL: the second is the fallback rung — the v2.4.0 safety net is intact and MEASURED, not assumed');
+    eq(P.out, 'FALLBACK ANSWER', 'POSITIVE CONTROL: and the user gets an answer rather than an error, which is the whole purpose of the chain');
+
+    // THE DEFECT, CLOSED.
+    for (const [label, e] of [['capability mismatch', eConstraint], ['data-policy mismatch', ePolicy], ['unclassifiable 404', eUnknown]]) {
+      const R = await run(e);
+      eq(R.calls.length, 1,
+        `${label}: EXACTLY ONE model was dispatched — no walk onto the PAID fallback rung, and no 4x retry from generateText's ladder either`);
+      eq(R.calls[0], CHAIN[0], `${label}: and the one call was the model the user actually chose`);
+      ok(R.err instanceof Error, `${label}: the failure SURFACES to the user instead of being papered over with a substitute answer`);
+      ok(R.out === null, `${label}: nothing was returned as if it had succeeded`);
+      ok(!R.calls.includes(CHAIN[1]),
+        `${label}: specifically, "${CHAIN[1]}" was never called — that is the paid substitution this whole section exists to prevent`);
+    }
+
+    // AND THE MESSAGE SURVIVES THE LADDER. generateText rewrites messages for
+    // 429/503; a deterministic error must reach the user with its own accurate,
+    // actionable text rather than a generic "the provider is overloaded" claim.
+    const R = await run(eConstraint);
+    ok(/pick another model/i.test((R.err && R.err.message) || ''),
+      'the accurate, actionable message reaches the caller unrewritten — generateText\'s outage rewrite does not claim the provider is down');
+
+    // ── 6f-vi. LAYER 1 ON ITS OWN — and an honest note about what it is for ───
+    //
+    // ⚠ FOUND BY MUTATION, NOT BY READING. Deleting `isDeterministicProviderError`
+    // from callLLM's catch — i.e. restoring the shipped bug verbatim — left this
+    // suite at 699/0 GREEN. Every assertion above was satisfied by LAYER 2 alone:
+    // the adapter withholds `.status` and neutralises the prose, so
+    // `isModelNotFound()` returns false and the walk never starts whatever the
+    // dispatcher does. The dispatcher gate had ZERO coverage, inside the very
+    // section written to prove it. That is this repo's "guard that cannot fail"
+    // shape, occurring in its own fix, and it is chased here rather than filed
+    // as coverage.
+    //
+    // STATED PLAINLY, because the alternative is a comment that overclaims: with
+    // BOTH layers shipped, layer 1 is DEFENCE IN DEPTH and is not independently
+    // load-bearing on any production path today — no shipping adapter emits an
+    // error that is both `curatorDeterministic` and not-found-shaped. It is kept
+    // for two reasons. It states the RULE where the rule belongs — the dispatcher
+    // decides whether to spend, so the dispatcher should refuse — instead of
+    // making every present and future adapter remember to also launder its own
+    // signals. And the adapter's own header commits to reusing this exact class
+    // for LM Studio / Ollama / llama.cpp against a configurable base URL; a
+    // future adapter that tags deterministic and keeps a 404 is protected for
+    // free, which is the whole argument for a rule over a spot fix.
+    //
+    // So the contract asserted here is llm.js's, not the adapter's: a
+    // deterministic error NEVER walks, no matter what else it carries.
+    {
+      const mkErr = (deterministic) => {
+        // Deliberately not-found-shaped on BOTH of isModelNotFound's rungs — the
+        // structural `.status === 404` AND the '404' + 'not found' message pair.
+        const e = new Error('OpenRouter chat/completions → HTTP 404: model not found');
+        e.status = 404;
+        if (deterministic) e.curatorDeterministic = true;
+        return e;
+      };
+
+      // NEGATIVE CONTROL FIRST. Without it, "the tagged error did not walk" could
+      // be green because this fixture never walks for some unrelated reason.
+      const untagged = await run(mkErr(false));
+      eq(untagged.calls.length, 2,
+        'NEGATIVE CONTROL: the SAME error WITHOUT the tag walks the chain — so the fixture really can walk, and the assertion below is sensitive to the tag alone');
+
+      const tagged = await run(mkErr(true));
+      eq(tagged.calls.length, 1,
+        'callLLM refuses the walk on a deterministic error even when it is fully not-found-shaped (status 404 AND "404"+"not found" prose) — the dispatcher gate, isolated from the adapter\'s laundering');
+      ok(!tagged.calls.includes(CHAIN[1]),
+        `and "${CHAIN[1]}" was never dispatched — the paid rung stays untouched`);
+      eq(tagged.err && tagged.err.status, 404,
+        'the gate does not mutate the error it refuses to act on — it declines to walk and rethrows exactly what it was given');
+    }
+
+    // Restore. The factory is module state and the config file is read
+    // fresh-per-call by every later section in this process.
+    __setOpenRouterAdapterFactory(null);
+    if (hadCfg) writeFileSync(cfgPath, prevCfg); else unlinkSync(cfgPath);
+    ok(existsSync(cfgPath) === hadCfg, 'the synthetic OpenRouter config is removed — no later section inherits it');
   }
 }
 

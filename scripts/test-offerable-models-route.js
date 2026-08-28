@@ -706,6 +706,283 @@ section('§5b. POST /api-keys/model — a chat-only model cannot be pinned as th
   }
 }
 
+
+// ── §5c. THE DISCONNECT PATH MOVES THE BUILD LANE, AND MUST BE GUARDED ───────
+//
+// THE DEFECT THIS CLOSES. `clearApiKey(provider, opts)` takes an
+// `opts.canActivate` predicate, consulted only when the cleared provider was
+// the ACTIVE one and other keyed providers remain. Absent, it ALLOWS
+// unconditionally and hands the build lane (ingest / Wiki Health / Compile) to
+// the first provider in PROVIDER_ORDER holding a key. The one call site,
+// POST /api/config/api-keys/disconnect, passed a SINGLE argument — so the guard
+// was inert on the only path a user can reach.
+//
+// SAY WHAT IT IS AND IS NOT: this was never an argument-count mismatch. The
+// parameter is defaulted; nothing threw, nothing was `undefined`, and no test
+// anywhere went red. It was an UN-SUPPLIED GUARD, which is the reason it left
+// no trace to find. Harmless today only BY LUCK, because every provider that
+// can hold a key happens to have a build-lane default; live the moment one does
+// not (the scaffolded `local` provider has no API key at all).
+//
+// ── WHY THE PREDICATE IS INJECTED HERE, STATED PLAINLY ──────────────────────
+// The scenario needs a keyed provider that CANNOT build. No such provider
+// exists in the shipped catalogue right now — verified below, not assumed — and
+// there is no supported way to manufacture one (a chat-only pin is refused at
+// the route AND falls back at the resolver; LLM_MODEL is gated on the ACTIVE
+// provider, which is the one being cleared). So the ONLY honest way to drive
+// the real code down the refusal branch is to inject the predicate.
+//
+// What is REAL here: the route handler (its own source, extracted and
+// executed), `clearApiKey`, the on-disk config, and the three-state read
+// through `getActiveProvider`. What is INJECTED: the `canActivate` verdict, and
+// a pass-through spy around `clearApiKey` that forwards WHATEVER ARGUMENTS THE
+// HANDLER ACTUALLY PASSED — so dropping the second argument is not merely
+// observed, it is *reproduced*, and the refusal branch then genuinely fails to
+// run. §5c-4 closes the loop over real HTTP with the real predicate.
+section('§5c. POST /api-keys/disconnect — reassigning the build lane is guarded');
+{
+  const { providerCanBuild } = await import('../src/routes/config.js');
+  const { clearApiKey: realClearApiKey, getActiveProvider } =
+    await import('../src/brain/config.js');
+  const { getCuratorConfigFile } = await import('../src/brain/paths.js');
+
+  const CONFIG_PATH = getCuratorConfigFile();
+  ok(CONFIG_PATH.startsWith(TMP_USER),
+    'isolation precondition: the config this section rewrites is inside the tempdir, not the real one');
+
+  const PROVIDER_FIELD = {
+    gemini: 'geminiApiKey', anthropic: 'anthropicApiKey', openrouter: 'openrouterApiKey',
+  };
+  const readCfg  = () => JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  const writeCfg = (o) => writeFileSync(CONFIG_PATH, JSON.stringify(o, null, 2) + '\n', { mode: 0o600 });
+  /** Exact starting state: which providers hold a key, and who is active. */
+  function seed(keyed, active) {
+    const cfg = {};
+    for (const p of keyed) cfg[PROVIDER_FIELD[p]] = `FAKE-TEST-${p.toUpperCase()}-KEY-do-not-use`;
+    if (active !== undefined) cfg.activeProvider = active;
+    writeCfg(cfg);
+  }
+
+  // ── §5c-1. providerCanBuild must be TOTAL over PROVIDER_ORDER ─────────────
+  // It is about to be handed to a storage-layer function that calls it inside a
+  // loop over every remaining keyed provider. `clearApiKey` does wrap it in a
+  // try/catch, but relying on that would make the disconnect path newly
+  // throwable if that catch were ever tightened, so the predicate is proven
+  // total in its own right — including for a provider holding NO key, and for
+  // the prototype-key strings this repo has been bitten by (v3.0.9).
+  section('§5c-1. providerCanBuild is total — every PROVIDER_ORDER id, keyed or not, plus hostile input');
+  {
+    seed([], undefined);            // NO keys saved at all — the harshest input
+    for (const p of ['gemini', 'anthropic', 'openrouter']) {
+      let threw = null, val;
+      try { val = providerCanBuild(p); } catch (e) { threw = e; }
+      ok(threw === null, `providerCanBuild(${JSON.stringify(p)}) does not throw with NO key saved for any provider`);
+      ok(typeof val === 'boolean', `providerCanBuild(${JSON.stringify(p)}) returns a boolean, never undefined`);
+    }
+    for (const bad of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'local', '', null, undefined, 42, {}]) {
+      let threw = null, val;
+      try { val = providerCanBuild(bad); } catch (e) { threw = e; }
+      ok(threw === null, `providerCanBuild(${JSON.stringify(bad)}) does not throw`);
+      ok(val === false, `providerCanBuild(${JSON.stringify(bad)}) is false — an unknown provider can never hold the build lane`);
+    }
+  }
+
+  // ── §5c-2. Extract the REAL handler and run it with the real clearApiKey ───
+  // Brace-matched out of the shipping source and executed, following this
+  // repo's precedent (v3.10.1's onSaveKey, v3.14.0's chargeForItem). A source
+  // REGEX asserting "the second argument is present" would prove a line exists
+  // and nothing about what it does — the house rule this file's header already
+  // states. Executing it means the assertions below are about behaviour.
+  section('§5c-2. The shipping disconnect handler, extracted and executed');
+  const routeSrc = readFileSync(path.join(REPO_ROOT, 'src/routes/config.js'), 'utf8');
+
+  /** Brace-match from `openIdx` (which must be a `{`), skipping strings and comments. */
+  function matchBrace(src, openIdx) {
+    let depth = 0;
+    for (let i = openIdx; i < src.length; i++) {
+      const c = src[i], n = src[i + 1];
+      if (c === '/' && n === '/') { i = src.indexOf('\n', i); if (i < 0) return -1; continue; }
+      if (c === '/' && n === '*') { i = src.indexOf('*/', i + 2); if (i < 0) return -1; i++; continue; }
+      if (c === '"' || c === "'" || c === '`') {
+        const q = c;
+        for (i++; i < src.length; i++) {
+          if (src[i] === '\\') { i++; continue; }
+          if (src[i] === q) break;
+        }
+        continue;
+      }
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) return i; }
+    }
+    return -1;
+  }
+
+  const anchor = routeSrc.indexOf(`router.post('/api-keys/disconnect'`);
+  ok(anchor > 0, 'located the disconnect route registration in the shipping source');
+  const arrowIdx = routeSrc.indexOf('(req, res) => {', anchor);
+  const openIdx  = routeSrc.indexOf('{', arrowIdx);
+  const closeIdx = matchBrace(routeSrc, openIdx);
+  ok(arrowIdx > anchor && closeIdx > openIdx, 'brace-matched the handler body out of the shipping source');
+  const handlerBody = routeSrc.slice(openIdx + 1, closeIdx);
+  // EXTRACTION SANITY. If the anchors ever drift, the slice could be empty or
+  // wrong and every assertion below would pass over nothing. Fail loudly here
+  // instead — a guard that silently stops covering its subject is worse than no
+  // guard (this repo has shipped that shape more than once).
+  ok(/\bclearApiKey\s*\(/.test(handlerBody),
+    'extraction sanity: the extracted body actually contains the clearApiKey call under test (not an empty or mis-sliced fragment)');
+  ok(handlerBody.length > 40 && handlerBody.length < 4000,
+    `extraction sanity: the extracted body is a plausible handler size (${handlerBody.length} chars)`);
+
+  const handler = new Function(
+    'knownProvider', 'badProvider', 'clearApiKey', 'getProviderInfo', 'providerCanBuild',
+    'req', 'res', handlerBody,
+  );
+
+  /** Records every id the predicate was asked about; allows only `allow`. */
+  function predicate(allow) {
+    const calls = [];
+    const f = (p) => { calls.push(p); return allow.includes(p); };
+    f.calls = calls;
+    return f;
+  }
+  /**
+   * Pass-through spy. It forwards EXACTLY the arguments it received, so if the
+   * handler passes one argument the real clearApiKey really does run unguarded
+   * — the defect is reproduced, not simulated.
+   */
+  function spyClear() {
+    const seen = [];
+    const f = (...args) => { seen.push(args); return realClearApiKey(...args); };
+    f.seen = seen;
+    return f;
+  }
+  function fakeRes() {
+    const out = { code: 200, body: null };
+    return {
+      status(c) { out.code = c; return this; },
+      json(b) { out.body = b; return this; },
+      _out: out,
+    };
+  }
+  /** Drive the extracted handler with injected deps; returns what it produced. */
+  function runDisconnect(provider, canActivate) {
+    const spy = spyClear();
+    const res = fakeRes();
+    handler(
+      (p) => ['gemini', 'anthropic', 'openrouter'].includes(p),
+      (r) => r.status(400).json({ error: 'bad provider' }),
+      spy,
+      () => { throw new Error('no provider'); },   // getProviderInfo — irrelevant here, always swallowed
+      canActivate,
+      { body: { provider } },
+      res,
+    );
+    return { spy, out: res._out };
+  }
+
+  // ── §5c-3. The three states, driven through the real handler ──────────────
+  section('§5c-3. The three activeProvider states after a disconnect');
+
+  // (A) CONTROL — the remaining provider CAN build, so it takes the lane. This
+  //     is the same input as (B) with the opposite verdict, which is what makes
+  //     (B) non-vacuous: the corpus demonstrably produces both outcomes.
+  {
+    seed(['gemini', 'anthropic'], 'gemini');
+    const pred = predicate(['gemini', 'anthropic', 'openrouter']);
+    const { spy, out } = runDisconnect('gemini', pred);
+    ok(out.code === 200 && out.body && out.body.ok === true, 'control: disconnecting the active provider succeeds (HTTP 200)');
+    ok(spy.seen.length === 1, 'control: clearApiKey was called exactly once');
+    eq(readCfg().activeProvider, 'anthropic', 'control: a remaining provider that CAN build takes the build lane — the everyday path is unchanged');
+    eq(getActiveProvider(), 'anthropic', 'control: and getActiveProvider agrees');
+    eq(readCfg().geminiApiKey, '', 'control: the disconnected key really was cleared');
+  }
+
+  // (B) THE P0 — the remaining provider CANNOT build. The lane must NOT be
+  //     handed over, and the refusal must be recorded as the `null` DECISION,
+  //     not as an ABSENT field (absence means "infer from key presence", which
+  //     would re-derive the very answer just refused — this project's
+  //     fact-vs-absence bug class).
+  {
+    seed(['gemini', 'anthropic'], 'gemini');
+    const pred = predicate([]);   // nobody can build
+    const { spy, out } = runDisconnect('gemini', pred);
+    ok(out.code === 200, 'P0: the disconnect itself still succeeds — refusing to reassign is not an error');
+
+    // ▶ THE ASSERTION THAT GOES RED IF THE SECOND ARGUMENT IS DROPPED.
+    ok(readCfg().activeProvider !== 'anthropic',
+      'P0: the build lane is NOT silently handed to a provider that cannot serve it (this is the assertion the un-supplied guard failed)');
+    ok(Object.prototype.hasOwnProperty.call(readCfg(), 'activeProvider'),
+      'P0: `activeProvider` is PRESENT — the decision is recorded, the field is not deleted');
+    eq(readCfg().activeProvider, null,
+      'P0: and its value is the explicit `null` sentinel — "we considered the candidates and chose nobody"');
+    eq(getActiveProvider(), null,
+      'P0: getActiveProvider honours the sentinel and does NOT fall through to the legacy key-presence ladder');
+
+    // ▶ SECOND, INDEPENDENT DETECTOR. Dropping the argument also means the
+    //   predicate is never consulted at all.
+    ok(pred.calls.length > 0,
+      'P0: the predicate was actually CONSULTED — a zero-call run means the handler never supplied it');
+    ok(pred.calls.includes('anthropic'),
+      'P0: and it was asked specifically about the candidate that would have taken the lane');
+    ok(spy.seen[0] && spy.seen[0].length === 2 && typeof spy.seen[0][1]?.canActivate === 'function',
+      'P0: clearApiKey received the predicate as `opts.canActivate` — naming the exact defect (a one-argument call left the guard inert)');
+  }
+
+  // (C) THE THIRD STATE — no candidate at all. Nothing was refused; there was
+  //     simply nobody to consider, so the field is REMOVED and the documented
+  //     `.env` developer fallback in getActiveProvider still applies. This is
+  //     what keeps `null` and ABSENT distinguishable rather than collapsed.
+  {
+    seed(['gemini'], 'gemini');
+    const pred = predicate([]);
+    runDisconnect('gemini', pred);
+    ok(!Object.prototype.hasOwnProperty.call(readCfg(), 'activeProvider'),
+      'no candidates: `activeProvider` is ABSENT, not null — nothing was refused, there was nobody to refuse');
+    eq(pred.calls.length, 0,
+      'no candidates: the predicate is not consulted at all when there is no one to consider');
+  }
+
+  // (D) The guard must not fire on a NON-active disconnect. Clearing a provider
+  //     that was not holding the lane must leave the lane exactly where it was.
+  {
+    seed(['gemini', 'anthropic'], 'anthropic');
+    const pred = predicate([]);
+    runDisconnect('gemini', pred);
+    eq(readCfg().activeProvider, 'anthropic',
+      'disconnecting a NON-active provider leaves the active one untouched');
+    eq(pred.calls.length, 0, 'and the build-lane predicate is not consulted — no reassignment is happening');
+  }
+
+  // ── §5c-4. Real HTTP, real predicate — the non-regression ─────────────────
+  // Everything above injects the verdict. This closes the loop with nothing
+  // injected: the shipping route, over the wire, with the real providerCanBuild.
+  // It proves the fix did not accidentally strand users by refusing a provider
+  // that can in fact build — which would be the same P0 arriving from the other
+  // side, and is exactly why clearApiKey's own default is ALLOW.
+  section('§5c-4. Real HTTP + real providerCanBuild — the everyday disconnect still hands over correctly');
+  {
+    ok(providerCanBuild('gemini') === true && providerCanBuild('anthropic') === true,
+      'fixture sanity: BOTH providers used below really can build today — otherwise the hand-over assertion would pass for the wrong reason');
+
+    seed(['gemini', 'anthropic'], 'gemini');
+    const res = await fetch(BASE + '/api/config/api-keys/disconnect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'gemini' }),
+    });
+    const body = await res.json();
+    ok(res.status === 200 && body.ok === true, 'the shipping route returns 200 for a normal disconnect');
+    eq(readCfg().activeProvider, 'anthropic',
+      'the real guarded route still hands the lane to the remaining provider — no user loses ingest/Health/Compile to an over-eager refusal');
+    eq(body.activeProvider, 'anthropic', 'and the response reports the provider that actually took the lane');
+
+    const bad = await fetch(BASE + '/api/config/api-keys/disconnect', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: '__proto__' }),
+    });
+    ok(bad.status === 400, 'an unknown provider is still refused at the route with 400, before any config write');
+  }
+}
+
 await new Promise(r => server.close(r));
 
 // ─────────────────────────────────────────────────────────────────────────

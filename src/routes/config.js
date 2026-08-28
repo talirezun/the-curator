@@ -345,11 +345,25 @@ export function resolveOfferableModels(table, provider) {
  * ── The P0 this exists to prevent (v3.15.0) ─────────────────────────────────
  * Reproduced before it was fixed: a user with a WORKING Gemini install who
  * merely SAVED an OpenRouter key lost ingest, Health and Compile. Last-saved-
- * wins flipped `activeProvider` to a provider that has no build-lane model
- * (`DEFAULTS.openrouter` is null and the catalogue is empty BY DESIGN until a
- * model has been measured), so the next `getProviderInfo()` threw. Worse, the
- * GET route swallows that throw in a `catch` commented "no key configured yet"
- * — but a key IS configured — so nothing on screen said the app was broken.
+ * wins flipped `activeProvider` to a provider that, AT THAT MOMENT, had no
+ * build-lane model — OpenRouter's default and its hand-measured catalogue were
+ * both still empty, because this release's rule is that a model may not be
+ * offered for a job nobody has measured it doing. So the next
+ * `getProviderInfo()` threw. Worse, the GET route swallows that throw in a
+ * `catch` that used to be commented "no key configured yet" — but a key IS
+ * configured — so nothing on screen said the app was broken.
+ *
+ * ⚠ DO NOT READ THE ABOVE AS THE CURRENT STATE. This comment previously
+ * asserted, in the present tense, that "`DEFAULTS.openrouter` is null and the
+ * catalogue is empty BY DESIGN" — and BOTH halves became false within this same
+ * release, once three OpenRouter models were measured and admitted. Verified by
+ * execution at the time of writing: `getDefaultModel('openrouter')` resolves a
+ * real id, and `OFFERABLE_MODELS.openrouter` is non-empty. That is precisely why
+ * the paragraph above is now written in the past tense and no live value is
+ * restated here: a comment asserting the opposite of its own file is this
+ * repo's most reliable early-warning shape, and this one had already turned.
+ * The predicate below is the single source of truth — read it, do not read a
+ * remembered value out of prose.
  *
  * The rule is the CLASS, not the instance: THE APP MUST NEVER MAKE A PROVIDER
  * ACTIVE THAT CANNOT SERVE THE BUILD LANE. It stays correct once OpenRouter has
@@ -502,9 +516,23 @@ export function isBuildLaneAllowed(provider, modelId, offerableTable) {
 router.get('/api-keys', (_req, res) => {
   const keys = getApiKeys();
   let provider = null;
+  // TWO DIFFERENT FACTS REACH THE CATCH BELOW, and the comment that used to sit
+  // here named only one of them ("no key configured yet"), which is why the
+  // build-lane P0 documented at providerCanBuild was invisible on screen:
+  //   (a) genuinely no key anywhere — the honest first-run case;
+  //   (b) a key IS configured, but `activeProvider` resolves to a provider
+  //       with no build-lane model, or to the explicit `null` sentinel
+  //       ("we decided: nobody" — recorded by setApiKeys / clearApiKey when
+  //       every candidate was refused). getProviderInfo throws for both.
+  // Swallowing is still right HERE — this is a status read, and a 500 on the
+  // screen the user opens to fix their keys would be worse than a null. What
+  // is NOT right is calling it (a). The response already carries the honest
+  // signal for both: `activeProvider: null` plus `hasGeminiKey` /
+  // `hasAnthropicKey` / `hasOpenrouterKey`, so a caller can tell "no key" from
+  // "keys, but nobody can build" without a new field.
   try {
     provider = getProviderInfo();
-  } catch { /* no key configured yet */ }
+  } catch { /* see the two cases above — deliberately not distinguished here */ }
 
   // llm.js's frozen { gemini: [...], anthropic: [...] } catalogue of models the
   // UI may OFFER a user to pick, cheapest-first, each entry carrying pricing +
@@ -672,16 +700,52 @@ router.post('/api-keys', guardConcurrent('save API keys'), (req, res) => {
 });
 
 /** POST /api/config/api-keys/disconnect — clear one provider's stored key.
- *  Body: { provider: 'gemini' | 'anthropic' }
- *  If the disconnected key was active, active switches to the other provider
- *  (if it still has a key), or to null.
+ *  Body: { provider: 'gemini' | 'anthropic' | 'openrouter' }
+ *  If the disconnected key was active, active switches to the next provider
+ *  that still has a key AND can serve the build lane, or to null.
+ *
+ * ── THE THIRD BUILD-LANE MOVER, and the last one to be guarded ──────────────
+ * Disconnecting the ACTIVE provider REASSIGNS the build lane (ingest, Wiki
+ * Health, Compile) to whichever remaining provider holds a key. That is the
+ * same reassignment `setApiKeys` and `/api-keys/active` above already gate on
+ * `providerCanBuild`, and this call site was the one that did not: it passed a
+ * single argument, so `clearApiKey`'s `opts.canActivate` guard — which exists
+ * for exactly this and documents this file as the fix — was INERT on the only
+ * path a user can reach.
+ *
+ * NOT an argument-count mismatch: the parameter is defaulted, nothing threw,
+ * nothing was undefined. It was an UN-SUPPLIED GUARD, which is why it left no
+ * trace. Absent, `clearApiKey` allows unconditionally and hands the lane to the
+ * first keyed provider in PROVIDER_ORDER. Measured before this line changed: a
+ * config holding a Gemini key and an OpenRouter key, active gemini,
+ * `clearApiKey('gemini')` resolved to openrouter with nothing consulted.
+ *
+ * Harmless only BY LUCK today, because every provider that can hold a key
+ * happens to have a build-lane default. It becomes live the moment one does not
+ * — `local` is scaffolded to be precisely that (no API key at all), and an
+ * OpenRouter whose default is pulled is the same shape. Then: disconnecting one
+ * provider silently hands the build lane to a provider that cannot serve it,
+ * the next `getProviderInfo()` throws, and the GET route swallows it — so
+ * ingest, Health and Compile all break with nothing on screen saying why.
+ *
+ * The default in `clearApiKey` is ALLOW (not refuse, unlike `setApiKeys`) and
+ * that asymmetry is deliberate and documented there — which is exactly why the
+ * guarantee has to be the caller supplying the predicate. Never drop this
+ * second argument.
  */
 router.post('/api-keys/disconnect', guardConcurrent('disconnect an API key'), (req, res) => {
   const { provider } = req.body || {};
   if (!knownProvider(provider)) return badProvider(res);
   try {
-    clearApiKey(provider);
+    clearApiKey(provider, { canActivate: providerCanBuild });
     let info = null;
+    // This catch became REACHABLE-WITH-KEYS-CONFIGURED the moment the guard
+    // above was supplied: when every remaining candidate is refused,
+    // `activeProvider` is the explicit `null` decision and getProviderInfo
+    // throws. Swallowing is correct (the disconnect itself succeeded, and a 500
+    // would misreport that), and `activeProvider: null` below is the honest
+    // report of the outcome. Do not re-label this as "no key configured" — that
+    // mislabelling on the GET route is what hid this whole P0.
     try { info = getProviderInfo(); } catch {}
     res.json({
       ok: true,

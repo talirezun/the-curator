@@ -240,21 +240,18 @@ export function classifyOpenRouterStatus(status) {
  * The paragraph above describes the SPEC's assumption, and a live probe
  * contradicts it. When no upstream can satisfy `require_parameters`, OpenRouter
  * answers **404**, not 503, with *"No endpoints found that can handle the
- * requested parameters"*. That message satisfies `isModelNotFound` — via the
- * `'404' + 'not found'` clause — so llm.js would read a CAPABILITY mismatch as
- * "this model is gone" and WALK THE FALLBACK CHAIN onto the paid rung, paying
- * for a substitution the user never asked for.
+ * requested parameters"*.
  *
- * UNREACHABLE TODAY, and only by accident of two unrelated facts: the model-pin
- * route refuses every id that is not in the catalogue, and all three
- * hand-measured build-lane models support `response_format`. Neither is a
- * property of THIS file, so neither is a guarantee it can rely on — the moment a
- * fourth model is admitted without structured-output support, this is live.
+ * FIXED, not merely recorded — see `ROUTING_CONSTRAINT_404_CLAUSES` and
+ * `classifyNotFoundReason` below for the measurement and the decision, and the
+ * 404 branch of `_throwForStatus` for the behaviour. In short: a 404 is now
+ * classified from the upstream's own message into constraint / retirement /
+ * unknown, and only a measured RETIREMENT is allowed to walk the fallback chain.
  *
- * Recorded rather than fixed because fixing it means deciding what a 404
- * carrying that message SHOULD do, which is a behaviour change with its own
- * verification, and the honest state today is "we know the mental model in the
- * comment above is wrong". Do not inherit the 503 assumption from it.
+ * The 503 handling below is UNCHANGED and still correct. Both statuses can carry
+ * a routing-constraint failure and both are therefore tagged
+ * `curatorDeterministic`; the difference is only that a 404 additionally has to
+ * have its `isModelNotFound` signals withheld, because 503 was never one.
  */
 const TRANSIENT_STATUSES = new Set([429]);
 
@@ -318,6 +315,130 @@ export const MODEL_NOT_FOUND_CLAUSES = Object.freeze([
 ]);
 
 /**
+ * ── NOT EVERY 404 MEANS "THIS MODEL IS GONE" ─────────────────────────────────
+ *
+ * MEASURED LIVE 2026-08-28 against the real endpoint with the real key. Four
+ * probes, two of them the pair that matters:
+ *
+ *   requested                                  wire  upstream message
+ *   ─────────────────────────────────────────  ────  ─────────────────────────
+ *   poolside/laguna-s-2.1     + response_format 404  "No endpoints found that
+ *   tencent/hy-mt2-1.8b       + response_format 404   can handle the requested
+ *                                                     parameters."
+ *   poolside/laguna-s-2.1     TEXT mode         200  (answers normally)
+ *   openai/gpt-3.5-turbo-0301 TEXT mode         404  "No endpoints found for
+ *                                                     openai/gpt-3.5-turbo-0301."
+ *   acme/totally-not-a-real-model-xyz           400  "… is not a valid model ID"
+ *
+ * Three facts fall out, and each one changes a decision:
+ *
+ *  1. A CAPABILITY MISMATCH IS A 404, NOT A 503. The block below `TRANSIENT_
+ *     STATUSES` used to assume 503 and recorded its own assumption as wrong
+ *     without acting on it. `isModelNotFound()` fires on that 404 twice over
+ *     (`err.status === 404`, and `'404' + 'not found'` in our own prose), so
+ *     llm.js walked the OpenRouter fallback chain onto a PAID rung. A mismatch
+ *     between what we require and what an upstream offers was being silently
+ *     converted into a paid substitution the user never asked for. The chain
+ *     exists for model RETIREMENT; this is not retirement.
+ *  2. THE SAME MODEL ANSWERS FINE IN TEXT MODE. So the 404 is a statement about
+ *     the REQUEST, not about the model — it is not gone, and swapping models is
+ *     a choice the user should make, not one we should make for them silently.
+ *  3. A BOGUS MODEL ID IS A **400**, not a 404. The 404 space is therefore
+ *     narrower than assumed: every 404 measured here opens "No endpoints found",
+ *     and what follows says whether OpenRouter is talking about THE MODEL
+ *     ("… for <id>.") or about OUR ROUTING CONSTRAINTS ("… that can handle the
+ *     requested parameters", "… matching your data policy"). Only the first is
+ *     a retirement.
+ *
+ * A THIRD CONSTRAINT SHAPE IS ALREADY DOCUMENTED IN THIS FILE and is REACHABLE
+ * TODAY: `_buildBody`'s ⚠ block records that an ACCOUNT-LEVEL data policy 404s a
+ * catalogued free model with nothing special sent at all
+ * (`nvidia/nemotron-3-super-120b-a12b:free`), and closes with "so a 404 on a
+ * `:free` id is not automatically a retired model". `minimax/minimax-m3:free` is
+ * a shipped, offerable build-lane model and `FALLBACK_CHAINS.openrouter[0]` is
+ * the PAID `ibm-granite/granite-4.0-h-micro`. So this is not only the latent
+ * capability case: a user on the free model whose account carries a training
+ * policy would have been moved onto a paid model, silently, today.
+ *
+ * ── WHY THIS IS A TABLE AND NOT AN `if` AT THE CALL SITE ────────────────────
+ * Same reason `MODEL_NOT_FOUND_CLAUSES` above is one: this repo's recurring
+ * defect is two hand-maintained copies of one guard drifting apart. One table,
+ * one classifier, one call site, and the load-time block below probes every
+ * clause automatically, so adding a clause adds its own proof.
+ *
+ * Each entry's `match` is a CONJUNCTION over the lower-cased upstream message.
+ * `capability` is the human half — what The Curator asked for that could not be
+ * met — because "pick a different model" is only actionable if the user is told
+ * what the model failed to do.
+ */
+export const ROUTING_CONSTRAINT_404_CLAUSES = Object.freeze([
+  Object.freeze({
+    match: Object.freeze(['no endpoints found', 'requested parameters']),
+    capability:
+      'the request parameters The Curator requires — structured JSON output on ' +
+      'wiki-building calls, and no silent substitution of a different provider',
+  }),
+  Object.freeze({
+    match: Object.freeze(['no endpoints found', 'data policy']),
+    capability:
+      "this OpenRouter account's data policy — check the privacy settings on " +
+      'openrouter.ai, which can make a model unreachable without changing anything here',
+  }),
+]);
+
+/**
+ * The ONE measured shape that means the model itself has no endpoints, i.e. a
+ * genuine retirement, i.e. the case `FALLBACK_CHAINS` exists for.
+ *
+ * SUPPORTING OBSERVATION, deliberately NOT made a second conjunct: this message
+ * echoes the REQUESTED MODEL ID and the constraint messages do not, which is why
+ * the two are structurally distinguishable rather than merely differently
+ * worded. It is not required as a gate because OpenRouter's echo need not be
+ * byte-identical to what we sent (a `:free` suffix could plausibly be stripped),
+ * and a gate that fails on a real retirement would defeat the safety net this
+ * clause exists to preserve.
+ */
+export const MODEL_RETIRED_404_CLAUSES = Object.freeze([
+  Object.freeze(['no endpoints found for']),
+]);
+
+/**
+ * Why did this 404 happen — our routing constraints, or the model being gone?
+ *
+ * THREE-VALUED ON PURPOSE, and the third value is the point. This repo's most
+ * expensive recurring defect is a FACT AND ITS ABSENCE collapsed into one value
+ * (v3.15.0 found it in eight places in one release). "We could not tell" is not
+ * "it is a retirement" and it is not "it is a constraint" — it is its own
+ * answer, and the caller must be able to act on it differently.
+ *
+ *   'routing-constraint' — measured: our own requirements could not be met.
+ *   'model-retired'      — measured: this model has no endpoints at all.
+ *   null                 — the upstream said something we have never measured,
+ *                          or said nothing at all (a non-JSON 404 body).
+ *
+ * CONSTRAINTS ARE TESTED FIRST. The two sets are disjoint today and the load-time
+ * block below proves it, but if a future clause ever made a message match both,
+ * the safe verdict must win rather than depend on iteration order.
+ *
+ * @param {unknown} message  the upstream's OWN `error.message`, before any of
+ *   our prose is added — the narrowest possible input, so this can never be a
+ *   substring test over a whole assembled error string (this repo shipped a bare
+ *   `/\b429\b/` that matched ingest's own "yielded only 429 characters").
+ * @returns {'routing-constraint'|'model-retired'|null}
+ */
+export function classifyNotFoundReason(message) {
+  if (typeof message !== 'string' || message.length === 0) return null;
+  const m = message.toLowerCase();
+  for (const c of ROUTING_CONSTRAINT_404_CLAUSES) {
+    if (c.match.every(t => m.includes(t))) return 'routing-constraint';
+  }
+  for (const clause of MODEL_RETIRED_404_CLAUSES) {
+    if (clause.every(t => m.includes(t))) return 'model-retired';
+  }
+  return null;
+}
+
+/**
  * ── LOAD-TIME PROOF THAT THE NEUTRALISERS COVER THE CENSUS ───────────────────
  *
  * Runs once, at import, over ~13 short strings. It throws rather than warns
@@ -356,6 +477,25 @@ export const MODEL_NOT_FOUND_CLAUSES = Object.freeze([
     const probe = neutralizeNotFoundSignals(clause.join(' ')).toLowerCase();
     if (clause.every(t => probe.includes(t.toLowerCase()))) {
       survived.push(`not-found clause [${clause.join(' + ')}]`);
+    }
+  }
+  // ── THE TWO 404 VERDICTS MUST STAY DISJOINT ────────────────────────────────
+  // Only `model-retired` walks the fallback chain, so a constraint clause broad
+  // enough to swallow the retirement probe would kill the v2.4.0 safety net,
+  // and a retirement clause broad enough to swallow a constraint probe would
+  // reopen the paid-substitution defect. Neither is visible by reading two
+  // tables side by side once either grows; both are visible here. This is NOT
+  // `f(x) === f(x)`: adding `['no endpoints found']` to the constraint table —
+  // the single most plausible careless edit, since every measured 404 begins
+  // that way — makes the SECOND loop fire, naming the clause.
+  for (const c of ROUTING_CONSTRAINT_404_CLAUSES) {
+    if (classifyNotFoundReason(c.match.join(' ')) !== 'routing-constraint') {
+      survived.push(`constraint clause [${c.match.join(' + ')}] does not classify as routing-constraint`);
+    }
+  }
+  for (const clause of MODEL_RETIRED_404_CLAUSES) {
+    if (classifyNotFoundReason(clause.join(' ')) !== 'model-retired') {
+      survived.push(`retirement clause [${clause.join(' + ')}] is shadowed by a routing-constraint clause`);
     }
   }
   if (survived.length > 0) {
@@ -864,7 +1004,12 @@ export class OpenRouterAdapter {
         );
       }
 
-      if (!res.ok) await this._throwForStatus(res, 'chat/completions');
+      // The model id is passed so a routing-constraint 404 can NAME what failed.
+      // The 429 branch's comment records the cost of not having it here: without
+      // the id an error can only speak in generalities on the one screen where
+      // the user's next action is "pick a different model". `validateKey`'s call
+      // site below passes none, and that path degrades to "this model".
+      if (!res.ok) await this._throwForStatus(res, 'chat/completions', model);
       let body;
       try {
         body = await res.json();
@@ -1005,15 +1150,24 @@ export class OpenRouterAdapter {
    * accurate and say "model not found" to the human reading the log. Every
    * other status has no such structural signal, so its prose must not be
    * allowed to invent one.
+   *
+   * ── `keepsStructural404` MAKES THAT EXCLUSION'S PREMISE EXPLICIT ───────────
+   * The whole justification above is *"it already carries `.status = 404`"*. A
+   * routing-constraint 404 deliberately does NOT (see `_throwForStatus`), so for
+   * that one branch the premise is false and the prose must be neutralised like
+   * any other status — otherwise the message would re-invent, in text, exactly
+   * the signal the property was withheld to suppress. The default reproduces the
+   * previous condition EXACTLY (`neutralise ⟺ inBand || status !== 404`), so
+   * every other call site is byte-unchanged.
    */
-  _detail(raw, status, { inBand = false } = {}) {
+  _detail(raw, status, { inBand = false, keepsStructural404 = (status === 404 && !inBand) } = {}) {
     let d = this._redact(raw);
     if (!TRANSIENT_STATUSES.has(status)) d = neutralizeRetrySignals(d);
-    if (inBand || status !== 404) d = neutralizeNotFoundSignals(d);
+    if (!keepsStructural404) d = neutralizeNotFoundSignals(d);
     return d.slice(0, 200);
   }
 
-  async _throwForStatus(res, op) {
+  async _throwForStatus(res, op, model) {
     let raw = '';
     try {
       const body = await res.json();
@@ -1109,12 +1263,77 @@ export class OpenRouterAdapter {
       throw e;
     }
     if (status === 404) {
-      // .status = 404 is what llm.js's isModelNotFound() keys on, so this walks
-      // the fallback chain. NOTE 401 is checked upstream of model existence: a
-      // bogus key with a bogus model returns 401, so a chain walk never starts
-      // from an auth failure — which is correct, that would be four more
-      // pointless calls.
-      throw new OpenRouterError(code, `OpenRouter ${op} → model not found${detail ? `: ${detail}` : '.'}`, status);
+      // ── A 404 IS THREE DIFFERENT FACTS, AND ONLY ONE OF THEM MAY SPEND ─────
+      // See `ROUTING_CONSTRAINT_404_CLAUSES` for the live measurement. Only a
+      // measured RETIREMENT keeps `.status = 404` — the property llm.js's
+      // `isModelNotFound()` keys on — and so only a retirement walks the
+      // fallback chain onto a model the user did not choose.
+      //
+      // NOTE 401 is checked upstream of model existence: a bogus key with a
+      // bogus model returns 401, so a chain walk never starts from an auth
+      // failure — which is correct, that would be four more pointless calls.
+      const reason = classifyNotFoundReason(raw);
+
+      if (reason === 'model-retired') {
+        // UNCHANGED FROM BEFORE THIS BRANCH EXISTED, deliberately: the v2.4.0
+        // safety net is load-bearing and a fix for silent substitution must not
+        // become a silent removal of the thing that keeps users working on the
+        // day a provider retires their model.
+        throw new OpenRouterError(code, `OpenRouter ${op} → model not found${detail ? `: ${detail}` : '.'}`, status);
+      }
+
+      // ── FAIL-SAFE DIRECTION, STATED: `null` LANDS HERE, NOT ABOVE ──────────
+      // `null` means the upstream said something we have never measured, or
+      // sent a body we could not read at all. The two outcomes are not
+      // symmetric. Walking on a wrong guess spends the user's money on a model
+      // they did not pick, silently, and reports success. NOT walking on a
+      // wrong guess costs them one visible error and one click to pick another
+      // model — and the OpenRouter chain is exactly ONE rung deep, so what is
+      // being given up is small and what is being protected is not.
+      //
+      // The honest price of this choice: a genuine retirement announced in
+      // wording we have not measured surfaces as an error instead of degrading
+      // gracefully. That is accepted, and it is why `MODEL_RETIRED_404_CLAUSES`
+      // is a table — the fix for a reworded retirement is one clause, not a
+      // redesign.
+      //
+      // TWO LAYERS, both needed, exactly as the 503 branch above:
+      //  1. `curatorDeterministic` — the structural signal. `callLLM` refuses to
+      //     walk the chain on it and `generateText`'s ladder refuses to retry
+      //     it or overwrite its message with a generic outage claim.
+      //  2. NO not-found signal is emitted at all: `.status` is withheld (this
+      //     mirrors `_buildInBandError`, which withholds it for 404 for exactly
+      //     this reason) and the prose is neutralised, because `isModelNotFound`
+      //     reads the MESSAGE too and fixing only the property closes half the
+      //     door. A caller that re-wraps this error and loses its properties —
+      //     the case `ingest-queue.js`'s text fallback exists for — must not be
+      //     able to recover a retirement verdict from the text.
+      // The numeric status is not destroyed, only moved off the property a
+      // classifier reads: `httpStatus` keeps the fact available to a log, so
+      // "we withheld it" never becomes "there wasn't one".
+      const safeDetail = this._detail(raw, status, { keepsStructural404: false });
+      const clause = reason === 'routing-constraint'
+        ? ROUTING_CONSTRAINT_404_CLAUSES.find(c => c.match.every(t => raw.toLowerCase().includes(t)))
+        : null;
+      // Model ids come from our own catalogue (the pin route refuses anything
+      // else), but this is echoed prose either way: flattened and capped so it
+      // can never reshape the message.
+      const shownModel = typeof model === 'string' && model.length > 0
+        ? `"${model.replace(/[\r\n]+/g, ' ').slice(0, 80)}"`
+        : 'this model';
+      const why = clause
+        ? `no upstream provider satisfies ${clause.capability}`
+        : `OpenRouter reported no usable endpoint and did not say why`;
+      const e = new OpenRouterError(
+        code,
+        `OpenRouter could not serve ${shownModel}: ${why}. Retrying will not help, and ` +
+        `The Curator will not substitute a different model on its own — pick another model in Settings` +
+        `${safeDetail ? `. Upstream said: ${safeDetail}` : '.'}`,
+        undefined,
+      );
+      e.curatorDeterministic = true;
+      e.httpStatus = status;
+      throw e;
     }
     if (status === 401) {
       throw new OpenRouterError(

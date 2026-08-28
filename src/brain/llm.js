@@ -879,7 +879,7 @@ function hasTieredPricing(modelId, spec) {
  * A moving id is refused because the user does not know what they picked and the
  * price we quote is the alias's, not the target's.
  *
- * VERIFIED SAFE AT MODULE LOAD: 0 of the 14 ids this app currently ships —
+ * VERIFIED SAFE AT MODULE LOAD: 0 of the 17 ids this app currently ships —
  * defaults, fallback rungs, priced entries and offerable entries — match. A
  * false positive here would be a throw at import time, i.e. the whole app.
  */
@@ -1475,9 +1475,16 @@ export const OFFERABLE_MODELS = Object.freeze({
    *                            24,576-token output budget on hidden reasoning
    *                            (reasoning_tokens 24,576, finishReason "length")
    *                            and returned no parseable outline at all, at
-   *                            ~$0.0045 and ~160s per attempt. Its catalogue
-   *                            metadata advertises reasoning as OPTIONAL, so
-   *                            only a real probe could have found this.
+   *                            ~$0.0045 and ~160s per attempt. NOTHING in its
+   *                            catalogue metadata could have predicted that in
+   *                            either direction: it reads {"mandatory": false},
+   *                            byte-identical to upstage/solar-pro4, which
+   *                            measured 9/9 CLEAN — and `default_enabled`, the
+   *                            field that would signal reasoning-on-by-default,
+   *                            is ABSENT on both rather than false (74 of the
+   *                            380 catalogued models carry that exact shape).
+   *                            An absent field is not a "no": only a real
+   *                            probe could have found this.
    *   openai/gpt-oss-20b       18 of 18 runs HTTP 429, across 1.5s and 45s
    *                            spacings, while a trivial prompt to the same id
    *                            succeeded — a throughput limit that makes it
@@ -3140,6 +3147,26 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
       // would issue MORE provider calls (up to 5 more rungs) after the user
       // asked us to stop — the single worst thing this code could do here.
       if (isAbortError(err) || (opts.signal && opts.signal.aborted)) throw makeAbortError();
+      // ── DETERMINISTIC BEATS NOT-FOUND, AND IT MUST BE CHECKED FIRST ────────
+      // `generateText`'s retry ladder already gates on this tag — but the ladder
+      // wraps THIS loop, so by the time it runs the chain has already been
+      // walked and the money already spent. The gate has to be here too.
+      //
+      // The case that forced it (MEASURED live 2026-08-28, see
+      // openrouter-adapter.js's ROUTING_CONSTRAINT_404_CLAUSES): OpenRouter
+      // answers **404** when no upstream can satisfy the parameters we require,
+      // and answers it for an account data-policy mismatch too. Both are our own
+      // constraints, not a retired model, and `isModelNotFound` cannot tell the
+      // difference — so a capability mismatch was being converted into a walk
+      // onto a PAID fallback rung the user never asked for. That is not what
+      // this chain is for: it exists for RETIREMENT, where the model the user
+      // picked has genuinely ceased to exist.
+      //
+      // FAIL-SAFE DIRECTION: the tag is opt-in and set by exactly one adapter,
+      // so every Gemini and Anthropic path is byte-unchanged, and an untagged
+      // error classifies exactly as it did before. A wrongly-tagged error costs
+      // one visible message; a wrongly-walked one costs money, silently.
+      if (isDeterministicProviderError(err)) throw err;
       if (isModelNotFound(err) && i < chain.length - 1) {
         console.warn(`[llm] Model "${candidate}" returned "not found"; trying fallback "${chain[i + 1]}"...`);
         lastErr = err;

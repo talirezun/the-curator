@@ -2091,8 +2091,23 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
   {
     // Behavioural, not a grep: drive a spread of magnitudes through the real
     // formatter and require the rendered fragment to carry exactly its output.
-    const CHEAPEST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
-    const DEAREST = everyEntry.slice().sort((a, b) => a.e.input - b.e.input).slice(-1)[0].e;
+    //
+    // CHEAPEST/DEAREST are drawn from `paidEntries`, NOT `everyEntry` — the
+    // same rule §11.2 and §11.6 already apply, stated there as "a free
+    // entry's null price sorts first and has no figure to compare". A free
+    // entry's `input` is `null` BY DESIGN (never 0), and `null - number`
+    // coerces to `0 - number` inside a comparator, so sorting `everyEntry`
+    // ascending by `.input` put the free model FIRST — "cheapest" by
+    // accident of arithmetic, never by price. That mattered here specifically
+    // because it fed BOTH rows below: `messageCostUsd` returns `null` for a
+    // free model (membership, not price), `formatUsdHonest(null)` returns
+    // `null` (not a string), and `escapeHtmlStub(null)` returns `''` — so
+    // `anyString.includes('')` is unconditionally true. Two of the four
+    // assertions in the loop below could not fail regardless of what
+    // `assistantCostHtml` rendered; this was proven by feeding the loop
+    // deliberately wrong HTML and watching them pass anyway.
+    const CHEAPEST = paidEntries.slice().sort((a, b) => a.e.input - b.e.input)[0].e;
+    const DEAREST = paidEntries.slice().sort((a, b) => a.e.input - b.e.input).slice(-1)[0].e;
     for (const [model, u] of [
       [CHEAPEST.id, { inputTokens: 8, outputTokens: 2, cachedReadTokens: 0, cacheWriteTokens: 0 }],
       [CHEAPEST.id, USAGES[0]],
@@ -2101,9 +2116,50 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     ]) {
       const usd = messageCostUsd(msg(model, u), ctx);
       const expected = formatUsdHonest(usd);
+      // GUARD AGAINST THE VACUOUS SHAPE ITSELF, not merely against the one
+      // input that triggered it. `html.includes(x)` is unconditionally true
+      // when `x === ''`, so any assertion of this shape is silently inert the
+      // moment its `expected` string is empty — regardless of why (a free
+      // model slipping back in, `messageCostUsd`/`formatUsdHonest` starting
+      // to return null for a model this loop believes is priced, …). Fail
+      // loudly, by name, rather than let the `.includes()` below pass quiet.
+      ok(typeof expected === 'string' && expected.length > 0,
+        `§11.7 GUARD ${model} ${u.inputTokens}/${u.outputTokens}: formatUsdHonest produced a non-empty string ` +
+        `(got ${JSON.stringify(expected)}) — an empty expectation would make the .includes() assertion below ` +
+        'vacuously true for ANY rendered HTML');
       ok(assistantCostHtml(msg(model, u), ctx).includes(escapeHtmlStub(expected)),
         `§11.7 ${model} ${u.inputTokens}/${u.outputTokens} renders exactly formatUsdHonest's output (${expected})`);
     }
+
+    // ── THE FREE MODEL, ASSERTED ON ITS OWN TERMS — NOT DROPPED ───────────
+    // A free model never reaches `formatUsdHonest` with a real number:
+    // `assistantCostHtml` branches on `messageCostUsd() === null` and, for a
+    // model that is free BY MEMBERSHIP, renders the literal word "free" —
+    // never a dollar figure (see assistantCostHtml's own docblock in
+    // views/chat.js, and §11.1b above, which covers the same fact from
+    // chargeForItem's side). So this is not a "does it equal formatUsdHonest's
+    // output" claim like the loop above — there is no such output to match —
+    // it is the corresponding claim for the one catalogue member that loop
+    // must never draw from: no dollar sign, ever.
+    ok(freeEntries.length > 0,
+      `§11.7 fixture self-check — the real catalogue contains ${freeEntries.length} free model(s), ` +
+      'so the free-model assertion below is not vacuous');
+    if (freeEntries.length > 0) {
+      const FREE = freeEntries[0].e;
+      const freeUsage = { inputTokens: 500, outputTokens: 100, cachedReadTokens: 0, cacheWriteTokens: 0 };
+      const freeUsd = messageCostUsd(msg(FREE.id, freeUsage), ctx);
+      ok(freeUsd === null,
+        `§11.7 fixture: messageCostUsd is null for the free model ${FREE.id} (got ${freeUsd}) — ` +
+        'confirming formatUsdHonest is never fed a fabricated number for it in this section');
+      ok(formatUsdHonest(freeUsd) === null,
+        `§11.7 fixture: formatUsdHonest(null) is null, not a string — the free model has no formatted figure to match`);
+      const freeHtml = assistantCostHtml(msg(FREE.id, freeUsage), ctx);
+      ok(!/\$/.test(freeHtml),
+        `§11.7 ${FREE.id}: the free model's rendered cost fragment carries NO dollar figure (got ${JSON.stringify(freeHtml)})`);
+      ok(freeHtml === '' || /free/i.test(freeHtml),
+        `§11.7 ${FREE.id}: the free model's rendered cost fragment either says nothing or says "free" (got ${JSON.stringify(freeHtml)})`);
+    }
+
     // The source-level half of the same claim: the view must not re-grow a
     // local dollar formatter. (Kept as a companion to the behavioural checks,
     // not as a substitute — it catches a SECOND formatter that is never
