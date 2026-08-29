@@ -85,6 +85,21 @@ import {
   loaderHtml, gatedLoader, settleGate,
 } from '../src/public/next/shared/loading-gate.js';
 
+// §7 executes the REAL renderHealthPanel through `new Function`, so every
+// identifier that function references has to be handed in by name. When
+// views/domains.js adopted the shared text system, the three renderers below
+// became such identifiers and this suite CRASHED with a bare ReferenceError
+// rather than failing — the hand-listed-dependency blind spot v3.11.0 records
+// (a new module-level helper makes the suite die instead of go red).
+//
+// They are imported REAL rather than stubbed: shared/text.js deliberately
+// takes no imports so that it stays executable in Node, and passing the true
+// renderers means §7's assertions keep observing what the panel actually
+// paints instead of a marker chosen by this file.
+import {
+  renderReadoutGroup, renderDescription, renderStatus,
+} from '../src/public/next/shared/text.js';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
 
@@ -401,7 +416,12 @@ const EXEMPT = [
     why: 'lives inside panelLoading(), which ships HIDDEN and is revealed only by the gate — asserted below, so this exemption is not taken on trust' },
   { file: 'views/settings.js', needle: "state.quickLoading ? 'Scanning…'",
     why: 'System-check BUTTON label during a user-initiated scan' },
-  { file: 'views/shared.js', needle: 'sb-card-cohort-note">Loading…',
+  // RE-ANCHORED, not widened, when views/shared.js adopted shared/text.js.
+  // The markup was `<div class="sb-card-cohort-row sb-card-cohort-note">
+  // Loading…</div>`; it is now the shared description role. Same call site,
+  // same wait, same reason — the exemption going red on the stale needle is
+  // the mechanism working, since a stale exemption is a hole nobody can see.
+  { file: 'views/shared.js', needle: "renderDescription('Loading…')",
     why: 'cohort details: a network round-trip to the shared GitHub repo (seconds)' },
   { file: 'views/shared.js', needle: 'Loading the contributor list',
     why: 'member directory: a network round-trip to the shared GitHub repo (seconds)' },
@@ -590,6 +610,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
     renderIssueGroups: () => '<GROUPS/>',
     HEALTH_CATEGORIES: [{ key: 'brokenLinks', label: 'Broken links' }],
     inFlightWriteSlugs: new Set(),
+    renderReadoutGroup, renderDescription, renderStatus,
   };
   const names = Object.keys(deps);
   const fn = new Function(
@@ -601,11 +622,18 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
 
   const REPORT = { counts: { entities: 1, concepts: 2, summaries: 3, dismissed: 0 }, scannedAt: 1, brokenLinks: [] };
   const COLLAPSED = /dm-health-body">Scanning…/;
+  // The open-issue total, which totalOpenIssues is stubbed to report as 6.
+  // It used to be the literal 'Found 6 issues'; the panel now renders it as a
+  // READOUT rather than a prose sentence, so the needle follows the figure
+  // instead of the wording. The property being guarded is unchanged and is
+  // the one that matters: whether THIS domain's cached figures are on screen.
+  // The four sibling counts are 1/2/3/0, so this matches only the total.
+  const FIGURES = /tx-readout-value">6</;
 
   // THE DEFECT: re-entry used to null the report and collapse the panel.
   let h = render({ healthLoading: true, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
   ok(!COLLAPSED.test(h), 'rescan with a cached report for THIS domain does NOT collapse to "Scanning…"');
-  ok(h.includes('Found 6 issues'), 'the cached figures stay on screen');
+  ok(FIGURES.test(h), 'the cached figures stay on screen');
   ok(h.includes('Re-scanning… showing the previous result'),
     'and they are LABELLED as the previous scan — the figures stay useful, nothing claims they are current');
   ok(h.includes('<RING/>'), 'the Rescan control shows the scan is running');
@@ -615,16 +643,16 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   // than the bug it fixes.
   h = render({ healthLoading: true, health: REPORT, healthSlug: 'business', healthError: null, busyKey: null, expandedGroups: new Set() });
   ok(COLLAPSED.test(h), 'a report scanned for ANOTHER domain is refused — collapses to "Scanning…" instead');
-  ok(!h.includes('Found 6 issues'), 'and that domain\'s figures are NOT rendered under this heading');
+  ok(!FIGURES.test(h), 'and that domain\'s figures are NOT rendered under this heading');
 
   // settled state
   h = render({ healthLoading: false, health: REPORT, healthSlug: 'articles', healthError: null, busyKey: null, expandedGroups: new Set() });
-  ok(h.includes('Found 6 issues'), 'settled: the report renders');
+  ok(FIGURES.test(h), 'settled: the report renders');
   ok(!h.includes('Re-scanning…'), 'settled: no stale marker');
 
   // a settled foreign report renders NOTHING rather than the wrong domain's
   h = render({ healthLoading: false, health: REPORT, healthSlug: 'business', healthError: null, busyKey: null, expandedGroups: new Set() });
-  ok(!h.includes('Found 6 issues'), 'settled + foreign slug: renders nothing rather than another domain\'s figures');
+  ok(!FIGURES.test(h), 'settled + foreign slug: renders nothing rather than another domain\'s figures');
 
   // first-ever scan, nothing cached
   h = render({ healthLoading: true, health: null, healthSlug: null, healthError: null, busyKey: null, expandedGroups: new Set() });
@@ -633,7 +661,7 @@ section('§7  BEHAVIOURAL — health stale-while-revalidate, and the slug gate')
   // an error still wins over stale data
   h = render({ healthLoading: false, health: REPORT, healthSlug: 'articles', healthError: 'boom', busyKey: null, expandedGroups: new Set() });
   ok(h.includes('boom'), 'a failed rescan surfaces the error');
-  ok(!h.includes('Found 6 issues'), 'and does NOT leave stale figures sitting under it implying success');
+  ok(!FIGURES.test(h), 'and does NOT leave stale figures sitting under it implying success');
 }
 
 // ── §7b — THE RESET ITSELF, executed ─────────────────────────────────────

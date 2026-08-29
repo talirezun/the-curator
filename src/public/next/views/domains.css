@@ -3,6 +3,56 @@
    Everything not specific to this view (buttons, empty-card, eyebrows,
    sidebar shell) reuses shell.css classes untouched. */
 
+/* ── Placement for the shared text roles ─────────────────────────────────
+   This view is the first adopter of shared/text.css. That file owns TYPE —
+   size, weight, family, colour, and the contrast floors those encode. It
+   deliberately owns no outer margins, because a component that ships its own
+   spacing is a component every call site then has to fight.
+
+   SPACING therefore lives here — but NOT by naming the component's classes.
+   shared/text.css owns the tx- prefix outright, and scripts/
+   test-next-text-system.js enforces that with a blunt substring test over
+   every other stylesheet in the tree: one tx- class name anywhere in this
+   file fails it — descendant selectors and comments included. That is
+   stricter than a margin needs, and it is also RIGHT, because what it really
+   protects is that a view cannot re-dress a shared role: a file allowed to
+   write `.dm-x > (a tx- role) { margin }` is one edit from writing
+   `{ color }` there too, which is how 81 one-off -desc/-hint/-note
+   treatments came to exist in the first place.
+
+   So every rule below hangs on a class THIS view owns: a wrapper, or a
+   child-agnostic `> * + *`. Nothing here sets a font-size, a colour or a
+   border, and nothing here can reach a role in another view.
+
+   (Written without the leading dot in prose on purpose — the guard's regex
+   matches a literal dot-tx- in a comment just as readily as in a selector.) */
+
+/* Sidebar: a failed load renders the status role where `.sidebar-hint` used
+   to render a dimmed sentence. It follows the full-width New domain button. */
+.dm-sidebar-status { margin-top: 10px; }
+
+/* Health card: the re-scanning status (present only while revalidating) sits
+   ABOVE the readouts it qualifies; the block sits above the chip row. These
+   replace `.dm-health-body`'s 8px and `.dm-health-meta`'s 12px. The inner gap
+   is child-agnostic so the wrapper needs no knowledge of what it holds. */
+.dm-health-summary { margin-bottom: 16px; }
+.dm-health-summary > * + * { margin-top: 14px; }
+
+/* Quick maintenance: replaces `.dm-quick-note`'s margin-top, for BOTH the
+   cost/recovery description and the in-flight-write status that used to
+   share its class and differ only by a colour modifier. */
+.dm-quick-footnote { margin-top: 10px; }
+
+/* The no-key variant is a flex row (prose + Open Settings button); the prose
+   must be allowed to shrink. The role's own max-width still caps its line
+   length. */
+.dm-quick-empty-text { flex: 1 1 auto; min-width: 0; }
+
+/* Browse card: replaces `.dm-browse-empty`'s 10px bottom margin for the
+   pre-load blurb and the listing error. The no-matches line sits inside
+   `.dm-browse-list` and needs no margin of its own. */
+.dm-browse-lead { margin-bottom: 10px; }
+
 /* ── Sidebar domain list ─────────────────────────────────────────────── */
 
 .dm-new-btn { width: 100%; }
@@ -108,7 +158,17 @@
   padding: 3px 9px;
 }
 
-.dm-scope-desc { margin-bottom: 24px; }
+/* `.dm-scope-desc` is GONE. It modified `.view-body` — shell.css's static-copy
+   class — to carry a GENERATED sentence, which is the exact "a measurement and
+   an explanation in the same voice" defect shared/text.css was written for, and
+   it is cited by name in shared/text.js's header as one of the three observed
+   consequences. The figures it spelled out are rendered by .dm-stats-grid below
+   from the same variables, so the sentence was de-duplicated rather than
+   restyled (see DOMAIN_BLURB in domains.js); what remains of it is static prose
+   and renders as the description role, which brings its own bottom margin.
+   `.view-body` itself is untouched and still lives in shell.css — it is the
+   default class shared/loading-gate.js paints its placeholder with. What is
+   retired is THIS VIEW'S four uses of it, role by role, not the class. */
 
 /* ── Stat cards ───────────────────────────────────────────────────────── */
 
@@ -174,6 +234,15 @@
   color: var(--text);
 }
 
+/* ONE use left, and it is deliberate. `.dm-health-body` used to carry three
+   unrelated roles — a loading placeholder, a runtime error, and the generated
+   scan readout. The last two are now the status and readout-group roles.
+   The placeholder STAYS, and not by omission: the exact markup
+   `<div class="dm-health-body">Scanning…</div>` is byte-pinned by
+   scripts/test-next-loading-gate.js as a documented EXEMPTION from the
+   delay-gate rule ("health scan: measured ~654 ms. Deliberately NOT gated — an
+   honest indicator for a genuinely long wait"). Rewriting it would silently
+   revoke a measured v3.11.0 decision that is not this wave's to revisit. */
 .dm-health-body {
   font-size: var(--text-md);
   line-height: var(--leading-relaxed);
@@ -181,13 +250,20 @@
   max-width: 66ch;
   margin-bottom: 8px;
 }
-.dm-error-text { color: var(--danger-text); }
 
-.dm-health-meta {
-  font-size: var(--text-2xs);
-  color: var(--text-3);
-  margin-bottom: 12px;
-}
+/* `.dm-error-text` and `.dm-health-meta` are GONE — zero users.
+   `.dm-error-text` was a colour modifier bolted onto whichever class happened
+   to be nearby (`.sidebar-hint`, `.dm-health-body`, `.dm-browse-empty`), which
+   is how one class came to mean both "a benign empty state" and "the request
+   failed". All three are the status role now, where the danger rail is a BORDER
+   (non-text, 3:1 floor, measured 7.57 dark / 5.41 light) instead of dyeing
+   the prose.
+   `.dm-health-meta` painted the scan's own entity/concept/summary/dismissed
+   counts — MEASUREMENTS — at --text-3, measured 4.27 dark / 4.14 light against
+   the 4.5 AA floor. They are readout value/label now (16.71/18.27 and
+   8.34/7.26). This is the 181-rule --text-3-as-body-text mistake that
+   shared/text.js's FINDING 1 records; it is retired here by CONSTRUCTION, not
+   by a colour edit, because no role in the text system reads that token. */
 
 /* ── Category chips ───────────────────────────────────────────────────── */
 
@@ -239,22 +315,13 @@
 .dm-banner-error    { background: var(--danger-tint);  color: var(--danger-text); }
 .dm-banner-info     { background: var(--info-tint);    color: var(--accent-text); }
 
-/* ── Read-only mirror note ────────────────────────────────────────────── */
-
-.dm-mirror-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--surface-inset);
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
-  margin-bottom: 14px;
-}
-.dm-mirror-note svg { flex: none; margin-top: 2px; color: var(--text-3); }
+/* `.dm-mirror-note` is GONE — zero users. It was a hand-built status box
+   (raised-ish surface, border, radius, an icon and a sentence) that predates
+   the shared one; renderMirrorNote now returns the status role, which is the same
+   idea with a rail and measured contrast. Its `svg` rule was the last
+   --text-3 glyph in this block, and the lock it coloured is not duplicated:
+   the title row's `read-only mirror` pill already carries one. Spacing moved
+   to `.dm-health-summary` at the top of this file. */
 
 /* ── Quick maintenance block ──────────────────────────────────────────── */
 
@@ -304,11 +371,21 @@
 .dm-quick-btn-ai { color: var(--accent-text); }
 .dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .dm-quick-cost { font-size: var(--text-2xs); color: var(--text-3); }
-.dm-quick-note {
-  font-size: var(--text-sm);
-  color: var(--text-2);
-  margin-top: 10px;
-}
+/* `.dm-quick-note` (the base rule) is GONE — zero users. It carried the
+   cost-and-recovery promise, which is now the description role; its 10px top margin
+   moved to `.dm-quick-footnote` at the top of this file.
+
+   `.dm-quick-note-busy` SURVIVES, and the honest reason is that two OTHER
+   sites still use it standalone — the browse-listing truncation warning and
+   the pending-plan in-flight line — neither of which is part of this wave.
+   MEASURED, and recorded rather than implied away: --attention-text as TEXT
+   is 3.16:1 over --accent-tint in the light theme and 3.58:1 over
+   --surface-raised, both under the 4.5 floor for normal text. The Quick
+   maintenance use of it is fixed (it is the status role now, where the amber is
+   the rail and the words are --text); the other two are a known remaining
+   gap, and scripts/test-next-domains-text.js pins their COUNT so it cannot
+   grow quietly. One of them is byte-asserted by
+   scripts/test-next-domain-lifecycle.js, so it is not this file's to move. */
 /* MEDIUM-5 fix: distinguishes "an earlier fix on this domain is still
    running" (a real backend write in flight, buttons genuinely disabled)
    from the routine cost-disclosure note above — same amber token the

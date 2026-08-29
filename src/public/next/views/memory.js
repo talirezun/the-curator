@@ -68,6 +68,16 @@ import {
   isCurrentMount, reportAsyncMountFailure,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
+// The ONE text system in /next (shared/text.js). Imported, never re-implemented:
+// the five roles exist precisely so a view stops inventing its own -desc /
+// -hint / -quiet class per sentence. This view had FOUR semantic roles sharing
+// `.mem-quiet` alone, and rendered a runtime ERROR in the same class as a
+// marketing sentence (`.sidebar-hint`). scripts/test-next-memory-ingest-text.js
+// asserts these imports are present AND reached, because a component that ships
+// unused is the shape this repo keeps re-learning.
+import {
+  renderDescription, renderStatus, renderReadout, renderExplainer,
+} from '../shared/text.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
@@ -236,6 +246,12 @@ const FOCUS_FALLBACK = {
   // Reloading dismisses the notice this button lives in. The sidebar's
   // Refresh is the nearest stable control that does the same KIND of thing.
   'mem-reload': '#mem-refresh',
+  // The About fold is the SHARED explainer component now, and shared/text.js
+  // owns its markup — its <summary> carries no id. Its identity lives on the
+  // <details> as data-tx-explainer, so it is resolved by attribute instead.
+  // Without this, focusing that summary and re-rendering would drop focus to
+  // <body>: the exact v3.17.1 defect this view's focus handling exists for.
+  'mem-fold-about': '[data-tx-explainer="about"] > .tx-explainer-summary',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -782,7 +798,16 @@ function captureFocus() {
   if (typeof document === 'undefined') return;
   const active = document.activeElement;
   const id = active && active.id;
-  if (id && FOCUSABLE_IDS.includes(id)) pendingFocusId = id;
+  if (id && FOCUSABLE_IDS.includes(id)) { pendingFocusId = id; return; }
+  // ...and the same for a shared-component summary, which has no id to read.
+  // FOCUSABLE_IDS stays the ONE list of what this view will restore to: the
+  // data attribute is mapped onto its existing entry rather than becoming a
+  // second, parallel list free to disagree with it.
+  if (active && typeof active.closest === 'function') {
+    const ex = active.closest('[data-tx-explainer]');
+    const key = ex && ex.dataset ? 'mem-fold-' + ex.dataset.txExplainer : null;
+    if (key && FOCUSABLE_IDS.includes(key)) pendingFocusId = key;
+  }
 }
 
 function restoreFocus() {
@@ -803,22 +828,35 @@ function restoreFocus() {
 }
 
 function renderSidebar(token) {
+  // STATIC PROSE, in the one role for static prose. It was `.sidebar-hint` —
+  // the same class the error branch below used to render a RUNTIME FAILURE in,
+  // separated only by a colour modifier. Two things that are not alike must not
+  // share an element.
   const head =
     '<div class="sidebar-title">Agent memory</div>' +
-    '<div class="sidebar-hint">The working brief your agents leave for each other — read here, written by them.</div>';
+    renderDescription('The working brief your agents leave for each other — read here, written by them.');
 
   if (state.loading) {
     setSidebar(head + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
     return;
   }
   if (state.indexError) {
-    setSidebar(head + '<div class="sidebar-hint mem-error-text">Could not load agent memory — ' +
-      escapeHtml(state.indexError) + '</div>', token);
+    // A FAILURE, not a hint. renderStatus carries its state in a 3px rail
+    // (a BORDER, so its floor is 3:1, which --danger-text clears in both
+    // themes) while the words stay at --text/--text-2, which clear the 4.5:1
+    // text floor. The old `.mem-error-text` painted the whole sentence in
+    // --danger-text: the state was decoded from colour, and read as a dimmer
+    // version of the description directly above it.
+    setSidebar(head + renderStatus({
+      state: 'danger',
+      title: 'Could not load agent memory',
+      detail: state.indexError,
+    }), token);
     return;
   }
   if (!state.projects.length) {
     setSidebar(head + '<div class="cur-eyebrow" style="margin-top:10px">PROJECTS</div>' +
-      '<div class="sidebar-note">No domains yet. Agent memory is kept per domain — create one in Domains first.</div>',
+      renderDescription('No domains yet. Agent memory is kept per domain — create one in Domains first.'),
       token);
     return;
   }
@@ -875,7 +913,9 @@ function renderMain(token) {
   if (state.loading) {
     body = gatedLoader(loadGate, 'Loading agent memory…');
   } else if (state.indexError) {
-    body = '<div class="mem-inline-error">Could not load agent memory — ' + escapeHtml(state.indexError) + '</div>';
+    body = renderStatus({
+      state: 'danger', title: 'Could not load agent memory', detail: state.indexError,
+    });
   } else if (!state.activeProject) {
     body = renderNoProjects();
   } else {
@@ -894,8 +934,11 @@ function renderNoProjects() {
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">No domains yet</div>' +
-      '<div class="empty-body">Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
-      'Create a domain first, then point an agent at it — the brief appears here the moment one saves.</div>' +
+      // `html: true` because the sentence carries an inline <code>. The caller
+      // owns escaping when it opts in; every value here is a literal.
+      renderDescription('Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
+        'Create a domain first, then point an agent at it — the brief appears here the moment one saves.',
+        { html: true }) +
     '</div>'
   );
 }
@@ -914,7 +957,9 @@ function renderProject() {
     '</div>';
 
   if (state.detailError) {
-    return header + '<div class="mem-inline-error">' + escapeHtml(state.detailError) + '</div>' + renderAbout();
+    return header + renderStatus({
+      state: 'danger', title: 'Could not read this project’s memory', detail: state.detailError,
+    }) + renderAbout();
   }
   if (state.detailLoading && !read) {
     return header + gatedLoader(loadGate, 'Reading state…');
@@ -1058,11 +1103,12 @@ function renderBriefOnlyNotice(read, unlisted) {
   return (
     '<div class="mem-doc-card mem-doc-empty">' +
       '<div class="mem-doc-empty-title">No handoff saved yet</div>' +
-      '<div class="mem-doc-empty-body">' + escapeHtml(msg) +
+      // `msg` is the STORE's own sentence and is escaped by renderDescription's
+      // default path — this call deliberately does not opt into raw HTML.
+      renderDescription(msg +
         (unlisted ? '' :
           ' The brief below is what every agent read returns. A handoff appears here the first time ' +
-          'an agent saves its working state at the end of a session.') +
-      '</div>' +
+          'an agent saves its working state at the end of a session.')) +
     '</div>'
   );
 }
@@ -1087,10 +1133,10 @@ function renderEmptyProject(unlistedEntries) {
     return (
       '<div class="empty-card">' +
         '<div class="empty-title">Nothing readable for this project yet</div>' +
-        '<div class="empty-body">No handoff could be read here — but this project’s ' +
-        '<span class="mono">state/</span> folder is not empty, and the note above says why. ' +
-        'Rename those entries so they can be read. Do not save over them: a new save is written under a ' +
-        'different, generated name and would leave what is already there stranded.</div>' +
+        renderDescription('No handoff could be read here — but this project’s ' +
+          '<span class="mono">state/</span> folder is not empty, and the note above says why. ' +
+          'Rename those entries so they can be read. Do not save over them: a new save is written under a ' +
+          'different, generated name and would leave what is already there stranded.', { html: true }) +
       '</div>'
     );
   }
@@ -1098,9 +1144,13 @@ function renderEmptyProject(unlistedEntries) {
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">Nothing saved for this project yet</div>' +
-      '<div class="empty-body">No agent has written a handoff here. Ask an agent connected through ' +
-      '<span class="mono">my-curator</span> to save its working state for ' +
-      '<span class="mono">' + escapeHtml(state.activeProject) + '</span> at the end of a session, and it will show up here.</div>' +
+      // `html: true`, so the project name is escaped HERE, explicitly, rather
+      // than relying on the component: opting into raw HTML moves that duty to
+      // the caller and this is the one interpolated value in the sentence.
+      renderDescription('No agent has written a handoff here. Ask an agent connected through ' +
+        '<span class="mono">my-curator</span> to save its working state for ' +
+        '<span class="mono">' + escapeHtml(state.activeProject) +
+        '</span> at the end of a session, and it will show up here.', { html: true }) +
     '</div>'
   );
 }
@@ -1235,9 +1285,7 @@ function renderHandoff() {
     return (
       '<div class="mem-doc-card mem-doc-empty">' +
         '<div class="mem-doc-empty-title">No handoff under this scope yet</div>' +
-        '<div class="mem-doc-empty-body">' +
-          escapeHtml(d.message || 'Nothing has been saved here.') +
-        '</div>' +
+        renderDescription(d.message || 'Nothing has been saved here.') +
       '</div>'
     );
   }
@@ -1245,10 +1293,31 @@ function renderHandoff() {
   const savedAge = formatAge(
     d.current.savedAt ? Math.max(0, Math.round((Date.now() - Date.parse(d.current.savedAt)) / 1000)) : null
   );
-  const stamp = d.current.savedAt
-    ? '<span class="mem-doc-stamp mono" title="' + escapeHtml(d.current.savedAt) + '">' +
-      escapeHtml(savedAge || d.current.savedAt) + '</span>'
-    : '';
+  // WHEN this was saved and WHO saved it are one measurement, and they were
+  // two elements in two places (`.mem-doc-stamp` in the head, `.mem-doc-who`
+  // under the headline) styled to look like quiet chrome. renderReadout is the
+  // instrument role: the figure is mono at full --text, the provenance steps
+  // back by SIZE and FAMILY rather than by dropping under the contrast floor.
+  //
+  // ABSENT IS NOT ZERO, and this is the case that proves it: with no savedAt
+  // and no journal entry there is no reading, so nothing renders — never
+  // "unknown", never a dash. Each fact is still shown when only the other is
+  // missing, so consolidating the two elements cannot drop one of them.
+  const savedValue = savedAge || d.current.savedAt || null;
+  // Harness and model come from the journal's newest entry — STRUCTURED
+  // fields, never scraped out of the document's prose provenance line. A
+  // parser over that sentence would break the first time its wording moved.
+  const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
+  const who = j0 ? [j0.harness, j0.model].filter(Boolean).join(' · ') : '';
+  const readout = savedValue
+    ? renderReadout({ label: 'Saved', value: savedValue, provenance: who || undefined })
+    : (who ? renderReadout({ label: 'Written by', value: who }) : '');
+  // The exact ISO stamp stays reachable on hover, which formatAge's own
+  // docblock relies on when it rounds to "2 hr ago". A wrapper carries it
+  // because a readout states a reading and takes no tooltip of its own.
+  const stamp = readout && d.current.savedAt
+    ? '<span class="mem-doc-stamp" title="' + escapeHtml(d.current.savedAt) + '">' + readout + '</span>'
+    : readout;
 
   const notes = [];
   if (d.current.truncated) {
@@ -1265,12 +1334,6 @@ function renderHandoff() {
 
   const { headline, body } = splitHandoffPreamble(d.current.text || '');
 
-  // Harness and model come from the journal's newest entry — STRUCTURED
-  // fields, never scraped out of the document's prose provenance line. A
-  // parser over that sentence would break the first time its wording moved.
-  const j0 = d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
-  const who = j0 ? [j0.harness, j0.model].filter(Boolean).map((x) => escapeHtml(x)).join(' · ') : '';
-
   // renderMarkdown (shared/markdown.js) HTML-escapes the whole string before
   // emitting any markup — the escape-first invariant that module's own suite
   // pins. State text is untrusted (syncs from other machines; inside a
@@ -1280,7 +1343,6 @@ function renderHandoff() {
     '<section class="mem-doc-card" aria-label="Current handoff">' +
       '<div class="mem-doc-head"><span class="cur-eyebrow">CURRENT HANDOFF</span>' + stamp + '</div>' +
       (headline ? '<div class="mem-doc-headline">' + escapeHtml(headline) + '</div>' : '') +
-      (who ? '<div class="mem-doc-who mono">' + who + '</div>' : '') +
       noteHtml +
       '<div class="mem-doc">' + renderMarkdown(body) + '</div>' +
     '</section>'
@@ -1300,9 +1362,10 @@ function renderBrief(read, openIt) {
       '<details class="mem-fold" data-mem-fold="brief"' + openAttr + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-brief">' + icon('chevronRight', 14) +
           '<span>Standing brief</span><span class="mem-fold-meta">not written</span></summary>' +
-        '<div class="mem-fold-body"><p class="mem-quiet">No standing brief for this project. It is the part that ' +
-        'rarely changes — the goal, the firm decisions, the working model — and every agent read returns it, so it is ' +
-        'worth writing once.</p></div>' +
+        '<div class="mem-fold-body">' +
+          renderDescription('No standing brief for this project. It is the part that rarely changes — the goal, ' +
+            'the firm decisions, the working model — and every agent read returns it, so it is worth writing once.') +
+        '</div>' +
       '</details>'
     );
   }
@@ -1342,7 +1405,9 @@ function renderJournal() {
       '<details class="mem-fold" data-mem-fold="journal"' + journalOpen + '>' +
         '<summary class="mem-fold-summary" id="mem-fold-journal">' + icon('chevronRight', 14) +
           '<span>Session journal</span><span class="mem-fold-meta">empty</span></summary>' +
-        '<div class="mem-fold-body"><p class="mem-quiet">No saves recorded under this scope and machine yet.</p></div>' +
+        '<div class="mem-fold-body">' +
+          renderDescription('No saves recorded under this scope and machine yet.') +
+        '</div>' +
       '</details>'
     );
   }
@@ -1430,17 +1495,36 @@ function renderJournal() {
     );
   }).join('');
 
-  // A fact and its absence, kept apart: `total: null` with totalUnknown means
-  // the journal was longer than the tail we read, so we do NOT know the count
-  // and must not print the tail's length as if we did.
-  let countLine;
+  // A COUNT, rendered as a count. It was a grey sentence in `.mem-quiet` — the
+  // same class as the About fold's static explanation — so the one live figure
+  // at the foot of the list read as chrome. renderReadout splits it into the
+  // three things it actually is: what was measured, the figure, and how the
+  // figure was obtained.
+  //
+  // A fact and its absence stay apart, exactly as before: `total: null` with
+  // totalUnknown means the journal was longer than the tail we read, so we do
+  // NOT know the count. The VALUE is then the number we can stand behind (what
+  // is shown) and the reason we cannot state a total is provenance — never a
+  // total printed as if the tail's length were it.
+  let countReadout;
   if (j.totalUnknown) {
-    countLine = 'Showing the ' + j.returned + ' most recent. The full count is unknown — ' +
-      (j.totalUnknownReason || 'only the end of the journal was read') + '.';
+    countReadout = renderReadout({
+      label: 'Saves shown',
+      value: j.returned,
+      provenance: 'most recent · full count unknown — ' +
+        (j.totalUnknownReason || 'only the end of the journal was read'),
+    });
   } else if (typeof j.total === 'number' && j.total > j.returned) {
-    countLine = 'Showing the ' + j.returned + ' most recent of ' + j.total + '.';
+    countReadout = renderReadout({
+      label: 'Saves recorded',
+      value: j.total,
+      provenance: 'showing the ' + j.returned + ' most recent',
+    });
   } else {
-    countLine = j.returned + ' save' + (j.returned === 1 ? '' : 's') + ' recorded.';
+    countReadout = renderReadout({
+      label: j.returned === 1 ? 'Save recorded' : 'Saves recorded',
+      value: j.returned,
+    });
   }
 
   const canExpand = state.journalLimit === JOURNAL_PAGE &&
@@ -1462,46 +1546,70 @@ function renderJournal() {
         // "what is blocking us" is exactly the person who would act on that,
         // so the framing is stated once, above the list, rather than left to
         // be inferred. The current handoff above is the authoritative present.
-        '<p class="mem-quiet mem-j-framing">History, newest first. Any entry may since have been ' +
-        'superseded — the current handoff above is what is true now.</p>' +
+        '<div class="mem-j-framing">' +
+          renderDescription('History, newest first. Any entry may since have been ' +
+            'superseded — the current handoff above is what is true now.') +
+        '</div>' +
         '<ol class="mem-j-list">' + rows + '</ol>' +
-        '<div class="mem-j-foot"><span class="mem-quiet">' + escapeHtml(countLine) + '</span>' + moreBtn + '</div>' +
+        '<div class="mem-j-foot">' + countReadout + moreBtn + '</div>' +
       '</div>' +
     '</details>'
   );
 }
 
 /**
- * The one explanatory surface. Closed by default and last on the page:
- * needed once, then never again. Contains no interactive control, so its
- * <summary> has nothing to swallow.
+ * The one explanatory surface, and now the SHARED one.
+ *
+ * ── WHY THIS SITE IN PARTICULAR ─────────────────────────────────────────
+ * This fold is the reason shared/text.js has an explainer role at all: it is
+ * generalised FROM here (that module's §5 says so), because this view already
+ * proved the pattern. Measured before the component existed, Agent memory
+ * ships 87 characters of explanation on first paint where Shared Brain ships
+ * 376 — the difference is that this one is folded. Leaving it bespoke would
+ * mean the app's best example of a pattern was the one place not using it.
+ *
+ * BOTH LOAD-BEARING PROPERTIES ARE KEPT, because the component keeps them:
+ * a native <details> (so keyboard operation and screen-reader announcement
+ * come free) and DEFAULT CLOSED (needed once, then never again). Neither is
+ * re-implemented here — `open` is passed only when the user has opened it.
+ *
+ * NOTHING IS HIDDEN THAT WARNS. This fold explains a mechanism; it carries no
+ * caution, no cost and no refusal, which is exactly the content an explainer
+ * is for. The component makes the alternative structurally awkward — there is
+ * no parameter that puts toned text INSIDE the fold — and this call has no
+ * reason to reach for one. The read-only rule stated in the last paragraph is
+ * a DESIGN FACT, not a warning: the sidebar states it unfolded, permanently,
+ * and the store has no write endpoint to reach even if it were missed here.
+ *
+ * `html: true`, so this call owns escaping. Every byte below is a literal;
+ * nothing user-supplied, machine-supplied or store-supplied reaches it.
  */
 function renderAbout() {
-  return (
-    '<details class="mem-fold mem-about" data-mem-fold="about"' +
-        ((state.openFolds && state.openFolds.about) ? ' open' : '') + '>' +
-      '<summary class="mem-fold-summary" id="mem-fold-about">' + icon('chevronRight', 14) +
-        '<span>How this works</span></summary>' +
-      '<div class="mem-fold-body">' +
-        '<p class="mem-quiet">Agent memory is three files per project, kept in <span class="mono">state/</span> ' +
-        'beside that project’s wiki, and synced with it.</p>' +
-        '<ul class="mem-about-list">' +
-          '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
-          'model. One per project, returned on every agent read.</li>' +
-          '<li><b>Current handoff</b> — where things stand right now, per scope and per machine. A ' +
-          '<i>scope</i> is one work-stream, so parallel threads never overwrite each other. Overwritten on ' +
-          'every save, so it never grows stale behind you.</li>' +
-          '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
-          'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
-        '</ul>' +
-        '<p class="mem-quiet">Each machine writes to its own folder, so two machines can never overwrite each ' +
-        'other over sync. Reading a scope with no machine named gives you the most recently written one, whichever ' +
-        'machine that was.</p>' +
-        '<p class="mem-quiet">This screen only reads. Your agents write it through the ' +
-        '<span class="mono">my-curator</span> MCP tools — the files are plain markdown, so a text editor works too.</p>' +
-      '</div>' +
-    '</details>'
-  );
+  return renderExplainer({
+    // `id` lands as data-tx-explainer, which is what wire() keys the open-fold
+    // memory on and what FOCUS_FALLBACK resolves the summary through.
+    id: 'about',
+    summary: 'How this works',
+    open: !!(state.openFolds && state.openFolds.about),
+    html: true,
+    body:
+      '<p>Agent memory is three files per project, kept in <span class="mono">state/</span> ' +
+      'beside that project’s wiki, and synced with it.</p>' +
+      '<ul class="mem-about-list">' +
+        '<li><b>Standing brief</b> — the part that rarely changes: the goal, the firm decisions, the working ' +
+        'model. One per project, returned on every agent read.</li>' +
+        '<li><b>Current handoff</b> — where things stand right now, per scope and per machine. A ' +
+        '<i>scope</i> is one work-stream, so parallel threads never overwrite each other. Overwritten on ' +
+        'every save, so it never grows stale behind you.</li>' +
+        '<li><b>Session journal</b> — one line per save: when, which harness, which model, and the headline. ' +
+        'It is history and it accumulates, so an old entry can describe something already resolved.</li>' +
+      '</ul>' +
+      '<p>Each machine writes to its own folder, so two machines can never overwrite each ' +
+      'other over sync. Reading a scope with no machine named gives you the most recently written one, whichever ' +
+      'machine that was.</p>' +
+      '<p>This screen only reads. Your agents write it through the ' +
+      '<span class="mono">my-curator</span> MCP tools — the files are plain markdown, so a text editor works too.</p>',
+  });
 }
 
 // ── Wiring ───────────────────────────────────────────────────────────────
@@ -1519,10 +1627,14 @@ function wire(token) {
   // Record which disclosures are open so the next render can re-open them.
   // `toggle` fires only on a real change, never on parse, so emitting `open`
   // in the markup above does not feed back into this.
-  document.querySelectorAll('[data-mem-fold]').forEach((el) => {
+  // `[data-tx-explainer]` is the SHARED explainer (About). One handler over
+  // both, keyed on whichever attribute the element carries — a second loop
+  // would be two descriptions of one behaviour, free to drift.
+  document.querySelectorAll('[data-mem-fold], [data-tx-explainer]').forEach((el) => {
     el.addEventListener('toggle', () => {
       if (!state.openFolds) state.openFolds = {};
-      state.openFolds[el.dataset.memFold] = el.open;
+      const key = el.dataset.memFold || el.dataset.txExplainer;
+      if (key) state.openFolds[key] = el.open;
     });
   });
 

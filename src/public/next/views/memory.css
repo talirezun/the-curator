@@ -132,7 +132,13 @@
 }
 .mem-sidebar-foot svg { flex: none; margin-top: 1px; }
 
-.mem-error-text { color: var(--danger-text); }
+/* `.mem-error-text` and `.mem-inline-error` are GONE, not renamed. Both
+   painted a whole sentence in --danger-text, i.e. they encoded state as the
+   text colour of the message itself. shared/text.js's renderStatus carries
+   the state in a 3px rail — a BORDER, whose floor is 3:1 rather than 4.5:1 —
+   and leaves the words at --text / --text-2. All three error sites in this
+   view (sidebar index error, main index error, project detail error) now use
+   it, so the state is never decoded from colour alone.                     */
 
 /* ── Main: project header ────────────────────────────────────────────── */
 
@@ -159,8 +165,21 @@
   font: var(--type-mono);
   font-size: var(--text-2xs);
 }
-.mem-badge-quiet { background: var(--surface-inset); color: var(--text-3); border: 1px solid var(--border-subtle); }
-.mem-badge-attn  { background: var(--attention-tint); color: var(--attention-text); border: 1px solid var(--attention-text); }
+/* THE LABELS ARE --text, AND THAT IS A MEASUREMENT, NOT A PREFERENCE.
+   shared/text.js's FINDING 2: --attention-text ON --attention-tint measures
+   9.11 dark but 3.21 LIGHT, at --text-2xs (10px) — nowhere near the
+   large-text exemption, so it failed AA for half of all users. --text-3 on
+   --surface-inset failed in both themes, as it does everywhere in this file.
+
+   The component's fix is adopted here even though its MARKUP could not be:
+   scripts/test-next-memory-view.js pins the class name `mem-badge-attn` in
+   three assertions, so swapping these two spans for renderBadge would have
+   meant editing that suite rather than this file. The tone therefore still
+   lives entirely in the tint and the 1px border — non-text, floor 3:1, which
+   both clear in both themes — while the LABEL sits at --text. Nothing is
+   decoded by colour alone either way: both badges say it in words.         */
+.mem-badge-quiet { background: var(--surface-inset); color: var(--text); border: 1px solid var(--border-subtle); }
+.mem-badge-attn  { background: var(--attention-tint); color: var(--text); border: 1px solid var(--attention-text); }
 
 /* THE "SOMETHING WAS SAVED WHILE YOU WERE LOOKING" NOTICE.
 
@@ -272,9 +291,20 @@
   gap: 12px;
   margin-bottom: 12px;
 }
-/* 2.26 dark / 2.34 light at --text-faint; 8.34 / 7.26 at --text-2, on
-   --surface. When a handoff was saved is provenance, not decoration. */
-.mem-doc-stamp { font-size: var(--text-2xs); color: var(--text-2); }
+/* WHEN it was saved and WHO saved it are ONE instrument now — a readout from
+   shared/text.js — so this rule no longer paints text. It survives only as the
+   carrier of the exact ISO timestamp on `title`, which formatAge's own docblock
+   relies on when it rounds to "2 hr ago"; a readout states a reading and takes
+   no tooltip of its own.
+
+   NOTHING BELOW RESTYLES THE COMPONENT, and that is enforced rather than
+   promised: scripts/test-next-text-system.js fails if any other /next
+   stylesheet carries a `tx-` selector at all, so the system's type cannot be
+   overridden from a view. It caught a first draft of this file doing exactly
+   that — stepping the readout's figure down a size because it looked loud
+   beside the headline. It is MEANT to be loud: the figure is the valuable
+   thing on this screen and reading as chrome is the defect being fixed. */
+.mem-doc-stamp { display: block; }
 
 /* The one-line headline the agent wrote, promoted out of the document's
    preamble (see splitHandoffPreamble in memory.js). It is the only part of
@@ -284,15 +314,19 @@
   font-weight: var(--weight-medium);
   color: var(--text);
   line-height: var(--leading-snug);
-  margin-bottom: 3px;
 }
-/* Which harness and which model wrote this — same reasoning as the stamp. */
-.mem-doc-who { font-size: var(--text-2xs); color: var(--text-2); margin-bottom: 14px; }
-.mem-doc-headline:last-child, .mem-doc-who:last-child { margin-bottom: 0; }
+/* `.mem-doc-who` is gone: harness and model are the readout's `provenance`
+   line in the head, beside the save age they belong with. The headline takes
+   over the 14px that element used to contribute, so the gap above the
+   document is unchanged. */
+.mem-doc-headline { margin-bottom: 14px; }
+.mem-doc-headline:last-child { margin-bottom: 0; }
 
 .mem-doc-empty { border-style: dashed; }
 .mem-doc-empty-title { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-2); margin-bottom: 5px; }
-.mem-doc-empty-body { font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+/* `.mem-doc-empty-body` is gone — both empty cards render the shared description role, which
+   is the description role and is --text-2 rather than the sub-floor --text-3
+   this rule used. */
 
 /* A quiet, non-alarming note. Truncation and read-side sanitisation are
    facts worth stating, not failures worth shouting about. */
@@ -305,7 +339,14 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--surface-inset);
-  color: var(--text-3);
+  /* --text-2, not --text-3. This file's own measurements say --text-3 reaches
+     only 3.87-4.38 across every surface in it, against a 4.5:1 floor — and
+     these two notes ("the tail is not shown", "protocol-shaped text was
+     neutralised on read") are the view's quietest WARNINGS, which is the one
+     class of sentence that must not be the hardest to read. --text-2 measures
+     8.45 dark / 6.79 light on --surface-inset. The amber stays on the icon,
+     a graphical object held to 3:1. */
+  color: var(--text-2);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
@@ -416,15 +457,29 @@
 .mem-fold-meta { margin-left: auto; font-size: var(--text-2xs); color: var(--text-2); }
 .mem-fold-body { padding: 2px 16px 15px; }
 
-.mem-quiet { margin: 0 0 9px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
-.mem-quiet:last-child { margin-bottom: 0; }
-.mem-about-list { margin: 0 0 10px; padding-left: 18px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+/* `.mem-quiet` IS GONE, and its removal is the point of this pass. It carried
+   FOUR unrelated roles at once — the About fold's static explanation, the
+   "no standing brief" prose, the journal's framing sentence, and the journal's
+   live COUNT ("12 saves recorded") — in one grey at --text-3, which this
+   file's own measurements put at 3.87-4.38 against a 4.5:1 floor. The
+   description sites use the shared description role now and the count uses the
+   readout role, so an
+   explanation and a measurement no longer render in the same voice.
+
+   The About list is the one fragment that stays: it is the explainer's BODY
+   content, so it INHERITS that role's size and colour (a <ul> inherits both
+   from the body element the component paints) rather than restating them.
+   Only layout is set here — declaring a font-size or a colour would be the
+   view describing type the system already owns. */
+.mem-about-list { margin: 0 0 10px; padding-left: 18px; }
 .mem-about-list li { margin-bottom: 5px; }
-.mem-about-list b { color: var(--text-2); font-weight: var(--weight-medium); }
+.mem-about-list b { color: var(--text); font-weight: var(--weight-semibold); }
 
 /* ── Journal ─────────────────────────────────────────────────────────── */
 
-.mem-j-framing { margin-bottom: 10px; font-size: var(--text-xs); }
+/* A wrapper for spacing only — the sentence inside is a shared description and owns its
+   own type. Setting a font-size here would fight the role. */
+.mem-j-framing { margin-bottom: 10px; }
 .mem-j-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
 .mem-j-row {
   display: flex;
@@ -481,7 +536,10 @@
   border-left: 2px solid var(--attention);
 }
 .mem-j-rej-loss svg { color: var(--attention-text); }
-.mem-j-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+/* The foot holds the journal's live count (a readout) and, when there is more
+   to fetch, the Show more button. `align-items: flex-end` because the readout
+   is a two- or three-line column and the button belongs on its last line. */
+.mem-j-foot { display: flex; align-items: flex-end; gap: 12px; margin-top: 10px; }
 .mem-j-more { flex: none; }
 
 /* .btn-xs is declared in sync.css/settings.css as a shared-looking utility,
@@ -489,15 +547,6 @@
    an edit there can never silently change this view's button. */
 .btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
 
-.mem-inline-error {
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--danger-text);
-  background: var(--danger-tint);
-  color: var(--danger-text);
-  font-size: var(--text-sm);
-  max-width: var(--prose-max);
-}
 
 /* ── Narrow viewports ────────────────────────────────────────────────── */
 
@@ -513,3 +562,19 @@
      a narrow menu. */
   .mem-ctl .lb, .mem-ctl .lb-btn { max-width: 46vw; }
 }
+
+/* ── PLACING THE SHARED TEXT ROLES ───────────────────────────────────────
+   There is nothing here, and the absence is the design.
+
+   shared/text.js owns the type AND the geometry of its five roles, and
+   scripts/test-next-text-system.js enforces that ownership by failing on any
+   `tx-` selector in any other /next stylesheet — comments included. So a view
+   places these elements by CHOOSING one and putting it somewhere; it does not
+   get to argue with how one looks.
+
+   A first draft of this file carried seven such rules (a measure limit on the
+   description, an alignment on the readout, two font-size step-downs, a gap on
+   the group). Every one of them was this view re-describing a decision the
+   system had already made, which is precisely the 81-class fragmentation the
+   component exists to end. They were deleted rather than negotiated, and the
+   screen was re-checked in a real browser afterwards.                       */

@@ -67,6 +67,52 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 import { progressRingHtml, ringValueFromCounts } from '../shared/progress-ring.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
+// The shared TEXT system — the five roles in shared/text.js. This view is the
+// first adopter, because it is where the defect that motivated the module was
+// reported: `renderHealthPanel` welded an action report, a generated readout
+// and a static description into ONE <div class="dm-health-body">, and the
+// maintainer's own words were that it "doesn't look like a report — it looks
+// like a clarification".
+//
+// TWO AA FAILURES ARE FIXED BY CONSTRUCTION HERE — measured from
+// tokens/color.css with var() chains resolved and rgba tints composited over
+// their surface, in both themes (the tool is the one in
+// test-next-text-system.js §7), and re-measured through getComputedStyle in a
+// real browser on both themes, where the two agreed to the second decimal:
+//
+//   .dm-health-meta      --text-3 on --surface         4.27 dark / 4.14 light
+//   .dm-quick-note-busy  --attention-text over
+//                        --accent-tint on --surface    9.75 dark / 3.16 light
+//
+// against a 4.5 floor for normal text. The first is a MEASUREMENT — the scan's
+// own entity/concept/summary/dismissed counts — rendered below the readable
+// floor. The second is a WARNING sitting directly above the buttons that
+// delete pages: FINDING 2 in text.js's header, live in this view and worse
+// than the header's own example because of the accent tint underneath.
+// Neither is fixed by a colour edit: the roles carry --text and --text-2
+// (measured 6.42-18.27 in the browser across both themes), and renderStatus
+// puts the status colour on the RAIL, where the floor is 3:1 and attention
+// clears it at 10.70 / 3.58.
+//
+// WHAT IS *NOT* A CONTRAST FIX, stated because the first draft of this block
+// claimed it was. The three runtime errors moved here — the sidebar's, the
+// health scan's and the browse listing's — all carried `.dm-error-text`, and
+// that rule WON the cascade, so they rendered at --danger-text and measured
+// 7.80 dark / 5.41 light. They PASSED. Reproducing the original cascade in
+// the browser (re-injecting the deleted rule, in a sheet appended last) gives
+// rgb(195,51,69) at 5.41 — not the 4.14 an earlier version of this comment
+// asserted, which was `.sidebar-hint` WITHOUT the override and therefore a
+// measurement of a different element. Moving them to renderStatus is a
+// SEMANTIC fix — a failure and a hint stopped being one class plus a colour —
+// and it is not sold as an accessibility one.
+//
+// Do NOT re-grow a local -desc/-hint/-note class in this file.
+// scripts/test-next-domains-text.js asserts the import AND executes the real
+// render functions; a hand-rolled replacement goes red naming the site.
+import {
+  renderReadoutGroup, renderDescription, renderStatus,
+} from '../shared/text.js';
+
 // The icon set this view needs (activity, sparkles, chevron-right,
 // alert-circle, lock, check) lives in app.js's shared ICON_BODY — see
 // icon() below — there is no view-local icon table.
@@ -132,6 +178,34 @@ const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolder
 // Kept consistent with docs/ai-health.md's "How to actually undo a Health fix".
 const GIT_UNDO_NOTE = 'If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet.';
 const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Sync this is recoverable with a git client; otherwise it cannot be undone.';
+
+// ── What a domain IS, said once ────────────────────────────────────────────
+// Static prose: identical for every user, read once, and therefore the
+// DESCRIPTION role. Single-sourced for the same reason GIT_UNDO_NOTE is —
+// the empty state and the domain header both said it, and two hand-written
+// copies of one sentence is how they end up disagreeing.
+//
+// WHAT THIS REPLACED, AND WHY IT IS NOT A READOUT. The domain header used to
+// render a GENERATED sentence through `.view-body dm-scope-desc`:
+//
+//   "A compounding wiki of 379 pages — 41 entities, 331 concepts, 7 summaries."
+//
+// A live figure in the same class as static copy is the defect text.js was
+// written for, so the obvious move was renderReadoutGroup. It was not taken,
+// and the reason is measurable rather than aesthetic: that sentence is built
+// from `pages, counts.entities, counts.concepts, counts.summaries, otherCount`
+// and renderStatCards twelve lines below renders THE SAME FIVE VARIABLES.
+// There is no figure in the sentence that the cards do not already show, so a
+// readout group here would be the same instrument twice — and it would be the
+// WORSE copy, because the cards carry --type-entity/-concept/-summary, the
+// graph colours that tie a count to its node type in Obsidian, which
+// .tx-readout-value (correctly, deliberately) does not.
+//
+// So the figures were not restyled, they were DE-DUPLICATED: the cards are the
+// instrument, and what is left of the sentence is what it always actually was
+// — an explanation of what a domain is. That is this constant.
+const DOMAIN_BLURB = 'A domain is one compounding wiki — a subject you read about often. Everything ingested into it updates the pages already there, so the graph gets denser rather than just bigger.';
+const MIRROR_BLURB = 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages. Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.';
 
 // ── Module state ───────────────────────────────────────────────────────────
 // Kept at module scope (not reset on every onEnter) so switching away to
@@ -1240,8 +1314,27 @@ function renderSidebar(token) {
   }
   if (state.loadError) {
     setSidebar(
+      // A RUNTIME ERROR, not a hint. `.sidebar-hint` renders a marketing
+      // sentence in sync.js and rendered this failure too, separated only by
+      // a colour modifier — one class, two meanings, which is the defect.
+      //
+      // THIS IS A SEMANTIC FIX, NOT A CONTRAST ONE, and the distinction is
+      // measured rather than assumed: `.dm-error-text` won the cascade here,
+      // so the old line rendered at --danger-text and measured 7.80 dark /
+      // 5.41 light — it PASSED AA. What changes is that a failure is now a
+      // STATE with its own shape (rail measured 5.41:1 against its box,
+      // above the 3:1 non-text floor) rather than a hint wearing red, and
+      // that the server's own message is the DETAIL, so the headline stays
+      // constant and the cause is not glued onto the end of our sentence.
+      // `.sidebar-hint`'s own --text-3 (4.27 / 4.14, under AA) is untouched
+      // and still carries the LOADING placeholder above, which is
+      // loading-gate.js's role and deliberately not converted.
+      // Wrapped only to carry this view's spacing: text.css owns the type,
+      // domains.css owns where it sits. The wrapper sets no type of its own.
       '<div class="sidebar-title">Domains</div>' + newBtn +
-      '<div class="sidebar-hint dm-error-text">Could not load domains — ' + escapeHtml(state.loadError) + '</div>',
+      '<div class="dm-sidebar-status">' +
+        renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.loadError }) +
+      '</div>',
       token
     );
     bindNewDomainBtn();
@@ -1344,8 +1437,7 @@ function renderMain(token) {
     setMain(
       eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' +
       renderLifecycleCard() +
-      '<div class="view-body">A domain is one compounding wiki — a subject you read about often. Everything ingested ' +
-      'into it updates the pages already there, so the graph gets denser rather than just bigger.</div>' +
+      renderDescription(DOMAIN_BLURB) +
       emptyCard({
         title: 'No domains yet',
         body: 'Name it, pick a starting schema, and it is ready to ingest into. Nothing is written until you confirm.',
@@ -1378,12 +1470,9 @@ function renderMain(token) {
   const otherCount = counts.other || 0;
   const pages = typeof domain.pageCount === 'number' ? domain.pageCount : (counts.entities + counts.concepts + counts.summaries + otherCount);
 
-  const scopeSentence = readonly
-    ? 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages. Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.'
-    : ('A compounding wiki of ' + pluralize(pages, 'page') + ' — ' + pluralize(counts.entities, 'entity').replace('entitys', 'entities') +
-       ', ' + pluralize(counts.concepts, 'concept') + ', ' + pluralize(counts.summaries, 'summary').replace('summarys', 'summaries') +
-       (otherCount > 0 ? ', ' + pluralize(otherCount, 'other page') : '') + '.');
-
+  // The five figures this used to spell out in prose are rendered by
+  // renderStatCards below, from these exact variables. See DOMAIN_BLURB for
+  // why the sentence was de-duplicated rather than restyled as a readout.
   const html =
     '<div class="dm-path-eyebrow mono">domains/' + escapeHtml(domain.slug) + '/</div>' +
     '<div class="dm-title-row">' +
@@ -1393,7 +1482,7 @@ function renderMain(token) {
       '<button class="btn btn-ghost dm-title-btn dm-delete-btn" id="dm-delete-btn">' + icon('trash', 13) + ' Delete</button>' +
       '<button class="btn btn-primary dm-ask-btn" id="dm-ask-btn">' + icon('messageSquare', 14) + ' Ask this domain</button>' +
     '</div>' +
-    '<div class="view-body dm-scope-desc">' + escapeHtml(scopeSentence) + '</div>' +
+    renderDescription(readonly ? MIRROR_BLURB : DOMAIN_BLURB) +
     renderLifecycleCard() +
     renderStatCards(counts, pages) +
     renderHealthPanel(domain, readonly) +
@@ -1520,7 +1609,9 @@ function renderBrowsePanel() {
     return (
       '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
       '<div class="dm-browse-card">' +
-        '<div class="dm-browse-empty">Browse every page in this domain — entities, concepts and summaries.</div>' +
+        '<div class="dm-browse-lead">' +
+          renderDescription('Browse every page in this domain — entities, concepts and summaries.') +
+        '</div>' +
         '<button class="btn btn-secondary" id="dm-browse-load-btn">' + icon('book', 13) + ' Browse pages</button>' +
       '</div>'
     );
@@ -1533,7 +1624,16 @@ function renderBrowsePanel() {
     return (
       '<div class="cur-eyebrow dm-recent-eyebrow">PAGES</div>' +
       '<div class="dm-browse-card">' +
-        '<div class="dm-browse-empty dm-error-text">Could not list pages — ' + escapeHtml(b.error) + '</div>' +
+        // The THIRD runtime error in this view that rendered through a class
+        // meaning something else — `.dm-browse-empty` also says "No pages
+        // match that filter", i.e. a benign empty state, with only
+        // `.dm-error-text` distinguishing a failure from a filter that
+        // matched nothing. Fixing the sidebar and the health scan and
+        // leaving this one is how a class gets fixed at its reported site
+        // and stays broken as a class.
+        '<div class="dm-browse-lead">' +
+          renderStatus({ state: 'danger', title: 'Could not list pages', detail: b.error }) +
+        '</div>' +
         '<button class="btn btn-secondary" id="dm-browse-load-btn">Try again</button>' +
       '</div>'
     );
@@ -1553,7 +1653,7 @@ function renderBrowsePanel() {
       '<span class="dm-browse-title">' + escapeHtml(e.title || e.slug) + '</span>' +
       '<span class="mono dm-browse-path">' + escapeHtml(e.path) + '</span>' +
     '</button>'
-  )).join('') || '<div class="dm-browse-empty">No pages match that filter.</div>';
+  )).join('') || renderDescription('No pages match that filter.');
 
   const capNote = matches.length > shown.length
     ? '<div class="dm-browse-note">Showing the first ' + shown.length + ' of ' + matches.length.toLocaleString() + ' matches — narrow the filter to see the rest.</div>'
@@ -1839,7 +1939,11 @@ function renderHealthPanel(domain, readonly) {
           '<div class="dm-health-head">' + icon('activity', 17) + '<span class="dm-health-title">Wiki health</span></div>' +
           '<button class="btn btn-secondary" id="dm-rescan-btn">' + icon('refresh', 13) + ' Rescan</button>' +
         '</div>' +
-        '<div class="dm-health-body dm-error-text">Could not scan this domain — ' + escapeHtml(state.healthError) + '</div>' +
+        // Third meaning of `.dm-health-body`, after the loading placeholder
+        // above and the readout below: a runtime error. It is a STATE, so it
+        // is renderStatus, and the server's message is the DETAIL rather than
+        // being glued onto the end of our sentence with an em dash.
+        renderStatus({ state: 'danger', title: 'Could not scan this domain', detail: state.healthError }) +
       '</div>'
     );
   }
@@ -1860,11 +1964,32 @@ function renderHealthPanel(domain, readonly) {
     return '<span class="dm-chip ' + cls + '">' + escapeHtml(cat.label) + ' <span class="mono dm-chip-count">' + count + '</span></span>';
   }).join('');
 
-  const scanMeta =
-    'Scanned ' + pluralize(report.counts.entities, 'entity').replace('entitys', 'entities') +
-    ' · ' + pluralize(report.counts.concepts, 'concept') +
-    ' · ' + pluralize(report.counts.summaries, 'summary').replace('summarys', 'summaries') +
-    ' · ' + report.counts.dismissed + ' dismissed';
+  // ── THE READOUT ──────────────────────────────────────────────────────────
+  // This is the block the maintainer reported: it "doesn't look like a report
+  // — it looks like a clarification". It was ONE prose <div> welding an action
+  // report ("Re-scanning… showing the previous result.") to a generated
+  // measurement ("Found 12 issues, last scanned 10s ago") to a static feature
+  // description, plus a SECOND <div class="dm-health-meta"> carrying four more
+  // measurements at --text-3 — 4.27 dark / 4.14 light, under the 4.5 AA floor.
+  // Three roles, one voice, and the most valuable figures on the screen were
+  // the least readable ones.
+  //
+  // ABSENT IS NOT ZERO, and it is not decorative here. `relTime(undefined)`
+  // returns the string 'never', so a report with no `scannedAt` used to render
+  // "last scanned never." — a claim about when a scan happened, made from the
+  // absence of the field that would say. As a readout the provenance is simply
+  // OMITTED instead, which is text.js's rule and is asserted by mutation.
+  // `report.counts.dismissed` behaves the same way: a missing count used to
+  // render the literal "undefined dismissed", and now drops its entry. A real
+  // 0 is a measurement and still renders.
+  const stamp = report.scannedAt ? 'scanned ' + relTime(report.scannedAt) : null;
+  const healthReadouts = renderReadoutGroup([
+    { label: total === 1 ? 'Open issue' : 'Open issues', value: total, provenance: stamp },
+    { label: 'Entities', value: report.counts.entities },
+    { label: 'Concepts', value: report.counts.concepts },
+    { label: 'Summaries', value: report.counts.summaries },
+    { label: 'Dismissed', value: report.counts.dismissed },
+  ]);
 
   return (
     '<div class="dm-health-card">' +
@@ -1876,10 +2001,22 @@ function renderHealthPanel(domain, readonly) {
       '</div>' +
       // Honesty: while revalidating, these counts are the PREVIOUS scan's.
       // Saying so is the price of not collapsing the panel — the figures
-      // stay useful, and nothing claims they are current.
-      '<div class="dm-health-body">' + (revalidating ? 'Re-scanning… showing the previous result. ' : '') +
-        'Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) + '.</div>' +
-      '<div class="dm-health-meta mono">' + scanMeta + '</div>' +
+      // stay useful, and nothing claims they are current. It is now a STATUS
+      // and sits ABOVE the readouts it qualifies, because a caveat printed
+      // after the number it qualifies has already been read too late.
+      // The wrapper is this view's, and it exists for spacing ONLY.
+      // shared/text.css owns the tx- prefix outright and its suite fails on
+      // any tx- name appearing in another stylesheet, so domains.css hangs
+      // its margins on `.dm-health-summary` instead of reaching into the
+      // component. That is the stricter and better arrangement: a view that
+      // cannot name a role's class cannot quietly restyle it either.
+      '<div class="dm-health-summary">' +
+        (revalidating
+          ? renderStatus({ state: 'attention', title: 'Re-scanning… showing the previous result',
+                           detail: 'The figures below are the last completed scan’s until this one finishes.' })
+          : '') +
+        healthReadouts +
+      '</div>' +
       '<div class="dm-chip-row">' + chips + '</div>' +
       (state.banner ? renderBanner() : '') +
       (readonly ? renderMirrorNote() : renderQuickMaintenance(domain, report, crossMountBusy)) +
@@ -1899,12 +2036,22 @@ function renderBanner() {
   return '<div class="dm-banner ' + cls + '">' + ic + '<span>' + escapeHtml(b.text) + '</span></div>';
 }
 
+// This sits where the Quick maintenance bar would be, i.e. in the place the
+// user looks for the buttons that fix things. It is a STATE — "this domain
+// cannot be fixed from here" — not a hint, so it is renderStatus.
+//
+// TONE IS 'neutral' ON PURPOSE. A mirror being read-only is the ORDINARY
+// condition of a mirror, and text.css's own note on the neutral rail is that
+// the first-run case "must not be dressed as a problem". The consequence
+// half ("fixes here would be overwritten") is the detail, so nothing is
+// hidden and nothing is escalated into an alarm the user cannot act on. The
+// lock glyph is dropped rather than duplicated: the title row already renders
+// a `read-only mirror` pill carrying it.
 function renderMirrorNote() {
-  return (
-    '<div class="dm-mirror-note">' + icon('lock', 13) +
-    '<span>This domain is a read-only Shared Brain mirror. Fixes here would be overwritten on the next Pull — ' +
-    'fix issues in your personal contributing domain, then push from Sync.</span></div>'
-  );
+  return renderStatus({
+    title: 'This domain is a read-only Shared Brain mirror',
+    detail: 'Fixes here would be overwritten on the next Pull — fix issues in your personal contributing domain, then push from Sync.',
+  });
 }
 
 // The design's smallest size: 16px, activity-only, inside a button that is
@@ -2023,9 +2170,15 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
   if (items.length === 0) {
     if (!state.aiAvailable) {
       return (
+        // Static prose, identical for every user without a key — the
+        // DESCRIPTION role. The bare <span> inherited a font-size set on the
+        // flex container, which is the untracked-treatment shape the module
+        // replaces; .tx-desc is a flex item here and keeps its own type.
         '<div class="dm-quick dm-quick-empty">' +
-          '<span>No structural issues to fix right now. Add an AI provider key in Settings to unlock broken-link ' +
-          'resolution, orphan rescue and duplicate-page detection.</span>' +
+          '<div class="dm-quick-empty-text">' +
+            renderDescription('No structural issues to fix right now. Add an AI provider key in Settings to unlock ' +
+              'broken-link resolution, orphan rescue and duplicate-page detection.') +
+          '</div>' +
           '<button class="btn btn-secondary dm-quick-settings-btn" id="dm-open-settings-btn">Open Settings</button>' +
         '</div>'
       );
@@ -2046,9 +2199,31 @@ function renderQuickMaintenance(domain, report, crossMountBusy) {
       // otherwise a user who clicks Fix and never left the view sees
       // "an earlier fix is still running" about the very click they just
       // made, which reads as if something is already wrong.
-      (crossMountBusy && !busy
-        ? '<div class="dm-quick-note dm-quick-note-busy">' + icon('alertTriangle', 12) + ' An earlier fix on this domain is still running — please wait for it to finish before starting another.</div>'
-        : '<div class="dm-quick-note">Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE + '</div>') +
+      //
+      // TWO ROLES THAT WERE ONE CLASS PLUS A COLOUR MODIFIER. The busy line is
+      // a live STATE and is now a status box; the other is static prose that
+      // is identical for every user and is now a description. They were
+      // `.dm-quick-note` and `.dm-quick-note.dm-quick-note-busy` — the
+      // `.sidebar-hint` defect again, in a second place.
+      //
+      // THE BUSY LINE WAS ALSO THE WORST CONTRAST IN THIS VIEW: it painted
+      // --attention-text as TEXT over --accent-tint, measured 3.16:1 in the
+      // light theme against a 4.5 floor. That is a warning about an in-flight
+      // write, printed directly above the buttons that delete pages, and it
+      // was the least readable string on the panel. As a status the amber is
+      // the RAIL (non-text, 3:1 floor, clears at 10.70 / 3.58) and the words
+      // are --text / --text-2.
+      //
+      // NEITHER IS FOLDED. renderExplainer was not used here and must not be:
+      // the cost promise and the git-recovery note are the disclosure that
+      // makes a spend gate a gate, and v3.16.1's rule is that a warning behind
+      // a click is not a warning.
+      '<div class="dm-quick-footnote">' +
+        (crossMountBusy && !busy
+          ? renderStatus({ state: 'attention', title: 'An earlier fix on this domain is still running',
+                           detail: 'Please wait for it to finish before starting another.' })
+          : renderDescription('Every AI action shows its cost before it runs. ' + GIT_UNDO_NOTE)) +
+      '</div>' +
     '</div>'
   );
 }

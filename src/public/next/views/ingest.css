@@ -3,22 +3,22 @@
    The batch-queue row/status styling (Phase 2, 2+ files) will be added
    here once views/ingest.js actually wires the queue.
 
-   `.btn-xs` and `.settings-inline-error` are duplicated here rather than
-   pulled from shell.css — matching the existing pattern in this codebase
-   (settings.css and sync.css each carry their own identical copy too; see
-   views/README.md item 3 — a rule only moves to shell.css when it's
-   asked for). */
+   `.btn-xs` is duplicated here rather than pulled from shell.css — matching
+   the existing pattern in this codebase (settings.css and sync.css each carry
+   their own identical copy too; see views/README.md item 3 — a rule only moves
+   to shell.css when it's asked for).
+
+   `.settings-inline-error` IS GONE from this file. It was the THIRD
+   hand-maintained copy of one rule (settings.css and sync.css hold the other
+   two) under a name belonging to another view, and what it did was paint the
+   whole message in --danger-text on --danger-tint — a status colour used as
+   TEXT, which shared/text.js measured at 3.21:1 in the light theme against a
+   4.5:1 floor. All five error sites in this view render shared/text.js's
+   renderStatus instead: the tone is a 3px rail (a BORDER, floor 3:1, cleared
+   in both themes) and the words stay at --text / --text-2. One definition, in
+   one place, legible in both themes. */
 
 .btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
-
-.settings-inline-error {
-  padding: 11px 13px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--danger-text);
-  background: var(--danger-tint);
-  color: var(--danger-text);
-  font-size: var(--text-sm);
-}
 
 /* ── Sidebar: cross-mount busy note ──────────────────────────────────── */
 
@@ -662,3 +662,22 @@
   font-size: var(--text-xs);
   color: var(--text-2);
 }
+
+/* ── The shared text roles, inside this view ─────────────────────────────
+   shared/text.js owns the TYPE of every role (size, weight, family, colour);
+   a view may only place them. Every rule below sets geometry and nothing
+   else — no font-size, no color — so a change to the system reaches this
+   screen instead of being overridden by it.
+
+   These replace five `style="margin-*"` attributes that used to sit inline on
+   the error boxes. Spacing is a property of WHERE a status appears, so it
+   belongs to this file; the box itself belongs to the system.              */
+.ing-status-block { margin-top: 14px; margin-bottom: 14px; }
+
+/* NOTHING PLACES THE SHARED ROLES HERE, and the absence is deliberate.
+   shared/text.js owns their type AND their geometry, and
+   scripts/test-next-text-system.js enforces that by failing on a `tx-`
+   selector in any other /next stylesheet — comments included. A first draft of
+   this file set the estimate group's gap; the component's own value is fine
+   and the override was this view re-describing a decision the system had
+   already made. Deleted, then re-checked in a real browser. */

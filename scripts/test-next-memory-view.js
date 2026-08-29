@@ -132,6 +132,15 @@ import { fileURLToPath } from 'node:url';
 // by a line in some OTHER function, and vocabulary is pinned to a literal
 // rather than to the constant the production code itself reads.
 import { stripComments, functionSource, callSiteCount, assertLiteral } from './test-helpers/source-scan.js';
+// The shared text system the view now renders through. IMPORTED, not stubbed
+// and not lifted: shared/text.js deliberately takes no imports of its own so
+// that it is executable in Node (its header records why), which makes it the
+// one shared component this harness can run for real. A stub would let the
+// escaping battery below pass over markup the shipped screen never emits.
+import {
+  renderDescription, renderStatus, renderReadout, renderReadoutGroup,
+  renderBadge, renderExplainer,
+} from '../src/public/next/shared/text.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -584,8 +593,13 @@ function makeRenderers(stateObj) {
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
     'unlistedCount, renderProject, pendingListboxes };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
-    'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes', body)(
-    stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50, []);
+    'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes',
+    // The real shared text renderers, so §6's escaping battery runs through
+    // the component that actually paints these sentences rather than past it.
+    'renderDescription', 'renderStatus', 'renderReadout', 'renderReadoutGroup',
+    'renderBadge', 'renderExplainer', body)(
+    stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50, [],
+    renderDescription, renderStatus, renderReadout, renderReadoutGroup, renderBadge, renderExplainer);
 }
 
 const hostileDetail = {
@@ -732,11 +746,33 @@ ok('read-side sanitisation is stated, not hidden',
   ok('...and does NOT print the tail length as if it were the total', !/of 2\b/.test(j));
 }
 {
+  // THE COUNT IS AN INSTRUMENT NOW, not a sentence: the journal foot renders a
+  // shared/text.js .tx-readout ("Save recorded" / "1") instead of the prose
+  // "1 save recorded". The PROPERTY under test is unchanged and is the one
+  // that matters — a count of one must not say "saves" — so it is asserted
+  // against the shipped markup rather than against a phrase nothing emits.
+  //
+  // STRENGTHENED, not relaxed, in both directions: the singular case now pins
+  // the figure as well as the wording, and the plural case is covered for the
+  // first time. Reverting the view to a hardcoded 'Saves recorded' label reds
+  // the first of these; dropping the count reds the second.
   const single = makeRenderers({
     ...hostileState,
     detail: { ...hostileDetail, journal: { returned: 1, total: 1, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
   });
-  ok('one save singularises ("1 save recorded")', single.renderJournal().includes('1 save recorded'));
+  const one = single.renderJournal();
+  ok('one save singularises (readout label "Save recorded", never "Saves")',
+    one.includes('>Save recorded<') && !one.includes('>Saves recorded<'), one.slice(-400));
+  ok('...and the figure itself is rendered as the readout VALUE',
+    /class="tx-readout-value">1</.test(one), one.slice(-400));
+
+  const plural = makeRenderers({
+    ...hostileState,
+    detail: { ...hostileDetail, journal: { returned: 3, total: 3, totalUnknown: false, entries: [hostileDetail.journal.entries[1]] } },
+  });
+  const many3 = plural.renderJournal();
+  ok('three saves pluralise ("Saves recorded")', many3.includes('>Saves recorded<'), many3.slice(-400));
+  ok('...with the figure as the value', /class="tx-readout-value">3</.test(many3), many3.slice(-400));
 }
 
 // Single-option controls collapse to a static label rather than a dropdown.

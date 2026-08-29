@@ -127,6 +127,16 @@ import {
   computeQueueStatusCounts, computeQueueSpentLabel,
 } from '../shared/ingest-queue-logic.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
+// The ONE text system in /next (shared/text.js). Imported, never re-implemented.
+// This view rendered its cost ESTIMATE — the figure a user decides to spend on —
+// in a bespoke label/value row, and its static "what this view does" sentence in
+// `.view-body`, a class that also means "loading placeholder" and "empty state"
+// elsewhere in the tree. renderReadout and renderDescription are those two roles.
+// scripts/test-next-memory-ingest-text.js asserts these imports are present AND
+// reached: a component that ships unused is the shape this repo keeps re-learning.
+import {
+  renderDescription, renderStatus, renderReadoutGroup,
+} from '../shared/text.js';
 
 // The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
 // separate module precisely because those are frozen to app.js and this
@@ -633,7 +643,7 @@ function renderMain(token) {
   if (state.loadingDomains) {
     body = gatedLoader(loadGate, 'Loading domains…');
   } else if (state.domainsError) {
-    body = '<div class="settings-inline-error">Could not load domains: ' + escapeHtml(state.domainsError) + '</div>';
+    body = renderStatus({ state: 'danger', title: 'Could not load domains', detail: state.domainsError });
   } else if (!state.domains.length) {
     body = emptyCard({
       title: 'No domains to ingest into yet',
@@ -645,12 +655,38 @@ function renderMain(token) {
     body = renderIngestForm();
   }
 
+  // THE FORMATS ARE DERIVED, and that is the whole reason this line changed
+  // shape. It used to TYPE OUT ".pdf, .md or .txt" three lines above a drop
+  // zone that builds the same list from ALLOWED_EXT — the constant
+  // pickSingleFile actually validates against. Two descriptions of one fact,
+  // in one view, one of them hand-maintained: add a format and this sentence
+  // silently starts lying about what the picker will accept. Read from the
+  // constant here too, so it cannot.
+  //
+  // Built inline rather than through a shared helper because
+  // renderDropZoneHtml must keep `ALLOWED_EXT ... .map(` in its OWN body —
+  // scripts/test-next-ingest-view.js §? asserts exactly that, so hoisting the
+  // list-builder out of it would defeat the guard that stops the drop zone
+  // regressing to a typed list. One constant, two readers, no second copy of
+  // the fact.
+  const acceptList = ALLOWED_EXT.map((ext) => '<span class="mono">' + escapeHtml(ext) + '</span>');
+  const accepts = acceptList.length > 1
+    ? acceptList.slice(0, -1).join(', ') + ' or ' + acceptList[acceptList.length - 1]
+    : (acceptList[0] || '');
+
   setMain(
     eyebrow('the way material gets in') +
     '<h1 class="view-title">Ingest</h1>' +
-    '<div class="view-body">Drop in a <span class="mono">.pdf</span>, <span class="mono">.md</span> or ' +
-    '<span class="mono">.txt</span> source — or several at once for a batch. The Curator reads them and ' +
-    'updates the wiki automatically.</div>' +
+    // STATIC PROSE, in the one role for it. `.view-body` is deliberately NOT
+    // renamed — shell.css owns it and shared/loading-gate.js DEFAULTS to it —
+    // it is retired ROLE BY ROLE, and this was its description role. Its
+    // loading-placeholder role survives below, which is the meaning the class
+    // legitimately keeps.
+    //
+    // `html: true`: the sentence carries the derived <span class="mono">
+    // fragments, every one of them escaped above at the point it was built.
+    renderDescription('Drop in a ' + accepts + ' source — or several at once for a batch. ' +
+      'The Curator reads them and updates the wiki automatically.', { html: true }) +
     body,
     token
   );
@@ -723,7 +759,11 @@ function renderIngestForm() {
     '</button>' +
     renderProgress() +
     renderDuplicate() +
-    (state.errorMessage ? '<div class="settings-inline-error" style="margin-top:14px">' + escapeHtml(state.errorMessage) + '</div>' : '') +
+    (state.errorMessage
+      ? '<div class="ing-status-block">' +
+          renderStatus({ state: 'danger', title: 'Ingest failed', detail: state.errorMessage }) +
+        '</div>'
+      : '') +
     renderResult()
   );
 }
@@ -1963,7 +2003,9 @@ function renderQueueConfirmGate() {
     const n = state.selectedFiles.length;
     estimateBody = '<p class="view-body">Estimating cost for <span class="mono">' + n + '</span> file' + (n === 1 ? '' : 's') + '…</p>';
   } else if (state.queueEstimateError) {
-    estimateBody = '<div class="settings-inline-error">' + escapeHtml(state.queueEstimateError) + '</div>';
+    estimateBody = renderStatus({
+      state: 'danger', title: 'Could not estimate this batch', detail: state.queueEstimateError,
+    });
   } else if (state.queueEstimate) {
     estimateBody = renderQueueEstimate(state.queueEstimate);
   }
@@ -1976,7 +2018,11 @@ function renderQueueConfirmGate() {
     '<div class="ing-field">' +
       renderDropZoneHtml({ disabled: false, multiHint: false }) +
     '</div>' +
-    (state.queueSubmitError ? '<div class="settings-inline-error" style="margin-bottom:14px">' + escapeHtml(state.queueSubmitError) + '</div>' : '') +
+    (state.queueSubmitError
+      ? '<div class="ing-status-block">' +
+          renderStatus({ state: 'danger', title: 'Could not start this batch', detail: state.queueSubmitError }) +
+        '</div>'
+      : '') +
     estimateBody
   );
 }
@@ -1992,7 +2038,6 @@ function renderQueueEstimate(est) {
   const costRange = formatUsdRange(est2.usdLow, est2.usdHigh);
   const tokIn = formatTokenRange(est2.inputTokensLow, est2.inputTokensHigh);
   const tokOut = formatTokenRange(est2.outputTokensLow, est2.outputTokensHigh);
-  const basis = est2.basis ? escapeHtml(est2.basis) : '';
   const warnings = Array.isArray(est.warnings) ? est.warnings : [];
 
   const rejectedHtml = rejected.length
@@ -2010,8 +2055,22 @@ function renderQueueEstimate(est) {
       '</ul>' +
     '</div>';
 
+  // A WARNING ON A SPENDING SURFACE. renderStatus, unfolded and above the
+  // Start button, never an explainer: v3.16.1's rule is that a warning behind
+  // a click is not a warning, and this is the exact surface that rule was
+  // learned on. The component makes hiding these structurally awkward — there
+  // is no parameter that puts toned text inside a fold — and nothing here
+  // works around that.
+  //
+  // The estimator can emit several; they are one finding about one batch, so
+  // they are one box with the lines as its detail rather than N stacked boxes
+  // competing with the Start button.
   const warningsHtml = warnings.length
-    ? '<div class="ing-queue-warnings">' + warnings.map((w) => '<div>' + escapeHtml(String(w)) + '</div>').join('') + '</div>'
+    ? renderStatus({
+        state: 'attention',
+        title: warnings.length === 1 ? 'Before you start' : 'Before you start (' + warnings.length + ' notes)',
+        detail: warnings.map((w) => String(w)).join(' · '),
+      })
     : '';
 
   return (
@@ -2021,10 +2080,27 @@ function renderQueueEstimate(est) {
     '</div>' +
     rejectedHtml +
     fileListHtml +
+    // THE TWO FIGURES THIS WHOLE GATE EXISTS FOR, as instruments. They were a
+    // hand-built label/value row: the label in body prose, the figure bolded
+    // mono — close to right, and one more private description of a role the
+    // app now has a single definition of. renderReadout puts the figure in
+    // mono at full --text and steps the label back by SIZE and FAMILY, so the
+    // cost stops competing with the sentence above it.
+    //
+    // `basis` — the estimator's own account of HOW it arrived at the range —
+    // is PROVENANCE, which is exactly the third field of a readout, and it
+    // hangs off the cost it qualifies rather than floating under both rows.
+    //
+    // ABSENT IS NOT ZERO: formatUsdRange already returns an honest "unknown"
+    // string rather than a fabricated $0.00 (test-ingest-queue-frontend.js
+    // pins that), and renderReadout drops a provenance line that was never
+    // supplied rather than printing "—". Neither behaviour is re-implemented
+    // here; both are inherited.
     '<div class="ing-queue-estimate">' +
-      '<div class="ing-queue-estimate-row"><span>Estimated cost</span><strong class="mono">' + escapeHtml(costRange) + '</strong></div>' +
-      '<div class="ing-queue-estimate-row"><span>Estimated tokens</span><span class="mono">' + escapeHtml(tokIn) + ' in / ' + escapeHtml(tokOut) + ' out</span></div>' +
-      (basis ? '<div class="ing-queue-estimate-basis">' + basis + '</div>' : '') +
+      renderReadoutGroup([
+        { label: 'Estimated cost', value: costRange, provenance: est2.basis || undefined },
+        { label: 'Estimated tokens', value: tokIn + ' in / ' + tokOut + ' out' },
+      ]) +
     '</div>' +
     warningsHtml +
     '<div class="ing-field ing-queue-budget-row">' +
@@ -2076,17 +2152,35 @@ function renderQueueRejectedItem(entry) {
 // copy contract with the other 11, not on this file's reimplement-the-
 // markup side of the line).
 
+/**
+ * A paused batch — state, said without a sentence of our own.
+ *
+ * `pausedReasonCopy` (shared/ingest-queue-logic.js) stays the ONE source of
+ * the words; only their TREATMENT moves to the shared status role. A pause is
+ * `attention`, never `danger`: every reason in that table is recoverable and
+ * says so ("Nothing was lost", "resume when ready"), and dressing a resumable
+ * pause as a failure is the mistake shared/text.js's own status docblock
+ * records its precedent avoiding.
+ *
+ * The rail carries the tone as a BORDER (floor 3:1, which --attention-text
+ * clears in both themes) while the words stay at --text / --text-2, which
+ * clear the 4.5:1 text floor — where the amber-on-tint TEXT this banner used
+ * measures 3.21:1 in the light theme.
+ *
+ * `pausedMessage` is the server's own account of the pause and is appended to
+ * the copy's body rather than dropped: it is the line that names WHICH file or
+ * WHICH provider, and it is the one part a user can act on. Absent is not
+ * zero — when the server sent none, nothing extra is rendered.
+ */
 function renderQueuePausedBanner(job) {
   const copy = pausedReasonCopy(job && job.pausedReason);
-  const detail = (job && typeof job.pausedMessage === 'string' && job.pausedMessage)
-    ? '<div class="ing-queue-paused-detail">' + escapeHtml(job.pausedMessage) + '</div>' : '';
-  return (
-    '<div class="ing-queue-paused-banner">' +
-      '<div class="ing-queue-paused-title">' + escapeHtml(copy.title) + '</div>' +
-      '<div class="ing-queue-paused-body">' + escapeHtml(copy.body) + '</div>' +
-      detail +
-    '</div>'
-  );
+  const extra = (job && typeof job.pausedMessage === 'string' && job.pausedMessage.trim())
+    ? ' ' + job.pausedMessage.trim() : '';
+  return renderStatus({
+    state: 'attention',
+    title: copy.title,
+    detail: copy.body + extra,
+  });
 }
 
 function renderQueueDoneSummary(job) {
@@ -2326,7 +2420,9 @@ function renderQueuePanel(job) {
     '</div>';
 
   const streamErrorHtml = state.queueStreamError
-    ? '<div class="settings-inline-error" style="margin-bottom:14px">' + escapeHtml(state.queueStreamError) + '</div>'
+    ? '<div class="ing-status-block">' +
+        renderStatus({ state: 'danger', title: 'Lost the live connection to this batch', detail: state.queueStreamError }) +
+      '</div>'
     : '';
   const pausedHtml = job.status === 'paused' ? renderQueuePausedBanner(job) : '';
   const doneHtml = isTerminal ? renderQueueDoneSummary(job) : '';
