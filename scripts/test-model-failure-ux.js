@@ -55,6 +55,16 @@
  *     backoff.
  *   - Rendering, layout and colour CONTRAST are not measurable in Node; they
  *     were measured in a real browser and the numbers live in chat.css.
+ *   - §11's THREE 429 SHAPES come from a live wire capture on 2026-08-29 and
+ *     were NOT re-measured by this suite or by the session that wrote it.
+ *     Re-confirming them means deliberately tripping a free-tier cap (~21 rapid
+ *     requests), which was declined on quota grounds. A cheap zero-token probe
+ *     was run instead and established one useful negative: an OpenRouter 4xx
+ *     that is NOT a 429 carries no `x-ratelimit-*` headers at all, so these
+ *     headers cannot be observed without provoking the rate limit itself.
+ *     The design is written to be INERT rather than wrong if the capture is
+ *     ever wrong about the ENCODING: a seconds-encoded or relative value fails
+ *     the sanity bound and falls to the unchanged 60 s default (asserted below).
  */
 
 import { readFileSync } from 'fs';
@@ -563,6 +573,238 @@ section('§10  THE STYLING IS RECESSED, AND ITS TOKENS EXIST');
     'CONTROL: stripping comments left the real rules intact, so the check below is not vacuous');
   ok(!/\.chat-msg-error\s+\.chat-answer\s*\{[^}]*--danger-text/.test(cssCode),
     'the old `.chat-msg-error .chat-answer { color: var(--danger-text) }` rule is deleted');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11  THE OTHER TWO 429 SHAPES — the one the report was actually on');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // ── THE MEASUREMENT ────────────────────────────────────────────────────────
+  // Captured live 2026-08-29 from one key in one session. OpenRouter does not
+  // answer a 429 one way; it answers three ways, and the shipped fix reached
+  // one of them:
+  //
+  //   A  z-ai/glm-5.2:free      retry-after: 5                    → FIXED
+  //   B  google/gemma-4-*:free  x-ratelimit-{limit,remaining,reset}
+  //                             reset = ABSOLUTE epoch MILLISECONDS
+  //                             body: "Rate limit exceeded: free-models-per-min."
+  //   C  google/gemma-4-31b-it:free   no rate-limit headers at all
+  //
+  // The maintainer's ORIGINAL report was on a Gemma free model — shape B. So
+  // the honest hint was on the wire and still fell to the 60 s default, three
+  // times over: ~180 s of silence, which is the whole of the complaint.
+  const NOW = 1_756_000_000_000;   // fixed clock; nothing here reads the real one
+  const OR_429 = 'OpenRouter chat → HTTP 429 (rate limit): rate limited upstream';
+
+  // POSITIVE CONTROL, and it is the finding: shape B carries no Retry-After in
+  // any form, so every rung that existed before this change declines it.
+  const shapeB = { message: OR_429, rateLimitResetMs: NOW + 5_000 };
+  eq(T.retryAfterSecondsFromHeaders(shapeB.headers), null,
+    'MEASURED: shape B carries no retry-after header — the Retry-After reader has nothing to read');
+  eq(T.parseRetryDelay({ message: OR_429 }, NOW), 60_000,
+    'CONTROL: with the reset stamp REMOVED, shape B is exactly the 60s default it used to get');
+
+  // THE FIX.
+  eq(T.parseRetryDelay(shapeB, NOW), 5_000,
+    'THE FIX: a reset stamp 5s in the future yields 5000ms, not the 60000ms default');
+
+  // Shape C must be untouched — there is nothing to read, and inventing one
+  // would be strictly worse than the default we already had.
+  eq(T.parseRetryDelay({ message: OR_429 }, NOW), 60_000,
+    'shape C (no rate-limit headers at all) still gets the unchanged 60s default');
+
+  // ── PRECEDENCE: the clock-derived value may only ever replace the INVENTED
+  // one. It must never displace a duration the provider stated, in any form.
+  eq(T.parseRetryDelay({ message: OR_429, retryAfterSeconds: 3, rateLimitResetMs: NOW + 9_000 }, NOW), 3_000,
+    'a stated Retry-After outranks the reset stamp — a duration beats an arithmetic result');
+  eq(T.parseRetryDelay({ message: '429', headers: { 'retry-after': '4' }, rateLimitResetMs: NOW + 9_000 }, NOW), 4_000,
+    '…and so does a Retry-After read from headers');
+  eq(T.parseRetryDelay({ message: 'Please retry in 8s', rateLimitResetMs: NOW + 9_000 }, NOW), 8_000,
+    'even Gemini\'s PROSE form outranks it: stated-in-text is still clock-free, the stamp is not');
+  eq(T.parseRetryDelay({ message: '429 {"retryDelay":"7s"}', rateLimitResetMs: NOW + 9_000 }, NOW), 7_000,
+    '…as does Gemini\'s structured message form');
+
+  // ── THE SANITY BOUND, driven directly so the boundary is visible. At exactly
+  // 60s the ACCEPTED value and the DEFAULT are both 60000, so parseRetryDelay
+  // alone cannot tell them apart — which is why the rung is exported and
+  // exercised on its own here. A test that could not distinguish the two would
+  // pass whether or not the bound existed.
+  const R = T.retryDelayFromResetStamp;
+  eq(R({ rateLimitResetMs: NOW + 1 }, NOW), 1, '1ms in the future is accepted — the bound is not a floor in disguise');
+  eq(R({ rateLimitResetMs: NOW + 60_000 }, NOW), 60_000, 'exactly the ceiling is ACCEPTED (inclusive)');
+  eq(R({ rateLimitResetMs: NOW + 60_001 }, NOW), null, 'one millisecond over the ceiling is REFUSED, not clamped');
+  eq(R({ rateLimitResetMs: NOW }, NOW), null, 'a reset of exactly now is refused — a 429 just happened, so it cannot be trusted');
+  eq(R({ rateLimitResetMs: NOW - 1 }, NOW), null, 'a reset in the past is refused');
+
+  // ── SKEWED CLOCK, both directions. This is the rung's whole risk: it is the
+  // only one whose answer depends on the local machine agreeing with the
+  // provider. Both skews must land on the UNCHANGED default, costing the user
+  // nothing they were not already paying.
+  const DAY = 86_400_000;
+  eq(T.parseRetryDelay({ message: OR_429, rateLimitResetMs: NOW + 5_000 }, NOW + 365 * DAY), 60_000,
+    'CLOCK A YEAR FAST: the reset lands in the past, so it is refused and the 60s default stands');
+  eq(T.parseRetryDelay({ message: OR_429, rateLimitResetMs: NOW + 5_000 }, NOW - 365 * DAY), 60_000,
+    'CLOCK A YEAR SLOW: the delta is ~a year, far over the ceiling, so it is refused — never a year-long sleep');
+  ok(R({ rateLimitResetMs: NOW + 5_000 }, NOW - 365 * DAY) === null,
+    '…and the rung itself returns null there rather than a clamped figure we would then PRINT');
+
+  // ── OTHER PLAUSIBLE ENCODINGS FAIL SAFE WITHOUT A SPECIAL CASE. If a provider
+  // ever sends seconds, or a relative duration, the delta against a ~1.7e12
+  // epoch is hugely negative — refused, never misread as a 55-year wait.
+  eq(R({ rateLimitResetMs: Math.floor(NOW / 1000) }, NOW), null,
+    'a SECONDS-encoded reset is refused, not misread (delta is hugely negative)');
+  eq(R({ rateLimitResetMs: 5_000 }, NOW), null,
+    'a RELATIVE duration sent in the absolute field is refused too');
+
+  // Garbage must never coerce. `Number.isFinite` is the gate, not truthiness.
+  for (const bad of [null, undefined, NaN, Infinity, -Infinity, '5000', {}, [], true]) {
+    eq(R({ rateLimitResetMs: bad }, NOW), null,
+      `a rateLimitResetMs of ${JSON.stringify(bad) ?? String(bad)} yields null, never a coerced number`);
+  }
+  eq(R({}, NOW), null, 'an error with no reset stamp yields null');
+  eq(R(null, NOW), null, 'a null error yields null rather than throwing');
+
+  // `now` is DEFAULTED, so no production call site changed. Proven by calling
+  // the shipped signature with one argument, as generateText does.
+  const soon = { message: OR_429, rateLimitResetMs: Date.now() + 10_000 };
+  const live = T.parseRetryDelay(soon);
+  ok(live > 8_000 && live <= 10_000,
+    'parseRetryDelay(err) with NO clock argument still reads the stamp against the real Date.now()');
+
+  // ── THE PRODUCER. The adapter must actually read all three headers off the
+  // wire and attach them RAW — a consumer with no producer is the same
+  // dead-data shape from the other end.
+  const adapterSrc = readFileSync(path.join(ROOT, 'src/brain/openrouter-adapter.js'), 'utf8');
+  for (const h of ['x-ratelimit-reset', 'x-ratelimit-limit', 'x-ratelimit-remaining']) {
+    ok(new RegExp(`readNumericHeader\\(res\\.headers, '${h}'\\)`).test(adapterSrc),
+      `the adapter reads ${h} off the 429 response`);
+  }
+  ok(/e\.rateLimitResetMs = resetMs/.test(adapterSrc),
+    'the adapter attaches the reset stamp to the error — the carrier that actually reaches the user');
+
+  // RAW, not pre-derived. If the adapter collapsed the stamp into
+  // `retryAfterSeconds` the clock-dependent guess would become indistinguishable
+  // from a provider-stated fact, defeating the precedence above.
+  ok(!/retryAfterSeconds\s*=\s*[^;]*resetMs/.test(adapterSrc),
+    'the adapter does NOT collapse the reset stamp into retryAfterSeconds — the two ranks stay distinct');
+
+  // ── readNumericHeader: absent and zero must stay distinguishable. Number('')
+  // is 0, and a 0 here is a real, actionable figure.
+  const A = (await import('../src/brain/openrouter-adapter.js')).__testing;
+  eq(A.readNumericHeader({ 'x-ratelimit-remaining': '0' }, 'x-ratelimit-remaining'), 0,
+    'a header of "0" reads as the NUMBER 0 — a real figure, not absence');
+  eq(A.readNumericHeader({}, 'x-ratelimit-remaining'), null, 'an absent header reads as null, never 0');
+  for (const bad of ['', '   ', 'soon', '1e5', '20 per minute']) {
+    eq(A.readNumericHeader({ 'x-ratelimit-limit': bad }, 'x-ratelimit-limit'), null,
+      `a header of ${JSON.stringify(bad)} is refused rather than coerced`);
+  }
+  eq(A.readNumericHeader(new Headers({ 'x-ratelimit-limit': '20' }), 'x-ratelimit-limit'), 20,
+    'a WHATWG Headers is read too, matching the shape readHeader already accepts');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12  THE REAL LIMIT IS REPORTED — because it is now REPORTABLE');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  // v3.15.0 refused to print a rate-limit figure because OpenRouter's docs
+  // render that table as JS components and it came through EMPTY — the project
+  // had never verified a number. That reasoning stands. What changed is the
+  // PREMISE: on shape B the provider states it per-request, on the 429 itself.
+  // A reported fact about this exact call is not an invented one.
+  const D = T.describeReportedLimit;
+
+  eq(D(20, 0), 'OpenRouter reported a limit of 20 on this response.',
+    'the measured figure is repeated verbatim and attributed');
+  eq(D(20, 3), 'OpenRouter reported a limit of 20 with 3 remaining on this response.',
+    'a NON-zero remaining is kept — being refused with quota left says another limit was hit');
+  eq(D(20, 0), D(20, null),
+    'a ZERO remaining is suppressed: on a 429 it is the definition of the error, so it carries no information');
+
+  // ABSENCE IS NEVER A FIGURE. This is the whole discipline.
+  for (const absent of [null, undefined, NaN, Infinity, '20', {}, []]) {
+    eq(D(absent, 5), '', `a limit of ${JSON.stringify(absent) ?? String(absent)} renders NOTHING — never a default`);
+  }
+
+  // NO INVENTED WINDOW AND NO INVENTED TIER. The header is a bare number; only
+  // the upstream's own prose names the window, and it already reaches the user
+  // as `detail`. v3.18.0 measured 18 consecutive 429s on a PAID model, so a
+  // "free tier" lead was wrong exactly when the user needed it right.
+  const INVENTED = /per minute|per-minute|per day|per second|\/min|\bfree tier\b|\bfree-tier\b|\bpaid tier\b/i;
+  ok(INVENTED.test('capped at 20 requests per minute on the free tier'),
+    'POSITIVE CONTROL: the detector fires on the claim that actually shipped in v3.15.0');
+  for (const [l, r] of [[20, 0], [20, 3], [1, 0], [0, 0]]) {
+    ok(!INVENTED.test(D(l, r)), `the reported sentence (${l}/${r}) invents no window and no tier`);
+  }
+
+  // ONE DEFINITION, TWO CONSUMERS. A second copy of a claim about a NUMBER
+  // would not diverge visibly, it would diverge in what it asserts.
+  const adapterSrc = readFileSync(path.join(ROOT, 'src/brain/openrouter-adapter.js'), 'utf8');
+  ok(/export function describeReportedLimit/.test(adapterSrc),
+    'the sentence is defined exactly once, in the adapter that knows what the headers mean');
+  ok(/describeReportedLimit,/.test(llmSrc.slice(0, llmSrc.indexOf("} from './openrouter-adapter.js'"))),
+    'llm.js IMPORTS it rather than keeping a second copy');
+  ok(!/reported a limit of/.test(llmSrc),
+    'the literal sentence appears NOWHERE in llm.js — proving the import is the only source');
+
+  // ── IT REACHES THE USER. The adapter's `_warn` is a no-op on every production
+  // path (nothing passes `onWarn` to `new OpenRouterAdapter`), so a figure that
+  // stopped there would be measured, attached and read by nobody. MEASURED, not
+  // assumed: the construction site carries no callback.
+  const ctor = /new OpenRouterAdapter\(\{ apiKey \}\)/.exec(llmSrc);
+  ok(ctor !== null,
+    'MEASURED: llm.js builds the adapter with apiKey alone — no onWarn, so _warn reaches nobody');
+
+  const withLimit = T.buildRateLimitMessage('OpenRouter', 'openrouter', 5, { limit: 20, remaining: 0 });
+  ok(/OpenRouter reported a limit of 20 on this response\./.test(withLimit),
+    'THE FIX: the figure reaches the message a rate-limited user actually reads');
+  ok(withLimit.indexOf('reported a limit') < withLimit.indexOf('documented at'),
+    '…and precedes the docs link, because a figure just stated outranks a page to go and read');
+
+  // BYTE-IDENTICAL WHEN NOTHING WAS REPORTED. Every provider and every call that
+  // sent no header must produce exactly the message that shipped.
+  for (const [id, name] of PROVIDERS) {
+    const base = T.buildRateLimitMessage(name, id, 30);
+    const label = id ?? 'unknown-provider';
+    eq(T.buildRateLimitMessage(name, id, 30, undefined), base,
+      `the ${label} message is byte-identical with no limits argument at all`);
+    eq(T.buildRateLimitMessage(name, id, 30, {}), base,
+      `…and with an EMPTY limits object — absence never renders a partial sentence`);
+    eq(T.buildRateLimitMessage(name, id, 30, { limit: null, remaining: null }), base,
+      `…and with explicit nulls`);
+    ok(!/reported a limit/.test(base),
+      `the ${label} message says nothing about a limit it was never told`);
+  }
+
+  // The provider name is threaded, so nothing here is OpenRouter-specific.
+  ok(/Gemini reported a limit of 9 on this response\./.test(
+    T.buildRateLimitMessage('Gemini', 'gemini', 5, { limit: 9 })),
+    'the sentence names whichever provider reported it — Gemini would render identically');
+
+  // THE FIGURES ARE FORWARDED FROM THE RAW ERROR. A builder that accepts them
+  // and a call site that never passes them is the dead-data shape from the
+  // other end — this repo has shipped it several times.
+  const genSrc = extractFunction(llmSrc, 'generateText', 'llm.js');
+  ok(/limit:\s*err\?\.rateLimitLimit/.test(genSrc) && /remaining:\s*err\?\.rateLimitRemaining/.test(genSrc),
+    'generateText forwards both figures off the raw provider error into the message');
+
+  // ── CLASSIFICATION IS UNCHANGED BY THE NEW SENTENCE. It is added to a message
+  // five classifiers across four files read as TEXT.
+  const withBoth = T.buildRateLimitMessage('OpenRouter', 'openrouter', 5, { limit: 20, remaining: 3 });
+  for (const [label, msg] of [['limit-only', withLimit], ['limit+remaining', withBoth]]) {
+    ok(T.is429({ message: msg }), `is429 still fires on the ${label} message`);
+    ok(!T.is503({ message: msg }), `…and the ${label} message acquired NO 503 token`);
+    ok(!isOutputTokenLimit({ message: msg }),
+      `…and the word "limit" did NOT make it read as an output-token limit`);
+    eq(classifyTransientError(new Error(`Ingest failed: ${msg}`)), 'rate_limit',
+      `the queue still PAUSES the batch on a wrapped ${label} message`);
+    // Takes a STRING, not an error object — matching how §6 calls it. Passing
+    // `{ message }` here made this assertion fail on the BASE message too, i.e.
+    // it was measuring the CALL SHAPE, not the classifier. Caught by the suite
+    // going red on first run, which is the right outcome; the code was fine.
+    ok(isTransientLlmError(msg), `sharedbrain still treats the ${label} message as transient`);
+    ok(hasTransientMarker(msg), `the CI gate still reads the ${label} message as a provider blip`);
+    ok(msg.includes('(HTTP 429)'), `the ${label} message keeps the literal "(HTTP 429)"`);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════

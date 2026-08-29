@@ -163,7 +163,12 @@ console.log('\n§2  The builders are actually WIRED — call sites, not just sou
   // remedy GIVEN a provider id; these prove the id is what production hands
   // them. Passing `providerName` here would render generic advice for every
   // provider — a silent regression to "no links" that a call COUNT cannot see.
-  ok(/buildRateLimitMessage\(\s*providerName\s*,\s*providerId\s*,\s*delaySec\s*\)/.test(genSrc),
+  // The trailing `[,)]` tolerates the OPTIONAL 4th argument (the provider's own
+  // reported rate-limit figures) without loosening what this guard is for: the
+  // first three positions are still pinned by name, so passing `providerName`
+  // where `providerId` belongs — the silent regression to generic advice that a
+  // call COUNT cannot see — still reds this line.
+  ok(/buildRateLimitMessage\(\s*providerName\s*,\s*providerId\s*,\s*delaySec\s*[,)]/.test(genSrc),
     'the 429 call site passes providerId (not the display name) to the builder');
   ok(/buildServiceUnavailableMessage\(\s*providerName\s*,\s*providerId\s*\)/.test(genSrc),
     'the 503 call site passes providerId (not the display name) to the builder');

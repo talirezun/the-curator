@@ -1374,11 +1374,47 @@ export class OpenRouterAdapter {
 
     if (status === 429) {
       const retryAfter = readHeader(res.headers, 'retry-after');
+      // ── THREE 429 SHAPES, MEASURED ON THE WIRE 2026-08-29 ──────────────────
+      // OpenRouter does not answer a 429 one way. All three were captured live
+      // in the same session, from the same key:
+      //
+      //   • `z-ai/glm-5.2:free`          → `retry-after: 5`, nothing else.
+      //   • `google/gemma-4-*:free`      → NO `retry-after`. Instead
+      //     `x-ratelimit-limit`, `x-ratelimit-remaining` and `x-ratelimit-reset`
+      //     (an ABSOLUTE epoch, in MILLISECONDS), with a body message naming the
+      //     window: "Rate limit exceeded: free-models-per-min."
+      //   • `google/gemma-4-31b-it:free` → no rate-limit headers at all.
+      //
+      // The shipped fix read only the first shape, so the maintainer's ORIGINAL
+      // report — on a Gemma free model, i.e. the second shape — still fell to
+      // the 60 s default three times over: ~180 s of silence. Every value below
+      // is therefore read and attached RAW; `llm.js` owns what to do with them,
+      // because it owns the precedence and the ceiling.
+      const resetMs = readNumericHeader(res.headers, 'x-ratelimit-reset');
+      const limit = readNumericHeader(res.headers, 'x-ratelimit-limit');
+      const remaining = readNumericHeader(res.headers, 'x-ratelimit-remaining');
       // NO INVENTED FIGURE — AND NO INVENTED TIER. An earlier version said "Free
       // models are capped at 20 requests/minute" on ANY 429, a paid model's
       // included. OpenRouter's own docs render that table as JS components and it
-      // came through EMPTY, so the project has never verified the number; the
+      // came through EMPTY, so the project had never verified the number; the
       // docs refuse to print it and this string had no more right to.
+      //
+      // ⚠ THAT REASONING STANDS AND ITS PREMISE HAS CHANGED — updated 2026-08-29
+      // rather than left contradicting the code beside it. What was unavailable
+      // was a number we could VERIFY; the objection was never to printing a
+      // figure, it was to printing one nobody had measured. On the Gemma shape
+      // the provider now states it per-request, on the 429 itself:
+      // `x-ratelimit-limit: 20`, `x-ratelimit-remaining: 0`. That is a REPORTED
+      // fact about this exact call, not a docs table we could not read and not a
+      // tier we inferred — so it may be repeated, verbatim and attributed.
+      //
+      // The discipline is unchanged and is what keeps this honest: report it
+      // ONLY when the header is present on THIS response. Never remember it,
+      // never default it, never carry it to a call that did not send one, and
+      // never attach a window to it — the header is a bare number, and the only
+      // thing naming the window ("free-models-per-min") is the upstream's own
+      // prose, which already reaches the user through `detail`. Reported or
+      // absent, never inferred.
       //
       // Removing the DIGITS was not enough, and that is the instructive part: the
       // rewrite kept "free models carry a request cap that rises once credits are
@@ -1400,6 +1436,7 @@ export class OpenRouterAdapter {
       this._warn(
         'OpenRouter rate limit reached.' +
         (retryAfter ? ` OpenRouter asks us to wait ${retryAfter}s.` : '') +
+        (limit !== null ? ` ${describeReportedLimit(limit, remaining)}` : '') +
         ' Which limit applies depends on the model and on this key\'s account —' +
         ' System Check reads the live figures from OpenRouter\'s own key endpoint,' +
         ' free and without spending a token.'
@@ -1412,7 +1449,25 @@ export class OpenRouterAdapter {
         `OpenRouter ${op} → HTTP 429 (rate limit)${detail ? `: ${detail}` : ''}`,
         status,
       );
+      // ── WHY THESE GO ON THE ERROR AND NOT ONLY INTO `_warn` ────────────────
+      // MEASURED 2026-08-29: `_warn` reaches NOBODY on any production LLM path.
+      // `onWarn` is optional and `llm.js` constructs this adapter as
+      // `new OpenRouterAdapter({ apiKey })` — no callback — so `this._onWarn` is
+      // null and `_warn()` is a no-op for chat, ingest, Health and compile
+      // alike. A figure reported only there would be this repo's dead-data shape
+      // again, which is precisely the defect the `retryAfterSeconds` half of
+      // this block was written to close. The error is the one carrier that
+      // reaches the user, so every measured figure rides on it.
+      //
+      // RAW, never derived. `retryAfterSeconds` is a DURATION the provider
+      // stated; `rateLimitResetMs` is an ABSOLUTE epoch whose meaning depends on
+      // the reader's clock. Collapsing the second into the first here would make
+      // a clock-dependent guess indistinguishable from a provider-stated fact
+      // one layer up, and `llm.js` ranks them differently on purpose.
       if (retryAfter) e.retryAfterSeconds = Number(retryAfter);
+      if (resetMs !== null) e.rateLimitResetMs = resetMs;
+      if (limit !== null) e.rateLimitLimit = limit;
+      if (remaining !== null) e.rateLimitRemaining = remaining;
       throw e;
     }
     if (status === 503) {
@@ -1608,12 +1663,67 @@ function readHeader(headers, name) {
   return null;
 }
 
+/**
+ * Read a header as a finite number, or null.
+ *
+ * Deliberately STRICTER than `Number(...)`: an empty string, whitespace, `null`
+ * and `[]` all coerce to 0 under `Number`, and a 0 here is a real, actionable
+ * figure ("you have 0 requests left"), so coercing an ABSENT header into one
+ * would manufacture a fact. The regex requires at least one digit before the
+ * conversion, which is what makes "absent" and "zero" distinguishable — the
+ * v3.15.0 fact-vs-absence rule, applied to a header.
+ */
+function readNumericHeader(headers, name) {
+  const raw = readHeader(headers, name);
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The one sentence that repeats a provider-reported rate-limit figure.
+ *
+ * ── WHY IT LIVES HERE AND IS IMPORTED, NOT COPIED ───────────────────────────
+ * It has TWO consumers: this adapter's `_warn`, and `llm.js`'s
+ * `buildRateLimitMessage` — the message a user actually reads when the ladder
+ * is exhausted. Two hand-maintained copies of one claim is the shape that
+ * produced this repo's v3.2.0 CRITICAL, and a claim about a NUMBER is the worst
+ * case of it: the copies would not diverge visibly, they would diverge in what
+ * they assert. So there is one function, `llm.js` imports it, and `subject`
+ * carries the provider name so nothing about it is OpenRouter-specific.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT SAY ───────────────────────────────────────
+ * No window. `x-ratelimit-limit` is a bare number; naming it "per minute" would
+ * be an inference, and the only thing that names the window is the upstream's
+ * own prose ("free-models-per-min"), which already reaches the user as `detail`.
+ * No tier either — v3.18.0 measured 18 consecutive 429s on a PAID model, so
+ * "free tier" was wrong exactly when the user most needed it right.
+ *
+ * ── WHY A ZERO REMAINING IS SUPPRESSED ──────────────────────────────────────
+ * On a 429 `remaining: 0` is the EXPECTED value — it is what a rate limit means.
+ * Printing it states the definition of the error back at the reader, the
+ * no-information shape v3.18.0 deleted the `chat only` badge for. A NON-zero
+ * remaining is the informative case: refused while the counter still shows
+ * quota, which tells the user some OTHER limit was reached. That one is kept.
+ */
+export function describeReportedLimit(limit, remaining, subject = 'OpenRouter') {
+  if (typeof limit !== 'number' || !Number.isFinite(limit)) return '';
+  const rem = (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0)
+    ? ` with ${remaining} remaining`
+    : '';
+  return `${subject} reported a limit of ${limit}${rem} on this response.`;
+}
+
 /** Test-only surface — the pure helpers, so a suite can drive them directly. */
 export const __testing = {
+  describeReportedLimit,
   neutralizeRetrySignals,
   neutralizeNotFoundSignals,
   linkSignals,
   readHeader,
+  readNumericHeader,
   SECRET_PATTERNS,
   TRANSIENT_STATUSES,
 };

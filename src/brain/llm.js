@@ -26,6 +26,11 @@ import {
   MODEL_NOT_FOUND_CLAUSES,
   fetchOpenRouterCatalogue,
   buildOpenRouterCatalogue,
+  // IMPORTED, never re-written here. It is the one sentence that repeats a
+  // provider-reported rate-limit figure, and it has a second consumer in the
+  // adapter's own `_warn`. See its docblock for why a second copy of a claim
+  // about a NUMBER is the worst case of the two-hand-maintained-copies shape.
+  describeReportedLimit,
 } from './openrouter-adapter.js';
 // User-data path + atomic write for the persisted OpenRouter catalogue. `fs` is
 // already on the MCP child's import graph (config.js), so this adds no new
@@ -180,7 +185,7 @@ const MAX_RETRIES = 4;
  *     outage from reddening the live CI gate).
  * The remedy CLAUSES are free to change; the diagnosis clauses are not.
  */
-function buildRateLimitMessage(providerName, providerId, delaySec) {
+function buildRateLimitMessage(providerName, providerId, delaySec, limits) {
   const remedies = providerRemedies(providerId);
   const limitsAdvice = remedies
     ? `${providerName}'s current limits for your account tier are documented at ${remedies.limitsUrl}.`
@@ -188,11 +193,23 @@ function buildRateLimitMessage(providerName, providerId, delaySec) {
   // "1 seconds" shipped for as long as this message has existed, on the one
   // figure a rate-limited user reads most closely.
   const wait = `${delaySec} second${delaySec === 1 ? '' : 's'}`;
+  // ── THE MEASURED FIGURE, WHEN THE PROVIDER SENT ONE ────────────────────────
+  // The sentence above it is the GENERIC claim ("limits differ by provider and
+  // by tier"); this is the specific instance of it, for this exact call, in the
+  // provider's own numbers. It renders ONLY when the header was present on this
+  // response — `describeReportedLimit` returns '' otherwise, which is what keeps
+  // this message BYTE-IDENTICAL for every provider and every call that reported
+  // nothing. Reported or absent, never inferred; never remembered between calls.
+  //
+  // Placed BEFORE `limitsAdvice` deliberately: that clause points at
+  // documentation about limits, and a figure the provider just stated outranks a
+  // link to a page the user still has to go and read.
+  const reported = describeReportedLimit(limits?.limit, limits?.remaining, providerName);
   return (
     `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
     `not an issue with The Curator. The Curator already retried ${MAX_RETRIES - 1} times, pausing between ` +
     `attempts, before showing you this. Limits differ by provider and by the tier your account is on, and ` +
-    `a paid account has them too. Please wait ${wait} and try again. ${limitsAdvice} ` +
+    `a paid account has them too. ${reported ? `${reported} ` : ''}Please wait ${wait} and try again. ${limitsAdvice} ` +
     `You can also switch to a different provider in Settings.`
   );
 }
@@ -3487,10 +3504,66 @@ function retryAfterSecondsFromHeaders(headers) {
  * that is the whole of the reported "I waited and then got a wall of red".
  *
  * Precedence is deliberate: a value the provider STATED beats one parsed out of
- * its prose, which beats a default we invented. The 60 s fallback is unchanged,
- * so an error carrying no hint in any form behaves exactly as it did.
+ * its prose, which beats a clock-derived reading of an absolute reset stamp,
+ * which beats a default we invented. The 60 s fallback is unchanged, so an
+ * error carrying no hint in any form behaves exactly as it did.
+ *
+ * ── THE CLOCK-DERIVED RUNG, AND WHY IT SITS LAST BEFORE THE DEFAULT ─────────
+ *
+ * MEASURED 2026-08-29: OpenRouter emits THREE different 429 shapes and the fix
+ * above reaches only one of them. The shape behind the ORIGINAL bug report — a
+ * Gemma free model — sends NO `Retry-After` at all. What it sends instead is
+ * `x-ratelimit-reset`, an ABSOLUTE epoch in MILLISECONDS. So the honest hint was
+ * on the wire and still fell to the 60 s default, three times: ~180 s of
+ * silence, the whole of the reported complaint.
+ *
+ * It is a WEAKER class of evidence than everything above it, and the ordering
+ * says so. `Retry-After` and Gemini's two prose forms are DURATIONS: they mean
+ * the same thing on any machine. An absolute stamp only becomes a duration by
+ * subtracting OUR clock from THEIR clock, so a skewed, frozen or
+ * timezone-confused local clock silently changes the answer. A duration the
+ * provider stated — even one stated in prose — is therefore better evidence than
+ * an arithmetic result, and this rung must never displace one. Placing it last
+ * before the default means the ONLY thing it can ever replace is a figure we
+ * invented, which is the safest insertion point available.
+ *
+ * ── THE SANITY BOUND IS EXACTLY THE RANGE WHERE BEING WRONG IS FREE ─────────
+ *
+ * Accepted only when `0 < delta <= MAX_RETRY_SLEEP_MS`. That bound is not a
+ * round number, it is the range in which a WRONG answer costs nothing we were
+ * not already prepared to pay:
+ *
+ *   • Above 60 s — the sleep site clamps to MAX_RETRY_SLEEP_MS anyway, so
+ *     accepting a larger value could not change how long we wait. It could only
+ *     change the number we PRINT, and a clock-derived "wait 3600 seconds" from a
+ *     machine whose clock is a year behind is precisely the invented figure this
+ *     project keeps deleting. From inside the process a genuinely long window
+ *     and a skewed clock are indistinguishable, so we decline both.
+ *   • At or below 0 — the reset is in the past, which either means skew or a
+ *     stale value. A 429 was just returned, so "the window already reset" cannot
+ *     be true and trusted at the same time.
+ *   • Between them — the worst case is a sleep we would have taken regardless
+ *     (the ceiling is 60 s either way) and a printed figure that is likewise
+ *     ≤ 60 s. The failure direction is IDENTICAL to today: fall through to the
+ *     same 60 s default, having cost the user nothing new.
+ *
+ * The bound also makes the other plausible encodings fail safe without a special
+ * case. Seconds-instead-of-milliseconds (~1.7e9) and a relative duration (~5e3)
+ * both yield a hugely negative delta against a ~1.7e12 epoch, so both are
+ * rejected rather than misread.
+ *
+ * `now` is injected so a suite can drive a skewed clock deterministically; it is
+ * defaulted, so every production call site is unchanged.
  */
-function parseRetryDelay(err) {
+function retryDelayFromResetStamp(err, now) {
+  const reset = err?.rateLimitResetMs;
+  if (typeof reset !== 'number' || !Number.isFinite(reset)) return null;
+  const delta = reset - now;
+  if (!Number.isFinite(delta) || delta <= 0 || delta > MAX_RETRY_SLEEP_MS) return null;
+  return Math.ceil(delta);
+}
+
+function parseRetryDelay(err, now = Date.now()) {
   // Structured, provider-stated. `openrouter-adapter.js` sets this from the
   // upstream's own Retry-After header; anything else that learns a delay
   // structurally should set the same property rather than encode it in prose.
@@ -3510,6 +3583,12 @@ function parseRetryDelay(err) {
   // Plain text: "Please retry in 27.136533819s"
   const plainMatch = msg.match(/retry in ([\d.]+)s/i);
   if (plainMatch) return Math.ceil(parseFloat(plainMatch[1]) * 1000);
+
+  // Clock-derived, sanity-bounded. Weaker than everything above — see the
+  // docblock — so it is consulted only once every stated form has been ruled
+  // out, and can therefore only ever replace the invented default below.
+  const fromReset = retryDelayFromResetStamp(err, now);
+  if (fromReset !== null) return fromReset;
 
   // Default fallback: 60 seconds
   return 60_000;
@@ -3778,7 +3857,16 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
           // a rate limit instead of failing just the one item. Message text
           // is UNCHANGED (existing tests assert on it); this only adds
           // properties.
-          const e = new Error(buildRateLimitMessage(providerName, providerId, delaySec));
+          // The provider's own figures, forwarded from the raw error to the one
+          // message the user actually reads. WIRED ON PURPOSE: the adapter's
+          // `_warn` channel is a no-op on every production path (nothing passes
+          // `onWarn` to `new OpenRouterAdapter`), so a figure that stopped here
+          // would be measured, attached, and read by nobody — the dead-data
+          // shape the structured Retry-After half of this ladder already closed.
+          const e = new Error(buildRateLimitMessage(
+            providerName, providerId, delaySec,
+            { limit: err?.rateLimitLimit, remaining: err?.rateLimitRemaining },
+          ));
           e.curatorTransient = 'rate_limit';
           e.curatorRetryAfterMs = parseRetryDelay(err);
           throw e;
@@ -4634,6 +4722,11 @@ export const __testing = {
   // (a structured Retry-After with no consumer) is invisible to any test that
   // asserts on a copy of the precedence rules.
   parseRetryDelay, retryAfterSecondsFromHeaders, MAX_RETRIES, MAX_RETRY_SLEEP_MS,
+  // The clock-derived rung, exposed separately so a suite can drive a SKEWED
+  // clock deterministically instead of waiting for one. Its whole risk is that
+  // it depends on `Date.now()`, so the injected `now` is the only way to test
+  // the bound in both directions without making the suite time-dependent.
+  retryDelayFromResetStamp, describeReportedLimit,
   // The private half of the model-resolution path, so a suite can assert the
   // build-lane refusal without having to reach it through a config write.
   applyModelOverride, defaultModelFor, storedSelection, resolveProviderDefault,
