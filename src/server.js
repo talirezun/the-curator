@@ -10,7 +10,7 @@ import queryRouter from './routes/query.js';
 import wikiRouter from './routes/wiki.js';
 import chatRouter from './routes/chat.js';
 import syncRouter from './routes/sync.js';
-import configRouter  from './routes/config.js';
+import configRouter, { maybeAutoSyncOpenRouter } from './routes/config.js';
 import healthRouter from './routes/health.js';
 import mcpRouter    from './routes/mcp.js';
 import compileRouter from './routes/compile.js';
@@ -352,6 +352,39 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
     if (!process.env.CURATOR_NO_OPEN) {
       exec(`open http://localhost:${PORT}`);
     }
+
+    // ── Refresh the OpenRouter model catalogue if it is absent or stale ──────
+    //
+    // WHY IT IS HERE, AFTER listen(), AND NOT AT MODULE SCOPE IN THE ROUTER.
+    // The catalogue used to be populated ONLY by a user pressing Sync in
+    // Settings: before that press chat offered the 5 hand-measured OpenRouter
+    // routes, after it ~190, and nothing said which state you were in. A list
+    // that is silently partial is worse than a short one, because the user
+    // cannot tell it is partial.
+    //
+    // The trigger belongs to a SERVER BOOT, not to importing a module. Firing it
+    // from `routes/config.js`'s module scope would make any suite that imports
+    // that file for an unrelated helper reach the network and write a catalogue
+    // sidecar into the real user-data directory — `test-beta10-fixes.js` does
+    // exactly that import and does not isolate. Binding it to `listen()` makes
+    // "only a real boot syncs" structural rather than a list of suites to
+    // remember.
+    //
+    // Placed INSIDE the listen callback and never awaited, so it cannot delay
+    // the port binding by a single millisecond. Every failure mode is absorbed
+    // by `maybeAutoSyncOpenRouter` itself: it is key-gated config-only, it
+    // defers to any write in flight, it cannot throw, and a failed or empty
+    // fetch leaves the existing catalogue completely intact.
+    // The SKIP is logged, not just the run. Two reasons, both practical:
+    // a user asking "why is my OpenRouter model list short?" gets the answer in
+    // /tmp/the-curator.log ('no-key' / 'fresh' / 'writes-active'), and the call
+    // itself becomes observable, which is the only way to see that this line is
+    // still wired without standing up a network fetch at boot.
+    maybeAutoSyncOpenRouter()
+      .then(r => {
+        if (r && !r.ran) console.error(`[config] OpenRouter catalogue auto-sync skipped (${r.reason})`);
+      })
+      .catch(() => {});
   });
 
   server.on('error', err => {

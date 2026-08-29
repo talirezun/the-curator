@@ -139,7 +139,9 @@ function enclosingFunctionName(src, offset) {
 // ── §0 — POSITIVE CONTROL: the extractor still reaches its targets ───────
 console.log('\n§ 0  Positive control — the extractor reaches its targets');
 
-const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain', 'renderSidebar', 'renderDropZoneHtml', 'loadDomains'];
+const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain', 'renderSidebar', 'renderDropZoneHtml', 'loadDomains',
+  // The ONE builder both domain pickers render from (see §9).
+  'domainListboxCfg'];
 const bodies = {};
 for (const name of NEEDED) {
   const body = extractFunction(js, name);
@@ -226,8 +228,14 @@ ok(/startQueueSelection\s*\(/.test(bodies.selectDomain),
 ok(/state\.queueModeActive\s*&&\s*!state\.queueJob/.test(bodies.selectDomain),
   're-estimate is gated on "at the confirm gate, no job yet" — the ported condition');
 
-const selectListener = /domainSelect\.addEventListener\('change',\s*\(e\)\s*=>\s*selectDomain\(/;
-ok(selectListener.test(js), 'the <select> change handler routes through selectDomain');
+// The picker is the shared listbox now, and its onChange lives in the ONE
+// cfg builder both surfaces render from — so this asserts on that builder
+// rather than on a listener the wiring pass used to attach.
+ok(/onChange:\s*\(value\)\s*=>\s*selectDomain\(value\)/.test(js),
+  'the domain picker\'s onChange routes through selectDomain');
+ok(/mountListbox\(domainListboxCfg\(\)\)/.test(js),
+  'and the control is hydrated from the SAME builder the markup came from — ' +
+  'not from a second cfg literal that could describe different options');
 ok(/btn\.dataset\.destSlug/.test(bodies.renderSidebar) && /selectDomain\(/.test(bodies.renderSidebar),
   'the sidebar destination rows route through selectDomain too');
 
@@ -325,52 +333,74 @@ ok(/formatDestinationMeta\(/.test(bodies.renderSidebar),
 ok(/d\.pageCount/.test(bodies.formatDestinationMeta) && /d\.lastIngestDate/.test(bodies.formatDestinationMeta),
   'formatDestinationMeta reads both fields by name');
 
-// ── §9 — the select's chrome ────────────────────────────────────────────
-console.log('\n§ 9  The <select> chevron is CSS-drawn and follows the theme');
+// ── §9 — the domain picker is the shared listbox ────────────────────────
+console.log('\n§ 9  The domain picker is the shared listbox, not a native <select>');
 
-ok(/select\.ing-select\s*\{[^}]*appearance:\s*none/.test(css),
-  'appearance: none is applied to the select');
-ok(/select\.ing-select\s*\{[^}]*-webkit-appearance:\s*none/.test(css),
-  '-webkit-appearance is present too (Safari still needs the prefix)');
-ok(/select\.ing-select\s*\{/.test(css),
-  'the rule is TYPE-QUALIFIED as `select.ing-select`');
-ok(!/^\s*\.ing-select\s*\{[^}]*appearance:/m.test(css),
-  'the unqualified .ing-select rule does NOT set appearance — .ing-select is ' +
-  'shared with the batch confirm gate\'s <input type="number"> budget field, ' +
-  'and an unqualified rule would strip that input\'s spinner too');
+// THE POINT OF THE CHANGE. `appearance: none` + a CSS chevron got the CLOSED
+// control on-design and could never reach the OPEN list, which macOS paints
+// outside the document. Both pickers in this view now use the component, so
+// the open menu is ours too.
+// Deliberately scanned over the WHOLE file, comments included. A comment
+// asserting the opposite of its own code is this repo's most reliable
+// early-warning shape (v3.13.1 found four in one release), and this view had
+// one describing "the in-form <select>" after the select was gone.
+ok(!/<select/.test(js),
+  'this view contains NO <select> at all, in markup OR in a comment — an ' +
+  'OS-drawn popup would be the exact defect this change exists to remove, ' +
+  'and a comment still describing one sends the next reader looking for it');
+const lbRenders = js.match(/renderListboxHtml\(domainListboxCfg\(/g) || [];
+ok(lbRenders.length === 2,
+  'both domain pickers (single-file form + batch confirm gate) render the ' +
+  'component (' + lbRenders.length + ' found)');
+ok(/function domainListboxCfg\(/.test(js),
+  'from ONE cfg builder — the two surfaces previously carried two ' +
+  'hand-written copies of the same <option> loop, which is this repo\'s ' +
+  'most reliable failure shape waiting for one of them to be edited');
+const cfgBody = bodies.domainListboxCfg || '';
+ok(/state\.domains\.map/.test(cfgBody),
+  'the builder CONSUMES state.domains rather than re-deriving the list — so ' +
+  'the read-only Shared Brain mirror exclusion is decided in exactly one ' +
+  'place upstream and this control cannot reintroduce a domain the loader dropped');
+ok(!/shared-/.test(cfgBody),
+  'and it carries no filtering of its own that could drift from that upstream rule');
 
-const chevron = /\.ing-select-wrap::after\s*\{([\s\S]*?)\}/.exec(css);
-ok(!!chevron, 'a ::after chevron rule exists on the wrapper');
-if (chevron) {
-  ok(/border-right:[^;]*var\(--text-2\)/.test(chevron[1]) &&
-     /border-bottom:[^;]*var\(--text-2\)/.test(chevron[1]),
-    'the chevron is two rotated BORDERS taking a theme token');
-  ok(/rotate\(45deg\)/.test(chevron[1]), 'rotated 45deg into a chevron');
-  ok(!/url\(/.test(chevron[1]),
-    'NOT a background-image data URI — a data URI carries its own colour, so ' +
-    'it cannot follow the theme and would need one copy per theme');
-  ok(/pointer-events:\s*none/.test(chevron[1]),
-    'pointer-events: none so the click still reaches the select');
-}
-ok(/\.ing-select-wrap\s*\{[^}]*position:\s*relative/.test(css),
-  'the wrapper is positioned so the chevron can anchor to it');
-ok(/OPEN dropdown list is\s*\n?\s*drawn by the OS/.test(css) ||
-   /OPEN dropdown list is[\s\S]{0,80}OS/.test(css),
-  'the stylesheet STATES that the open dropdown list stays OS-drawn and CSS ' +
-  'cannot reach it, rather than implying the problem away');
-ok(!/base-select/.test(css.replace(/Chromium-only today[\s\S]{0,60}/, '')) ||
-   /Chromium-only/.test(css),
-  'if appearance: base-select is mentioned at all, it is recorded as the ' +
-  'Chromium-only option that was NOT taken');
+// A REAL disabled state, not a CSS lookalike. This is the requirement a
+// hand-rolled menu most often fails: several of these controls lock during a
+// live write, and a div that merely looks unavailable still fires its handler.
+ok(/disabled:\s*!!disabled/.test(cfgBody),
+  'the cfg carries a real `disabled` flag');
+const lbJs = readFileSync(path.join(ROOT, 'src/public/next/shared/listbox.js'), 'utf8');
+ok(/\(disabled \? ' disabled' : ''\)/.test(lbJs),
+  'and the component emits the native `disabled` ATTRIBUTE on a <button> — ' +
+  'so the browser refuses the click and drops it from the tab order, rather ' +
+  'than a style that leaves a live handler underneath');
+ok(/if \(state\.trigger\.disabled\) return;/.test(lbJs),
+  'with a second, independent refusal inside open() — belt to that\'s braces');
 
-// Every select in this view must be inside the wrapper, or it has no chevron.
-const selectTags = js.match(/<select class="ing-select"/g) || [];
-const wrapOpen = js.match(/<span class="ing-select-wrap">/g) || [];
-ok(selectTags.length >= 2, 'both selects (single-file form + confirm gate) are present');
-ok(wrapOpen.length === selectTags.length,
-  'EVERY .ing-select select is wrapped in .ing-select-wrap (' + selectTags.length +
-  ' selects, ' + wrapOpen.length + ' wrappers) — an unwrapped one silently loses ' +
-  'its chevron while still having appearance: none, i.e. no affordance at all');
+// ── .ing-select IS NOW A SINGLE-USER CLASS, AND THE TRAP IS SHARPER ──────
+// It was shared between the <select>s and the batch confirm gate's budget
+// field. The selects are gone; the <input type="number"> is the only user
+// left, so an unqualified `appearance: none` on it would strip that input's
+// spinner and there is no longer a <select> in this view to make adding one
+// look reasonable.
+ok(/class="ing-select ing-queue-budget-input"/.test(js),
+  'the budget field still uses .ing-select');
+ok((js.match(/class="[^"]*\bing-select\b/g) || []).length === 1,
+  '.ing-select has exactly ONE user in this view now — the number input');
+ok(!/\.ing-select\s*\{[^}]*appearance:/.test(css),
+  'the .ing-select rule does NOT set appearance — it would strip the number ' +
+  'input\'s spinner, and it is the only control that rule reaches');
+ok(!/select\.ing-select/.test(css),
+  'and the dead `select.ing-select` type-qualified rule is gone rather than ' +
+  'left behind pinning a control that no longer exists');
+ok(!/ing-select-wrap/.test(css) && !/ing-select-wrap/.test(js),
+  'the chevron wrapper is gone from both the stylesheet and the markup — the ' +
+  'component draws its indicator inside the trigger');
+
+// The stylesheet must not quietly claim the old trade-off was free.
+ok(/UNPAID|unpaid/.test(css),
+  'ingest.css records what the switch away from <select> COSTS (the OS touch ' +
+  'picker) rather than implying the trade was free');
 
 // ── §10 — the drop zone is a substantial surface ────────────────────────
 console.log('\n§ 10  The drop zone is sized like the primary input surface');

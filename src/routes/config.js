@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -89,6 +89,106 @@ try {
 } catch (err) {
   console.error(`[config] could not restore local model qualifications: ${err && err.message}`);
 }
+
+// ── BOOT: refresh the OpenRouter catalogue when it is absent or stale ───────
+//
+// THE DEFECT THIS CLOSES. Until now the catalogue was populated ONLY by a user
+// pressing Sync in Settings. Before that press, chat offered the 5 hand-measured
+// OpenRouter routes; after it, ~190. Nothing anywhere said which state you were
+// in, so the same app showed two very different lists on two machines — reported
+// as "sometimes they show, other times they do not". A list that is silently
+// partial is worse than a short one, because the user cannot tell it is partial.
+//
+// ── EVERY PROPERTY BELOW IS A REFUSAL TO MAKE BOOT WORSE ────────────────────
+//
+// IT DOES NOT BLOCK BOOT. Scheduled on a timer and never awaited, so module
+// evaluation finishes and the server binds regardless. `.unref()` so a pending
+// timer cannot hold the process open — which matters for the CLI/test paths that
+// import this module and expect to exit.
+//
+// IT CANNOT THROW. The timer callback is wrapped, and the promise carries its
+// own `.catch`. An unhandled rejection from a boot-time network call would be a
+// crash on a machine with flaky wifi, for a refresh nobody asked for.
+//
+// A FAILURE LEAVES THE PREVIOUS CATALOGUE INTACT. Not a property of this block —
+// a property of `syncOpenRouterCatalogue`, which reaches `setOpenRouterCatalogue`
+// only after a fetch AND a build have both succeeded, and which refuses a
+// zero-record response outright. Clearing on failure would read to a user as
+// "OpenRouter no longer offers anything", on the screen where they choose what
+// to spend through. This block adds nothing to that and takes nothing away.
+//
+// IT IS KEY-GATED CONFIG-ONLY. `getApiKeys()`, never `getEffectiveKey()` — the
+// v3.0.13 rule. A provider the user Disconnected in Settings must not have
+// background work done on its behalf, and `offerable.openrouter` is itself
+// key-gated, so syncing without a saved key would populate state no screen shows.
+// The key is read for TRUTHINESS ONLY: OpenRouter's /models endpoint is public
+// and unauthenticated, so no credential enters this path.
+//
+// IT DEFERS TO ANY WRITE IN FLIGHT. A sync REPLACES the catalogue and REBUILDS
+// the price and free registries, which mid-ingest changes what `getProviderInfo`
+// resolves for the next call and what the queue prices the last one at — the
+// reason `POST /openrouter/sync` carries `guardConcurrent`. A boot-time write is
+// unlikely (the ingest queue recovers to `paused`, never running) but "unlikely"
+// is not a guard, and this is the one place the HTTP guard cannot reach.
+//
+// IT IS SKIPPED UNDER TEST. `CURATOR_TEST_USER_DATA_DIR` is this repo's "this is
+// a test" seam; a suite that merely imports this router must never make an
+// unannounced outbound request. Suites drive `maybeAutoSyncOpenRouter` directly
+// with an injected fetch instead.
+//
+// Exported so the policy is testable without a timer and without a network.
+export async function maybeAutoSyncOpenRouter(opts = {}) {
+  const skip = (reason) => ({ ran: false, reason });
+  if (!opts.force && process.env.CURATOR_TEST_USER_DATA_DIR) return skip('test-isolated');
+  if (typeof llmModule.openRouterCatalogueNeedsSync !== 'function'
+      || typeof llmModule.syncOpenRouterCatalogue !== 'function') {
+    return skip('unsupported');
+  }
+  let saved = '';
+  try { saved = getApiKeys().openrouterApiKey || ''; } catch { return skip('config-unreadable'); }
+  if (!saved) return skip('no-key');
+  // Read through the injected accessor when a suite supplies one, so the
+  // deferral can be exercised without standing up a real write.
+  const busy = typeof opts.hasActiveWrites === 'function' ? opts.hasActiveWrites : hasActiveWrites;
+  try { if (busy()) return skip('writes-active'); } catch { /* treat as idle */ }
+  const verdict = llmModule.openRouterCatalogueNeedsSync(
+    Number.isFinite(opts.now) ? opts.now : Date.now(),
+  );
+  if (!verdict.needed) return { ran: false, reason: verdict.reason, ageMs: verdict.ageMs };
+  try {
+    const result = await llmModule.syncOpenRouterCatalogue({
+      ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+      ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+    });
+    console.error(`[config] auto-synced the OpenRouter catalogue (${verdict.reason}): ` +
+      `${result.admitted} model(s) admitted of ${result.total} published`);
+    return { ran: true, reason: verdict.reason, admitted: result.admitted, total: result.total };
+  } catch (err) {
+    // Deliberately quiet and non-fatal: the previous catalogue is still live and
+    // still selectable, and the Sync button in Settings remains the explicit,
+    // reportable path. A boot-time toast about a refresh nobody requested would
+    // train users to ignore the one that matters.
+    console.error(`[config] OpenRouter catalogue auto-sync failed (${verdict.reason}); ` +
+      `keeping the existing list: ${err && err.message}`);
+    return { ran: false, reason: 'failed', error: err && err.message };
+  }
+}
+
+// ── THE TRIGGER LIVES IN server.js, NOT AT MODULE SCOPE HERE ────────────────
+//
+// The first draft fired this from a `setTimeout` at module load, next to the two
+// restore blocks above. That was wrong, and the reason is worth keeping: a suite
+// that imports this router is NOT booting the app. `test-beta10-fixes.js` pulls
+// `classifyNpmError` out of this file and does not isolate its user-data dir, so
+// module-scope firing would have made an OFFLINE suite reach the network AND
+// persist a catalogue sidecar into the maintainer's real user-data directory.
+// The `CURATOR_TEST_USER_DATA_DIR` guard inside the function does not save it —
+// that suite never sets the variable.
+//
+// Binding the trigger to `src/server.js` makes the distinction structural rather
+// than a list of suites to remember: only an actual server boot syncs. The env
+// guard stays as a second layer for the suites that DO spawn a real server.
+// See `src/server.js` for the call.
 // The CODE root — package.json + the git checkout the auto-updater operates on.
 // Never user data (see src/brain/paths.js).
 const PROJECT_ROOT = APP_ROOT;
@@ -508,6 +608,40 @@ export function offerableFor(provider) {
 }
 
 /**
+ * `offerableFor`, with ONE additive field per entry: `measuredBy`.
+ *
+ * ── WHY IT IS JOINED HERE AND NOT STAMPED ON THE FROZEN ENTRY ───────────────
+ * It has three values — 'curator' (we measured it against the real ingest
+ * prompt), 'user' (this installation measured it on its own pages via "Test on
+ * my wiki"), and null (nobody has) — and the middle one depends on live
+ * per-installation state a frozen catalogue cannot know. Stamping two of the
+ * three onto the entry and letting the client join the third back on would put
+ * one field name on two different quantities, which is the defect v3.17.1
+ * records. So llm.js owns the single producer (`measurementProvenance`) and
+ * this is the only place its answer is attached.
+ *
+ * The entries are still serialised verbatim — this SPREADS rather than mutates,
+ * so the frozen objects `listOfferableModels` returns are untouched and every
+ * existing field keeps its existing meaning. `suitability`, `dominated`,
+ * `caution`, `jsonRaw`, `medianLatencyMs` and `outlinePages*` are all left
+ * alone: suites pin them, and this field answers a question none of them does.
+ *
+ * IT IS NOT A QUALITY SCORE. `null` means UNMEASURED, never BAD — a
+ * hand-measured model may be flagged `caution` and a fetched one may be
+ * excellent and simply unprobed. Price stays a displayed FACT and is not
+ * consulted here at all.
+ *
+ * Degrades to the plain list when the export is absent, the same
+ * namespace-import contract as `knownProvider` / `isBuildLaneAllowed`: a
+ * missing field reads as "we do not know", which is the safe direction.
+ */
+function withMeasurement(provider) {
+  const list = offerableFor(provider);
+  if (typeof llmModule.measurementProvenance !== 'function') return list;
+  return list.map(e => ({ ...e, measuredBy: llmModule.measurementProvenance(provider, e.id) }));
+}
+
+/**
  * Is `provider` a provider this app knows how to talk to?
  *
  * Every mutating route below gates on THIS, not on its own inline
@@ -684,10 +818,48 @@ router.get('/api-keys', (_req, res) => {
     // provider with no key SAVED IN SETTINGS serialises an empty array whatever
     // any catalogue holds (the v3.0.13 config-scoped rule).
     offerable: {
-      gemini:     keys.geminiApiKey     ? offerableFor('gemini')     : [],
-      anthropic:  keys.anthropicApiKey  ? offerableFor('anthropic')  : [],
-      openrouter: keys.openrouterApiKey ? offerableFor('openrouter') : [],
+      gemini:     keys.geminiApiKey     ? withMeasurement('gemini')     : [],
+      anthropic:  keys.anthropicApiKey  ? withMeasurement('anthropic')  : [],
+      openrouter: keys.openrouterApiKey ? withMeasurement('openrouter') : [],
     },
+    // ── THE ONE BUILD MODEL, DERIVED ─────────────────────────────────────────
+    // What actually builds the wiki right now: one provider, one model, and
+    // where the value came from. NOTHING NEW IS STORED for this — it is read
+    // straight off the same resolution ingest, Health and Compile use, so it
+    // cannot disagree with them, and there is no second field to migrate or to
+    // drift. `POST /api-keys/build-model` is the write side.
+    //
+    // `source` answers the question the old per-provider picker could not: WHY
+    // this model. 'env' means LLM_MODEL is overriding everything (the developer
+    // escape hatch, which outranks a Settings click by design); 'selected' means
+    // the user picked it; 'default' means nobody picked and this is the pinned
+    // cheapest model on the active provider. Reported as a fact rather than
+    // inferred client-side, because a client re-deriving the precedence ladder
+    // would be a second copy of it.
+    //
+    // Null when no provider can resolve at all — the same honest state
+    // `activeProvider: null` above reports, not an error.
+    buildModel: (() => {
+      const p = provider?.provider || null;
+      if (!p) return null;
+      const selected = getSelectedModel(p);
+      const envModel = (process.env.LLM_MODEL && p === getActiveProvider())
+        ? process.env.LLM_MODEL : null;
+      return {
+        provider: p,
+        model: provider?.model || null,
+        source: envModel ? 'env' : (selected ? 'selected' : 'default'),
+        // Does the STORED pick actually govern? False when LLM_MODEL is
+        // overriding it, or when the pick was refused on read (stale id, model
+        // pulled after a bad probe, chat-only pinned as build). A picker that
+        // shows a stored choice the engine has stopped obeying is this repo's
+        // named dead-data shape, in the direction the user notices least.
+        selectedHonoured: !!selected && selected === (provider?.model || null),
+        measuredBy: typeof llmModule.measurementProvenance === 'function'
+          ? llmModule.measurementProvenance(p, provider?.model || null)
+          : null,
+      };
+    })(),
     // Provenance for the OpenRouter half of `offerable` above — when the live
     // catalogue was fetched and how many entries it holds. Deliberately NOT a
     // second catalogue surface: the models themselves stay in `offerable`, and
@@ -1026,6 +1198,147 @@ router.post('/api-keys/model', guardConcurrent('change the AI model'), (req, res
       effectiveModel: getDefaultModel(provider),
       activeProvider: info?.provider || null,
       activeModel:    info?.model || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/config/api-keys/build-model — choose THE model that builds the wiki.
+ * Body: { provider: 'gemini'|'anthropic'|'openrouter', model: '<id>' }
+ *
+ * ── WHY THIS EXISTS: A PIN THAT COULD BE INERT ──────────────────────────────
+ * `/api-keys/model` above stores a pin PER PROVIDER and deliberately does not
+ * touch `activeProvider`. Only the ACTIVE provider's pin governs ingest, Health
+ * and Compile, so a user with two connected providers could pick a model, see
+ * it marked as chosen, and have it govern nothing — documented in
+ * `docs/user-guide.md` as the likeliest user-facing surprise in the whole
+ * router. There is exactly ONE build model, and choosing it is one act.
+ *
+ * So this route names PROVIDER AND MODEL TOGETHER and applies both. It cannot
+ * produce an inert selection, because after it returns the pinned model always
+ * belongs to the active provider.
+ *
+ * ── IT ADDS NO NEW STORAGE, AND THAT IS THE SAFETY ARGUMENT ─────────────────
+ * The obvious implementation is a new `buildModel: {provider, model}` config
+ * key. It was rejected: `activeProvider` + `selectedModels[activeProvider]`
+ * ALREADY expresses exactly this, so a second field would be a second source of
+ * truth for one fact — the two-hand-maintained-copies shape that produced this
+ * repo's v3.2.0 CRITICAL — and it would need a migration, a precedence rule
+ * against the old field, and a resolver branch. Instead this route performs the
+ * two EXISTING writes atomically from the user's point of view.
+ *
+ * The consequence is the acceptance criterion for the whole change:
+ * `resolveProviderDefault`, `defaultModelFor`, `applyModelOverride`,
+ * `storedSelection` and `getDefaultModel` are BYTE-UNCHANGED, so every existing
+ * config shape — a per-provider pin, no pin, `LLM_MODEL` set, a stored id whose
+ * provider was later disconnected, a stored id no longer offerable, a corrupt
+ * hand-edited file — resolves exactly as it did before this route existed.
+ * Nothing moves until the user makes a new choice HERE. `test-build-model.js`
+ * proves that against the pre-change resolver rather than arguing it.
+ *
+ * ── WRITE ORDER IS LOAD-BEARING: MODEL FIRST, THEN PROVIDER ─────────────────
+ * The two writes are separate `writeRaw` calls, so a crash can land between
+ * them. Model-then-provider means the interrupted state is "pin stored, provider
+ * not switched" — which is EXACTLY today's behaviour, an inert pin: no worse
+ * than the baseline, and repaired by clicking again. The reverse order would
+ * leave the provider switched with no pin, silently moving the user onto a
+ * different provider's DEFAULT model — a spend change they never asked for.
+ *
+ * ── IT CANNOT HAND THE BUILD LANE TO A PROVIDER THAT CANNOT BUILD ───────────
+ * v3.15.1 records that P0: `clearApiKey` handed the lane onward without the
+ * `canActivate` predicate. Here it is closed BY CONSTRUCTION, not by a
+ * predicate: the provider is only switched to after this route has already
+ * established that it has a key SAVED IN SETTINGS and that `model` is
+ * build-lane-eligible for it — so the very model being pinned is the proof that
+ * the provider can build. `providerCanBuild` is still passed to
+ * `setActiveProvider` for defence in depth, and is re-evaluated AFTER the pin
+ * lands so it reads the post-write state rather than the pre-write one.
+ *
+ * ── guardConcurrent, config-scoped keys, and the 409 ────────────────────────
+ * Both inherited unchanged from the two routes this replaces the pair of. The
+ * guard is the sharper of the two reasons stated on `/api-keys/model`: this
+ * route can change the provider AND the model mid-ingest, so unguarded it could
+ * plan an outline on one provider and write Phase-2 batches on another.
+ */
+router.post('/api-keys/build-model', guardConcurrent('change the AI model'), (req, res) => {
+  const { provider, model } = req.body || {};
+  if (!knownProvider(provider)) return badProvider(res);
+  // Deliberately NO clearing arm, unlike /api-keys/model. "Clear the one build
+  // model" has no meaning: something must build the wiki. A user who wants the
+  // app default back clears the per-provider pin through the older route, which
+  // is still the surface for that.
+  if (typeof model !== 'string' || !model) {
+    return res.status(400).json({ error: 'model must be a non-empty string' });
+  }
+  try {
+    const keys = getApiKeys();
+    // CONFIG-scoped (getApiKeys, never getEffectiveKey/.env) — the v3.0.13 rule,
+    // and the same frozen field table `/api-keys/model` uses rather than a
+    // ternary, for the v3.10.1 reason.
+    const KEY_FIELD_BY_PROVIDER = {
+      gemini: 'geminiApiKey', anthropic: 'anthropicApiKey', openrouter: 'openrouterApiKey',
+    };
+    const savedKey = Object.hasOwn(KEY_FIELD_BY_PROVIDER, provider)
+      ? keys[KEY_FIELD_BY_PROVIDER[provider]]
+      : '';
+    if (!savedKey) {
+      return res.status(400).json({
+        error: `No ${provider} key is saved in Settings — connect one before choosing a model for it.`,
+      });
+    }
+    // Never echo the caller's string here: unvalidated at this point, and this
+    // repo has a recorded log-forgery finding from echoing an attacker-supplied
+    // value into a user-facing refusal (v3.0.1-beta.20).
+    if (!llmModule.isOfferableModel(provider, model)) {
+      return res.status(400).json({
+        error: `That model is not available for ${provider}. Pick one from the list in Settings.`,
+      });
+    }
+    // Past this line `model` is one of OUR catalogue ids, so naming it is safe.
+    if (!isBuildLaneAllowed(provider, model)) {
+      const canBeMeasured = provider === 'openrouter'
+        && typeof llmModule.getLocalQualification === 'function'
+        && !llmModule.getLocalQualification(model);
+      return res.status(400).json({
+        error: `"${model}" has not been measured for building a wiki, so it cannot be the model that ` +
+               'runs ingest, Health and Compile. You can still choose it per-conversation in chat.' +
+               (canBeMeasured
+                 ? ' To use it here, run "Test on my wiki" on its row first — that measures it against ' +
+                   `your own pages ${QUALIFY_MIN_RUNS} times and reports what it actually did.`
+                 : ' Pick a general-purpose model here instead.'),
+        reason: 'not_build_lane',
+      });
+    }
+
+    const providerBefore = getActiveProvider();
+    const stored = setSelectedModel(provider, model);      // write 1 — see order note
+    const activeAfter = provider === providerBefore
+      ? providerBefore
+      : setActiveProvider(provider, { canActivate: providerCanBuild });  // write 2
+
+    // REPORT THE OUTCOME, NOT THE REQUEST. `setActiveProvider` returns the
+    // resulting provider and is a no-op when it refuses, so a switch that did
+    // not take is visible here rather than being asserted by us — the v3.13.2
+    // "report the outcome" rule. A refusal is not an error: the pin landed and
+    // is simply still inert, which is strictly the pre-change behaviour.
+    let info = null;
+    try { info = getProviderInfo(); } catch {}
+    res.json({
+      ok: true,
+      provider,
+      selectedModel: stored,
+      // What this provider will ACTUALLY use now — resolved, not assumed.
+      effectiveModel: getDefaultModel(provider),
+      activeProvider: info?.provider || null,
+      activeModel:    info?.model || null,
+      providerSwitched: activeAfter !== providerBefore,
+      // The one honest failure mode of this route, named rather than implied
+      // away: the pin landed but the provider did not move, so the choice is
+      // inert. Only reachable if `setActiveProvider` refused after our own
+      // checks passed (a key that vanished between the two writes).
+      inert: (info?.provider || null) !== provider,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -48,35 +48,28 @@
   margin-bottom: 6px;
 }
 
-/* THE SELECT IS STILL A NATIVE <select>. Only its CLOSED chrome is replaced,
-   using the same approach views/memory.css landed in v3.17.3 — read that
-   file's own note for the full reasoning; the short version is repeated
-   here because this is the file someone editing this select will open.
+/* ── THE DOMAIN PICKER IS NO LONGER A <select> ────────────────────────
+   Both of them (single-file form and batch confirm gate) are now the shared
+   listbox — shared/listbox.js + shared/listbox.css, linked globally from
+   next/index.html. Every visual rule for that control lives there; the
+   `lb-field` variant reproduces the full-width field shape this view used.
 
-   `appearance: none` turns off the UA-drawn menulist widget. Without it
-   macOS draws its own indicator glyph, whose colour and metrics we do not
-   control and which does not follow the theme.
+   Recorded rather than quietly deleted: the note that stood here said a
+   hand-rolled listbox "costs the keyboard model, the screen-reader model
+   and the platform picker on touch — not worth a chevron". The first two
+   costs were real and are now PAID by the component (arrows, Home/End,
+   Enter, Escape-restores, Tab, type-ahead, and the APG select-only-combobox
+   roles). The third is genuine and unpaid: no OS wheel picker on touch.
+   Desktop localhost app, so that is a cost we take knowingly.
 
-   STATED PLAINLY, because it is what remains: the OPEN dropdown list is
-   drawn by the OS and NO CSS HERE REACHES IT. `appearance: none` does not
-   change that and never has. Matching the open state needs either a
-   hand-rolled listbox (which costs the keyboard model, the screen-reader
-   model and the platform picker on touch — not worth a chevron) or
-   `appearance: base-select`, which is Chromium-only today. Not attempted.
-
-   The `select.` type qualifier is LOAD-BEARING, not tidiness: `.ing-select`
-   is deliberately shared with the batch confirm gate's budget field, which
-   is an <input type="number"> (see renderQueueEstimate in views/ingest.js).
-   An unqualified `appearance: none` would strip that input's spinner too —
-   a silent behaviour change to a control this pass was not asked to touch. */
-select.ing-select {
-  appearance: none;
-  -webkit-appearance: none;              /* Safari still needs the prefix */
-  /* Right padding clears the chevron below; without it a long domain name
-     runs underneath it. */
-  padding-right: 28px;
-}
-
+   ── .ing-select IS STILL LIVE, AND IS NOW A SINGLE-USER CLASS ──────────
+   It styles the batch confirm gate's budget field, an <input type="number">
+   (see renderQueueEstimate in views/ingest.js) — which is now its ONLY
+   user, so the hazard the old `select.` type qualifier existed to avoid is
+   MORE acute rather than less: an unqualified `appearance: none` added to
+   the rule below would strip that input's spinner, and there is no longer a
+   <select> anywhere in this view to make such an addition look reasonable.
+   Do not add one. */
 .ing-select {
   width: 100%;
   height: var(--control-md);
@@ -89,28 +82,6 @@ select.ing-select {
 }
 .ing-select[disabled] { opacity: 0.55; cursor: not-allowed; }
 
-/* The wrapper exists only to anchor the chevron. `display: block` (not
-   inline-flex as in memory.css) because this select is a full-width field
-   control, not an inline toolbar control. */
-.ing-select-wrap { position: relative; display: block; }
-
-/* The chevron, drawn in CSS rather than as a background-image data URI. A
-   data URI carries its own colour, so it cannot follow the theme and would
-   need one copy per theme; two rotated borders take a token and flip for
-   free. pointer-events: none so the click still reaches the select. */
-.ing-select-wrap::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: 11px;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid var(--text-2);
-  border-bottom: 1.5px solid var(--text-2);
-  transform: translateY(-4px) rotate(45deg);
-  pointer-events: none;
-}
-.ing-select-wrap:has(select[disabled])::after { opacity: 0.55; }
 
 /* ── Drop zone ────────────────────────────────────────────────────────── */
 

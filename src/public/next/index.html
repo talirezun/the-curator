@@ -66,6 +66,17 @@
      which is the assertion that would have caught this. -->
 <link rel="stylesheet" href="/next/shared/progress-ring.css">
 
+<!-- shared/listbox.css — the ONE dropdown surface in /next, replacing the
+     OS-native <select> popup at every call site. Linked here for the same
+     reason the ring is: it owns the whole `lb-` prefix, and a view that
+     adopts the component must not have to touch this file.
+
+     Linked ABOVE the views on purpose. The component ships two size
+     variants (`.lb-sm`, `.lb-field`) reproducing the heights the replaced
+     selects used, and a view may still add placement at equal specificity
+     after this point — the same layering the ring documents above. -->
+<link rel="stylesheet" href="/next/shared/listbox.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

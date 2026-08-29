@@ -115,7 +115,7 @@
 // reason sync.js's gate is: neither action is domain-scoped, so a write on
 // ANY domain is a real conflict. Not gated, and why: "Replace"/"Cancel"
 // (open/close the key-input row — no network call), the default-domain
-// <select> (only changes the MCP server's OWN fallback for FUTURE tool
+// picker (only changes the MCP server's OWN fallback for FUTURE tool
 // calls missing a domain — never touches an in-flight app-initiated
 // write), AI Health scan-limit Save (changes future scan cost ceilings,
 // not anything currently running), MCP self-test / view-config /
@@ -144,6 +144,7 @@ import {
 // views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
 // closed unconditionally by this view's teardown, so navigating away can
 // never leave it mounted behind the next view.
+import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 import { openMcpWizard, closeMcpWizardIfOpen } from './mcp-wizard.js';
 // D-C / ARCHITECTURE.md R7: "a tour you can never get back is worse than
 // none." This is the one control that re-opens the dismissed first-run
@@ -765,6 +766,12 @@ registerView('settings', {
       // the interaction that produced it ends, rather than leaving it
       // sitting in memory for however long the user is on another view.
       state.replaceValue = '';
+      // The picker menus are <body> children, so a rail navigation does not
+      // remove them with the view. The component self-closes when its trigger
+      // leaves the document (setMain replaces #view-root's child on the next
+      // mount), so this is the deliberate SECOND layer — a teardown that
+      // depends on a repaint happening is not a teardown.
+      closeAllListboxes();
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
       // Never leave the MCP wizard's overlay mounted behind the next view —
       // the same unconditional rule views/shared.js applies to the Shared
@@ -993,6 +1000,17 @@ function requestTheme(target) {
  * open the whole time; it was simply scrolled off the top of the viewport,
  * which is indistinguishable from having been closed.
  */
+// ── The render -> wire handoff for shared listboxes ──────────────────────
+// Every renderer that emits a listbox pushes the SAME cfg object it rendered
+// from onto this array; wireGlobalListeners hydrates from it. Rebuilding the
+// cfg at wiring time would be two descriptions of one control, free to
+// disagree about its options — this repo's most reliable failure shape, and
+// the reason there is a handoff at all rather than a second derivation.
+//
+// Cleared at the top of renderMain, so a section that emits no picker leaves
+// nothing behind for the wiring pass to mount.
+const pendingListboxes = [];
+
 function render(token) {
   preserveMainScroll(() => {
     renderSidebar(token);
@@ -1028,6 +1046,9 @@ function renderSidebar(token) {
 }
 
 function renderMain(token) {
+  // See pendingListboxes. Cleared BEFORE the section body is built, because
+  // building it is what fills the array.
+  pendingListboxes.length = 0;
   const title = SECTION_TITLES[state.section] || 'Settings';
   let body;
   if (state.section === 'general') body = renderGeneral();
@@ -2870,8 +2891,8 @@ function modelFilterFor(provider) {
 /**
  * ── THE BAR: one obvious input, and everything else small ─────────────────
  *
- * Search is the primary control and gets the width. The sort is a native
- * <select> and the measured filter a checkbox, both compact — six filter chips
+ * Search is the primary control and gets the width. The sort is the shared
+ * listbox and the measured filter a checkbox, both compact — six filter chips
  * above a list is not an improvement on a long list, and a control panel that
  * out-weighs the thing it controls is the clutter it was meant to solve.
  *
@@ -2889,7 +2910,7 @@ function modelFilterFor(provider) {
  *
  * THEY ADD NO PIXELS TO A ROW. A collapsed row shows what a CHOICE needs —
  * which model, what it costs, any warning. A release date is not that; it is a
- * sort key, and it stays one. Two <option>s inside the <select> that already
+ * sort key, and it stays one. Two more rows in the picker that already
  * exists is the whole surface: the bar still carries exactly three controls, and
  * an assertion in test-next-model-picker.js §22e holds it to that.
  *
@@ -2906,10 +2927,36 @@ function modelFilterFor(provider) {
  * structural fix is to keep controls out of it rather than to suppress the
  * event — a suppression a later edit can drop.
  */
+// The sort control's options, in display order. A TABLE rather than four
+// inline calls: the labels are read by the picker AND the keys are read by
+// MODEL_SORT_UNRANKED_LABEL, and a list that exists once cannot fall out of
+// step with itself.
+const MODEL_SORT_OPTIONS = [
+  ['cheapest', 'Cheapest first'],
+  ['dearest', 'Most expensive first'],
+  ['newest', 'Newest first'],
+  ['largest-context', 'Largest context first'],
+];
+
 function renderModelFilterBar(provider, f, shown, total, unranked) {
   const pid = escapeHtml(String(provider));
-  const opt = (v, label) => '<option value="' + v + '"' +
-    (f.sort === v ? ' selected' : '') + '>' + label + '</option>';
+  // ONE cfg object, rendered here and hydrated by wireGlobalListeners from
+  // pendingListboxes — never described twice. The id is provider-scoped
+  // because this bar is rendered once per provider and two controls sharing
+  // an id would make aria-controls and aria-activedescendant ambiguous.
+  const sortCfg = {
+    id: 'model-filter-sort-' + String(provider),
+    ariaLabel: 'Sort models',
+    value: f.sort,
+    triggerClass: 'model-filter-sort',
+    minWidth: 200,
+    options: MODEL_SORT_OPTIONS.map(([value, label]) => ({ value, label })),
+    onChange: (value) => {
+      setModelFilter(String(provider), { sort: value });
+      render(myMountToken);
+    },
+  };
+  pendingListboxes.push(sortCfg);
   // ── THE ROWS THIS SORT COULD NOT RANK, STATED ────────────────────────────
   // Only ever a positive integer, and only for a sort that has an absence to
   // report. Reusing the count span rather than adding an element is the
@@ -2924,16 +2971,11 @@ function renderModelFilterBar(provider, f, shown, total, unranked) {
       '<input type="search" class="model-filter-q" data-model-filter-q="' + pid + '"' +
         ' placeholder="Search models…" aria-label="Search models"' +
         ' value="' + escapeHtml(f.q) + '">' +
-      // Wrapper carries the CSS-drawn chevron — see .settings-select-wrap.
-      // It is the flex item now, so the sizing that was on the select
-      // (`flex: 0 0 auto`) moves to it; a wrapper left at the default
-      // `min-width: auto` would refuse to shrink and push the row wide.
-      '<span class="settings-select-wrap model-filter-sort-wrap">' +
-        '<select class="model-filter-sort" data-model-filter-sort="' + pid + '" aria-label="Sort models">' +
-          opt('cheapest', 'Cheapest first') + opt('dearest', 'Most expensive first') +
-          opt('newest', 'Newest first') + opt('largest-context', 'Largest context first') +
-        '</select>' +
-      '</span>' +
+      // The shared listbox (shared/listbox.js). `.model-filter-sort` now
+      // sizes the TRIGGER; the menu is a <body> child and takes its width
+      // from the trigger's rect, so this row's flex sizing cannot squeeze
+      // the open list the way it constrained the closed select.
+      renderListboxHtml(sortCfg) +
       '<label class="model-filter-measured">' +
         '<input type="checkbox" data-model-filter-measured="' + pid + '"' +
           (f.measuredOnly ? ' checked' : '') + '>' +
@@ -3708,9 +3750,22 @@ function renderMcp() {
 
   const domains = (state.defaultDomainInfo && state.defaultDomainInfo.domains) || [];
   const defaultDomain = state.defaultDomainInfo ? state.defaultDomainInfo.defaultDomain : null;
-  const options = ['<option value="">— none (require an explicit domain) —</option>']
-    .concat(domains.map((d) => '<option value="' + escapeHtml(d) + '"' + (d === defaultDomain ? ' selected' : '') + '>' + escapeHtml(d) + '</option>'))
-    .join('');
+  // ONE cfg, rendered below and hydrated from pendingListboxes — never
+  // described twice. The empty-string value is a real, selectable option
+  // (not a placeholder): "no default" is a decision the user makes, and it
+  // has to be reachable BACK to after setting one.
+  const defaultDomainCfg = {
+    id: 'select-default-domain',
+    ariaLabel: 'Default domain for MCP writes',
+    value: defaultDomain || '',
+    disabled: !!state.defaultDomainSaving,
+    triggerClass: 'settings-select mono',
+    minWidth: 280,
+    options: [{ value: '', label: '— none (require an explicit domain) —', typeahead: 'none' }]
+      .concat(domains.map((d) => ({ value: d, label: d }))),
+    onChange: (value) => onSaveDefaultDomain(value, myMountToken),
+  };
+  pendingListboxes.push(defaultDomainCfg);
 
   return (
     '<div class="settings-status-card">' +
@@ -3742,13 +3797,10 @@ function renderMcp() {
       '<span class="settings-field-label">Default domain for MCP writes</span>' +
       '<p class="settings-hint-text">When a client calls a write tool and the user says “my wiki” without naming a ' +
       'domain, this one is used. Leave unset to force the model to always name a domain.</p>' +
-      // The wrapper is required, not decorative: it is what the CSS-drawn
-      // chevron is positioned against, now that `appearance: none` has
-      // removed the UA's own indicator. See .settings-select-wrap in
-      // settings.css for what is replaced and what stays native.
-      '<span class="settings-select-wrap">' +
-        '<select class="settings-select mono" id="select-default-domain"' + (state.defaultDomainSaving ? ' disabled' : '') + '>' + options + '</select>' +
-      '</span>' +
+      // The shared listbox (shared/listbox.js). No wrapper: the component
+      // draws its own indicator INSIDE the trigger, so there is nothing left
+      // to position a chevron against.
+      renderListboxHtml(defaultDomainCfg) +
       (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
     '</div>'
   );
@@ -3863,6 +3915,19 @@ function wireGlobalListeners() {
 
   const updatesBtn = document.getElementById('settings-updates-btn');
   if (updatesBtn) updatesBtn.addEventListener('click', () => onCheckForUpdates(myMountToken));
+
+  // Hydrate every listbox this render emitted, from the cfg objects that
+  // produced the markup. Runs BEFORE the per-section wiring so a section
+  // handler can rely on the control being live.
+  //
+  // Settings re-renders WHOLESALE (setMain replaces innerHTML), so the
+  // previous mount's trigger elements are already gone by the time this
+  // runs. The component's menu is a <body> child and would therefore
+  // OUTLIVE that repaint as a detached-trigger orphan — its own rAF loop
+  // closes it within a frame of the trigger leaving the document, and
+  // closeAllListboxes() below is the belt to that's braces.
+  closeAllListboxes();
+  for (const cfg of pendingListboxes) mountListbox(cfg);
 
   if (state.section === 'general') wireGeneralListeners();
   else if (state.section === 'providers') wireProviderListeners();
@@ -3981,12 +4046,10 @@ function wireProviderListeners() {
       }
     });
   });
-  document.querySelectorAll('[data-model-filter-sort]').forEach((el) => {
-    el.addEventListener('change', () => {
-      setModelFilter(el.dataset.modelFilterSort, { sort: el.value });
-      render(myMountToken);
-    });
-  });
+  // The sort control is the shared listbox now — mounted from
+  // pendingListboxes in wireGlobalListeners, with its onChange built beside
+  // the markup in renderModelFilterBar. There is no [data-model-filter-sort]
+  // element left to delegate to.
   document.querySelectorAll('[data-model-filter-measured]').forEach((el) => {
     el.addEventListener('change', () => {
       setModelFilter(el.dataset.modelFilterMeasured, { measuredOnly: !!el.checked });
@@ -4113,8 +4176,9 @@ function wireMcpListeners() {
   if (viewBtn) viewBtn.addEventListener('click', () => onMcpViewConfig(myMountToken));
   const copyBtn = document.getElementById('btn-mcp-copy-snippet');
   if (copyBtn) copyBtn.addEventListener('click', () => onMcpCopySnippet(myMountToken));
-  const select = document.getElementById('select-default-domain');
-  if (select) select.addEventListener('change', () => onSaveDefaultDomain(select.value, myMountToken));
+  // The default-domain picker is the shared listbox now — mounted from
+  // pendingListboxes in wireGlobalListeners, with its onChange built beside
+  // the markup in renderMcp(). Nothing to wire here.
 }
 
 function wireHealthListeners() {

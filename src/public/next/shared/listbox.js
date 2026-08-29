@@ -164,8 +164,17 @@ export function renderListboxHtml(cfg) {
   if (cfg.mono === true) cls.push('mono');
   if (isPlaceholder) cls.push('is-placeholder');
 
+  // The ROOT's class is separate from the trigger's, and that is not
+  // tidiness: `.lb` is inline-flex so it shrinks to its content, and a
+  // full-width FIELD control needs the block behaviour on the root — putting
+  // `width: 100%` on the trigger inside a shrink-wrapped root measured 51px
+  // wide in a browser. Expressed as an explicit class rather than a
+  // `:has(> .lb-field)` rule, because settings.css already records the house
+  // position that `:has()` is acceptable for cosmetics and not for layout.
+  const rootCls = 'lb' + (cfg.rootClass ? ' ' + String(cfg.rootClass) : '');
+
   return (
-    '<span class="lb" data-lb-root="' + escapeHtml(id) + '">' +
+    '<span class="' + escapeHtml(rootCls) + '" data-lb-root="' + escapeHtml(id) + '">' +
       '<button type="button" class="' + escapeHtml(cls.join(' ')) + '"' +
         ' id="' + escapeHtml(id) + '"' +
         ' data-lb-trigger="' + escapeHtml(id) + '"' +
@@ -266,7 +275,35 @@ export function mountListbox(cfg) {
     if (!el) { state.trigger.removeAttribute('aria-activedescendant'); return; }
     el.classList.add('is-active');
     state.trigger.setAttribute('aria-activedescendant', el.id);
-    if (scroll) el.scrollIntoView({ block: 'nearest' });
+    if (scroll) scrollRowIntoView(el);
+  }
+
+  /**
+   * Bring the active row into view, ARITHMETICALLY.
+   *
+   * NOT `scrollIntoView({block:'nearest'})`, and the reason was MEASURED: at
+   * open() time the menu has just been appended and had its max-height set,
+   * and on a 193-row list scrollIntoView did nothing — the menu opened with
+   * the selected row 6,514px above the fold, which is exactly the "loses your
+   * place" failure that opening on the selection exists to prevent. The same
+   * call works perfectly a tick later (verified: it moved scrollTop 0 ->
+   * 6,174), so it is a layout-timing dependency, not a broken API. `offsetTop`
+   * forces a synchronous layout read and gives an exact answer whenever it is
+   * called.
+   *
+   * `offsetParent` is the menu itself (it is `position: fixed`), so offsetTop
+   * is already menu-relative — verified in a browser rather than assumed.
+   */
+  function scrollRowIntoView(el) {
+    const menu = state.menu;
+    if (!menu) return;
+    const PAD = 4;
+    const top = el.offsetTop;
+    const bottom = top + el.offsetHeight;
+    if (top < menu.scrollTop + PAD) menu.scrollTop = Math.max(0, top - PAD);
+    else if (bottom > menu.scrollTop + menu.clientHeight - PAD) {
+      menu.scrollTop = bottom - menu.clientHeight + PAD;
+    }
   }
 
   function position() {
@@ -280,6 +317,14 @@ export function mountListbox(cfg) {
     // Measure the menu's natural height with the cap lifted, so the flip
     // decision is made against what the menu WANTS rather than against a cap
     // computed from the side we have not chosen yet.
+    //
+    // LIFTING THE CAP RESETS scrollTop, and that cost a real defect: the rAF
+    // loop calls this again on the frame after open(), so a menu that had
+    // correctly scrolled to the selected row snapped back to the top — on a
+    // 193-row list, measured, every single time. The saved offset is restored
+    // below. Reading scrollTop first is also what forces the layout flush the
+    // measurement needs.
+    const keepScroll = state.menu.scrollTop;
     state.menu.style.maxHeight = 'none';
     const natural = state.menu.scrollHeight;
 
@@ -311,6 +356,7 @@ export function mountListbox(cfg) {
       state.menu.style.top = Math.round(r.bottom + GAP) + 'px';
     }
     state.menu.dataset.lbSide = up ? 'up' : 'down';
+    state.menu.scrollTop = keepScroll;
   }
 
   // The ONE loop. Runs only while open. Closes on detachment (a view repaint
@@ -343,6 +389,14 @@ export function mountListbox(cfg) {
     state.trigger.setAttribute('aria-expanded', 'true');
     state.trigger.classList.add('is-open');
 
+    // POSITION BEFORE setActive, and the order is load-bearing. setActive
+    // scrolls the active row into view, and until the menu has been sized and
+    // placed there is nothing to scroll WITHIN — measured on a 193-row list:
+    // with these two the other way round the menu opened with the selected
+    // row off-screen, which is precisely the "loses your place" failure the
+    // open-on-selection rule below exists to prevent.
+    position();
+
     // Open ON the current value, the way a native menulist does — not on the
     // first row. Landing on row 1 of a 193-row model list loses the user's
     // place every single time they glance at the menu.
@@ -369,7 +423,6 @@ export function mountListbox(cfg) {
       if (m) setActive(Number(m[1]), { scroll: false });
     });
 
-    position();
     state.lastRect = '';
     state.raf = requestAnimationFrame(tick);
 
@@ -414,7 +467,39 @@ export function mountListbox(cfg) {
     close();
     // Fired AFTER the menu is gone, so a handler that re-renders the whole
     // view is not racing a live menu it does not know about.
-    if (changed && typeof cfg.onChange === 'function') cfg.onChange(value, opt);
+    if (changed && typeof cfg.onChange === 'function') {
+      cfg.onChange(value, opt);
+      restoreFocusAfterRerender();
+    }
+  }
+
+  /**
+   * ── FOCUS SURVIVES THE HANDLER'S OWN REPAINT ────────────────────────────
+   * MEASURED, not anticipated: committing with Enter left focus on <body>.
+   * close() focuses the trigger correctly, and then onChange re-rendered the
+   * view via innerHTML, destroying the very element that had just been
+   * focused. That is v3.17.1 finding 8 in a new place — a control that works
+   * and silently strands the keyboard user who used it.
+   *
+   * Restored BY ID, because the node itself is gone (the pattern
+   * views/onboarding.js established in v3.8.0 and views/memory.js reuses).
+   *
+   * GATED ON FOCUS HAVING BEEN LOST TO <body>. If the handler deliberately
+   * moved focus somewhere else, that is a decision and this must not
+   * override it; only the "dropped on the floor" case is repaired. A
+   * handler that re-renders synchronously is already done by the time this
+   * runs, and one that re-renders after an await is covered by the second
+   * attempt on the next frame.
+   */
+  function restoreFocusAfterRerender() {
+    const tryOnce = () => {
+      if (typeof document === 'undefined') return;
+      if (document.activeElement && document.activeElement !== document.body) return;
+      const again = document.getElementById(id);
+      if (again) { try { again.focus(); } catch { /* detached again */ } }
+    };
+    tryOnce();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(tryOnce);
   }
 
   function move(delta) {

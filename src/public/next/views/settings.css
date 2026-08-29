@@ -503,110 +503,44 @@
   overflow-y: auto;
 }
 /* ── Selects ─────────────────────────────────────────────────────────────
-   THE ELEMENT IS STILL A NATIVE <select>. Only its CHROME is replaced.
+   BOTH CONTROLS IN THIS FILE ARE NOW THE SHARED LISTBOX, not <select>s.
+   See shared/listbox.js and shared/listbox.css, linked globally from
+   next/index.html.
 
-   `appearance: none` turns off the UA-drawn menulist widget. Without it the
-   browser draws its own indicator glyph, whose colour and metrics we do not
-   control and which does not follow the theme — which is what these two
-   controls looked like before, alone among the app's form controls. A
-   hand-rolled listbox would also match the OPEN menu, but it costs the
-   keyboard model, the screen-reader model and the platform picker on touch,
-   all of which a <select> gives for nothing. That trade is not worth a
-   chevron.
+   Recorded rather than deleted, because the note that stood here made a
+   claim this change had to answer: "a hand-rolled listbox would also match
+   the OPEN menu, but it costs the keyboard model, the screen-reader model
+   and the platform picker on touch, all of which a <select> gives for
+   nothing. That trade is not worth a chevron."
 
-   STATED PLAINLY, BECAUSE IT IS WHAT REMAINS: the OPEN dropdown list is
-   drawn by the OS and no CSS here reaches it. `appearance: none` does not
-   change that and never has. Matching the open state needs either a custom
-   listbox (the a11y cost above) or `appearance: base-select`, which is
-   Chromium-only today and whose fallback is untested here.
+   The first two costs were correct, and they are now PAID rather than
+   waved away — the component implements Up/Down/Home/End, Enter, Escape
+   (which cancels AND restores), Tab, type-ahead, and the APG
+   select-only-combobox roles with aria-activedescendant. The third cost is
+   real and UNPAID: on a touch device the OS wheel/sheet picker is gone.
+   This is a desktop localhost app; that is a cost taken knowingly, and it
+   is written down rather than implied away.
 
-   WHY THIS IS A SECOND COPY OF views/memory.css's version rather than a
-   shared rule. views/README.md's rule 3 is per-view CSS, duplicated on
-   purpose, "so an edit to another view's CSS can never silently change
-   this one" — and hoisting it to shell.css would have to be a bare
-   `select` rule to be worth it, which would strip the native chevron off
-   views/ingest.css's `.ing-select` too and leave it with NO indicator at
-   all. Two named copies is the honest cost of that safety. */
-
-/* Deliberately carries NO sizing of its own. The wrapper is the flex item
-   now, so whatever the select used to contribute to its parent's layout has
-   to move here — but the two usages sit in different parents (a column
-   block and a wrapping row), so that lands in the two scoped rules below
-   rather than in one shape that is wrong for one of them. */
-.settings-select-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
+   What is left below is the two SIZING rules, unchanged in effect. They
+   apply to the trigger button now instead of the select, and they still
+   differ from each other because their parents differ: one is a column
+   block, one is a wrapping row. shared/listbox.css is linked ABOVE this
+   file, so these single-class rules win on source order — which is the
+   intended layering, and the same one shared/progress-ring.css documents. */
 
 /* Default-domain: parent is a COLUMN flex, so without align-self the
-   wrapper stretches the full width and the absolutely-positioned chevron
-   goes with it — landing far to the right of the select it belongs to.
-   These two declarations were on .settings-select before the wrapper
-   existed; they are moved, not added. */
-.settings-field-block > .settings-select-wrap {
-  align-self: flex-start;
-  max-width: 280px;
-}
-
-/* Model sort: parent is the wrapping filter ROW (align-items: center), so
-   it inherits the centring and only needs to refuse to grow or shrink —
-   what .model-filter-sort itself used to declare. */
-.model-filter-sort-wrap { flex: 0 0 auto; }
-/* The filter-bar select is the compact one (5/7px padding against the
-   default-domain select's 32px control height), so its chevron sits in
-   tighter and the padding-right on .model-filter-sort matches this. */
-.model-filter-sort-wrap::after { right: 8px; }
-
-/* The chevron, drawn in CSS rather than as a background-image data URI. A
-   data URI carries its own colour baked in, so it cannot follow the theme
-   and would need one copy per theme; two rotated borders take a token and
-   flip for free. pointer-events: none so the click still reaches the select
-   underneath — without it the chevron is a 6px dead zone on the control. */
-.settings-select-wrap::after {
-  content: '';
-  position: absolute;
-  right: 10px;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid var(--text-2);
-  border-bottom: 1.5px solid var(--text-2);
-  transform: translateY(-2px) rotate(45deg);
-  pointer-events: none;
-}
-
+   trigger stretches the full width of the block. These two declarations
+   have travelled from .settings-select to the wrapper and now back to the
+   control; the effect has never changed. */
 .settings-select {
-  appearance: none;
-  -webkit-appearance: none;              /* Safari still needs the prefix */
-  height: var(--control-md);
-  /* Right padding clears the chevron above; without it a long domain name
-     runs underneath it. */
-  padding: 0 26px 0 11px;
-  border-radius: 6px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: var(--text-md);
   align-self: flex-start;
   max-width: 280px;
-  cursor: pointer;
 }
-.settings-select:hover { border-color: var(--border-strong); }
-.settings-select:focus-visible {
-  outline: none;
-  border-color: var(--border-focus);
-  box-shadow: var(--ring-focus);
-}
-/* A disabled select is not a thing you can open, so the chevron dims with
-   it. COSMETIC ONLY, and chosen knowing `:has()` is the newest thing in
-   this file: where it is unsupported the chevron simply stays at full
-   contrast beside a dimmed control. Nothing about layout or hit-testing
-   depends on it — that is why the two sizing rules above use explicit
-   classes instead. */
-.settings-select-wrap:has(.settings-select[disabled])::after { opacity: 0.45; }
-.settings-select[disabled] { opacity: 0.55; cursor: not-allowed; }
+/* The disabled look is shared/listbox.css's `.lb-btn:disabled` now, and the
+   chevron dims with the button because it is an inline child taking
+   `currentColor` — no `:has()` and no second rule. The `:has()` version this
+   replaces existed only because the chevron was a ::after on a WRAPPER that
+   could not know the control's state; there is no wrapper any more. */
 
 /* ── Health & scan limits ────────────────────────────────────────────── */
 
@@ -890,26 +824,18 @@
   color: var(--text);
   font: var(--type-body-sm);
 }
-/* `flex: 0 0 auto` has moved to .model-filter-sort-wrap — the wrapper is
-   the flex item now. See the Selects section above for what `appearance:
-   none` replaces and what stays OS-drawn. */
+/* The compact trigger for the model sort control (shared listbox). Sits in
+   the wrapping filter ROW, whose align-items: center it inherits; it only
+   needs to refuse to grow or shrink. Overrides shared/listbox.css's default
+   trigger metrics on source order — see the Selects note above. */
 .model-filter-sort {
-  appearance: none;
-  -webkit-appearance: none;              /* Safari still needs the prefix */
-  /* Right padding clears the wrapper's chevron. */
-  padding: 5px 22px 5px 7px;
-  border: 1px solid var(--border);
+  flex: 0 0 auto;
+  height: auto;
+  padding: 5px 7px;
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-2);
   font-size: var(--text-xs);
-  cursor: pointer;
-}
-.model-filter-sort:hover { border-color: var(--border-strong); }
-.model-filter-sort:focus-visible {
-  outline: none;
-  border-color: var(--border-focus);
-  box-shadow: var(--ring-focus);
 }
 .model-filter-measured {
   display: flex;

@@ -457,6 +457,10 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MODEL_SUITABILITY_BADGES', 'ACTIVATION_
   // not at it, and a hardcoded 8 in this file would keep passing after the
   // module moved to a different number.
   'CHAT_LANE_COLLAPSE_AT', 'MODEL_SORTS', 'MODEL_FILTER_MIN_ROWS',
+  // The sort control's option table. Extracted rather than re-declared here:
+  // it is now the ONLY place the four sort labels exist, and a local copy
+  // would keep this suite green after the module renamed or dropped one.
+  'MODEL_SORT_OPTIONS',
   // v3.17.0 — the two sorts that need a comparator. Extracted rather than
   // re-declared here: the field NAMES are the contract between llm.js and the
   // picker, and a local copy would keep passing after the wire field was
@@ -550,6 +554,34 @@ const RENDER_INJECTED_VALUES = {
   renderActiveModelLine: () => '',
   gatedLoader: () => '<LOADER/>',
   loadGate: null,
+  // The render -> wire handoff array (see settings.js). Injected as a real
+  // array rather than stubbed away, so §the filter-bar section can read back
+  // the cfg the renderer pushed and assert on what the control WILL be
+  // mounted with — not merely on the markup it emitted.
+  pendingListboxes: [],
+  // ── The shared listbox, STUBBED — and why that is the right call here ──
+  // shared/listbox.js imports `icon`/`escapeHtml` from next/app.js, which
+  // touches `document` at module scope and therefore cannot be imported in
+  // Node (measured: "document is not defined"). More importantly, this suite's
+  // subject is the model PICKER, not the dropdown component — the component
+  // has its own suite (scripts/test-next-listbox.js), which drives the real
+  // renderer.
+  //
+  // The stub is deliberately FAITHFUL ABOUT THE THINGS THIS SUITE ASSERTS ON:
+  // it emits the control's id and every option's value and label, so §the
+  // filter-bar section can still check that the sort control exists and offers
+  // the four sorts by name. It is NOT faithful about markup shape, and no
+  // assertion here may depend on that — stated so nobody adds one.
+  renderListboxHtml: (cfg) => '<div data-listbox="' + cfg.id + '" data-listbox-value="' +
+    String(cfg.value == null ? '' : cfg.value) + '">' +
+    (cfg.options || []).map((o) => '<span data-listbox-option="' + o.value + '">' + o.label + '</span>').join('') +
+    '</div>',
+  // Called only from the cfg's onChange closure, which the render pass never
+  // invokes — but the static callee scanner cannot know that, and a name it
+  // cannot resolve is a ReferenceError waiting for the first caller. Provided
+  // as no-ops rather than removed from the scan.
+  setModelFilter: () => {},
+  render: () => {},
 };
 const RENDER_INJECTED = Object.keys(RENDER_INJECTED_VALUES);
 
@@ -625,6 +657,7 @@ const {
   modelSearchText, isCuratorMeasured, filterModels, orderModels, modelFilterFor,
   renderModelFilterBar, renderModelFilterEmpty, MODEL_SORTS, MODEL_FILTER_MIN_ROWS,
   modelSortKey, countUnrankedForSort, MODEL_SORT_KEYS, MODEL_SORT_UNRANKED_LABEL,
+  MODEL_SORT_OPTIONS,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -4518,7 +4551,13 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
       'an unfiltered bar reports a plain total, not "209 of 209"');
     // Exactly THREE controls. Six chips above a list is not an improvement on a
     // long list; this assertion is what stops the bar growing into one.
-    const controls = (bar.match(/<input|<select/g) || []).length;
+    //
+    // The sort control is the shared listbox now, so it is `data-listbox`
+    // rather than `<select>` — counted by the marker the STUB emits, which
+    // means this line measures "how many controls did the bar ask for", not
+    // "how many tags did the component print". That is the fact worth
+    // pinning; the component's own markup is its own suite's subject.
+    const controls = (bar.match(/<input|data-listbox=/g) || []).length;
     ok(controls === 3, `the bar carries exactly 3 controls (found ${controls}) — search, sort, measured`);
     ok(!renderModelFilterBar('openrouter', F({ q: '"><img src=x>' }), 1, 2).includes('<img src=x'),
       'a hostile query cannot break out of the input value attribute');
@@ -4560,8 +4599,12 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
       'the filter bar IS rendered — it reaches the returned markup, not just a local variable');
     ok(!/data-model-filter/.test(summaryHtml),
       'and no filter control is inside the <summary>');
-    ok(/data-model-filter-sort/.test(bodyHtml) && /data-model-filter-measured/.test(bodyHtml),
-      'all three controls reach the DOM');
+    ok(/data-listbox="model-filter-sort-openrouter"/.test(bodyHtml) &&
+       /data-model-filter-measured/.test(bodyHtml),
+      'all three controls reach the DOM — the sort control is the shared ' +
+      'listbox and is PROVIDER-SCOPED in its id, because this bar is rendered ' +
+      'once per provider and two controls sharing an id would make ' +
+      'aria-controls and aria-activedescendant ambiguous');
     // Below the threshold the bar is furniture and stays away.
     const small = Object.assign({}, big, { offerable: Object.assign({}, WIRE, { openrouter: CORPUS.slice(0, 5) }) });
     ok(!/data-model-filter-q/.test(renderModelPicker(rowFor('openrouter'), small, true, false)),
@@ -4833,15 +4876,24 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
   {
     const F = (over) => Object.assign({ q: '', sort: 'cheapest', measuredOnly: false }, over);
     const bar = renderModelFilterBar('openrouter', F({ sort: 'newest' }), 20, 20, 12);
-    ok(/value="newest"/.test(bar) && /value="largest-context"/.test(bar),
+    ok(/data-listbox-option="newest"/.test(bar) && /data-listbox-option="largest-context"/.test(bar),
       'both new sorts are offered');
     ok(/Newest first/.test(bar) && /Largest context first/.test(bar),
       'and are labelled in the language a person uses, not the field name');
-    ok(/value="newest"[^>]*selected/.test(bar), 'the current sort round-trips as selected');
-    // RESTRAINT: two <option>s inside the <select> that already exists. The
+    // Asserted on the cfg the renderer PUSHED, not on the stub's markup: this
+    // is the object the control is actually mounted from, so it is the
+    // stronger of the two available checks. Read through the injected map
+    // rather than a local — the sandbox holds the only live reference.
+    const pushed = RENDER_INJECTED_VALUES.pendingListboxes;
+    const sortCfg = pushed.filter((c) => c.id === 'model-filter-sort-openrouter').pop();
+    ok(!!sortCfg && sortCfg.value === 'newest',
+      'the current sort round-trips as the mounted control\'s value');
+    ok(!!sortCfg && sortCfg.options.length === MODEL_SORT_OPTIONS.length,
+      'and the control offers every sort in the table, with no second copy of the list');
+    // RESTRAINT: two more rows in the picker that already exists. The
     // maintainer's directive was "not too many information"; this is the
     // structural expression of it.
-    const controls = (bar.match(/<input|<select/g) || []).length;
+    const controls = (bar.match(/<input|data-listbox=/g) || []).length;
     ok(controls === 3, `the bar still carries exactly 3 controls (found ${controls}) — no new chip, column or badge`);
     // The absence is STATED, on the count line that already exists.
     ok(/12 with no release date/.test(bar),
@@ -4895,7 +4947,8 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
       'control: in the cheapest view it is the other way round, so the assertion above is measuring the sort');
     ok(newHtml.includes('with no release date'),
       'and the rendered picker STATES the unranked count — the honesty reaches the screen, not just the helper');
-    ok(/value="newest"[^>]*selected/.test(newHtml), 'with the sort control showing the active choice');
+    ok(/data-listbox="model-filter-sort-openrouter"[^>]*data-listbox-value="newest"/.test(newHtml),
+      'with the sort control showing the active choice');
 
     stubState.modelFilter = { openrouter: { q: '', sort: 'largest-context', measuredOnly: false } };
     const ctxHtml = renderModelPicker(rowFor('openrouter'), keys, true, false);

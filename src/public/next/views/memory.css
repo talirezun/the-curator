@@ -214,7 +214,7 @@
 }
 /* min-width: 0 is load-bearing, not tidiness. A flex item defaults to
    min-width: auto — a content-based floor — so .mem-ctl refused to shrink
-   below its widest child and .mem-select's own `max-width: 100%` then
+   below its widest child and the control's own `max-width: 100%` then
    resolved against a box that was ALREADY overflowing. Measured at a 640px
    viewport: the select's right edge landed at 651 and the main column grew a
    horizontal scrollbar (scrollWidth 319 vs clientWidth 308). Both boxes need
@@ -234,72 +234,27 @@
    states the same class of fact, so it is held to the same legibility. */
 .mem-ctl-note { font-size: var(--text-2xs); color: var(--text-2); }
 
-/* THE SELECT IS STILL A NATIVE <select>. Only its CHROME is replaced.
-   `appearance: none` turns off the UA-drawn menulist widget — without it the
-   browser draws its own indicator glyph, whose colour and metrics we do not
-   control and which does not follow the theme. A hand-rolled listbox would
-   also match the OPEN menu, but it costs the keyboard model, the screen
-   reader model and the platform picker on touch, all of which a <select>
-   gives for nothing. That trade is not worth a chevron.
+/* ── THE PICKERS ARE NO LONGER <select>s ──────────────────────────────
+   Everything visual now comes from shared/listbox.css (`.lb-*`), linked
+   globally from next/index.html. Nothing about the control's look lives
+   here any more; what remains below is only the FLEX SIZING this row needs.
 
-   STATED PLAINLY, because it is what remains: the OPEN dropdown list is
-   drawn by the OS and no CSS here reaches it. `appearance: none` does not
-   change that, and never has. Matching the open state needs either a custom
-   listbox (the a11y cost above) or `appearance: base-select`, which is
-   Chromium-only today.
+   Why the native control went, recorded rather than quietly dropped: the
+   note that stood here said a hand-rolled listbox "costs the keyboard
+   model, the screen reader model and the platform picker on touch, all of
+   which a <select> gives for nothing", and concluded that trade was not
+   worth a chevron. The first two costs were real and are now PAID — the
+   component implements Up/Down/Home/End/Enter/Escape/Tab, type-ahead, and
+   the APG select-only-combobox roles. The third is genuine and unpaid: on
+   a touch device the OS wheel/sheet picker is gone. This is a desktop
+   localhost app, so that is a cost we can take; it is stated here so the
+   next reader is not told the trade was free.
 
-   The wrapper carries min-width/max-width as well as the select: it is the
-   flex item now, and a wrapper with the default min-width: auto reinstates
-   exactly the 640px overflow the .mem-ctl note above describes. */
-.mem-select-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* The chevron, drawn in CSS rather than as a background-image data URI. A
-   data URI carries its own colour, so it cannot follow the theme and would
-   need one copy per theme; two rotated borders take a token and flip for
-   free. pointer-events: none so the click still reaches the select.
-
-   --text-2 measured at 8.55 dark / 7.02 light over --surface-inset, against
-   the 3:1 that applies to a graphical control indicator. It is deliberately
-   not --text-3 (3.92/3.54 here): this glyph is the only thing that says
-   "this opens", so it is the last place to spend contrast. */
-.mem-select-wrap::after {
-  content: '';
-  position: absolute;
-  right: 9px;
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid var(--text-2);
-  border-bottom: 1.5px solid var(--text-2);
-  transform: translateY(-2px) rotate(45deg);
-  pointer-events: none;
-}
-
-.mem-select {
-  appearance: none;
-  -webkit-appearance: none;              /* Safari still needs the prefix */
-  height: var(--control-sm);
-  max-width: 100%;
-  min-width: 0;                          /* see .mem-ctl — both are required */
-  /* Right padding clears the chevron above; without it a long scope name
-     runs underneath it. */
-  padding: 0 24px 0 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface-inset);
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-  transition: border-color var(--t-state), background var(--t-state);
-}
-.mem-select:hover { border-color: var(--border-strong); background: var(--surface-hover); }
-.mem-select:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+   `min-width: 0` on the control is load-bearing for the same reason it was
+   on the select — see the .mem-ctl note above; a machine id is long and
+   hex-suffixed and would otherwise push this row past the viewport. */
+.mem-ctl .lb { min-width: 0; max-width: 100%; }
+.mem-ctl .lb-btn { max-width: 100%; }
 
 /* ── The handoff document ────────────────────────────────────────────── */
 
@@ -552,7 +507,9 @@
   .mem-j-row { flex-direction: column; gap: 2px; }
   .mem-j-when { width: auto; }
   .mem-controls { gap: 8px 12px; }
-  /* The wrapper is the flex item now, so the cap goes on it; the select
-     follows at max-width: 100%. */
-  .mem-select-wrap, .mem-select { max-width: 46vw; }
+  /* The .lb wrapper is the flex item; the trigger follows at max-width:
+     100%. The MENU is not capped here — it is a <body> child positioned
+     against the viewport by listbox.js, so a narrow trigger does not force
+     a narrow menu. */
+  .mem-ctl .lb, .mem-ctl .lb-btn { max-width: 46vw; }
 }

@@ -126,6 +126,7 @@ import {
   extractConflictJobId, formatHealthCounts, sanitizeDisplayName,
   computeQueueStatusCounts, computeQueueSpentLabel,
 } from '../shared/ingest-queue-logic.js';
+import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 
 // The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
 // separate module precisely because those are frozen to app.js and this
@@ -285,6 +286,14 @@ registerView('ingest', {
       // Write-gate subscription cleanup — a torn-down mount must stop
       // reacting to gate changes.
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
+
+      // The domain picker's menu is a <body> child, so a rail navigation
+      // does not remove it with the view. navigate() closes the reader but
+      // explicitly does NOT reach into view-owned popovers (see its
+      // comment), so closing it is this view's job. The component also
+      // self-closes when its trigger leaves the document; this is the
+      // deliberate second layer.
+      closeAllListboxes();
     };
   },
 });
@@ -346,7 +355,7 @@ function render(token) {
 }
 
 // The ONE place `state.domain` changes in response to a USER action. Both
-// the in-form <select> and the sidebar's destination rows call this, so the
+// the in-form domain picker and the sidebar's destination rows call this, so the
 // two controls cannot drift: there is one writer and the whole view
 // re-renders from state. (Two further writers exist and are legitimate —
 // applyQueueJobSnapshot and checkActiveQueueJob adopt a live job's domain,
@@ -510,6 +519,41 @@ function renderMain(token) {
   );
 }
 
+/**
+ * The domain picker's whole description, in ONE place.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT TWO LITERALS ─────────────────────────
+ * The same control is rendered by the single-file form AND by the batch
+ * confirm gate. They previously carried two hand-written copies of the same
+ * <option> loop; the copies happened to agree, which is the state every pair
+ * of copies is in right up until one of them is edited. One builder, called
+ * twice, and the two surfaces cannot describe different domains.
+ *
+ * ── READ-ONLY MIRRORS STAY OUT, AND THAT IS NOT DECORATION ──────────────
+ * `state.domains` is already filtered upstream of this view (a Shared Brain
+ * `shared-*` mirror is excluded from the ingest destination list, and the
+ * route refuses one anyway). This builder does not re-derive that list — it
+ * consumes it — so there is exactly one place the exclusion is decided and
+ * this control cannot reintroduce a domain the loader deliberately dropped.
+ *
+ * `disabled` is passed in rather than read from state so the confirm gate,
+ * which is never mid-submit, does not have to reason about a flag that
+ * belongs to the other surface.
+ */
+function domainListboxCfg({ disabled = false } = {}) {
+  return {
+    id: 'ing-domain',
+    ariaLabel: 'Domain',
+    value: state.domain,
+    disabled: !!disabled,
+    rootClass: 'lb-block',
+    triggerClass: 'lb-field',
+    placeholder: 'Choose a domain…',
+    options: state.domains.map((d) => ({ value: d.slug, label: d.displayName })),
+    onChange: (value) => selectDomain(value),
+  };
+}
+
 function renderIngestForm() {
   const crossBusy = state.domain && !state.submitting && isDomainWriteBusy(state.domain);
   const btnDisabled = !state.file || !!state.fileError || state.submitting || crossBusy || !state.domain;
@@ -519,18 +563,10 @@ function renderIngestForm() {
       state.domain + '" — wait for it to finish, or switch to a different domain.';
   }
 
-  const domainOptions = state.domains.map((d) => (
-    '<option value="' + escapeHtml(d.slug) + '"' + (d.slug === state.domain ? ' selected' : '') + '>' +
-      escapeHtml(d.displayName) +
-    '</option>'
-  )).join('');
-
   return (
     '<div class="ing-field">' +
-      '<label class="ing-label" for="ing-domain">Domain</label>' +
-      '<span class="ing-select-wrap">' +
-        '<select class="ing-select" id="ing-domain"' + (state.submitting ? ' disabled' : '') + '>' + domainOptions + '</select>' +
-      '</span>' +
+      '<span class="ing-label" id="ing-domain-label">Domain</span>' +
+      renderListboxHtml(domainListboxCfg({ disabled: state.submitting })) +
     '</div>' +
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-file-input">File</label>' +
@@ -924,14 +960,21 @@ function formatElapsedMs(ms) {
 // event firing and the very next line of JS running).
 
 function wireListeners() {
-  const domainSelect = document.getElementById('ing-domain');
-  if (domainSelect) {
-    // Routed through selectDomain — the single writer of state.domain,
-    // shared with the sidebar's destination rows so the two controls
-    // cannot drift. The re-estimate-at-the-confirm-gate behaviour ported
-    // from src/public/app.js lives in there; see its comment.
-    domainSelect.addEventListener('change', (e) => selectDomain(e.target.value));
-  }
+  // The domain picker. Hydrated from the SAME builder the markup came from
+  // (domainListboxCfg), so the mounted control and the rendered one cannot
+  // describe different options.
+  //
+  // No `disabled` is passed here, deliberately: the flag only ever affects
+  // the RENDERED markup, and mountListbox reads the live `button.disabled`
+  // off the DOM. A disabled <button> refuses the click at the platform
+  // level — there is no CSS-only lookalike that still fires a handler
+  // mid-write, which is the failure a hand-rolled menu invites.
+  //
+  // onChange routes through selectDomain — the single writer of state.domain,
+  // shared with the sidebar's destination rows so the two controls cannot
+  // drift. The re-estimate-at-the-confirm-gate behaviour ported from
+  // src/public/app.js lives in there; see its comment.
+  mountListbox(domainListboxCfg());
 
   const dropZone = document.getElementById('ing-drop-zone');
   const fileInput = document.getElementById('ing-file-input');
@@ -1707,12 +1750,6 @@ function renderQueueSection() {
 }
 
 function renderQueueConfirmGate() {
-  const domainOptions = state.domains.map((d) => (
-    '<option value="' + escapeHtml(d.slug) + '"' + (d.slug === state.domain ? ' selected' : '') + '>' +
-      escapeHtml(d.displayName) +
-    '</option>'
-  )).join('');
-
   let estimateBody = '';
   if (state.queueEstimateLoading) {
     const n = state.selectedFiles.length;
@@ -1725,10 +1762,8 @@ function renderQueueConfirmGate() {
 
   return (
     '<div class="ing-field">' +
-      '<label class="ing-label" for="ing-domain">Domain</label>' +
-      '<span class="ing-select-wrap">' +
-        '<select class="ing-select" id="ing-domain">' + domainOptions + '</select>' +
-      '</span>' +
+      '<span class="ing-label" id="ing-domain-label">Domain</span>' +
+      renderListboxHtml(domainListboxCfg({ disabled: false })) +
     '</div>' +
     '<div class="ing-field">' +
       renderDropZoneHtml({ disabled: false, multiHint: false }) +

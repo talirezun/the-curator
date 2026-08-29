@@ -1,0 +1,187 @@
+/* shared/listbox.css — the one dropdown surface in /next.
+   Companion to shared/listbox.js; see that file's header for why the native
+   <select> popup had to go and why the menu lives on <body>.
+
+   ── WHAT IS OWNED HERE ────────────────────────────────────────────────
+   Everything. That is the point: with a native <select> the closed control
+   took our tokens and the OPEN list was painted by the OS, so half of every
+   picker in the app sat outside the design system. There is no OS-drawn
+   surface left in this component — no `appearance` declaration anywhere in
+   this file, because there is no UA widget to switch off.
+
+   ── SIZE VARIANTS ─────────────────────────────────────────────────────
+   `.lb-sm` / `.lb-md` reproduce the two heights the six replaced selects
+   already used (memory's toolbar control, and ingest/settings' field
+   control). They are variants rather than per-view overrides so a seventh
+   adoption picks one instead of inventing a third height. */
+
+/* ── Trigger ─────────────────────────────────────────────────────────── */
+
+.lb { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
+.lb-block { display: block; width: 100%; }
+
+.lb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--control-md);
+  padding: 0 9px 0 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-state), background var(--t-state);
+}
+.lb-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-hover); }
+.lb-btn:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+/* Open reads as a held state, not merely as hover — the menu it belongs to
+   is on <body> and therefore visually detached from it. */
+.lb-btn.is-open { border-color: var(--border-focus); background: var(--surface-hover); }
+
+/* A REAL disabled state. This is a <button disabled>, so the browser refuses
+   the click and removes it from the tab order; these rules only say so on
+   screen. The failure this replaces would be a div that merely looked
+   unavailable while still firing its handler mid-write. */
+.lb-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.lb-btn-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.lb-btn.is-placeholder .lb-btn-text { color: var(--text-3); }
+
+/* The chevron is an inline SVG taking `currentColor` from the button, so it
+   follows the theme and the disabled opacity without a second rule — unlike
+   the background-image data URI the replaced selects deliberately avoided,
+   which carries its own colour and needs one copy per theme. */
+.lb-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-2);
+  transition: transform var(--t-state);
+}
+.lb-btn.is-open .lb-chevron { transform: rotate(180deg); }
+
+/* Small variant — memory's scope/machine toolbar controls. */
+.lb-sm .lb-btn, .lb-btn.lb-sm {
+  height: var(--control-sm);
+  padding: 0 7px 0 8px;
+  font-size: var(--text-xs);
+  background: var(--surface-inset);
+}
+/* Field variant — ingest's domain field and settings' default-domain field:
+   a full-width block control rather than an inline toolbar one. */
+.lb-btn.lb-field {
+  width: 100%;
+  height: var(--control-md);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font: var(--type-body-sm);
+}
+
+/* ── Menu ────────────────────────────────────────────────────────────── */
+/* `position: fixed` on a <body> child. NOT fixed inside a view: `#view-root`
+   carries a transform during the view-enter animation, and a transformed
+   ancestor becomes the containing block for fixed descendants — shell.css
+   carries that warning and v3.10.0 measured a probe moving 340px through it.
+   Every coordinate below is written by listbox.js from the trigger's rect. */
+.lb-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-pop);
+}
+
+.lb-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
+  cursor: pointer;
+  scroll-margin: 5px;
+}
+/* `.is-active` is the KEYBOARD position and `.is-selected` is the committed
+   value; they are different facts and are shown differently on purpose. A
+   user arrowing down a 193-row list must be able to see both where they are
+   and what is still selected — collapsing them into one style is how a
+   listbox stops being able to say "you have not committed this yet". */
+.lb-opt.is-active { background: var(--surface-hover); }
+.lb-opt.is-selected { background: var(--accent-tint); color: var(--accent-text); }
+.lb-opt.is-selected.is-active { background: var(--accent-tint-strong); }
+.lb-opt.is-disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lb-opt-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* --text-2, not --text-3. The detail column carries a machine's age and a
+   model's id — body text a user reads, so it takes the AA 4.5:1 floor, and
+   --text-3 measures under it on this surface. */
+.lb-opt-detail {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+.lb-opt-check { display: inline-flex; flex: none; width: 13px; color: var(--accent-text); }
+.lb-opt.is-selected .lb-opt-check { color: currentColor; }
+
+/* Group heading. Inert text, NOT a [role="option"], so arrow navigation and
+   type-ahead skip it for free rather than by a filter that can be forgotten. */
+.lb-group {
+  padding: 7px 9px 3px;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.lb-group:first-child { padding-top: 3px; }
+
+.lb-foot {
+  margin-top: 4px;
+  padding: 6px 9px 2px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+}
+
+/* Rich rows — the composer's model menu, which stacks a label, badges, a
+   price and a measured one-liner. The row becomes a column; everything above
+   still applies. */
+.lb-menu.lb-rich .lb-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  position: relative;
+  padding-right: 26px;
+}
+.lb-menu.lb-rich .lb-opt-check { position: absolute; top: 8px; right: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-btn, .lb-chevron { transition: none; }
+}

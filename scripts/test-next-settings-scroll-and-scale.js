@@ -360,50 +360,95 @@ console.log('\n§3b  An expanded model row survives a repaint');
   }
 }
 
-// ── §4  The two selects ──────────────────────────────────────────────────
-console.log('\n§4  Both Settings selects are styled, not native chrome');
-for (const sel of ['.settings-select', '.model-filter-sort']) {
-  const block = blockFor(settingsCss, sel);
-  ok(block !== null, `${sel} has a rule block`);
-  ok(/(^|\n)\s*appearance:\s*none;/.test(block), `${sel}: appearance: none — the UA menulist chrome is off`);
-  ok(/-webkit-appearance:\s*none;/.test(block), `${sel}: -webkit-appearance too (Safari still needs the prefix)`);
-  // Without right padding a long value runs underneath the chevron.
-  ok(/padding:[^;]*\b(2[0-9]|[3-9][0-9])px\b/.test(block), `${sel}: reserves right padding for the chevron`);
-}
-{
-  const after = blockFor(settingsCss, '.settings-select-wrap::after');
-  ok(after !== null, 'a wrapper draws the replacement indicator');
-  ok(/border-right:[^;]*var\(--text-2\)/.test(after) && /border-bottom:[^;]*var\(--text-2\)/.test(after),
-    'the chevron is two rotated borders in a THEME TOKEN — a data URI carries its own colour and cannot follow the theme');
-  ok(/rotate\(45deg\)/.test(after), 'rotated into a chevron');
-  ok(/pointer-events:\s*none/.test(after), 'pointer-events: none — the chevron is not a dead zone on the control');
-  ok(!/url\(\s*['"]?data:/.test(after), 'not a data-URI background image');
-  const wrap = blockFor(settingsCss, '.settings-select-wrap');
-  ok(/position:\s*relative/.test(wrap), 'the wrapper is the positioning context the chevron needs');
-}
-{
-  // The wrapper became the flex item, so whatever the select contributed to
-  // its parent's layout had to move. Losing this is not subtle: in the column
-  // block the wrapper stretches full width and takes the chevron with it.
-  ok(blockFor(settingsCss, '.settings-field-block > .settings-select-wrap') !== null,
-    'the default-domain wrapper carries the align-self/max-width that moved off the select');
-  ok(/\.model-filter-sort-wrap\s*\{[^}]*flex:\s*0 0 auto/.test(settingsCss),
-    'the sort wrapper carries the flex sizing that moved off the select');
-  ok(settingsSrc.includes('settings-select-wrap'), 'settings.js renders the wrapper (a rule with no markup is dead CSS)');
-  ok(settingsSrc.includes('model-filter-sort-wrap'), 'settings.js renders the sort wrapper');
-}
-ok(/OPEN dropdown list is\s*\n?\s*drawn by the OS|open dropdown list is[\s\S]{0,40}OS/i.test(settingsCss),
-  'settings.css STATES what is still native rather than implying it away');
-// Comments stripped for the same reason §6 strips them from boot(): this
-// file's own comment EXPLAINS why base-select was not taken, and naming the
-// thing you rejected must not read as having used it. Second instance of
-// that mistake in this suite, hence the shared helper.
-ok(!/appearance:\s*base-select|::picker\s*\(/.test(stripCssComments(settingsCss)),
-  'no ::picker/base-select DECLARATION — Chromium-only with an untested fallback, deliberately not taken');
-// memory.css is another agent's file in this cycle. The duplication is the
-// correct outcome; what must not happen is this change having edited it.
-ok(readFileSync(join(NEXT, 'views/memory.css'), 'utf8').includes('.mem-select-wrap'),
-  'views/memory.css keeps its own copy of the pattern, untouched');
+// ── §4  The two pickers are the shared listbox ──────────────────────────
+console.log('\n§4  Both Settings pickers are the shared listbox, not native <select>s');
+
+// WHAT CHANGED AND WHY THIS SECTION WAS REWRITTEN RATHER THAN DELETED.
+// It used to pin `appearance: none` + a CSS-drawn chevron on two <select>s.
+// That got the CLOSED control on-design and could never reach the OPEN list,
+// which macOS paints outside the document — the stylesheet said so in a
+// comment and left it there. Both controls are now shared/listbox.js, so the
+// open menu is ours too. The facts worth pinning moved; the section did not
+// stop being worth having.
+const lbCss = readFileSync(join(NEXT, 'shared/listbox.css'), 'utf8');
+const lbJs = readFileSync(join(NEXT, 'shared/listbox.js'), 'utf8');
+
+ok(!/<select/.test(settingsSrc),
+  'settings.js contains NO <select> at all, in markup OR in a comment — a ' +
+  'comment still describing one sends the next reader looking for a control ' +
+  'that is gone (v3.13.1 found four comments contradicting their own code)');
+ok(!/appearance:/.test(settingsCss),
+  'and settings.css declares `appearance` NOWHERE — there is no UA widget ' +
+  'left in this file to switch off');
+ok(!/appearance:/.test(lbCss),
+  'nor does the component\'s own stylesheet: it draws the whole control, so ' +
+  'there is nothing to un-draw');
+
+// ONE component, both controls. The reason this is an assertion and not a
+// convention: two hand-maintained copies of one control is this repo's most
+// reliable failure shape, and it had already produced two copies of the
+// select chrome across two view stylesheets.
+const rendered = settingsSrc.match(/renderListboxHtml\(/g) || [];
+ok(rendered.length === 2,
+  'both pickers (default domain + model sort) render the shared component (' +
+  rendered.length + ' found)');
+ok(/import \{[^}]*renderListboxHtml[^}]*\} from '\.\.\/shared\/listbox\.js'/.test(settingsSrc),
+  'from next/shared/listbox.js — not a local copy of it');
+
+// ── THE RENDER -> WIRE HANDOFF ──────────────────────────────────────────
+// The markup and the mounted behaviour must come from the SAME cfg object. A
+// second cfg literal at wiring time is two descriptions of one control, free
+// to disagree about its options.
+ok(/const pendingListboxes = \[\]/.test(settingsSrc), 'the handoff array exists');
+ok(/pendingListboxes\.length = 0;/.test(extractFunction(settingsSrc, 'renderMain', 'views/settings.js')),
+  'renderMain CLEARS it before building the body — a section that emits no ' +
+  'picker must leave nothing behind for the wiring pass to mount');
+const wireSrc = extractFunction(settingsSrc, 'wireGlobalListeners', 'views/settings.js');
+ok(/for \(const cfg of pendingListboxes\) mountListbox\(cfg\)/.test(wireSrc),
+  'and wireGlobalListeners hydrates from the same objects');
+ok((settingsSrc.match(/pendingListboxes\.push\(/g) || []).length === 2,
+  'exactly two pushes — one per control, so neither is rendered without being mounted');
+
+// ── THE REPAINT LEAK ────────────────────────────────────────────────────
+// Settings re-renders WHOLESALE via innerHTML. The component's menu is a
+// <body> child, so it does NOT go with the repaint; a menu that survived one
+// would be a detached-trigger orphan holding live document listeners.
+ok(/closeAllListboxes\(\);/.test(wireSrc),
+  'every render closes any open menu — the belt');
+ok(/if \(!document\.contains\(state\.trigger\)\) \{ close\(/.test(lbJs),
+  'and the component self-closes the moment its trigger leaves the document ' +
+  '— the braces, which does not depend on a view remembering to call anything');
+ok(/cancelAnimationFrame\(state\.raf\)/.test(lbJs) &&
+   /removeEventListener\('pointerdown', onDocPointer, true\)/.test(lbJs),
+  'closing tears down BOTH the rAF loop and the document listener — a leaked ' +
+  'one of either is the whole reason a body-appended menu is riskier than an ' +
+  'in-flow one');
+
+// ── WHY THE MENU IS ON <body> AND NOT position:fixed IN PLACE ───────────
+// A CSS transform makes an element the containing block for fixed
+// DESCENDANTS. #view-root is transformed by the view-enter animation, and
+// v3.10.0 measured a fixed probe moving 340px through exactly that. The
+// component must not reopen it.
+ok(/document\.body\.appendChild\(menu\)/.test(lbJs),
+  'the menu is appended to <body>, which is never transformed');
+ok(/position: fixed/.test(lbCss), 'and positioned fixed against the viewport');
+ok(/transform/i.test(lbJs) === false || /containing block/.test(lbJs),
+  'with the transform trap recorded in the component rather than rediscovered');
+
+// The rejected alternative, still rejected, still named.
+ok(!/appearance:\s*base-select|::picker\s*\(/.test(stripCssComments(settingsCss)) &&
+   !/appearance:\s*base-select|::picker\s*\(/.test(stripCssComments(lbCss)),
+  'no ::picker/base-select DECLARATION anywhere — Chromium-only with an ' +
+  'untested fallback, and moot now that the menu is ours');
+
+// SUPERSEDED, and recorded rather than silently dropped: this used to assert
+// that views/memory.css kept its OWN copy of the select chrome, on the
+// reasoning that per-view duplication is views/README.md rule 3 and therefore
+// correct. That reasoning held while each view owned its control. It does not
+// hold for a shared component, and the copies are gone from BOTH files.
+ok(!/mem-select/.test(readFileSync(join(NEXT, 'views/memory.css'), 'utf8')),
+  'views/memory.css no longer carries its own copy of the select chrome — ' +
+  'the duplication this suite used to require is what the shared component removed');
 
 // ── §5  normalizeFontScale ───────────────────────────────────────────────
 console.log('\n§5  Text scale — any input lands on a scale we ship');

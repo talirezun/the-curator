@@ -2151,12 +2151,154 @@ function openRouterCataloguePath() {
   return userDataPath(OPENROUTER_CATALOGUE_FILENAME);
 }
 
-export function getOpenRouterCatalogueMeta() {
+/**
+ * ── HOW OLD A CATALOGUE MAY BE BEFORE WE REFRESH IT ─────────────────────────
+ *
+ * 24 hours, and the number is bounded from BOTH sides rather than picked for
+ * roundness:
+ *
+ *   • It must be much LONGER than an app restart cadence. The Curator is
+ *     relaunched from the Dock several times a day, and the auto-sync below
+ *     fires on module load; a threshold of minutes would turn every launch into
+ *     a network fetch of ~400 records for no new information.
+ *   • It must be much SHORTER than the interval over which the offer actually
+ *     changes. OpenRouter adds and retires routes most weeks, so a threshold of
+ *     weeks would leave a user picking from a list that no longer matches what
+ *     their key can reach — which is the "sometimes they show, other times they
+ *     do not" complaint in a slower form.
+ *
+ * A day sits roughly an order of magnitude clear of both. It is deliberately
+ * NOT tuned to price freshness: prices are re-derived at admission on every
+ * sync AND on every boot restore, and a stale price is a displayed FACT the
+ * `syncedAt` stamp already dates — this constant governs MEMBERSHIP, which is
+ * the thing a user notices missing.
+ */
+export const OPENROUTER_CATALOGUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Should the OpenRouter catalogue be refreshed right now?
+ *
+ * PURE — takes the clock as an argument and reads only module state, so the
+ * policy is decidable offline in every branch. The caller owns the side effects
+ * (the key check, the write-registry check, the actual fetch); this owns only
+ * the question "is what we hold good enough".
+ *
+ * `reason` is returned even when `needed` is false so a caller can log or
+ * surface WHY without re-deriving it — the field is the answer, not a flag the
+ * consumer has to reconstruct.
+ *
+ *   'absent'     nothing is loaded at all — the state in which chat offers the
+ *                5 hand-measured routes and nothing says so.
+ *   'undated'    entries are loaded but carry no `syncedAt`. Treated as STALE,
+ *                not as fresh: an unknown age cannot be asserted to be young,
+ *                and the fail-safe direction here is one extra free public GET.
+ *   'stale'      older than OPENROUTER_CATALOGUE_MAX_AGE_MS.
+ *   'fresh'      within the window; `needed` is false.
+ */
+export function openRouterCatalogueNeedsSync(nowMs = Date.now()) {
+  if (_openrouterCatalogue.length === 0) {
+    return { needed: true, reason: 'absent', ageMs: null };
+  }
+  const ageMs = openRouterCatalogueAgeMs(nowMs);
+  if (ageMs === null) return { needed: true, reason: 'undated', ageMs: null };
+  if (ageMs > OPENROUTER_CATALOGUE_MAX_AGE_MS) {
+    return { needed: true, reason: 'stale', ageMs };
+  }
+  return { needed: false, reason: 'fresh', ageMs };
+}
+
+/**
+ * Age of the loaded catalogue in ms, or null when it carries no usable stamp.
+ *
+ * A stamp we cannot parse, and a stamp in the FUTURE, both resolve to null
+ * rather than to a number. A future stamp arises from a clock change or a
+ * hand-edited sidecar and would otherwise compute a NEGATIVE age, which passes
+ * every "younger than a day" test forever — a stale catalogue that can never be
+ * refreshed. Unknown is the honest answer and, via 'undated' above, the one
+ * that costs a free refresh instead of silence.
+ */
+function openRouterCatalogueAgeMs(nowMs = Date.now()) {
+  if (typeof _openrouterCatalogueSyncedAt !== 'string' || !_openrouterCatalogueSyncedAt) return null;
+  const t = Date.parse(_openrouterCatalogueSyncedAt);
+  if (!Number.isFinite(t)) return null;
+  const age = nowMs - t;
+  return age < 0 ? null : age;
+}
+
+/**
+ * Provenance of the OpenRouter half of the offerable list.
+ *
+ * `syncedAt` / `source` / `count` are unchanged. `ageMs` / `stale` / `reason`
+ * are ADDITIVE and exist so a view can say the list is partial or stale WITHOUT
+ * re-implementing the threshold client-side — a second copy of a freshness rule
+ * is this repo's v3.2.0 drift shape, and the client half would be the one that
+ * rots.
+ *
+ * `loaded` is stated explicitly rather than left as `count > 0` for the caller
+ * to infer: "the catalogue is absent" and "the catalogue is present and holds
+ * nothing" are different facts and only the first is reachable today, but a
+ * consumer that infers absence from a zero will read the second as the first
+ * the day it becomes possible.
+ */
+export function getOpenRouterCatalogueMeta(nowMs = Date.now()) {
+  const verdict = openRouterCatalogueNeedsSync(nowMs);
   return {
     syncedAt: _openrouterCatalogueSyncedAt,
     source: _openrouterCatalogueSource,
     count: _openrouterCatalogue.length,
+    loaded: _openrouterCatalogue.length > 0,
+    ageMs: verdict.ageMs,
+    stale: verdict.needed,
+    reason: verdict.reason,
+    maxAgeMs: OPENROUTER_CATALOGUE_MAX_AGE_MS,
   };
+}
+
+/**
+ * ── WHO MEASURED THIS MODEL AGAINST THE REAL INGEST PROMPT ──────────────────
+ *
+ * Three states, one field, computed in ONE place:
+ *
+ *   'curator'  hand-measured by us against this repo's real `buildOutlinePrompt`
+ *              on real prose, and typed into the static `OFFERABLE_MODELS`
+ *              table. `defineOfferableModel` REFUSES to build a static entry
+ *              without a non-empty `note` ("a model nobody has measured must
+ *              not be offered at all"), so membership of that table IS the
+ *              measurement claim — there is nothing to keep in step.
+ *   'user'     this installation measured it, on its own pages, via "Test on my
+ *              wiki", and the record still passes (`isLocallyQualified`
+ *              re-checks liveness on every read).
+ *   null       nobody has. A fetched catalogue entry with no local run: it
+ *              exists and we can quote its price, and that is all we claim.
+ *
+ * WHY THIS IS NOT A FROZEN FIELD ON THE ENTRY. The third state depends on live
+ * per-user state that a frozen table cannot know, so an entry-level field could
+ * only ever carry two of the three — and a consumer joining the missing half
+ * back on would be re-deriving a rule that already exists here. Worse, a field
+ * whose value on the entry differs from its value on the wire is the "one field
+ * name, two quantities" defect v3.17.1 records. One producer, one meaning.
+ *
+ * WHY MEMBERSHIP RATHER THAN A MARKER. "Was this admitted from a fetched
+ * catalogue" is answered by IDENTITY against `_openrouterCatalogue` — the array
+ * `listOfferableModels` splices in — so there is no second flag to set, and no
+ * way for a marker and the list it describes to disagree.
+ *
+ * NOT A QUALITY SCORE, and deliberately says nothing about price. `null` means
+ * UNMEASURED, never BAD: `z-ai/glm-5.3-flash` is hand-measured AND flagged
+ * `caution`, while a fetched entry may well be excellent and simply unprobed.
+ * The measured/unmeasured axis and the good/bad axis are different questions
+ * and collapsing them is what this whole catalogue exists to avoid.
+ *
+ * Fails closed: an unknown provider or an id we do not offer returns null.
+ */
+export function measurementProvenance(provider, modelId) {
+  const entry = findOfferableModel(provider, modelId);
+  if (entry === null) return null;
+  // Identity, not `id` equality: two entries can never share an id (the static
+  // table is hand-ordered and the dynamic half is built from a Map), but
+  // identity cannot be fooled by one anyway.
+  if (!_openrouterCatalogue.includes(entry)) return 'curator';
+  return isLocallyQualified(provider, modelId) ? 'user' : null;
 }
 
 /**

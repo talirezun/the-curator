@@ -1073,7 +1073,12 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // a read-only POST trips it and must be exempted by name rather than being
     // waved through by a cleverer classifier that could also wave through a
     // genuinely destructive one.
-    expectedMutatingCount: 11,
+    // 11 -> 12: POST /api-keys/build-model, the ONE build model (provider and
+    // model chosen together so a pin can never be inert). It carries
+    // guardConcurrent and needs no exemption — the bump IS the human look the
+    // comment above demands, and the guard assertions below check it like any
+    // other mutating route.
+    expectedMutatingCount: 12,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also

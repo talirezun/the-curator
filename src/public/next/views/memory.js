@@ -69,6 +69,16 @@ import {
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
+
+// ── The render -> wire handoff for the two pickers ───────────────────────
+// renderScopeControls builds each control's cfg while it has the data in
+// hand; wireScopeControls hydrates from the SAME objects after the paint.
+// Rebuilding the cfg at wiring time would be two descriptions of one
+// control, free to disagree about its options — this repo's most reliable
+// failure shape. Cleared at the top of every renderScopeControls call, so a
+// render that emits no picker leaves nothing for the wiring pass to mount.
+const pendingListboxes = [];
 
 // Journal page sizes. The store clamps journalLimit to [1, 50] itself
 // (MAX_JOURNAL_ENTRIES); these are just the two steps this view offers, and
@@ -196,7 +206,7 @@ let state = freshState();
  *
  * It persists across renders on purpose. A scope or machine change renders
  * TWICE — once into the loading state, once with the result — and the machine
- * <select> is absent from the first of those (state.detail is dropped before
+ * picker is absent from the first of those (state.detail is dropped before
  * the fetch, deliberately, so the old machine list cannot be shown under the
  * new scope). Clearing on the first miss would strand focus exactly in the
  * case this exists for.
@@ -279,6 +289,13 @@ registerView('memory', {
       // the life of the page.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
       stopPoll();
+      // navigate() closes the reader itself but explicitly does NOT reach
+      // into view-owned popovers (see its comment) — so a menu left open on
+      // a rail click is this view's to close. The component also self-closes
+      // when its trigger leaves the document; this is the deliberate second
+      // layer, because a teardown that depends on a repaint happening is not
+      // a teardown.
+      closeAllListboxes();
       if (wakeHandler) {
         if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
@@ -354,7 +371,7 @@ async function fetchIndex(token) {
  * WHAT THE SCREEN CURRENTLY SAYS, as a comparable string.
  *
  * A poll that re-renders unconditionally is worse than no poll: every render
- * replaces the whole main pane, so it would close a native <select> the user
+ * replaces the whole main pane, so it would close a picker the user
  * had OPEN at that moment, and churn focus on a screen nobody asked to
  * change. In the steady state — which is almost always — nothing has moved
  * and the correct amount of work is none.
@@ -368,7 +385,7 @@ async function fetchIndex(token) {
 function screenSignature() {
   // The scope picker's own contents, deduplicated the same way
   // renderScopeControls deduplicates them, so this is what is literally in
-  // the <select> rather than the raw (scope, machine) pairs behind it.
+  // the picker rather than the raw (scope, machine) pairs behind it.
   //
   // OMITTING THIS WAS HALF THE BUG. Once refreshIndex re-reads the scope
   // list, a newly written scope changes nothing else the signature looks at
@@ -483,7 +500,7 @@ async function refreshIndex(token) {
  *     (a mutation removing THAT one goes red). Measured, not assumed.
  *   · THE SELECTED SCOPE IS GONE. A save can only add, so this needs a
  *     directory removed out of band — but adopting then would leave the
- *     <select> unable to show state.scope, and the browser would silently
+ *     picker unable to show state.scope, and it would silently
  *     display some other scope's name over this scope's handoff. Keeping the
  *     old list leaves the two consistent, and Reload (which re-picks
  *     deliberately) is the right way out.
@@ -1091,10 +1108,21 @@ function renderEmptyProject(unlistedEntries) {
 /**
  * Scope + machine pickers.
  *
- * Both are plain <select>s and both are SIBLINGS of every <details> on the
- * page (see the <summary> hazard note in this file's header). Each appears
- * only when there is genuinely something to choose: one scope with one
- * machine renders as a quiet label, not a dropdown with a single option.
+ * Both are the shared listbox (next/shared/listbox.js) and both are SIBLINGS
+ * of every <details> on the page (see the <summary> hazard note in this
+ * file's header). Each appears only when there is genuinely something to
+ * choose: one scope with one machine renders as a quiet label, not a
+ * dropdown with a single option.
+ *
+ * ── WHY THESE ARE NO LONGER NATIVE SELECT ELEMENTS ──────────────────────
+ * `appearance: none` and a CSS chevron got the CLOSED control on-design and
+ * could never reach the OPEN list, which the OS paints outside the document.
+ * The component replaces the popup outright and owes back the keyboard and
+ * screen-reader behaviour the platform control provided — see its header.
+ *
+ * The cfg object is built ONCE per control and handed to both
+ * renderListboxHtml (markup) and mountListbox (behaviour). Two cfg literals
+ * would be two hand-maintained copies of one control's option list.
  */
 function renderScopeControls(scopes) {
   const d = state.detail;
@@ -1102,16 +1130,24 @@ function renderScopeControls(scopes) {
   const scopeNames = [];
   for (const s of scopes) if (!scopeNames.includes(s.scope)) scopeNames.push(s.scope);
 
-  // The <select> is wrapped so a chevron can be drawn over it. It stays a
-  // real <select> — see the note on .mem-select in memory.css for why the
-  // native control is kept and only its CHROME is replaced.
+  // Built here, consumed twice: once for markup below and once by
+  // wireScopeControls() after the paint. `pendingListboxes` is the handoff —
+  // see its declaration for why the cfg is not rebuilt at wiring time.
+  pendingListboxes.length = 0;
+
+  const scopeCfg = {
+    id: 'mem-scope-select',
+    ariaLabel: 'Scope',
+    value: state.scope,
+    triggerClass: 'lb-sm mono',
+    minWidth: 180,
+    options: scopeNames.map((s) => ({ value: s, label: s })),
+  };
+  if (scopeNames.length > 1) pendingListboxes.push(scopeCfg);
+
   const scopeCtl = scopeNames.length > 1
-    ? '<label class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
-        '<span class="mem-select-wrap">' +
-        '<select class="mem-select" id="mem-scope-select">' +
-          scopeNames.map((s) => '<option value="' + escapeHtml(s) + '"' +
-            (s === state.scope ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('') +
-        '</select></span></label>'
+    ? '<span class="mem-ctl"><span class="mem-ctl-label" id="mem-scope-label">Scope</span>' +
+        renderListboxHtml(scopeCfg) + '</span>'
     : (state.scope
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
           '<span class="mem-ctl-static mono">' + escapeHtml(state.scope) + '</span></span>'
@@ -1129,19 +1165,31 @@ function renderScopeControls(scopes) {
   const selectedIsMine = !!(d && d.machineIsThisMachine === true);
   const MINE = ' · this machine';
 
+  // The age is a `detail` rather than part of the label, so type-ahead
+  // matches on the machine name a user actually types at and not on "3 hr
+  // ago". The " · this machine" marker stays IN the label: it is identity,
+  // not metadata, and it is the answer to "which of these is mine?".
+  const machineCfg = {
+    id: 'mem-machine-select',
+    ariaLabel: 'Machine',
+    value: d && d.machine,
+    triggerClass: 'lb-sm mono',
+    minWidth: 240,
+    options: machines.map((m) => {
+      const sel = !!(d && m.machine === d.machine);
+      return {
+        value: m.machine,
+        label: m.machine + (sel && selectedIsMine ? MINE : ''),
+        detail: formatAge(m.ageSeconds) || 'unknown age',
+        typeahead: m.machine,
+      };
+    }),
+  };
+  if (machines.length > 1) pendingListboxes.push(machineCfg);
+
   const machineCtl = machines.length > 1
-    ? '<label class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
-        '<span class="mem-select-wrap">' +
-        '<select class="mem-select" id="mem-machine-select">' +
-          machines.map((m) => {
-            const sel = !!(d && m.machine === d.machine);
-            return '<option value="' + escapeHtml(m.machine) + '"' +
-              (sel ? ' selected' : '') + '>' +
-              escapeHtml(m.machine) + ' · ' + escapeHtml(formatAge(m.ageSeconds) || 'unknown age') +
-              (sel && selectedIsMine ? MINE : '') +
-            '</option>';
-          }).join('') +
-        '</select></span></label>'
+    ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
+        renderListboxHtml(machineCfg) + '</span>'
     : (d && d.machine
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
           '<span class="mem-ctl-static mono">' + escapeHtml(d.machine) +
@@ -1478,20 +1526,22 @@ function wire(token) {
     });
   });
 
-  const scopeSel = document.getElementById('mem-scope-select');
-  if (scopeSel) {
-    scopeSel.addEventListener('change', () => {
-      state.journalLimit = JOURNAL_PAGE;
-      loadScope(scopeSel.value, null, token).catch((err) => reportAsyncMountFailure(token, err));
-    });
-  }
-
-  const machineSel = document.getElementById('mem-machine-select');
-  if (machineSel) {
-    machineSel.addEventListener('change', () => {
-      state.journalLimit = JOURNAL_PAGE;
-      loadScope(state.scope, machineSel.value, token).catch((err) => reportAsyncMountFailure(token, err));
-    });
+  // Hydrate the two pickers from the cfg objects renderScopeControls built.
+  // onChange is attached HERE rather than in the cfg because it closes over
+  // the mount token, which the render pass has no business knowing about.
+  for (const cfg of pendingListboxes) {
+    if (cfg.id === 'mem-scope-select') {
+      cfg.onChange = (value) => {
+        state.journalLimit = JOURNAL_PAGE;
+        loadScope(value, null, token).catch((err) => reportAsyncMountFailure(token, err));
+      };
+    } else if (cfg.id === 'mem-machine-select') {
+      cfg.onChange = (value) => {
+        state.journalLimit = JOURNAL_PAGE;
+        loadScope(state.scope, value, token).catch((err) => reportAsyncMountFailure(token, err));
+      };
+    }
+    mountListbox(cfg);
   }
 
   const refresh = document.getElementById('mem-refresh');

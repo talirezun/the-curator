@@ -392,6 +392,12 @@ function extractFunction(src, name, where) {
 
 const viewSrc = readFileSync(join(NEXT, 'views/memory.js'), 'utf8');
 const viewCss = readFileSync(join(NEXT, 'views/memory.css'), 'utf8');
+// The shared listbox's RENDER half. Lifted rather than stubbed, so §6's
+// escaping battery runs through the component that actually paints these two
+// pickers — a stub would let a hole in the component's own escaping pass here
+// while the real screen carries it. It cannot be imported: shared/listbox.js
+// imports next/app.js, which touches `document` at module scope.
+const listboxSrc = readFileSync(join(NEXT, 'shared/listbox.js'), 'utf8');
 
 // The REAL escapeHtml from app.js — lifted rather than reimplemented, so a
 // change there cannot leave this suite testing a copy that no longer matches.
@@ -508,10 +514,16 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderBrief', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderAbout', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
-    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, renderEmptyProject };';
+    // The REAL component render path, with its own helpers, so the escaping
+    // assertions below cover it too.
+    extractFunction(listboxSrc, 'normaliseOptions', 'listbox.js') + '\n' +
+    extractFunction(listboxSrc, 'findOption', 'listbox.js') + '\n' +
+    extractFunction(listboxSrc, 'triggerLabelFor', 'listbox.js') + '\n' +
+    extractFunction(listboxSrc, 'renderListboxHtml', 'listbox.js') + '\n' +
+    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, renderEmptyProject, pendingListboxes };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
-    'JOURNAL_PAGE', 'JOURNAL_MORE', body)(
-    stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50);
+    'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes', body)(
+    stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50, []);
 }
 
 const hostileDetail = {
@@ -915,7 +927,14 @@ ok('wide content scrolls inside its own box (pre gets overflow-x)',
   /\.mem-doc pre \{[\s\S]*?overflow-x: auto/.test(viewCss));
 ok('focus is visible on the project rows', viewCss.includes('.mem-row:focus-visible'));
 ok('focus is visible on the disclosures', viewCss.includes('.mem-fold-summary:focus-visible'));
-ok('focus is visible on the selects', viewCss.includes('.mem-select:focus-visible'));
+// The pickers are the shared listbox now, so their focus ring lives in
+// shared/listbox.css — asserted THERE rather than pretended to be here. What
+// this file still owes is that it does not sit on top of the component's ring
+// with a rule of its own.
+ok('the pickers\' focus ring is the component\'s (shared/listbox.css), not overridden here',
+  !/\.mem-ctl[^{]*\.lb-btn[^{]*:focus/.test(viewCss));
+ok('focus is visible on the shared listbox trigger (shared/listbox.css)',
+  readFileSync(join(NEXT, 'shared/listbox.css'), 'utf8').includes('.lb-btn:focus-visible'));
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§11 — REVALIDATION, driven rather than grepped');
