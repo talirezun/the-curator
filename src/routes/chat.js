@@ -6,6 +6,11 @@ import {
   deleteConversation,
 } from '../brain/chat.js';
 import { assertKnownDomain } from '../brain/files.js';
+// IMPORTED, never re-implemented. isAbortError is llm.js's own classifier for
+// "the caller stopped this" (it tags `curatorAborted`, and also matches a raw
+// SDK `AbortError` we never got to translate). A second hand-written copy of a
+// classifier is the shape that produced the v3.2.0 CRITICAL.
+import { isAbortError } from '../brain/llm.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 
 const router = Router();
@@ -98,6 +103,73 @@ router.get('/:domain/:id', async (req, res) => {
 
 // Send a message (creates conversation if conversationId omitted)
 router.post('/:domain', async (req, res) => {
+  // ── CANCELLATION: WHAT COUNTS AS "THE CLIENT IS GONE" ───────────────────
+  //
+  // MEASURED, NOT ASSUMED (express 4.22.2 / node 22.14, 25 runs per case).
+  // Three obvious candidates are all WRONG here, each for the same reason —
+  // express.json() has already drained the request body before this handler
+  // runs, so the readable side is finished on a perfectly healthy request:
+  //
+  //   req.destroyed        true on entry in 25/25 NORMAL requests.
+  //   req.on('close')      fires on entry in 25/25 NORMAL requests.
+  //   req.aborted          false in 25/25 ABORTED requests (legacy, unset).
+  //
+  // res.on('close') fires in BOTH cases too — on a normal request it simply
+  // fires later, after we have written. So the event alone cannot discriminate
+  // and `res.on('close', abort)` would cancel every successful turn.
+  //
+  // The discriminator is the RESPONSE's own write state at the moment close
+  // fires. Over 25 aborted requests it was identical every time
+  // (`writableEnded:false, writableFinished:false, headersSent:false,
+  // destroyed:true`), and on a normal request res.end() sets writableEnded
+  // synchronously BEFORE close is emitted. So:
+  //
+  //   close fired AND we have not written  <=>  the connection died under us.
+  //
+  // `writableEnded` (end() was called) rather than `writableFinished` (bytes
+  // flushed) is the right test: it is the earliest point at which we have
+  // committed a response, so it can never lag behind our own write.
+  //
+  // WHAT THIS DELIBERATELY DOES *NOT* CATCH: an open-but-idle connection. In
+  // the SPA, navigating to another conversation or another section leaves the
+  // fetch in flight and the socket open, so nothing fires here, the turn runs
+  // to completion and sendMessage persists it. That is the required behaviour,
+  // not a gap. The only things that reach this code are a genuinely closed
+  // connection: the tab closing, or the browser aborting the fetch.
+  //
+  // CROSS-LAYER NOTE: this makes the FRONTEND the sole author of intent. If
+  // views/chat.js ever aborts its in-flight fetch on view teardown, that will
+  // read here as a cancel and the turn will stop. Only a Stop control should
+  // abort the fetch; a view change must not.
+  //
+  // Registered before assertKnownDomain, which does not weaken the "nothing
+  // derived from an unvalidated domain is ever built" invariant above: an
+  // AbortController and a listener on `res` derive nothing from `:domain` and
+  // touch no path. One listener on a per-request `res` object also cannot
+  // accumulate — the keep-alive SOCKET is reused across requests, `res` is not.
+  //
+  // MEASURED HONESTLY, because three of the four lines below are DEFENCE IN
+  // DEPTH rather than independently load-bearing, and saying otherwise would be
+  // claiming coverage this does not have:
+  //   • swapping res.on('close') for req.on('close') reds 19 assertions,
+  //     including "a turn nobody is watching still persists". That one is the
+  //     whole reason the measurement above was done instead of guessing.
+  //   • deleting the `writableEnded` line ALONE leaves the suite 58/58 GREEN.
+  //     It is a no-op today only because `clientGone` is never read after
+  //     res.json() — so the handler is correct by COINCIDENCE without it, and
+  //     one reordering (an await added before the write, a post-response hook)
+  //     turns it into the 19-red mutation. It stays because it makes the
+  //     invariant explicit; it is not claimed as tested behaviour.
+  //   • both `if (clientGone) return` lines are green when deleted too. See
+  //     each one's own note for why it is kept and what makes it redundant.
+  const controller = new AbortController();
+  let clientGone = false;
+  res.on('close', () => {
+    if (res.writableEnded) return; // we already answered — a normal close
+    clientGone = true;
+    controller.abort();
+  });
+
   try {
     const { domain } = req.params;
     const { message, conversationId, responseStyle, provider, model } = req.body;
@@ -122,9 +194,46 @@ router.post('/:domain', async (req, res) => {
     // check at this route would leave the other seven generateText entry points
     // open and create a second hand-maintained copy of the guard — the shape
     // that produced the v3.2.0 CRITICAL.
-    const result = await sendMessage(domain, conversationId || null, message, { responseStyle, provider, model });
+    const result = await sendMessage(domain, conversationId || null, message, {
+      responseStyle, provider, model, signal: controller.signal,
+    });
+    // The client hung up while we were working. The turn still ran to
+    // completion and sendMessage has already persisted it — see the
+    // persistence rule at that write — so there is nothing to recover, only
+    // nobody left to tell. Writing here is pointless rather than fatal:
+    // measured over 25 aborted requests, res.json() on a destroyed socket
+    // neither threw nor emitted 'error' (an unguarded second res.end() did not
+    // either). We return anyway, because serialising a response for a socket
+    // that is gone is work with no reader.
+    //
+    // Deleting this line alone leaves the suite GREEN (measured): res.json() on
+    // a destroyed socket is inert, so skipping it saves work and changes no
+    // observable behaviour. Hygiene, not a guarantee — recorded as such.
+    if (clientGone) return;
     res.json(result);
   } catch (err) {
+    // Same reason as above, one branch earlier: nothing can reach a closed
+    // socket. A cancel is also NOT an incident — logging every user Stop as an
+    // error is how a log stops being read, which is the rule the status check
+    // below already encodes for a self-produced 404.
+    //
+    // Also GREEN when deleted alone, and the REASON is worth recording because
+    // it is a dependency on another module: generateText normalises ANY error
+    // raised once its signal has fired into a tagged abort error
+    // (`isAbortError(err) || signal.aborted -> throw makeAbortError()`), so a
+    // post-cancel failure arrives here already classified and is caught by the
+    // isAbortError branch below instead. This line is what keeps that true for
+    // a failure raised OUTSIDE generateText — a writeConversation EACCES after
+    // the user left — which no offline fixture currently reaches.
+    if (clientGone) return;
+    // An abort with the connection still OPEN is not something this route can
+    // cause — `controller` is per-request and only the close handler above ever
+    // fires it. It would mean an SDK raised its own AbortError (e.g. an
+    // internal timeout). The client is still waiting, so it must get an answer:
+    // returning silently here would hang the browser forever. It is reported
+    // without a stack trace because llm.js's ABORT_MESSAGE is already a
+    // finished, user-readable sentence.
+    if (isAbortError(err)) return sendError(res, err);
     // A refusal we produced ourselves (an unknown domain) carries a status and
     // is an ordinary 404, not an incident — stack-tracing it to stderr on every
     // probe is how a log stops being read. Anything without a status is genuinely

@@ -348,7 +348,56 @@
   font-size: 14.5px;
   line-height: 1.6;
 }
-.chat-msg-error .chat-answer { color: var(--danger-text); }
+/* ── A FAILED TURN ────────────────────────────────────────────────────────
+   REPLACES `.chat-msg-error .chat-answer { color: var(--danger-text) }`, which
+   painted the provider's whole ~450-character message in alarm red at 14.5px
+   answer size, full bleed. Reported by the maintainer after a free-model rate
+   limit: "the user now waits for an answer and then it gets a screen with a
+   big error."
+
+   The failure is signalled by ONE 2px rule, not by the copy. Everything else is
+   the recessed treatment `.chat-msg-fallback` and `.chat-stopped-note` already
+   use for a stated fact — width-capped at 62ch so it can never span the column,
+   stepped down in size so it reads as a note rather than as an answer, and in
+   neutral text colours so the red marks WHERE the failure is without making the
+   sentence itself hard to read. No animation: nothing enters or leaves, so
+   there is nothing for prefers-reduced-motion to neutralise.
+
+   CONTRAST MEASURED IN A REAL BROWSER (2026-08-29, 1280x860, both themes driven
+   through the app's own theme control, with the measuring helper first validated
+   against known controls: #fff-on-#000 = 21.00, 50%-black-on-white = 3.98).
+   `--danger` is a BORDER only, so it is held to 1.4.11's 3:1 non-text floor;
+   every string is held to the 4.5:1 AA text floor. Numbers are on each rule. */
+.chat-error-note {
+  max-width: 62ch;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  /* The whole failure signal. MEASURED 5.55:1 dark / 5.41:1 light against the
+     block's own background — over 1.4.11's 3:1 floor for a non-text indicator. */
+  border-left: 2px solid var(--danger);
+}
+/* The provider's own message. --text-2, not --text-3: this is the only thing on
+   screen explaining where the answer went, so it is held to the AA text floor
+   the same way `.chat-stopped-note` is. MEASURED 8.09:1 dark / 7.26:1 light.
+   `--text-3` was measured on this view's sibling note at 4.38 / 4.00 — under
+   AA in BOTH themes — which is why it is not used here. */
+.chat-error-detail {
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+}
+/* The free-model context sentence, one step further back — it explains the line
+   above rather than being the news itself. Still held to the AA text floor:
+   MEASURED 8.09:1 dark / 7.26:1 light. It is separated from the message above by
+   spacing and size, not by dropping below AA. */
+.chat-error-context {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+}
 .chat-answer p { margin: 0 0 12px; }
 .chat-answer p:last-child { margin-bottom: 0; }
 .chat-answer ul, .chat-answer ol { margin: 0 0 12px; padding-left: 22px; }
@@ -437,7 +486,42 @@
   margin-top: 4px;
   font-size: var(--text-2xs);
   line-height: var(--leading-snug);
-  color: var(--text-3);
+  /* AA: was --text-3, MEASURED 4.38:1 dark / 4.00:1 light -- under the 4.5:1
+     floor for body text. That was justified while this was a passing latency
+     hint that resolved on its own; it now also carries the free-model
+     EXPLANATION, which the user has to read, so the premise no longer holds.
+     --text-2 measures 8.55:1. Same token its sibling notice already uses. */
+  color: var(--text-2);
+}
+
+/* A turn the user stopped. DELIBERATELY THE SAME RECESSED TREATMENT AS
+   `.chat-thinking-slow` DIRECTLY ABOVE, and deliberately NOT the
+   `.chat-msg-error` danger red below: the user did this on purpose, so nothing
+   has gone wrong, and there is nothing here to act on. No icon, no colour, no
+   animation — one plain sentence, stated once (v3.13.2's rule for reporting a
+   fact the user did not ask to be alarmed about).
+
+   Not a `.chat-msg`: it is not a message, nothing is persisted, and giving it a
+   bubble and a "THE CURATOR" eyebrow would dress an absence up as a turn.
+
+   ── THE COLOUR IS --text-2, AND THAT IS A DEPARTURE FROM ITS SIBLING ─────
+   `.chat-thinking-slow` above uses `--text-3`, and matching it was the first
+   draft. MEASURED IN A REAL BROWSER, `--text-3` renders this note at 4.38:1
+   (dark) and 4.00:1 (light) against the thread background — both under the
+   4.5:1 AA floor for body text. v3.17.1 hit exactly this and reached the same
+   answer: `--text-3` was proposed, measured at 3.87-4.38, and `--text-2` used
+   instead.
+   The two are not really the same kind of thing, which is why the split is
+   defensible rather than merely expedient: `.chat-thinking-slow` is a passing
+   hint during a wait that resolves on its own, whereas this sentence is the
+   ONLY place on screen that says where the user's typed message went. It
+   persists, and it has to be read. `--text-2` measures 8.09:1 and still sits
+   clearly below body copy, so the recessed intent survives. */
+.chat-stopped-note {
+  margin-top: 10px;
+  font-size: var(--text-2xs);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
 }
 
 .chat-spinner {
@@ -525,6 +609,56 @@
 .chat-send-btn:hover { background: var(--accent-hover); }
 .chat-send-btn:active { transform: translateY(0.5px); }
 .chat-send-btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+
+/* ── STOP ─────────────────────────────────────────────────────────────────
+   The same button, while a turn is in flight. RECESSED, NOT DANGER-RED:
+   stopping your own answer is a normal thing to do and nothing has gone wrong,
+   and spending the danger colour on it is how a user learns to stop reading the
+   red that marks a real failure — the same argument `.chat-thinking-slow` and
+   `.chat-compile-refused` are built on. It steps DOWN from the accent fill so
+   it reads as "not the primary action right now" while staying an obviously
+   live control (it is never `disabled`; see renderComposerBusy).
+
+   ── THE FILL WAS MEASURED, NOT PICKED ────────────────────────────────────
+   The first draft used `--surface-raised`, which resolves to EXACTLY the
+   composer's own background in BOTH themes (dark rgb(16,16,26) vs
+   rgb(16,16,26), light #FFF vs #FFF — measured in a real browser through the
+   CSSOM, 1.00:1 in both). A declaration that resolves to its parent's value is
+   dead CSS wearing the appearance of a decision. `--surface-hover` is the
+   resting fill instead because it is the one that actually differs, and
+   `--surface-active` is the hover because it moves AWAY from the composer in
+   both directions of the palette — lighter in dark (21,21,31 -> 27,27,39),
+   darker in light (245,245,249 -> 236,236,242). Every other surface token was
+   measured and rejected; none separates by more than 1.18:1.
+
+   NOT ENFORCED, AND STATED RATHER THAN IMPLIED AWAY: no surface token in this
+   design system separates from the composer by anything approaching 3:1, so
+   the fill is a nudge and the button's identification rests on the GLYPH,
+   measured at 7.76:1 (dark) and 7.26:1 (light) against its own background —
+   comfortably over WCAG 1.4.11's 3:1 for a UI component. The 1px border is
+   `--border-strong`, the strongest border token there is, and it still only
+   reaches 1.54:1 / 1.64:1 against the composer. That is PRE-EXISTING and
+   SYSTEMIC — the same shortfall v3.12.0 recorded for `--accent-border` on this
+   very element's container — and strengthening it in chat alone would make the
+   composer disagree with the rest of the app. Left as measured, not fixed
+   here. */
+.chat-send-btn-stop {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+.chat-send-btn-stop:hover { background: var(--surface-active); color: var(--text); }
+
+/* The square. Drawn here rather than added to app.js's shared ICON_BODY, which
+   is not this view's file to extend — see composerPrimaryButtonHtml. Uses
+   `currentColor` so it inherits the hover colour change above rather than
+   needing a rule of its own to stay in step. */
+.chat-stop-glyph {
+  width: 9px; height: 9px;
+  border-radius: 1.5px;
+  background: currentColor;
+  display: block;
+}
 
 .chat-foot-hint {
   text-align: center;

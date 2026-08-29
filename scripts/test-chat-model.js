@@ -177,7 +177,13 @@ section('4. Source guards — provider override wired through the stack');
 
   const route = readFileSync(path.join(ROOT, 'src/routes/chat.js'), 'utf8');
   ok(/responseStyle, provider/.test(route), 'chat route reads provider from the body');
-  ok(/\{ responseStyle, provider, model \}/.test(route), 'chat route passes provider AND model to sendMessage');
+  // WIDENED (chat-cancellation) for the same reason as its twin in
+  // test-chat-style.js: a closed literal cannot survive the options object
+  // growing, and chat now also forwards an AbortSignal. Still anchored to the
+  // sendMessage CALL and still requires all three names, so a field silently
+  // ceasing to be forwarded — this repo's dead-data defect — still reds it.
+  ok(/sendMessage\(domain, conversationId \|\| null, message, \{[^}]*\bresponseStyle\b[^}]*\bprovider\b[^}]*\bmodel\b[^}]*\}/.test(route),
+    'chat route passes provider AND model to sendMessage');
 
   const cfg = readFileSync(path.join(ROOT, 'src/routes/config.js'), 'utf8');
   ok(/models:\s*\{/.test(cfg), 'api-keys route returns a models map');
@@ -2067,9 +2073,20 @@ section('18. Usage record — the tokens that price an answer, reported or absen
       ok(!!layer, 'the real POST /:domain handler was located on the chat router');
       const handler = layer.route.stack[0].handle;
       let body = null, status = 200;
+      // `on`/`once` are part of the double because the real `res` is an
+      // http.ServerResponse (an EventEmitter), and the POST handler registers a
+      // lifecycle listener for cancellation. Without them this section did not
+      // fail — it CRASHED with "res.on is not a function", taking the tally
+      // with it. Record-only: nothing here is about the connection lifecycle,
+      // and `writableEnded` reports whether this double has answered yet, which
+      // is what the handler's close guard reads.
       const res = {
         json: (v) => { body = v; return res; },
         status: (s) => { status = s; return res; },
+        on: () => res,
+        once: () => res,
+        removeListener: () => res,
+        get writableEnded() { return body !== null; },
       };
       await handler(
         { params: { domain: DOMAIN }, body: { message: 'What is foo?', provider: 'anthropic' } },

@@ -29,6 +29,133 @@ body {
   background: var(--canvas);
 }
 
+/* ── Scrollbars ──────────────────────────────────────────────────────────
+   Reported as "a divider you can hold with the mouse and drive up and down
+   — too thick, not within our design concept". It is NOT a divider and not
+   a resizer: there is no resizer anywhere in /next. It is the OS scrollbar,
+   unstyled. Before this rule nothing in the tree styled scrollbars at all
+   (the one exception is chat.css's deliberate HIDE on .chat-scopebar), so
+   macOS painted its own classic bar — measured at 15px wide with a filled
+   grey track, which is what reads as a draggable divider.
+
+   WHY THIS LIVES HERE, GLOBALLY. There are 33 `overflow: auto/scroll`
+   containers across 11 files in /next. A per-view rule set would have to be
+   repeated in each and would drift; every /next stylesheet is <link>ed
+   globally, so one rule in the shell reaches all of them. It is NOT in
+   tokens/base.css or tokens/color.css on purpose: index.html documents those
+   as "copied byte-identical from the design system bundle", and base.css has
+   exactly one commit in this repo's history (its original import). Editing
+   them would fork the bundle to no benefit — this file already carries the
+   same "keep the token file untouched" rule for --app-sidebar-w above.
+
+   ── THE TWO MECHANISMS, AND WHICH ONE ACTUALLY RUNS ────────────────────
+   MEASURED in this engine (Chromium, macOS 15.7.7), gutter =
+   offsetWidth - clientWidth on a 100px overflowing `overflow-y: auto` box:
+
+     no scrollbar styling ........................ 15px  (the reported bar)
+     ::-webkit-scrollbar { width: 10px } ......... 10px
+     scrollbar-width: thin ....................... 11px
+     BOTH authored together ...................... 11px
+     both, with ::-webkit-scrollbar width 24px ... 11px   <-- not 24
+
+   That last row is the finding: when the standard properties are present,
+   the -webkit- pseudo-element rules are INERT in this engine — a 24px
+   webkit width changed nothing. So authoring both unconditionally would
+   ship a block of rules that never execute in the browser this app is
+   actually used in, and which a future reader would reasonably assume were
+   load-bearing. They are guarded by @supports instead, so exactly one
+   mechanism is live per engine: the standard properties in Chromium /
+   Firefox / Safari 18.2+, the -webkit- block only where the standard
+   property is genuinely unsupported (older Safari, pre-121 Chromium).
+
+   ── WHY NOT ::-webkit-scrollbar AS THE PRIMARY PATH ────────────────────
+   Because it would REGRESS the majority case. chat.css:226 already records
+   the mechanism: styling ::-webkit-scrollbar opts the element out of
+   overlay scrollbars, so the bar takes permanent layout space "on every
+   machine, whether or not that user's OS ever shows a scrollbar". This
+   machine's AppleShowScrollBars is unset, i.e. macOS "Automatic" — classic
+   bars while a mouse is attached (which is exactly why the report says
+   "with the mouse"), overlay bars on the trackpad alone. So the overlay
+   case is not a hypothetical other user, it is the SAME user five seconds
+   after unplugging a mouse. The standard properties change the scrollbar's
+   width and colour without switching it out of overlay mode; the -webkit-
+   path does not. That is the whole reason for the ordering above.
+
+   ── INHERITANCE: THE TWO PROPERTIES DO NOT BEHAVE THE SAME ─────────────
+   Measured, and it overturned the obvious one-liner:
+     scrollbar-color IS inherited  -> setting it once on :root reaches every
+                                      nested container (verified 3 levels
+                                      deep inside .main).
+     scrollbar-width is NOT        -> with it set only on :root, .sidebar,
+                                      .main and a deep-nested box all still
+                                      computed `auto`.
+   A `:root { scrollbar-width: thin }` one-liner would therefore have
+   recoloured the bar app-wide while leaving it 15px THICK — i.e. it would
+   have looked like it worked while failing the actual complaint. Hence the
+   universal selector for the width and :root for the colour. Pseudo-
+   elements are excluded from the selector because they cannot scroll.
+
+   ── COLOUR: MEASURED, NOT ASSUMED ──────────────────────────────────────
+   WCAG 1.4.11 wants >= 3:1 for a UI component. Real relative-luminance
+   arithmetic against every surface the thumb can sit on (--canvas,
+   --surface, --surface-sunken, --surface-raised), worst case per theme:
+
+     --border-strong  1.54 dark / 1.48 light   FAILS  (~half the floor)
+     --text-faint     2.19 dark / 2.11 light   FAILS
+     --text-3         4.15 dark / 3.74 light   PASSES  <-- chosen
+     --text-2         8.09 dark / 6.56 light   PASSES (too loud for rest)
+
+   The intuitive "quiet subtle border" picks are the two that fail, which is
+   why these are computed numbers and not an eyeballed choice. --text-3 is
+   the quietest token in the system that still clears the floor, so it is
+   the correct resolution of "quiet" vs ">= 3:1" rather than a compromise.
+
+   Both themes come from ONE declaration: --text-3 is a semantic token that
+   color.css already redefines under [data-theme="light"], so the thumb is
+   theme-correct with no theme branching here. There is no
+   prefers-color-scheme query and there must not be one — the shell always
+   stamps data-theme (app.js applyTheme sets it both ways), and four other
+   /next stylesheets carry the same prohibition.
+
+   TRACK IS TRANSPARENT. The filled grey channel is most of why the native
+   bar reads as a solid divider; removing it leaves only a thin floating
+   thumb over the surface's own colour.
+
+   ── NOT DONE, DELIBERATELY: hover on the standard path ─────────────────
+   scrollbar-color has no scrollbar-thumb-hover equivalent, and there is no
+   selector for "the element whose scrollbar is being hovered". `*:hover`
+   matches the entire ancestor chain, so it is effectively always-on rather
+   than a hover state, and applying it to only the two shell containers
+   would leave the other 31 inconsistent. Rest-only is therefore the honest
+   behaviour here; the -webkit- block gets a thumb:hover because that path
+   supports it natively and it costs nothing there. */
+:root {
+  /* Inherited — one declaration covers every scroll container in the app. */
+  scrollbar-color: var(--text-3) transparent;
+}
+* {
+  /* NOT inherited — must be set on the elements themselves. Specificity 0,
+     so chat.css's `.chat-scopebar { scrollbar-width: none }` (0,1,0) still
+     wins and that deliberate hide is preserved — verified, not assumed. */
+  scrollbar-width: thin;
+}
+@supports not (scrollbar-width: thin) {
+  /* Older Safari / pre-121 Chromium only. Inert everywhere else — see the
+     24px measurement above. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--text-3);
+    border-radius: 999px;
+    /* Transparent border + padding-box clip insets the thumb so it reads as
+       a floating capsule rather than a full-width bar. */
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background-color: var(--text-2); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+}
+
 #app-shell {
   display: grid;
   grid-template-columns: 60px var(--app-sidebar-w) 1fr;

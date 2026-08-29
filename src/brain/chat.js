@@ -1001,6 +1001,28 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const rawAnswer = await generateText(schema, prompt, maxTokens, 'text', null, {
     provider: chatProvider,
     model: chatModel,
+    // ── CANCELLATION: the signal reaches EXACTLY ONE CALL, and that is the
+    // whole design (v3.18.x) ───────────────────────────────────────────────
+    //
+    // Chat was the last long-running LLM surface with no way to stop it. The
+    // abort plumbing has existed in llm.js since v3.4.0 (the batch-ingest
+    // queue); chat simply never handed it a signal. This line is that fix.
+    //
+    // It matters most on the RATE-LIMIT ladder, which is the reported symptom:
+    // generateText retries a 429 four times, and parseRetryDelay DEFAULTS TO
+    // 60_000 ms when the provider sends no Retry-After hint — so a chat turn
+    // can sit in backoff for up to three minutes before surfacing an error.
+    // sleep() is abortable, so a cancel now rejects out of that wait instead of
+    // serving it out.
+    //
+    // PASSED UNCONDITIONALLY, and that is provably free for callers who do not
+    // cancel: generateText runs `normalizeSignal(opts?.signal)`, which
+    // duck-types on `.aborted`/`.addEventListener` and returns null for
+    // anything else. `signal: undefined` and an omitted key both normalise to
+    // null, and callProvider then does `opts.signal || null` again. So a
+    // no-signal caller is on a byte-identical path to the pre-cancellation
+    // code, with no branch here to get the two cases wrong.
+    signal: opts.signal,
     onUsage: (u) => {
       if (!u) return;
       if (typeof u.model === 'string' && u.model) usedModel = u.model;
@@ -1017,6 +1039,37 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   const citations = [...answer.matchAll(/\[source:\s*([^\]]+)\]/g)].map(m => m[1].trim());
   const uniqueCitations = [...new Set(citations)];
 
+  // ── THE PERSISTENCE RULE, STATED SO NOBODY "IMPROVES" IT ────────────────
+  //
+  // There is DELIBERATELY no abort check between generateText returning and
+  // this write, and none may be added. The rule is:
+  //
+  //   generateText THREW  -> nothing is persisted.
+  //   generateText RETURNED -> the turn is persisted, whatever the signal says.
+  //
+  // Both halves are load-bearing and each protects a different user.
+  //
+  // The throw half is a property this file already had rather than a new one:
+  // this is the ONLY writeConversation call site in sendMessage, and both
+  // messages are pushed on the two lines above it, so a failed turn leaves an
+  // existing conversation file byte-unchanged and a failed FIRST turn leaves no
+  // file at all. A cancelled turn must not become a half-written turn, and a
+  // "save what we have" improvement here would produce exactly that: a user
+  // message with no answer, silently added to the history that seeds the NEXT
+  // prompt.
+  //
+  // The return half is the one that is easy to get wrong. A turn whose reader
+  // has walked away must still land on disk. In the SPA, navigating to another
+  // conversation or another section does NOT close the HTTP connection, so the
+  // turn keeps running with nobody watching and must be waiting when the user
+  // comes back. It also covers the narrow race where a cancel arrives in the
+  // milliseconds after the provider answered: the money is already spent and
+  // the answer already exists, so discarding it would be a second loss on top
+  // of the one the user was trying to avoid.
+  //
+  // The consequence is that CANCELLATION IS NOT A GUARANTEE OF NON-PERSISTENCE,
+  // and that is intended. What a cancel guarantees is that we stop WAITING and
+  // stop SPENDING at the next call boundary — see llm.js's own honest-scope note.
   conversation.messages.push({ role: 'user', content: userMessage });
   conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage));
   await writeConversation(domain, conversation);

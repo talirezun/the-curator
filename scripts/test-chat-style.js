@@ -142,7 +142,14 @@ section('5. Source guard — sendMessage + route wiring');
   // Shape-pinned rather than name-pinned, so this stays a real guard as the
   // per-chat options grow: what matters to THIS suite is that responseStyle is
   // still one of them. (v3.12.x added `model`.)
-  ok(/sendMessage\(domain, conversationId \|\| null, message, \{ responseStyle, provider, model \}\)/.test(routeSrc),
+  // WIDENED (chat-cancellation): this pinned a CLOSED object literal, so it had
+  // to be hand-edited every time an option was added (v3.12.x did exactly that
+  // for `model`) — which contradicts the comment directly above it. The intent
+  // is unchanged and is what is now enforced: responseStyle, provider AND model
+  // must all still be forwarded in THIS call's options object. Dropping any one
+  // still reds it; the object may now grow (it carries `signal` since chat
+  // gained cancellation) without a suite edit.
+  ok(/sendMessage\(domain, conversationId \|\| null, message, \{[^}]*\bresponseStyle\b[^}]*\bprovider\b[^}]*\bmodel\b[^}]*\}/.test(routeSrc),
     'chat route passes responseStyle (+ provider, model) to sendMessage');
 }
 

@@ -146,6 +146,20 @@ function providerRemedies(provider) {
 }
 
 /**
+ * How many ATTEMPTS the transient ladder in `generateText` makes: 1 initial try
+ * plus `MAX_RETRIES - 1` retries.
+ *
+ * MODULE-SCOPED SO THE LADDER AND THE MESSAGE ABOUT THE LADDER READ ONE NUMBER.
+ * It lived inside `generateText` while `buildServiceUnavailableMessage` said
+ * "already retried 4 times" as a hand-typed literal a thousand lines away —
+ * two copies of one fact, which is this repo's most-repeated defect shape and
+ * the reason the 503 sentence is arguably already off by one (4 attempts, 3
+ * retries). The builders below now derive from this, so changing the ladder
+ * changes what the user is told, in the same edit.
+ */
+const MAX_RETRIES = 4;
+
+/**
  * ── THE TWO TRANSIENT-FAILURE MESSAGES ───────────────────────────────────────
  *
  * Pure builders, extracted from `generateText` so a suite can execute them for
@@ -171,11 +185,14 @@ function buildRateLimitMessage(providerName, providerId, delaySec) {
   const limitsAdvice = remedies
     ? `${providerName}'s current limits for your account tier are documented at ${remedies.limitsUrl}.`
     : `Check your provider's own rate-limit documentation for the limits that apply to your account.`;
+  // "1 seconds" shipped for as long as this message has existed, on the one
+  // figure a rate-limited user reads most closely.
+  const wait = `${delaySec} second${delaySec === 1 ? '' : 's'}`;
   return (
     `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
-    `not an issue with The Curator. Limits differ by provider and by the tier your account is on, and a ` +
-    `bulk operation such as a large ingest can reach them even on a paid plan. ` +
-    `Please wait ${delaySec} seconds and try again. ${limitsAdvice} ` +
+    `not an issue with The Curator. The Curator already retried ${MAX_RETRIES - 1} times, pausing between ` +
+    `attempts, before showing you this. Limits differ by provider and by the tier your account is on, and ` +
+    `a paid account has them too. Please wait ${wait} and try again. ${limitsAdvice} ` +
     `You can also switch to a different provider in Settings.`
   );
 }
@@ -188,8 +205,8 @@ function buildServiceUnavailableMessage(providerName, providerId) {
   return (
     `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
     `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
-    `problem with The Curator or your API key. The Curator already retried 4 times with backoff over ` +
-    `~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, ${statusAdvice} ` +
+    `problem with The Curator or your API key. The Curator already retried ${MAX_RETRIES - 1} times with ` +
+    `backoff over ~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, ${statusAdvice} ` +
     `or temporarily switch to a different provider in Settings.`
   );
 }
@@ -3402,11 +3419,88 @@ function resolveProviderDefault(preferProvider) {
 }
 
 /**
+ * The longest we will SLEEP between two 429 attempts, whatever the provider asks.
+ *
+ * The 503 ladder has always been bounded (`Math.min(..., 60_000)` at its call
+ * site); the 429 ladder was not, and once `parseRetryDelay` started honouring a
+ * provider-supplied Retry-After (below) an unbounded value became reachable —
+ * a `Retry-After: 3600` would have put a chat turn to sleep for an hour, three
+ * times over. Bounding at the SAME 60 s the 503 path already uses means the
+ * worst case here is exactly what it was before this change (3 x 60 s), never
+ * worse, while any SHORTER hint is now honoured in full.
+ *
+ * THE CLAMP IS ON THE SLEEP ONLY, NEVER ON THE REPORTED FIGURE. The message
+ * tells the user how long the PROVIDER asked them to wait, so clamping the
+ * number we render would print a wait the provider never asked for — a
+ * fabricated figure on the one line a rate-limited user will act on.
+ */
+const MAX_RETRY_SLEEP_MS = 60_000;
+
+/**
+ * Read a `retry-after` value, in seconds, from a headers-like object.
+ *
+ * Accepts both shapes an SDK might hand us: a WHATWG `Headers` (has `.get`) and
+ * a plain lower-cased object. Returns null for anything that is not a finite,
+ * non-negative number — HTTP also permits an absolute HTTP-date here, which is
+ * DELIBERATELY NOT parsed: a date is clock-skew-sensitive and this path already
+ * has a safe fallback, so guessing at one would trade a known default for an
+ * unknown one.
+ *
+ * NOT VERIFIED AGAINST A LIVE ANTHROPIC 429. This exists because Anthropic's SDK
+ * errors carry response headers and the standard header is the only portable
+ * place a delay could be; whether that SDK actually populates it in the shape
+ * below is UNMEASURED (it cannot be measured without spending real money on a
+ * deliberate rate limit). It is written to be inert when absent, so the cost of
+ * being wrong is the 60 s default we already had.
+ */
+function retryAfterSecondsFromHeaders(headers) {
+  if (!headers || typeof headers !== 'object') return null;
+  let raw = null;
+  if (typeof headers.get === 'function') {
+    try { raw = headers.get('retry-after'); } catch { return null; }
+  } else if (Object.hasOwn(headers, 'retry-after')) {
+    raw = headers['retry-after'];
+  }
+  if (raw == null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
  * Extract the retry-after delay in milliseconds from a 429 error.
- * The Gemini API embeds this in the error message as e.g. "retry in 27.136s"
- * or in a structured RetryInfo field.
+ *
+ * ── WHY A STRUCTURED RUNG COMES FIRST (the defect this closes) ───────────────
+ *
+ * Both message patterns below are GEMINI's ("retry in 27.1s", `"retryDelay"`),
+ * and until now they were the only thing consulted. `openrouter-adapter.js`
+ * reads the upstream's `Retry-After` header and puts it on the error as
+ * `err.retryAfterSeconds` — and NOTHING READ IT. One producer, zero consumers:
+ * the dead-data shape this repo has now shipped several times, and the honest
+ * figure was discarded in favour of the 60 s default on the line below.
+ *
+ * The harm is not cosmetic. An OpenRouter 429 that says "wait 2 seconds" made
+ * The Curator sleep 60 s, three times: ~180 s of silence instead of ~6 s, and
+ * then a message telling the user to "wait 60 seconds" that the provider never
+ * said. On a free model — where a 429 is the EXPECTED outcome, not an
+ * exceptional one (v3.15.0 measured free ids sharing an upstream pool: one
+ * sibling answered 8/8 while three answered 0/8 over the same ten minutes) —
+ * that is the whole of the reported "I waited and then got a wall of red".
+ *
+ * Precedence is deliberate: a value the provider STATED beats one parsed out of
+ * its prose, which beats a default we invented. The 60 s fallback is unchanged,
+ * so an error carrying no hint in any form behaves exactly as it did.
  */
 function parseRetryDelay(err) {
+  // Structured, provider-stated. `openrouter-adapter.js` sets this from the
+  // upstream's own Retry-After header; anything else that learns a delay
+  // structurally should set the same property rather than encode it in prose.
+  const stated = err?.retryAfterSeconds;
+  if (typeof stated === 'number' && Number.isFinite(stated) && stated >= 0) {
+    return Math.ceil(stated * 1000);
+  }
+  const fromHeaders = retryAfterSecondsFromHeaders(err?.headers);
+  if (fromHeaders !== null) return Math.ceil(fromHeaders * 1000);
+
   const msg = err?.message ?? '';
 
   // Structured: "retryDelay":"27s" or "retryDelay": "27.136533819s"
@@ -3602,7 +3696,8 @@ function sleep(ms, signal = null) {
  *   Token usage is delivered out-of-band via opts.onUsage instead.
  */
 export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {}) {
-  const MAX_RETRIES = 4; // up to 4 attempts (3 retries)
+  // Attempt count lives at module scope (MAX_RETRIES) so the ladder and the
+  // message that describes the ladder cannot drift apart.
   // v3.0.11: optional per-call provider override (chat model selector). Ignored
   // unless it names a provider with a usable key (getProviderInfo enforces this).
   const providerOverride = (opts && isKnownProvider(opts.provider)) ? opts.provider : null;
@@ -3696,10 +3791,13 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
         throw err;
       }
 
-      // Calculate delay: 429 respects API hint; 503 uses exponential backoff (3s, 9s, 27s)
+      // Calculate delay: 429 respects the provider's own hint, BOUNDED — see
+      // MAX_RETRY_SLEEP_MS for why honouring an unbounded Retry-After became
+      // reachable only once parseRetryDelay started reading one. 503 uses
+      // exponential backoff (3s, 9s, 27s) against the same ceiling.
       const delayMs = rateLimited
-        ? parseRetryDelay(err)
-        : Math.min(3000 * Math.pow(3, attempt - 1), 60_000);
+        ? Math.min(parseRetryDelay(err), MAX_RETRY_SLEEP_MS)
+        : Math.min(3000 * Math.pow(3, attempt - 1), MAX_RETRY_SLEEP_MS);
 
       const delaySec = Math.ceil(delayMs / 1000);
       const reason = rateLimited ? 'Rate limit' : 'Service busy';
@@ -4531,6 +4629,11 @@ export const __testing = {
   PROVIDER_REMEDIES, providerRemedies,
   buildRateLimitMessage, buildServiceUnavailableMessage,
   is429, is503,
+  // The retry ladder's own numbers, exposed so a suite drives the REAL delay
+  // resolution rather than a re-implementation of it — the defect closed here
+  // (a structured Retry-After with no consumer) is invisible to any test that
+  // asserts on a copy of the precedence rules.
+  parseRetryDelay, retryAfterSecondsFromHeaders, MAX_RETRIES, MAX_RETRY_SLEEP_MS,
   // The private half of the model-resolution path, so a suite can assert the
   // build-lane refusal without having to reach it through a config write.
   applyModelOverride, defaultModelFor, storedSelection, resolveProviderDefault,

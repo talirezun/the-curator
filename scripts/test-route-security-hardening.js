@@ -182,6 +182,26 @@ function drive(route, { domain, id, query = {}, body = { message: 'hi' } }) {
       statusCode: 200,
       status(c) { this.statusCode = c; return this; },
       json(b) { done({ statusCode: this.statusCode, body: b }); },
+      // The real `res` express hands a handler is an http.ServerResponse, i.e.
+      // an EventEmitter — `res.on('finish'|'close', …)` is ordinary middleware
+      // vocabulary. This double omitted it, so the moment a handler registered
+      // a lifecycle listener EVERY assertion below reported `statusCode: -2`
+      // (the harness's "the handler threw" sentinel) instead of the 404 the
+      // route really produces. That reads exactly like a traversal refusal
+      // having stopped being deliverable, which is far more alarming than the
+      // truth: an incomplete stand-in. Verified against a RUNNING server with
+      // raw sockets (so nothing normalises the path client-side) — every one
+      // of the hostile POSTs below answers `HTTP/1.1 404 Not Found` with no
+      // leak, and a real domain still answers 200.
+      //
+      // Deliberately RECORD-ONLY: handlers are stored and never fired, because
+      // nothing in THIS suite is about the connection lifecycle. Its subject is
+      // refusal semantics, and every status/leak assertion is byte-unchanged.
+      _handlers: Object.create(null),
+      on(evt, fn) { (this._handlers[evt] ||= []).push(fn); return this; },
+      once(evt, fn) { return this.on(evt, fn); },
+      removeListener() { return this; },
+      get writableEnded() { return settled; },
     };
     const req = { params: { domain, id }, query, body };
     try {
@@ -302,6 +322,26 @@ function driveBody(route, body) {
       statusCode: 200,
       status(c) { this.statusCode = c; return this; },
       json(b) { done({ statusCode: this.statusCode, body: b }); },
+      // The real `res` express hands a handler is an http.ServerResponse, i.e.
+      // an EventEmitter — `res.on('finish'|'close', …)` is ordinary middleware
+      // vocabulary. This double omitted it, so the moment a handler registered
+      // a lifecycle listener EVERY assertion below reported `statusCode: -2`
+      // (the harness's "the handler threw" sentinel) instead of the 404 the
+      // route really produces. That reads exactly like a traversal refusal
+      // having stopped being deliverable, which is far more alarming than the
+      // truth: an incomplete stand-in. Verified against a RUNNING server with
+      // raw sockets (so nothing normalises the path client-side) — every one
+      // of the hostile POSTs below answers `HTTP/1.1 404 Not Found` with no
+      // leak, and a real domain still answers 200.
+      //
+      // Deliberately RECORD-ONLY: handlers are stored and never fired, because
+      // nothing in THIS suite is about the connection lifecycle. Its subject is
+      // refusal semantics, and every status/leak assertion is byte-unchanged.
+      _handlers: Object.create(null),
+      on(evt, fn) { (this._handlers[evt] ||= []).push(fn); return this; },
+      once(evt, fn) { return this.on(evt, fn); },
+      removeListener() { return this; },
+      get writableEnded() { return settled; },
     };
     try {
       const r = route.handle({ params: {}, query: {}, body }, res, () => done({ statusCode: -1, body: null }));

@@ -253,6 +253,18 @@ const state = {
   activeConversationId: null,
   thread: [],             // [{role, content, citations?, error?}]
   sending: false,
+  // Outcome of the last STOPPED turn: {text} or null. Rendered at the foot of
+  // the thread.
+  //
+  // TRANSIENT STATE, DELIBERATELY NOT A `state.thread` ENTRY. A compile outcome
+  // IS pushed into the thread (see renderThreadOnly's `role === 'compile'`
+  // branch) because it records something that really happened to the wiki and
+  // must survive every later rebuild. A cancelled turn is the opposite: the
+  // server persisted NOTHING (writeConversation only runs after the model
+  // returns), so a thread entry would be a claim about a conversation that does
+  // not exist on disk and would reappear on every repaint until navigation. The
+  // sidebar's `bulkNotice` above is the precedent this follows.
+  cancelNotice: null,
   responseStyle: 'balanced',
   modelProvider: null,    // null -> global active provider
   availableProviders: [], // config-scoped subset of PROVIDER_KEY_FLAGS' ids
@@ -417,7 +429,28 @@ registerView('chat', {
     //     mount — so a fresh mount opened mid-compile correctly shows a
     //     disabled "Compiling… NN%" button that the run itself re-enables.
     //     There is no path to a permanently-stuck disabled button.
+    //
+    // AMENDED (chat-cancel), because this change interacts with the rule above
+    // and the "only flag reset" line would otherwise become quietly false.
+    // `state.cancelNotice` is now reset here too, and it belongs to the FIRST
+    // category, not the second, on the same test the two bullets above apply:
+    // it is purely a VISUAL ARTIFACT (one recessed line at the foot of the
+    // thread), it holds no lock, it guards no paid or destructive work, and
+    // nothing will ever repaint it away on a fresh mount — the turn it
+    // described is over. Left unreset, a "Stopped." line from before the user
+    // navigated away would reappear under whatever conversation boot()
+    // re-selects, describing a turn that has nothing to do with it. So: two
+    // flag resets here, both artifacts, and `state.compileBusy` still
+    // deliberately NOT among them for exactly the reason given above.
+    //
+    // WHAT IS STILL NOT DONE HERE, AND MUST NOT BE: the in-flight turn's fetch
+    // is NOT aborted, on this path or any other except an explicit click on
+    // Stop. See `sendAbort`'s declaration for the measurement behind that —
+    // in short, an abandoned turn's answer is still written to disk by the
+    // server and the user gets it back by re-opening the conversation, so
+    // aborting here would destroy a paid answer rather than save one.
     state.sending = false;
+    state.cancelNotice = null;
     // The abandon path. The clock is module-level precisely so it can be
     // stopped from a DIFFERENT mount than the one that started it: the previous
     // mount's send is still in flight (this view never aborts the fetch), and
@@ -822,6 +855,10 @@ async function selectConversation(id, mountToken, opts = {}) {
   // after B's and must not paint over it) — the same shape as convToken
   // above, distinct from the cross-mount isCurrentMount(mountToken) check.
   const selectToken = ++state.selectToken;
+  // The notice describes a turn in the thread being navigated AWAY from; it has
+  // no meaning in the one being opened. Same reason switchDomain clears
+  // bulkNotice. (Also covers the re-mount path, where boot() reaches here.)
+  state.cancelNotice = null;
   state.activeConversationId = id;
   try {
     const res = await fetch('/api/chat/' + encodeURIComponent(state.activeDomain) + '/' + encodeURIComponent(id));
@@ -853,6 +890,8 @@ function switchDomain(slug) {
   cancelSearchTimer();          // a keystroke's pending refetch belongs to the OLD domain
   state.selectedConvIds.clear(); // ids are per-domain; carrying them across would target rows that are gone
   state.bulkNotice = null;
+  state.cancelNotice = null;     // belonged to the OLD domain's thread
+
   // autoSelectMostRecent: FALSE.
   //
   // This function has already cleared activeConversationId and thread three
@@ -873,6 +912,7 @@ function switchDomain(slug) {
 function startNewChat() {
   state.activeConversationId = null;
   state.thread = [];
+  state.cancelNotice = null;   // belonged to the thread being left behind
   renderShell(myMountToken);
   focusComposer();
 }
@@ -1075,6 +1115,18 @@ async function sendCurrentMessage() {
   // asked for, and it is half of the divergence comparison.
   const requestedModelAtSend = state.chatModel;
 
+  // A new turn supersedes the last Stop — the notice described the turn the
+  // user has just replaced, and leaving it under a live thinking bubble would
+  // read as "stopped" and "thinking" at once.
+  state.cancelNotice = null;
+
+  // The abort handle for THIS turn. Captured into the module-level record with
+  // the same identity fields the render guards use, so `cancelCurrentSend` can
+  // reach it from the button and — critically — so nothing else can. See the
+  // record's declaration for why the teardown must never touch it.
+  const controller = new AbortController();
+  sendAbort = { controller, mountToken, domain: domainAtSend, conversationId: conversationIdAtSend, text };
+
   state.sending = true;
   // Started BEFORE the first render, so the bubble's very first paint already
   // carries "0s" rather than blank-then-jump.
@@ -1088,6 +1140,7 @@ async function sendCurrentMessage() {
   try {
     const res = await fetch('/api/chat/' + encodeURIComponent(domainAtSend), {
       method: 'POST',
+      signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: text,
@@ -1194,10 +1247,62 @@ async function sendCurrentMessage() {
     const stillRelevant = isCurrentMount(mountToken) &&
       state.activeDomain === domainAtSend &&
       state.activeConversationId === conversationIdAtSend;
+
+    // ── A STOPPED TURN IS A NORMAL OUTCOME, NOT AN ERROR ─────────────────
+    //
+    // DETECTED FROM THE SIGNAL, NOT THE ERROR'S NAME. `controller.signal.aborted`
+    // is the fact; `err.name === 'AbortError'` is a symptom that does not always
+    // survive. v3.15.0 measured exactly this: an abort that lands during the
+    // BODY read (fetch resolves on HEADERS, so `res.json()` is where a slow
+    // turn's remaining time actually goes) was caught by a JSON handler and
+    // translated into a different error, invisible to a name test — and the
+    // consequence there was that a cancelled call got RETRIED. The name is kept
+    // only as a second disjunct.
+    if (controller.signal.aborted || (err && err.name === 'AbortError')) {
+      // The optimistic user bubble is REMOVED, not annotated. `writeConversation`
+      // runs only after the model returns, so an aborted turn persisted nothing:
+      // leaving the bubble on screen would show a message that is not in the
+      // conversation on disk and would vanish on the next reload. Removing it
+      // also means a cancelled FIRST message leaves no conversation behind at
+      // all — `wasNew` never ran, so no sidebar row was ever created and
+      // `state.activeConversationId` was never set.
+      //
+      // Guarded by identity rather than by index: `stillRelevant` already proves
+      // we are looking at the same thread, and popping only when the last entry
+      // is the exact user message this turn sent means a race that somehow
+      // appended something else can never eat an innocent message.
+      if (stillRelevant) {
+        const last = state.thread[state.thread.length - 1];
+        if (last && last.role === 'user' && last.content === text) state.thread.pop();
+        state.cancelNotice = { text: restoreDraft(text) };
+        renderThreadOnly(mountToken);
+      }
+      // NOT relevant: the abort still happened (that is what the user asked
+      // for), but the notice and the draft belong to a thread that is no longer
+      // on screen, and restoring text into the composer of a DIFFERENT
+      // conversation would arm the wrong thread with someone else's message.
+      // Same rule as the success path: stop the work, render nothing.
+      return;
+    }
+
     if (!stillRelevant) return;
-    state.thread.push({ role: 'assistant', content: '', error: err.message });
+    // `requestedModel` is the ONLY model fact a failed turn has: the request
+    // never came back, so there is no served model to report. It is recorded
+    // here so the failure note can say something true about the model the user
+    // actually chose — captured at SEND time (see requestedModelAtSend), never
+    // read from the composer at render time, because the dropdown is live during
+    // a turn and re-deriving it there is the v3.13.2 relabelling bug.
+    state.thread.push({
+      role: 'assistant', content: '', error: err.message,
+      requestedModel: requestedModelAtSend || null,
+    });
     renderThreadOnly(mountToken);
   } finally {
+    // Identity-checked so a turn can only ever clear ITS OWN record. Nothing can
+    // interleave here today (the cancel path above has no `await`), but a record
+    // cleared by the wrong turn would leave a live turn unstoppable — a silent
+    // failure with no symptom until someone needs the button.
+    if (sendAbort && sendAbort.controller === controller) sendAbort = null;
     state.sending = false;
     // EVERY exit path — resolved, thrown, or returned early as irrelevant —
     // passes through here, which is the only placement that cannot be skipped by
@@ -1208,6 +1313,57 @@ async function sendCurrentMessage() {
       focusComposer();
     }
   }
+}
+
+/**
+ * Stop the turn in flight. THE ONLY CALLER IS THE STOP BUTTON.
+ *
+ * Does exactly one thing: aborts. Everything the user then sees — the bubble
+ * coming down, the notice, the draft, the button reverting, the clock stopping —
+ * is done by `sendCurrentMessage`'s own catch/finally, because that is the code
+ * that owns the turn's state. Unwinding from here as well would give one
+ * transition two owners, which is how the two halves come to disagree.
+ *
+ * Safe to call with nothing in flight, and safe to call twice: `abort()` on an
+ * already-aborted controller is a documented no-op, and the record is cleared by
+ * the `finally` regardless.
+ */
+function cancelCurrentSend() {
+  if (!sendAbort) return;
+  sendAbort.controller.abort();
+}
+
+/**
+ * Put a stopped turn's message back in the composer. Returns the sentence the
+ * notice should show — which is derived from what actually happened, never
+ * assumed, so the notice cannot promise a restore that did not occur.
+ *
+ * REFUSES TO CLOBBER A NON-EMPTY COMPOSER. Unreachable while a send is in
+ * flight, because the textarea is disabled for the duration (see
+ * renderComposerBusy) — this is defence in depth, and it fails in the direction
+ * of keeping the text the user can SEE rather than the text they cannot.
+ */
+function restoreDraft(text) {
+  const ta = document.getElementById('chat-input');
+  if (!ta || ta.value.trim() !== '') return 'Stopped. Nothing was saved.';
+  ta.value = text;
+  autosize(ta);
+  return 'Stopped. Nothing was saved — your message is back in the composer.';
+}
+
+/**
+ * The notice for a stopped turn, or '' when there is none.
+ *
+ * A FACT, STATED ONCE, IN THE RECESSED TREATMENT. No icon, no colour, no
+ * animation: the user stopped this deliberately, so nothing has gone wrong, and
+ * dressing it as a failure (the `alertCircle` + `--danger-text` treatment two
+ * branches below in renderThreadOnly) teaches people to distrust the red that
+ * marks a real one. Same reasoning, same styling, as `.chat-thinking-slow`.
+ */
+function cancelNoticeHtml() {
+  const n = state.cancelNotice;
+  if (!n || !n.text) return '';
+  return '<div class="chat-stopped-note" role="status">' + escapeHtml(n.text) + '</div>';
 }
 
 // ── Compile to Wiki ──────────────────────────────────────────────────────
@@ -2040,13 +2196,54 @@ function composerShowsModelPicker() {
     : state.providerOnlyProviders.length >= 2;
 }
 
+/**
+ * The composer's primary button — Send, or Stop while a turn is in flight.
+ *
+ * ONE BUILDER, TWO CALLERS, for the reason `composerShowsModelPicker` above
+ * exists: `renderComposerHtml` paints this on a full repaint and
+ * `renderComposerBusy` re-paints it in place when the turn starts and ends. Two
+ * copies of "what does this button look like right now" is how a repaint
+ * silently drops a control the first paint had — and here the control it would
+ * drop is the only way to stop a paid, minutes-long call.
+ *
+ * ONE ELEMENT, NOT TWO. Same `#chat-send-btn` id and same listener in both
+ * states (see wireComposer, which dispatches on `state.sending`), so a repaint
+ * cannot orphan a handler or leave two live buttons behind.
+ *
+ * THE STOP GLYPH IS CSS, NOT `icon()`. There is no stop/square in app.js's
+ * shared ICON_BODY, and `icon()` answers an unknown name with a console error
+ * and a missing-icon placeholder. app.js is not this view's file to extend, so
+ * the square is drawn by `.chat-stop-glyph` in chat.css. `x`/`close` were
+ * rejected as substitutes: they read "dismiss this", and what this does is halt
+ * work that is still running.
+ */
+function composerPrimaryButtonHtml(busy) {
+  // NOT `disabled` while busy — the whole point is that it is clickable. It was
+  // a disabled spinner before this change, which is what left a minutes-long
+  // turn with no way out.
+  return (
+    '<button class="chat-send-btn' + (busy ? ' chat-send-btn-stop' : '') + '" id="chat-send-btn"' +
+      (busy
+        ? ' title="Stop this answer" aria-label="Stop">' + '<span class="chat-stop-glyph" aria-hidden="true"></span>'
+        : ' title="Send (⌘/Ctrl + Enter)" aria-label="Send">' + icon('send', 15)) +
+    '</button>'
+  );
+}
+
 function renderComposerHtml(active) {
   const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
 
   return (
     '<div class="chat-composer-wrap">' +
       '<div class="chat-composer" id="chat-composer">' +
-        '<textarea class="chat-input" id="chat-input" rows="2" placeholder="' + escapeHtml(placeholder) + '"></textarea>' +
+        // `state.sending` is read here, not passed in, because a full repaint
+        // can happen MID-TURN (selectConversation, switchDomain and
+        // startNewChat all call renderShell) and the composer must come back
+        // in the state the app is actually in. Before this it always came back
+        // as an enabled Send that `sendCurrentMessage` then silently refused —
+        // the inert-control defect this repo has recorded twice.
+        '<textarea class="chat-input" id="chat-input" rows="2" placeholder="' + escapeHtml(placeholder) + '"' +
+          (state.sending ? ' disabled' : '') + '></textarea>' +
         // REMOVED (cutover): a permanently-disabled paperclip sat here whose
         // own tooltip said it was not wired up. The shipping composer has no
         // attach control at all, so this was a NEW dead affordance in the
@@ -2061,9 +2258,7 @@ function renderComposerHtml(active) {
           '<div class="chat-composer-pickers" id="chat-composer-pickers"></div>' +
           '<div class="chat-composer-spacer"></div>' +
           '<span class="chat-cost-hint mono">cost varies with response length</span>' +
-          '<button class="chat-send-btn" id="chat-send-btn" title="Send (⌘/Ctrl + Enter)" aria-label="Send">' +
-            icon('send', 15) +
-          '</button>' +
+          composerPrimaryButtonHtml(state.sending) +
         '</div>' +
       '</div>' +
       '<div class="chat-foot-hint mono">Answers cite the pages they came from. Click a citation to read the page.</div>' +
@@ -2123,16 +2318,59 @@ const SUITABILITY_LABELS = Object.assign(Object.create(null), {
 // deliberately match ingest.js's (module-level timer, one-second tick, the same
 // "6m 22s" formatting) rather than inventing a second pattern.
 //
-// MODULE LEVEL, NOT `state`. `state` is reassigned WHOLESALE by every onEnter,
-// and this interval must keep ticking and — far more importantly — must be
-// CLEARABLE across a re-mount. A timer that survives its own turn writing into
-// a live thread is the "button left permanently reading Fixing…" shape this
-// repo has already shipped once.
+// MODULE LEVEL, NOT `state`. This interval must keep ticking and — far more
+// importantly — must be CLEARABLE across a re-mount. A timer that survives its
+// own turn writing into a live thread is the "button left permanently reading
+// Fixing…" shape this repo has already shipped once.
+//
+// CORRECTED (chat-cancel): this comment used to justify the placement with
+// "`state` is reassigned WHOLESALE by every onEnter". That is FALSE — `state`
+// is a `const` (see its declaration) and is never reassigned anywhere in this
+// file, which is exactly what onEnter's own comment says ("this file's `state`
+// is deliberately NOT reset on every onEnter"). Two comments in one file
+// disagreeing about one variable is this repo's most-recurring shape (v3.14.0
+// finding 8), so the false half is deleted rather than left to mislead the next
+// reader into believing a `state.` field would be wiped on re-mount. The
+// placement itself is unchanged and still fine: turn-lifetime bookkeeping lives
+// together, up here, beside the abort record below.
 let sendStartedAt = null;
 let sendTimerId = null;
 // What we measured for the model serving THIS turn: `{label, ms}` or null.
 // Captured at send time because the composer stays live during the call.
 let sendLatencyHint = null;
+
+// ── THE IN-FLIGHT TURN, AND THE ONE THING ALLOWED TO ABORT IT ────────────
+//
+// `{ controller, mountToken, domain, conversationId, text }` for the turn
+// currently in flight, or null. Lives beside the clock, for the same reason and
+// with the same lifetime: one per turn, set in `sendCurrentMessage`, cleared in
+// its `finally`.
+//
+// ══ ONLY AN EXPLICIT CLICK ON STOP MAY ABORT. ═══════════════════════════
+// NOT the view teardown, NOT `onEnter`, NOT a conversation switch, NOT a domain
+// switch, NOT any cleanup path. This is a hard rule, and it is not stylistic:
+//
+//   - A turn can legitimately run for MINUTES (measured: 186s to first byte on
+//     one OpenRouter model). Users navigate away while they wait — that is the
+//     normal, reasonable thing to do.
+//   - An abandoned turn is NOT wasted today. `sendMessage` persists the
+//     conversation server-side after the model returns, so the answer lands on
+//     disk and the user gets it back simply by re-opening that conversation.
+//     Only the LIVE RENDER is dropped (by the `stillRelevant` check), never the
+//     answer.
+//   - So aborting on teardown would convert "navigate away" into "silently
+//     destroy the paid answer you were waiting for" — strictly worse than the
+//     behaviour it replaced, and unrecoverable.
+//
+// The mount-token / domain / conversation discipline throughout this file is
+// about NOT RENDERING INTO THE WRONG PLACE. It must never be read as licence to
+// abort because the view moved on. The identity fields captured here serve the
+// same render-placement purpose (see `cancelCurrentSend`), plus `text` for the
+// draft restore — they are not an abort trigger.
+//
+// scripts/test-next-chat-cancel.js §6 pins this by EXECUTION: it runs the real
+// teardown mid-flight and asserts the request was NOT aborted.
+let sendAbort = null;
 
 // After this long, a turn stops looking slow and starts looking broken — so if
 // we have a measurement for the model in flight, we state it. Once, as a fact.
@@ -2220,13 +2458,21 @@ function latencyHintForTurn() {
   }
   if (!row) return null;
   const label = row.entry.label || row.entry.id;
+  // llm.js's own reported fact that this model bills nothing — never a ":free"
+  // id substring, and never a price of 0 (see formatLivePrice's docblock for why
+  // those two are not the same question). Carried on the hint rather than
+  // resolved again later so the bubble and the failure note describe the same
+  // model the turn was actually sent to.
+  const free = row.entry.free === true;
   const ms = row.entry.medianLatencyMs;
-  if (Number.isFinite(ms) && ms >= 1000) return { kind: 'measured', label, ms };
+  if (Number.isFinite(ms) && ms >= 1000) return { kind: 'measured', label, ms, free };
   const range = measuredLatencyRange(state.offerable, state.availableProviders);
   // No range either (a catalogue with fewer than two measured models): nothing
-  // to say, so nothing is said. The clock still ticks.
-  if (!range) return null;
-  return { kind: 'unmeasured', label, lowMs: range.lowMs, highMs: range.highMs };
+  // to say about TIMING, so nothing is said about timing. A free model still has
+  // something true to say, so it keeps a hint; anything else stays null and gets
+  // a bare ticking clock, which is the absence rule.
+  if (!range) return free ? { kind: 'free-only', label, free } : null;
+  return { kind: 'unmeasured', label, lowMs: range.lowMs, highMs: range.highMs, free };
 }
 
 /**
@@ -2239,13 +2485,43 @@ function latencyHintForTurn() {
  */
 function slowTurnNoticeText(hint) {
   if (!hint) return '';
+  // ── THE FREE-MODEL CLAUSE, AND WHY THE SENTENCE LIVES HERE ────────────────
+  //
+  // Written out inline rather than delegated to a helper: this function is
+  // lifted verbatim into a `new Function` sandbox by test-next-composer-model
+  // with a fixed set of bindings, so ANY new free identifier — a helper, or even
+  // a module-level string constant — is a ReferenceError there rather than a
+  // failing assertion. Inline keeps the shipped wording drivable by that suite.
+  //
+  // This is also the ONLY copy of the sentence: the failure surface reaches it
+  // by calling THIS function with `{label, free: true}` (see
+  // failedModelNoteHtml), so the words a user reads while waiting and the words
+  // they read after a failure cannot drift apart.
+  //
+  // NO RATE-LIMIT FIGURE, EVER. v3.15.0 records this project declining to print
+  // free-tier request caps because they could not be verified, and v3.18.0
+  // measured 18 consecutive 429s on a PAID model — so a "free tier allows N/day"
+  // lead would be both unverifiable and wrong exactly when it is read. What is
+  // stated instead is the thing we did measure: the SHARED POOL, and the spread
+  // it produced across siblings in one session.
+  const free = hint.free === true
+    ? hint.label + ' is a free model, and free models share one pool of capacity with ' +
+      'everyone else using them: in our own testing one free model answered 8 of 8 calls while ' +
+      'three of its siblings answered 0 of 8 over the same ten minutes.'
+    : '';
+  let timing = '';
   if (hint.kind === 'measured') {
-    return hint.label + ' measured at about ' + formatDurationMs(hint.ms) +
+    timing = hint.label + ' measured at about ' + formatDurationMs(hint.ms) +
       ' per call in our testing, on a full ingest outline — a much larger prompt than a chat turn.';
+  } else if (hint.kind === 'unmeasured') {
+    timing = 'We have no timing measurement for ' + hint.label + '. ' +
+      'Across the models we have measured, one call took anywhere from ' +
+      formatDurationMs(hint.lowMs) + ' to ' + formatDurationMs(hint.highMs) + '.';
   }
-  return 'We have no timing measurement for ' + hint.label + '. ' +
-    'Across the models we have measured, one call took anywhere from ' +
-    formatDurationMs(hint.lowMs) + ' to ' + formatDurationMs(hint.highMs) + '.';
+  // An unrecognised kind contributes no timing sentence rather than falling
+  // through to the unmeasured wording, which would state a span for a hint that
+  // carries none and render "undefined to undefined".
+  return timing && free ? timing + ' ' + free : (timing || free);
 }
 
 /**
@@ -3528,10 +3804,30 @@ function wireComposer() {
     });
     autosize(ta);
   }
-  if (sendBtn) sendBtn.addEventListener('click', sendCurrentMessage);
+  wireComposerPrimaryButton();
   // The pickers are BUILT here, not in renderComposerHtml — one code path
   // paints them on first mount and on every repaint after a pick.
   renderComposerPickers();
+}
+
+/**
+ * Bind the composer's primary button. Factored out of `wireComposer` because
+ * `renderComposerBusy` replaces that element (outerHTML) on every busy
+ * transition and has to re-bind, and because binding is the half that must not
+ * drift between the two paths.
+ *
+ * DISPATCHES ON `state.sending` AT CLICK TIME rather than binding a different
+ * handler per state: the flag is the single truth about whether a turn is in
+ * flight, and a handler captured when the button was painted could outlive the
+ * state it was painted for.
+ */
+function wireComposerPrimaryButton() {
+  const btn = document.getElementById('chat-send-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (state.sending) cancelCurrentSend();
+    else sendCurrentMessage();
+  });
 }
 
 function renderModelDropdownHtml() {
@@ -4019,6 +4315,34 @@ function answerIsInPromptWindow(index) {
 }
 
 /**
+ * One extra sentence under a failed turn when — and only when — the model it was
+ * sent to is FREE. '' in every other case.
+ *
+ * WHY THIS IS THE FACT WORTH STATING. On a free model a rate limit is the
+ * EXPECTED outcome rather than an exceptional one, and the user has no way to
+ * know that from the provider's own message. The wording is not written here: it
+ * comes from `slowTurnNoticeText`, the same builder the thinking bubble uses, so
+ * there is exactly one copy of the claim and the "while you wait" text and the
+ * "after it failed" text cannot disagree.
+ *
+ * Resolved from `m.requestedModel` (recorded at send time) with the SAME
+ * `resolveChatModel` every other model-derived line in this view uses, and gated
+ * on `entry.free === true` — llm.js's reported flag, never an id substring.
+ * A message with no recorded model says nothing, which is the absence rule: we
+ * do not guess from the composer's current selection.
+ */
+function failedModelNoteHtml(m, ctx) {
+  const id = m && typeof m.requestedModel === 'string' && m.requestedModel ? m.requestedModel : null;
+  if (!id) return '';
+  const c = ctx || {};
+  const row = resolveChatModel(id, c.offerable, c.availableProviders);
+  if (!row || !row.entry || row.entry.free !== true) return '';
+  const text = slowTurnNoticeText({ label: row.entry.label || row.entry.id, free: true });
+  if (!text) return '';
+  return '<div class="chat-error-context">' + escapeHtml(text) + '</div>';
+}
+
+/**
  * The question an assistant message at `index` was answering: the nearest
  * PRECEDING user turn. Null when there is none — a thread that opens with an
  * assistant message (a compile card, an error) has nothing to re-ask.
@@ -4044,8 +4368,16 @@ function questionForAnswerIndex(index) {
  * SUPPRESSED WHILE A SEND IS IN FLIGHT, because `sendCurrentMessage` refuses a
  * second send anyway (`state.sending`) and a button that silently does nothing
  * is the inert-control defect this repo has shipped and recorded twice. Also
- * suppressed on an errored message and where the composer has no model picker at
- * all — with one model there is no other model to ask.
+ * suppressed where the composer has no model picker at all — with one model
+ * there is no other model to ask.
+ *
+ * NOW RENDERED ON A FAILED TURN TOO, and that is the point of the control there:
+ * a failure whose most likely remedy is "try a different model" should offer
+ * that remedy where the failure is, not leave the user to find the dropdown.
+ * (This docblock previously said errored messages were suppressed. They were —
+ * by the CALL SITE never invoking this, not by anything in here. The sentence
+ * described a behaviour no line in this function implemented, which is why it
+ * silently stopped being true the moment the call site changed.)
  */
 function reaskButtonHtml(index) {
   if (state.sending) return '';
@@ -4086,8 +4418,19 @@ function renderComposerBusy(busy, token) {
   const sendBtn = document.getElementById('chat-send-btn');
   const ta = document.getElementById('chat-input');
   if (sendBtn) {
-    sendBtn.disabled = busy;
-    sendBtn.innerHTML = busy ? '<span class="chat-spinner"></span>' : icon('send', 15);
+    // NEVER disabled now. It used to be `disabled = busy` with a spinner inside,
+    // which is the state this change exists to remove: a turn that can run for
+    // minutes, showing a control that acknowledges it is busy and offers no way
+    // out. Liveness has not been lost with the spinner — the thinking bubble
+    // carries a spinner AND a ticking elapsed clock, which is the honest signal.
+    sendBtn.disabled = false;
+    // outerHTML, not innerHTML: the class, title and aria-label all differ
+    // between the two states, and rewriting only the contents would leave a
+    // square glyph inside a button still telling a screen reader "Send".
+    // Replacing the element drops its listener with it, so it is re-bound here —
+    // `wireComposer` is not re-run by this path.
+    sendBtn.outerHTML = composerPrimaryButtonHtml(busy);
+    wireComposerPrimaryButton();
   }
   if (ta) ta.disabled = busy;
 }
@@ -4111,7 +4454,13 @@ function renderThreadOnly(token) {
             ? 'This domain has ' + active.pageCount.toLocaleString() + ' page' + (active.pageCount === 1 ? '' : 's') + '. Answers cite the specific pages they draw from — click a citation to open it.'
             : 'Answers cite the specific pages they draw from — click a citation to open it.') +
         '</div>' +
-      '</div>';
+      '</div>' +
+      // The empty state is REACHABLE AFTER A STOP, and it is the case that most
+      // needs the notice: stopping the very first message of a new conversation
+      // removes the only entry in the thread, so without this the screen would
+      // snap back to "Ask X anything" with nothing to say the turn had been
+      // stopped rather than never sent.
+      cancelNoticeHtml();
     return;
   }
 
@@ -4163,10 +4512,31 @@ function renderThreadOnly(token) {
       );
     }
     if (m.error) {
+      // ── A FAILURE IS AN OUTCOME, NOT A CATASTROPHE ─────────────────────
+      // Reported as: a full-width wall of red text after a long wait, on a
+      // free model. Three things changed and each is deliberate.
+      //   1. NOT `.chat-answer`. That class is 14.5px body copy and the whole
+      //      message was painted --danger-text, so ~450 characters of provider
+      //      prose arrived at answer size in alarm colour. The text is now
+      //      recessed and width-capped like every other stated fact in this
+      //      view; the failure is marked by ONE hairline rule, not by the copy.
+      //   2. NO ICON. Same rule the stopped-turn note follows (v3.13.2): state
+      //      the fact, do not decorate it.
+      //   3. AN ACTION. `reaskButtonHtml` is the v3.18.0 control, reused rather
+      //      than reinvented — the same one-click "ask this again with another
+      //      model" that a successful answer offers. A failure the user can act
+      //      on in one click is the actual fix; better apology copy is not.
+      // `role="status"`, not `alert`: the user is already watching this spot
+      // having waited for it, and an assertive region would interrupt whatever a
+      // screen reader is mid-sentence on. Previously there was no role at all.
       return (
         '<div class="chat-msg chat-msg-assistant chat-msg-error">' +
           '<div class="chat-msg-eyebrow mono">THE CURATOR</div>' +
-          '<div class="chat-answer">' + icon('alertCircle', 14) + ' ' + escapeHtml(m.error) + '</div>' +
+          '<div class="chat-error-note" role="status">' +
+            '<div class="chat-error-detail">' + escapeHtml(m.error) + '</div>' +
+            failedModelNoteHtml(m, eyebrowCtx) +
+          '</div>' +
+          reaskButtonHtml(i) +
         '</div>'
       );
     }
@@ -4192,7 +4562,7 @@ function renderThreadOnly(token) {
       '<div class="chat-msg-eyebrow mono">THE CURATOR</div>' +
       thinkingBodyHtml() +
     '</div>'
-  ) : '');
+  ) : '') + cancelNoticeHtml();
 
   // Delegated click for the re-ask control. One handler for the whole thread,
   // not one per message: `renderThreadOnly` replaces this element's entire
