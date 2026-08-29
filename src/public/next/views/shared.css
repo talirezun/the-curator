@@ -1,51 +1,4 @@
-/* View: Shared Brain — owned by views/shared.js.
-
-   ── THE TEXT SYSTEM (shared/text.css) ──────────────────────────────────
-   THIS IS THE VIEW THE DEFECT WAS REPORTED AGAINST: a description in the
-   sidebar, a near-duplicate in the centre pane, and the centre one wearing
-   `.view-body` — the class domains.js also uses for a GENERATED sentence
-   and loading-gate.js paints its placeholder in.
-
-   Thirteen local text treatments left this file when views/shared.js
-   adopted the shared roles:
-
-     .settings-hint-text   static prose      -> renderDescription
-     .sb-cta-desc          static prose      -> renderDescription
-     .sb-admin-hint        static prose      -> renderDescription
-     .sb-card-cohort-note  static prose      -> renderDescription
-     .sb-card-cohort-row   layout for it
-     .sb-conn-state        a state flag      -> renderBadge
-     .sb-fellow-pill       an identifier     -> renderBadge
-     .sb-card-stat-label   a readout label   -> renderReadout
-     .sb-card-pending      a state           -> renderStatus
-     .sb-card-pending-note a state detail    -> renderStatus detail
-     .sb-card-busy-note    a state           -> renderStatus
-     .sb-card-status       an action report  -> renderStatus
-     .sb-admin-note-danger a failure         -> renderStatus (danger)
-
-   SIX of them failed WCAG AA as shipped — measured from tokens/color.css
-   with var() chains resolved and rgba tints composited, in both themes:
-
-     .sb-conn-state    --text-faint     on --surface        2.26 / 2.34
-     .sb-fellow-pill   --text-faint     on --surface-inset  2.29 / 2.18
-     .sb-card-note     --text-faint     on --surface        2.26 / 2.34
-     .sb-cta-desc      --text-3         on --surface        4.27 / 4.14
-     .sb-admin-hint    --text-3         on --surface        4.27 / 4.14
-     .sb-card-pending  --attention-text on its own tint     9.11 / **3.21**
-
-   The first three are under 3:1 — below the floor for NON-text UI, let
-   alone text. Recolouring them would have left thirteen treatments for
-   four roles, so the ROLE was adopted instead and the colour followed.
-
-   NO RULE IN THIS FILE MAY NAME A `tx-` CLASS. shared/text.css owns that
-   prefix and its own suite asserts no other /next stylesheet defines a
-   rule on it — which is what stops an adopter re-styling a shared role
-   locally and re-growing the classes it just replaced. Where spacing or
-   flex sizing is needed, a view-owned WRAPPER carries it: .sb-lede,
-   .sb-card-block, .sb-card-live, .sb-confirm-text, .sb-admin-inset.
-
-   The wizard (`sbw-`) and confirm-dialog (`cfd-`) sections lower down
-   belong to OTHER modules and are deliberately untouched by this pass. */
+/* View: Shared Brain — owned by views/shared.js. */
 
 /* ── Small utilities also used in sync.css/settings.css ──────────────────
    Duplicated on purpose rather than shared — see views/README.md: "put
@@ -54,9 +7,13 @@
 
 .btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
 
-/* .settings-hint-text removed with the markup — renderDescription is the ONE
-   static-prose treatment now. settings.css keeps its own copy for its own
-   view; nothing else in this file referenced it. */
+.settings-hint-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 66ch;
+}
 
 .settings-inline-error {
   padding: 11px 13px;
@@ -100,12 +57,7 @@
 }
 .sb-conn-dot-readonly { background: var(--attention-text); }
 .sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* .sb-conn-state removed with the markup. --text-faint on the sidebar's
-   --surface measured 2.26 dark / 2.34 light — failing not just the 4.5 AA
-   text floor but the 3:1 floor for non-text UI, on the only per-connection
-   state this sidebar shows. It is a renderBadge now: the tone lives in the
-   tint and the 1px border (non-text, 3:1) and the label sits at --text,
-   measured 13.81 dark / 16.39 light on the attention tint. */
+.sb-conn-state { font-size: var(--text-2xs); color: var(--text-faint); }
 
 /* ── Disabled (feature-flag off) state ───────────────────────────────── */
 
@@ -145,8 +97,7 @@
   gap: 7px;
 }
 .sb-cta-title svg { flex: none; color: var(--accent-text); }
-/* .sb-cta-desc removed with the markup — --text-3 at 4.27 / 4.14, under AA,
-   for static prose. renderDescription is the one treatment. */
+.sb-cta-desc { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
 
 .sb-add-more { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 
@@ -197,26 +148,32 @@ a.sb-card-repo:hover { color: var(--text-link); }
 
 /* ── Stats grid ───────────────────────────────────────────────────────── */
 
-/* SPACING ONLY. The grid, the per-cell stack and .sb-card-stat-label (which
-   was --text-3, 4.27 / 4.14, under AA) all left with the markup: the five
-   card figures are a renderReadoutGroup, which brings its own wrap layout,
-   its own mono value and a label at --text-2. This wrapper carries nothing
-   but the 12px the old grid did — a view positions the component from the
-   outside and never dresses it. */
-.sb-card-stats { margin-bottom: 12px; }
+.sb-card-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px 18px;
+  margin-bottom: 12px;
+}
+.sb-card-stats > span { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); color: var(--text); }
+.sb-card-stat-label { font-size: var(--text-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: var(--track-eyebrow); }
 
 /* ── Pending / busy notices ───────────────────────────────────────────── */
 
-/* .sb-card-pending / .sb-card-pending-note / .sb-card-busy-note removed with
-   the markup. The pending notice painted --attention-text as TEXT on
-   --attention-tint — 9.11:1 dark but **3.21:1 light**, under AA — on a
-   notice about work that will cost API credits. They are renderStatus boxes
-   now: the amber is the 3px rail (a BORDER, floor 3:1, measured 10.70 /
-   3.58) and the words are --text / --text-2.
-
-   .sb-card-block is the view-owned spacing wrapper they sit in, carrying the
-   same 12px. */
-.sb-card-block { margin-bottom: 12px; }
+.sb-card-pending,
+.sb-card-busy-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  margin-bottom: 12px;
+}
+.sb-card-pending { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.sb-card-pending > svg, .sb-card-busy-note > svg { flex: none; }
+.sb-card-pending-note { font-size: var(--text-2xs); color: var(--text-3); }
+.sb-card-busy-note { color: var(--text-2); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
 
 /* ── Actions ──────────────────────────────────────────────────────────── */
 
@@ -237,12 +194,10 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--text-sm);
   flex-wrap: wrap;
 }
-/* A view-owned wrapper carries the flex sizing; no rule here may name the
-   component's own class. Measured --text-2 over --surface-inset: 8.45 dark /
-   6.79 light, both clear AA. */
-.sb-confirm-text { flex: 1; min-width: 240px; }
 .sb-confirm-block { flex-basis: 100%; align-items: flex-start; }
 .sb-confirm-actions { display: flex; gap: 7px; margin-left: auto; flex: none; }
 
@@ -290,29 +245,23 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-weight: var(--weight-medium);
 }
 .sb-card-cohort-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-/* .sb-card-cohort-row and .sb-card-cohort-note removed with the markup: the
-   three cohort figures are a renderReadoutGroup and the three honesty notes
-   are renderDescription. The notes were --text-3 (4.27 / 4.14, under AA).
-   The flex gap above still spaces them. */
+.sb-card-cohort-row { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text); }
+.sb-card-cohort-note { color: var(--text-3); font-size: var(--text-xs); line-height: var(--leading-normal); }
 
 /* ── Status line ──────────────────────────────────────────────────────── */
 
-/* .sb-card-status (and its .error modifier) removed with the markup: an
-   action report is a statement about the live system, so it is a
-   renderStatus, and the error case gets the danger rail rather than a colour
-   modifier on a paragraph.
+.sb-card-status {
+  margin-bottom: 10px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.sb-card-status.error { color: var(--danger-text); }
 
-   .sb-card-live is the ARIA live region, and it is now emitted
-   UNCONDITIONALLY with only its contents changing. It used to be created
-   together with its first message, which is the classic aria-live failure —
-   a region inserted at the same moment as its content is frequently never
-   announced. It has no visual treatment of its own; the status inside brings
-   that, and the empty region collapses to nothing. */
-.sb-card-live:not(:empty) { margin-bottom: 10px; }
-
-/* .sb-card-note keeps only its spacing. Its text was --text-faint on
-   --surface: 2.26 dark / 2.34 light, under even the 3:1 non-text floor. */
-.sb-card-note { margin: 0 0 12px; }
+.sb-card-note {
+  margin: 0 0 12px;
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
 
 /* ── Footer: fellow id + Leave ───────────────────────────────────────── */
 
@@ -324,10 +273,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border-top: 1px solid var(--border-subtle);
   flex-wrap: wrap;
 }
-/* .sb-fellow-pill removed with the markup — --text-faint on --surface-inset
-   measured 2.29 dark / 2.18 light, under the 3:1 non-text floor, on the one
-   string an admin reads out to identify themselves in a cohort. It is a
-   renderBadge now (same pill shape, label at --text). */
+.sb-fellow-pill {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
 .sb-leave-link {
   margin-left: auto;
   background: none;
@@ -388,27 +341,22 @@ a.sb-card-repo:hover { color: var(--text-link); }
   gap: 8px;
   flex-wrap: wrap;
 }
-/* .sb-admin-hint removed with the markup. It was --text-3 (4.27 / 4.14,
-   under AA) and it carried the GDPR Article 17 revocation warning — the
-   paragraph an admin reads before an IRREVERSIBLE erasure. That paragraph is
-   now a renderDescription at --text-2 (8.34 / 7.26) and is NOT folded:
-   renderExplainer is not imported into views/shared.js at all, so it cannot
-   become a disclosure by a later edit. A warning behind a click is not a
-   warning.
-
-   .sb-admin-note keeps LAYOUT only — the icon row. Its text is a
-   renderDescription now, so the font-size and colour are gone.
-   .sb-admin-note-danger left with its markup: a failure is a renderStatus
-   with the danger rail, not red body text. */
+.sb-admin-hint {
+  margin: 4px 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+}
 .sb-admin-note {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
 }
 .sb-admin-note > svg { flex: none; margin-top: 1px; }
-/* The 4px the old .sb-admin-hint carried under its row title. */
-.sb-admin-row-text > .sb-admin-inset,
-.sb-admin-inset { margin-top: 10px; }
+.sb-admin-note-danger { color: var(--danger-text); }
 
 .sb-irreversible-pill {
   font-size: var(--text-2xs);
@@ -1020,13 +968,3 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--attention-text);
 }
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-
-/* ── Lede ─────────────────────────────────────────────────────────────
-   A SPACING wrapper for the view's one-paragraph description, carrying the
-   22px `.view-body` used to. The margin lives here rather than on the
-   shared description class so that class never grows view-specific spacing
-   — which is exactly how the 81 one-off text classes this component
-   replaces came about. `.view-body` itself is NOT deleted from shell.css:
-   loading-gate.js's loaderHtml() defaults to it, so removing the class
-   would silently unstyle every gated placeholder in the app. */
-.sb-lede { margin-bottom: 22px; }

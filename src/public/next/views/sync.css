@@ -1,32 +1,4 @@
-/* View: Sync — owned by views/sync.js.
-
-   ── THE TEXT SYSTEM (shared/text.css) ──────────────────────────────────
-   Nine text treatments left this file when views/sync.js adopted the
-   shared roles. What went, and why it was not simply recoloured:
-
-     .settings-hint-text  static prose      -> renderDescription
-     .sync-history-empty  static prose      -> renderStatus + renderExplainer
-     .sync-repo           a repo path       -> renderStatus detail
-     .sync-last           a computed stamp  -> renderReadout
-     .sync-pending-note   a computed count  -> renderReadout
-     .sync-sb-meta        a computed stamp  -> renderReadout
-     .sync-action-note    an action report  -> renderStatus
-     .status-pill(-ok)    connection state  -> renderStatus
-     .sync-sidebar-busy   a busy state      -> renderStatus
-     .sync-status-top     layout for three of the above
-
-   Four of those failed WCAG AA as shipped, measured from tokens/color.css
-   with var() chains resolved and rgba tints composited, in both themes:
-   `--text-3` (.settings-hint-text, .sync-last, .sync-history-empty
-   .empty-body) is 4.27 dark / 4.14 light against a 4.5 floor;
-   `--success-text` on `--success-tint` (.status-pill-ok) is 8.73 / **3.59**;
-   `--attention-text` on `--attention-tint` (.sync-sidebar-busy,
-   .sync-pending-note) is 9.11 / **3.21**. Two more carried a HARDCODED
-   12.5px, which freezes at 1x while Settings > General scales the ramp.
-
-   Recolouring them would have left nine treatments for four roles. What is
-   left below is layout and chrome; every text treatment in this view now
-   comes from shared/text.css.                                            */
+/* View: Sync — owned by views/sync.js. */
 
 /* ── Small utilities also used in settings.css ──────────────────────────
    Duplicated on purpose rather than shared: both files are owned by this
@@ -60,14 +32,25 @@
 }
 .theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
 
-/* .status-pill / .status-pill-dot / .status-pill-ok removed with the markup:
-   the "Connected" pill rendered --success-text as TEXT on --success-tint,
-   measured 3.59:1 in the light theme, and connection state is renderStatus's
-   role. settings.css keeps its own copy for its own markup. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--radius-full);
+  font: var(--type-mono);
+  font-size: var(--text-2xs);
+}
+.status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
 
-/* .settings-hint-text removed with the markup — renderDescription is the ONE
-   static-prose treatment now. shared.css and settings.css keep their copies
-   for their own views. */
+.settings-hint-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: var(--leading-normal);
+  max-width: 66ch;
+}
 
 .settings-inline-error {
   padding: 11px 13px;
@@ -105,13 +88,24 @@
    sync state) and the footnote apologising for it. Both removed with the
    markup at cutover — see sync.js's renderSidebar comment. */
 
-/* .sync-sidebar-busy removed with the markup. It painted --attention-text as
-   TEXT on --attention-tint — 9.11:1 dark but **3.21:1 light**, under AA — for
-   a message whose whole job is to be read. It is a renderStatus now: the
-   amber moves to the 3px rail (a BORDER, floor 3:1, measured 10.70 / 3.58)
-   and the words sit at --text / --text-2. ingest.css's .ing-sidebar-busy is
-   the same shape and is NOT converted here — it belongs to another view and
-   another agent this session; recorded rather than reached into. */
+/* Cross-view write-gate notice — same visual pattern as ingest.css's
+   .ing-sidebar-busy, deliberately re-declared here rather than shared (see
+   the views/README's "own your own CSS file" rule: each view stands on
+   its own so an edit to ingest.css can never silently change this one). */
+.sync-sidebar-busy {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--attention-text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.sync-sidebar-busy svg { flex: none; margin-top: 1px; }
 
 /* ── Setup (unconfigured) card ───────────────────────────────────────── */
 
@@ -148,15 +142,15 @@
   background: var(--surface);
   margin-bottom: 22px;
 }
-
-/* State first, then the instruments. Layout only — the status box and the
-   readouts bring their own treatment from shared/text.css. */
-.sync-conn {
+.sync-status-top {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 }
+.sync-repo { flex: 1; min-width: 220px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.sync-last { font-size: var(--text-2xs); color: var(--text-3); flex: none; }
 
 .sync-status-actions {
   display: flex;
@@ -164,15 +158,12 @@
   gap: 9px;
   flex-wrap: wrap;
 }
-
-/* The action report sits directly under the buttons — the 12px
-   .sync-action-note used to carry. A VIEW-OWNED WRAPPER, never a rule on the
-   component's own class: shared/text.css owns the `tx-` prefix and its suite
-   asserts that no other /next stylesheet defines a `tx-` rule. That invariant
-   is what stops an adopter re-styling a shared role locally and re-growing
-   the 81 one-off text classes the component replaced. A view positions the
-   component from the outside; it never dresses it. */
-.sync-action-report { margin-top: 12px; }
+.sync-pending-note { margin-left: auto; font-size: var(--text-xs); color: var(--attention-text); }
+.sync-action-note {
+  margin-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
 
 /* ── Shared Brain reporting row ─────────────────────────────────────── */
 
@@ -188,28 +179,25 @@
   flex-wrap: wrap;
 }
 .sync-sb-row > svg { flex: none; color: var(--accent-text); }
-/* Sizing only. The prose inside carries the shared description role; the row no longer sets a
-   font-size or a colour of its own. */
-.sync-sb-text { flex: 1; min-width: 240px; }
+.sync-sb-text { flex: 1; min-width: 240px; font-size: var(--text-sm); color: var(--text-2); }
 .sync-sb-text strong { color: var(--text); font-weight: var(--weight-medium); }
-/* .sync-sb-meta removed with the markup — the connection name and its last
-   push stamp are a renderReadout (label / value / provenance). */
+.sync-sb-meta { font-size: var(--text-2xs); color: var(--text-3); }
 
-/* ── History — honest empty state ─────────────────────────────────────
-   .sync-history-empty and its .empty-title / .empty-body removed with the
-   markup: the missing endpoint is STATE (renderStatus) and the workaround is
-   background prose (renderExplainer, closed). .empty-body was --text-3 at
-   4.27 / 4.14, under the AA floor, on the only paragraph telling a user how
-   to recover a sync by hand. */
+/* ── History — honest empty state ───────────────────────────────────── */
 
-.sync-history {
+.sync-history-empty {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  align-items: stretch;
-  max-width: 640px;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
   margin-bottom: 22px;
 }
+.sync-history-empty .empty-title { font: var(--type-h3); color: var(--text); }
+.sync-history-empty .empty-body { font: var(--type-body-sm); color: var(--text-3); max-width: 62ch; }
 
 /* ── Disconnect ──────────────────────────────────────────────────────── */
 
@@ -237,23 +225,8 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--danger-text);
   background: var(--danger-tint);
+  color: var(--text-2);
+  font-size: var(--text-sm);
   flex-wrap: wrap;
 }
-/* A view-owned wrapper carries the sizing (see .sync-action-report for why
-   no rule here may name a `tx-` class). Measured --text-2 over
-   --danger-tint: 7.33 dark / 6.34 light, both clear AA. */
-.sync-disconnect-text { flex: 1; min-width: 240px; }
 .sync-disconnect-actions { display: flex; gap: 7px; margin-left: auto; }
-
-/* ── Lede ─────────────────────────────────────────────────────────────
-   A SPACING wrapper for the view's one-line description, carrying the 22px
-   .view-body used to. The margin lives here rather than on the shared description class so the
-   shared class never grows view-specific spacing — which is how the 81
-   one-off text classes this component replaces came about. */
-.sync-lede { margin-bottom: 22px; }
-
-/* NO rule for the sidebar's cross-write status: `.sidebar-inner` is already
-   `display:flex; flex-direction:column; gap:12px` (shell.css), so the status
-   box is spaced by the shell. A rule naming the shared status class here would
-   also have been a GLOBAL selector reaching every other view's sidebar from a
-   file named for this one. */
