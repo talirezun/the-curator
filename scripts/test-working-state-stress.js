@@ -51,7 +51,7 @@
 
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync,
-  existsSync, readdirSync, statSync, appendFileSync,
+  existsSync, readdirSync, statSync, appendFileSync, utimesSync,
 } from 'fs';
 import { spawn, spawnSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -668,6 +668,34 @@ section('4. Scale — past every cap at once');
   mkdirSync(path.join(DOMAINS, PS, 'wiki'), { recursive: true });
   writeFileSync(path.join(DOMAINS, PS, 'CLAUDE.md'), '# scale\n');
 
+  // ── Ordered mtimes, forced. ──────────────────────────────────────────
+  // The index and the default-machine fallback sort on mtime ALONE:
+  // `found.sort((a, b) => b.mtimeMs - a.mtimeMs)` in listScopeMachines has no
+  // tie-break. On a filesystem whose timestamp granularity is coarser than
+  // this loop is fast, two consecutive saves share one mtime; the sort is
+  // stable, so it then falls back to readdir order, and "the newest machine"
+  // becomes whichever the directory happened to list first.
+  //
+  // Not hypothetical — this reddened CI on v3.19.0 (run 33261552572): the
+  // default machine came back host-063 instead of host-064, on a commit whose
+  // working-state.js and this file are BYTE-IDENTICAL to v3.18.0. Giving those
+  // two files one identical mtime reproduces host-063 exactly. It passed on
+  // macOS (APFS nanosecond stamps: 65 distinct mtimes, measured) and on seven
+  // earlier Linux runs, which is what kept it hidden.
+  //
+  // test-working-state.js already forces ordered mtimes for exactly this
+  // reason — "same-millisecond writes would make the assertion pass by luck"
+  // (§8) — and stamps the structurally identical wide-scope loop. This section
+  // duplicated that scenario at larger scale and did not adopt the remedy.
+  // Stamping in WRITE ORDER changes no expectation here: it only makes the
+  // clock say what the loop already means.
+  const STAMP_BASE = Math.floor(Date.now() / 1000) - 100_000;
+  let stampSeq = 0;
+  const stampWrite = (scope, machine) => {
+    const t = STAMP_BASE + (stampSeq++);
+    utimesSync(statePath(PS, path.join(scope, machine, CURRENT_FILENAME)), t, t);
+  };
+
   const N_SCOPES = MAX_INDEX_ENTRIES + 12;      // 72 distinct scopes
   const buried = 'scope-000';
   // The buried scope is written FIRST so it is the OLDEST and therefore falls
@@ -677,18 +705,44 @@ section('4. Scale — past every cap at once');
     scope: buried, machine: 'm1', headline: 'the oldest, buried scope',
     nowState: 'BURIED-CANARY body text', nextSteps: ['find me'],
   });
+  stampWrite(buried, 'm1');
   for (let i = 1; i < N_SCOPES; i++) {
+    const scope = `scope-${String(i).padStart(3, '0')}`;
     await saveWorkingState(PS, {
-      scope: `scope-${String(i).padStart(3, '0')}`, machine: 'm1',
+      scope, machine: 'm1',
       headline: `work stream ${i}`, nowState: `body ${i}`,
     });
+    stampWrite(scope, 'm1');
   }
   const N_MACHINES = MAX_INDEX_ENTRIES + 5;     // 65 machines on ONE scope
   for (let i = 0; i < N_MACHINES; i++) {
+    const machine = `host-${String(i).padStart(3, '0')}`;
     await saveWorkingState(PS, {
-      scope: 'wide', machine: `host-${String(i).padStart(3, '0')}`,
+      scope: 'wide', machine,
       headline: `machine ${i}`, nowState: `m ${i}`,
     });
+    stampWrite('wide', machine);
+  }
+
+  // Precondition on the FIXTURE, not on the product. The assertion further
+  // down ("the cap can never hide the newest machine") is only meaningful if
+  // there IS one unambiguously newest machine on disk; without this it can
+  // pass on a tied corpus by luck, which is precisely how it went green seven
+  // times and then red once. It fails loudly if the stamping ever stops
+  // working, so the guard below cannot quietly become vacuous.
+  {
+    const wideDir = statePath(PS, 'wide');
+    const stamps = readdirSync(wideDir).filter(n => !n.startsWith('.'))
+      .map(n => ({ machine: n, ms: statSync(path.join(wideDir, n, CURRENT_FILENAME)).mtimeMs }));
+    const distinct = new Set(stamps.map(s => s.ms)).size;
+    const maxMs = Math.max(...stamps.map(s => s.ms));
+    const atMax = stamps.filter(s => s.ms === maxMs).map(s => s.machine);
+    assert(distinct === N_MACHINES,
+      `fixture precondition: all ${N_MACHINES} machines carry DISTINCT mtimes (no clock-granularity ties)`,
+      `${distinct} distinct of ${N_MACHINES}`);
+    assert(atMax.length === 1 && atMax[0] === `host-${String(N_MACHINES - 1).padStart(3, '0')}`,
+      'fixture precondition: the last-written machine is the UNIQUE newest on disk',
+      JSON.stringify(atMax));
   }
 
   const t0 = Date.now();
