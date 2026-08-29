@@ -10,7 +10,7 @@
  */
 import { Router } from 'express';
 import { readFileSync } from 'fs';
-import { listDomains, isDomainReadonly } from '../brain/files.js';
+import { isDomainReadonly, assertKnownDomain } from '../brain/files.js';
 import { scanWiki, fixIssue, AUTO_FIXABLE } from '../brain/health.js';
 import {
   suggestBrokenLinkTarget,
@@ -72,14 +72,12 @@ router.post('/ai-settings', (req, res) => {
   }
 });
 
-async function assertDomain(domain) {
-  const domains = await listDomains();
-  if (!domains.includes(domain)) {
-    const err = new Error(`Unknown domain: ${domain}`);
-    err.status = 404;
-    throw err;
-  }
-}
+// The domain allow-list is `assertKnownDomain` in files.js, imported above —
+// NOT a local copy. It used to be four lines here and four more inline in
+// routes/chat.js; the chat ones were simply absent from three of its four
+// routes, which is how an unvalidated `:domain` reached path.join(). One
+// function, one behaviour, nothing to drift.
+const assertDomain = assertKnownDomain;
 
 // v3.0.2: mutating Health endpoints refuse read-only Shared Brain
 // mirrors (Decision 7) — a "fix" applied to a mirror is silently overwritten

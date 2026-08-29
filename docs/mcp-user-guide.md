@@ -2,7 +2,9 @@
 
 > **Version 2.3.0+** · Local-only · macOS tested
 
-**My Curator** is your private bridge between the Curator wiki and Claude Desktop (or any MCP-compatible LLM client). It lets frontier models — Opus, Sonnet — do deep research against your local second brain without uploading anything to the cloud.
+**My Curator** is your private bridge between the Curator wiki and any MCP-compatible client. It lets a frontier model do deep research against your local second brain without uploading anything to the cloud.
+
+> **This bridge is deliberately vendor-neutral.** It is a **stdio JSON-RPC server** — an ordinary local program that speaks the Model Context Protocol over standard input and output. Any client that can spawn a local process and speak MCP can drive it: Claude Desktop, Claude Code, Cursor, and other MCP-capable agents. It is **not an integration with one assistant**, and it **does not require The Curator's web app to be running** — it reads your markdown files directly. The one real limit is the transport, not the vendor: a browser-only assistant that cannot spawn a local program cannot reach it. Setup below is written for Claude Desktop because that is the most common case; the snippet is the same everywhere, only the file you paste it into changes.
 
 This is a *personal* MCP: it reads only your local wiki folder, nothing more, and no one else can connect to it. Think of it as an extra window into the same knowledge that Obsidian renders as a graph — except the reader is a frontier LLM.
 
@@ -28,7 +30,7 @@ That's the difference between *"I have a folder of notes"* and *"I have a querya
 
 ## What it does
 
-My Curator exposes **twenty tools** to Claude Desktop — twelve read tools that explore your knowledge graph and your own prior working state, and eight health/authoring tools (v2.5.2+) that let Claude maintain and *update* the wiki on your behalf. Five of those eight actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`); the other three only scan and report.
+My Curator exposes **twenty tools** to whichever client you connect — twelve read tools that explore your knowledge graph and your own prior working state, and eight health/authoring tools (v2.5.2+) that let Claude maintain and *update* the wiki on your behalf. Five of those eight actually change anything on disk (`compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue`, `save_working_state`); the other three only scan and report.
 
 ### Read tools (since v2.3.0)
 
@@ -70,7 +72,7 @@ When you join a Shared Brain (see [`docs/shared-brain.md`](shared-brain.md)), th
 
 > That refusal message is quoted verbatim from the code, and its last few words are now out of date: since the v3.9.0 cutover, **Push contributions** lives in the **Shared Brain** rail view, not in Sync. The refusal itself is correct — only the signpost at the end of it is stale.
 
-Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. So do the three read-only members of the health/authoring group (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`): scanning a mirror to answer *"is the collective wiki healthy?"* is supported, and it is only *applying* a fix that is refused. The MCP skill at `claude-skills/my-curator/SKILL.md` documents this in §3.1.
+Read tools (`get_node`, `search_wiki`, `get_index`, etc.) work normally on mirror domains — Claude can freely research across them. So do the three read-only members of the health/authoring group (`scan_wiki_health`, `scan_semantic_duplicates`, `get_health_dismissed`): scanning a mirror to answer *"is the collective wiki healthy?"* is supported, and it is only *applying* a fix that is refused. The MCP skill at `skills/my-curator/SKILL.md` documents this in §3.1.
 
 ### Write tools while the Curator app is running an ingest (`v3.0.1-beta.8+`)
 
@@ -133,7 +135,7 @@ The MCP exposes 20 tools. Used naively, Claude works — but used *well*, Claude
 
 The **My Curator skill** packages that playbook into a single markdown file you install once. After install, every Claude conversation that touches the my-curator MCP automatically follows the rules — no detailed prompting needed.
 
-> 📥 **Download:** [`claude-skills/my-curator/SKILL.md`](../claude-skills/my-curator/SKILL.md) and [`claude-skills/my-curator/examples.md`](../claude-skills/my-curator/examples.md) — both files from the GitHub repository.
+> 📥 **Download:** [`skills/my-curator/SKILL.md`](../skills/my-curator/SKILL.md) and [`skills/my-curator/examples.md`](../skills/my-curator/examples.md) — both files from the GitHub repository.
 
 ### What the skill enforces
 
@@ -142,15 +144,26 @@ The **My Curator skill** packages that playbook into a single markdown file you 
 - **Maintenance** — three-tier model: auto-fix safe types, confirm review-only types, always-preview destructive (`semanticDupe`) merges. Persists `dismiss_wiki_issue` decisions across machines.
 - **Quality rules** — no invented slugs, no duplicate pages, no folder prefixes in entity/concept wikilinks, no cross-domain links, no idempotency-violating re-compiles.
 
+> **Using a host that isn't Claude?** The playbook itself is ordinary prose and works anywhere —
+> what is Claude-specific is only how it *switches on*. A harness-neutral form is **generated** from
+> this same file (never hand-copied, so the two can't drift and instruct two agents differently):
+> see [`skills/README.md`](../skills/README.md). In a host without a skills mechanism, you paste
+> the body into whatever it loads at the start of a session.
+
+> **Note on paths:** this directory was called `claude-skills/` until recently and is now
+> **`skills/`** — the old name asserted a Claude-only framework in the filesystem, which is not what
+> this is. GitHub does **not** redirect a moved directory, so any bookmark or external link to the
+> old path will 404 rather than forward. Update the path; the contents are unchanged.
+
 ### Install — Claude Code (recommended path)
 
 If you use Claude Code, skills are first-class:
 
 ```bash
 mkdir -p ~/.claude/skills/my-curator
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/my-curator/SKILL.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/my-curator/SKILL.md \
   -o ~/.claude/skills/my-curator/SKILL.md
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/my-curator/examples.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/my-curator/examples.md \
   -o ~/.claude/skills/my-curator/examples.md
 ```
 
@@ -166,7 +179,7 @@ Claude Desktop doesn't have first-class "skills" yet, but you can use the same c
 
 1. In Claude Desktop, open the project where you do most of your second-brain work (or create one — *e.g.* `My Second Brain`).
 2. Open **Project knowledge**.
-3. Upload both files from `claude-skills/my-curator/` — `SKILL.md` and `examples.md`.
+3. Upload both files from `skills/my-curator/` — `SKILL.md` and `examples.md`.
 
 Claude reads project-knowledge files automatically as context for every conversation in that project. The behaviour matches having the skill loaded.
 
@@ -180,9 +193,9 @@ The skill is a static markdown file. To get updates (new sections, refined trigg
 
 ```bash
 # Same commands as install — they overwrite cleanly
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/my-curator/SKILL.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/my-curator/SKILL.md \
   -o ~/.claude/skills/my-curator/SKILL.md
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/my-curator/examples.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/my-curator/examples.md \
   -o ~/.claude/skills/my-curator/examples.md
 ```
 
@@ -190,7 +203,7 @@ curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skil
 
 1. Open the project where you uploaded the skill.
 2. **Project knowledge** → delete the existing `SKILL.md` and `examples.md`.
-3. Download the latest from GitHub: [SKILL.md](https://github.com/talirezun/the-curator/raw/main/claude-skills/my-curator/SKILL.md) · [examples.md](https://github.com/talirezun/the-curator/raw/main/claude-skills/my-curator/examples.md)
+3. Download the latest from GitHub: [SKILL.md](https://github.com/talirezun/the-curator/raw/main/skills/my-curator/SKILL.md) · [examples.md](https://github.com/talirezun/the-curator/raw/main/skills/my-curator/examples.md)
 4. Upload the fresh copies.
 
 Check the skill's `§10 Version compatibility` footer to confirm which Curator version your installed copy targets. If the footer doesn't match your installed Curator version, update.
@@ -249,7 +262,7 @@ handoff, size limits, and the security posture.
 > [user-guide.md § Turning it off](user-guide.md#turning-it-off) for that and the two other
 > levers.
 
-> 📥 **Download:** [`claude-skills/curator-continuity/SKILL.md`](../claude-skills/curator-continuity/SKILL.md) and [`claude-skills/curator-continuity/examples.md`](../claude-skills/curator-continuity/examples.md) — both files from the GitHub repository.
+> 📥 **Download:** [`skills/curator-continuity/SKILL.md`](../skills/curator-continuity/SKILL.md) and [`skills/curator-continuity/examples.md`](../skills/curator-continuity/examples.md) — both files from the GitHub repository.
 
 ### What the skill enforces
 
@@ -270,9 +283,9 @@ handoff, size limits, and the security posture.
 
 ```bash
 mkdir -p ~/.claude/skills/curator-continuity
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/curator-continuity/SKILL.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/curator-continuity/SKILL.md \
   -o ~/.claude/skills/curator-continuity/SKILL.md
-curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/claude-skills/curator-continuity/examples.md \
+curl -L https://raw.githubusercontent.com/talirezun/the-curator/main/skills/curator-continuity/examples.md \
   -o ~/.claude/skills/curator-continuity/examples.md
 ```
 
@@ -282,7 +295,7 @@ Verify by asking Claude in a new session *"What skills are available?"* — you 
 ### Install — Claude Desktop
 
 Same **Project knowledge** mechanism as the My Curator skill: open your project, open
-**Project knowledge**, and upload both files from `claude-skills/curator-continuity/`. Updating
+**Project knowledge**, and upload both files from `skills/curator-continuity/`. Updating
 works the same way too — re-run the `curl` commands, or delete and re-upload the project-knowledge
 copies.
 

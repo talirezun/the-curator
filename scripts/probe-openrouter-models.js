@@ -553,7 +553,7 @@ async function main() {
       + `system ${snap.systemPrompt.length} vs ${real.systemPrompt.length})`);
   }
 
-  const promptSha = sha(snap.systemPrompt + ' ' + snap.userPrompt);
+  const promptSha = sha(snap.systemPrompt + '\u0000' + snap.userPrompt);
   const sourceSha = sha(sourceText);
 
   // ── 4. Report the assembly ────────────────────────────────────────────────

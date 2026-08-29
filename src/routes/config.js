@@ -23,6 +23,7 @@ import {
   endUpdate,
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
+import { scrubPaths } from '../brain/scrub-paths.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
 import {
@@ -1325,23 +1326,75 @@ router.post('/api-keys/build-model', guardConcurrent('change the AI model'), (re
     // is simply still inert, which is strictly the pre-change behaviour.
     let info = null;
     try { info = getProviderInfo(); } catch {}
+    // What this provider will ACTUALLY use now — resolved, not assumed.
+    const effectiveModel = getDefaultModel(provider);
+
+    // ── `inert` MEANS "THE PIN IS NOT IN FORCE", AND IT HAD ONE BLIND SPOT ───
+    // It used to test the provider switch ALONE, so it answered only half the
+    // question. `getDefaultModel` resolves LLM_MODEL ahead of the stored pin
+    // (documented precedence: per-call > LLM_MODEL > stored > DEFAULTS) and
+    // `defaultModelFor` returns that env value with no validation, so with
+    // LLM_MODEL set this route replied 200 / `inert: false` — asserting the
+    // user's choice was in force — while `effectiveModel` in the same body was
+    // a DIFFERENT model, potentially a Gemini id sitting under `anthropic`.
+    // A spend surface affirming a pin it is not honouring is this repo's named
+    // dead-data shape.
+    //
+    // THE PRECEDENCE IS DELIBERATELY UNCHANGED. LLM_MODEL is a documented dev
+    // override and legitimately wins; validating or ignoring it here would make
+    // this route disagree with llm.js about which model runs. The fix is to
+    // REPORT the outcome, which is what the surrounding code already does for
+    // the provider switch: derive from the resolved values rather than
+    // restating the request.
+    //
+    // AND THE APP ALREADY KNEW THIS. `GET /api-keys` computes
+    // `buildModel.selectedHonoured` — "does the STORED pick actually govern?
+    // False when LLM_MODEL is overriding it" — with a docblock naming the same
+    // dead-data hazard. `pinHonoured` below is that identical question asked of
+    // the same two values, so the READ surface and the WRITE surface can no
+    // longer disagree about one fact. They did: GET said not honoured while
+    // POST replied `inert: false` about the very write that produced it.
+    //
+    // The two arms are asked in the order the user experiences them — a pin
+    // under a provider that never activated is inert whatever the model layer
+    // then resolves.
+    const providerActive = (info?.provider || null) === provider;
+    const pinHonoured = effectiveModel === stored;
+    const inertReason = !providerActive ? 'provider-not-active'
+      : !pinHonoured ? 'model-overridden'
+      : null;
+
     res.json({
       ok: true,
       provider,
       selectedModel: stored,
-      // What this provider will ACTUALLY use now — resolved, not assumed.
-      effectiveModel: getDefaultModel(provider),
+      effectiveModel,
       activeProvider: info?.provider || null,
       activeModel:    info?.model || null,
       providerSwitched: activeAfter !== providerBefore,
-      // The one honest failure mode of this route, named rather than implied
-      // away: the pin landed but the provider did not move, so the choice is
-      // inert. Only reachable if `setActiveProvider` refused after our own
-      // checks passed (a key that vanished between the two writes).
-      inert: (info?.provider || null) !== provider,
+      // The honest failure modes of this route, named rather than implied away:
+      //  provider-not-active — the pin landed but the provider did not move.
+      //    Only reachable if `setActiveProvider` refused after our own checks
+      //    passed (a key that vanished between the two writes).
+      //  model-overridden    — the provider IS active and something ahead of the
+      //    stored pin in the precedence chain won. LLM_MODEL is the only cause
+      //    that exists today; the test is on the RESOLVED value rather than on
+      //    `process.env`, so a future rung is covered without being predicted.
+      inert: !providerActive || !pinHonoured,
+      // STATED LIMIT: no shipping surface reads `inertReason` yet — the /next
+      // Settings view branches on `inert` alone and, for the new arm, shows a
+      // remediation hint about the provider key that is imprecise for an env
+      // override. That is strictly better than the previous behaviour, which
+      // said nothing at all and left the user believing the pin took effect.
+      inertReason,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Raw `fs` and config errors embed absolute paths — on a real install the
+    // user's home directory and their cloud-storage layout — and this body is
+    // rendered in Settings and pasted into bug reports. `scrubPaths` is the
+    // v3.3.0 scrubber, imported from its single home rather than re-derived;
+    // it keeps the basename, which is the half that helps.
+    res.status(500).json({ error: scrubPaths(String((err && err.message) || 'Unexpected error')) });
   }
 });
 

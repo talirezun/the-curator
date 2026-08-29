@@ -188,7 +188,7 @@ for (const v of viewNames) {
   const expectedBody = ICON_BODY[iconName];
   ok(expectedBody !== undefined && rendered.includes(expectedBody),
      `icon(VIEW_META.${v}.icon) renders the real "${iconName}" body`);
-  ok(!rendered.includes(MISSING_ICON_BODY.match(/rect[^>]*>/)?.[0] || ' IMPOSSIBLE'),
+  ok(!rendered.includes(MISSING_ICON_BODY.match(/rect[^>]*>/)?.[0] || '\u0000IMPOSSIBLE'),
      `icon(VIEW_META.${v}.icon) does not fall back to the missing-icon placeholder`);
   ok(consoleLog.length === 0, `icon(VIEW_META.${v}.icon) logs no console.error`);
 }

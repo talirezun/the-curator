@@ -355,7 +355,7 @@ Implementation: `ensureSharedDomainExists()` writes `domains/shared-<slug>/CLAUD
 
 **Gap closed:** `POST /api/health/:domain/dismiss` and `/undismiss` were once ungated while their MCP equivalents were guarded, so the two surfaces disagreed and a mirror was not strictly read-only on disk (they write `.health-dismissed.jsonl` inside the mirror's own `wiki/` directory). Both routes now call `assertWritableDomain` in `src/routes/health.js`, matching `dismiss_wiki_issue` / `undismiss_wiki_issue` in `mcp/tools/dismissed.js`. The app and the MCP now refuse a mirror identically for dismissals as well as for page edits.
 
-The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read/write contract from Claude's perspective so it knows where to compile when the user says "save this to the shared brain".
+The Claude skill (`skills/my-curator/SKILL.md` §3.1) documents this read/write contract from Claude's perspective so it knows where to compile when the user says "save this to the shared brain".
 
 ### Deferred (no decision needed for v1)
 

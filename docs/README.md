@@ -33,7 +33,14 @@ table lives in [working-state.md](working-state.md#1-the-problem-it-solves).
 ### Two honest boundaries
 
 - **The MCP bridge is a stdio child process.** It works with any MCP client that can spawn a
-  local program — Claude Code, Claude Desktop, Cursor. A browser-only assistant cannot reach it.
+  local program — Claude Code, Claude Desktop, Cursor, and other MCP-capable agents — and it does
+  not need the web app running. A browser-only assistant cannot reach it. The limit is the
+  transport, not the vendor.
+- **The skills are portable in content, Claude-shaped in activation.** Their text is ordinary prose
+  and works anywhere you can paste it; what is Claude-specific is how they *switch on* (the
+  tool-permission header, auto-triggering from a description, and the install path). So an agent in
+  another harness can **read** working state through MCP fine, but nothing tells it to **save**.
+  The store is portable; the discipline that fills it is not yet.
 - **Capture is advisory.** Nothing forces a save at the end of a session; the skill layer prompts
   for one. A missed save means the next read returns the **previous** state — stale, never
   corrupted. The standing project brief is human-authored; no tool writes it.

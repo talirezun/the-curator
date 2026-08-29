@@ -86,6 +86,47 @@ function extractFunction(src, name, where) {
   return out;
 }
 
+/**
+ * Comments stripped, so a source scan cannot be satisfied by PROSE.
+ *
+ * MEASURED, twice, in this repo: §5 below records that deleting a real
+ * `closeAllListboxes()` call left a bare scan green because a comment two lines
+ * above mentioned it. Every scan in §4 that is about CODE now reads `lbCode`;
+ * the ones that are deliberately about the recorded REASONING still read the
+ * raw source, and say so.
+ *
+ * `[^:]` in front of `//` keeps a `https://` inside a string intact — an
+ * over-strip there would only ever cost a false red, which is the safe error.
+ */
+function stripJsComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+const lbCode = stripJsComments(lbJs);
+
+/**
+ * Brace-match a NESTED function (one declared inside `mountListbox`, so it is
+ * indented and the line-anchored `extractFunction` above cannot see it).
+ *
+ * Exists because a file-wide regex is not a scope. Proven necessary by
+ * mutation: `if (state.trigger.disabled) return;` appears IDENTICALLY in
+ * `open()` and in `onKeyDown()`, so deleting it from open() — the refusal that
+ * stops a programmatic `api.open()` on a disabled control — left the suite
+ * GREEN, satisfied by the other function's copy. The same file-wide-versus-
+ * function-scoped shape was already fixed in this section for `position();`
+ * and not for this.
+ */
+function nestedFunctionBody(src, decl, where) {
+  const at = src.indexOf(decl);
+  if (at === -1) throw new Error(`nestedFunctionBody: "${decl}" not found in ${where} — the anchor has moved`);
+  let depth = 0, end = -1;
+  for (let i = src.indexOf('{', at); i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
+  }
+  if (end === -1) throw new Error(`nestedFunctionBody: "${decl}" desynced in ${where}`);
+  return src.slice(at, end);
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 section('§1  The render half, EXECUTED — not read');
 
@@ -199,6 +240,8 @@ section('§4  The behavioural contract (SOURCE SCAN — see NOT ENFORCED in the 
 const KEYBOARD = [
   ["case 'ArrowDown'", 'ArrowDown — opens when closed, moves down when open'],
   ["case 'ArrowUp'", 'ArrowUp'],
+  ["case 'PageDown'", 'PageDown — pages down, the way the native popup does'],
+  ["case 'PageUp'", 'PageUp'],
   ["case 'Home'", 'Home — first enabled option'],
   ["case 'End'", 'End — last enabled option'],
   ["case 'Enter'", 'Enter — commits the active option'],
@@ -213,6 +256,30 @@ ok(/function typeAhead\(/.test(lbJs) && /startsWith\(q\)/.test(lbJs),
 ok(/const repeat = state\.typeBuf\.length === 1 && state\.typeBuf === ch/.test(lbJs),
   'a repeated single character CYCLES through matches rather than re-selecting the same one');
 ok(/TYPEAHEAD_MS = 800/.test(lbJs), 'with a buffer that expires, so a later search starts fresh');
+
+// ── PAGING, and the fact that a page is MEASURED rather than guessed ────
+// The component shipped with no case for either key: on the 193-row model list
+// the only way down was 193 presses of ArrowDown. Verified with REAL key
+// events in a browser before the fix — `aria-activedescendant` did not move —
+// and again after.
+{
+  const kd = nestedFunctionBody(lbCode, 'function onKeyDown(e) {', 'listbox.js');
+  ok(/case 'PageDown':[\s\S]{0,160}move\(pageStep\(\)\)/.test(kd),
+    'PageDown moves by a PAGE, from inside onKeyDown — not merely a `case` label ' +
+    'somewhere in the file');
+  ok(/case 'PageUp':[\s\S]{0,160}move\(-pageStep\(\)\)/.test(kd),
+    '…and PageUp moves the other way');
+  ok(/case 'PageDown':\s*\n\s*if \(!isOpen\) return;/.test(kd) &&
+     /case 'PageUp':\s*\n\s*if \(!isOpen\) return;/.test(kd),
+    'both act ONLY while open, exactly like Home/End — and without preventDefault ' +
+    'when closed, so a closed trigger does not swallow the page scroll the user ' +
+    'was asking the document for');
+  const step = nestedFunctionBody(lbCode, 'function pageStep() {', 'listbox.js');
+  ok(/menu\.clientHeight/.test(step) && /offsetHeight/.test(step),
+    'the page size is DERIVED from what is on screen (menu height / row height) — ' +
+    'a hardcoded 10 would overshoot a short menu and crawl a tall one');
+  ok(/Math\.max\(1,/.test(step), '…and can never be 0, which would make the key silently inert');
+}
 
 // Escape must CANCEL, and the cancel must be structural rather than a manual
 // rollback that a later edit can get wrong.
@@ -229,8 +296,26 @@ ok(/Tab means "I am done here", and a native menulist does not commit/.test(lbJs
 ok(/\(disabled \? ' disabled' : ''\)/.test(lbJs),
   'the trigger emits the native `disabled` ATTRIBUTE — the browser refuses the ' +
   'click and drops it from the tab order');
-ok(/if \(state\.trigger\.disabled\) return;/.test(lbJs),
-  'with an independent second refusal inside open()');
+// ── SCOPED TO open()'s OWN BODY ────────────────────────────────────────
+// This assertion was `/if \(state\.trigger\.disabled\) return;/.test(lbJs)` —
+// file-wide — and `onKeyDown` carries a byte-identical line. Proven by
+// mutation: DELETING the refusal from open() left the suite GREEN, satisfied
+// by a different function. A file-wide regex is not a function scope, and this
+// section had already learned that once for `position();` two assertions below
+// without the lesson being carried across.
+//
+// The production line stays: the trigger also emits the native `disabled`
+// ATTRIBUTE, which is what actually refuses a pointer or keyboard interaction,
+// so this is the guard on the PROGRAMMATIC path — `api.open()` is exported, and
+// a caller reaching for it must not be able to open a menu the view has
+// disabled (Ingest disables its picker for the duration of a submit). Stated as
+// defence in depth rather than as the only barrier, which is what it is.
+{
+  const openBody = nestedFunctionBody(lbCode, 'function open() {', 'listbox.js');
+  ok(/if \(state\.trigger\.disabled\) return;/.test(openBody),
+    'open() ITSELF refuses on a disabled trigger — asserted inside open()\'s ' +
+    'brace-matched body, not file-wide, because onKeyDown carries the identical line');
+}
 
 // The <body>-append trap and its cleanup.
 ok(/document\.body\.appendChild\(menu\)/.test(lbJs), 'the menu is appended to <body>');
@@ -265,17 +350,12 @@ ok(/function scrollRowIntoView\(/.test(lbJs) && !/scrollIntoView\(\{ block: 'nea
 // appears in tick() and setOptions() — so deleting the call from open()
 // entirely left it 89/0 GREEN. A file-wide indexOf is not an ordering guard.
 {
-  // `open` is NESTED inside mountListbox and therefore indented, which
-  // extractFunction's line-anchored marker cannot see. Brace-matched here
-  // directly rather than loosening that shared helper's anchor.
-  const openAt = lbJs.indexOf('function open() {');
-  let depth = 0, end = openAt;
-  for (let i = lbJs.indexOf('{', openAt); i < lbJs.length; i++) {
-    if (lbJs[i] === '{') depth++;
-    else if (lbJs[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
-  }
-  const openBody = openAt >= 0 ? lbJs.slice(openAt, end) : '';
-  ok(openAt >= 0 && openBody.length > 200,
+  // COMMENTS STRIPPED (`lbCode`): open()'s body carries a paragraph about why
+  // `position()` runs first, and it contains the literal `position();` — so an
+  // ordering check over the RAW body could be satisfied by the prose explaining
+  // the ordering rather than by the ordering.
+  const openBody = nestedFunctionBody(lbCode, 'function open() {', 'listbox.js');
+  ok(openBody.length > 200,
     'open() was located and brace-matched (a desync here would make the three ' +
     'ordering assertions below vacuous rather than red)');
   const pos = openBody.indexOf('position();');
@@ -439,6 +519,22 @@ ok(!/<select/.test('<div><button role="combobox"></button></div>'),
     'control: the adoption counter counts what is actually there');
 }
 
+{
+  // The new FUNCTION-SCOPED detectors, proven to react to a body rather than
+  // to the file. Without these, §4's scoping fix would be a claim rather than
+  // a demonstrated property.
+  const withGuard = 'function open() {\n  if (state.trigger.disabled) return;\n  position();\n}';
+  const without   = 'function open() {\n  position();\n}\nfunction onKeyDown(e) {\n  if (state.trigger.disabled) return;\n}';
+  ok(/if \(state\.trigger\.disabled\) return;/.test(nestedFunctionBody(withGuard, 'function open() {', 'fixture')),
+    'control: the disabled detector fires on an open() that carries the refusal');
+  ok(!/if \(state\.trigger\.disabled\) return;/.test(nestedFunctionBody(without, 'function open() {', 'fixture')),
+    '…and does NOT fire on an open() without it, even when an IDENTICAL line sits in ' +
+    'another function of the same source — the exact false pass the file-wide regex gave');
+  let threw = false;
+  try { nestedFunctionBody('nothing here', 'function open() {', 'fixture'); } catch { threw = true; }
+  ok(threw, '…and a moved anchor THROWS rather than yielding an empty body every scan would pass');
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 section('§8  ACTION ROWS — a row that DOES something, not one that IS the value');
 // ═══════════════════════════════════════════════════════════════════════
@@ -456,14 +552,37 @@ section('§8  ACTION ROWS — a row that DOES something, not one that IS the val
     { value: 'b', label: 'Beta' },
     { value: ' browse', label: 'Browse all', action: true },
   ];
-  const norm = render.normaliseOptions(OPTS_A);
+  // ── AN ACTION ROW IS DECLARED TWICE, AND THE cfg HAS THE SECOND SAY ────
+  // MEASURED: adding `action: true` to Ingest's REAL domain-picker options
+  // turned every domain row into an action row — selecting a domain fired
+  // onChange and never became the value — and THREE suites stayed green over
+  // it. So `action` is now a REQUEST that only takes effect for a value the
+  // cfg also names in `actionValues`. The defect is not merely detectable on
+  // the seven controls that declare none; it is inexpressible.
+  const ACTION_VALUES = [' browse'];
+  const norm = render.normaliseOptions(OPTS_A, ACTION_VALUES);
   ok(norm[0].action === false && norm[1].action === false,
-    'an ordinary option is NOT an action — the six pre-existing adoptions all take this path');
-  ok(norm[2].action === true, 'and the flagged one is');
-  ok(render.normaliseOptions([{ value: 'x', label: 'X', action: 'yes' }])[0].action === false,
+    'an ordinary option is NOT an action — the seven other adoptions all take this path');
+  ok(norm[2].action === true, 'and the flagged one is, because the cfg names its value');
+  ok(render.normaliseOptions([{ value: 'x', label: 'X', action: 'yes' }], ['x'])[0].action === false,
     'only a literal `true` counts — a truthy string does not silently make a row an action');
+  ok(render.normaliseOptions(OPTS_A)[2].action === false,
+    'THE GATE: `action: true` with NO actionValues is inert — a caller that has not ' +
+    'said which row is an action gets ordinary rows, never a menu whose every row ' +
+    'silently declines to be chosen');
+  ok(render.normaliseOptions(OPTS_A, ['something-else'])[2].action === false,
+    '…and it is per-VALUE, so marking a MODEL as an action inside a control that ' +
+    'does have one action row is inert too');
+  ok(render.normaliseOptions(OPTS_A, new Set([' browse']))[2].action === true,
+    'a Set is accepted as well as an array');
+  for (const junk of [null, undefined, 'browse', 42, {}, [7, null]]) {
+    ok(render.normaliseOptions(OPTS_A, junk)[2].action === false,
+      `a malformed actionValues (${JSON.stringify(junk)}) grants nothing — the fail-safe direction`);
+  }
 
   const m = render.menuHtml('zz', norm, 'a', '');
+  ok(!/data-lb-action/.test(render.menuHtml('zz', render.normaliseOptions(OPTS_A), 'a', '')),
+    '…and an ungranted action row reaches the MARKUP as an ordinary row too');
   ok(/data-lb-action="1"/.test(m), 'an action row is marked in the MARKUP');
   ok((m.match(/data-lb-action/g) || []).length === 1, '…on exactly the one row that carries the flag');
   ok(/class="lb-opt is-action"/.test(m), '…and carries a class, so a caller can style it without :has()');
@@ -544,6 +663,71 @@ section('§8  ACTION ROWS — a row that DOES something, not one that IS the val
     run('z');
     ok(fired.length === 0 && !sink.closed, 'a DISABLED action row does nothing at all');
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+section('§9  ACTION ROWS, ASSERTED OVER THE REAL CALL SITES');
+// ═══════════════════════════════════════════════════════════════════════
+//
+// §8 proves the component's contract against options this suite wrote itself.
+// That is exactly the gap that let the defect through: adding `action: true` to
+// Ingest's REAL domain-picker options turned every domain row into an action
+// row and THREE suites stayed green, because none of them ever looked at what
+// the shipped builders actually produce.
+{
+  // ── 9a. INGEST'S BUILDER, EXECUTED ──────────────────────────────────────
+  const ingestSrc = readFileSync(path.join(VIEWS, 'ingest.js'), 'utf8');
+  const mkCfg = new Function('state', 'selectDomain',
+    extractFunction(ingestSrc, 'domainListboxCfg') + '\nreturn domainListboxCfg;'
+  )({ domain: 'business', domains: [
+    { slug: 'articles', displayName: 'Articles' },
+    { slug: 'business', displayName: 'Business' },
+  ] }, () => {});
+
+  const cfg = mkCfg();
+  ok(Array.isArray(cfg.options) && cfg.options.length === 2,
+    '§9a the REAL domain builder produced its rows (a desync here would make the ' +
+    'assertions below vacuous rather than red)');
+  ok(cfg.options.every((o) => o.action !== true),
+    '§9a no domain row ASKS to be an action row — a domain must BECOME the value, ' +
+    'not merely fire a handler and leave the picker on the old one');
+  ok(!cfg.actionValues || cfg.actionValues.length === 0,
+    '§9a …and the picker GRANTS none, so the request could not be honoured even ' +
+    'if a later edit made it');
+  const normed = render.normaliseOptions(cfg.options, cfg.actionValues);
+  ok(normed.length === 2 && normed.every((o) => o.action === false),
+    '§9a through the REAL normaliser, every domain row is an ordinary option');
+
+  // ── 9b. THE COMPOSER'S BUILDER — the one control that HAS an action row ──
+  // Not executable here (it reaches the working set, the catalogue and icon()),
+  // so brace-matched and scanned with COMMENTS STRIPPED: this file carries
+  // paragraphs about action rows, and a scan a comment can satisfy is a guard
+  // about prose.
+  const chatSrc = readFileSync(path.join(VIEWS, 'chat.js'), 'utf8');
+  const mcfg = stripJsComments(nestedFunctionBody(stripJsComments(chatSrc), 'function modelListboxCfg() {', 'chat.js'));
+  const actionFlags = (mcfg.match(/action:\s*true/g) || []).length;
+  ok(actionFlags === 1, `§9b the model picker declares exactly ONE action row (found ${actionFlags})`);
+  ok(/value:\s*BROWSE_MODEL_VALUE,[\s\S]{0,200}action:\s*true/.test(mcfg),
+    '§9b …and it is the browse sentinel, not a model');
+  ok(/actionValues:\s*\[BROWSE_MODEL_VALUE\]/.test(mcfg),
+    '§9b …and the cfg GRANTS that one value and no other, so marking a MODEL as an ' +
+    'action is inert — the picker cannot end up offering rows that decline to be chosen');
+
+  // ── 9c. THE CLASS, enumerated from the tree ─────────────────────────────
+  // Not a hardcoded pair of filenames: a NEW picker that adds an action row
+  // without granting it (or grants one it never uses) is the same defect in a
+  // file that does not exist yet.
+  const asks = [], grants = [];
+  for (const f of viewFiles) {
+    const code = stripJsComments(readFileSync(path.join(VIEWS, f), 'utf8'));
+    if (/action:\s*true/.test(code)) asks.push(f);
+    if (/actionValues:/.test(code)) grants.push(f);
+  }
+  ok(asks.join(',') === grants.join(','),
+    '§9c every view that ASKS for an action row also GRANTS one, and vice versa ' +
+    `(asks: ${asks.join(', ') || 'none'} | grants: ${grants.join(', ') || 'none'})`);
+  ok(asks.length === 1 && asks[0] === 'chat.js',
+    '§9c and today that is exactly one view — the composer\'s model menu');
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

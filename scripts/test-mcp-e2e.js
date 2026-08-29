@@ -565,8 +565,8 @@ ok(orphansAsType?.ok === false && /cannot be fixed via this tool/.test(String(or
 // NOT ENFORCED by this assertion: that the surrounding prose is *correct*, only
 // that the enum list and its count word match AUTO_FIXABLE. A skill that names
 // the right seven types in a misleading sentence still passes here.
-const skillMd = readFileSync(path.join(REPO_ROOT, 'claude-skills/my-curator/SKILL.md'), 'utf8');
-const examplesMd = readFileSync(path.join(REPO_ROOT, 'claude-skills/my-curator/examples.md'), 'utf8');
+const skillMd = readFileSync(path.join(REPO_ROOT, 'skills/my-curator/SKILL.md'), 'utf8');
+const examplesMd = readFileSync(path.join(REPO_ROOT, 'skills/my-curator/examples.md'), 'utf8');
 const NUMBER_WORDS = { five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
 const enumSentence = skillMd.match(/takes exactly (\w+) types — (.+?) — and passing/);
 ok(!!enumSentence, 'SKILL.md states the fix_wiki_issue enum explicitly (source scan)');

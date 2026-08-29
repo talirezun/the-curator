@@ -1179,7 +1179,7 @@ section('9. The recovery instruction must actually work');
     'positive control: the dot-prefixed directory really is absent from the listing');
   assert(idx.unlistedEntries === 5,
     '…and really is NOT among the counted five, exactly as the instruction says');
-  for (const ch of ['/', '\\', ' ', ':']) {
+  for (const ch of ['/', '\\', '\u0000', ':']) {
     assert(isSafeSegment(`a${ch}b`) === false,
       `a name containing ${JSON.stringify(ch)} is refused, consistent with the stated character set`);
   }

@@ -163,6 +163,56 @@ This is the shift from a file cabinet to a neural network.
 
 ---
 
+## Vendor-neutral by construction — harness-, agent- and LLM-agnostic
+
+**Portability is the product.** Nobody should be locked into a harness that owns their
+accumulated context. That is not a slogan bolted on afterwards — it is why the storage is
+plain files, why the bridge is a protocol rather than an integration, and why there is no
+service of ours anywhere in the picture.
+
+```mermaid
+flowchart TD
+    subgraph NEUTRAL["✅ NEUTRAL — no vendor, no lock-in"]
+        direction TB
+        S1[YOUR KNOWLEDGE<br/>plain markdown in a folder you chose<br/>no database, no proprietary format<br/>readable in Obsidian or any editor]
+        S2[YOUR WORKING STATE<br/>markdown + append-only JSONL<br/>survives a change of session,<br/>harness, model or machine]
+        S3[YOUR SYNC<br/>your own private GitHub repo<br/>no service we run, no account with us]
+        S4[THE MCP BRIDGE<br/>stdio JSON-RPC child process<br/>ANY MCP client speaks it<br/>runs without the web app]
+        S5[THE MODELS<br/>Gemini · Anthropic · OpenRouter<br/>swap providers whenever you like]
+    end
+
+    subgraph SHAPED["⚠️ CLAUDE-SHAPED TODAY — content portable, activation is not"]
+        direction TB
+        K1[THE TWO SKILLS<br/>bodies are pure prose and port anywhere;<br/>auto-triggering and the install path<br/>are Claude-harness mechanisms]
+    end
+
+    subgraph FUTURE["🔒 NOT AVAILABLE YET"]
+        direction TB
+        F1[LOCAL MODELS<br/>the Settings row exists<br/>and is marked unavailable]
+    end
+```
+
+**What is genuinely neutral, and why:**
+
+| Layer | Why it is not locked to anyone |
+|---|---|
+| **Your wiki** | Plain `.md` files in a folder you picked. No database, no export step, no proprietary container. Delete The Curator tomorrow and your knowledge is still sitting there, readable. |
+| **Your working state** | Markdown plus append-only JSONL, in your domain folder. Built precisely so build context survives moving between session, harness, model and machine instead of being stranded inside one vendor's project folder. |
+| **Sync** | Your own private GitHub repository, your own token. There is no Curator server, no Curator account, and nothing of yours passes through us. |
+| **The MCP bridge** | A stdio JSON-RPC server spawned as a child process — **any** client that speaks MCP can drive it: Claude Desktop, Claude Code, Cursor, and other MCP-capable agents. It reads your markdown directly and **does not need the Curator web app running**. |
+| **The models** | Three providers today — Gemini, Anthropic, and OpenRouter, which is an aggregator reaching roughly two hundred models from many vendors. You can change provider whenever you like. |
+
+**What is *not* yet neutral — stated plainly, because overclaiming here would be worse than the gap:**
+
+- **The two agent skills are portable in content but Claude-shaped in activation.** Their bodies are ordinary prose and carry no vendor-specific logic, so they work anywhere you can paste them. What is Claude-specific is how they *switch on*: the tool-permission frontmatter uses Claude's tool-naming convention, automatic triggering from a description field is a Claude Code / Claude Desktop mechanism, and the documented install location is Claude's skills folder. In another harness you paste the body into whatever that harness loads at the start of a session.
+- **The consequence is worth naming.** An agent in another harness can *read* working state through MCP perfectly well — that half is pure protocol. What it lacks is anything telling it to **save**. So the store is portable; the discipline that fills it is not yet.
+- **A harness-neutral form is generated, not hand-copied.** Rather than maintaining a second copy of a 37 KB playbook — two copies of one instruction set drifting apart is this repository's most reliably recurring defect, and it would be at its worst here because *models* read these files — the neutral form is **derived** from the same source at build time: the body verbatim with the Claude-specific frontmatter stripped, and the tool names with the host-specific prefix removed. One source, no copies.
+- **Local models are not available yet.** The provider row exists in Settings and is explicitly marked unavailable. The OpenRouter adapter speaks an OpenAI-*compatible* protocol — that is the name of a wire format, **not** OpenAI support — which is the groundwork that makes local runtimes a natural later addition. It is not a capability today, and this README will say so when it is.
+
+> On skill portability specifically: an open format existing is not the same as other harnesses implementing it. Treat cross-harness skill loading as something you may have to do by hand, not as a feature you can assume.
+
+---
+
 ## Features
 
 - Drop in a `.pdf`, `.txt`, or `.md` file — the AI does the rest
@@ -223,9 +273,12 @@ This is the shift from a file cabinet to a neural network.
   of them free), almost all of which can build your wiki, plus a much larger **chat-only** list you
   can fetch from OpenRouter's live catalogue with one click.
   **One model builds your brain; you choose freely when talking to it.** A single durable choice in
-  **Settings → Providers & keys** governs everything that *writes* to your wiki — ingest, Health
-  scans and Compile — deliberately as one setting rather than three, while the chat composer's
-  Model dropdown picks per message and leaves what your next ingest costs untouched.
+  **Settings** governs everything that *writes* to your wiki — ingest, Health
+  scans and Compile — deliberately as one setting rather than three, and as **one model app-wide
+  rather than one per provider**, with the reason it is the model currently running stated on
+  screen (your pick, the app default, an environment override, or a pick the engine refused).
+  The chat composer's model picker chooses per message and leaves what your next ingest costs
+  untouched.
   Every model that can build your wiki was probed live against the app's real
   ingest prompt, and each row shows its price as billed today plus the measured trade-off — output
   ceiling, hidden reasoning spend, and how thoroughly it plans a wiki — so the cost is visible at
@@ -245,7 +298,9 @@ This is the shift from a file cabinet to a neural network.
   did. Nine is the minimum, the confirmation leads with **time** rather than money (8 to 57 minutes,
   measured), you can stop at any point, and the result is badged as *you measured this* rather than
   *we measured this* — a separate claim, kept separate on purpose. It never says *verified*: it
-  reports what it observed and over how many runs, and it cannot overturn a finding of ours. For chat, **Settings → Refresh model list** fetches OpenRouter's own catalogue and adds
+  reports what it observed and over how many runs, and it cannot overturn a finding of ours. For chat, OpenRouter's own catalogue is fetched **automatically** when it is missing or more than a day
+  old — previously it arrived only if you pressed a button, which is why models "sometimes showed and
+  sometimes did not" — and a manual refresh is still there when you want one. It adds
   everything that survives the checks: on one measured refresh, 387 listed models became 189 added,
   taking the picker from 3 to 192. No standing count is printed here — that catalogue moved by seven
   records inside five hours on the day it was measured — and passing the checks means *nothing in
@@ -525,7 +580,7 @@ The Curator itself is **free, open-source software**. The only paid component is
 | **Google Gemini 2.5 Flash Lite** *(default, recommended)* | Yes — 15 RPM, 1,000 requests/day, 250k tokens/min ([details](https://ai.google.dev/gemini-api/docs/rate-limits)) | $0.10/M input · $0.40/M output | **~€5/month** at heavy use (50 articles × ~10 pages, plus daily chat) |
 | **Anthropic Claude Haiku 4.5** | No | $1/M input · $5/M output | ~10× the Gemini bill for the same workload |
 
-**Those two rows are the defaults, not the only options.** You can pick a different model per provider — the catalogue spans Gemini, Anthropic and OpenRouter (one of the OpenRouter routes is free), almost all of it usable for building your wiki, and you can add to it by measuring an OpenRouter model against your own wiki — and the span across the measured fourteen Gemini and Anthropic models is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
+**Those two rows are the defaults, not the only options.** You can pick a different model — one choice, app-wide, from a single cross-provider list — and the catalogue spans Gemini, Anthropic and OpenRouter (one of the OpenRouter routes is free), almost all of it usable for building your wiki, and you can add to it by measuring an OpenRouter model against your own wiki — and the span across the measured fourteen Gemini and Anthropic models is roughly 50× on input and 62× on output, so a change there rescales the figures above. [User Guide §16b](docs/user-guide.md#16b-choosing-your-ai-model) covers what each one costs and what was measured about it.
 
 **About the Gemini "free tier":** it exists, and it's enough to *try* the app — but the daily quota was [tightened by 50–80% in December 2025](https://ai.google.dev/gemini-api/docs/rate-limits), so a single batch ingest of 5–10 PDFs will usually exhaust it. For real use, enable billing in [Google AI Studio](https://aistudio.google.com/app/apikey) — the per-token cost is so low that most users pay €1–€10/month total. See [User Guide §19](docs/user-guide.md#19-api-keys-cost--free-tier) for a full cost breakdown and pricing math.
 
@@ -579,7 +634,7 @@ That is not a chat interface. That is a frontier model doing **deep research ove
 
 When you join a Shared Brain (see [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)), the collective wiki appears on your machine as a `shared-<slug>/` domain. **MCP read tools work fully on it** — Claude can `search_wiki`, `get_node`, `get_index`, `search_cross_domain` across the collective just like any other domain. This is where the cohort/team use cases get powerful: a research team can ask *"across our shared brain, which papers contradict each other on X?"* and Claude reads everyone's combined reading to surface the answer with citations.
 
-**The five mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you click **Push contributions** in the **Shared Brain** view. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
+**The five mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you click **Push contributions** in the **Shared Brain** view. The skill ([skills/my-curator/SKILL.md](skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
 
 ### Why this is first-of-its-kind
 
@@ -593,9 +648,9 @@ This is what makes the difference between "I have a folder of notes" and "I have
 
 > 📖 **Setup is under 2 minutes** from **Settings** inside the app — see **[docs/mcp-user-guide.md](docs/mcp-user-guide.md)** for the wizard, prompt patterns, and the privacy/security model.
 >
-> 💡 **The My Curator Claude skill (v2.5.7+):** drop **[claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md)** into Claude Code's `~/.claude/skills/` — or upload it to any Claude Desktop project's knowledge files — and every conversation that touches the my-curator MCP automatically follows the playbook: ground every wikilink, refuse speculative writes on fresh domains, three-tier-track Health fixes, respect domain siloing. No more typing detailed prompts every time. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-my-curator-claude-skill--best-results-out-of-the-box-v257).
+> 💡 **The My Curator Claude skill (v2.5.7+):** drop **[skills/my-curator/SKILL.md](skills/my-curator/SKILL.md)** into Claude Code's `~/.claude/skills/` — or upload it to any Claude Desktop project's knowledge files — and every conversation that touches the my-curator MCP automatically follows the playbook: ground every wikilink, refuse speculative writes on fresh domains, three-tier-track Health fixes, respect domain siloing. No more typing detailed prompts every time. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-my-curator-claude-skill--best-results-out-of-the-box-v257).
 >
-> 🧭 **The Curator Continuity skill (v3.17.0+):** the same install, for the memory layer — drop **[claude-skills/curator-continuity/SKILL.md](claude-skills/curator-continuity/SKILL.md)** into `~/.claude/skills/` and your agent resumes from where the last session left off, and saves a handoff before it runs out of context. **Install it if you want working state at all:** nothing forces an agent to save, so an agent that hasn't been told the discipline never writes and the store stays empty. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170); what it stores is in [working-state.md](docs/working-state.md).
+> 🧭 **The Curator Continuity skill (v3.17.0+):** the same install, for the memory layer — drop **[skills/curator-continuity/SKILL.md](skills/curator-continuity/SKILL.md)** into `~/.claude/skills/` and your agent resumes from where the last session left off, and saves a handoff before it runs out of context. **Install it if you want working state at all:** nothing forces an agent to save, so an agent that hasn't been told the discipline never writes and the store stays empty. Install instructions in the [MCP guide](docs/mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170); what it stores is in [working-state.md](docs/working-state.md).
 
 ---
 

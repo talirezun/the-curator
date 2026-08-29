@@ -543,7 +543,7 @@ never been told the discipline simply never writes, the store stays empty, and e
 the read half, the in-app view — has nothing to show. So the skill is not an optional
 convenience here, it is the half of the feature that is not code.
 
-It ships in this repository as **[`claude-skills/curator-continuity/`](../claude-skills/curator-continuity/SKILL.md)** —
+It ships in this repository as **[`skills/curator-continuity/`](../skills/curator-continuity/SKILL.md)** —
 `SKILL.md` plus `examples.md`, following the [Agent Skills](https://agentskills.io) open standard,
 the same shape and the same install paths as the My Curator skill. Install instructions:
 [mcp-user-guide.md § The Curator Continuity Claude skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170).

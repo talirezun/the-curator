@@ -10,13 +10,23 @@
  *      and so does Start", but the two qualify handlers were never special:
  *      ~40 call sites reach settings.js's render(). Fixed at the chokepoint.
  *
- *   2. THE TWO NATIVE SELECTS (§4). `#select-default-domain` and the model
- *      sort control were the only form controls in Settings drawing macOS
- *      chrome. `appearance: none` + a CSS-drawn chevron, the pattern
- *      views/memory.css established in v3.17.3.
+ *   2. THE TWO PICKERS (§4). `#select-default-domain` and the model sort
+ *      control were the only form controls in Settings drawing macOS chrome.
+ *      Both are now shared/listbox.js, so the OPEN menu is ours too — and it
+ *      lives on <body>, never inside the transformed `#view-root`.
  *
  *   3. AN APP-WIDE TEXT SIZE (§5-§7). One multiplier over the type ramp,
  *      four presets, persisted per browser.
+ *
+ *   4. THE WIRING ITSELF (§3c). Added 2026-08-29 after an adversarial audit
+ *      found FIVE real defects applied to production and this suite still at
+ *      134 passed / 0 failed. Four of them were mutations nothing here could
+ *      see: the only writer of `state.modelRowOpen` deleted, the theme
+ *      buttons unwired, the text-size buttons unwired, and both pickers never
+ *      mounted — each left behind as a `//` comment, which every positive
+ *      source scan in this file happily matched. The controls §1-§7 describe
+ *      are now DRIVEN: the real wiring functions run against a recording fake
+ *      DOM, and every listener is bound, fired, and its effect asserted.
  *
  * WHERE POSSIBLE THIS EXECUTES THE REAL CODE, lifted out of the live source
  * by brace-matching and run with `new Function` — the technique
@@ -41,20 +51,46 @@
  *  · boot() reads the stored scale and applies it BEFORE the first paint.
  *  · Every --text-* ramp token is expressed against --font-scale, and
  *    --font-scale is defined in CSS so the default survives with no JS.
- *  · Both selects set `appearance: none` AND have a wrapper drawing a chevron
- *    from a theme token rather than a data URI.
+ *  · Neither picker is a native <select> any more: settings.js contains none,
+ *    and neither stylesheet declares `appearance` because the component draws
+ *    the whole control. Its menu is appended to <body> INSIDE open() — scoped
+ *    and comment-stripped — and the component never reaches for `#view-root`
+ *    or `.main`, whose transform would make it the containing block for a
+ *    fixed child (v3.10.0 measured a probe moving 340px through exactly that).
  *  · The theme handler is scoped to [data-theme-choice] — a bare
  *    `.theme-seg-btn` selector would bind it to the text-size buttons too and
  *    picking a text size would silently switch the theme.
+ *  · EXECUTED (§3c), not scanned: the theme buttons, the text-size buttons,
+ *    the section-nav rows and all three fold toggles each bind a listener,
+ *    and firing it calls requestTheme / setFontScale / resetMainScroll or
+ *    records the fold. Every cfg in pendingListboxes is mounted. A fold
+ *    toggle triggers ZERO re-renders — COUNTED through the injected render,
+ *    so routing a repaint through a one-line helper elsewhere in the file
+ *    (which defeats a proximity regex) is caught too.
+ *  · Every positive source scan in this file reads COMMENT-STRIPPED source,
+ *    including the `--font-scale` definition and the ramp enumeration. Each
+ *    stripper-dependent scan carries a POSITIVE CONTROL proving it detects
+ *    the commented form and still accepts the real one.
  *
  * ── NOT ENFORCED (named, not implied away) ───────────────────────────────
  *  · There is no CSSOM here, so §4 asserts the DECLARATIONS exist, not that
- *    they cascade to the element. The open dropdown list is OS-drawn and
- *    nothing in this file (or in any CSS) can reach it — see settings.css.
- *  · 18 hardcoded px font-sizes remain under src/public/next/**, all in view
- *    CSS this change does not own (chat.css, sync.css, shell.css). They do
- *    not scale. §7 pins the COUNT so the number cannot grow silently, and
- *    pins settings.css at zero so the screen hosting the control is coherent.
+ *    they cascade to the element.
+ *  · A CEILING, not an exact count, of hardcoded px font-sizes remains under
+ *    src/public/next/**, all in view CSS this change does not own (chat.css,
+ *    sync.css, shell.css, shared.css). They do not scale. §7 prints the live
+ *    figure and pins the ceiling so the set cannot GROW silently, and pins
+ *    settings.css at zero so the screen hosting the control is coherent. The
+ *    number is deliberately not repeated here: a count quoted in prose rots,
+ *    and this docblock has carried a stale one before.
+ *  · §3c drives the wiring against a FAKE DOM, not a browser. It proves a
+ *    listener is bound and what it calls; it cannot prove the element the
+ *    selector matches exists in the rendered markup, nor that a real click
+ *    reaches it. The markup half is §7's `[data-font-scale]` / `aria-pressed`
+ *    assertions and test-next-model-picker.js §13.
+ *  · §4's listbox assertions are SOURCE SCANS and stay so: shared/listbox.js
+ *    touches `document` at module scope and cannot be imported in Node
+ *    (measured: "document is not defined"). The component has its own suite,
+ *    scripts/test-next-listbox.js, which drives the real renderer.
  *  · Nothing here measures rendered geometry. Whether the largest preset
  *    actually fits was checked in a real browser, not by an assertion — a
  *    scrollHeight delta is not reproducible in Node (the v3.11.0 finding).
@@ -63,6 +99,15 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
+// ── WHY THESE ARE IMPORTED RATHER THAN HAND-ROLLED HERE ──────────────────
+// An adversarial audit on 2026-08-29 found this file green at 134/0 while
+// production carried FIVE real defects. Four of them were invisible for the
+// same two reasons: a positive scan over RAW source is satisfied by a `//`
+// comment, and a file-wide regex is satisfied by a line in a DIFFERENT
+// function. `stripComments` and `functionSource`/`callSiteCount` are the
+// shared fixes, self-tested with positive controls by
+// scripts/test-source-scan-helpers.js.
+import { stripComments, functionSource, callSiteCount } from './test-helpers/source-scan.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT = join(ROOT, 'src/public/next');
@@ -101,6 +146,10 @@ const appSrc = readFileSync(join(NEXT, 'app.js'), 'utf8');
 const settingsSrc = readFileSync(join(NEXT, 'views/settings.js'), 'utf8');
 const settingsCss = readFileSync(join(NEXT, 'views/settings.css'), 'utf8');
 const typographyCss = readFileSync(join(NEXT, 'tokens/typography.css'), 'utf8');
+/** settings.js as the ENGINE reads it. Every POSITIVE source scan in this
+ *  file must use this rather than `settingsSrc`: measured, leaving a deleted
+ *  call behind as `// resetMainScroll();` kept this suite at 134/0. */
+const settingsCode = stripComments(settingsSrc);
 
 // ── A DOM small enough to reason about, real enough to drive the code ──────
 //
@@ -275,14 +324,26 @@ console.log('\n§3  settings.js render() goes through it; a section change does 
 {
   // Order is load-bearing: render() restores the OLD offset, so the reset for
   // a new section has to come after it or it is immediately overwritten.
-  const src = settingsSrc;
+  //
+  // READ OVER COMMENT-STRIPPED SOURCE. This scan used to read the raw file, so
+  // leaving the call behind as `// resetMainScroll();` satisfied both halves
+  // and left this suite at 134/0 while a section change stopped returning to
+  // the top — the exact defect the section exists for. `settingsCode` is the
+  // source the ENGINE reads.
+  const src = settingsCode;
   const i = src.indexOf('state.section = btn.dataset.section;');
   ok(i > 0, 'the section-switch handler is found');
   const region = src.slice(i, i + 1200);
   const r = region.indexOf('render(myMountToken);');
   const z = region.indexOf('resetMainScroll();');
-  ok(r >= 0 && z >= 0, 'the section-switch handler both re-renders and resets the scroll');
+  ok(r >= 0 && z >= 0, 'the section-switch handler both re-renders and resets the scroll (comment-stripped: a commented-out call does not count)');
   ok(z > r, 'resetMainScroll() runs AFTER render() — before it, render() would restore the old offset over the reset');
+  // AND SCOPED TO THE HANDLER'S OWN FUNCTION, so a `resetMainScroll()` living
+  // anywhere else in the file cannot stand in for the one in the section
+  // switch. `callSiteCount` throws rather than scanning an empty string when
+  // the enclosing function is not found, so this cannot pass vacuously.
+  eq(callSiteCount(settingsSrc, 'resetMainScroll', { within: 'wireGlobalListeners' }), 1,
+    'exactly one resetMainScroll() call site inside wireGlobalListeners — counted, not proximity-matched');
 }
 ok(/import \{[\s\S]*?preserveMainScroll[\s\S]*?\} from '\.\.\/app\.js'/.test(settingsSrc),
   'settings.js takes the primitive from the shell rather than reading #main itself (views/README.md rule 4)');
@@ -386,6 +447,195 @@ console.log('\n§3b  An expanded model row survives a repaint');
   }
 }
 
+// ── §3c  THE WIRING, EXECUTED — every control this file claims is live ───
+console.log('\n§3c  The wiring is driven, not grepped');
+// ═════════════════════════════════════════════════════════════════════════
+// WHY THIS SECTION EXISTS. Everything this file said about the controls was a
+// SOURCE SCAN over raw text, and four separate mutations proved that worthless:
+//
+//   · the ONLY writer of `state.modelRowOpen` deleted, left as a comment
+//       -> 134/0 GREEN. Every expanded model row collapses on every repaint,
+//          which is the precise defect §3b exists for.
+//   · `document.querySelectorAll('[data-theme-choice]')…` left as a comment
+//       -> 134/0 GREEN. The theme buttons do nothing.
+//   · `document.querySelectorAll('[data-font-scale]')…` left as a comment
+//       -> 134/0 GREEN. The text-size control — the whole of §5-§7 — is dead.
+//   · `for (const cfg of pendingListboxes) mountListbox(cfg);` commented out
+//       -> 134/0 GREEN. Both pickers render and neither opens.
+//
+// Each is now driven: the REAL wiring functions run against a recording fake
+// DOM, every listener they bind is captured, then FIRED, and the effect is
+// asserted. A commented-out `forEach` binds nothing, and nothing is what this
+// measures.
+{
+  const noop = () => {};
+  /** A DOM that records rather than renders. Deliberately tiny — only what the
+   *  wiring touches — for the reason makeDom() above records: a fixture whose
+   *  behaviour you cannot see is how a guard ends up asserting against a shape
+   *  the product cannot produce. */
+  function makeWiringDom(selectorMap, idMap = {}) {
+    const bound = [];
+    const mk = (data) => ({
+      dataset: data, open: false, value: '', disabled: false,
+      addEventListener(type, fn) { bound.push({ el: this, type, fn }); },
+      focus() {}, setSelectionRange() {},
+    });
+    const bySelector = {};
+    for (const [sel, datas] of Object.entries(selectorMap)) bySelector[sel] = datas.map(mk);
+    const byId = {};
+    for (const id of Object.keys(idMap)) byId[id] = mk({});
+    return {
+      bound, bySelector, byId,
+      document: {
+        querySelectorAll: (sel) => bySelector[sel] || [],
+        querySelector: (sel) => (bySelector[sel] || [])[0] || null,
+        getElementById: (id) => byId[id] || null,
+        activeElement: null,
+      },
+      /** Listeners bound to the element matched by `sel`, of `type`. */
+      on: (sel, type) => bound.filter((b) => (bySelector[sel] || []).includes(b.el) && b.type === type),
+    };
+  }
+  /** Build one of settings.js's wiring functions with injected dependencies.
+   *  Anything the function reaches for that is NOT listed throws a named
+   *  ReferenceError, which is caught and reported rather than crashing. */
+  function buildWiring(names, deps, ...fnNames) {
+    const body = fnNames.map((n) => extractFunction(settingsSrc, n, 'views/settings.js')).join('\n');
+    return new Function(...names, body + `\nreturn ${fnNames[0]};`)(...names.map((n) => deps[n]));
+  }
+
+  // ── 3c-1. THE GENERAL SECTION: theme + text size, through wireGlobalListeners
+  // Driven from wireGlobalListeners with state.section = 'general', so the
+  // DELEGATION is exercised too — unwiring by removing the `else if` branch
+  // fails here just as a commented-out forEach does.
+  {
+    const dom = makeWiringDom({
+      '.settings-nav-row': [{ section: 'health' }],
+      '[data-theme-choice]': [{ themeChoice: 'dark' }],
+      '[data-font-scale]': [{ fontScale: 'largest' }],
+    });
+    const themed = [], scaled = [];
+    let resets = 0, mounted = 0, closed = 0, renders = 0;
+    const deps = {
+      document: dom.document,
+      state: { section: 'general', liveConfirmOpen: false, live: null },
+      myMountToken: 1,
+      render: () => { renders++; },
+      resetMainScroll: () => { resets++; },
+      ensureSectionData: () => Promise.resolve(),
+      reportAsyncActionFailure: noop,
+      closeAllListboxes: () => { closed++; },
+      mountListbox: () => { mounted++; },
+      pendingListboxes: [{ id: 'select-default-domain' }, { id: 'model-filter-sort-openrouter' }],
+      onCheckForUpdates: noop, onApplyUpdate: () => Promise.resolve(),
+      onRestartOnly: () => Promise.resolve(), onRunQuickCheck: noop,
+      onVerifyAiConfirm: noop, openOnboardingPanel: noop,
+      requestTheme: (v) => themed.push(v),
+      setFontScale: (v) => scaled.push(v),
+      wireProviderListeners: noop, wireMcpListeners: noop,
+      wireHealthListeners: noop, wireStorageListeners: noop,
+    };
+    const names = Object.keys(deps);
+    const errs = [];
+    let wire = null;
+    try {
+      wire = buildWiring(names, deps, 'wireGlobalListeners', 'wireGeneralListeners');
+      wire();
+    } catch (e) { errs.push(String(e && e.message)); }
+    ok(errs.length === 0, `wireGlobalListeners runs against the fake DOM (${errs.join(' | ') || 'no error'})`);
+
+    // THEME
+    eq(dom.on('[data-theme-choice]', 'click').length, 1,
+      'EXECUTED: the theme buttons get a click listener — a commented-out forEach binds nothing');
+    for (const b of dom.on('[data-theme-choice]', 'click')) { try { b.fn(); } catch (e) { errs.push(String(e.message)); } }
+    eq(themed.join(','), 'dark',
+      'EXECUTED: clicking one calls requestTheme with THAT button\'s choice — not undefined, which falls through to the light branch');
+
+    // TEXT SIZE
+    eq(dom.on('[data-font-scale]', 'click').length, 1,
+      'EXECUTED: the text-size buttons get a click listener — §5-§7 describe a control that does nothing without it');
+    const rBefore = renders;
+    for (const b of dom.on('[data-font-scale]', 'click')) { try { b.fn(); } catch (e) { errs.push(String(e.message)); } }
+    eq(scaled.join(','), 'largest',
+      'EXECUTED: clicking one calls setFontScale with THAT button\'s preset — the shell\'s one way in, which applies AND persists AND normalises');
+    ok(renders > rBefore,
+      'EXECUTED: …and re-renders afterwards, so the active preset is re-marked (and, via preserveMainScroll, without moving the page under the control just clicked)');
+
+    // BOTH PICKERS MOUNTED
+    eq(mounted, 2,
+      'EXECUTED: every cfg in pendingListboxes is mounted — a rendered picker that is never mounted looks right and does not open');
+    ok(closed === 1, 'EXECUTED: and the previous mount\'s menus are closed exactly once first (a body-appended menu outlives the repaint that removed its trigger)');
+    ok(errs.length === 0, `no wiring handler threw (${errs.join(' | ') || 'none'})`);
+  }
+
+  // ── 3c-2. THE SECTION SWITCH RESETS THE SCROLL — fired, not read ─────────
+  // §3 above pins the ORDER in source. This pins that it HAPPENS: the handler
+  // is fired and the injected resetMainScroll is counted.
+  {
+    const dom = makeWiringDom({ '.settings-nav-row': [{ section: 'health' }] });
+    const order = [];
+    const deps = {
+      document: dom.document, state: { section: 'general' }, myMountToken: 1,
+      render: () => order.push('render'),
+      resetMainScroll: () => order.push('reset'),
+      ensureSectionData: () => Promise.resolve(),
+      reportAsyncActionFailure: noop, closeAllListboxes: noop, mountListbox: noop,
+      pendingListboxes: [], onCheckForUpdates: noop,
+      wireGeneralListeners: noop, wireProviderListeners: noop, wireMcpListeners: noop,
+      wireHealthListeners: noop, wireStorageListeners: noop,
+    };
+    const names = Object.keys(deps);
+    buildWiring(names, deps, 'wireGlobalListeners')();
+    const clicks = dom.on('.settings-nav-row', 'click');
+    eq(clicks.length, 1, 'EXECUTED: the section-nav rows get a click listener');
+    for (const b of clicks) b.fn();
+    eq(order.join(','), 'render,reset',
+      'EXECUTED: a section change re-renders and THEN resets the scroll — a commented-out resetMainScroll() leaves only "render" here');
+  }
+
+  // ── 3c-3. THE FOLD WRITERS — the readers in §3b need one ────────────────
+  // §3b proves the RENDER consults state.modelRowOpen / state.modelShelfOpen.
+  // It cannot see whether anything ever writes them, and a reader with no
+  // writer is a fold that never survives a repaint. Driven here.
+  {
+    const dom = makeWiringDom({
+      '[data-model-row]': [{ modelRow: 'z-ai/glm-4.7' }],
+      '[data-model-shelf]': [{ modelShelf: 'all' }],
+      '[data-model-picker]': [{ modelPicker: 'gemini' }],
+    });
+    const wireState = { modelRowOpen: {}, modelShelfOpen: false, modelPickerOpen: {} };
+    let renders = 0;
+    const deps = {
+      document: dom.document, state: wireState, myMountToken: 1,
+      render: () => { renders++; }, setModelFilter: noop, cssEscapeAttr: (s) => String(s),
+      focusReplaceInput: noop, onDisconnect: noop, onPickBuildModel: noop, onPickModel: noop,
+      onQualifyDismiss: noop, onQualifyEstimate: noop, onQualifyGo: noop, onQualifyStop: noop,
+      onSaveKey: noop, onSetActive: noop, onSyncCatalogue: noop, onTestKey: noop,
+    };
+    const names = Object.keys(deps);
+    buildWiring(names, deps, 'wireProviderListeners')();
+    const errs = [];
+    const fire = (sel, open) => {
+      const list = dom.on(sel, 'toggle');
+      for (const b of list) { b.el.open = open; try { b.fn(); } catch (e) { errs.push(`${sel}: ${e.message}`); } }
+      return list.length;
+    };
+    eq(fire('[data-model-row]', true), 1,
+      'EXECUTED: a toggle listener is bound to [data-model-row] — the ONLY writer of state.modelRowOpen');
+    eq(wireState.modelRowOpen['z-ai/glm-4.7'], true,
+      'EXECUTED: …and expanding a row records it, so §3b\'s reader has something to read');
+    fire('[data-model-row]', false);
+    ok(!Object.hasOwn(wireState.modelRowOpen, 'z-ai/glm-4.7'), 'EXECUTED: …and collapsing it forgets it');
+    eq(fire('[data-model-shelf]', true), 1, 'EXECUTED: the shelf has its writer too');
+    eq(wireState.modelShelfOpen, true, 'EXECUTED: …and expanding it is recorded');
+    eq(fire('[data-model-picker]', true), 1, 'EXECUTED: and so does each provider list');
+    eq(wireState.modelPickerOpen.gemini, true, 'EXECUTED: …recorded under its OWN provider id');
+    ok(errs.length === 0, `no fold handler threw (${errs.join(' | ') || 'none'})`);
+    eq(renders, 0,
+      'EXECUTED: recording a fold triggers ZERO re-renders — repainting here would throw away the DOM the user just opened, and a one-line repaint HELPER (which defeats a proximity regex) is counted the same way');
+  }
+}
+
 // ── §4  The two pickers are the shared listbox ──────────────────────────
 console.log('\n§4  Both Settings pickers are the shared listbox, not native <select>s');
 
@@ -455,10 +705,45 @@ ok(/cancelAnimationFrame\(state\.raf\)/.test(lbJs) &&
 // DESCENDANTS. #view-root is transformed by the view-enter animation, and
 // v3.10.0 measured a fixed probe moving 340px through exactly that. The
 // component must not reopen it.
-ok(/document\.body\.appendChild\(menu\)/.test(lbJs),
-  'the menu is appended to <body>, which is never transformed');
+// WHAT WAS WRONG HERE. This was a single POSITIVE regex over RAW source, so
+// `// document.body.appendChild(menu);` satisfied it, and there was no
+// NEGATIVE half at all — re-parenting the menu into the transformed
+// `#view-root` (or into `.main`, or into the trigger's own parent) added a
+// line this scan never looked for. Three changes: comment-stripped,
+// FUNCTION-SCOPED to `open()` so a `document.body.appendChild` somewhere else
+// in the component cannot stand in for it, and a negative naming the
+// transformed ancestors by the selectors a re-parenting would actually use.
+{
+  const lbCode = stripComments(lbJs);
+  const openSrc = functionSource(lbCode, 'open');
+  // FAIL LOUDLY rather than scan an empty string — the vacuous pass this
+  // whole rebuild exists to remove.
+  ok(openSrc !== null, 'listbox.js declares open() — the function that mounts the menu (scoped scan below depends on finding it)');
+  const scope = openSrc || '';
+  ok(/document\.body\.appendChild\(\s*menu\s*\)/.test(scope),
+    'the menu is appended to <body> INSIDE open() — comment-stripped and function-scoped, so neither a `//` copy nor an appendChild elsewhere in the component satisfies it');
+  // THE NEGATIVE. A transform makes an element the containing block for its
+  // fixed DESCENDANTS; v3.10.0 measured a fixed probe moving 340px through
+  // exactly that, and shell.css's own comment records that `.main` must not
+  // gain one for the same reason. Named by the selectors a re-parenting uses.
+  for (const bad of ['#view-root', '.main-inner', "getElementById('view-root')", "getElementById('main')"]) {
+    ok(!lbCode.includes(bad),
+      `the component never reaches for ${bad} — appending the menu into a TRANSFORMED ancestor is the v3.10.0 trap, and it is silent (the menu simply opens in the wrong place)`);
+  }
+  // POSITIVE CONTROLS. Both halves, on synthetic source, so the scan is
+  // proven to detect rather than trusted to.
+  ok(!/document\.body\.appendChild\(\s*menu\s*\)/.test(
+    stripComments('function open(){ // document.body.appendChild(menu);\n }')),
+    'control — a commented-out append is NOT accepted');
+  ok(!/document\.body\.appendChild\(\s*menu\s*\)/.test(
+    functionSource(stripComments("function open(){ document.querySelector('#view-root').appendChild(menu); }\nfunction other(){ document.body.appendChild(menu); }"), 'open')),
+    'control — a re-parenting inside open() IS detected even though another function still appends to <body>');
+  ok(/document\.body\.appendChild\(\s*menu\s*\)/.test(
+    functionSource(stripComments('function open(){ document.body.appendChild(menu); }'), 'open')),
+    'control — …while the real shape still passes, so the scan has not simply become impossible to satisfy');
+}
 ok(/position: fixed/.test(lbCss), 'and positioned fixed against the viewport');
-ok(/transform/i.test(lbJs) === false || /containing block/.test(lbJs),
+ok(/transform/i.test(stripComments(lbJs)) === false || /containing block/.test(lbJs),
   'with the transform trap recorded in the component rather than rediscovered');
 
 // The rejected alternative, still rejected, still named.
@@ -578,13 +863,33 @@ function driveApply({ storageThrows = false } = {}) {
 // ── §7  The ramp actually moves, and the control is wired ────────────────
 console.log('\n§7  The type ramp is expressed against the scale');
 {
-  ok(/^\s*--font-scale:\s*1;/m.test(typographyCss),
-    '--font-scale is DEFINED in CSS at 1 — with no JS, no stored value, or storage disabled, the ramp is the design system\'s original');
+  // ── READ OVER COMMENT-STRIPPED CSS ────────────────────────────────────
+  // This scan used to read the raw file. `/* --font-scale: 1; */` on one line
+  // does not match `^\s*--font-scale`, so the single-line form was caught by
+  // luck — but a BLOCK comment wrapping the declaration puts it back at the
+  // start of its own line, and that form left this suite at 134/0 with the
+  // token undefined and all 13 `calc()` ramp steps therefore INVALID at
+  // computed-value time. An invalid custom property is the silent failure
+  // mode this repo has shipped before (v3.0.15's `--text-dim`), and here it
+  // takes every font-size in the app with it.
+  const typographyCode = stripCssComments(typographyCss);
+  ok(/^\s*--font-scale:\s*1;/m.test(typographyCode),
+    '--font-scale is DEFINED in CSS at 1, in a DECLARATION and not in a comment — with no JS, no stored value, or storage disabled, the ramp is the design system\'s original');
+  // POSITIVE CONTROLS for the stripper, so this is not trusted on faith: the
+  // two comment shapes a "temporarily retired" token would take.
+  ok(!/^\s*--font-scale:\s*1;/m.test(stripCssComments('/* retired:\n  --font-scale: 1;\n*/\n')),
+    'control — a declaration wrapped in a BLOCK comment is NOT accepted (the shape that went undetected)');
+  ok(!/^\s*--font-scale:\s*1;/m.test(stripCssComments('  /* --font-scale: 1; */\n')),
+    'control — nor a single-line commented declaration');
+  ok(/^\s*--font-scale:\s*1;/m.test(stripCssComments(':root {\n  --font-scale: 1;\n}\n')),
+    'control — …while a REAL declaration still is, so the stripper has not simply eaten everything');
   // Enumerated from the file, never a hardcoded list of token names — a
   // hardcoded list is how a guard here goes blind when a step is added. The
   // count is asserted so the enumeration collapsing to a subset is visible:
   // the first draft of this regex silently missed --text-sm and reported 12.
-  const ramp = [...typographyCss.matchAll(/^\s*(--text-[a-z0-9]+)\s*:\s*([^;]+);/gm)];
+  // Comment-stripped for the same reason as above: a commented-out step is
+  // not a step, and counting one would make the total agree by accident.
+  const ramp = [...typographyCode.matchAll(/^\s*(--text-[a-z0-9]+)\s*:\s*([^;]+);/gm)];
   eq(ramp.length, 13, 'all 13 ramp steps are enumerated from the file');
   for (const [, name, value] of ramp) {
     ok(/^calc\(\s*\d+px\s*\*\s*var\(--font-scale\)\s*\)$/.test(value.trim()),
@@ -593,7 +898,7 @@ console.log('\n§7  The type ramp is expressed against the scale');
   // The composed roles are what most rules actually read; they must keep
   // reading the ramp rather than having been inlined at some point.
   for (const role of ['--type-body', '--type-h1', '--type-label', '--type-mono']) {
-    ok(new RegExp(`${role}:[^;]*var\\(--text-`).test(typographyCss),
+    ok(new RegExp(`${role}:[^;]*var\\(--text-`).test(typographyCode),
       `${role} still resolves through the ramp (so it inherits the scale for free)`);
   }
 }

@@ -48,6 +48,36 @@ export async function listDomains() {
 }
 
 /**
+ * Refuse a domain name that is not one of the real domains on disk.
+ *
+ * ── THIS IS AN ALLOW-LIST, AND IT IS THE ONLY CONTAINMENT CHECK ─────────────
+ * `listDomains()` is the single authority on what a domain IS (a directory
+ * under the domains root carrying a CLAUDE.md schema). Membership in its
+ * result is therefore a stricter guarantee than any path-shape test could
+ * give: `..%2fsomething`, an absolute path, a symlinked directory and a
+ * ghost folder left by a sync deletion are all simply absent from the list.
+ *
+ * Deliberately NOT a second `resolveInside`-style check. Two hand-maintained
+ * copies of a containment guard is what produced the v3.2.0 CRITICAL, so this
+ * function exists so that the routes which need one can SHARE it rather than
+ * each writing four lines of `listDomains().includes(...)` that can drift.
+ *
+ * `err.status = 404` because "no such domain" is a missing resource, matching
+ * what routes/wiki.js, routes/domains.js and routes/memory.js already return.
+ * The name is echoed back the way every one of those routes echoes it; it
+ * reaches the client only inside a JSON string.
+ */
+export async function assertKnownDomain(domain) {
+  const domains = await listDomains();
+  if (!domains.includes(domain)) {
+    const err = new Error(`Unknown domain: ${domain}`);
+    err.status = 404;
+    err.code = 'UNKNOWN_DOMAIN';
+    throw err;
+  }
+}
+
+/**
  * Returns true if the domain's CLAUDE.md declares `readonly: true` in its
  * YAML frontmatter. Used by Phase 4 MCP write tools (and the in-app Compile
  * + Health write paths) to refuse direct writes to Shared Brain mirror
@@ -1240,8 +1270,26 @@ export function matchConversation(conv, needle) {
  */
 export async function listConversations(domain, opts = {}) {
   const dir = conversationsPath(domain);
-  await mkdir(dir, { recursive: true });
-  const entries = await readdir(dir);
+  // ── A READ PATH CREATES NOTHING ───────────────────────────────────────────
+  // This used to be `await mkdir(dir, {recursive: true})`. Cross-origin GETs
+  // are exempt from the CSRF guard BY DESIGN (a GET is not the browser-driven
+  // mutation vector), so `GET /api/chat/<anything>` was a directory-creation
+  // primitive any web page in the user's browser could reach — recursive, so
+  // it made every missing parent too. The route now refuses a domain that is
+  // not on the allow-list, which closes the reachable half; this closes the
+  // shape itself, so no future caller can reintroduce it.
+  //
+  // ENOENT reads as "no conversations", which is what an empty directory
+  // already returned — so the ANSWER is unchanged for every legitimate caller,
+  // only the side effect is gone. Any other error (EACCES, ENOTDIR) still
+  // throws: "we could not look" must never be served as "there is nothing".
+  let entries;
+  try {
+    entries = await readdir(dir);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return [];
+    throw err;
+  }
   const rawQuery = typeof opts.q === 'string' ? opts.q : '';
   const needle = rawQuery.slice(0, CONVERSATION_SEARCH_MAX_CHARS).trim().toLowerCase();
   const convs = [];

@@ -7,6 +7,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 ## Table of contents
 
 1. [What is this app?](#1-what-is-this-app)
+1c. [Nothing here is locked to one AI, one tool, or one company](#1c-nothing-here-is-locked-to-one-ai-one-tool-or-one-company)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
 4. [Get your API key (Gemini, Claude or OpenRouter)](#4-get-your-api-key-gemini-claude-or-openrouter)
@@ -44,6 +45,27 @@ The Curator is a local, AI-powered knowledge curation system. You feed it docume
 
 The big idea: instead of one giant notebook where everything gets lost, you have **separate, focused wikis per topic** (e.g. AI/Tech, Business, Personal Growth). Each one compounds with every source you add. You are the curator; the AI is the diligent librarian.
 
+### The three layers, and the one rule that separates them
+
+The Curator stores three different kinds of thing. They look similar — all markdown, all in your domain folder — but **two of them accumulate and one of them supersedes**, and mixing that up is the single most important thing to understand.
+
+```mermaid
+flowchart TD
+    D[A DOMAIN<br/>one folder · one topic]
+
+    D --> L1[1 · YOUR BRAIN<br/>wiki/<br/>entities · concepts · summaries]
+    D --> L2[2 · YOUR TEAM'S BRAIN<br/>a shared wiki, mirrored in<br/>read-only · opt-in]
+    D --> L3[3 · YOUR AGENTS' BRAIN<br/>state/<br/>what you are working on]
+
+    L1 --> A1[ACCUMULATES<br/>a new source makes an existing<br/>page richer, never a duplicate]
+    L2 --> A2[ACCUMULATES<br/>collectively, from a cohort]
+    L3 --> A3[SUPERSEDES<br/>each save REPLACES the last,<br/>so a solved problem<br/>cannot come back]
+```
+
+**Why the third one is different.** Knowledge is additive: everything you learn about a topic is worth keeping. Working state is not — "blocked on the login bug" stops being true the moment you fix it, and a store that merely *added* the fix would leave the stale blocker sitting there beside it. So each save of your working state replaces the one before it. Knowledge grows; state is current or it is worthless.
+
+The middle layer is off unless you turn it on, and only the domains you explicitly opt in ever leave your machine.
+
 > 📖 **For the long-form story** of why a second brain matters and how the parts of The Curator fit together philosophically, read **[Knowledge Immortality — Building a Second Brain with The Curator](../research/articles/knowledge-immortality-second-brain.md)**. It's a 15-minute essay covering the Karpathy spark, what markdown gives you, every section of the app in plain language, and the case for *compounding* knowledge. Recommended before you start ingesting.
 
 ---
@@ -74,6 +96,53 @@ Feed it customer interview transcripts, investor updates, and market research. Q
 Ingest journal entries, book highlights, and podcast notes. Query recurring patterns across months of writing. The Curator provides the objectivity of a third party on your own thinking.
 
 → See [docs/use-cases.md](use-cases.md) for detailed workflows for each profile.
+
+---
+
+## 1c. Nothing here is locked to one AI, one tool, or one company
+
+The Curator is deliberately **harness-, agent- and LLM-agnostic**. Portability is not a side benefit; it is the point. Your accumulated context should never be trapped inside whichever assistant you happened to use last year.
+
+```mermaid
+flowchart TD
+    subgraph N["✅ NEUTRAL — yours, in open formats"]
+        direction TB
+        N1[YOUR WIKI<br/>plain markdown in a folder you chose<br/>no database · no export step<br/>open it in Obsidian or any editor]
+        N2[YOUR WORKING STATE<br/>markdown + append-only JSONL<br/>built to survive a change of<br/>session, harness, model or machine]
+        N3[YOUR SYNC<br/>your own private GitHub repo<br/>no Curator server · no Curator account]
+        N4[THE MCP BRIDGE<br/>stdio JSON-RPC child process<br/>ANY MCP client can drive it<br/>works with the web app closed]
+        N5[YOUR MODELS<br/>Gemini · Anthropic · OpenRouter<br/>change provider whenever you like]
+    end
+
+    subgraph S["⚠️ CLAUDE-SHAPED TODAY"]
+        direction TB
+        S1[THE TWO SKILLS<br/>the writing ports anywhere;<br/>how they SWITCH ON is<br/>a Claude-harness mechanism]
+    end
+
+    subgraph F["🔒 NOT AVAILABLE YET"]
+        direction TB
+        F1[LOCAL MODELS<br/>the Settings row exists<br/>and is marked unavailable]
+    end
+```
+
+**What that buys you, concretely:**
+
+| If you… | You are not blocked, because… |
+|---|---|
+| Switch from one AI assistant to another | The bridge is a **protocol**, not an integration. Any MCP client can spawn it and read your wiki and working state. |
+| Stop using The Curator entirely | Your knowledge is markdown files in your own folder. Nothing to export; they're already readable. |
+| Change AI provider | Three providers ship today, and swapping is a Settings choice. Your wiki doesn't care which one wrote it. |
+| Work across several machines | Sync is your own private GitHub repository. No account with us, and nothing of yours passes through us. |
+| Move a coding session to a different tool | Working state is plain markdown and JSONL, designed for exactly that move. |
+
+**And what is *not* yet neutral — said plainly, because an overclaim would be worse than the gap:**
+
+- **The two Claude skills are portable in content but Claude-shaped in activation.** Their text is ordinary prose with no vendor-specific logic, so it works anywhere you can paste it. What is Claude-specific is how they *switch on*: the tool-permission header uses Claude's tool-naming convention, automatic triggering from a description is a Claude Code / Claude Desktop mechanism, and the documented install location is Claude's skills folder. Elsewhere, you paste the body into whatever your harness loads at the start of a session.
+- **The practical consequence.** An agent in another harness can **read** working state through MCP without any trouble — that half is pure protocol. What it is missing is anything telling it to **save**. The store is portable; the discipline that fills it is not yet.
+- **The neutral form is generated, never hand-copied.** A second, hand-maintained copy of a long playbook would be the worst possible place for two documents to drift apart, because these files are read by *models* — two copies would not merely disagree, they would instruct two agents to behave differently. So the neutral version is **derived** from the same single source: the same prose, with the Claude-specific activation header stripped and the tool names de-prefixed.
+- **Local models are not available today.** The provider row is visible in Settings and marked unavailable. The OpenRouter connection speaks an OpenAI-*compatible* protocol — that is the name of a wire format, **not** OpenAI support — which is the groundwork that makes local runtimes a natural later addition rather than a rewrite. When it ships, this guide will say so.
+
+> A note on skill portability: an open format existing is not the same as other tools implementing it. Treat loading these skills elsewhere as something you may need to do by hand.
 
 ---
 
@@ -291,7 +360,7 @@ Then, at the **bottom of the rail**, separated by a gap:
 
 | Rail footer | What it's for |
 |---|---|
-| **☀/☾ theme toggle** | Switch between the dark and light themes. Also in **Settings → General → Appearance**. |
+| **☀/☾ theme toggle** | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type; control heights and icons deliberately stay put, so buttons don't grow into each other. |
 | **Sync** | Back your wiki up to a private GitHub repository. |
 | **Settings** | Keys, MCP bridge, scan limits, knowledge base folder, version. |
 
@@ -383,6 +452,34 @@ rules — is in **[working-state.md](working-state.md)**.
 
 > **For developers:** [docs/ingestion-pipeline.md](ingestion-pipeline.md) is the technical deep dive — every stage, every safeguard, the full failure-mode catalogue, the quality contract.
 
+### What actually happens to your document
+
+Ingest is not "upload a file and store it". The document is read once, taken apart into the ideas and things it is *about*, and those become pages that link to each other — and to pages earlier documents already created.
+
+```mermaid
+flowchart TD
+    A[Your PDF / Markdown / text file] --> B[Saved to raw/<br/>your original, untouched]
+    B --> C[Text extracted]
+    C --> D{Enough text to work with?}
+    D -->|No| X[Refused, and told why<br/>a scanned PDF needs OCR first]
+    D -->|Yes| E[The AI plans which pages<br/>this document should produce]
+    E --> F[The AI writes them]
+
+    F --> G[entities/<br/>people · tools · companies]
+    F --> H[concepts/<br/>ideas · techniques · principles]
+    F --> I[summaries/<br/>ONE page for this document]
+
+    G --> J[Merged with what is<br/>already on disk —<br/>existing pages GROW,<br/>they are not duplicated]
+    H --> J
+    I --> J
+
+    J --> K[Links repaired and made<br/>two-way, so the summary and<br/>every entity point at each other]
+    K --> L[Catalogue and history updated]
+    L --> M[A report: what was created,<br/>what was updated, and<br/>anything you should look at]
+```
+
+**The part that matters most is the merge.** Ingesting a second document about the same person does not create a second page about them — it adds to the one that exists. That is why the wiki gets *better* the more you feed it, rather than just bigger, and it is the whole difference between this and a folder of files.
+
 ### Supported file types
 
 | File type | Extension | Example use |
@@ -396,13 +493,17 @@ rules — is in **[working-state.md](working-state.md)**.
 ### How to ingest
 
 1. Click **Ingest** in the rail
-2. Pick a **Domain** from the dropdown
+2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
 3. Drag your file onto the drop zone — *"Drop file(s) here or browse — 2 or more starts a batch"* — or click **browse** to pick one
 4. Click **Ingest**
 5. Wait. A progress bar names the current step ("AI is analyzing the document…") with a percentage and a running timer beside it. This usually takes **15–60 seconds** depending on the document length. Do not close the browser or refresh the page. See *Understanding the progress bar* below if it looks like it's stuck.
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
 
 > The chat sidebar also shows a drop zone. It is **not connected** — it says so on itself, and clicking **Ingest** on it brings you here. Ingesting from chat isn't wired up yet.
+
+**The panel beside the rail is a destination list.** Every other view's side panel is a list of the things that view acts on, and Ingest's is the place your file is about to land: one row per domain, each showing how many pages it holds and when it was last written to. That second figure says *last write* rather than *last ingest* on purpose — compiling a conversation writes to a domain too, and calling that an ingest would be wrong. While something is being written, the rows are **disabled rather than hidden**, so the list doesn't rearrange itself under your cursor mid-run.
+
+**The drop zone answers two different questions.** Hovering it looks one way — *you could drop here* — and dragging a file over it looks another, louder way — *let go and this happens*. They are deliberately distinct states, not one highlight doing double duty.
 
 ### Batch ingest — queue many files at once
 
@@ -707,11 +808,37 @@ After ingesting a few sources, you can have a full multi-turn conversation with 
 The message box has its controls tucked along its own bottom edge, to the left of the **Send** button:
 
 - **Length** (always shown) — Concise · Balanced · Detailed, described below.
-- **Model** — pick the exact model that answers your chat messages. The menu is grouped by provider and lists every model available on the key(s) you have saved in Settings, cheapest first, each row showing its id, its price per 1M tokens as billed today, and any warning badge (`caution`, `chat only`, `out-performed`, `thinks`) plus a short line naming the reason and, when measured, the typical time per call. One key is enough — Gemini or Anthropic alone offers seven models, and an OpenRouter key adds three measured ones plus, once you have refreshed the list, everything else OpenRouter offers that passes the structural checks (see [Refreshing the model list](#refreshing-the-model-list)). With no key at all there is nothing to choose and the dropdown is hidden. Full explanation of the badges and the criteria behind them: [§16b](#16b-choosing-your-ai-model).
+- **Model** — pick the exact model that answers your chat messages. Each row shows its id, its price per 1M tokens as billed today, and one plain line: any warning reason first, then how fast it answered when measured. With no key saved there is nothing to choose and the picker is hidden. Full explanation of the markers: [§16b](#16b-choosing-your-ai-model).
 - There is **no attach button** — you can't ingest a file from the chat box. Use **Ingest** in the rail.
 - Alongside them, a short note reminds you that what a message costs depends on how long the answer runs.
 
-Both dropdowns open **upward**. Both choices are remembered in your browser between questions — the model you pick here stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one.
+#### The menu shows a working set, not two hundred rows
+
+An OpenRouter key can put roughly two hundred models within reach. Dropping all of them into a menu you open mid-conversation would make switching models harder, not easier. So the menu shows a **working set**: the model you're on, any you've **starred**, the ones you've **used recently**, and every model that has actually been **measured** — by us or by you.
+
+Two details make this predictable rather than clever:
+
+- **The order is the catalogue's, not your recency.** Membership changes as you use the app; **position doesn't**. A model does not jump to the top because you used it last, so the menu doesn't have to be re-read every time you open it.
+- **It only collapses when collapsing actually saves you something.** If the catalogue is small (**24 models or fewer**), or the working set isn't genuinely shorter than the full list, everything is shown and no *browse* row appears — because a "see everything" link leading to a list already on screen is just a wasted click.
+
+When it does collapse, a **browse** row opens the full catalogue with **search** (matching the model id or name, vendor prefix included), a **provider** filter, and a **free-only** filter. A running count tells you how many of how many you're looking at, and if a filter leaves nothing, one click clears it. **Every model stays reachable** — nothing is hidden from you, only deferred.
+
+> **Starring works in the browse dialog**, where each row carries a star you can toggle. In the composer menu the star is shown but is not clickable — a menu row is a single choice, and burying a second control inside it is a known way to make menus behave badly.
+
+#### The keyboard works everywhere now
+
+Every dropdown in the app is drawn by The Curator rather than by your operating system, which means keyboard behaviour is consistent and is ours to get right: **arrow keys** move (and open a closed menu), **Home/End** jump to the first and last option, **Page Up/Down** move by a screenful, **Enter** commits, **Escape** closes and changes nothing, **Tab** closes without committing, and **typing** jumps to a match — by prefix first, then anywhere in the name, so typing `opus` finds a model whose id begins with a vendor prefix. Typing the same letter repeatedly cycles between matches. Typing never commits blindly.
+
+Both pickers open **upward**. Both choices are remembered in your browser between questions — the model you pick stays picked for every later chat message from this browser, across conversations and across restarts, until you pick a different one.
+
+#### Ask the same question again, on a different model
+
+Any answer can be **re-asked with another model**. It takes the question that produced that answer, keeps you in the same conversation, and sends it again to a model you choose. **Both answers stay in the thread**, each labelled with the model that actually produced it and what it cost — so you are comparing two real answers side by side rather than remembering what the first one said.
+
+Two things worth understanding before you use it:
+
+- **It is a second opinion, not an independent run.** Prompts are built from the recent messages in the conversation, so the second model can usually *see* the first answer. The app tells you which situation you are in at the moment you pick — whether the earlier answer is still inside that window, or has fallen outside it — because "asked fresh" and "asked knowing what the other one said" are different questions with different answers.
+- **Picking the model sends immediately.** There is no separate confirmation step, so treat the model list as the decision point. It costs one ordinary chat message on the model you pick.
 
 This is the **chat lane**, and it is sealed off from the rest of the app: ingest, Compile and Health scans all keep using the model set in Settings, no matter what you pick here. That is the design — *one model builds your brain; you choose freely when talking to it* — and [§16b](#16b-choosing-your-ai-model) explains why the two lanes are separate and why the build side is a single setting rather than one per feature. Because the choice is sticky, **each answer displays the model that actually produced it**, so a selection you made and forgot is always visible on the answers themselves rather than only in the dropdown. Where that figure comes from, and why it sometimes isn't shown at all, is explained just below in [Why a sticky chat choice is safe](#why-a-sticky-chat-choice-is-safe--every-answer-names-the-model-that-produced-it).
 
@@ -737,13 +864,13 @@ The chat adapts its answer shape to your question: a **decision** question ("whi
 
 Chat is the app's default view — it's what you land on. It has three parts:
 
-- **The panel beside the rail** — a **New chat** button, a **Search conversations…** box, and this domain's conversation history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one and a **trash** button appears to delete it.
+- **The panel beside the rail** — a **New chat** button, a search box that reads the *contents* of your conversations rather than only their titles, and this domain's history grouped into **TODAY** and **EARLIER**. Click any conversation to reopen it. Hover one for a **trash** button, or tick several and delete them together.
 - **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. On the right of that bar you'll see how much is in scope, e.g. *"3,336 pages in scope"* — and, once a conversation has a question in it, the **Compile to Wiki** button.
 - **The thread and the composer** below it.
 
 Under the composer, a line reminds you: *"Answers cite the pages they came from. Click a citation to read the page."*
 
-> Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists.
+> Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
 ### Starting a conversation
 
@@ -803,8 +930,11 @@ If what you want is context that genuinely survives across sessions and machines
 ### Managing conversations
 
 - **Revisit** — click any conversation in the panel beside the rail to reopen it in full
-- **Find one** — type in the **Search conversations…** box; it filters by title as you type
-- **Delete** — hover a conversation and click the trash button that appears
+- **Find one** — type in the search box beside the rail. **The search reads the messages, not just the titles.** A conversation's title is only its opening question, trimmed — so searching used to find a thread by how it *started* and never by what it turned into. Now the server searches every message in every conversation of that domain, and a conversation found by its contents rather than its title says so on the row. Searching is debounced as you type and repaints only the list, so the thread you are reading and your place in the composer are undisturbed.
+- **Delete one** — hover a conversation and click the trash button that appears
+- **Delete several** — tick the checkbox on each conversation you want gone, then use the bar that appears above the list (it also offers select-all and a way to clear the selection). Deletions are confirmed first and run one at a time; if any fail, you are told which, and those stay ticked so you can retry them. Your ticks survive the list refreshing.
+
+> **One wrinkle worth knowing.** The message count on a conversation updates as soon as you send, without a round trip. If you have a search active at that moment, the just-sent message is not re-tested against it until your next keystroke or navigation — so a thread will not leap into the results the instant it becomes a match.
 
 ### Good questions to ask
 
@@ -1615,14 +1745,40 @@ Now there is. A list of **hand-measured models** is on offer across all three pr
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
 
-### The principle: one model builds your brain, and you choose freely when talking to it
+### The principle: two jobs, not one setting with two halves
 
-There are two places to pick a model, and they are not two halves of one setting. They are **two lanes**, and knowing which is which answers almost every question people have about this screen.
+Almost every question people have about this screen dissolves once you see that the app asks a model to do **two completely different jobs**, and that the stakes are wildly lopsided between them.
 
-| Lane | Where you pick | Scope | Governs |
-|---|---|---|---|
-| **The build lane** — everything that *writes* to your wiki | **Settings → Providers & keys →** the model list under the **active** provider | **Durable.** Saved on this machine, survives restarts. | **Ingest, Wiki Health AI scans, and Compile to Wiki** — and chat too, unless the composer overrides it. |
-| **The chat lane** — talking to what you built | **Chat composer → Model dropdown** (next to Length) | **Per message.** Remembered in this browser until you change it. | Only the chat messages you send. |
+```mermaid
+flowchart TD
+    Q{What is the model<br/>being asked to do?}
+
+    Q -->|Build the wiki| B[THE BUILD JOB<br/>Ingest · Wiki Health · Compile]
+    Q -->|Answer a question| C[THE CHAT JOB<br/>one question, one answer]
+
+    B --> B1[ONE model, app-wide<br/>set in Settings]
+    B1 --> B2[Must be a MEASURED model<br/>the app refuses the rest]
+    B2 --> B3[At risk: your wiki.<br/>Bad pages are written<br/>permanently, across a document<br/>you will not re-read —<br/>and already paid for]
+
+    C --> C1[Any model your key reaches<br/>picked in the composer]
+    C1 --> C2[No measurement required]
+    C2 --> C3[At risk: one answer,<br/>on screen, that you can<br/>simply ask again]
+```
+
+That asymmetry is the whole design. A bad chat answer is prose you can see and re-ask. A bad ingest writes wrong pages into the thing this app exists to protect.
+
+| | **The build job** | **The chat job** |
+|---|---|---|
+| **What it covers** | Ingest, Wiki Health AI scans, Compile to Wiki | The chat messages you send |
+| **Where you choose** | **Settings** — one list, one choice | The **model picker in the chat composer** |
+| **How many models** | Exactly **one**, app-wide | One per message, changeable mid-conversation |
+| **What is eligible** | Only models measured against the real ingest prompt | Anything your saved key reaches |
+| **How long it lasts** | Durable — saved on this machine, survives restarts | Sticky in this browser until you change it |
+| **If it goes wrong** | Pages written wrong, permanently | One answer, re-askable |
+
+**The build job is one setting, not three — deliberately.** You cannot give ingest one model and Health another. Health scans read the same wiki ingest wrote, in the same shapes, and ask the same kind of judgement of it. Splitting them would double the decisions and the prices you have to reason about, and let your wiki be built and maintained by two models that disagree about it. It is also not a convention that could quietly drift: the parts of the app that build your wiki are written so a per-feature model override is not merely unused — it cannot be expressed, because there is no argument to carry it.
+
+**And the two jobs cannot leak into each other.** Picking an expensive model for one hard chat question must not quietly change what your next ingest costs, and it doesn't: the composer choice is attached to a single chat request and stored in your browser. It never touches the server-side build choice.
 
 **The build lane is one setting, not three — and that is deliberate.** You cannot give ingest one model and Health another, because there is nothing sensible to gain from it and a great deal to lose. Health scans read the same wiki that ingest wrote, in the same shapes, and ask the same kind of judgement of it — the work of noticing that two pages describe one thing is the same work as deciding they were two things in the first place. Splitting them would double the number of decisions you have to make, double the number of prices you have to reason about, and let your wiki be built and maintained by two models that disagree about it. So there is one choice, it is the one you already made when you picked a provider's model, and it covers the whole build lane.
 
@@ -1633,7 +1789,7 @@ The split between the two lanes is about money and reversibility. Ingest is by f
 Which gives the two answers people most often want:
 
 - **"If I pick Sonnet 5 in chat, does my next ingest cost more?"** No. Nothing you do in the composer reaches ingest, Health or Compile. The composer choice is attached to one chat request and stored in your browser; it changes nothing on the server.
-- **"I pinned a model under Anthropic, but Gemini is active — what runs my ingest?"** Gemini's. The **active provider is chosen first**, and only *that* provider's pinned model is consulted. A pin on the other provider is remembered, not applied — it is waiting for you to make that provider active (**Set active** on its row), at which point it takes effect. This is why the model list sits underneath a provider rather than above both of them: a pin is a per-provider preference, and only one provider is live at a time.
+- **"I chose a model under Anthropic once, but Gemini is building — what runs my ingest?"** Gemini's. **This used to be invisible, and now it is not.** Older versions kept a separate choice under each provider, so a choice made under a provider that wasn't active sat there governing nothing and saying nothing. Choosing a model is now **one act**: picking a model from the single list sets the provider and the model together, so a choice cannot land inert. Any leftover choice from the old per-provider arrangement is still on disk, and Settings now names it explicitly — it tells you which model you also chose, under which provider, that it governs nothing while your current model is building, and that picking it from the list would switch you over and put it in charge.
 
 Two more consequences worth knowing:
 
@@ -1663,14 +1819,18 @@ Beside the model name on each answer, you'll often see a small cost figure too �
 
 ### Picking, pinning, and following the default
 
-Under each connected provider in **Settings → Providers & keys** there is a collapsible list. Collapsed, it already answers the common question — it names the model that provider is running and shows a **your choice** marker if that model is yours rather than ours. Expanded, each model is a row with a **Use this** button; the one you're on reads **Selected** instead of offering a button that would do nothing.
+Settings opens with a plain statement of **which model is building your wiki right now** — its provider, its model, who measured it, and, crucially, **why it is the one running**. That last part is the question the old per-provider arrangement could never answer. There are four possible reasons, and they are genuinely different situations:
 
-The line at the top of the list tells you which of two states you're in, and they are genuinely different:
+| Why this model is running | What it means | What to do |
+|---|---|---|
+| **You chose it** | You picked this model and it is in charge. App updates will not move you off it. | Nothing. |
+| **It is the app default** | You have picked nothing, so the app is running its own pinned default — the cheapest model on the active provider. A future release can move you onto a newer one. | Nothing, unless you want to take control. |
+| **An environment variable is overriding everything** | A developer escape hatch (`LLM_MODEL`) is set on this machine and outranks anything clicked in Settings, by design. | If you didn't mean to, unset it and restart. |
+| **You chose a model, and the engine is not using it** | Your choice could not be honoured — the model was withdrawn, pulled after a bad measurement, or is one the app refuses for building. The app fell back rather than failing. | Pick again from the list. The worst case of a refusal is that you spend *less* than you asked for, never more. |
 
-- **Following the app default** — you have picked nothing. A future Curator release can move you onto a newer model.
-- **Pinned** — you have picked something. App updates will not move you off it.
+Below that statement is **one list, not one list per provider** — every model you can build with, across every provider whose key you have saved, with the provider shown as a chip on each row. Picking a row does both halves at once: it sets the model **and** makes that provider active. That is the whole reason the list is now cross-provider — a choice cannot land somewhere it doesn't govern.
 
-**Picking today's default pins it.** If you click **Use this** on `gemini-2.5-flash-lite`, you are no longer following the default; you have chosen that exact model and it will stay that model. To go back to following, use the **Follow the app default** button, which only appears when there is something to clear.
+**Picking today's default counts as choosing it.** If you pick the model the app was already running by default, you are no longer following the default; you have chosen that exact model and it will stay that model. To go back to following, use the button that clears your choice — it appears only when there is something to clear.
 
 If a model you pinned is later withdrawn — a provider retires it, or we pull it after a bad measurement — nothing breaks. The app quietly falls back to that provider's default, which is its cheapest model. The worst case of any refusal is that you spend *less* than you asked for, never more.
 
@@ -1683,6 +1843,28 @@ While anything is writing to your wiki, the **Use this** buttons grey out, and t
 3. **Wrong arithmetic.** Cost is priced per model. Changing model mid-batch makes the spend figure — and any budget cap you set — wrong.
 
 Wait for the run to finish. The chat composer's dropdown is unaffected and stays usable throughout — it only remembers a preference in your browser and attaches it to your next chat message; it changes nothing on the server, so there is nothing that could land mid-run.
+
+### The honest limits — what we have measured, and what we have not
+
+This is the part most model pickers leave out, and it is the part that should decide how much weight you put on anything else on the screen.
+
+| | Roughly how many | What that means |
+|---|---|---|
+| **Models we have hand-measured** | **19** — 7 Gemini, 7 Anthropic, 5 OpenRouter routes | Run against the app's real ingest prompt, repeatedly. Everything on their row is an observation. |
+| **Models reachable through an OpenRouter key** | **~200**, and the number moves daily | Their price and published capabilities come from OpenRouter. **Nothing about how well they do our job has been tested.** |
+| **Models you can measure yourself** | Any OpenRouter model, on your own wiki | Your evidence, kept as a separate claim from ours. |
+
+So the great majority of what you can pick in chat is **unmeasured — which means unmeasured, not bad.** Nobody has tested two hundred models against a specific application's prompt, and pretending otherwise would be the dishonest option.
+
+**There is deliberately no "best" or "most capable" sort. This is a finding, not a missing feature.**
+
+The obvious idea is to rank the catalogue by something — price, size, recency, vendor reputation — and let you sort by quality. It was tried, and the available proxies were measured to *lie*:
+
+- One model passed **every** structural check, was genuinely **fast**, and returned **zero usable outputs in nine runs**.
+- Another model failed **nine times out of nine** while its own **free sibling** — same base model, different routing — passed eight of nine. Model identity did not determine reliability; **routing** did.
+- Price, parameter size, release date and vendor each pointed the *wrong way* on this evidence.
+
+Ranking the rest by any of those would be a confident-looking guess wearing the costume of a measurement, on a screen where you are deciding how to spend your own money. So the sorts offered are ones that are simply **true** — cheapest, dearest, newest, largest context window — and a model missing the value a sort needs is **not invented one**: it keeps its place at the end, and the count tells you how many are unranked.
 
 ### Why these models — the selection criteria
 
@@ -1703,20 +1885,35 @@ Two rules keep the list honest, and they're worth stating plainly:
 - **A model is not offered for a feature it has never been measured against.** Two real, documented, priced Anthropic models are deliberately *absent* because nobody has run them against the actual ingest prompt. Guessing would mean guessing about your bill.
 - **No working model is hidden.** If a model measured badly, it is shown **with the reason on screen** rather than quietly removed. Deciding for you what you may spend your own API key on isn't our call; telling you what we measured is.
 
-### What the badges mean
+### What a model row tells you
 
-In **Settings**, each row can carry any combination of:
+The labelling was overhauled to stop a long list reading as a wall of warnings. **The measurement vocabulary in particular collapsed from several competing labels into one chip with three values** — because on a fetched catalogue of roughly two hundred models, "we have not measured this" was true of nearly every row, and a warning that appears on almost everything stops being read at all.
 
-| Badge | Meaning | What to do |
+**The measurement chip — one chip, three states, and it is not a quality score:**
+
+| Chip state | What it claims | What it does **not** claim |
 |---|---|---|
-| **cheapest** | The least expensive model on that provider. Always the first row. | Nothing. It's a reference point for the rows below it. |
-| **in use** | This is what the provider is actually running right now. | Nothing. |
-| **your choice** | You pinned this one. Without it, you're following the app default. | Nothing — but it tells you an update won't move you. |
-| **caution** | Usable everywhere, but carries a measured downside you should see before choosing: a scheduled price rise, thinner results than a *cheaper* model, or a same-priced sibling that beat it. | Expand the row and read the note. Then choose deliberately. |
-| **chat only — not for ingest** | Measured *unfit for ingest specifically.* Chat is unaffected. | Fine for chat. You **cannot** make it your Settings model — the app refuses, and says why. |
-| **out-performed** | Another model at **exactly the same price** measured better on every axis tested. | Pick the sibling named in the note instead. You're paying the same either way. |
+| **Measured by The Curator** | We ran this model against the real ingest prompt ourselves. | — |
+| **Measured on your wiki** | *You* ran it, on your own pages, and it came back clean. Deliberately kept as a separate claim from ours. | That we endorse it. Your evidence and our evidence are different things and stay apart. |
+| **Not measured** | Nobody has run it here. | **That it is bad.** Unmeasured is unmeasured. Most of the catalogue sits here simply because nobody has tested two hundred models. |
 
-The **chat composer** menu shows the same badge words — **caution**, **chat only**, **out-performed**, **thinks** — and, beneath them, a one-line summary instead of the full note: the reason for a warning always leads (it's a required field on any flagged model, never optional), followed by how fast that model answered when it was last measured, if it was. Settings shows the same one-line summary on the collapsed row, plus the full note one click away — see below.
+**Other things a row can carry:**
+
+| Marker | Meaning |
+|---|---|
+| **provider chip** | Which provider the row belongs to — needed now that the build list is one cross-provider list. |
+| **in use** | This is what is actually running right now. |
+| **your choice** | You picked this one, so an update won't move you off it. |
+| **cheapest** | The least expensive model available. A reference point for the rows near it. |
+| **out-performed** | Another model at **exactly the same price** measured better on every axis tested. Pick the sibling named instead — you pay the same either way. |
+| **failed on your wiki** | You tested it yourself and it did not come back clean. Kept on purpose, so you don't spend the same time re-testing it next month. |
+| **price** | Per million tokens in and out, as billed today — or **free**, where a model genuinely costs nothing. A promotional price that is due to rise says so. |
+
+Below the markers, each row carries **one plain line** rather than a paragraph — at most three clauses, in a fixed order: **the reason for any warning first**, then roughly how many wiki pages the model plans from one source, then how fast it answered when measured. A clause whose measurement is missing is simply left out; it is never printed as a zero. The full measured note is still there in its entirety, one click away on the row — **except the warning reason, which never hides behind that click**, because a warning behind a click is not a warning.
+
+> **Two labels were removed, and one rule behind them was not.** The old **caution** badge is gone — its reason now leads the plain line instead, where you actually read it. The old **chat only — not for ingest** badge is gone too, because it was true of nearly every row in a fetched catalogue and had become noise. **The rule it described is fully intact and is enforced on the server**, not merely displayed: a model that isn't fit for building still cannot become your build model, whatever any list looks like.
+
+**Settings and the chat composer deliberately show different amounts.** Settings is a screen you open to manage models and can afford a fuller row; the composer is a menu you open mid-conversation, so it keeps the warning and the speed and drops the rest. Both use the same words for the same facts, computed once in one place so the two cannot drift apart. That is intentional, not a discrepancy to fix.
 
 ### Rows are short by default now, and the note is one click away
 
@@ -1736,11 +1933,11 @@ A collapsed row now shows only what a choice needs — the model, its id, the pr
 
 Two examples, because the principle matters more than the specifics:
 
-**`gemini-3.5-flash-lite` is offered but marked "chat only — not for ingest."** In 2 of 9 live runs against the real ingest prompt it returned structured data that neither the parser nor the repair pass could fix — a genuine generation defect, not a length problem the app could work around. Chat doesn't ask for structured data at all, so it's unaffected and the model stays genuinely useful there. It also happens to cost **exactly the same** as `gemini-2.5-flash`, which was clean on every run of the identical test and plans wider outlines. So it is flagged, and its cleaner twin is one row away.
+**`gemini-3.5-flash-lite` is offered for chat, but the app will not build with it.** In 2 of 9 live runs against the real ingest prompt it returned structured data that neither the parser nor the repair pass could fix — a genuine generation defect, not a length problem the app could work around. Chat doesn't ask for structured data at all, so it's unaffected and the model stays genuinely useful there. It also happens to cost **exactly the same** as `gemini-2.5-flash`, which was clean on every run of the identical test and plans wider outlines. So it is flagged, and its cleaner twin is one row away.
 
-**`claude-opus-4-5` is offered but marked "out-performed."** At the identical $5 / $25 it is behind `claude-opus-5` on all three measured axes: half the output ceiling, formatting that needs repair, and 12–13 planned pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price. There is no measurement supporting the choice — but it is still on the list, labelled, because it is your key.
+**`claude-opus-4-5` is offered but marked **out-performed**.** At the identical $5 / $25 it is behind `claude-opus-5` on all three measured axes: half the output ceiling, formatting that needs repair, and 12–13 planned pages against 25–27. It plans more thinly than `claude-sonnet-5` does at two-fifths of the price. There is no measurement supporting the choice — but it is still on the list, labelled, because it is your key.
 
-**A flag on the build lane is now a rule, not just a label.** Until this release, "chat only — not for ingest" was a badge and nothing more: you could pin such a model as your Settings model and the app would let you, while the warning sat on the same screen. That is fixed. The app now **refuses** to make a chat-only model your build model, tells you why, and reminds you it is still available in chat — and if you had already pinned one, it quietly runs the provider's default for ingest instead. Nothing about chat changed: a chat-only model stays fully pickable in the composer, which is the whole point of the label.
+**This is a rule, not a label — and it survived the labels being removed.** There was a time when "not for ingest" was a badge and nothing more: you could make such a model your build model anyway, and the app would let you, with the warning sitting on the same screen. That is long fixed, and it is enforced **on the server**. The badge itself has since been retired from the interface — on a fetched catalogue of ~200 models it was true of nearly every row and had become noise — but nothing about the rule changed. A model that is unfit for building still cannot become your build model, whatever the list looks like; if you had already chosen one, the app quietly builds with the default instead. And it stays fully pickable for chat, which was always the point.
 
 ### OpenRouter — one key, two lanes, and a model list you refresh
 
@@ -1879,9 +2076,11 @@ Of those 193, **189 were added** and 2 were models The Curator had already measu
 
 **Why it is sometimes refused with an error about a write in progress.** The button is disabled, and the server refuses the request outright, while an ingest, a Wiki Health fix or another write is running. That is correct behaviour, not a fault: replacing the model catalogue mid-run can change which model the next call in that run resolves to, and what the last one gets priced at. Wait for the run to finish and click again.
 
-**When to use it.** After you first save an OpenRouter key; when you want a model that has been released since; and if a model you were using has disappeared — free ones come and go. There is no automatic refresh, on purpose: fetching a fresh catalogue is a change to what your money can be spent on, so it happens when you ask for it.
+**The list now keeps itself current, and this fixed a real complaint.** The catalogue is fetched **automatically** when the app starts if it is missing altogether or more than **24 hours** old. Previously it was fetched *only* when you pressed the button, with no signal that it hadn't been — so chat offered a handful of models until you happened to discover a button you had no reason to look for. That is the direct cause of models **"sometimes showing and sometimes not"**. The automatic fetch is skipped while anything is writing to your wiki, and skipped if you have no OpenRouter key saved.
 
-**And the honest limit on all of it.** Passing every check above means *nothing in OpenRouter's published metadata disqualifies this model*. It does not mean the model works. The catalogue can say a model **accepts** structured-output mode; it cannot say the output **parses** — the app's own list contains a model that advertises full support and returned unrepairable data in 2 of 9 real runs. That is why fetched models carry a **never measured here** badge and are confined to chat, where a bad answer costs you one visible answer and nothing is written to your wiki.
+**When to press the button anyway.** When you want a model released in the last day; if a model you were using has disappeared — free ones come and go; or right after saving an OpenRouter key for the first time, if you'd rather not wait for a restart.
+
+**And the honest limit on all of it.** Passing every check above means *nothing in OpenRouter's published metadata disqualifies this model*. It does not mean the model works. The catalogue can say a model **accepts** structured-output mode; it cannot say the output **parses** — the app's own list contains a model that advertises full support and returned unrepairable data in 2 of 9 real runs. That is why fetched models are marked **not measured** and are confined to chat, where a bad answer costs you one visible answer and nothing is written to your wiki.
 
 
 #### Free models — real, useful, and not unlimited
@@ -1940,7 +2139,6 @@ Also remember that a **thinks** model bills its invisible reasoning as output to
 
 ### What isn't available
 
-- **Automatic catalogue refresh** — the OpenRouter chat list is fetched when you press **Refresh model list**, and never on its own. Nothing goes stale silently (the panel says when it was last refreshed), but if a model appeared today you will not see it until you ask. See [Refreshing the model list](#refreshing-the-model-list).
 - **Promotion by refresh** — the fetched chat catalogue is large, but it is *unmeasured*, and a refresh can never move a model into the build lane. Promoting one is a deliberate act with nine real runs behind it: either we measure it and ship it, or [you measure it on your own wiki](#test-a-model-on-your-own-wiki). A local result is also confined to your machine — it does not travel with Sync, and it cannot overturn a finding of ours.
 - **OpenRouter in the old interface at `/old`** — not supported at all, deliberately.
 - **Local models** — not supported for The Curator's own calls. The **Local model** row in Settings is a placeholder marked *"not available in this build."* (You *can* point a local model at your wiki through the MCP bridge — see [§13 Option C](#option-c--my-curator-mcp-frontier-model-research-plus-writes-from-v252) — but that is the model reading your wiki, not The Curator calling it.)

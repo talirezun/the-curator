@@ -239,10 +239,10 @@ const { __testing } = await import('../src/brain/sharedbrain.js');
 const { resolveInsideBase } = __testing;
 
 // Null byte injection — POSIX rejects but JavaScript strings can carry these
-assert(resolveInsideBase('/base', 'foo .md') === null || (() => {
+assert(resolveInsideBase('/base', 'foo\u0000.md') === null || (() => {
   // Some Node versions normalise the null byte away — if path.resolve doesn't
   // crash and returns something inside /base, that's still safe.
-  const r = resolveInsideBase('/base', 'foo .md');
+  const r = resolveInsideBase('/base', 'foo\u0000.md');
   return r !== null && r.startsWith('/base');
 })(), 'null byte path either rejected or resolved safely inside base');
 

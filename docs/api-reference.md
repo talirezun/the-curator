@@ -2084,10 +2084,49 @@ this release, so `Set active` succeeds for any of them that has a stored key. Th
 documented because it stays reachable for a provider wired up before its models are measured, and
 because the storage-layer backstop still enforces it for every caller.
 
+## POST /api/config/api-keys/build-model
+
+**The atomic build-model write.** Sets the provider **and** the model together, so a choice can
+never land inert. This is what the single cross-provider model list in Settings posts to.
+
+`POST /api/config/api-keys/model` (below) still exists and is still the **only** way to *clear* a
+selection — this route has no clearing arm by design, because "build with nothing" is not a state.
+
+```json
+// Request — both fields required; there is no clearing arm
+{ "provider": "openrouter", "model": "upstage/solar-pro4" }
+```
+
+Refused with `400` when: the provider is unknown; `model` is not a non-empty string; the provider's
+key is **not saved in Settings** (config-scoped — a key living only in `.env` does not count, the
+v3.0.13 rule); the model is not offerable; or the model is not build-lane eligible
+(`reason: "not_build_lane"`).
+
+Writes are ordered **model first, then provider**. A crash between them leaves the pre-existing
+inert-pin state rather than silently moving the user onto a different provider's default.
+
+Response carries `ok`, `provider`, `selectedModel`, `effectiveModel`, `activeProvider`,
+`activeModel`, `providerSwitched`, `inert`, and `inertReason`
+(`'provider-not-active' | 'model-overridden' | null`).
+
+> **Known gap, recorded rather than implied away:** no shipping surface reads `inertReason` yet —
+> the `/next` Settings view branches on `inert` alone, so its message attributes the cause to the
+> provider even when the real cause is an `LLM_MODEL` environment override.
+
+Guarded by `guardConcurrent`, so it refuses with `409` while a write to the wiki is in flight.
+
+---
+
 ## POST /api/config/api-keys/model
 
 Persist the user's model choice for one provider, **without** changing which provider is active.
 This pins the **build model** — the one that runs ingest, Health and Compile.
+
+> Prefer [`POST /api/config/api-keys/build-model`](#post-apiconfigapi-keysbuild-model) for *setting*
+> a model: it sets provider and model atomically. This route remains the way to **clear** a
+> selection, and it is how the "follow the app default" control works. Because it does not touch
+> `activeProvider`, it is also the route that can still produce a pin under a non-active provider —
+> a state Settings now surfaces explicitly rather than hiding.
 
 ```json
 // Request — an empty/null/absent model CLEARS the selection (back to the provider default)

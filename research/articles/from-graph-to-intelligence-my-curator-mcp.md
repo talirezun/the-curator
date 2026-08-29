@@ -116,7 +116,7 @@ This is the problem that **My Curator MCP skills** solve.
 
 A *skill*, in the context of Claude Desktop, is a plain markdown file that you install once as a Project Document. It functions as a standing set of instructions that apply automatically to every conversation within that project. You do not re-type the rules. You do not remind the model of the playbook. The skill handles it.
 
-My Curator ships with a dedicated skill file — [`claude-skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/claude-skills/my-curator/SKILL.md) — that encodes a complete operational playbook. When this skill is installed, every Claude conversation that touches the My Curator MCP automatically follows the rules, every time, without exception.
+My Curator ships with a dedicated skill file — [`skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/skills/my-curator/SKILL.md) — that encodes a complete operational playbook. When this skill is installed, every Claude conversation that touches the My Curator MCP automatically follows the rules, every time, without exception.
 
 The skill covers three distinct workflows:
 
@@ -220,7 +220,7 @@ This is what *queryable extension of your own thinking* means in practice.
 
 ## Best Practices: Getting the Most from My Curator MCP
 
-**Install the My Curator skill before your first real session.** The skill file is available at [`claude-skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/claude-skills/my-curator/SKILL.md) in The Curator GitHub repository. Add it as a Project Document in Claude Desktop. After that, every conversation that touches your wiki follows the full operational playbook automatically. Do not skip this step — the skill is what transforms the MCP from a capable tool into a precise one.
+**Install the My Curator skill before your first real session.** The skill file is available at [`skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/skills/my-curator/SKILL.md) in The Curator GitHub repository. Add it as a Project Document in Claude Desktop. After that, every conversation that touches your wiki follows the full operational playbook automatically. Do not skip this step — the skill is what transforms the MCP from a capable tool into a precise one.
 
 **Start every research session with `get_graph_overview`.** Even if you think you know what you are looking for, let the model orient itself on the topology first. The hub pages — the entities and concepts most densely connected to everything else — are often not the ones you expected. Seeing the actual topology of your knowledge frequently surfaces angles you had not consciously considered.
 
@@ -246,7 +246,7 @@ The installation follows a clear sequence. Two components; one wizard.
 
 **Step 4: Run the self-test.** Back in The Curator Settings tab, click **Run self-test**. The system confirms that My Curator responds correctly and that it can find your domains folder. Green indicators mean you are ready.
 
-**Step 5: Install the My Curator skill.** Download [`claude-skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/claude-skills/my-curator/SKILL.md) from The Curator GitHub repository. In Claude Desktop, add the `SKILL.md` file within the designated *add skill* section.
+**Step 5: Install the My Curator skill.** Download [`skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/skills/my-curator/SKILL.md) from The Curator GitHub repository. In Claude Desktop, add the `SKILL.md` file within the designated *add skill* section.
 
 **First prompt:** *"Use `list_domains` to show my available knowledge domains, then use `get_graph_overview` on the most interesting one to show me how everything is connected."*
 
@@ -274,7 +274,7 @@ The second brain gets smarter with every source you add. **Now, it also has a wa
 
 [**The Curator**](https://github.com/talirezun/the-curator) is open source and free to use.
 
-The My Curator skill file is at [`claude-skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/claude-skills/my-curator/SKILL.md) in the same repository.
+The My Curator skill file is at [`skills/my-curator/SKILL.md`](https://github.com/talirezun/the-curator/blob/main/skills/my-curator/SKILL.md) in the same repository.
 
 If you are using Claude Desktop, **Claude Sonnet** is the recommended model for most research sessions — capable and efficient. For the most demanding synthesis tasks, involving large wikis and complex cross-domain queries, **Claude Opus** is worth the additional cost.
 

@@ -203,6 +203,12 @@ const { listConversations, matchConversation, CONVERSATION_SEARCH_MAX_CHARS, con
 const DOMAIN = 'searchdemo';
 const convDir = conversationsPath(DOMAIN);
 mkdirSync(convDir, { recursive: true });
+// The CLAUDE.md schema is what makes a directory a DOMAIN (listDomains filters
+// on it, so ghost folders left by a sync deletion are not domains). §2 drives
+// the real GET /api/chat/:domain handler, which now refuses a name that is not
+// on that allow-list — the guard that closes the `..%2f` traversal — so the
+// fixture has to be a real domain rather than a bare directory.
+writeFileSync(path.join(path.dirname(convDir), 'CLAUDE.md'), '# searchdemo\n');
 function uuidN(n) { return String(n).padStart(8, '0') + '-0000-4000-8000-000000000000'; }
 function writeConv(n, title, messages, createdAt) {
   const id = uuidN(n);

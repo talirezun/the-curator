@@ -298,6 +298,16 @@ import {
 // literal would assert this file agrees with itself while the real wording
 // drifted away underneath.
 import { openRouterRecordToSpec } from '../src/brain/openrouter-adapter.js';
+// ── THE FOUR ROOT CAUSES OF AN ASSERTION THAT CANNOT FAIL ────────────────
+// An adversarial audit on 2026-08-29 applied FIVE real defects to production
+// simultaneously and left this suite at 1982 passed / 0 failed — byte-identical
+// to baseline. `stripComments` fixes scans a `//` satisfies; `functionSource`
+// fixes file-wide regexes a DIFFERENT function satisfies; `callSiteCount`
+// fixes an executed function whose CALL SITE nobody asserted; `assertLiteral`
+// is the rule for the fourth, which no helper can fix — an expected value read
+// from the same constant the code reads is equal by construction.
+// Self-tested with positive controls by scripts/test-source-scan-helpers.js.
+import { stripComments, functionSource, callSiteCount, assertLiteral } from './test-helpers/source-scan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -305,6 +315,10 @@ const SETTINGS_PATH = path.join(ROOT, 'src/public/next/views/settings.js');
 const APP_PATH = path.join(ROOT, 'src/public/next/app.js');
 const settings = readFileSync(SETTINGS_PATH, 'utf8');
 const appJs = readFileSync(APP_PATH, 'utf8');
+/** settings.js as the ENGINE reads it. Every POSITIVE source scan below must
+ *  use this: a scan over raw source is satisfied by `// theCall();`, which is
+ *  exactly the mutation that kept this suite green while shipping the defect. */
+const settingsCode = stripComments(settings);
 
 let passed = 0, failed = 0;
 function ok(cond, label) {
@@ -2193,9 +2207,76 @@ section('§12  The list is attached to its own provider row');
   const pickAt = section.indexOf('data-model-picker="gemini"');
   ok(rowAt !== -1 && pickAt !== -1 && pickAt > rowAt,
     'the Gemini model section is rendered AFTER its own provider row, in the same list');
-  ok(/import \{ formatUsdHonest \} from '\.\.\/shared\/format-usd\.js';/.test(settings),
-    'SOURCE GUARD: settings.js imports the shared USD formatter rather than growing a local one');
-  ok(!/toFixed\(4\)/.test(settings), 'settings.js has no local four-decimal dollar formatter');
+  // ── THE MONEY FORMATTER — behaviour first, then the two source scans ────
+  // WHAT WAS WRONG HERE. These were the ONLY two guards on the one rule
+  // `shared/format-usd.js` exists to enforce ("a non-zero cost never renders
+  // as zero"), and both were greppable over RAW source. Measured: rewriting
+  // `formatModelPrice`'s two lines to an INLINE `'$' + n.toFixed(2)` — no new
+  // name for a scanner to see, the import left untouched and satisfying the
+  // scan below — left this suite at 2009 passed / 0 failed while every price
+  // under half a cent rendered `$0.00`, i.e. FREE, on the screen whose whole
+  // job is saying what something costs.
+  //
+  // It survived because §3's price check reads its expected value out of
+  // `formatModelPrice` itself (`const expectLive = formatModelPrice(...)`), so
+  // expected equals actual by construction whatever that function does — the
+  // fourth root cause named at the top of this file.
+  //
+  // NOT ENFORCED, stated rather than implied away: the render sandbox INJECTS
+  // the real `formatUsdHonest`, so a call site that still calls it BY NAME
+  // cannot be mutated behaviourally from here. What the behavioural half below
+  // catches is a call site that stops routing through the shared formatter at
+  // all — which is the mutation that actually happened. The name-shadowing
+  // case is covered by the source scans that follow it, and by §0's
+  // `topLevelFunctionNames` control.
+  {
+    // Sub-cent money is not hypothetical on this surface: a qualification run
+    // reports `spendUsd` and an estimate reports `usd`, both routinely below a
+    // cent, and an OpenRouter entry may be priced below the $0.10 floor of
+    // today's static table. A two-decimal formatter renders every one of them
+    // as $0.00.
+    const TINY = 0.00003;
+    const NEAR = 0.004;
+    ok(formatModelPrice(TINY, TINY) !== '', 'a sub-cent price renders SOMETHING (not suppressed)');
+    ok(!/\$0\.00\b(?!\d)/.test(formatModelPrice(TINY, TINY)),
+      `a price of $${TINY} never renders as "$0.00" — that reads as FREE (got ${JSON.stringify(formatModelPrice(TINY, TINY))})`);
+    ok(!/\$0\.00\b(?!\d)/.test(formatModelPrice(NEAR, NEAR)),
+      `nor does $${NEAR} (got ${JSON.stringify(formatModelPrice(NEAR, NEAR))})`);
+    // The genuine zero is still allowed to read as zero — the rule is about
+    // non-zero costs, and blunting it into "never print $0.00" would be a
+    // different, wrong rule.
+    ok(/\$0\.00/.test(String(formatModelPrice(0, 0))),
+      'while a genuine ZERO still reads as $0.00 — the rule is about non-zero costs, not about the string');
+    // Cross-checked against the shared module the suite imports DIRECTLY, so
+    // the two cannot silently disagree about the same number.
+    ok(String(formatModelPrice(TINY, TINY)).includes(String(formatUsdHonest(TINY))),
+      'and the figure on the row is exactly what shared/format-usd.js produces for it');
+    // THE WHOLE ROW, through the shipping renderer — a formatter can be
+    // correct while the row inserts something else (the v3.16.1 finding:
+    // `filterHtml` computed and never rendered).
+    {
+      const tinyModel = Object.assign({}, WIRE[POPULATED[0]][0], {
+        id: 'zz/sub-cent', label: 'Sub-cent', free: false,
+        input: TINY, output: TINY, standardInput: TINY, standardOutput: TINY,
+        promotionUntilIso: null, standardPriceFromIso: null,
+      });
+      const price = headlinePrice(renderModelOption(tinyModel, 1, ''));
+      ok(price !== null, 'a sub-cent model still renders a headline price span');
+      ok(price === null || !/\$0\.00(?!\d)/.test(price),
+        `and the RENDERED row does not say $0.00 for it (got ${JSON.stringify(price)})`);
+    }
+  }
+  // SOURCE GUARDS, over COMMENT-STRIPPED source. The previous form read the
+  // raw file, so leaving the import behind as `// import { formatUsdHonest }…`
+  // satisfied it while the real import was gone.
+  ok(/import \{ formatUsdHonest \} from '\.\.\/shared\/format-usd\.js';/.test(settingsCode),
+    'SOURCE GUARD: settings.js imports the shared USD formatter — asserted over comment-stripped source, so a commented-out import does not satisfy it');
+  ok(!/toFixed\(4\)/.test(settingsCode), 'settings.js has no local four-decimal dollar formatter');
+  // The shape the inline mutation took. Narrow on purpose: `toFixed(2)` is
+  // legitimate for a ratio (§11 renders tokenizerFactor with it), so what is
+  // refused is a toFixed adjacent to a DOLLAR SIGN — a money formatter.
+  ok(!/['"`]\$['"`]\s*\+[^\n]*toFixed\(|toFixed\(\d\)[^\n]*['"`]\s*\$/.test(settingsCode),
+    'and no inline `\'$\' + n.toFixed(n)` money formatter anywhere in it — every dollar figure goes through the shared module');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -2235,9 +2316,158 @@ section('§13  The expanded/collapsed state survives a repaint');
   // list, so the markup differs by exactly that attribute and nothing else.
   ok(closed.replace(' open', '') === open.replace(' open', ''),
     'open/closed changes nothing but the attribute — no content is withheld from a collapsed list');
-  ok(/addEventListener\('toggle'/.test(settings),
-    'SOURCE GUARD: a toggle listener records the change');
-  ok(!/addEventListener\('toggle'[\s\S]{0,400}?render\(myMountToken\)/.test(settings),
+  // ── THE LISTENERS, EXECUTED — not grepped ──────────────────────────────
+  // WHAT WAS WRONG HERE. The two source guards below were the ONLY coverage
+  // of the wiring. `addEventListener('toggle'` was searched for FILE-WIDE and
+  // over RAW source, so deleting ALL THREE listeners and leaving one behind as
+  // a `//` comment left this suite at 2022 passed / 0 failed — with every
+  // expanded model list, model row and reference shelf snapping shut on every
+  // repaint the user did not ask for (this section repaints on a keystroke in
+  // the search box, on a sort, on a key save, and on the cross-view write gate
+  // firing for an ingest ELSEWHERE in the app).
+  //
+  // Replaced by driving the REAL `wireProviderListeners` against a recording
+  // fake DOM: every listener it binds is captured, then FIRED, and the state
+  // it wrote is asserted. A deleted listener has nothing to fire; a listener
+  // wired to the wrong field writes the wrong key.
+  {
+    const bound = [];
+    const mkEl = (data) => ({
+      dataset: data, open: false, value: '', disabled: false,
+      addEventListener(type, fn) { bound.push({ el: this, type, fn }); },
+      focus() {}, setSelectionRange() {},
+    });
+    // Exactly one element per selector the wiring reaches for, so a missing
+    // `forEach` binds nothing and is visible as an absent listener.
+    const byId = {};
+    const bySelector = {
+      '[data-model-picker]': [mkEl({ modelPicker: 'gemini' })],
+      '[data-model-row]': [mkEl({ modelRow: 'z-ai/glm-4.7' })],
+      '[data-model-shelf]': [mkEl({ modelShelf: 'all' })],
+    };
+    const fakeDoc = {
+      querySelectorAll: (sel) => bySelector[sel] || [],
+      querySelector: (sel) => (bySelector[sel] || [])[0] || null,
+      getElementById: (id) => byId[id] || null,
+      activeElement: null,
+    };
+    const noop = () => {};
+    const wireState = { modelPickerOpen: {}, modelRowOpen: {}, modelShelfOpen: false };
+    const deps = {
+      document: fakeDoc, state: wireState, myMountToken: 1,
+      render: noop, setModelFilter: noop, cssEscapeAttr: (s) => String(s),
+      focusReplaceInput: noop, onDisconnect: noop, onPickBuildModel: noop,
+      onPickModel: noop, onQualifyDismiss: noop, onQualifyEstimate: noop,
+      onQualifyGo: noop, onQualifyStop: noop, onSaveKey: noop, onSetActive: noop,
+      onSyncCatalogue: noop, onTestKey: noop,
+    };
+    const names = Object.keys(deps);
+    const wire = new Function(...names,
+      extractFunction(settings, 'wireProviderListeners', 'views/settings.js') +
+      '\nreturn wireProviderListeners;')(...names.map((n) => deps[n]));
+    wire();
+
+    const fired = (selector, type) => bound.filter(
+      (b) => (bySelector[selector] || []).includes(b.el) && b.type === type);
+    for (const sel of ['[data-model-picker]', '[data-model-row]', '[data-model-shelf]']) {
+      ok(fired(sel, 'toggle').length === 1,
+        `EXECUTED: exactly one toggle listener is bound to ${sel} (got ${fired(sel, 'toggle').length}) — a deleted one, or one left behind as a comment, binds nothing`);
+    }
+    // FIRE THEM. Binding the listener is half the claim; writing the right
+    // field is the other half, and a listener pointed at the wrong key would
+    // bind fine and lose the fold anyway.
+    //
+    // FAIL CLEANLY, NEVER CRASH. A listener that reaches for a name this
+    // harness does not supply throws ReferenceError, and an uncaught throw
+    // here is a red for the WRONG REASON that also hides every assertion
+    // after it (the v3.7.0 lesson). The throw is caught and reported as its
+    // own named assertion instead, so the failure says what happened.
+    const thrown = [];
+    const fire = (sel, open) => {
+      bySelector[sel][0].open = open;
+      for (const b of fired(sel, 'toggle')) {
+        try { b.fn(); } catch (e) { thrown.push(`${sel}: ${e && e.message}`); }
+      }
+    };
+    const openIt = (sel) => fire(sel, true);
+    const closeIt = (sel) => fire(sel, false);
+
+    openIt('[data-model-picker]');
+    ok(wireState.modelPickerOpen.gemini === true,
+      'EXECUTED: expanding a provider list records it under its OWN id, so the next repaint reopens it');
+    closeIt('[data-model-picker]');
+    ok(!Object.hasOwn(wireState.modelPickerOpen, 'gemini'),
+      'EXECUTED: …and collapsing it forgets it, rather than leaving a list the user closed pinned open');
+
+    openIt('[data-model-row]');
+    ok(wireState.modelRowOpen['z-ai/glm-4.7'] === true,
+      'EXECUTED: expanding a MODEL ROW records it — this is the only writer of state.modelRowOpen, and §3b of test-next-settings-scroll-and-scale.js is the reader');
+    closeIt('[data-model-row]');
+    ok(!Object.hasOwn(wireState.modelRowOpen, 'z-ai/glm-4.7'),
+      'EXECUTED: …and collapsing it forgets it');
+
+    openIt('[data-model-shelf]');
+    ok(wireState.modelShelfOpen === true, 'EXECUTED: expanding the reference shelf records it');
+    closeIt('[data-model-shelf]');
+    ok(wireState.modelShelfOpen === false, 'EXECUTED: …and collapsing it records that too');
+
+    // A toggle handler must depend on NOTHING beyond the fold state it
+    // records. Anything else it reaches for is either a re-render (forbidden
+    // below) or a name this harness deliberately does not supply — and either
+    // way the next reader deserves to be told which, not handed a stack trace.
+    ok(thrown.length === 0,
+      `EXECUTED: no toggle handler threw while recording a fold (${thrown.join(' | ') || 'none'}) — a handler reaching for anything beyond state is doing more than recording`);
+
+    // NO RE-RENDER from any of them. <details> has already applied the change;
+    // repainting here throws away the DOM the user just opened. Asserted by
+    // COUNTING calls to the injected render, not by a proximity regex over
+    // source — a one-line helper between the listener and the render defeats a
+    // regex and does not defeat this.
+    {
+      let renders = 0;
+      const d2 = Object.assign({}, deps, { render: () => { renders++; } });
+      const bound2 = [];
+      const mk2 = (data) => ({
+        dataset: data, open: false, value: '', disabled: false,
+        addEventListener(type, fn) { bound2.push({ type, fn, el: this }); },
+        focus() {}, setSelectionRange() {},
+      });
+      const sel2 = {
+        '[data-model-picker]': [mk2({ modelPicker: 'gemini' })],
+        '[data-model-row]': [mk2({ modelRow: 'a/b' })],
+        '[data-model-shelf]': [mk2({ modelShelf: 'all' })],
+      };
+      d2.document = { querySelectorAll: (s) => sel2[s] || [], querySelector: () => null, getElementById: () => null, activeElement: null };
+      d2.state = { modelPickerOpen: {}, modelRowOpen: {}, modelShelfOpen: false };
+      const n2 = Object.keys(d2);
+      new Function(...n2, extractFunction(settings, 'wireProviderListeners', 'views/settings.js') +
+        '\nreturn wireProviderListeners;')(...n2.map((k) => d2[k]))();
+      const before = renders;
+      const errs = [];
+      for (const b of bound2.filter((b) => b.type === 'toggle')) {
+        b.el.open = true;
+        try { b.fn(); } catch (e) { errs.push(String(e && e.message)); }
+      }
+      // COUNTED, not grepped, and that is the point: routing the re-render
+      // through a one-line helper elsewhere in the file (`repaintAfterFold()`)
+      // defeats a proximity regex over source and does not defeat this — the
+      // helper still calls the injected render, and the counter still moves.
+      // A helper that is not injected throws instead, which the assertion
+      // below reports by name rather than crashing the run.
+      ok(errs.length === 0,
+        `EXECUTED: firing the toggles threw nothing (${errs.join(' | ') || 'none'}) — a handler calling out to a repaint helper shows up here`);
+      ok(renders === before,
+        `EXECUTED: firing all three toggles triggers ZERO re-renders (got ${renders - before}) — a repaint here would discard the DOM the user just opened`);
+      ok(bound2.filter((b) => b.type === 'toggle').length === 3,
+        'control — three toggle listeners really were bound, so the zero above is not zero-because-nothing-ran');
+    }
+  }
+  // The two source guards this section used to rely on ALONE, kept as a
+  // second layer and moved onto COMMENT-STRIPPED source so a commented-out
+  // listener no longer satisfies them.
+  ok(/addEventListener\('toggle'/.test(settingsCode),
+    'SOURCE GUARD: a toggle listener records the change (comment-stripped, so a `//` copy does not count)');
+  ok(!/addEventListener\('toggle'[\s\S]{0,400}?render\(myMountToken\)/.test(settingsCode),
     'SOURCE GUARD: and does NOT re-render — repainting would discard the DOM the user just opened');
 }
 // ═════════════════════════════════════════════════════════════════════════
@@ -4740,13 +4970,52 @@ section('§21  The collapsed row stands alone — reason and price unfolded, not
   // this is enforced rather than requested. Pinned in BOTH directions so a
   // future edit that inlines a private copy in either view goes red.
   {
+    // ── WHY THIS WAS REWRITTEN ───────────────────────────────────────────
+    // Both scans read RAW source, and the negative one looked only for
+    // `function formatModelSummary`. Measured: commenting out the import and
+    // adding `const formatModelSummary = (m) => …` — a private copy that says
+    // something different — left this suite at 2017 passed / 0 failed. The
+    // import scan was satisfied by its own comment, the declaration scan does
+    // not know the arrow form, and the behavioural check below cannot see it
+    // at all because the render sandbox INJECTS the real shared builder.
+    // Three ways to be blind to one mutation.
+    //
+    // NOT ENFORCED, stated rather than implied away: because of that injection
+    // this remains a SOURCE SCAN. It is comment-stripped and covers every
+    // declaration form the codebase uses, but it cannot execute a shadowed
+    // binding, and a copy under a DIFFERENT NAME (`buildSummaryLine`) would
+    // evade it — §0's unresolved-callee scanner is the layer that sees a new
+    // top-level name, not this one.
     const settingsSrc = readFileSync(path.join(ROOT, 'src/public/next/views/settings.js'), 'utf8');
     const chatSrc2 = readFileSync(path.join(ROOT, 'src/public/next/views/chat.js'), 'utf8');
-    for (const [name, src] of [['settings.js', settingsSrc], ['chat.js', chatSrc2]]) {
-      ok(/import \{[^}]*formatModelSummary[^}]*\} from '\.\.\/shared\/model-summary\.js';/.test(src),
-        `${name} imports formatModelSummary from the shared module`);
-      ok(!/function formatModelSummary\b/.test(src),
-        `${name} does NOT define its own copy of it`);
+    /** Every declaration form that would shadow an import, over stripped source. */
+    const declaresLocally = (code, fn) => {
+      const esc = fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(
+        `(?:async\\s+)?function\\s+${esc}\\s*\\(` +          // function f(…)
+        `|(?:const|let|var)\\s+${esc}\\s*=` +                 // const f = … (arrow, fn-expr, alias)
+        `|class\\s+${esc}\\b`, 'm').test(code);
+    };
+    for (const [name, raw] of [['settings.js', settingsSrc], ['chat.js', chatSrc2]]) {
+      const code = stripComments(raw);
+      ok(/import \{[^}]*formatModelSummary[^}]*\} from '\.\.\/shared\/model-summary\.js';/.test(code),
+        `${name} imports formatModelSummary from the shared module — over COMMENT-STRIPPED source, so a commented-out import does not satisfy it`);
+      ok(!declaresLocally(code, 'formatModelSummary'),
+        `${name} does NOT define its own copy of it, in ANY declaration form (function, const/let/var, class) — a private copy is free to say something different from the composer's`);
+      // Non-vacuous precondition: the name really is an IMPORT here, so the
+      // two assertions above are about the shape they claim to be about.
+      ok(importedNames(code).has('formatModelSummary'),
+        `${name}: formatModelSummary resolves as an imported binding, not a local one`);
+    }
+    // POSITIVE CONTROL for the detector, on synthetic source — so this proves
+    // the SCANNER, not today's settings.js. Both forms the real mutation used.
+    {
+      ok(declaresLocally('const formatModelSummary = (m) => m.label;', 'formatModelSummary'),
+        'control — the ARROW form is detected (the form the shipped scan missed)');
+      ok(declaresLocally('function formatModelSummary(m) { return m; }', 'formatModelSummary'),
+        'control — the function-declaration form is detected');
+      ok(!declaresLocally('const derived = formatModelSummary(m);', 'formatModelSummary'),
+        'control — a CALL is not mistaken for a declaration');
     }
     for (const m of (WIRE.openrouter || [])) {
       const expected = formatModelSummary(m);
@@ -4864,6 +5133,59 @@ section('§22  The filter — search first, and never a ranking we cannot suppor
   ok(orderModels(CORPUS, 'nonsense').every((m, i) => m === CORPUS[i]),
     'an unknown sort falls back to delivered order rather than to an arbitrary one');
   ok(orderModels(null, 'dearest').length === 0, 'a missing list is empty, never a throw');
+
+  // ── 22c-1. THE LABEL IS THE PROMISE ───────────────────────────────────
+  // Everything above ranks by the KEY (`'cheapest'`, `'dearest'`) and never
+  // once asks what the user was told that key does. SWAPPING the two labels in
+  // MODEL_SORT_OPTIONS therefore left this suite at 1999/0 while "Cheapest
+  // first" sorted MOST EXPENSIVE first — across a catalogue spanning 50x on
+  // input and 62x on output, on the screen built for choosing what to spend.
+  // Measured, not theorised.
+  //
+  // The one existing check nearby compares `sortCfg.options.length` against
+  // `MODEL_SORT_OPTIONS.length` — both sides read from the constant under
+  // test, so it is equal by construction (root cause 4). Two guards replace it:
+  // literals for the words, and a BEHAVIOURAL check that resolves the key FROM
+  // the label and drives the real `orderModels` with prices this block owns.
+  {
+    const labelOf = (value) => {
+      const row = MODEL_SORT_OPTIONS.find(([v]) => v === value);
+      return row ? row[1] : null;
+    };
+    assertLiteral(ok, 'Cheapest first', labelOf('cheapest'), 'the `cheapest` key is labelled');
+    assertLiteral(ok, 'Most expensive first', labelOf('dearest'), 'the `dearest` key is labelled');
+    assertLiteral(ok, 'Newest first', labelOf('newest'), 'the `newest` key is labelled');
+    assertLiteral(ok, 'Largest context first', labelOf('largest-context'), 'the `largest-context` key is labelled');
+
+    // THE BEHAVIOURAL HALF. The key is looked up FROM THE WORDS A PERSON READS,
+    // so a swap sends the descending comparator down the "Cheapest first" path
+    // and this fails on the prices themselves rather than on a string.
+    const keyLabelled = (want) => {
+      const row = MODEL_SORT_OPTIONS.find(([, l]) => l === want);
+      return row ? row[0] : null;
+    };
+    // Prices this block owns, in the order the server delivers them (free
+    // bills nothing, so it leads). Small enough to read; the span is real.
+    const mk = (id, input) => ({ id, provider: 'openrouter', label: id, free: input === null, input, output: input === null ? null : input * 4 });
+    const PRICED = [mk('free/a', null), mk('p/010', 0.1), mk('p/100', 1), mk('p/500', 5), mk('p/620', 62)];
+    const paidPrice = (list) => list.filter((m) => typeof m.input === 'number').map((m) => m.input);
+
+    const cheapKey = keyLabelled('Cheapest first');
+    const dearKey = keyLabelled('Most expensive first');
+    ok(cheapKey !== null && dearKey !== null, 'both price labels resolve to a sort key');
+    const asc = orderModels(PRICED, cheapKey);
+    const desc = orderModels(PRICED, dearKey);
+    ok(paidPrice(asc).every((p, i, a) => i === 0 || a[i - 1] <= p),
+      'the option a person reads as "Cheapest first" really does order the priced rows CHEAPEST FIRST');
+    ok(asc[0] && asc[0].free === true,
+      '…with the free row at the cheap end, where a price of null belongs');
+    ok(paidPrice(desc).every((p, i, a) => i === 0 || a[i - 1] >= p),
+      '"Most expensive first" really does order them DEAREST FIRST');
+    ok(desc[desc.length - 1] && desc[desc.length - 1].free === true,
+      '…and puts the free row LAST, which a null-as-zero comparator gets wrong');
+    ok(paidPrice(asc)[0] !== paidPrice(desc)[0],
+      'the two are genuinely different orders — a corpus that could not distinguish them would prove nothing');
+  }
 
   // ── 22d. A MISS EXPLAINS ITSELF AND OFFERS THE WAY BACK ───────────────
   // An unexplained empty list reads as "the feature is broken" — a misreading
@@ -5322,6 +5644,61 @@ section('§40  ONE VOCABULARY — cost, who measured it, and one plain line');
 // be gone, and what replaced them must actually be present. A deletion with no
 // replacement assertion is how a screen loses information silently.
 {
+  // ── 40a-0. THE WORDS THEMSELVES, PINNED TO HAND-WRITTEN LITERALS ────────
+  // Everything else in 40a/40b compares `measurementChip(...)` against the
+  // very object it returns, by IDENTITY. That is correct as a routing test and
+  // it is BLIND to the vocabulary: SWAPPING the `curator` and `none` labels
+  // inside MEASUREMENT_CHIPS leaves every identity comparison true, so every
+  // measured model would read "not measured" and every unmeasured one
+  // "measured by The Curator" — on a spending screen — with this suite at
+  // 1982/0. Measured, not theorised: that mutation was applied and the tally
+  // did not move by one.
+  //
+  // These three literals are typed out here ON PURPOSE. They are the fourth
+  // root cause the shared helpers cannot fix (see the import block at the top):
+  // an expected value read from the constant under test is equal by
+  // construction. If a label is deliberately reworded, this is the assertion
+  // that is supposed to make you come and change it.
+  assertLiteral(ok, 'measured by The Curator', MEASUREMENT_CHIPS.curator.label,
+    'the CURATOR chip reads exactly that');
+  assertLiteral(ok, 'measured on your wiki', MEASUREMENT_CHIPS.user.label,
+    'the USER chip reads exactly that — a nine-run local probe is not a multi-document measurement');
+  assertLiteral(ok, 'not measured', MEASUREMENT_CHIPS.none.label,
+    'the NONE chip reads exactly that');
+  // Distinct, and disjoint as substrings — which is what lets the rendered
+  // assertions below say "and NOT the other two" and mean it.
+  {
+    const labels = [MEASUREMENT_CHIPS.curator.label, MEASUREMENT_CHIPS.user.label, MEASUREMENT_CHIPS.none.label];
+    ok(new Set(labels).size === 3, 'the three chips carry three different words');
+    ok(!labels.some((a) => labels.some((b) => a !== b && a.includes(b))),
+      'and none contains another, so a containment check cannot pass on the wrong chip');
+  }
+
+  // ── 40a-1. THE RENDERED CHIP CARRIES THE RIGHT WORD ────────────────────
+  // Behavioural, through the shipping renderer, because a table can be
+  // correct while nothing reads it. Each case asserts the word that SHOULD be
+  // there and the ABSENCE of the two that should not — a swap fails twice.
+  {
+    const rendered = [
+      ['curator', 'measured by The Curator', ['measured on your wiki', 'not measured']],
+      ['user', 'measured on your wiki', ['measured by The Curator', 'not measured']],
+      [null, 'not measured', ['measured by The Curator', 'measured on your wiki']],
+    ];
+    for (const [wire, want, wrong] of rendered) {
+      // Just the chip's own visible text: the `title` is prose about the same
+      // subject and would make a naive contains-check ambiguous.
+      const span = renderMeasurementChip({ measuredBy: wire }, null);
+      const text = />([^<]*)<\/span>\s*$/.exec(span);
+      ok(!!text, `measuredBy ${JSON.stringify(wire)}: the chip renders a <span> with visible text`);
+      assertLiteral(ok, want, text ? text[1] : null,
+        `measuredBy ${JSON.stringify(wire)}: the RENDERED chip says it`);
+      for (const w of wrong) {
+        ok(text ? text[1] !== w : false,
+          `measuredBy ${JSON.stringify(wire)}: …and does NOT say "${w}" (a label swap fails here)`);
+      }
+    }
+  }
+
   // ── 40a. The chip is a total function over the three wire states ────────
   const chipCases = [
     ['curator', MEASUREMENT_CHIPS.curator],
@@ -5362,9 +5739,49 @@ section('§40  ONE VOCABULARY — cost, who measured it, and one plain line');
     'an explicit null is honoured — "we were not told" and "nobody measured it" are different facts');
 
   // ── 40c. The retired badges are gone from EVERY row, everywhere ─────────
+  //
+  // WHAT WAS WRONG HERE, AND WHY IT WAS 111 ASSERTIONS. This block used to
+  // assert `!li.includes(word)` for THREE retired phrases on EACH of 37
+  // rendered rows: 111 assertions, 5.6% of this whole suite, for a THREE-FACT
+  // claim. All three phrases exist in settings.js today only inside COMMENTS
+  // describing the reduction; no code path emits any of them, and every one of
+  // the 37 rows was re-asserting the identical GLOBAL property.
+  //
+  // STATED PRECISELY, because overclaiming a finding is its own defect: those
+  // 111 were not literally unfalsifiable — reintroducing a badge on every row
+  // does turn them red, and that was measured. What they were is 37x redundant
+  // on a property that is global, not per-row, inflating the tally by 5.6%
+  // while buying nothing the first row had not already established. A tally
+  // that large is itself a hazard: it reads as coverage, and it is the kind of
+  // block a reviewer skims past on the way to the assertions that discriminate.
+  //
+  // REPLACED, not deleted: what the block is FOR — "the six vocabularies were
+  // reduced to one and stayed reduced" — is worth keeping. It is now
+  // expressed as (a) a SOURCE scan over comment-stripped settings.js, which a
+  // reintroduced badge really does break, (b) a POSITIVE CONTROL proving that
+  // scan fires, and (c) one aggregated check per phrase over every rendered
+  // row, so the wire cannot smuggle the wording back in through a note.
+  // 111 unfalsifiable -> 7 falsifiable, and the per-row POSITIVE assertion
+  // (exactly one measurement chip) is untouched and still runs 37 times.
   const RETIRED = ['chat only — not for ingest', 'never measured here',
     'you measured this on your wiki'];
+  {
+    for (const word of RETIRED) {
+      ok(!settingsCode.includes(word),
+        `SOURCE: settings.js can no longer EMIT the retired badge "${word}" — asserted over comment-stripped source, because all three survive in comments describing the reduction and a raw scan would be red for prose`);
+    }
+    // POSITIVE CONTROL. Proves the scan detects a reintroduction rather than
+    // passing because the phrase is simply hard to find.
+    const probe = stripComments(
+      "// the `chat only — not for ingest` badge was retired\n" +
+      "const BADGE = 'chat only — not for ingest';\n");
+    ok(probe.includes('chat only — not for ingest'),
+      'control — a REINTRODUCED badge (a real string literal) IS detected by that scan');
+    ok(!stripComments("// 'chat only — not for ingest'\n").includes('chat only'),
+      'control — …while the same words in a COMMENT are not, which is why the scan is comment-stripped');
+  }
   let rowsChecked = 0;
+  const allRows = [];
   for (const prov of POPULATED) {
     const surfaces = [
       renderModelPicker(rowFor(prov), keysFor(prov), true, false),
@@ -5375,17 +5792,27 @@ section('§40  ONE VOCABULARY — cost, who measured it, and one plain line');
         const li = liFor(html, m.id);
         if (!li) continue;
         rowsChecked++;
-        for (const word of RETIRED) {
-          ok(!li.includes(word), `"${m.id}": no retired badge "${word}"`);
-        }
+        allRows.push(li);
         // …and exactly ONE measurement chip, so the three did not become three
-        // again under new names.
+        // again under new names. POSITIVE and per-row: a second chip, or none,
+        // fails here and names the model.
         const chips = (li.match(/class="model-badge model-measured /g) || []).length;
         ok(chips === 1, `"${m.id}": carries exactly one measurement chip (got ${chips})`);
       }
     }
   }
   ok(rowsChecked > 20, `the sweep is non-vacuous (${rowsChecked} rows checked)`);
+  {
+    // ONE assertion per phrase over the whole rendered corpus, rather than one
+    // per phrase per row. Same guarantee, 3 tally entries instead of 111 — and
+    // it still covers the one way the wording could come back without touching
+    // settings.js: a `note` on the wire that happens to carry it.
+    const corpus = allRows.join('\n');
+    for (const word of RETIRED) {
+      ok(!corpus.includes(word),
+        `RENDERED: no row on either surface carries the retired badge "${word}" (${rowsChecked} rows, both surfaces)`);
+    }
+  }
 
   // ── 40d. `caution` lost its badge and KEPT its warning ──────────────────
   // v3.16.1's rule: a warning behind a click is not a warning. `cautionReason`

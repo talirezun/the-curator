@@ -34,6 +34,11 @@ import {
 import { readFileSync } from 'fs';
 import { userDataPath } from './paths.js';
 import { writeFileAtomicSync } from './atomic-write.js';
+// The absolute-path scrubber, from its own LEAF module. Deliberately not from
+// ingest-queue.js, where it used to live: that module imports THIS one, so the
+// import would be a cycle and would drag the ingest queue and health.js into
+// the MCP child's import graph, where a stray stdout write corrupts JSON-RPC.
+import { scrubPaths } from './scrub-paths.js';
 
 /**
  * The providers this module can dispatch to.
@@ -2071,11 +2076,63 @@ export function setOpenRouterCatalogue(specs) {
   // every time a user syncs.
   const staticIds = new Set((OFFERABLE_MODELS.openrouter || []).map(e => e.id));
 
+  // ── AN ID IS A KEY, AND SEVERAL OF THE LOOKUPS IT KEYS ARE NOT PROVIDER-
+  //    SCOPED ────────────────────────────────────────────────────────────────
+  // `getModelPrice(id)`, `isFreeModel(id)` and `anthropicMaxOutputTokens(id)`
+  // take an id and nothing else, and `chargeForItem` keys on `tokenUsage.model`
+  // — the model that actually RAN. So a fetched entry claiming a BUILT-IN id
+  // from ANOTHER provider would be offered under `openrouter` while every
+  // id-keyed money lookup answered with the built-in's figures.
+  //
+  // NOT A LIVE EXPLOIT, and the comment says so rather than dressing it up:
+  // measured against the real provider list, all 198 live specs carry a
+  // `vendor/` prefix and no built-in id does, so nothing OpenRouter publishes
+  // today can collide. This is a structural floor under an id namespace we do
+  // not control, not a fix for an observed failure.
+  //
+  // OpenRouter's OWN static ids are excluded — they collide by design (the
+  // provider of course lists the models we hand-measured) and are already
+  // handled as `superseded` above, which is not a failure.
+  const builtInIds = new Set();
+  for (const list of Object.values(OFFERABLE_MODELS)) {
+    for (const e of list || []) if (e && typeof e.id === 'string') builtInIds.add(e.id);
+  }
+  for (const id of Object.keys(MODEL_PRICES_USD_PER_MTOK)) builtInIds.add(id);
+  for (const id of staticIds) builtInIds.delete(id);
+
   const out = [];
+  const seenIds = new Set();
   let refused = 0;
   let superseded = 0;
   for (const spec of Array.isArray(specs) ? specs : []) {
-    if (spec && typeof spec.id === 'string' && staticIds.has(spec.id)) { superseded++; continue; }
+    const specId = spec && typeof spec.id === 'string' ? spec.id : null;
+    if (specId !== null && staticIds.has(specId)) { superseded++; continue; }
+    // ── UNIQUENESS, BEFORE ADMISSION ─────────────────────────────────────────
+    // Nothing deduped: two specs sharing an id were BOTH admitted, so the
+    // picker rendered the same model twice while `registerDynamicPrice` and the
+    // free registry kept only the LAST — an offer and its price describing
+    // different records. Refused BEFORE `defineOfferableModel` so the duplicate
+    // never registers a price or a freeness at all.
+    //
+    // The FIRST occurrence wins because `findOfferableModel` uses `.find()`:
+    // that entry is already the one routing and pricing resolve, so keeping it
+    // makes the registries agree with what was always being used, rather than
+    // changing which model a user gets.
+    //
+    // Counted as `refused` rather than as a new field: the route's contract for
+    // that number is "passed eligibility, failed to become an offer", which a
+    // duplicate and a collision both did. A separate counter would reach no
+    // rendered surface — dead data — and the stderr line below carries the
+    // reason for anyone reading a log.
+    if (specId !== null && (seenIds.has(specId) || builtInIds.has(specId))) {
+      refused++;
+      console.error(
+        seenIds.has(specId)
+          ? `[llm] OpenRouter catalogue entry refused: duplicate id "${specId}" — the first occurrence is kept`
+          : `[llm] OpenRouter catalogue entry refused: id "${specId}" collides with a built-in model id`,
+      );
+      continue;
+    }
     try {
       // `{dynamic: true}` is what makes the overlay's chat-lane claim structural
       // rather than a comment — see defineOfferableModel.
@@ -2090,6 +2147,7 @@ export function setOpenRouterCatalogue(specs) {
         throw new Error(`[llm] built entry "${entry.id}" is not chat-only — the runtime overlay may not reach the build lane`);
       }
       out.push(entry);
+      seenIds.add(entry.id);
     } catch (err) {
       refused++;
       // stderr, never stdout — this module is imported by the MCP child
@@ -2318,7 +2376,11 @@ function persistOpenRouterCatalogue(specs, syncedAt) {
   } catch (err) {
     // stderr, never stdout — this module is imported by the MCP child process,
     // which reserves stdout for JSON-RPC frames (v2.5.3).
-    console.error(`[llm] could not persist the OpenRouter catalogue: ${err && err.message}`);
+    // SCRUBBED: a failed write throws a raw `fs` error carrying the sidecar's
+    // ABSOLUTE path, i.e. the user's home directory. This line is now reached
+    // from the BOOT-TIME auto-sync as well as from the Settings button, so it
+    // fires with nobody watching, into the log users paste into bug reports.
+    console.error(`[llm] could not persist the OpenRouter catalogue: ${scrubPaths(String((err && err.message) || err))}`);
     return false;
   }
 }
@@ -2566,7 +2628,9 @@ function persistLocalQualifications() {
   } catch (err) {
     // stderr, never stdout — this module is imported by the MCP child process,
     // which reserves stdout for JSON-RPC frames (v2.5.3).
-    console.error(`[llm] could not persist local model qualifications: ${err && err.message}`);
+    // Same shape, same reason as the catalogue sidecar above: a raw `fs` error
+    // carries the absolute path of a file under the user's home directory.
+    console.error(`[llm] could not persist local model qualifications: ${scrubPaths(String((err && err.message) || err))}`);
     return false;
   }
 }

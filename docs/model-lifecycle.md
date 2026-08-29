@@ -304,6 +304,7 @@ This mirrors `normalizeChatProvider` (invalid provider → `null` → global) an
 
 ---
 
+
 ## OpenRouter — a third provider whose catalogue moves without us
 
 Gemini and Anthropic are two vendors with two catalogues, and both are small enough to hand-measure in full. **OpenRouter is an aggregator**: one key, one wire format, and hundreds of models from many vendors behind it. That difference is the whole design problem, because this project's admission rule — *a model may not be offered for a feature it has never been measured against* — does not scale to a catalogue nobody on this project controls, that changes without a release of ours, and that is already large enough that measuring all of it is not a task with an end.
@@ -315,9 +316,35 @@ The answer is **two admission standards over one catalogue, split by lane**. It 
 | **Build** — ingest, AI Health scans, Compile | Writes pages into the user's wiki | **Hand-measured against the real ingest outline prompt.** Unchanged from the standard the 14 hand-measured models were held to. |
 | **Chat** | Answers one question | Whatever the user's key unlocks, after the structural filters below — **clearly labelled as unmeasured**. |
 
-> **Status: the chat lane's live-catalogue overlay is POPULATED, on demand.** The previous release shipped `fetchOpenRouterCatalogue()`, `openRouterRecordToSpec()` and `setOpenRouterCatalogue()` fully tested with **zero production callers**, so both lanes offered the same three models. `POST /api/config/openrouter/sync` is the join, driven by **Refresh model list** in Settings; it fetches, filters, admits, persists, and reports the funnel below. On one measured run (28 August 2026) it took `listOfferableModels('openrouter')` from **3 entries to 192**. Nothing is fetched until a user asks — there is no automatic refresh — and nothing fetched can reach the build lane.
+> **Status: the chat lane's live-catalogue overlay is POPULATED, on demand.** The previous release shipped `fetchOpenRouterCatalogue()`, `openRouterRecordToSpec()` and `setOpenRouterCatalogue()` fully tested with **zero production callers**, so both lanes offered the same three models. `POST /api/config/openrouter/sync` is the join, driven by **Refresh model list** in Settings; it fetches, filters, admits, persists, and reports the funnel below. On one measured run (28 August 2026) it took `listOfferableModels('openrouter')` from **3 entries to 192**. It is now **also fetched automatically at startup when the catalogue is absent or older than `OPENROUTER_CATALOGUE_MAX_AGE_MS` (24 h)** — see [Automatic catalogue sync](#automatic-catalogue-sync) — and nothing fetched can reach the build lane.
 >
 > **No standing catalogue count appears in this document, and that is deliberate.** OpenRouter's list moved by **seven records inside five hours** on the day it was measured. Any absolute number here would be wrong within the week; the *method* is what is stable, so every figure below is dated.
+
+### Automatic catalogue sync
+
+**The problem it fixed.** Until this release the OpenRouter catalogue was populated *only* by the
+Settings button. A user with an OpenRouter key who never found that button saw the five static
+routes and nothing else, with no signal anywhere that a larger catalogue existed. That is the
+direct cause of the reported symptom *"the models sometimes show and sometimes do not"*.
+
+**The policy.** `openRouterCatalogueNeedsSync(nowMs)` in `src/brain/llm.js` classifies the stored
+catalogue as `absent`, `undated`, `stale` or `fresh` against
+`OPENROUTER_CATALOGUE_MAX_AGE_MS = 24 * 60 * 60 * 1000`. An unparseable **or future** timestamp
+yields a `null` age and is treated as stale — a clock that cannot be trusted must not be read as
+freshness.
+
+**Where it fires, and why that matters.** `maybeAutoSyncOpenRouter()` in `src/routes/config.js` is
+invoked from **inside `listen()`** in `src/server.js`, deliberately **not at module scope**: an
+offline suite imports that router unisolated, and a module-scope call would make a test hit the
+network and write a sidecar into the real user-data directory. It reports a skip reason rather
+than failing silently — `test-isolated`, `unsupported`, `config-unreadable`, `no-key`,
+`writes-active`, or `failed`.
+
+**Failure is non-destructive, in both directions.** A fetch error is caught and the previous
+catalogue is left exactly as it was. An *empty* result throws `OPENROUTER_EMPTY_CATALOGUE` before
+anything is replaced — "OpenRouter has no models" is not a state that exists, whereas "we could not
+read the answer" very much is. The manual `POST /api/config/openrouter/sync` route and its Settings
+button remain, unchanged.
 
 ### The fetched catalogue is persisted, and re-checked on the way back in
 

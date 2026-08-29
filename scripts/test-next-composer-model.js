@@ -303,6 +303,11 @@ const FN_NAMES = [
   'assistantEyebrowHtml',
   // §11 — the ANSWER cost (what that message cost, from its own tokens).
   'messageUsageTokens', 'messageCostUsd', 'assistantCostHtml',
+  // §15 — the RE-ASK caveat: whether the answer being re-asked is still inside
+  // the window the next prompt will carry.
+  'answerIsInPromptWindow',
+  // §16 — the option VALUE that names a row rather than a model id.
+  'modelOptionValue', 'parseModelOptionValue',
 ];
 
 /** Bindings the sandbox supplies to the extracted code, in call order. */
@@ -349,8 +354,21 @@ const sandbox = new Function(
   extractConst(chatSrc, 'WORKING_SET_COLLAPSE_ABOVE') + '\n' +
   extractConst(chatSrc, 'MAX_RECENTS') + '\n' +
   extractConst(chatSrc, 'MAX_STARRED') + '\n' +
+  // §15/§16's two constants, lifted from the REAL source. §15 additionally
+  // asserts the LITERAL 20 and cross-checks src/brain/chat.js's `slice(-20)`,
+  // because a suite whose expectation is read from the same constant the code
+  // reads cannot see the two drift apart — it only sees them agree.
+  extractConst(chatSrc, 'PROMPT_HISTORY_MESSAGES') + '\n' +
+  extractConst(chatSrc, 'MODEL_VALUE_SEP') + '\n' +
+  extractConst(chatSrc, 'BROWSE_MODEL_VALUE') + '\n' +
+  // `answerIsInPromptWindow` reads the view's module-level `state`. Declared
+  // here rather than added to INJECTED so the sandbox's argument ORDER — which
+  // §0 does not check — cannot silently shift under a later edit.
+  'var state = { thread: [] };\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
-  'return { SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' + FN_NAMES.join(', ') + ' };'
+  'return { SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' +
+  'PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, ' +
+  '__setThread(t) { state.thread = t; }, ' + FN_NAMES.join(', ') + ' };'
 )(escapeHtmlStub, formatUsdHonest, formatModelSummary, iconStub, formatDurationMs);
 
 const {
@@ -363,6 +381,8 @@ const {
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
   messageUsageTokens, messageCostUsd, assistantCostHtml,
+  PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, __setThread,
+  answerIsInPromptWindow, modelOptionValue, parseModelOptionValue,
 } = sandbox;
 
 // ── The FN_NAMES completeness guard — see §0 ─────────────────────────────
@@ -3054,6 +3074,173 @@ section('§14  THE BROWSE DIALOG — search and filter on FACTS only');
     // the id and the label into ATTRIBUTE context.
     ok(!/aria-label="[^"]*<img/.test(html), 'the star\'s aria-label is escaped too');
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§15  THE RE-ASK CAVEAT — a claim about what the second model will see');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT ───────────────────────────────────────────────────────────
+// The pre-spend dialog said, UNCONDITIONALLY, "The new model can see the answer
+// above, so this is a second opinion rather than an independent run." Prompts
+// are built from `conversation.messages.slice(-20)`, and `reaskButtonHtml(i)`
+// is emitted for EVERY assistant index — so on any thread longer than the
+// window that sentence was simply false, on the surface where a paid call is
+// being authorised.
+//
+// The fix is the CLAIM, not the control: an older answer is still worth
+// re-asking, so the button stays and the sentence becomes conditional, gated on
+// being able to PROVE the answer is in scope.
+{
+  // ── 15a. THE COUPLING, PINNED AT BOTH ENDS ─────────────────────────────
+  // The window size is a frontend COPY of a backend constant and cannot be
+  // imported (this view runs in a browser). Both ends are pinned to the LITERAL
+  // here — reading the expectation out of the same constant the code reads
+  // would only ever prove the file agrees with itself.
+  ok(PROMPT_HISTORY_MESSAGES === 20,
+    '§15a chat.js pins the prompt window at 20 messages (literal, not read from the code under test)');
+  const brainChat = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
+  ok(/conversation\.messages\.slice\(-20\)/.test(brainChat),
+    '§15a …and src/brain/chat.js STILL slices the last 20 — if this goes red the two ' +
+    'have drifted and the dialog\'s sentence is wrong again; change both, never one');
+
+  // ── 15b. THE ARITHMETIC, over the REAL function ────────────────────────
+  const mkThread = (n) => Array.from({ length: n }, (_, i) => (
+    i % 2 === 0 ? { role: 'user', content: 'q' + i } : { role: 'assistant', content: 'a' + i }
+  ));
+  const at = (thread, i) => { __setThread(thread); return answerIsInPromptWindow(i); };
+
+  const t40 = mkThread(40);
+  ok(at(t40, 39) === true, '§15b the LAST answer is in the window');
+  // index 20 has 19 messages after it -> 20th from the end -> the last slot.
+  ok(at(t40, 20) === true, '§15b the answer exactly 20th from the end is still in the window (boundary, inclusive)');
+  // index 19 has 20 after it -> 21st from the end -> outside.
+  ok(at(t40, 19) === false, '§15b the answer 21st from the end is OUTSIDE it (boundary, exclusive)');
+  ok(at(t40, 1) === false, '§15b an answer near the top of a long thread is outside it');
+  ok(at(mkThread(6), 1) === true, '§15b a short thread is entirely inside it');
+
+  // ── 15c. FAIL-SAFE DIRECTION IS FALSE ──────────────────────────────────
+  // `true` licenses a claim; anything unaccountable must therefore return
+  // false, so the dialog hedges rather than asserts.
+  ok(at(t40, -1) === false, '§15c a negative index claims nothing');
+  ok(at(t40, 1.5) === false, '§15c a non-integer index claims nothing');
+  ok(at(t40, 999) === false, '§15c an index past the end claims nothing');
+  ok(at(t40, undefined) === false, '§15c a missing index claims nothing');
+  __setThread(null);
+  ok(answerIsInPromptWindow(0) === false, '§15c a thread that is not an array claims nothing');
+  {
+    const holed = mkThread(6);
+    holed[4] = null;
+    ok(at(holed, 1) === false,
+      '§15c an entry it cannot account for claims nothing — an under-claim is a hedge, ' +
+      'an over-claim is a falsehood');
+  }
+
+  // ── 15d. COMPILE CARDS ARE SKIPPED, AND NOTHING ELSE IS ────────────────
+  // A compile card is pushed client-side and is provably never in the server's
+  // `messages`, so counting it would push a genuinely in-window answer out.
+  // An ERRORED assistant turn is NOT skipped even though the failed send
+  // usually persisted nothing: over-counting can only move an answer OUT of
+  // the window, which is the safe error, and the reverse is a false claim.
+  {
+    // 21 real entries puts index 0 exactly ONE past the window; 20 puts it
+    // inside. So splicing a 21st entry in decides the case, and what that
+    // entry IS decides whether the answer is claimed or hedged.
+    ok(at(mkThread(21), 0) === false, '§15d control: 21 real entries puts index 0 outside');
+    ok(at(mkThread(20), 0) === true, '§15d control: 20 real entries puts index 0 inside');
+    const withCards = mkThread(20);
+    withCards.splice(5, 0, { role: 'compile', html: '<div></div>' });
+    ok(withCards.length === 21 && at(withCards, 0) === true,
+      '§15d a COMPILE CARD does not count — it is client-only and never reaches the server\'s messages');
+    const withError = mkThread(20);
+    withError.splice(5, 0, { role: 'assistant', content: '', error: 'boom' });
+    ok(withError.length === 21 && at(withError, 0) === false,
+      '§15d an ERRORED assistant turn IS counted — over-counting only pushes an answer OUT, ' +
+      'which is the safe direction');
+  }
+
+  // ── 15e. THE SENTENCE ITSELF, in the shipped source ────────────────────
+  // Comments stripped first: this file carries several paragraphs ABOUT the
+  // caveat, and a scan a comment can satisfy is a guard about prose.
+  const chatCode = stripCommentsAndLiterals(chatSrc, true);
+  const claims = chatCode.match(/'Re-asks your question in this conversation\.[^']*'/g) || [];
+  ok(claims.length === 2,
+    `§15e the dialog carries TWO re-ask subtitles, not one unconditional claim (found ${claims.length})`);
+  ok(claims.some(c => /can see the answer above/.test(c)),
+    '§15e one states the caveat outright, for the case that can be proven');
+  ok(claims.some(c => /may fall outside/.test(c)),
+    '§15e …and the other HEDGES, for the case that cannot');
+  ok(claims.every(c => /independent run/.test(c)),
+    '§15e BOTH keep the point the sentence exists for — a re-ask is never an independent run, ' +
+    'because the turns since are in the prompt either way');
+  ok(/answerIsInPromptWindow\(o\.messageIndex\)\s*\n?\s*\?/.test(chatCode),
+    '§15e and the branch is DRIVEN by the predicate at the dialog\'s own call site — ' +
+    'not merely defined nearby (a defined-and-uncalled helper reads exactly like a working one)');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§16  AN OPTION VALUE NAMES A ROW, NOT A MODEL ID');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// `offerable` is keyed by provider, so one model id can appear under two of
+// them. shared/listbox.js resolves a commit BY VALUE, so a bare id would make
+// two rows share one value: click the second, get the first — a row badged one
+// vendor selecting another vendor's model and printing the wrong price.
+//
+// DEFENCE IN DEPTH, and said as such: all 198 live catalogue ids carry a
+// `vendor/` prefix and no built-in id does, so no collision exists against
+// today's real API. This makes the frontend half unable to produce one.
+{
+  ok(modelOptionValue('anthropic', 'x-1') === 'anthropic' + MODEL_VALUE_SEP + 'x-1',
+    '§16 a value is provider-qualified');
+  ok(modelOptionValue('gemini', 'x-1') !== modelOptionValue('anthropic', 'x-1'),
+    '§16 …so the SAME id under two providers is two different values');
+  const p = parseModelOptionValue(modelOptionValue('openrouter', 'a/b:free'));
+  ok(p && p.provider === 'openrouter' && p.id === 'a/b:free', '§16 …and round-trips');
+  // Split at the FIRST separator, so an id that itself contained one could not
+  // forge a provider.
+  const q = parseModelOptionValue('gemini' + MODEL_VALUE_SEP + 'weird' + MODEL_VALUE_SEP + 'id');
+  ok(q && q.provider === 'gemini' && q.id === 'weird' + MODEL_VALUE_SEP + 'id',
+    '§16 an id containing the separator cannot forge a provider (first-occurrence split)');
+  ok(parseModelOptionValue(BROWSE_MODEL_VALUE) === null,
+    '§16 the ACTION sentinel is not a qualified value, so it can never be mistaken for one');
+  for (const bad of ['', 'bare-id', MODEL_VALUE_SEP + 'x', 'gemini' + MODEL_VALUE_SEP, null, undefined, 7, {}]) {
+    ok(parseModelOptionValue(bad) === null, `§16 refuses ${JSON.stringify(bad)} — null is the cue to do nothing, never to guess`);
+  }
+
+  // ── 16b. THE RESOLVER HONOURS THE ROW THAT WAS CLICKED ─────────────────
+  // A REAL collision, constructed: the same id under two providers.
+  const COLLIDE = 'shared-id-1';
+  const off = {
+    gemini: [{ id: COLLIDE, label: 'G one', input: 1, output: 2 }],
+    anthropic: [{ id: COLLIDE, label: 'A one', input: 30, output: 60 }],
+  };
+  const provs = ['gemini', 'anthropic'];
+  ok(resolveChatModel(COLLIDE, off, provs).provider === 'gemini',
+    '§16b control: a BARE id resolves to whichever provider comes first — the defect');
+  ok(resolveChatModel(COLLIDE, off, provs, 'anthropic').provider === 'anthropic',
+    '§16b a named provider wins, so the row the user clicked is the row that is selected');
+  ok(resolveChatModel(COLLIDE, off, provs, 'gemini').entry.label === 'G one',
+    '§16b …and it selects that provider\'s ENTRY, which is where the price comes from');
+  ok(resolveChatModel(COLLIDE, off, provs, 'openrouter') === null,
+    '§16b a named provider is EXCLUSIVE — no silent fall-through to a same-named model ' +
+    'from another vendor at another price; refusing costs one click');
+  ok(resolveChatModel('nope', off, provs, 'gemini') === null, '§16b an unknown id is still refused');
+
+  // ── 16c. THE CALL SITES, not merely the helpers ────────────────────────
+  // A helper that is defined and never called reads exactly like a working one.
+  const chatCode2 = stripCommentsAndLiterals(chatSrc, true);
+  ok(/value:\s*modelOptionValue\(row\.provider,\s*row\.entry\.id\)/.test(chatCode2),
+    '§16c the composer\'s option VALUES are qualified at the builder');
+  ok(/value:\s*state\.chatModel\s*\?\s*modelOptionValue\(/.test(chatCode2),
+    '§16c …and so is the SELECTED value, or the check mark would land on nothing');
+  ok(/parseModelOptionValue\(value\)/.test(chatCode2) &&
+     /selectChatModel\(parsed\.id,\s*parsed\.provider\)/.test(chatCode2),
+    '§16c the listbox handler DECODES the value and passes the row\'s provider through');
+  ok(/getAttribute\('data-model-provider'\)/.test(chatCode2) &&
+     /selectChatModel\(id,\s*provider\)/.test(chatCode2),
+    '§16c and the BROWSE dialog reads `data-model-provider` — rendered on every row from ' +
+    'the start and, until now, read by nobody: this repo\'s named dead-data shape');
 }
 
 console.log('\n' + '─'.repeat(60));

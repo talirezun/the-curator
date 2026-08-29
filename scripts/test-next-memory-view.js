@@ -41,7 +41,35 @@
  *  · THE <summary> HAZARD, as a class invariant over rendered OUTPUT rather
  *    than over source text: no `<button>`, `<select>`, `<input>`, `<a>` or
  *    `<textarea>` may appear inside any `<summary>…</summary>` the view emits.
- *  · The view has NO write path: no non-GET fetch anywhere in its source.
+ *  · The view has NO write path, asserted STRUCTURALLY: every `fetch(` call
+ *    site in the view takes exactly ONE argument, so it can only ever be a GET
+ *    whatever a method string is spelled like. (The previous five-literal-
+ *    string scan was defeated by `const M = 'PO' + 'ST'`.)
+ *  · THE MOUNT CONTRACT IS EXECUTED, not grepped: onEnter is lifted out of the
+ *    registerView object literal and run against a recording window/document.
+ *    schedulePoll fires on mount; the teardown cancels the gate, calls
+ *    stopPoll, closes view-owned popovers and REMOVES both wake listeners; two
+ *    mount/teardown cycles leak nothing; and the wake handler itself is
+ *    invoked (revalidates when visible, does not when hidden or unmounted).
+ *  · The SHIPPED render() drives §11 — not a copy of it — so the fact that it
+ *    records `renderedSignature` is what makes "an unchanged poll re-renders
+ *    NOTHING" true. It paints both panes, re-wires, and bails on a stale mount.
+ *  · The focus contract is executed: capture is bounded to FOCUSABLE_IDS,
+ *    restore is BY ID with preventScroll, FOCUS_FALLBACK covers a control that
+ *    removed itself, and a miss is held only while another render is coming.
+ *  · The poll constants are pinned to HAND-WRITTEN LITERALS (20000 / 20 /
+ *    300000) read off live source, and the SAME parsed values are threaded
+ *    into the harness, so §11a's arithmetic is a claim about production.
+ *  · renderStaleNotice is executed, and executed THROUGH renderProject, so the
+ *    Reload offer is proven to reach all three content branches — each fixture
+ *    additionally checked for having reached the branch it is named after.
+ *  · reloadActive KEEPS the user's scope and machine (it does not snap to the
+ *    newest, which is what selectProject deliberately does instead), falls back
+ *    to the freshest only when the scope is genuinely gone, and abandons a
+ *    result that lands after a remount.
+ *  · A COVERAGE CENSUS enumerated FROM DISK: every top-level function is either
+ *    executed here or listed with the reason it is not, so a new one cannot
+ *    arrive untested in silence.
  *  · `splitHandoffPreamble` can never eat a body line, and returns the raw
  *    text unchanged rather than emptying a document it does not recognise.
  *  · `formatAge(null/NaN/negative)` is null, never "0s ago".
@@ -68,10 +96,26 @@
  *    inherited from listWorkingScopes and is not asserted here.
  *  · §11 drives the revalidation logic against a FAKE fetch and a FAKE clock.
  *    It proves what refreshIndex/refreshScopeList/nextPollDelay/schedulePoll
- *    DO with a given response; it does not prove the browser fires `focus` or
- *    `visibilitychange`, nor that the listeners are attached and removed —
- *    that pair is source-scanned in §9 and was verified by hand in a real
- *    browser (0 fetches over 24 s away from the view).
+ *    DO with a given response; it does not prove the BROWSER fires `focus` or
+ *    `visibilitychange`. That the listeners are attached and removed, and what
+ *    the handler does when it fires, IS now executed (§12) — but against a
+ *    fake EventTarget, so the browser half remains a hand-verified claim
+ *    (0 fetches over 28 s away from the view).
+ *  · renderSidebar / renderMain / wire are DOM-bound and are injected as
+ *    spies. §12/§13 prove they are CALLED with the mount token; the markup
+ *    they assemble from the render* functions is covered directly in §6/§14,
+ *    but the setSidebar/setMain/addEventListener calls themselves are not run.
+ *  · §12's "schedulePoll is in the mount half, stopPoll in the teardown half"
+ *    is a SOURCE SCAN over the comment-stripped closure, and says so in its own
+ *    assertion text. Execution proves each is called once per cycle; only the
+ *    scan proves WHICH half it lives in.
+ *  · The census records that a function is LIFTED and run, never that its every
+ *    branch is covered, and never that a meaningful assertion was made about
+ *    what it returned. Its EXECUTED set is hand-maintained; the only mechanical
+ *    check on it is that each name really is extracted from live source here.
+ *    `renderSidebar`, `renderMain`, `renderNoProjects`, `freshState`,
+ *    `loadIndex`, `selectProject` and `wire` are listed as not executed, each
+ *    with its reason, rather than being quietly absent.
  *  · refreshScopeList's `!state.scope` early return is defence in depth and
  *    is NOT independently pinned: the membership check below it already
  *    returns for a falsy scope. Said so in the source, and measured.
@@ -82,6 +126,12 @@ import { join, dirname, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+// Shared source-scanning helpers (scripts/test-source-scan-helpers.js proves
+// each one detects the defect it claims to). Used here so a positive scan
+// cannot be satisfied by a `//` comment, a file-wide regex cannot be satisfied
+// by a line in some OTHER function, and vocabulary is pinned to a literal
+// rather than to the constant the production code itself reads.
+import { stripComments, functionSource, callSiteCount, assertLiteral } from './test-helpers/source-scan.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -177,7 +227,7 @@ function fingerprint(dir) {
     for (const e of readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.isFile()) files.push(relative(dir, p) + ' ' + createHash('sha256').update(readFileSync(p)).digest('hex'));
+      else if (e.isFile()) files.push(relative(dir, p) + '\u0000' + createHash('sha256').update(readFileSync(p)).digest('hex'));
     }
   })(dir);
   return { hash: createHash('sha256').update(files.join('\n')).digest('hex'), count: files.length };
@@ -514,13 +564,25 @@ function makeRenderers(stateObj) {
     extractFunction(viewSrc, 'renderBrief', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderAbout', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderEmptyProject', 'memory.js') + '\n' +
+    // The five that used to be lifted by NOBODY. renderStaleNotice in
+    // particular had no assertion of any kind: replacing its body with
+    // `return '';` deleted the Reload offer — the v3.17.3 headline — and left
+    // this suite fully green. renderProject is lifted with it so the offer is
+    // proven to REACH the page rather than merely to exist.
+    extractFunction(viewSrc, 'renderStaleNotice', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'unlistedCount', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderUnlistedNote', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderBriefOnlyNotice', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderProject', 'memory.js') + '\n' +
     // The REAL component render path, with its own helpers, so the escaping
     // assertions below cover it too.
     extractFunction(listboxSrc, 'normaliseOptions', 'listbox.js') + '\n' +
     extractFunction(listboxSrc, 'findOption', 'listbox.js') + '\n' +
     extractFunction(listboxSrc, 'triggerLabelFor', 'listbox.js') + '\n' +
     extractFunction(listboxSrc, 'renderListboxHtml', 'listbox.js') + '\n' +
-    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, renderEmptyProject, pendingListboxes };';
+    'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, ' +
+    'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
+    'unlistedCount, renderProject, pendingListboxes };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes', body)(
     stateObj, escapeHtml, () => '<svg></svg>', renderMarkdown, () => '<div class="loader"></div>', null, 10, 50, []);
@@ -848,12 +910,72 @@ ok('a save with no notes renders no note label at all',
 section('§8 — The view has no write path');
 // ═════════════════════════════════════════════════════════════════════════
 
-for (const forbidden of ["method: 'POST'", 'method: "POST"', "method: 'DELETE'", "method: 'PUT'", "method: 'PATCH'"]) {
-  ok('view source contains no ' + forbidden, !viewSrc.includes(forbidden));
+// STRUCTURAL, NOT A LIST OF LITERAL STRINGS. The five-string version of this
+// scan was defeated by `const M = 'PO' + 'ST'` — a planted write survived it
+// intact. What actually makes this view read-only is that no fetch it issues
+// carries a REQUEST INIT at all: `fetch(url)` with one argument can only ever
+// be a GET, whatever the method name is spelled like. So the argument count is
+// what is asserted, and the method vocabulary is a second, weaker layer.
+const viewNoComments = stripComments(viewSrc);
+
+/** Every `fetch(` call site's argument list, paren-matched off real source. */
+function fetchCallArgs(src) {
+  const out = [];
+  const re = /(?<![.\w$])fetch\s*\(/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    let depth = 0, i = m.index + m[0].length - 1;
+    for (; i < src.length; i++) {
+      if (src[i] === '(') depth++;
+      else if (src[i] === ')') { depth--; if (depth === 0) break; }
+    }
+    out.push(src.slice(m.index + m[0].length, i));
+  }
+  return out;
+}
+
+/** Split one argument list on TOP-LEVEL commas only. */
+function topLevelArgs(argsSrc) {
+  const parts = [];
+  let depth = 0, quote = null, cur = '';
+  for (let i = 0; i < argsSrc.length; i++) {
+    const c = argsSrc[i];
+    if (quote) { if (c === '\\') { cur += c + (argsSrc[++i] ?? ''); continue; } if (c === quote) quote = null; cur += c; continue; }
+    if (c === "'" || c === '"' || c === '`') { quote = c; cur += c; continue; }
+    if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    if (c === ',' && depth === 0) { parts.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts.map((p) => p.trim()).filter(Boolean);
+}
+
+const fetchArgLists = fetchCallArgs(viewNoComments);
+ok('the scan found the view\'s real fetch call sites (it is not vacuous)',
+  fetchArgLists.length >= 2, 'found ' + fetchArgLists.length);
+ok('EVERY fetch in the view is single-argument — structurally a GET, whatever a method string is spelled like',
+  fetchArgLists.every((a) => topLevelArgs(a).length === 1),
+  JSON.stringify(fetchArgLists.map((a) => topLevelArgs(a).length)));
+// Positive control: the detector must SEE an init object, including one whose
+// method is assembled at runtime — the exact mutation the string list missed.
+ok('self-test: the argument-count scan DOES fire on a runtime-assembled method',
+  topLevelArgs(fetchCallArgs("const M='PO'+'ST'; await fetch(u, { method: M, body: b });")[0]).length === 2);
+ok('self-test: the argument-count scan does NOT fire on a plain read',
+  topLevelArgs(fetchCallArgs("await fetch('/api/memory');")[0]).length === 1);
+
+// A request init cannot arrive by any other door either: no `method:` key
+// anywhere in real code (comments stripped, so the docblock explaining the
+// rule cannot satisfy or violate it), and no alternative transport.
+ok('no `method:` property key appears anywhere in the view\'s real code',
+  !/\bmethod\s*:/.test(viewNoComments));
+for (const transport of ['XMLHttpRequest', 'sendBeacon', 'WebSocket', 'EventSource', 'FormData', 'Request(']) {
+  ok('the view never reaches for ' + transport + ' (fetch is not the only way to write)',
+    !viewNoComments.includes(transport));
 }
 ok('the view fetches only /api/memory endpoints', (() => {
-  const urls = [...viewSrc.matchAll(/fetch\(\s*'([^']+)'/g)].map((m) => m[1]);
-  const built = viewSrc.includes("fetch('/api/memory/' + encodeURIComponent(project)");
+  const urls = [...viewNoComments.matchAll(/fetch\(\s*'([^']+)'/g)].map((m) => m[1]);
+  const built = viewNoComments.includes("fetch('/api/memory/' + encodeURIComponent(project)");
   return urls.every((u) => u.startsWith('/api/memory')) && built;
 })());
 // Import-scoped for the same reason as the route check above: the view's
@@ -869,12 +991,15 @@ ok('the view escapes the project slug into the URL', viewSrc.includes('encodeURI
 section('§9 — Mount-token and timer discipline');
 // ═════════════════════════════════════════════════════════════════════════
 
-ok('the view imports isCurrentMount', viewSrc.includes('isCurrentMount'));
+// EVERY SCAN IN THIS SECTION READS COMMENT-STRIPPED SOURCE. Over raw text
+// each one is satisfiable by a `//` line — this file's own header quotes
+// several of these call shapes while explaining them.
+ok('the view imports isCurrentMount', viewNoComments.includes('isCurrentMount'));
 ok('every setSidebar/setMain call passes a token', (() => {
-  const calls = [...viewSrc.matchAll(/set(?:Sidebar|Main)\(/g)];
+  const calls = [...viewNoComments.matchAll(/set(?:Sidebar|Main)\(/g)];
   // Two definitions of the call shape: each call site must mention `token`
   // within its own statement. Line-scoped and therefore fail-safe.
-  const lines = viewSrc.split('\n');
+  const lines = viewNoComments.split('\n');
   let seen = 0;
   for (let i = 0; i < lines.length; i++) {
     if (!/set(?:Sidebar|Main)\(/.test(lines[i])) continue;
@@ -884,10 +1009,13 @@ ok('every setSidebar/setMain call passes a token', (() => {
   }
   return seen > 0 && calls.length > 0;
 })());
+// The gate cancel is EXECUTED in §12 (a spy counts the real call). This stays
+// as a cheap scoped confirmation that it lives in the teardown specifically —
+// which execution alone cannot tell you.
 ok('the teardown cancels the loading gate (timer hygiene)',
-  /return \(\) => \{[\s\S]*loadGate\.cancel\(\)/.test(viewSrc));
+  /return \(\) => \{[\s\S]*loadGate\.cancel\(\)/.test(viewNoComments));
 ok('async loaders check isCurrentMount after their await',
-  (viewSrc.match(/if \(!isCurrentMount\(token\)\)/g) || []).length >= 3);
+  (viewNoComments.match(/if \(!isCurrentMount\(token\)\)/g) || []).length >= 3);
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§10 — The SQUARE marker, and CSS hygiene');
@@ -957,11 +1085,73 @@ section('§11 — REVALIDATION, driven rather than grepped');
 // and given injected collaborators — a fake fetch, a fake clock, a render
 // that does exactly what the real one does to the signature bookkeeping.
 
-// Fidelity guard for the harness below: the real render() is what maintains
-// `renderedSignature`, so the fake one must too. A source check, and labelled
-// as one — it guards the harness, not the behaviour.
-ok('render() is what records renderedSignature (the harness mirrors this)',
-  /function render\(token\) \{[\s\S]{0,200}?renderedSignature = screenSignature\(\);/.test(viewSrc));
+// THE HARNESS BELOW RUNS THE REAL render(), NOT A COPY OF IT.
+//
+// It used to define its own `function render(token) { renderedSignature =
+// screenSignature(); onRender(token); }` and guard the real one with a source
+// regex. Both halves were defeatable: the regex reads RAW source, so leaving
+// `// renderedSignature = screenSignature();` behind satisfied it, and the
+// executed half never touched the shipped function at all. Deleting that one
+// assignment from production left this suite fully green while shipping a
+// 20-second poll that re-renders the whole pane unconditionally — closing any
+// picker the user had open, on the one screen whose premise is that something
+// else writes while you watch.
+//
+// So render/captureFocus/restoreFocus are lifted from the live source like
+// everything else, and only renderSidebar/renderMain/wire — which need a real
+// DOM — are injected. §11d's "an unchanged poll re-renders NOTHING" is
+// therefore a claim about the shipped function.
+
+// ── The poll constants, pinned to HAND-WRITTEN LITERALS ──────────────────
+//
+// The harness used to be handed 20000 / 20 / 300000 as parameters, so it
+// proved arithmetic about numbers the suite supplied and never read the ones
+// production uses. Changing them to 50 / 0 / 60 — a 50 ms busy poll against a
+// route that stats every (scope, machine) pair across up to 200 domains —
+// left every assertion green. Read off real source, compared against literals
+// typed here, and then THREADED INTO the harness so §11a's arithmetic moves
+// with them too.
+/** A top-level `const NAME = <literal>;` lifted off live source and eval'd. */
+function liftConst(name) {
+  const m = new RegExp('(?:^|\\n)const\\s+' + name + '\\s*=\\s*([\\s\\S]*?);\\n', 'm').exec(viewNoComments);
+  if (!m) return null;
+  try { return new Function('return (' + m[1] + ');')(); } catch { return null; }
+}
+const FOCUSABLE_IDS_SRC = liftConst('FOCUSABLE_IDS');
+const FOCUS_FALLBACK_SRC = liftConst('FOCUS_FALLBACK');
+
+function pollConst(name) {
+  const m = new RegExp('(?:^|\\n)const\\s+' + name + '\\s*=\\s*(-?[\\d_]+)\\s*;').exec(viewNoComments);
+  return m ? Number(m[1].replace(/_/g, '')) : null;
+}
+const POLL_BASE_MS_SRC = pollConst('POLL_BASE_MS');
+const POLL_DUTY_SRC = pollConst('POLL_DUTY');
+const POLL_MAX_MS_SRC = pollConst('POLL_MAX_MS');
+ok('POLL_BASE_MS is declared in the view', POLL_BASE_MS_SRC !== null);
+ok('POLL_DUTY is declared in the view', POLL_DUTY_SRC !== null);
+ok('POLL_MAX_MS is declared in the view', POLL_MAX_MS_SRC !== null);
+
+// ARGUMENT-ORDER ADAPTER, and it is not tidiness. assertLiteral calls
+// `ok(cond, message)`; THIS suite's ok is `ok(label, cond)`. Passing `ok`
+// directly made every literal assertion below read a non-empty message string
+// as its condition and pass unconditionally — root cause 4 (expected equals
+// actual by construction) reappearing inside the fix for root cause 4. Found
+// by mutation: POLL_BASE_MS 20000 -> 50 went red on the arithmetic and NOT on
+// the literal that exists to catch exactly that. Self-tested below.
+const okc = (cond, label) => ok(label, cond);
+ok('self-test: the literal-assertion adapter can actually FAIL', (() => {
+  let sawFail = false;
+  const spy = (label, cond) => { if (!cond) sawFail = true; };
+  assertLiteral((c, m) => spy(m, c), 'expected', 'ACTUAL', 'probe');
+  return sawFail;
+})());
+
+assertLiteral(okc, 20000, POLL_BASE_MS_SRC,
+  'the poll FLOOR is 20 s — anything shorter is a busy poll against a route that stats every (scope, machine) pair across up to 200 domains');
+assertLiteral(okc, 20, POLL_DUTY_SRC,
+  'the poll spends at most 1/20th of the wall clock refreshing — a duty of 0 disables the adaptive throttle entirely');
+assertLiteral(okc, 300000, POLL_MAX_MS_SRC,
+  'the poll CEILING is 5 min — a small ceiling turns the adaptive throttle into a fixed fast poll on a big install');
 
 /**
  * The revalidation machinery, executing for real.
@@ -971,7 +1161,7 @@ ok('render() is what records renderedSignature (the harness mirrors this)',
  * can be advanced without sleeping.
  */
 function makeRevalidator(stateObj, responder, opts = {}) {
-  const calls = { index: 0, project: 0, render: 0, urls: [] };
+  const calls = { index: 0, project: 0, render: 0, sidebar: 0, wire: 0, urls: [] };
   let mounted = true;
 
   // Fake clock. Timers are a queue of {at, fn}; advance(ms) fires everything
@@ -1002,7 +1192,12 @@ function makeRevalidator(stateObj, responder, opts = {}) {
   const body =
     'let pollTimer = null;\n' +
     'let renderedSignature = null;\n' +
-    'function render(token) { renderedSignature = screenSignature(); onRender(token); }\n' +
+    'let pendingFocusId = null;\n' +
+    // THE SHIPPED render(), not a paraphrase of it — with its two focus
+    // helpers, which it calls unconditionally.
+    extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
@@ -1017,15 +1212,25 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     'schedulePoll, stopPoll, render, armed: () => pollTimer !== null, sig: () => renderedSignature };';
 
   const api = new Function(
-    'state', 'onRender', 'isCurrentMount', 'fetch', 'document',
+    'state', 'renderSidebar', 'renderMain', 'wire', 'isCurrentMount', 'fetch', 'document',
+    'FOCUSABLE_IDS', 'FOCUS_FALLBACK',
     'setTimeout', 'clearTimeout', 'POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS', body)(
     stateObj,
-    () => { calls.render++; },
+    // Counted on renderMain so one render() is one tick, and the sidebar half
+    // is counted separately — a render() that painted only one pane would show
+    // up as a mismatch rather than as a pass.
+    (t) => { calls.sidebar++; calls.sidebarToken = t; },
+    (t) => { calls.render++; calls.mainToken = t; },
+    (t) => { calls.wire++; calls.wireToken = t; },
     () => mounted,
     fakeFetch,
-    { hidden: !!opts.hidden },
+    { hidden: !!opts.hidden, activeElement: null, getElementById: () => null, querySelector: () => null },
+    FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC,
     fakeSetTimeout, fakeClearTimeout,
-    20000, 20, 300000);
+    // The REAL constants, read off the live source above. A change to any of
+    // them moves this harness, so §11a's arithmetic is a claim about
+    // production rather than about three numbers typed into a test.
+    POLL_BASE_MS_SRC, POLL_DUTY_SRC, POLL_MAX_MS_SRC);
 
   // PRIME, exactly as onEnter does: it calls render(mountToken) before
   // loadIndex, so by the time any revalidation runs `renderedSignature`
@@ -1379,6 +1584,497 @@ ok('refreshScopeList never writes state.detail (the document is unreachable from
   !/state\.detail\s*=/.test(extractFunction(viewSrc, 'refreshScopeList', 'memory.js')));
 ok('refreshScopeList never moves the selection',
   !/state\.(scope|machine)\s*=/.test(extractFunction(viewSrc, 'refreshScopeList', 'memory.js')));
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§12 — THE MOUNT CONTRACT, executed rather than grepped');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// onEnter's mount+teardown closure was neither executed nor scanned by
+// anything. Four separate deletions inside it left this suite fully green
+// while shipping real defects:
+//
+//   · `schedulePoll(mountToken)` deleted  -> the poll never runs at all, so
+//     the whole adaptive-revalidation feature is dead and §11's arithmetic
+//     goes on proving things about a function nobody calls;
+//   · `stopPoll()` deleted from the teardown -> leaving the view keeps
+//     fetching forever, one more chain per re-entry, for the life of the page;
+//   · either wake listener deleted -> revalidation-on-focus gone, which is the
+//     cheapest and most valuable of the three triggers;
+//   · the `removeEventListener` block deleted -> two permanent listeners leak
+//     per mount, each holding a closure over a dead mount token.
+//
+// §9's `loadGate.cancel()` regex satisfied none of these; it merely happened
+// to sit in the same closure. So the closure is EXECUTED here, against a
+// window and a document that record every listener, with every collaborator
+// injected as a spy.
+
+/** The real onEnter, lifted out of the registerView({...}) object literal. */
+function liftOnEnter() {
+  const fn = functionSource(viewNoComments, 'onEnter');
+  if (fn === null) throw new Error('onEnter not found in memory.js — the mount contract would be untested');
+  return fn;
+}
+
+function mountView({ hidden = false, mounted = true } = {}) {
+  const log = { scheduled: [], stopped: 0, gateCancelled: 0, closedListboxes: 0, renders: [], loadIndex: 0, refresh: 0 };
+  const listeners = { window: [], document: [] };
+  const mkTarget = (bucket) => ({
+    addEventListener: (type, fn) => bucket.push({ type, fn }),
+    removeEventListener: (type, fn) => {
+      const i = bucket.findIndex((l) => l.type === type && l.fn === fn);
+      if (i >= 0) bucket.splice(i, 1);
+    },
+  });
+  const win = mkTarget(listeners.window);
+  const doc = mkTarget(listeners.document);
+  doc.hidden = hidden;
+
+  const body =
+    'let state, myMountToken, loadGate, wakeHandler;\n' +
+    'const __view = {' + liftOnEnter() + '};\n' +
+    'return { onEnter: __view.onEnter, wake: () => wakeHandler, token: () => myMountToken };';
+
+  const api = new Function(
+    'freshState', 'createLoadingGate', 'isCurrentMount', 'render', 'loadIndex',
+    'reportAsyncMountFailure', 'refreshIndex', 'schedulePoll', 'stopPoll',
+    'closeAllListboxes', 'window', 'document', body)(
+    () => ({ loading: true }),
+    () => ({ begin: () => {}, cancel: () => { log.gateCancelled++; } }),
+    () => mounted,
+    (t) => { log.renders.push(t); },
+    async (t) => { log.loadIndex++; return t; },
+    () => {},
+    async (t) => { log.refresh++; return t; },
+    (t) => { log.scheduled.push(t); },
+    () => { log.stopped++; },
+    () => { log.closedListboxes++; },
+    win, doc);
+
+  return { ...api, log, listeners, setMounted: (v) => { mounted = v; }, setHidden: (v) => { doc.hidden = v; } };
+}
+
+{
+  const m = mountView();
+  const teardown = m.onEnter(7);
+
+  // ── The mount half ──
+  eq('mount: the first paint happens with the mount token', m.log.renders[0], 7);
+  eq('mount: the index is loaded exactly once', m.log.loadIndex, 1);
+  eq('mount: schedulePoll IS called — without it the poll never runs at all', m.log.scheduled.length, 1);
+  eq('mount: ...and it is armed with the MOUNT token, not a re-derived one', m.log.scheduled[0], 7);
+  ok('mount: a `focus` listener is registered on window',
+    m.listeners.window.some((l) => l.type === 'focus'), JSON.stringify(m.listeners.window.map((l) => l.type)));
+  ok('mount: a `visibilitychange` listener is registered on document',
+    m.listeners.document.some((l) => l.type === 'visibilitychange'), JSON.stringify(m.listeners.document.map((l) => l.type)));
+  // GUARDED DEREFERENCES throughout this block. A missing listener is exactly
+  // what the assertions above exist to catch, and an unguarded `[0].fn` turns
+  // that catch into a TypeError that aborts the file — a red for the wrong
+  // reason, which hides every assertion after it. Measured: deleting the
+  // `focus` listener crashed this suite instead of failing it.
+  const fire = (bucket, type) => { const l = bucket.find((x) => x.type === type); if (l) l.fn(); return !!l; };
+  ok('mount: both wake listeners are the SAME handler, so both can be removed by it',
+    m.listeners.window.length > 0 && m.listeners.document.length > 0 &&
+    m.listeners.window[0].fn === m.listeners.document[0].fn);
+  ok('onEnter returns a teardown function', typeof teardown === 'function');
+
+  // ── The wake handler, actually invoked ──
+  eq('the wake handler is what refreshes — nothing has fired yet', m.log.refresh, 0);
+  ok('a `focus` wake listener exists to fire', fire(m.listeners.window, 'focus'));
+  eq('coming back to a VISIBLE view revalidates', m.log.refresh, 1);
+  m.setHidden(true);
+  ok('a `visibilitychange` wake listener exists to fire', fire(m.listeners.document, 'visibilitychange'));
+  eq('a HIDDEN tab does not revalidate (nobody is looking)', m.log.refresh, 1);
+  m.setHidden(false);
+  m.setMounted(false);
+  fire(m.listeners.window, 'focus');
+  eq('a listener that outlived its mount does not revalidate either', m.log.refresh, 1);
+  m.setMounted(true);
+
+  // ── The teardown half ──
+  teardown();
+  eq('teardown: the loading gate is cancelled (timer hygiene)', m.log.gateCancelled, 1);
+  eq('teardown: stopPoll IS called — otherwise the view keeps FETCHING for a screen nobody is on', m.log.stopped, 1);
+  eq('teardown: view-owned popovers are closed', m.log.closedListboxes, 1);
+  eq('teardown: the window `focus` listener is REMOVED (no leak per mount)', m.listeners.window.length, 0);
+  eq('teardown: the document `visibilitychange` listener is REMOVED', m.listeners.document.length, 0);
+}
+
+{
+  // Two mounts and two teardowns must leave nothing behind — the leak this
+  // catches grows one listener pair per rail click.
+  const m = mountView();
+  const t1 = m.onEnter(1); t1();
+  const t2 = m.onEnter(2); t2();
+  eq('two full mount/teardown cycles leak no window listeners', m.listeners.window.length, 0);
+  eq('two full mount/teardown cycles leak no document listeners', m.listeners.document.length, 0);
+  eq('...and each mount armed its own poll', m.log.scheduled.length, 2);
+  eq('...and each teardown disarmed one', m.log.stopped, 2);
+}
+
+// Scoped source checks for the two things execution cannot see: that the
+// schedule call is in the MOUNT half and the stop call is in the TEARDOWN
+// half. Stated as source scans, because they are.
+{
+  const onEnterSrc = functionSource(viewNoComments, 'onEnter');
+  const tIdx = onEnterSrc.indexOf('return () =>');
+  ok('onEnter contains a returned teardown closure', tIdx > 0);
+  const mountHalf = onEnterSrc.slice(0, tIdx);
+  const teardownHalf = onEnterSrc.slice(tIdx);
+  ok('SOURCE SCAN: schedulePoll is called in the MOUNT half, not the teardown',
+    /(?<![.\w$])schedulePoll\s*\(/.test(mountHalf) && !/(?<![.\w$])schedulePoll\s*\(/.test(teardownHalf));
+  ok('SOURCE SCAN: stopPoll is called in the TEARDOWN half',
+    /(?<![.\w$])stopPoll\s*\(/.test(teardownHalf));
+  eq('stopPoll has exactly one call site inside onEnter (the teardown)',
+    callSiteCount(viewSrc, 'stopPoll', { within: 'onEnter' }), 1);
+  eq('schedulePoll has exactly one call site inside onEnter (the mount)',
+    callSiteCount(viewSrc, 'schedulePoll', { within: 'onEnter' }), 1);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§13 — render() and the focus contract, executed');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// `restoreFocus()` made a no-op regressed the v3.17.1 focus-by-id fix — the
+// one that stops "Show more" dropping a keyboard user to <body> — and nothing
+// noticed. Both halves are executed here against a document that records
+// focus() calls.
+
+function makeFocusRig({ activeId = null, presentIds = [], detailLoading = false } = {}) {
+  const focused = [];
+  const mk = (id) => ({ id, focus(opts) { focused.push({ id, opts }); } });
+  const els = new Map(presentIds.map((id) => [id, mk(id)]));
+  const doc = {
+    activeElement: activeId ? mk(activeId) : null,
+    getElementById: (id) => els.get(id) || null,
+    querySelector: (sel) => els.get(sel.replace(/^#/, '')) || null,
+  };
+  const st = { detailLoading };
+  const body =
+    'let pendingFocusId = null;\n' +
+    extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
+    'let renderedSignature = null;\n' +
+    'function screenSignature() { return "SIG"; }\n' +
+    'return { render, captureFocus, restoreFocus, pending: () => pendingFocusId, sig: () => renderedSignature };';
+  const painted = { sidebar: 0, main: 0, wire: 0 };
+  const api = new Function(
+    'state', 'document', 'FOCUSABLE_IDS', 'FOCUS_FALLBACK', 'isCurrentMount',
+    'renderSidebar', 'renderMain', 'wire', body)(
+    st, doc, FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC, () => true,
+    () => { painted.sidebar++; }, () => { painted.main++; }, () => { painted.wire++; });
+  return { ...api, focused, painted, doc };
+}
+
+ok('FOCUSABLE_IDS was lifted from real source and is non-trivial',
+  Array.isArray(FOCUSABLE_IDS_SRC) && FOCUSABLE_IDS_SRC.length >= 6, JSON.stringify(FOCUSABLE_IDS_SRC));
+ok('FOCUS_FALLBACK was lifted from real source',
+  !!FOCUS_FALLBACK_SRC && typeof FOCUS_FALLBACK_SRC === 'object');
+
+{
+  // render() paints BOTH panes, wires them, and records the signature.
+  const r = makeFocusRig();
+  r.render(1);
+  eq('render() paints the sidebar', r.painted.sidebar, 1);
+  eq('render() paints the main pane', r.painted.main, 1);
+  eq('render() re-wires the result', r.painted.wire, 1);
+  eq('render() records the signature it just painted', r.sig(), 'SIG');
+}
+{
+  // A stale mount paints nothing at all.
+  const body =
+    'let pendingFocusId = null;\nlet renderedSignature = null;\n' +
+    'function screenSignature() { return "SIG"; }\n' +
+    extractFunction(viewSrc, 'render', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
+    'return { render, sig: () => renderedSignature };';
+  let painted = 0;
+  const api = new Function('state', 'document', 'FOCUSABLE_IDS', 'FOCUS_FALLBACK', 'isCurrentMount',
+    'renderSidebar', 'renderMain', 'wire', body)(
+    { detailLoading: false }, { activeElement: null, getElementById: () => null, querySelector: () => null },
+    FOCUSABLE_IDS_SRC, FOCUS_FALLBACK_SRC, () => false,
+    () => { painted++; }, () => { painted++; }, () => { painted++; });
+  api.render(1);
+  eq('a render for a STALE mount paints nothing', painted, 0);
+  eq('...and does not touch the signature either', api.sig(), null);
+}
+{
+  // Capture + restore, the real thing.
+  const r = makeFocusRig({ activeId: 'mem-journal-more', presentIds: ['mem-journal-more'] });
+  r.captureFocus();
+  eq('captureFocus records a focusable control of ours', r.pending(), 'mem-journal-more');
+  r.restoreFocus();
+  // Guarded: a restoreFocus that focuses NOTHING is the defect, and an
+  // unguarded `[0].id` would crash the file rather than name it.
+  eq('restoreFocus focuses it back BY ID after the pane was replaced',
+    r.focused.length ? r.focused[0].id : null, 'mem-journal-more');
+  ok('...with preventScroll, so the reading position the re-render preserved is not undone',
+    !!(r.focused.length && r.focused[0].opts && r.focused[0].opts.preventScroll === true),
+    JSON.stringify(r.focused.length ? r.focused[0].opts : null));
+  eq('...and the pending target is cleared once it lands', r.pending(), null);
+}
+{
+  // The case that matters: "Show more" REMOVES itself, so a by-id-only
+  // restore would drop focus every time it worked.
+  const r = makeFocusRig({ activeId: 'mem-journal-more', presentIds: ['mem-fold-journal'] });
+  r.captureFocus();
+  r.restoreFocus();
+  eq('a control that removed itself falls back to the nearest stable thing',
+    r.focused.length ? r.focused[0].id : null, 'mem-fold-journal');
+}
+{
+  // Reload dismisses the notice it lives in — same shape, its own fallback.
+  const r = makeFocusRig({ activeId: 'mem-reload', presentIds: ['mem-refresh'] });
+  r.captureFocus();
+  r.restoreFocus();
+  eq('Reload falls back to the sidebar Refresh, which does the same KIND of thing',
+    r.focused.length ? r.focused[0].id : null, 'mem-refresh');
+}
+{
+  // Never reach out of our own view.
+  const r = makeFocusRig({ activeId: 'rail-btn-domains', presentIds: ['rail-btn-domains'] });
+  r.captureFocus();
+  eq('captureFocus IGNORES a control outside this view (it cannot steal focus from the rail)', r.pending(), null);
+  r.restoreFocus();
+  eq('...and restoreFocus therefore focuses nothing', r.focused.length, 0);
+}
+{
+  // A miss is held while another render is still coming, dropped afterwards.
+  const held = makeFocusRig({ activeId: 'mem-machine-select', presentIds: [], detailLoading: true });
+  held.captureFocus();
+  held.restoreFocus();
+  eq('a miss is HELD while another render is still coming (a scope change renders twice)',
+    held.pending(), 'mem-machine-select');
+  const dropped = makeFocusRig({ activeId: 'mem-machine-select', presentIds: [], detailLoading: false });
+  dropped.captureFocus();
+  dropped.restoreFocus();
+  eq('...and is DROPPED once no further render is coming, so it cannot fire later out of context',
+    dropped.pending(), null);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§14 — The Reload OFFER is painted, and reaches every content branch');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// renderStaleNotice had NO assertion of any kind. `return ''` from it deletes
+// the v3.17.3 headline — the offer to reload after an agent writes underneath
+// you — with every other assertion in this file still green. Executed here,
+// and executed THROUGH renderProject, so it is proven to reach the page.
+
+{
+  const quiet = makeRenderers({ ...hostileState, staleWrite: false });
+  eq('no write since arrival renders no notice at all', quiet.renderStaleNotice(), '');
+
+  const loud = makeRenderers({ ...hostileState, staleWrite: true });
+  const n = loud.renderStaleNotice();
+  ok('a newer write renders a notice', n.length > 0);
+  ok('...carrying the Reload control by its stable id', n.includes('id="mem-reload"'));
+  assertLiteral(okc, 'Reload', (/>([^<]*)<\/button>/.exec(n) || [])[1],
+    'the control is labelled Reload — it OFFERS, it does not announce that something was replaced');
+  ok('...announced politely rather than as an alert (nothing is broken)', n.includes('role="status"'));
+  ok('...saying an agent SAVED, not that the document changed (we have not read it)',
+    /saved to this project since you opened it/i.test(n));
+  ok('...and it says what is below MAY not be latest, never that it IS stale',
+    /may not be the latest/i.test(n));
+}
+{
+  // ALL THREE CONTENT BRANCHES renderProject can take — and each fixture is
+  // checked for having actually REACHED the branch it is named after. The
+  // first draft of this block reused a fixture whose projectRead carried no
+  // `scopes` array, so the "FULL branch" case silently exercised the
+  // BRIEF-ONLY branch and deleting `staleNote` from the full branch stayed
+  // green. A branch test that does not prove which branch it took is not a
+  // branch test.
+  const base = { ...hostileState, staleWrite: true };
+
+  const fullState = { ...base,
+    projectRead: { ...hostileState.projectRead, scopes: [{ scope: 'a' }, { scope: 'b' }] } };
+  const full = makeRenderers(fullState).renderProject();
+  ok('branch check: the FULL fixture really renders the handoff card', full.includes('CURRENT HANDOFF'));
+  ok('the offer reaches the FULL branch (scopes + a handoff)', full.includes('id="mem-reload"'));
+
+  const briefOnly = makeRenderers({ ...base, detail: null,
+    projectRead: { scopes: [], brief: { present: true, text: '## B\n\nx' } } }).renderProject();
+  ok('branch check: the BRIEF-ONLY fixture really renders the no-handoff card',
+    briefOnly.includes('No handoff saved yet'));
+  ok('the offer reaches the BRIEF-ONLY branch', briefOnly.includes('id="mem-reload"'));
+
+  const empty = makeRenderers({ ...base, detail: null, projectRead: { scopes: [], brief: null } }).renderProject();
+  ok('branch check: the EMPTY fixture really renders the empty card',
+    empty.includes('Nothing saved for this project yet'));
+  ok('the offer reaches the EMPTY branch — where "nothing saved yet" is exactly the sentence a fresh write falsifies',
+    empty.includes('id="mem-reload"'));
+
+  for (const [name, s] of [['FULL', fullState],
+    ['BRIEF-ONLY', { ...base, detail: null, projectRead: { scopes: [], brief: { present: true, text: '## B\n\nx' } } }],
+    ['EMPTY', { ...base, detail: null, projectRead: { scopes: [], brief: null } }]]) {
+    ok('...and the ' + name + ' branch shows NO offer when nothing has been written',
+      !makeRenderers({ ...s, staleWrite: false }).renderProject().includes('id="mem-reload"'));
+  }
+}
+{
+  // The unlisted note: the store's own sentence, echoed rather than
+  // paraphrased, and the empty-project advice that changes with it.
+  const s = { ...hostileState, staleWrite: false, detail: null,
+    projectRead: { scopes: [], brief: null, unlistedEntries: 2, unlistedReason: 'RENAME THEM TO LETTERS.' } };
+  const out = makeRenderers(s).renderProject();
+  ok('an unaddressable directory entry is reported at all', out.includes('mem-note-loud'));
+  ok('...echoing the STORE\'s own reason verbatim rather than a second copy of the rule',
+    out.includes('RENAME THEM TO LETTERS.'));
+  ok('...and the empty-project card stops claiming nobody has written a handoff',
+    !out.includes('No agent has written a handoff here'));
+  ok('...and warns that saving would STRAND what is already there', /stranded/i.test(out));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§15 — Reload keeps the user where they are (v3.17.3\'s own rule)');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// reloadActive was never executed. Making it snap to the newest scope and drop
+// the machine — the exact behaviour v3.17.3 claims it prevents, and what
+// selectProject deliberately does instead — left this suite green.
+
+function makeReloader(stateObj, responder) {
+  const calls = { urls: [], renders: 0 };
+  let mounted = true;
+  const body =
+    extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'loadScope', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'reloadActive', 'memory.js') + '\n' +
+    'return { reloadActive, loadScope };';
+  const api = new Function('state', 'render', 'isCurrentMount', 'fetch', 'URLSearchParams',
+    'encodeURIComponent', 'JOURNAL_PAGE', body)(
+    stateObj, () => { calls.renders++; }, () => mounted,
+    async (url) => { calls.urls.push(String(url)); return responder(String(url)); },
+    URLSearchParams, encodeURIComponent, 10);
+  return { ...api, calls, unmount: () => { mounted = false; } };
+}
+
+{
+  // Three scopes; the user is on the MIDDLE one, on a named machine.
+  const s = liveState({ scope: 'memory-view', machine: null,
+    detail: { scope: 'memory-view', machine: 'machine-b', machines: [], current: { present: true, text: 'x' } } });
+  const r = makeReloader(s, (url) => url.includes('?')
+    ? { ok: true, json: async () => ({ ok: true, scope: 'memory-view', machine: 'machine-b',
+        current: { present: true, text: 'reloaded' }, machines: [] }) }
+    : { ok: true, json: async () => ({ ok: true, scopes: [
+        { scope: 'newest-scope' }, { scope: 'memory-view' }, { scope: 'main' }] }) });
+  await r.reloadActive(1);
+
+  eq('Reload KEEPS the scope the user was reading — it does not snap to the newest', s.scope, 'memory-view');
+  ok('...and re-reads that scope, not scopes[0]',
+    r.calls.urls.some((u) => /scope=memory-view/.test(u)), JSON.stringify(r.calls.urls));
+  ok('...and does not ask for the newest scope at all',
+    !r.calls.urls.some((u) => /scope=newest-scope/.test(u)), JSON.stringify(r.calls.urls));
+  ok('Reload KEEPS the machine the user was on — dropping it silently swaps whose handoff you read',
+    r.calls.urls.some((u) => /machine=machine-b/.test(u)), JSON.stringify(r.calls.urls));
+  eq('the fresh scope list IS adopted (that is what Reload is for)', s.projectRead.scopes.length, 3);
+  eq('the document was replaced with the fresh read', s.detail.current.text, 'reloaded');
+  eq('the stale offer is withdrawn once taken', s.staleWrite, false);
+  eq('both marks moved together, because both reads started together', s.scopesFetchedAt, s.detailFetchedAt);
+  ok('the marks moved forward', s.detailFetchedAt > 1_000_000);
+  eq('loading finished', s.detailLoading, false);
+}
+{
+  // The scope genuinely disappeared: fall back to the freshest, which is what
+  // selectProject would have chosen anyway. Documented behaviour.
+  const s = liveState({ scope: 'gone-scope', detail: { scope: 'gone-scope', machine: 'm1', machines: [], current: { present: true, text: 'x' } } });
+  const r = makeReloader(s, (url) => url.includes('?')
+    ? { ok: true, json: async () => ({ ok: true, current: { present: true, text: 'y' }, machines: [] }) }
+    : { ok: true, json: async () => ({ ok: true, scopes: [{ scope: 'newest-scope' }, { scope: 'main' }] }) });
+  await r.reloadActive(1);
+  eq('a scope removed out of band falls back to the freshest', s.scope, 'newest-scope');
+  ok('...and does NOT carry the old machine across to a different scope',
+    !r.calls.urls.some((u) => /machine=m1/.test(u)), JSON.stringify(r.calls.urls));
+}
+{
+  // A project whose state vanished entirely: say so, do not paint a scope
+  // label over a document that was never read.
+  const s = liveState();
+  const r = makeReloader(s, (url) => ({ ok: true, json: async () => ({ ok: true, scopes: [] }) }));
+  await r.reloadActive(1);
+  eq('a project with no scopes left clears the document', s.detail, null);
+  eq('...and the scope', s.scope, null);
+  eq('...and the machine', s.machine, null);
+  eq('...and stops loading', s.detailLoading, false);
+}
+{
+  // A remount mid-flight abandons the result.
+  const s = liveState();
+  const before = s.detail;
+  const r = makeReloader(s, (url) => ({ ok: true, json: async () => ({ ok: true, scopes: [{ scope: 'other' }] }) }));
+  const p = r.reloadActive(1);
+  r.unmount();
+  await p;
+  ok('a reload landing after a remount changes nothing', s.detail === before);
+}
+eq('reloadActive is reachable from the UI exactly where it should be — the Reload button and Refresh',
+  callSiteCount(viewSrc, 'reloadActive', { within: 'wire' }), 2);
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§16 — COVERAGE CENSUS — a new function cannot arrive untested in silence');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// 17 of this view's 34 top-level functions were never executed by anything and
+// 16 were never even NAMED. A census enumerated FROM DISK (never a hardcoded
+// list — that is how the v3.11.0 guard went blind) forces the next person
+// adding one to make a decision rather than to inherit a silent gap.
+
+const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(/gm)]
+  .map((m) => m[1]);
+
+// Executed somewhere above, with real assertions over what they returned/did.
+const EXECUTED = new Set([
+  'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
+  'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'renderAbout',
+  'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
+  'unlistedCount', 'renderProject',
+  'render', 'captureFocus', 'restoreFocus',
+  'screenSignature', 'nextPollDelay', 'stopPoll', 'schedulePoll',
+  'fetchIndex', 'fetchState', 'refreshIndex', 'refreshScopeList', 'reloadActive', 'loadScope',
+]);
+
+// NOT executed, each with the reason it is not — so the gap is a decision on
+// the record rather than an omission nobody noticed.
+const NOT_EXECUTED = {
+  freshState: 'a literal factory with no branches; every field it returns is exercised through the state fixtures',
+  renderSidebar: 'setSidebar/setMain need a real DOM; §12 proves render() calls it, §9 proves the token is passed',
+  renderMain: 'same — DOM-bound; its three branches are the render* functions §6/§14 execute directly',
+  renderNoProjects: 'a constant string with no inputs and no branches',
+  loadIndex: 'orchestration over fetchIndex + selectProject, both executed; its own logic is one sort, covered by §2',
+  selectProject: 'orchestration over fetchState + loadScope, both executed; reloadActive (§15) covers the same shape',
+  wire: 'addEventListener over a real DOM; its call targets are executed and its call sites are counted',
+};
+
+ok('the census enumerated this view\'s top-level functions FROM DISK',
+  TOP_LEVEL_FNS.length >= 30, 'found ' + TOP_LEVEL_FNS.length);
+{
+  const unaccounted = TOP_LEVEL_FNS.filter((n) => !EXECUTED.has(n) && !(n in NOT_EXECUTED));
+  ok('every top-level function is either EXECUTED here or listed with a reason it is not',
+    unaccounted.length === 0, 'unaccounted for: ' + JSON.stringify(unaccounted));
+  const stale = [...EXECUTED, ...Object.keys(NOT_EXECUTED)].filter((n) => !TOP_LEVEL_FNS.includes(n));
+  ok('...and neither list names a function that no longer exists',
+    stale.length === 0, 'stale entries: ' + JSON.stringify(stale));
+  ok('the EXECUTED set is the majority of the file, not a token few',
+    EXECUTED.size >= TOP_LEVEL_FNS.length - Object.keys(NOT_EXECUTED).length,
+    EXECUTED.size + ' executed of ' + TOP_LEVEL_FNS.length);
+
+  // THE CENSUS MUST NOT BE TAKEN ON TRUST. `EXECUTED` is hand-maintained, so
+  // on its own it is a claim rather than a measurement — deleting a whole
+  // section would leave it still asserting that section's functions run. Every
+  // name in it is therefore required to appear in a real extractFunction call
+  // in THIS file, which is the only way a module-private function can be
+  // reached at all. It does not prove an assertion was made about the result;
+  // it does prove the function was lifted out of live source to be run.
+  const selfSrc = readFileSync(join(ROOT, 'scripts/test-next-memory-view.js'), 'utf8');
+  const lifted = new Set([...selfSrc.matchAll(/extractFunction\(viewSrc,\s*'([A-Za-z0-9_$]+)'/g)].map((m) => m[1]));
+  const claimed = [...EXECUTED].filter((n) => !lifted.has(n));
+  ok('every function the census claims is EXECUTED is genuinely lifted from live source here',
+    claimed.length === 0, 'claimed but never lifted: ' + JSON.stringify(claimed));
+  ok('self-test: the lifted-set scan is not vacuous (it found the real extractions)',
+    lifted.size >= 15, 'found ' + lifted.size);
+}
 
 // ── Done ─────────────────────────────────────────────────────────────────
 

@@ -2399,9 +2399,37 @@ function offerableEntries(offerable, availableProviders) {
  * an id belonging to a provider with no saved key resolves to null, so a
  * stale localStorage value from before a Disconnect can never be applied.
  */
-function resolveChatModel(modelId, offerable, availableProviders) {
+function resolveChatModel(modelId, offerable, availableProviders, preferProvider) {
   if (typeof modelId !== 'string' || !modelId) return null;
-  for (const row of offerableEntries(offerable, availableProviders)) {
+  const rows = offerableEntries(offerable, availableProviders);
+  // ── A MODEL ID IS NOT UNIQUE ACROSS PROVIDERS ────────────────────────────
+  // `offerable` is a map keyed by provider, so nothing stops the same id
+  // appearing under two of them — and a bare-id walk returns whichever provider
+  // comes FIRST in `availableProviders`, not the one the user clicked. On a
+  // menu that groups by provider and prints a price per row, that is a row
+  // badged one vendor selecting another vendor's model and quoting the wrong
+  // price. So a caller that KNOWS which row was clicked says so, and its answer
+  // wins; the bare-id path below is unchanged for the callers that only have an
+  // id (a restored localStorage value, a recents entry).
+  //
+  // DEFENCE IN DEPTH, not a live defect: every one of the 198 synced catalogue
+  // ids carries a `vendor/` prefix and no built-in id does, so no collision
+  // exists against today's real API. This makes the frontend half unable to
+  // produce one if that ever stops being true.
+  //
+  // A named provider is EXCLUSIVE — no fall-through to the bare-id walk. The
+  // hint only ever comes from a row rendered out of the live catalogue in the
+  // same frame, so "named, and not there" means the catalogue moved under the
+  // menu, and quietly serving a same-named model from a different vendor at a
+  // different price is precisely the substitution this exists to stop. Refusing
+  // costs one click; both callers already handle a refusal.
+  if (typeof preferProvider === 'string' && preferProvider) {
+    for (const row of rows) {
+      if (row.provider === preferProvider && row.entry.id === modelId) return row;
+    }
+    return null;
+  }
+  for (const row of rows) {
     if (row.entry.id === modelId) return row;
   }
   return null;
@@ -3271,6 +3299,39 @@ const pendingListboxes = [];
 // refuse it anyway since no catalogue entry carries it.
 const BROWSE_MODEL_VALUE = ' browse-all';
 
+// ── AN OPTION VALUE NAMES A ROW, NOT A MODEL ID ───────────────────────────
+// `offerable` is keyed by provider, so the same model id can legitimately
+// appear under two of them. The listbox resolves a commit BY VALUE, so a bare
+// id would make two rows share one value: click the second, get the first —
+// a row badged one vendor selecting another vendor's model, and printing the
+// wrong price on the surface whose entire job is naming what will answer.
+//
+// `<provider>|<id>` is unambiguous because it is split at the FIRST separator
+// and the left half is then re-validated against the live provider list, so
+// even an id that itself contained a `|` could not forge a provider. Kept
+// human-readable rather than a control character: it lands in a DOM attribute
+// that a person may well be reading in devtools.
+//
+// The SENTINEL carries no separator and is checked first, so it can never be
+// mistaken for a qualified value — and no provider name can produce it.
+const MODEL_VALUE_SEP = '|';
+
+function modelOptionValue(provider, id) {
+  return String(provider) + MODEL_VALUE_SEP + String(id);
+}
+
+/**
+ * Split a qualified option value. Returns `{ provider, id }`, or null for
+ * anything that is not one — the sentinel, an empty string, a bare id left over
+ * from a stale render. Null is the caller's cue to do nothing, never to guess.
+ */
+function parseModelOptionValue(value) {
+  if (typeof value !== 'string') return null;
+  const at = value.indexOf(MODEL_VALUE_SEP);
+  if (at <= 0 || at === value.length - 1) return null;
+  return { provider: value.slice(0, at), id: value.slice(at + 1) };
+}
+
 /**
  * ONE cfg builder for the model picker - the ingest.js `domainListboxCfg`
  * precedent. Called by the render half and the mount half with its output used
@@ -3286,7 +3347,9 @@ function modelListboxCfg() {
   const starred = new Set(Array.isArray(state.modelStarred) ? state.modelStarred : []);
 
   const options = ws.rows.map(row => ({
-    value: row.entry.id,
+    // PROVIDER-QUALIFIED — see modelOptionValue. Two rows can never share one
+    // value, so the listbox's resolve-by-value cannot cross providers.
+    value: modelOptionValue(row.provider, row.entry.id),
     label: row.entry.label || row.entry.id,
     group: Object.hasOwn(PROVIDER_LABELS, row.provider) ? PROVIDER_LABELS[row.provider] : row.provider,
     // Type-ahead reaches the ID as well as the label, so "deepseek" and "opus"
@@ -3325,7 +3388,16 @@ function modelListboxCfg() {
   return {
     id: 'chat-model-lb',
     options,
-    value: state.chatModel,
+    // The SELECTED value must be qualified the same way the rows are, or the
+    // check mark and the open-on-selection scroll both land on nothing.
+    // `state.chatModel` and `state.modelProvider` are written together by
+    // selectChatModel and by the boot restore, so they cannot disagree.
+    value: state.chatModel ? modelOptionValue(state.modelProvider, state.chatModel) : null,
+    // The ONLY value in this control that `action: true` is honoured on — see
+    // normaliseOptions in shared/listbox.js. Marking a MODEL row as an action
+    // is inert, which is what stops "selecting a model" silently becoming
+    // "running a handler and keeping the old model".
+    actionValues: [BROWSE_MODEL_VALUE],
     // Reached only when `value` names no option - i.e. no model is pinned, or
     // the pinned one is outside the working set (impossible: `buildWorkingSet`
     // always includes the selection). "<Provider> default" only where the
@@ -3344,7 +3416,9 @@ function modelListboxCfg() {
     footHtml: 'Full measurements for each model: Settings → API keys',
     onChange: (value) => {
       if (value === BROWSE_MODEL_VALUE) { openBrowseDialog({ mode: 'pick' }); return; }
-      selectChatModel(value);
+      const parsed = parseModelOptionValue(value);
+      if (!parsed) return;   // not a row this control emitted — do nothing
+      selectChatModel(parsed.id, parsed.provider);
     },
   };
 }
@@ -3406,8 +3480,8 @@ function renderLengthDropdownHtml() {
  *
  * @returns {boolean} whether the pick was accepted
  */
-function selectChatModel(id) {
-  const picked = resolveChatModel(id, state.offerable, state.availableProviders);
+function selectChatModel(id, preferProvider) {
+  const picked = resolveChatModel(id, state.offerable, state.availableProviders, preferProvider);
   if (!picked) return false;
   state.chatModel = picked.entry.id;
   state.modelProvider = picked.provider;
@@ -3612,11 +3686,24 @@ function openBrowseDialog(opts) {
               // ── THE CAVEAT, STATED BEFORE THE SPEND, NOT AFTER ──────────
               // The re-ask goes into the SAME conversation, and src/brain/chat.js
               // builds every prompt from the last 20 messages — so the second
-              // model reads the first model's answer. That is a materially
-              // different question from the one the first model got, and calling
-              // it a clean comparison would be a claim the mechanism does not
-              // support. Said here, plainly, where the decision is being made.
-              ? 'Re-asks your question in this conversation. The new model can see the answer above, so this is a second opinion rather than an independent run.'
+              // model usually reads the first model's answer. That is a
+              // materially different question from the one the first model got,
+              // and calling it a clean comparison would be a claim the mechanism
+              // does not support. Said here, where the decision is being made.
+              //
+              // AND IT IS CONDITIONAL, because the control is offered on every
+              // assistant message and an old enough one falls OUTSIDE that
+              // slice. The unconditional sentence was simply false there. The
+              // branch is gated on being able to PROVE the answer is in scope
+              // (answerIsInPromptWindow fails safe to false), so the hedged
+              // sentence is the default — and it is written to be true whether
+              // the answer turns out to be in the window or not, since "will not
+              // see it" would just be the same over-claim pointing the other
+              // way. Both halves keep the point: this is never an independent
+              // run, because the turns since are in the prompt either way.
+              ? (answerIsInPromptWindow(o.messageIndex)
+                ? 'Re-asks your question in this conversation. The new model can see the answer above, so this is a second opinion rather than an independent run.'
+                : 'Re-asks your question in this conversation. The new model is only shown the most recent part of the thread and the answer above may fall outside it — but it does see the turns since, so this is still not an independent run.')
               : 'Every model you have a key for. Picking one changes the model for this chat until you change it again.') +
           '</div>' +
         '</div>' +
@@ -3742,10 +3829,16 @@ function openBrowseDialog(opts) {
     const pick = t.closest('[data-model-id]');
     if (pick) {
       const id = pick.getAttribute('data-model-id');
+      // `data-model-provider` was rendered on every row from the start and READ
+      // BY NOBODY — this repo's named dead-data shape. It is the only thing that
+      // says WHICH row was clicked when two providers carry one model id, so
+      // the pick resolves within it rather than taking whichever provider comes
+      // first in the catalogue.
+      const provider = pick.getAttribute('data-model-provider') || undefined;
       const mode = browseUi.mode;
       const messageIndex = browseUi.messageIndex;
       const question = browseUi.question;
-      if (!selectChatModel(id)) return;   // refused: unkeyed provider, stale id
+      if (!selectChatModel(id, provider)) return;   // refused: unkeyed provider, stale id
       closeBrowseDialog();
       if (mode === 'reask') reaskMessage(messageIndex, question);
     }
@@ -3767,8 +3860,10 @@ function openBrowseDialog(opts) {
 // and then either the second answer does not live in this thread at all, or it
 // lives here until the next reload and vanishes, and the sidebar grows a stray
 // row per comparison. Both are worse than a stated caveat, so the caveat is
-// stated: the browse dialog's re-ask mode says in its own subtitle that the new
-// model can see the answer above, BEFORE the spend happens.
+// stated: the browse dialog's re-ask mode says in its own subtitle what the new
+// model will be shown, BEFORE the spend happens — and says it CONDITIONALLY,
+// because the control is offered on every assistant message and an answer far
+// enough back is outside `slice(-20)` entirely. See `answerIsInPromptWindow`.
 //
 // ── WHAT IT COSTS TO BUILD, AND WHY THAT MATTERS ─────────────────────────
 // Nothing new. It puts the question back in the composer and calls the ordinary
@@ -3790,6 +3885,60 @@ function openBrowseDialog(opts) {
 // It never fires automatically and never fans out across models in parallel.
 // Every run is a real API call the user pays for, so every run is a decision the
 // user made; the model's price is on the row they pick it from.
+
+// ── THE PROMPT WINDOW, AND WHY THE CAVEAT IS NOT UNCONDITIONAL ───────────
+//
+// `sendMessage` (src/brain/chat.js) builds every prompt from
+// `conversation.messages.slice(-20)`. The re-ask control is offered on EVERY
+// assistant message, including ones far enough back to fall outside that
+// slice — so a dialog that said "the new model can see the answer above"
+// unconditionally was stating something false, on the surface where the user
+// is deciding to spend money.
+//
+// THE NUMBER IS A COUPLING, NOT A LOCAL CHOICE. This is a frontend copy of a
+// backend constant, which is the two-hand-maintained-copies shape this repo
+// keeps paying for. It cannot be imported (this file runs in a browser and
+// src/brain does not), so scripts/test-next-chat-reask.js pins BOTH — the
+// literal here and the `slice(-20)` there — and goes red the moment they
+// disagree, rather than letting the sentence quietly become wrong again.
+const PROMPT_HISTORY_MESSAGES = 20;
+
+/**
+ * Is the answer at `index` still inside the window the next prompt will carry?
+ *
+ * ── FAIL-SAFE DIRECTION: FALSE ──────────────────────────────────────────
+ * `true` licenses a CLAIM about what the second model will see. Anything this
+ * cannot account for therefore returns false, and the caller then says "may
+ * not" instead of "can" — an under-claim is a hedge, an over-claim is a
+ * falsehood.
+ *
+ * ── WHY THIS COUNTS THE CLIENT'S THREAD AND IS STILL SOUND ──────────────
+ * The window is over the SERVER's `conversation.messages`; this walks
+ * `state.thread`, which is not the same array. It holds everything the server
+ * has, plus entries the server does not: an errored assistant turn (the send
+ * threw, so nothing was appended) and compile cards.
+ *
+ * Only compile cards are skipped, because they are provably never persisted —
+ * they are pushed client-side by `renderCompileOutcome` and are gone from
+ * `state.thread` after the next load, which reads `data.messages` wholesale.
+ * Everything else is COUNTED even where it may not exist server-side, which
+ * over-estimates the distance from the end and can only push the answer out of
+ * the window, never into it. That is the safe error.
+ */
+function answerIsInPromptWindow(index) {
+  if (!Number.isInteger(index) || index < 0) return false;
+  const thread = Array.isArray(state.thread) ? state.thread : null;
+  if (!thread || index >= thread.length) return false;
+  let after = 0;
+  for (let i = index + 1; i < thread.length; i++) {
+    const m = thread[i];
+    if (!m || typeof m !== 'object') return false;   // unaccountable → no claim
+    if (m.role === 'compile') continue;              // client-only, never persisted
+    after++;
+  }
+  // `after` messages sit behind it, so it is the (after + 1)-th from the end.
+  return after + 1 <= PROMPT_HISTORY_MESSAGES;
+}
 
 /**
  * The question an assistant message at `index` was answering: the nearest

@@ -15,8 +15,8 @@
 // free — which is the whole substance of this file, and the reason it is one
 // component rather than six hand-rolled menus:
 //
-//   • Keyboard: Up/Down/Home/End, Enter to commit, Escape to cancel AND
-//     restore, Tab to leave without committing, and TYPE-AHEAD.
+//   • Keyboard: Up/Down/PageUp/PageDown/Home/End, Enter to commit, Escape to
+//     cancel AND restore, Tab to leave without committing, and TYPE-AHEAD.
 //   • Screen readers: the APG "select-only combobox" pattern — a `combobox`
 //     trigger that keeps focus, `aria-expanded`, `aria-controls`,
 //     `aria-activedescendant`, and a `listbox` of `option`s with
@@ -105,7 +105,27 @@ export function isListboxOpen() {
  * label because that is the text the user can see and is therefore the text
  * they will type at.
  */
-function normaliseOptions(options) {
+function normaliseOptions(options, actionValues) {
+  // ── AN ACTION ROW MUST BE DECLARED TWICE, AND THE SECOND ONE IS THE cfg ──
+  // `action: true` on an option is a REQUEST, not a grant: it takes effect only
+  // for a value the control's cfg also names in `actionValues`.
+  //
+  // Why the second gate exists, MEASURED not anticipated: adding `action: true`
+  // to Ingest's real domain-picker options turned every domain row into an
+  // action row — selecting a domain fired `onChange` and never became the
+  // control's value — and THREE suites stayed green over it. With this gate the
+  // same edit is inert, because `ingest.js` declares no `actionValues`, so the
+  // defect is not merely detectable, it is inexpressible on the seven controls
+  // that have no action row at all. On the one that does (the composer's model
+  // menu) the allow-list is a single sentinel, so marking a MODEL as an action
+  // is inert too.
+  //
+  // Absent/garbage `actionValues` yields an EMPTY allow-list, which is the
+  // fail-safe direction: a caller that cannot say which row is an action gets
+  // ordinary rows, never a menu whose every row silently declines to be chosen.
+  const allowed = actionValues instanceof Set
+    ? actionValues
+    : new Set(Array.isArray(actionValues) ? actionValues.filter((v) => typeof v === 'string') : []);
   const out = [];
   if (!Array.isArray(options)) return out;
   for (const o of options) {
@@ -132,11 +152,11 @@ function normaliseOptions(options) {
       // briefly claiming a model that does not exist — on the surface whose
       // entire job is naming the model that will answer.
       //
-      // It cannot affect the six pre-existing adoptions: none passes `action`,
-      // so every one of them takes the identical `action === false` path.
-      // scripts/test-next-listbox.js §8 drives both branches, and the
-      // "commits normally without it" half is the regression guard.
-      action: o.action === true,
+      // It cannot affect the seven adoptions that declare no `actionValues`:
+      // every option there takes the identical `action === false` path, whatever
+      // its own flag says. scripts/test-next-listbox.js §8 drives both branches,
+      // and the "commits normally without it" half is the regression guard.
+      action: o.action === true && allowed.has(value),
       // `html` lets a caller own the whole row body (badges, prices, notes)
       // while this file still owns the row ELEMENT and therefore all of the
       // keyboard and ARIA behaviour. That split is what lets the composer's
@@ -173,7 +193,7 @@ function triggerLabelFor(cfg, options) {
  * for; one `const cfg = {...}` used twice cannot drift.
  */
 export function renderListboxHtml(cfg) {
-  const options = normaliseOptions(cfg.options);
+  const options = normaliseOptions(cfg.options, cfg.actionValues);
   const id = String(cfg.id);
   const disabled = cfg.disabled === true;
   const label = triggerLabelFor(cfg, options);
@@ -270,7 +290,7 @@ export function mountListbox(cfg) {
   if (trigger.dataset.lbWired === '1') return null;
   trigger.dataset.lbWired = '1';
 
-  const options = normaliseOptions(cfg.options);
+  const options = normaliseOptions(cfg.options, cfg.actionValues);
   const state = {
     id,
     trigger,
@@ -555,6 +575,32 @@ export function mountListbox(cfg) {
     setActive(next);
   }
 
+  /**
+   * How many rows PageUp / PageDown move, DERIVED from what is on screen rather
+   * than a fixed number — the native popup pages by what you can see, and a
+   * hardcoded 10 would overshoot a short menu and crawl a tall one.
+   *
+   * `visible - 1` keeps one row of context across the jump, which is what every
+   * platform list control does and what makes paging readable rather than
+   * teleporting. Falls back to 10 when there is nothing to measure (an empty
+   * menu, or a row whose height reads 0 mid-layout) — a fallback that pages too
+   * far is still bounded by move()'s clamp, so the worst case is End/Home.
+   *
+   * APPROXIMATE BY CONSTRUCTION, stated rather than implied away: the divisor is
+   * one option row's height, while the menu may also contain group headings and
+   * a footer, so on a grouped list a page moves slightly less than a screenful.
+   * Erring short is the right direction — it never skips past content unseen.
+   */
+  function pageStep() {
+    const menu = state.menu;
+    if (!menu) return 10;
+    const row = menu.querySelector('.lb-opt');
+    const h = row ? row.offsetHeight : 0;
+    if (!h) return 10;
+    const visible = Math.floor(menu.clientHeight / h);
+    return Math.max(1, visible - 1);
+  }
+
   function typeAhead(ch) {
     const now = Date.now();
     if (now - state.typeAt > TYPEAHEAD_MS) state.typeBuf = '';
@@ -596,6 +642,30 @@ export function mountListbox(cfg) {
       case 'ArrowUp':
         e.preventDefault();
         if (!isOpen) open(); else move(-1);
+        return;
+      // ── PAGING, THE OTHER HALF OF THE DEBT THE NATIVE POPUP WAS PAYING ────
+      // A native <select> pages through its options; this component shipped
+      // with no case for either key, so on a 193-row model list the only way
+      // down was 193 presses of ArrowDown or a type-ahead guess. Measured with
+      // real key events before the fix: `aria-activedescendant` did not move.
+      //
+      // ONLY WHILE OPEN, exactly like Home/End directly below — and without
+      // preventDefault when closed, so a closed trigger does not swallow the
+      // page scroll the user was asking the document for. That also keeps the
+      // house rule this file states for printable keys: nothing commits blind
+      // from a control whose list the user cannot see.
+      //
+      // move() clamps to the ends, so PageDown near the bottom lands on the
+      // last enabled row rather than running off it — the native behaviour.
+      case 'PageDown':
+        if (!isOpen) return;
+        e.preventDefault();
+        move(pageStep());
+        return;
+      case 'PageUp':
+        if (!isOpen) return;
+        e.preventDefault();
+        move(-pageStep());
         return;
       case 'Home':
         if (!isOpen) return;
@@ -670,7 +740,7 @@ export function mountListbox(cfg) {
     close,
     /** Replace the options without re-rendering the trigger. */
     setOptions(next, nextValue) {
-      state.options = normaliseOptions(next);
+      state.options = normaliseOptions(next, cfg.actionValues);
       if (arguments.length > 1) state.value = nextValue;
       const opt = findOption(state.options, state.value);
       const textEl = state.trigger.querySelector('[data-lb-text]');
