@@ -3,7 +3,7 @@
 **For**: anyone joining or running a Shared Brain — contributors and admins. Step-by-step setup, daily workflow, and troubleshooting.
 **Companions**: [`docs/shared-brain.md`](shared-brain.md) (concept & architecture) · [`docs/shared-brain-admin.md`](shared-brain-admin.md) (advanced admin operations) · [`docs/shared-brain-compliance.md`](shared-brain-compliance.md) (GDPR / IP / residency) · [`docs/user-guide.md`](user-guide.md#15b-shared-brain) (main app user guide)
 
-> 📚 **New to The Curator?** Read the [main user guide](user-guide.md) first — install, ingest, chat, personal sync. Shared Brain is a v3.0.0-beta opt-in feature on top of the basic app. You won't need it if you're a solo user.
+> 📚 **New to The Curator?** Read the [main user guide](user-guide.md) first — install, ingest, chat, personal sync. Shared Brain is an opt-in feature on top of the basic app, still in beta as of v3.17.2. You won't need it if you're a solo user.
 
 ---
 
@@ -101,8 +101,19 @@ Within ~400ms the wizard validates the token against the cohort repo. Three poss
 #### Step 4 — Domains + display name + attribution
 
 - **Contributing domains**: tick which of YOUR personal domains push to this Shared Brain. The list filters out any `shared-*` mirrors (you can't contribute from one shared brain to another). Read-only members (yellow verdict in Step 3) can leave this empty — they don't push. Your ticks are remembered if you navigate Back and return.
-- **Your display name**: this is **not** private. Whatever you type here is written into the shared repo on every push (inside `contributions/<your-uuid>/*.json`), with no flag governing it, and everyone with access to the repo can read it. It is also what the admin's member directory shows. It does **not** appear on the synthesised wiki pages. Defaults to "Anonymous Fellow" if you leave it blank — **and a pseudonym is a perfectly valid entry** if you would rather not be named.
-- **Show my name in Provenance sections**: **currently has no effect.** The setting is saved with your connection, but Provenance sections and conflict markers on collective pages always show the first 8 characters of your UUID — name attribution is not implemented. Leave it unticked; ticking it changes nothing today, and if the feature ever ships you should re-confirm the choice at that point.
+- **Your display name**: stored on your own machine, in your connection. Whether it *leaves* your machine is decided entirely by the attribution checkbox below — leave that unticked (the default) and your name is never written to the shared repo at all. It never appears on the synthesised wiki pages either way; those always credit a short UUID. Defaults to "Anonymous Fellow" if you leave it blank — **and a pseudonym is a perfectly valid entry** if you would rather not be named.
+- **Show my name in my contribution records (default: anonymous UUID)**: **off by default, and it does something real.** This is the one setting on this screen that decides whether your name leaves your computer, so read it before you tick it.
+
+  **If you leave it unticked** (the default), your display name is never written to the shared repository. `contributorNameForStorage` in `src/brain/sharedbrain.js` returns `null`, and both routes out of your machine are suppressed: the `fellow_display_name` key is **omitted** from your contribution payload, and each per-page delta carries an empty `contributor_name`. The admin's member directory then shows you by your short UUID. Nothing identifies you but that UUID.
+
+  **If you tick it**, that same function returns your display name and it is written on **every push** into `contributions/<your-uuid>/*.json` in the shared repository, plus into each per-page delta inside that payload. Concretely:
+
+  - **Who can read it** — everyone with access to the repository: every current collaborator, anyone the admin adds later, and anyone who has already cloned it. It is in git history, so it is readable in every past commit even after a later change.
+  - **Where it does *not* appear** — the synthesised collective wiki pages. Provenance sections and conflict markers show the first 8 characters of your UUID whether this is on or off; that has never carried names.
+  - **It is not retroactive in either direction.** Ticking it later does not add your name to pushes you already made. Un-ticking it later does not remove your name from pushes already in the repository — the gate is forward-looking only, and there is no scrub. The only way to remove already-published names is a full [Article 17 revocation](shared-brain-compliance.md#2--right-to-erasure-gdpr-article-17), which erases **all** of your contributions, not just your name.
+  - **You cannot change it in place.** The setting is fixed when you join; changing it means leaving the brain on this machine (**"Leave this Shared Brain"** on the connection card) and re-joining. See [`shared-brain-compliance.md` §1a](shared-brain-compliance.md#1a--withdrawing-name-attribution-consent-article-73--current-limitation).
+
+  If you are unsure, leave it unticked. You can always join again later with it on; you cannot take a published name back without erasing your whole contribution history.
 
 Click **Continue →**.
 
@@ -126,7 +137,10 @@ The wizard closes. You'll see a new connection card in the **Shared Brain** view
 - A **pending line** when you have pages waiting to push ("⏳ N pages ready to push")
 - **Push contributions** · **Pull updates** buttons (read-only members see only Pull)
 - A note telling you pulled content appears as the `shared-<slug>` domain in **Domains**
-- An "Advanced" disclosure with: Run synthesis (with a confirm step, v3.0.5+) · Show invite token (re-display any time) · Generate/Rotate admin token · your fellow-ID pill · Revoke a contributor… (admins with an admin token) · Disconnect
+- **Run synthesis (admin)** alongside them in the same action row, with a confirm step explaining the cost before it runs
+- A **Cohort & sharing details** disclosure: contributor count, your share of the collective, and how many pages your mirror holds
+- An **Admin controls — admin token & contributor revocation** disclosure (admins only — read-only members get no admin surface at all) with: Generate/Rotate admin token · Show invite token · Revoke a contributor…
+- Your fellow-ID pill and a **Leave this Shared Brain** link in the card footer
 
 You're done. Skip to [§4 Daily workflow](#4--daily-workflow).
 
@@ -184,7 +198,7 @@ The wizard generates the invite token and displays it in a copy-to-clipboard box
 
 Send it to every cohort member via Slack, email, or any channel — the token contains no credentials, so it's safe to share. The wizard also gives you a link to the repo's **Settings → Collaborators** page so you can invite everyone if you haven't yet.
 
-Below the invite token, the wizard shows your **admin token** (`sbat_…`, v3.0.5+). This one is the opposite of the invite token: it is a **secret credential** that authorises contributor revocation (GDPR erasure), it is shown **only here, only once**, and you must NOT share it with contributors. Store it in your password manager now — the revoke panel will ask you to paste it. (Lost it? Advanced → **Rotate admin token** on the connection card issues a new one.)
+Below the invite token, the wizard shows your **admin token** (`sbat_…`, v3.0.5+). This one is the opposite of the invite token: it is a **secret credential** that authorises contributor revocation (GDPR erasure), it is shown **only here, only once**, and you must NOT share it with contributors. Store it in your password manager now — the revoke panel will ask you to paste it. (Lost it? On the connection card, **Admin controls — admin token & contributor revocation** → **Rotate token** issues a new one and invalidates the old.)
 
 Click **Set up my contribution →** to continue. You're now setting up YOUR own contributor identity (the admin is also a contributor).
 
@@ -223,7 +237,7 @@ A typical work session:
 4. Ingest new sources into your **personal opted-in domain** (e.g. `work-ai/`) — NOT the shared mirror
 5. **Push contributions** at the end of your session
 
-Both Push and Pull are SSE-streamed: you'll see live progress as the operation runs. The connection card status box shows messages like *"Synthesizing entities/context-engineering.md (2 contributions)"* during synthesis. Since v3.0.4 the final summary **stays on the card** after the operation (surviving tab switches), only one operation can run per connection at a time, and Disconnect is blocked while an operation runs.
+Both Push and Pull are SSE-streamed: you'll see live progress as the operation runs. The connection card status box shows messages like *"Synthesizing entities/context-engineering.md (2 contributions)"* during synthesis. Since v3.0.4 the final summary **stays on the card** after the operation (surviving tab switches), only one operation can run per connection at a time, and **Leave this Shared Brain** is blocked while an operation runs.
 
 **Card at-a-glance state (v3.0.4+):**
 
@@ -237,8 +251,8 @@ Same as contributors, plus periodic synthesis (recommended weekly):
 
 | Action | When |
 |---|---|
-| **Run synthesis (admin)** in Advanced disclosure | Weekly, or after a batch of pushes from your cohort. This is what merges contributions into the collective wiki. Since v3.0.5 a confirm step explains what it does before running (contributors who click it by accident can cancel). |
-| **Revoke a contributor…** in Advanced (v3.0.5+) | When someone requests GDPR erasure or must be fully removed. Opens the member directory, asks for your admin token + a typed confirmation, then streams the irreversible erasure + rebuild. |
+| **Run synthesis (admin)** — in the card's main action row, beside Push and Pull | Weekly, or after a batch of pushes from your cohort. This is what merges contributions into the collective wiki. Since v3.0.5 a confirm step explains what it does before running (contributors who click it by accident can cancel). |
+| **Revoke a contributor…** — under **Admin controls — admin token & contributor revocation** | When someone requests GDPR erasure or must be fully removed. Opens the member directory, asks for your admin token + a typed confirmation, then streams the irreversible erasure + rebuild. |
 
 Detailed admin operations (synthesis cadence, contributor management, admin-token security, revocation) are in [`docs/shared-brain-admin.md`](shared-brain-admin.md).
 
@@ -331,9 +345,10 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 | Start a new cohort (admin) | **Shared Brain** → **⚙ I'm starting a new Shared Brain** → Set up |
 | Push your contributions | **Shared Brain** → connection card → "Push contributions" |
 | Pull collective updates | **Shared Brain** → connection card → "Pull updates" |
-| Run synthesis (admin) | **Shared Brain** → connection card → admin controls → "Run synthesis" |
+| Run synthesis (admin) | **Shared Brain** → connection card → "Run synthesis (admin)" (main action row, beside Push and Pull) |
+| See cohort size / your share | **Shared Brain** → connection card → **"Cohort & sharing details"** |
 | Revoke a contributor (admin) | **Shared Brain** → connection card → **"Admin controls — admin token & contributor revocation"** (shown only when the connection has an admin token). The curl equivalent is in [`shared-brain-admin.md` §3](shared-brain-admin.md#3--revoking-a-contributor-article-17) |
-| Disconnect this machine | **Shared Brain** → connection card → Disconnect |
+| Leave the brain on this machine | **Shared Brain** → connection card footer → **"Leave this Shared Brain"** (removes the connection only; your local files, including the read-only mirror, stay) |
 
 > At `/old` the same actions live in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else).
 

@@ -303,18 +303,18 @@ The response's `links` field shows `broken_count: 0` — all links grounded. ✓
 
 > **Claude:** *"Saved to your `work-ai` domain: one summary + one new entity page (`context-engineering.md`). To make this appear in the cohort's shared brain:*
 >
-> *1. Open the Curator app → Sync tab*
-> *2. In the Shared Brains section, on your cohort's connection card, click **Push contributions***
+> *1. Open the Curator app → **Shared Brain** view in the left rail*
+> *2. On your cohort's connection card, click **Push contributions***
 > *3. The admin will run synthesis (usually weekly) — your contribution will then show up in everyone's `shared-cohort` mirror on their next Pull*
 >
-> *I can't trigger the Push myself — that step lives in the Curator app, not MCP, in v3.0.0-beta.1. (It's a future roadmap item.) Anything else you want me to add to your `work-ai` domain before you push?"*
+> *I can't trigger the Push myself — there are no push/pull/synthesize MCP tools, and that is intentional rather than a gap. Anything else you want me to add to your `work-ai` domain before you push?"*
 
 The user clicks Push themselves. A week later when the admin synthesises, the contribution lands in every cohort member's `shared-cohort` mirror as a synthesised collective page with Claude attributed in the Provenance section (under the user's UUID or display name, per the cohort's attribution settings).
 
 **Key moves**
 - Never compile to a `shared-*` mirror — those writes are refused at the tool level AND would be overwritten on next Pull.
 - `list_domains` distinguishes personal (no `shared-` prefix) from mirror (`shared-` prefix). Ask the user which personal domain feeds the shared brain when ambiguous.
-- After compiling, be PRECISE in the wrap-up: *"saved to your personal domain"* — not *"saved to the shared brain"*. Mention the manual Sync-tab Push step. Don't promise something MCP can't do.
+- After compiling, be PRECISE in the wrap-up: *"saved to your personal domain"* — not *"saved to the shared brain"*. Mention the manual **Push contributions** step in the **Shared Brain** view. Don't promise something MCP can't do.
 - For "what does our cohort brain say about X?" requests (the read direction), all read tools work directly on the `shared-cohort` mirror — no detour through personal domain needed.
 
 ---

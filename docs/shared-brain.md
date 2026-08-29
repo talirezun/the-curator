@@ -13,7 +13,7 @@ You keep your private brain private. You only share what you choose. The collect
 
 **Why an LLM is required, and where it runs.** Mechanical file merge produces a bigger wiki. LLM synthesis produces a *better* wiki — resolving conflicting formulations, eliminating broken cross-fellow wikilinks, enriching sparse pages, attributing provenance. The LLM runs **locally on each contributor's machine** (using the Gemini Flash Lite key they already have configured for ingest), pre-processing their changed pages into compact `DeltaSummary` objects before pushing. The collective brain receives structured knowledge summaries — not raw wiki files.
 
-**Status**: opt-in beta (introduced in v3.0.0-beta.1; still beta as of v3.1.0). The wizard, the invite-token flow and every documented path are GitHub-only; a Cloudflare R2 backend is planned for a future release (see [Roadmap](#7--roadmap)). A `local` filesystem backend also exists and is reachable by hand-writing a connection — see [§3 Architecture](#3--architecture) for the licensing consequence. Since v3.6.1 invite tokens are GitHub-only at both ends: `/generate-invite` refuses to mint a non-GitHub token and `/parse-invite` refuses to accept one, so the `local` backend cannot be reached through an invite. Note: v3.1.0 itself shipped as unrelated infrastructure work (see [Roadmap](#7--roadmap)), so the Shared Brain milestones below have shifted to later, not-yet-numbered releases.
+**Status**: opt-in beta — introduced in v3.0.0-beta.1 and **still beta as of v3.17.2**. The wizard, the invite-token flow and every documented path are GitHub-only; a Cloudflare R2 backend is planned for a future release (see [Roadmap](#7--roadmap)). A `local` filesystem backend also exists and is reachable by hand-writing a connection — see [§3 Architecture](#3--architecture) for the licensing consequence. Since v3.6.1 invite tokens are GitHub-only at both ends: `/generate-invite` refuses to mint a non-GitHub token and `/parse-invite` refuses to accept one, so the `local` backend cannot be reached through an invite. Note: v3.1.0 — once pencilled in for Shared Brain GA — shipped as unrelated infrastructure work, and the releases since have gone to other subsystems, so the Shared Brain milestones below have shifted to later, not-yet-numbered releases (see [Roadmap](#7--roadmap)).
 
 ---
 
@@ -297,8 +297,8 @@ before v3.6.2 already holds a real boolean. A contributor who *left the box unti
 therefore suppressed the moment they update, with no migration and no re-save. But a contributor
 who **ticked it** holds `true` on disk and keeps being attributed by name after upgrading, with
 no re-consent prompt. That matches the box they ticked, which is why it is left alone — but it
-means the upgrade is not a reset: anyone who wants to change the answer must go through Disconnect
-+ re-join (there is still no in-place toggle; see the compliance doc §1a).
+means the upgrade is not a reset: anyone who wants to change the answer must leave the brain on that
+machine and re-join (there is still no in-place toggle; see the compliance doc §1a).
 
 Your `fellow_id` (UUID) and each delta's `contributor_id` are unaffected either way — this makes
 contributions **pseudonymous, not unattributable**. The admin member directory falls back to the
@@ -349,11 +349,11 @@ Full detail and the disclosure obligation in [`docs/shared-brain-compliance.md` 
 
 **Why:** Without this guard, Claude (via MCP) could compile findings directly into `domains/shared-X/`. Those writes would (a) not propagate to other contributors (no push path from a mirror domain) and (b) be silently overwritten on next pull. The contribution model only works if writes originate from the personal opted-in domain.
 
-Implementation: `ensureSharedDomainExists()` writes `domains/shared-<slug>/CLAUDE.md` with `readonly: true` frontmatter. New helper `isDomainReadonly(domain)` in `src/brain/files.js`. The MCP `refuseIfReadonly()` chokepoint in `mcp/util.js` is called from all four write tools — refuses with a structured error pointing the user back to their personal opted-in domain.
+Implementation: `ensureSharedDomainExists()` writes `domains/shared-<slug>/CLAUDE.md` with `readonly: true` frontmatter. New helper `isDomainReadonly(domain)` in `src/brain/files.js`. The MCP `refuseIfReadonly()` chokepoint in `mcp/util.js` is called from every mutating tool — it refuses with a structured error pointing the user back to their personal opted-in domain. **That call *is* the definition of a mutator here, so enumerate the `refuseIfReadonly` call sites across `mcp/tools/**` rather than trusting a count written down anywhere** — the set has grown (most recently when `save_working_state` joined it) and a stale number in prose is what stops the next reviewer looking. Any new tool that writes user data MUST add the call.
 
 **Extended in v3.0.2:** the same contract is now enforced by the app's own write surfaces, not just the MCP — the ingest route, the compile route, and six mutating Health endpoints (`/fix`, `/fix-all`, `/fix-all-safe`, `/broken-links/apply`, `/orphans/apply`, `/semantic-dupes/merge-batch` — everything that edits wiki *pages*) refuse read-only mirrors with the same steer message; the Ingest tab's domain dropdown excludes mirrors; and `validateConnection` + `pushDomain` reserve the `shared-*` namespace so a mirror can never be registered as a *contributing* domain (which would create a pull→push feedback loop).
 
-**Known gap, recorded not hidden:** `POST /api/health/:domain/dismiss` and `/undismiss` are **not** gated by `assertWritableDomain`, yet they write `.health-dismissed.jsonl` inside the mirror's own `wiki/` directory. The harm is bounded — a dismissal is not wiki content, and the file is not part of the collective's page set, so a pull's prune step leaves it alone — but it does mean the mirror is not strictly read-only on disk, and a dismissal made against a mirror is local-only and will not be seen by anyone else. The MCP equivalents (`dismiss_wiki_issue` / `undismiss_wiki_issue`) *are* guarded, so the two surfaces disagree.
+**Gap closed:** `POST /api/health/:domain/dismiss` and `/undismiss` were once ungated while their MCP equivalents were guarded, so the two surfaces disagreed and a mirror was not strictly read-only on disk (they write `.health-dismissed.jsonl` inside the mirror's own `wiki/` directory). Both routes now call `assertWritableDomain` in `src/routes/health.js`, matching `dismiss_wiki_issue` / `undismiss_wiki_issue` in `mcp/tools/dismissed.js`. The app and the MCP now refuse a mirror identically for dismissals as well as for page edits.
 
 The Claude skill (`claude-skills/my-curator/SKILL.md` §3.1) documents this read/write contract from Claude's perspective so it knows where to compile when the user says "save this to the shared brain".
 
@@ -490,8 +490,8 @@ Irreversible. Documented prominently in admin guide and compliance reference.
 
 > **Note:** this milestone was originally planned for v3.1.0. That version number has since shipped as unrelated infrastructure work (Track 1 Foundation — see the CLAUDE.md changelog), so Shared Brain GA and everything below it will land in a later, not-yet-numbered release.
 
-- Production test program complete (revoke E2E on real GitHub, real-LLM delta/conflict prompts, concurrent-writer races, CI wiring, Playwright wizard test)
-- Structured beta pilot with a real cohort
+- Production test program complete. Most of it shipped in v3.0.6 and is wired into the test runner — revoke E2E against a real GitHub repo, real-LLM delta and conflict-resolution prompts on every configured provider, concurrent-writer races, the offline scenario suite, and CI wiring (see the `test-sharedbrain-*` suites and their offline/live classification in `scripts/run-tests.js`). Outstanding: the Playwright wizard pass, which is run per release rather than committed, since a Playwright devDependency would be installed on every end-user machine by the auto-updater.
+- Structured beta pilot with a real cohort — **the remaining GA gate**, and the one that has not started
 - More worked examples in the user guide
 
 ### Cloudflare R2-backed Shared Brains (planned, after GA)

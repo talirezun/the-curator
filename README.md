@@ -131,8 +131,9 @@ with strict daily quotas; pay-as-you-go costs roughly **€5/month** for moderat
 ## The interface
 
 The app is organized as a left icon rail rather than a row of tabs: **Chat, Domains, Shared
-Brain, Ingest**, and **Agent memory** — the third layer, showing the working state your coding
-agents write over MCP — run down the side, with
+Brain, Agent memory** — the third layer, showing the working state your coding agents write over
+MCP — and **Ingest** run down the side in that order (your brain → your team's brain → your
+agents' brain → the way material gets in), with
 **Sync** and **Settings** in the rail footer. **Agent memory is read-only in the app**: agents
 write it, the app shows it, and if you want to edit the standing brief by hand you open
 `state/project.md` in any editor. There's no
@@ -578,7 +579,7 @@ That is not a chat interface. That is a frontier model doing **deep research ove
 
 When you join a Shared Brain (see [docs/shared-brain-user-guide.md](docs/shared-brain-user-guide.md)), the collective wiki appears on your machine as a `shared-<slug>/` domain. **MCP read tools work fully on it** — Claude can `search_wiki`, `get_node`, `get_index`, `search_cross_domain` across the collective just like any other domain. This is where the cohort/team use cases get powerful: a research team can ask *"across our shared brain, which papers contradict each other on X?"* and Claude reads everyone's combined reading to surface the answer with citations.
 
-**The five mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you Push from Sync. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
+**The five mutating MCP tools refuse on `shared-*` mirrors** by design (the read-only Health scans still work there) — direct writes wouldn't propagate to other contributors and would be overwritten on the next Pull. To contribute, Claude writes to your personal opted-in domain (e.g. `work-ai/`), then you click **Push contributions** in the **Shared Brain** view. The skill ([claude-skills/my-curator/SKILL.md](claude-skills/my-curator/SKILL.md) §3.1) teaches Claude this contract so it knows where to compile when you say *"save this to the shared brain."*
 
 ### Why this is first-of-its-kind
 

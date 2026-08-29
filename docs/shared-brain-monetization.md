@@ -85,7 +85,7 @@ The buyer needs The Curator running on their own machine. Free, open-source, ins
 
 ## 3 — Three monetization patterns
 
-All three work today on v3.0.0-beta.1 with **zero code changes** to The Curator.
+All three work today, on the shipping app, with **zero code changes** to The Curator.
 
 ### Pattern A — Subscription access ("Substack for knowledge graphs")
 
@@ -147,7 +147,7 @@ flowchart TB
 | **Read-only** | Pull the collective wiki, read everything, query via Claude (MCP) | Free or small one-time fee |
 | **Contributor (read+write)** | Pull + Push their own reading and synthesis into the collective | Recurring monthly fee |
 
-**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. Do not sell "your name on the page": Provenance carries the shortened UUID only, and name attribution is not implemented (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-attribution--uuids-on-collective-pages-always-the-real-name-only-if-you-opt-in)).
+**Why this is powerful**: you let people sample the brain free (read-only) before they upgrade. Contributors get their facts into the collective and are attributed on every page they enriched — as a **pseudonymous 8-character short-id**, not by name. **Do not sell "your name on the page": collective wiki pages have never carried names and still do not.** Provenance sections and conflict markers show the shortened UUID only. There *is* a name-attribution setting, but it governs something narrower and less saleable: a contributor who opts in has their display name written into their raw contribution records in the repo, readable by every collaborator — not rendered on any wiki page (see [`shared-brain.md` § Decision 6a](shared-brain.md#6a-attribution--uuids-on-collective-pages-always-the-real-name-only-if-you-opt-in)). It is off by default, chosen once at join time, and not retroactively removable, so treat it as a privacy control rather than a perk to advertise.
 
 > ✅ **Read-only membership is first-class as of v3.0.4.** A read-only PAT
 > shows a yellow notice in the join wizard but the member can continue,
@@ -231,7 +231,7 @@ Welcome! Three things to get you started:
 2. Install The Curator (free, open source):
    https://github.com/talirezun/the-curator#quick-start
 
-3. In the Curator, open Settings → "Shared Brain (beta)" and click
+3. In the Curator, click "Shared Brain" in the left sidebar and click
    "Enable Shared Brain (beta)". Then, in that same view, click the
    "📨 I have an invite token → Join" card. Paste this invite token:
 
@@ -248,6 +248,10 @@ of the brain. Future updates land each week — pull anytime.
 
 Questions: <your contact>
 ```
+
+> The template describes the current interface. A buyer still on the older
+> interface at `/old` enables Shared Brain from **Settings → Shared Brain
+> (beta)** and joins from the **Sync** tab's "Shared Brains" block instead.
 
 Total time per buyer: ~3 minutes. If you sell 50 buyers/month, that's 2.5 hours/month — manageable, and arguably good for trust-building (every buyer hears from you personally).
 

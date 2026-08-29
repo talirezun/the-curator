@@ -76,6 +76,44 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 const JOURNAL_PAGE = 10;
 const JOURNAL_MORE = 50;
 
+// ── Revalidation ─────────────────────────────────────────────────────────
+//
+// THIS SCREEN IS A WINDOW ONTO DATA ANOTHER PROCESS WRITES, and that makes a
+// one-shot fetch on entry wrong here in a way it is not in Domains or Sync,
+// where the browser is the only writer. The whole premise of the feature is
+// that agents write this through the MCP while you watch.
+//
+// Measured, with the view open on a project: a save that added a second
+// scope left the sidebar reading `1 scope · 12 hr ago` while the scope
+// picker beside it listed TWO. Not a counting bug — GET /api/memory already
+// answered `scopeCount: 2` — purely that nothing re-asked. Two panes
+// disagreeing on screen reads as a broken app rather than as stale data.
+//
+// Three triggers, cheapest first:
+//   · selecting a project — the detail fetch already happens then, so the
+//     index is one request away and the two panes land together;
+//   · the window regaining focus / the tab becoming visible — the exact
+//     moment someone comes back from the agent that just wrote, and free
+//     while they are away;
+//   · a self-scheduling poll, for the case neither of those fires (the app
+//     visible and focused on a second monitor while an agent runs).
+//
+// THE POLL IS ADAPTIVE BECAUSE THE ROUTE IS NOT FREE. `listWorkingScopes`
+// stats every (scope, machine) pair and reads a 16 KB journal tail per pair,
+// for every domain, up to MAX_PROJECTS = 200 (see src/routes/memory.js,
+// which says so about itself). Measured at 2.2-3.6 ms over 3 domains with 2
+// pairs — trivial — but that cost scales with domains x pairs, and a number
+// picked against a 3-domain machine is a busy poll on a 200-domain one. So
+// the interval is DERIVED from how long the last refresh actually took: at
+// least POLL_BASE_MS, never more than 1/POLL_DUTY of the wall clock, capped
+// at POLL_MAX_MS. A big install throttles itself without anyone tuning it.
+//
+// It is a setTimeout CHAIN, not setInterval: a slow refresh must delay the
+// next one, not stack up behind it.
+const POLL_BASE_MS = 20000;
+const POLL_DUTY = 20;              // spend at most 1/20th of the wall clock refreshing
+const POLL_MAX_MS = 300000;
+
 function freshState() {
   return {
     loading: true,
@@ -108,6 +146,24 @@ function freshState() {
     // `undefined` still means "no opinion" and each fold keeps its own
     // default (the brief opens when it is the only content there is).
     openFolds: {},
+
+    // ── Revalidation bookkeeping (see the Revalidation block above) ──────
+    //
+    // When the read that produced what is CURRENTLY on screen was issued, in
+    // ms. Deliberately the START of that read, not its completion: a write
+    // landing mid-fetch may or may not be reflected, and the fail-safe
+    // direction is to offer a reload that was not strictly needed rather
+    // than to leave a stale document on screen claiming to be current.
+    // 0 means "nothing read yet", never "read at the epoch".
+    detailFetchedAt: 0,
+    // An index refresh saw a write NEWER than that read. Rendered as an
+    // offer to reload, never as an automatic replacement — see
+    // renderStaleNotice for why the document is not swapped underneath a
+    // reader.
+    staleWrite: false,
+    refreshing: false,
+    // How long the last index refresh took, in ms. Feeds nextPollDelay.
+    lastRefreshMs: 0,
   };
 }
 
@@ -137,6 +193,10 @@ let pendingFocusId = null;
 const FOCUSABLE_IDS = [
   'mem-scope-select', 'mem-machine-select', 'mem-journal-more',
   'mem-fold-brief', 'mem-fold-journal', 'mem-fold-about',
+  // Both revalidation controls. `mem-reload` is the one that matters: it
+  // REMOVES itself on success (the notice it lives in is gone once the
+  // reload lands), so it needs the same fallback treatment as "Show more".
+  'mem-refresh', 'mem-reload',
 ];
 
 // Where focus goes when the exact control did not come back. "Show more" is
@@ -146,6 +206,9 @@ const FOCUSABLE_IDS = [
 // just inside.
 const FOCUS_FALLBACK = {
   'mem-journal-more': '#mem-fold-journal',
+  // Reloading dismisses the notice this button lives in. The sidebar's
+  // Refresh is the nearest stable control that does the same KIND of thing.
+  'mem-reload': '#mem-refresh',
 };
 
 // Same mount-token discipline as chat.js / domains.js / sync.js: captured as
@@ -154,6 +217,12 @@ const FOCUS_FALLBACK = {
 // mounted" from "REmounted", which is the case that actually bites.
 let myMountToken = 0;
 let loadGate = null;
+let pollTimer = null;
+let wakeHandler = null;
+// The signature of what render() last painted. Compared against a freshly
+// computed one so a revalidation that changed nothing costs no render at
+// all — see screenSignature.
+let renderedSignature = null;
 
 registerView('memory', {
   onEnter(mountToken) {
@@ -166,33 +235,214 @@ registerView('memory', {
     render(mountToken);
     loadIndex(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
+    // REVALIDATE ON WAKE. `focus` covers alt-tabbing back from the terminal
+    // or from Claude Desktop; `visibilitychange` covers a background tab
+    // being brought forward, which fires no focus event. Both are cheap
+    // because they cost nothing while the user is elsewhere — which is
+    // exactly when an agent is writing.
+    //
+    // The mount token is captured, not read from `myMountToken`: a later
+    // mount overwrites that module-level variable, and a listener that
+    // outlived its teardown would then pass the WRONG view's token and be
+    // waved through by isCurrentMount. The teardown below removes these, so
+    // that cannot happen — capturing makes it not depend on remembering to.
+    wakeHandler = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (!isCurrentMount(mountToken)) return;
+      refreshIndex(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+    };
+    if (typeof window !== 'undefined') window.addEventListener('focus', wakeHandler);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wakeHandler);
+    schedulePoll(mountToken);
+
     return () => {
       // Timer hygiene: an armed delay timer surviving teardown would paint a
-      // loader into whatever view mounts next.
+      // loader into whatever view mounts next. The poll timer is worse than
+      // that — it would keep FETCHING for a view nobody is looking at, for
+      // the life of the page.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
+      stopPoll();
+      if (wakeHandler) {
+        if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
+        if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
+        wakeHandler = null;
+      }
     };
   },
 });
 
+// ── Polling ──────────────────────────────────────────────────────────────
+
+/**
+ * How long to wait before the next index refresh.
+ *
+ * Derived from the measured cost of the LAST one rather than fixed, so this
+ * cannot become a busy poll on an install far larger than the one it was
+ * tuned against. See the Revalidation block for why that install exists.
+ */
+function nextPollDelay() {
+  const measured = state.lastRefreshMs * POLL_DUTY;
+  return Math.min(POLL_MAX_MS, Math.max(POLL_BASE_MS, measured));
+}
+
+function stopPoll() {
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+/**
+ * A setTimeout CHAIN, re-armed only after the previous refresh has settled.
+ * setInterval would queue a second fetch on top of a slow first one; this
+ * structurally cannot.
+ *
+ * A hidden tab reschedules WITHOUT fetching: nobody is looking, and the
+ * wake handler refreshes the moment they are.
+ */
+function schedulePoll(token) {
+  stopPoll();
+  pollTimer = setTimeout(() => {
+    pollTimer = null;
+    if (!isCurrentMount(token)) return;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (hidden) { schedulePoll(token); return; }
+    refreshIndex(token)
+      .catch((err) => reportAsyncMountFailure(token, err))
+      .finally(() => { if (isCurrentMount(token)) schedulePoll(token); });
+  }, nextPollDelay());
+}
+
 // ── Load ─────────────────────────────────────────────────────────────────
 
-async function loadIndex(token) {
-  const gate = loadGate;                 // capture: the next mount replaces it
+/**
+ * The index request, and NOTHING else.
+ *
+ * Split out of loadIndex so the initial load and every later revalidation
+ * issue the same request against the same parsing, rather than two
+ * hand-maintained copies of one fetch that can drift about what an error
+ * looks like. Never throws; returns {projects, error}.
+ */
+async function fetchIndex(token) {
   try {
     const res = await fetch('/api/memory');
     const data = await res.json();
-    if (!isCurrentMount(token)) return;
-    if (!res.ok || !data.ok) {
-      state.indexError = data.error || ('HTTP ' + res.status);
-      state.projects = [];
-    } else {
-      state.projects = data.projects || [];
-      state.indexError = null;
-    }
+    if (!isCurrentMount(token)) return null;
+    if (!res.ok || !data.ok) return { projects: [], error: data.error || ('HTTP ' + res.status) };
+    return { projects: data.projects || [], error: null };
   } catch (err) {
-    if (!isCurrentMount(token)) return;
-    state.indexError = err.message;
-    state.projects = [];
+    if (!isCurrentMount(token)) return null;
+    return { projects: [], error: err.message };
+  }
+}
+
+/**
+ * WHAT THE SCREEN CURRENTLY SAYS, as a comparable string.
+ *
+ * A poll that re-renders unconditionally is worse than no poll: every render
+ * replaces the whole main pane, so it would close a native <select> the user
+ * had OPEN at that moment, and churn focus on a screen nobody asked to
+ * change. In the steady state — which is almost always — nothing has moved
+ * and the correct amount of work is none.
+ *
+ * The signature is built from the RENDERED text, not the raw fields, which
+ * is what makes it exact: `projectMetaLine` already folds `ageSeconds`
+ * through `formatAge`, so a row whose age ticked from 59s to 61s changes the
+ * signature (it now reads "1 min ago") while one that merely aged from 300s
+ * to 320s does not. Re-render iff the pixels would differ.
+ */
+function screenSignature() {
+  return JSON.stringify([
+    state.activeProject,
+    state.staleWrite,
+    state.indexError,
+    state.projects.map((p) => [p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
+  ]);
+}
+
+/**
+ * Re-ask the index and reconcile the screen with it.
+ *
+ * Deliberately narrow: it updates the project LIST and the stale flag, and
+ * touches neither the selection nor the loaded handoff. A revalidation that
+ * moved the user's selection, or swapped the document they were reading,
+ * would be a worse bug than the staleness it fixes.
+ */
+async function refreshIndex(token) {
+  if (state.refreshing || state.loading) return;
+  state.refreshing = true;
+  const startedAt = Date.now();
+  try {
+    const got = await fetchIndex(token);
+    if (!isCurrentMount(token) || !got) return;
+    state.lastRefreshMs = Date.now() - startedAt;
+
+    // A failed revalidation must NOT blank a list that is on screen and
+    // still broadly true. Report nothing, keep what we have, try again next
+    // tick — the opposite of the initial load, where an error IS the answer.
+    if (got.error) return;
+
+    state.projects = got.projects;
+    state.indexError = null;
+
+    // Has anything been written since the read that produced what is on
+    // screen? Compared against the read's START time — see detailFetchedAt.
+    const row = state.projects.find((p) => p.project === state.activeProject);
+    const wroteAt = row && row.lastWriteAt ? Date.parse(row.lastWriteAt) : NaN;
+    state.staleWrite = Number.isFinite(wroteAt) &&
+      state.detailFetchedAt > 0 && wroteAt > state.detailFetchedAt;
+
+    const before = renderedSignature;
+    if (screenSignature() !== before) render(token);
+  } finally {
+    state.refreshing = false;
+  }
+}
+
+/**
+ * Re-read the ACTIVE project, keeping the user where they are.
+ *
+ * Two requests, and only ever on an explicit click. It refreshes the scope
+ * list (so a scope written since arrival appears in the picker — otherwise
+ * reloading the document would leave the picker still claiming the old set)
+ * and then re-reads the scope the user was actually looking at, rather than
+ * snapping back to the newest one the way selectProject does.
+ */
+async function reloadActive(token) {
+  const project = state.activeProject;
+  if (!project) return;
+  const wantScope = state.scope;
+  const wantMachine = state.detail ? state.detail.machine : state.machine;
+
+  state.detailFetchedAt = Date.now();
+  state.staleWrite = false;
+  state.detailLoading = true;
+  render(token);
+
+  const read = await fetchState(project, {}, token);
+  if (!isCurrentMount(token) || state.activeProject !== project) return;
+  state.projectRead = read.data;
+  state.detailError = read.error;
+
+  const scopes = (read.data && read.data.scopes) || [];
+  if (!scopes.length) {
+    state.detail = null;
+    state.scope = null;
+    state.machine = null;
+    state.detailLoading = false;
+    render(token);
+    return;
+  }
+  // Keep the user's scope if it still exists; otherwise fall back to the
+  // freshest, which is what selectProject would have chosen anyway.
+  const keep = scopes.some((s) => s.scope === wantScope) ? wantScope : scopes[0].scope;
+  await loadScope(keep, keep === wantScope ? wantMachine : null, token);
+}
+
+async function loadIndex(token) {
+  const gate = loadGate;                 // capture: the next mount replaces it
+  const got = await fetchIndex(token);
+  if (!isCurrentMount(token)) return;
+  if (got) {
+    state.projects = got.projects;
+    state.indexError = got.error;
   }
 
   // Open on the project whose agent memory is FRESHEST — nearly always the
@@ -214,7 +464,7 @@ async function loadIndex(token) {
   if (pick) await selectProject(pick.project, token);
 }
 
-async function selectProject(project, token) {
+async function selectProject(project, token, opts = {}) {
   state.activeProject = project;
   state.projectRead = null;
   state.detail = null;
@@ -223,7 +473,21 @@ async function selectProject(project, token) {
   state.machine = null;
   state.journalLimit = JOURNAL_PAGE;
   state.detailLoading = true;
+  // The START of the read that is about to produce what goes on screen.
+  // Conservative on purpose: a write landing mid-fetch is reported as
+  // stale, which costs one reload the user did not strictly need, rather
+  // than leaving a stale document presenting itself as current.
+  state.detailFetchedAt = Date.now();
+  state.staleWrite = false;
   render(token);
+
+  // A user-initiated selection is the cheapest honest moment to re-ask the
+  // index: the detail fetch below is happening anyway, so the two land
+  // together and the sidebar row cannot contradict the picker it sits next
+  // to. NOT done for the initial pick, which loadIndex just fetched.
+  if (opts.revalidateIndex) {
+    refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+  }
 
   const read = await fetchState(project, {}, token);
   if (!isCurrentMount(token) || state.activeProject !== project) return;
@@ -367,6 +631,7 @@ export function splitHandoffPreamble(raw) {
 
 function render(token) {
   if (!isCurrentMount(token)) return;
+  renderedSignature = screenSignature();
   captureFocus();
   renderSidebar(token);
   renderMain(token);
@@ -445,9 +710,29 @@ function renderSidebar(token) {
     );
   }).join('');
 
+  // A VISIBLE, KEYBOARD-REACHABLE way to re-ask. The automatic triggers
+  // (select, wake, poll) cover the cases we can predict; this covers the one
+  // we cannot, which is a user who simply does not believe the screen.
+  //
+  // Plain text rather than a glyph: there is no refresh icon in ICON_BODY,
+  // and icon() renders a loud placeholder for a name it does not know rather
+  // than guessing (v3.9.0), so inventing one would ship a broken icon. A
+  // word also needs no aria-label to be announced correctly.
+  //
+  // Hoisted into a local rather than inlined into the setSidebar() call
+  // below: test-next-memory-view §9 reads the token argument within a
+  // 12-line window of the call, and it is right to — a call whose arguments
+  // no longer fit on a screen is a call whose token is easy to drop.
+  const projectsHead =
+    '<div class="mem-projects-head">' +
+      '<span class="cur-eyebrow">PROJECTS</span>' +
+      '<button type="button" class="mem-refresh" id="mem-refresh"' +
+        ' title="Re-read what agents have saved. This screen also re-checks by itself when you come back to it.">' +
+        'Refresh</button>' +
+    '</div>';
+
   setSidebar(
-    head +
-    '<div class="cur-eyebrow" style="margin-top:10px">PROJECTS</div>' +
+    head + projectsHead +
     '<div class="mem-row-list">' + rows + '</div>' +
     '<div class="mem-sidebar-foot">' + icon('lockAlt', 12) +
       '<span>Read-only here. Agents write this through MCP.</span></div>',
@@ -514,9 +799,14 @@ function renderProject() {
   // "Scope main" label affirms "there is exactly one scope", and it must not
   // say that while a second scope directory sits unread on disk.
   const unlistedNote = renderUnlistedNote(read, d);
+  // Sits with the unlisted note, above the controls, for the same reason: it
+  // qualifies the claim everything below it is about to make. Present in
+  // every content branch — the empty-project one most of all, where "nothing
+  // saved yet" is precisely the sentence a just-written handoff falsifies.
+  const staleNote = renderStaleNotice();
 
   if (!scopes.length && !hasBrief) {
-    return header + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
+    return header + staleNote + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
   }
 
   // A brief with no handoff: the store says so (`message`) and the view used
@@ -528,13 +818,14 @@ function renderProject() {
   // let agents save), so it is a common first experience.
   if (!scopes.length) {
     return (
-      header + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
+      header + staleNote + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
       renderBrief(read, true) + renderAbout()
     );
   }
 
   return (
     header +
+    staleNote +
     unlistedNote +
     renderScopeControls(scopes) +
     renderHandoff() +
@@ -543,6 +834,30 @@ function renderProject() {
     renderBrief(read, !(d && d.current && d.current.present)) +
     renderJournal() +
     renderAbout()
+  );
+}
+
+/**
+ * "An agent saved something since you loaded this."
+ *
+ * OFFERED, NEVER APPLIED. The sidebar is a summary and re-renders silently;
+ * the handoff is a document somebody is part-way through READING, and
+ * swapping it underneath them — moving their scroll position and the folds
+ * they opened — trades one wrong-looking screen for a hostile one. So the
+ * document stays put and the user decides.
+ *
+ * Says what is true and nothing more: something was written, not what. We
+ * know a newer mtime exists; we have not read it, and claiming to know
+ * whether it changed THIS scope would be a guess.
+ */
+function renderStaleNotice() {
+  if (!state.staleWrite) return '';
+  return (
+    '<div class="mem-stale" role="status">' +
+      '<span class="mem-stale-text">An agent has saved to this project since you opened it — ' +
+        'what is below may not be the latest.</span>' +
+      '<button type="button" class="btn btn-xs mem-stale-btn" id="mem-reload">Reload</button>' +
+    '</div>'
   );
 }
 
@@ -674,12 +989,16 @@ function renderScopeControls(scopes) {
   const scopeNames = [];
   for (const s of scopes) if (!scopeNames.includes(s.scope)) scopeNames.push(s.scope);
 
+  // The <select> is wrapped so a chevron can be drawn over it. It stays a
+  // real <select> — see the note on .mem-select in memory.css for why the
+  // native control is kept and only its CHROME is replaced.
   const scopeCtl = scopeNames.length > 1
     ? '<label class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
+        '<span class="mem-select-wrap">' +
         '<select class="mem-select" id="mem-scope-select">' +
           scopeNames.map((s) => '<option value="' + escapeHtml(s) + '"' +
             (s === state.scope ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('') +
-        '</select></label>'
+        '</select></span></label>'
     : (state.scope
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Scope</span>' +
           '<span class="mem-ctl-static mono">' + escapeHtml(state.scope) + '</span></span>'
@@ -699,6 +1018,7 @@ function renderScopeControls(scopes) {
 
   const machineCtl = machines.length > 1
     ? '<label class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
+        '<span class="mem-select-wrap">' +
         '<select class="mem-select" id="mem-machine-select">' +
           machines.map((m) => {
             const sel = !!(d && m.machine === d.machine);
@@ -708,7 +1028,7 @@ function renderScopeControls(scopes) {
               (sel && selectedIsMine ? MINE : '') +
             '</option>';
           }).join('') +
-        '</select></label>'
+        '</select></span></label>'
     : (d && d.machine
         ? '<span class="mem-ctl"><span class="mem-ctl-label">Machine</span>' +
           '<span class="mem-ctl-static mono">' + escapeHtml(d.machine) +
@@ -1030,7 +1350,8 @@ function wire(token) {
     btn.addEventListener('click', () => {
       const project = btn.dataset.memProject;
       if (project === state.activeProject) return;
-      selectProject(project, token).catch((err) => reportAsyncMountFailure(token, err));
+      selectProject(project, token, { revalidateIndex: true })
+        .catch((err) => reportAsyncMountFailure(token, err));
     });
   });
 
@@ -1057,6 +1378,24 @@ function wire(token) {
     machineSel.addEventListener('change', () => {
       state.journalLimit = JOURNAL_PAGE;
       loadScope(state.scope, machineSel.value, token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+
+  const refresh = document.getElementById('mem-refresh');
+  if (refresh) {
+    refresh.addEventListener('click', () => {
+      // Both halves, because "refresh" means the screen, not the sidebar:
+      // the index (which project rows read from) AND the project actually on
+      // display. Fired in parallel — they are independent reads.
+      refreshIndex(token).catch((err) => reportAsyncMountFailure(token, err));
+      reloadActive(token).catch((err) => reportAsyncMountFailure(token, err));
+    });
+  }
+
+  const reload = document.getElementById('mem-reload');
+  if (reload) {
+    reload.addEventListener('click', () => {
+      reloadActive(token).catch((err) => reportAsyncMountFailure(token, err));
     });
   }
 

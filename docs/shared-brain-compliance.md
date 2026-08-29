@@ -68,12 +68,12 @@ not**, and this is stated plainly rather than implied:
 | | How it works today |
 |---|---|
 | **When it is chosen** | Once, in the join wizard (step 4). It is saved with the connection. |
-| **How to change it** | There is **no attribution toggle on the connection card**. The contributor must **Disconnect the Shared Brain connection and re-join** with the box in the other state. |
+| **How to change it** | There is **no attribution toggle on the connection card**. The contributor must **leave the Shared Brain on that machine** (connection card footer → **"Leave this Shared Brain"**) **and re-join** with the box in the other state. |
 | **Is it retroactive?** | **No.** Un-ticking (or re-joining without it) stops *future* pushes from carrying the name. Names already written into `contributions/<fellow_id>/*.json` stay in shared storage and in that repository's git history — and the admin member directory keeps displaying the old name for as long as any payload carrying it survives. |
 | **How to remove names already published** | A **full revocation** (§2). That is the only mechanism that deletes a contributor's submission payloads from shared storage — and even then, see §2c on git history. |
 
 **What this means in practice.** A withdrawal request that only needs to affect future pushes is
-satisfied by Disconnect + re-join, and a contributor can do it themselves. A withdrawal request
+satisfied by leaving and re-joining, and a contributor can do it themselves. A withdrawal request
 that must also remove names already published is an **erasure** request and should be handled
 under §2 — route it to the cohort admin as an Article 17 revocation. Do not describe the wizard
 setting as a way to remove a name that has already been pushed.
@@ -261,7 +261,7 @@ So in practice: **every working Shared Brain today stores its data in the United
 is acceptable for your jurisdiction and data, you are fine. If it is not, there is no supported
 configuration — see the box above.
 
-### 4b — Cloudflare R2-backed Shared Brains (Phase 5+, not in v3.0.0-beta.1)
+### 4b — Cloudflare R2-backed Shared Brains (planned, not shipped)
 
 Cloudflare R2 supports per-bucket jurisdiction tagging. The Worker configuration enables EU residency via:
 
@@ -272,7 +272,7 @@ bucket_name = "my-shared-brain"
 jurisdiction = "eu"
 ```
 
-Data stays in EU data centres regardless of where your contributors or admins are located. This is the recommended path for EU-based deployments once Phase 5 ships.
+Data stays in EU data centres regardless of where your contributors or admins are located. This is the intended path for EU-based deployments once it ships. It is scheduled after Shared Brain GA — see the [roadmap in `shared-brain.md`](shared-brain.md#7--roadmap) for where it sits relative to everything else, rather than relying on a milestone name repeated here.
 
 ### 4c — Other jurisdictions
 

@@ -50,6 +50,13 @@ Get this wrong in the direction of putting durable material in state and the nex
 overwrites it. Nothing warns you, because from the store's point of view an overwrite is
 the correct behaviour.
 
+**Not wanting it at all is a supported position, and it needs no setting.** Nothing here
+runs unless an agent calls `save_working_state`, so a project you never save to has no
+state. If you want something firmer than that,
+[user-guide.md § Turning it off](user-guide.md#turning-it-off) sets out the three levers
+and what each one costs — including why `readonly: true` is a whole-domain switch rather
+than a memory one.
+
 ---
 
 ## 2. Layout on disk
@@ -185,6 +192,13 @@ otherwise orphan your previous state behind a segment nobody would think to ask 
 A scope is a workstream inside a project — `main`, `auth-refactor`, `v4-migration`.
 Scopes are independent: each has its own handoff and its own journal per machine. If you
 save without naming one, it goes to `main`.
+
+**The standing brief is NOT per scope — there is one per project and every scope shares
+it** (`project.md` sits above the scope folders and is returned on every read, whichever
+scope you ask for). So you never need to collapse work into a single scope to give it a
+common brief; doing that only costs you the ability to run two workstreams without one
+overwriting the other. [user-guide.md § One standing brief, many scopes](user-guide.md#one-standing-brief-many-scopes--how-the-brief-and-your-workstreams-relate)
+covers the practical version, including how the brief gets authored.
 
 **A scope name that is not already a safe path segment is normalised, and the save says
 which name won.** A scope is one directory name, so `feature/auth` is reduced to

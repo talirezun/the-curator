@@ -40,7 +40,7 @@ A contributor leaves the cohort, or asks to have their data removed under GDPR A
 
 1. **Shared Brain** rail view → your connection card → **Admin controls — admin token & contributor revocation**
 2. The panel loads the **member directory** from the shared repo (everyone who ever contributed — name where available, short fellow-ID, submission count, last activity). Pick the person. Your own entry is marked **YOU** (self-revocation is legitimate, e.g. when leaving a brain you administer).
-3. Paste your **admin token** (the `sbat_…` credential shown once at brain setup — see §9; if your connection predates v3.0.5, click **Generate admin token** in Advanced first).
+3. Paste your **admin token** (the `sbat_…` credential shown once at brain setup — see §9; if your connection predates v3.0.5, click **Generate token** in the same **Admin controls** disclosure first — see §9).
 4. Type the confirmation exactly as prompted (`REVOKE-<short-id>`) — the deliberate typing is the accident-prevention gate.
 5. Click **Permanently revoke this contributor**. Progress streams into the card; on success you get the follow-up checklist (tell contributors to Pull; remove the person as a GitHub collaborator).
 
@@ -88,7 +88,7 @@ curl -X POST http://localhost:3333/api/sharedbrain/<connection_id>/revoke \
 
 Where:
 - `<connection_id>` — your own Shared Brain connection ID. Find it via `GET /api/sharedbrain/list`.
-- `<your-admin-token>` — the `sbat_…` token shown once at brain setup (v3.0.5+) or provisioned via **Advanced → Generate admin token** / `POST /api/sharedbrain/<id>/admin-token/rotate`. The revoke endpoint refuses with 403 if it doesn't match the token stored on the connection.
+- `<your-admin-token>` — the `sbat_…` token shown once at brain setup (v3.0.5+) or provisioned via **Admin controls → Admin token → Generate token** / `POST /api/sharedbrain/<id>/admin-token/rotate`. The revoke endpoint refuses with 403 if it doesn't match the token stored on the connection.
 - `<contributor-uuid-to-revoke>` — the contributor's `fellow_id` (UUID). v3.0.5+: get it from `GET /api/sharedbrain/<id>/members` (or the card's revoke panel); older fallbacks: their Provenance short-id, or ask them to read it off their connection card. The directory shows a name for any contributor whose stored payloads carry one, and the **8-character short fellow-ID** otherwise. **The v3.6.2 `attribute_by_name` gate is forward-looking only and changes nothing about this directory on an existing cohort** — it is built by reading every contribution payload ever stored, and pre-v3.6.2 pushes wrote the name unconditionally, so those names are still listed until the contributions are revoked. On a cohort started after v3.6.2, only contributors who opted in will show a name. Either way: if the person you are looking for shows only a short-ID, ask the data subject to read their Fellow ID off their own connection card — a subject identifying themselves is the correct flow for an Article 17 request anyway.
 - `confirmation` — literal string `"REVOKE-<contributor-uuid-to-revoke>"` (the FULL UUID). The brittle confirmation is a GitHub-style accident-prevention gate.
 
@@ -96,7 +96,7 @@ Where:
 > `attribute_by_name` is chosen **once, at join time**, in the connection wizard.
 > There is currently **no toggle on the connection card** to change it afterwards.
 > If a contributor wants to stop publishing their display name, they must
-> **Disconnect the Shared Brain connection and re-join** with the box unticked;
+> **leave the Shared Brain on that machine** (connection card footer → **"Leave this Shared Brain"**) **and re-join** with the box unticked;
 > from that point their pushes carry the UUID alone. The change is **not
 > retroactive** — names already written into `contributions/<fellow_id>/*.json`
 > stay in shared storage and in that repository's git history, and a **full
@@ -237,7 +237,7 @@ Synthesis aggregates contributions into the collective wiki. It runs locally on 
 
 ### Manual trigger (every time the admin wants to merge)
 
-**Shared Brain** rail view → connection card → admin controls → **Run synthesis**.
+**Shared Brain** rail view → connection card → **Run synthesis (admin)** — it sits in the card's main action row beside Push and Pull, not inside a disclosure. A confirm step explains the cost before anything runs.
 
 ### Frequency recommendations
 
@@ -274,7 +274,7 @@ That's it. No new tokens, no admin action in the Curator.
 
 ### Re-displaying the invite token
 
-Lost the token? Since v3.0.5 it's one click: **Shared Brain** rail view → connection card → **Show invite token**. The token is deterministic (pure metadata), so re-generating from the connection's stored settings reproduces the original — safe to show any time, safe to share with anyone.
+Lost the token? Since v3.0.5 it's one click: **Shared Brain** rail view → connection card → **Admin controls — admin token & contributor revocation** → **Show invite token**. The token is deterministic (pure metadata), so re-generating from the connection's stored settings reproduces the original — safe to show any time, safe to share with anyone.
 
 > Note for connections created before v3.0.5: the data-handling-terms choice wasn't stored back then, so the re-displayed token defaults to *contributor retains*. If your brain uses the *organisational* IP mode, share your originally generated token instead (the card shows a caution in this case).
 
@@ -442,7 +442,7 @@ Expected (v3.0.4): their PAT was created with **Contents: Read** only, and they 
 That's the `permanent_skip` list (3 genuine LLM pre-processing failures on the same page). They can expand the block and click **Retry these pages on next push** (v3.0.4, `POST /api/sharedbrain/:id/unskip`) — no page editing needed. If the same pages keep striking out, inspect them for unusual content (enormous size, binary-ish text) and consider splitting them.
 
 ### Invite token says "uses version 2; this Curator install supports up to v1"
-Your contributor's Curator is older than the one that generated the token. The wizard's error includes the version mismatch. Have them update to v3.0.0-beta.1 or later, then retry.
+Your contributor's Curator is older than the one that generated the token. The wizard's error includes the version mismatch. Have them update to a Curator new enough to understand the token version named in the error — any release from v3.0.0-beta.1 onward supports v1 tokens — then retry.
 
 ### "Domain 'shared-cohort' is a read-only Shared Brain mirror"
 A contributor tried to use MCP write tools (`compile_to_wiki`, `fix_wiki_issue`) on the shared-<slug>/ mirror directly. That's correctly refused — direct writes to a mirror don't propagate. Tell them to use the MCP tools on their personal opted-in domain instead, then Push.
@@ -455,8 +455,8 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 
 **Provisioning (v3.0.5+):**
 - **New brains** — the admin wizard generates a `sbat_…` token (160 bits of entropy) and shows it **once** on step 2, next to the invite token. It's stored on your connection when you finish the wizard; save the plaintext in your password manager immediately.
-- **Existing connections** (created before v3.0.5) — **Shared Brain** rail view → connection card → admin controls → **Generate admin token**. Shown once, same rules.
-- **Rotation** — **Advanced → Rotate admin token** (or `POST /api/sharedbrain/:id/admin-token/rotate`). The old token stops working immediately; the new one is returned/shown once.
+- **Existing connections** (created before v3.0.5) — **Shared Brain** rail view → connection card → **Admin controls — admin token & contributor revocation** → **Generate token**. Shown once, same rules.
+- **Rotation** — connection card → **Admin controls — admin token & contributor revocation** → **Rotate token** (or `POST /api/sharedbrain/:id/admin-token/rotate`). The old token stops working immediately; the new one is returned/shown once.
 
 **Handling rules:**
 - **Keep it secret.** Don't share it with contributors — it is NOT the invite token. Don't commit it anywhere.
@@ -471,11 +471,11 @@ The `admin_token` is the one privileged credential in your Shared Brain. It gate
 |---|---|
 | Initial setup | **Shared Brain** → **⚙ I'm starting a new Shared Brain** → Set up |
 | Add a contributor mid-cohort | GitHub repo → Settings → Collaborators → Add people |
-| Run synthesis | **Shared Brain** → connection card → admin controls → Run synthesis (confirm dialog) |
-| See who has contributed | Card → Advanced → Revoke panel, or `GET /api/sharedbrain/:id/members` (v3.0.5+) |
-| Revoke a contributor | Card → **Advanced → Revoke a contributor…** (v3.0.5+), or `POST /api/sharedbrain/:id/revoke` |
-| Generate / rotate the admin token | Card → Advanced → Generate/Rotate admin token (v3.0.5+) |
-| Re-display the invite token | Card → Advanced → Show invite token (v3.0.5+), or `POST /api/sharedbrain/generate-invite` |
+| Run synthesis | **Shared Brain** → connection card → **"Run synthesis (admin)"** in the main action row, beside Push and Pull (confirm dialog) |
+| See who has contributed | Card → **Admin controls — admin token & contributor revocation** → Revoke panel, or `GET /api/sharedbrain/:id/members` (v3.0.5+). For counts only, without opening the revoke panel: Card → **"Cohort & sharing details"** |
+| Revoke a contributor | Card → **Admin controls — admin token & contributor revocation** → **Revoke a contributor…** (v3.0.5+), or `POST /api/sharedbrain/:id/revoke` |
+| Generate / rotate the admin token | Card → **Admin controls — admin token & contributor revocation** → Generate token / Rotate token (v3.0.5+) |
+| Re-display the invite token | Card → **Admin controls — admin token & contributor revocation** → **Show invite token** (v3.0.5+), or `POST /api/sharedbrain/generate-invite` |
 | Check synthesis stats | `meta/state/last-synthesis.json` in the repo |
 | Read the audit log | `state/revocations.jsonl` in the repo |
 | Compliance / GDPR ref | [`docs/shared-brain-compliance.md`](shared-brain-compliance.md) |

@@ -38,9 +38,9 @@ You closed the browser tab but the server is still running in the background. Yo
 
 ### Scenario 3 — Update and restart
 
-You click **Check for Updates** in the Settings tab and apply an update.
+You click **Check for updates** in the **Settings** view (reached from the left rail's footer) and apply an update.
 
-1. The frontend calls `/api/config/update` which runs `git pull`, `npm install`, and `bash scripts/build-app.sh` (rebuilds the .app with the current node path)
+1. The frontend calls `/api/config/update` which runs `git fetch origin main` + `git reset --hard origin/main`, then `npm install`, then `bash scripts/build-app.sh` (rebuilds the .app with the current node path). It hard-resets rather than pulling because `npm install` regenerates `package-lock.json` with machine-specific diffs, which makes a plain `git pull` abort — the reasoning is in the `POST /api/config/update` docblock in `src/routes/config.js`
 2. The frontend then calls `/api/restart`
 3. The server spawns a new process using `process.execPath` (the absolute path to the running Node binary) and exits
 4. The frontend polls for the new server and reloads automatically
@@ -81,7 +81,7 @@ bash scripts/build-app.sh
 
 This regenerates the AppleScript with the correct project path and node path, compiles it, applies the icon, and code-signs the bundle.
 
-The build script also runs automatically during updates (via the Settings tab).
+The build script also runs automatically during updates (via the **Settings** view).
 
 ---
 

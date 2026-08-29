@@ -11,6 +11,42 @@
 
 /* ── Sidebar: project list ───────────────────────────────────────────── */
 
+/* The PROJECTS eyebrow and its Refresh control share a row. Baseline
+   alignment, not centre: the eyebrow is uppercase --text-2xs and the button
+   is sentence case, so centring them makes the cap-height of one sit above
+   the x-height of the other. */
+.mem-projects-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Quiet by default — this is the fallback for the automatic revalidation,
+   not the primary way anyone is expected to keep the screen current, and a
+   prominent button would imply the screen does not update on its own.
+
+   --text-2 (8.34 dark / 7.26 light on --surface), not --text-3: this file's
+   own .mem-row-meta note records that --text-3 reaches only 3.87-4.38 across
+   every surface here and so clears the AA 4.5 floor on none of them.
+   Interactive TEXT is held to the text floor, not to the 3:1 that applies to
+   a graphical boundary. */
+.mem-refresh {
+  flex: none;
+  padding: 2px 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  transition: background var(--t-state), color var(--t-state);
+}
+.mem-refresh:hover { background: var(--surface-hover); color: var(--text); }
+.mem-refresh:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+
 .mem-row-list { display: flex; flex-direction: column; gap: 2px; }
 
 .mem-row {
@@ -126,6 +162,47 @@
 .mem-badge-quiet { background: var(--surface-inset); color: var(--text-3); border: 1px solid var(--border-subtle); }
 .mem-badge-attn  { background: var(--attention-tint); color: var(--attention-text); border: 1px solid var(--attention-text); }
 
+/* THE "SOMETHING WAS SAVED WHILE YOU WERE LOOKING" NOTICE.
+
+   Accent rather than amber: nothing is wrong and nothing was lost — newer
+   state exists and has not been read yet. Amber is already spent in this
+   file on .mem-note-loud ("there is state on disk we are NOT showing you")
+   and on the "written on another machine" badge, and a third amber thing
+   here would flatten the distinction between a caveat and an offer.
+
+   MEASURED in a real browser, both themes, composited over the banner's own
+   --accent-tint background (which itself sits on --canvas):
+     --text-2         7.65 dark / 6.22 light   — clears the AA 4.5 text floor
+     --text-3         3.92 dark / 3.54 light   — under it, as everywhere here
+     --accent-border  1.70 dark / 1.54 light   — under the 3:1 graphic floor
+     --accent         3.94 dark / 5.63 light   — clears it
+   So the border is --accent, NOT --accent-border. The tint-and-border pair
+   reads as a set and --accent-border is what every other tinted box here
+   uses, which is exactly why it was tried first and measured second; an
+   earlier draft of this comment asserted 3.30/3.34 for it from expectation
+   rather than measurement, and both numbers were wrong by roughly half.
+   Colour is never the only signal either way: the sentence says it in words
+   and the button says what to do about it. */
+.mem-stale {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent);
+  background: var(--accent-tint);
+}
+.mem-stale-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.mem-stale-btn { flex: none; }
+
 /* ── Controls: scope / machine ───────────────────────────────────────── */
 
 .mem-controls {
@@ -157,11 +234,61 @@
    states the same class of fact, so it is held to the same legibility. */
 .mem-ctl-note { font-size: var(--text-2xs); color: var(--text-2); }
 
+/* THE SELECT IS STILL A NATIVE <select>. Only its CHROME is replaced.
+   `appearance: none` turns off the UA-drawn menulist widget — without it the
+   browser draws its own indicator glyph, whose colour and metrics we do not
+   control and which does not follow the theme. A hand-rolled listbox would
+   also match the OPEN menu, but it costs the keyboard model, the screen
+   reader model and the platform picker on touch, all of which a <select>
+   gives for nothing. That trade is not worth a chevron.
+
+   STATED PLAINLY, because it is what remains: the OPEN dropdown list is
+   drawn by the OS and no CSS here reaches it. `appearance: none` does not
+   change that, and never has. Matching the open state needs either a custom
+   listbox (the a11y cost above) or `appearance: base-select`, which is
+   Chromium-only today.
+
+   The wrapper carries min-width/max-width as well as the select: it is the
+   flex item now, and a wrapper with the default min-width: auto reinstates
+   exactly the 640px overflow the .mem-ctl note above describes. */
+.mem-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The chevron, drawn in CSS rather than as a background-image data URI. A
+   data URI carries its own colour, so it cannot follow the theme and would
+   need one copy per theme; two rotated borders take a token and flip for
+   free. pointer-events: none so the click still reaches the select.
+
+   --text-2 measured at 8.55 dark / 7.02 light over --surface-inset, against
+   the 3:1 that applies to a graphical control indicator. It is deliberately
+   not --text-3 (3.92/3.54 here): this glyph is the only thing that says
+   "this opens", so it is the last place to spend contrast. */
+.mem-select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-2);
+  border-bottom: 1.5px solid var(--text-2);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+
 .mem-select {
+  appearance: none;
+  -webkit-appearance: none;              /* Safari still needs the prefix */
   height: var(--control-sm);
   max-width: 100%;
   min-width: 0;                          /* see .mem-ctl — both are required */
-  padding: 0 8px;
+  /* Right padding clears the chevron above; without it a long scope name
+     runs underneath it. */
+  padding: 0 24px 0 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: var(--surface-inset);
@@ -169,7 +296,9 @@
   font-family: inherit;
   font-size: var(--text-xs);
   cursor: pointer;
+  transition: border-color var(--t-state), background var(--t-state);
 }
+.mem-select:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .mem-select:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
 
 /* ── The handoff document ────────────────────────────────────────────── */
@@ -423,5 +552,7 @@
   .mem-j-row { flex-direction: column; gap: 2px; }
   .mem-j-when { width: auto; }
   .mem-controls { gap: 8px 12px; }
-  .mem-select { max-width: 46vw; }
+  /* The wrapper is the flex item now, so the cap goes on it; the select
+     follows at max-width: 100%. */
+  .mem-select-wrap, .mem-select { max-width: 46vw; }
 }

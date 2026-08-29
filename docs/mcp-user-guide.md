@@ -243,6 +243,11 @@ handoff, size limits, and the security posture.
 > a hook has to be rebuilt per harness. An agent that has not been told the discipline simply
 > never writes, so the store stays empty and the app's **Agent memory** view has nothing to show.
 > If you want working state at all, install this.
+>
+> The inverse is the answer to *"how do I turn the memory layer off?"* — removing this skill
+> is the practical off switch, because nothing else prompts a save. See
+> [user-guide.md § Turning it off](user-guide.md#turning-it-off) for that and the two other
+> levers.
 
 > 📥 **Download:** [`claude-skills/curator-continuity/SKILL.md`](../claude-skills/curator-continuity/SKILL.md) and [`claude-skills/curator-continuity/examples.md`](../claude-skills/curator-continuity/examples.md) — both files from the GitHub repository.
 
@@ -574,5 +579,5 @@ A dot still buys nothing towards a path: `..` anywhere, a leading dot (so a dotf
 ## What it is *not*
 
 - Not a cloud service. Not hosted. Not shared.
-- Not multi-user. My Curator = *my* Curator. Phase 3 will add an optional hosted/collective version with API keys — that's a separate thing.
+- Not multi-user. My Curator = *my* Curator. The collective version did ship — that is **Shared Brain** (v3.0.0-beta.1), described in [shared-brain.md](shared-brain.md) and above under *Write tools on Shared Brain mirrors*. It is still not hosted: a cohort shares a private GitHub repo you control, and this bridge stays a local process reading your own disk. A hosted service with managed API keys remains a separate thing that does not exist.
 - Not a replacement for the built-in Chat tab, Obsidian graph view, or the ingest pipeline. It's an *additional* access path: Obsidian gives you spatial exploration, Chat gives you a quick Q&A, and My Curator gives you frontier-model research.

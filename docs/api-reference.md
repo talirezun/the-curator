@@ -1001,7 +1001,7 @@ Ask the LLM to propose a target for an issue that the algorithmic scanner could 
 
 - `type: 'brokenLinks'` (v2.4.3+) — propose a target for a broken wikilink.
 - `type: 'orphans'` (v2.4.4+) — propose up to 5 pages that should link to an orphan.
-- Phase 3 (semantic near-duplicates) planned for v2.4.5.
+- Semantic near-duplicates are **not** handled here. They shipped in v2.4.5 as their own opt-in, cost-gated flow — see the `/semantic-dupes/estimate`, `/scan`, `/preview` and `/merge-batch` endpoints documented below.
 
 ### Broken-link suggestion
 

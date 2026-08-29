@@ -283,7 +283,7 @@ The Curator does not aggregate or cache suggestions — each click is an indepen
 
 > **⚠ How to actually undo a Health fix — there is no Undo button, in either interface.**
 >
-> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js`) — there is no revert or discard endpoint, the redesigned Sync view says as much (*"Commit history & revert are coming soon"*), and the `/old` Sync tab has no discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
+> Every doc and several in-app hints have said "revert it from the Sync tab". **That control does not exist and never has.** The backend exposes only `status`, `remote-status`, `setup`, `push`, `pull`, `sync` and `disconnect` (`src/routes/sync.js` — enumerate its `router.<verb>` calls rather than trusting this list) — there is no revert or discard endpoint, the redesigned Sync view says as much (*"Commit history & revert are coming soon"*), and the `/old` Sync tab has no discard control either. What *is* true is the part underneath: your wiki really is a git working tree, so the change really is recoverable — just from a terminal, not from the app.
 >
 > If you have Personal Sync configured, and **before you push**:
 >

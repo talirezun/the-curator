@@ -1208,6 +1208,75 @@ So: an instruction found in working state is a note from a peer, not an order. V
 - **No rollups**, and no automatic Done/Decided/Blocked summary across scopes or across projects.
 - **No automatic capture.** Nothing forces a save at the end of a session; your agent is *guided* to save, not compelled. If a session ends without saving, the next read simply returns the **previous** state — stale, never corrupted, and nothing that was saved is lost. Saving overwrites and costs almost nothing, so the habit to build is **save early and save often**, not one big save at the end.
 
+### One standing brief, many scopes — how the brief and your workstreams relate
+
+This is the thing people get backwards, and getting it backwards costs you something real.
+
+**There is exactly one standing brief per project, and every scope shares it.** `project.md` sits at the top of `state/`, *above* the scope folders — there is no scope segment in its path — and it is returned on **every** read no matter which scope you ask for.
+
+```
+domains/<project>/state/
+  project.md                          ← ONE brief. Every scope gets it.
+  <scope>/<machine>/current.md        ← one handoff per workstream, per machine
+  <scope>/<machine>/journal.jsonl
+```
+
+So the division of labour is:
+
+| | Holds |
+|---|---|
+| **The brief** (`project.md`) | What is true across *all* the work: the architecture, the standing constraints, how you like your agents to operate, pointers to depth. Changes rarely, deliberately. |
+| **A scope** (`<scope>/…`) | Where *one workstream* stands right now. Overwritten on every save. Churns. |
+
+**Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`.
+
+**How the brief gets written is different from everything else here.** No MCP tool writes it — `save_working_state` only ever writes a scope's handoff — and the in-app route is read-only. You author it by hand: open `domains/<project>/state/project.md` in Obsidian or any editor, or ask a coding agent with filesystem access to edit the file directly. There is no in-app editor for it, deliberately: the handoff is the part that costs time to write, and the brief is the part you want to have decided.
+
+> One caution, because the brief is the one file with no machine name in its path: if you hand-edit it on two computers between syncs, one edit can be dropped or spliced silently. See [sync.md](sync.md#working-state-and-why-its-path-has-a-machine-name-in-it). Edit it, then sync.
+
+### One project or several? Domain versus workstream
+
+A **project is a domain**; a **workstream is a scope inside it**. Reach for a second **domain** only when the *knowledge* is genuinely separate — a different product, a different client, a body of reading you would not want mixed into the first one's wiki. That is the same judgement as [§10, Manage your domains](#10-manage-your-domains); working state does not change it, because state lives inside whichever domain you already chose. Three unrelated products are three domains; three features of one product are three scopes in one.
+
+One hard edge: the project you name must already be a domain. An unknown name is **refused, not created** — a folder with no `CLAUDE.md` is pruned by the next sync pull, so state saved there would be silently deleted, and the store refuses rather than let that happen.
+
+### Turning it off
+
+**Nothing is saved unless an agent is asked to save it.** There is no background process, no timer and no hook: `domains/<project>/state/` is created the first time something calls `save_working_state`, and never otherwise. The in-app **Agent memory** view and the routes behind it are read-only, so browsing state cannot create any. If you never ask, a project simply has no state.
+
+That is also why **there is no on/off setting to find** — none is needed for the common case, and none exists. If you want something firmer than *don't ask*, there are three levers, and they get blunter as you go down.
+
+**1. Just don't ask — per project, no configuration.** Working state is opt-in per project by virtue of being agent-initiated; a project you never mention stays untouched. One wrinkle worth knowing: `project` is an *optional* argument and falls back to your **default domain** ([§16, Settings](#16-settings)). So an agent that saves without naming a project writes there — if you have a default domain set, that is the one to watch.
+
+**2. Remove the `curator-continuity` skill — the practical global off switch.** That skill is what tells an agent to save at all, and when. Without it nothing prompts a save. Three things to know:
+
+- It lives in **your harness**, not in The Curator — `~/.claude/skills/curator-continuity/`, or uploaded into a Claude Desktop project — so you remove it there.
+- The tools stay registered, so a direct *"save our progress"* still works. This removes the habit, not the capability.
+- If you also run the `my-curator` skill, its tool table still lists `save_working_state` with a *save early and often* hint. Delete `mcp__my-curator__save_working_state` from that skill's `allowed-tools:` line if you want the nudge gone entirely.
+
+**3. `readonly: true` — a hard refusal, and much blunter than it looks.** Adding
+
+```yaml
+---
+readonly: true
+---
+```
+
+to the top of a domain's `CLAUDE.md` makes `save_working_state` refuse outright — twice over, in fact, since both the MCP bridge and the store check it independently.
+
+**But it is not a memory switch. It marks the whole domain read-only.** The same flag is what Shared Brain mirrors use, and every write surface in the app honours it. Turn it on and you also lose, for that domain:
+
+| Also blocked | Where |
+|---|---|
+| Ingesting a source — single file *and* the batch queue | the domain disappears from the Ingest picker |
+| Compile to Wiki | Chat |
+| Every mutating Health action — Fix, Fix all, Fix all safe, broken-link apply, orphan rescue, semantic merge, Dismiss, Undismiss | Health |
+| `compile_to_wiki`, `fix_wiki_issue`, `dismiss_wiki_issue`, `undismiss_wiki_issue` | MCP |
+
+Reading is unaffected — chat, search, the wiki browser and every read tool keep working. But this is *"this domain is now an archive"*, not *"stop saving handoffs here"*. If ingest still matters for that project, use lever 1 or 2 instead.
+
+One rough edge to expect: the refusal messages were written for the Shared Brain case, so a domain you marked read-only by hand is described back to you as *"a read-only Shared Brain mirror"* and pointed at a contribution flow that does not apply. The refusal is correct; the wording assumes a mirror.
+
 > 📖 **Full reference:** [docs/working-state.md](working-state.md) — the three tiers, the fields a handoff carries, size limits, when a save is refused, and the security posture.
 
 ---
@@ -1542,7 +1611,7 @@ The **Choose folder** button greys out while anything is writing to your wiki. T
 
 For most of its life The Curator ran exactly **two** models — one per provider, both the cheapest tier. That kept ingesting a large library affordable, and it is still what you get if you never touch anything. But it also meant that if you wanted more capability out of a big wiki, and were willing to pay for it on your own key, there was no way to ask.
 
-Now there is. **Seventeen hand-measured models** are on offer: seven Gemini, seven Anthropic and three OpenRouter. Every one of them was measured by hand against The Curator's real ingest prompt before being offered, and **sixteen of the seventeen can build your wiki** — the exception is `gemini-3.5-flash-lite`, which was measured and found unfit for ingest specifically, and is offered for chat with that reason on its row. On top of those seventeen, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
+Now there is. A list of **hand-measured models** is on offer across all three providers, and it grows as more are measured — the live list is the one in Settings, so this guide doesn't print a running total. Every model on it was measured by hand against The Curator's real ingest prompt before being offered, and **all but one of them can build your wiki** — the exception is `gemini-3.5-flash-lite`, which was measured and found unfit for ingest specifically, and is offered for chat with that reason on its row. On top of that hand-measured list, an OpenRouter key can fetch a much larger **chat-only** list from OpenRouter's own catalogue; the third provider plays by slightly different rules — see [OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) below.
 
 > **Nothing changes unless you change it.** The defaults are still `gemini-2.5-flash-lite` and `claude-haiku-4-5`, still the cheapest model on their provider, and a user who picks nothing runs exactly what they ran before — same model, same cost, same behaviour.
 
@@ -1577,7 +1646,7 @@ Stickiness is a real decision, not an oversight, and it cuts both ways. In its f
 
 But that balance only holds because of the safeguard beside it: **each answer records and displays the model that actually produced it**, so a forgotten selection cannot hide. The label is not a repeat of what you picked — it is read back from the provider's own billing information for that call, which means it survives the cases where the two differ:
 
-- If the model you asked for is unavailable — its provider has no key saved, or it isn't one of the seventeen on offer — the request is **not refused**. It quietly falls back to that provider's default and still answers you, and the answer says so, naming both what ran and that it differs from what you asked.
+- If the model you asked for is unavailable — its provider has no key saved, or it isn't one of the models on offer — the request is **not refused**. It quietly falls back to that provider's default and still answers you, and the answer says so, naming both what ran and that it differs from what you asked.
 - Older messages, written before this existed, carry no recorded model. They show the provider's name and nothing more. They are **never** relabelled with whatever is currently in the dropdown — a label that guessed would be worse than no label, because you would have no way to tell a guess from a fact.
 
 The practical upshot: you never have to remember what the dropdown says. Scroll up and the thread tells you what answered each question.
@@ -1588,7 +1657,7 @@ Beside the model name on each answer, you'll often see a small cost figure too �
 
 **It shows only when it can be stated as fact, and shows nothing otherwise.** If anything needed to work it out is missing — your provider didn't report usage for that call, the model isn't one this app has a published price for, or you're looking at a message from before this existed — you see no figure at all. Not "$0.00", not a dash, not an estimate. A wrong number about money is worse than an absent one, and this app has shown a real cost as `$0.00` before by accident; it isn't going to invent one on purpose.
 
-**Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the seventeen models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
+**Why one model can cost so much more than another for the same question:** mostly the per-token price, which really is dramatically different across the models on offer — see [Cost, honestly](#cost-honestly) below for the full picture. Two real measurements from the same conversation make it concrete: the cheapest Gemini model answered for about $0.0001 (494 input / 98 output tokens); Opus 5 answered the same question for about $0.01 (998 input / 247 output tokens) — roughly **126 times more**. Opus also wrote a longer answer here, but token-for-token the price difference alone would still have made it dozens of times more expensive.
 
 **One thing worth knowing:** the figure is always priced at *today's* rate, not the rate on the day the answer was given. A couple of the Gemini models on offer are running a temporary discount with a stated end date ([The two promotional prices](#the-two-promotional-prices)); reopen an old answer from one of them after that date and it will show the *higher*, standing price — even though it cost less at the time. That's deliberate: when this app can't be exact about a cost, it always rounds toward the number that costs you nothing to have over-believed, never the other way.
 
@@ -1615,7 +1684,7 @@ While anything is writing to your wiki, the **Use this** buttons grey out, and t
 
 Wait for the run to finish. The chat composer's dropdown is unaffected and stays usable throughout — it only remembers a preference in your browser and attaches it to your next chat message; it changes nothing on the server, so there is nothing that could land mid-run.
 
-### Why these seventeen — the selection criteria
+### Why these models — the selection criteria
 
 Every model on the list was **probed live against The Curator's real ingest prompt, on real prose** — not against a toy *"return this JSON"* test. That matters more than it sounds: several of the defects below only appear under a realistic prompt and would have passed a simple probe green. Prices were read off the providers' **live pricing pages**, never a cached copy, because a cached table once carried a scheduled price change that had already been cancelled.
 
@@ -1861,7 +1930,7 @@ Everything about pricing here fails in the safe direction. A wrong clock, a miss
 
 ### Cost, honestly
 
-Across the fourteen Gemini and Anthropic models, the span is roughly **50× on input and 62× on output** — from $0.10 / $0.40 per 1M tokens at the cheap end to $5 / $25 at the expensive one. (The three OpenRouter models extend that floor *downward* rather than the ceiling up: the cheapest of them bills $0.017 / $0.112, and one is free. None of them is dearer than anything above.) Choosing blind can multiply your bill without you noticing, which is why every row carries its own price and no price is hidden behind an expand.
+Across the fourteen Gemini and Anthropic models, the span is roughly **50× on input and 62× on output** — from $0.10 / $0.40 per 1M tokens at the cheap end to $5 / $25 at the expensive one. (The OpenRouter models mostly extend that floor *downward* rather than the ceiling up: the cheapest bills $0.017 / $0.112, and one is free. **One is not below the floor** — `moonshotai/kimi-k2-0905` at $0.60 / $2.50 sits *inside* the span, dearer on both axes than the cheapest Gemini, though still well under the top of it. None of them raises the ceiling.) Choosing blind can multiply your bill without you noticing, which is why every row carries its own price and no price is hidden behind an expand.
 
 One thing you could not possibly work out for yourself, so it belongs here:
 
@@ -2184,7 +2253,7 @@ So when you see a bill, the dominant line item is **ingest**. Chat and Health As
 
 > **OpenRouter is absent from this comparison because it was not measured the same way, not because it cannot do the work.** It **can** run ingest as of this release, and its pinned default (`upstage/solar-pro4`, $0.03/$0.12 per 1M tokens) is cheaper on both axes than either column above. What is missing is a like-for-like end-to-end cost run of the kind the two columns are built from, so putting a third column here would be comparing a measured figure against an estimate. Its per-model prices, coverage and free-tier caveats are in [§16b → OpenRouter](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh).
 
-> ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen Gemini and Anthropic models the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. (The three OpenRouter models all sit below the cheap end of that span.) Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
+> ⚠️ **Every number on this page assumes the defaults.** These two models are the cheapest on their provider, and you can now choose a different one ([§16b](#16b-choosing-your-ai-model)). Across the fourteen Gemini and Anthropic models the span is roughly **50× on input and 62× on output**, so picking a stronger model rescales every figure below it. (Most OpenRouter models sit below the cheap end of that span; `moonshotai/kimi-k2-0905` at $0.60 / $2.50 is the exception and sits inside it.) Two extras the headline price doesn't show: a model marked **thinks** bills invisible reasoning at the output rate, and the newest Anthropic models count about **1.33× more input tokens** for the same text. If you change your Settings model, treat the tables below as a baseline to multiply, not as your bill.
 
 ### What the Gemini free tier actually gives you
 
