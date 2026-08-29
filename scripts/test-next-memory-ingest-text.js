@@ -503,5 +503,41 @@ ok('CONTROL: renderReadout really does omit an absent provenance',
 ok('CONTROL: the "no <details> on the estimate" detector fires when one is planted',
   /<details/.test('<div>' + renderExplainer({ summary: 's', body: 'b' }) + '</div>'));
 
+// ── ADOPTION IS ENFORCED AT THE CALL SITE, NOT AT THE IMPORT ──────────────
+//
+// ADDED AFTER A MUTATION PROVED THIS SUITE COULD NOT FAIL. Reverting
+// memory.js's sidebar description from `renderDescription(...)` to a raw
+// `<div class="sidebar-hint">` — the exact regression the component exists to
+// prevent — left this file GREEN at 98/0. The mutation was confirmed applied by
+// reading the file back off disk (0 renderDescription call sites, 1 raw-div
+// reversion) and restored by copy.
+//
+// The gap was named on handover by the component's own author: the suites prove
+// the renderers are SINGLE-SOURCE but not that any view USES them. An `import`
+// statement is satisfied by a file that never invokes what it imported, so an
+// import-presence check is not an adoption check.
+//
+// Hence two layers. A COUNT, so a view cannot quietly stop calling a renderer
+// at all; and a NAMED SITE, because a count alone stays green while any single
+// site regresses — which is precisely what the mutation did.
+{
+  const ingSrc = read('views/ingest.js');
+  for (const [label, src, fns] of [
+    ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer']],
+    ['ingest.js', ingSrc, ['renderDescription']],
+  ]) {
+    ok(`${label} imports the ONE text system`, /from '\.\.\/shared\/text\.js'/.test(src));
+    for (const fn of fns) {
+      const n = callSiteCount(src, fn);
+      ok(`${label} actually CALLS ${fn}() — an unused import is an unadopted component`, n > 0, `${n} call sites`);
+    }
+  }
+  // The exact site the mutation reverted, named so a count cannot mask it.
+  ok('the Agent-memory sidebar description goes through renderDescription, not a raw div',
+    /renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));
+  ok('and it has NOT reverted to the raw .sidebar-hint div pattern',
+    !/class="sidebar-hint">The working brief/.test(stripComments(memSrc)));
+}
+
 console.log(`\n  Passed: ${passed}   Failed: ${failed}\n`);
 process.exit(failed === 0 ? 0 : 1);

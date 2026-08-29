@@ -421,7 +421,7 @@ const EXEMPT = [
   // Loading…</div>`; it is now the shared description role. Same call site,
   // same wait, same reason — the exemption going red on the stale needle is
   // the mechanism working, since a stale exemption is a hole nobody can see.
-  { file: 'views/shared.js', needle: "renderDescription('Loading…')",
+  { file: 'views/shared.js', needle: 'sb-card-cohort-note">Loading…',
     why: 'cohort details: a network round-trip to the shared GitHub repo (seconds)' },
   { file: 'views/shared.js', needle: 'Loading the contributor list',
     why: 'member directory: a network round-trip to the shared GitHub repo (seconds)' },
