@@ -506,16 +506,42 @@
 
 .chat-type-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 
+/* ── The waiting state ────────────────────────────────────────────────────
+   A WRAPPER AND NOTHING MORE. Everything visible inside it — the ring, its
+   label, its sublabel, the orbit's motion and its reduced-motion behaviour —
+   belongs to shared/progress-ring.css, which owns the whole `pring-` prefix.
+   This file deliberately sets no `pring-` selector: ingest.css states that
+   convention explicitly at its own ring, and two view files reaching into a
+   shared component's internals is how one screen's ring quietly stops looking
+   like the other's.
+
+   The previous rule set `color` and `font` here for a hand-rolled
+   `.chat-spinner` + bare text. Both are gone: the ring's label carries its own
+   type and colour (`--text-2`), which also lifts this line from the `--text-3`
+   it used to inherit — MEASURED 4.27:1 dark / 4.14:1 light, under the 4.5:1 AA
+   floor for body text — to a measured pass. See the browser measurements in the
+   release notes rather than trusting this comment.                          */
 .chat-thinking {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-3);
-  font: var(--type-body-sm);
 }
-/* The elapsed clock (v3.0.17's ingest pattern, second home). Tabular figures so
-   a ticking second does not shift the text beside it every tick. */
-#chat-think-elapsed { font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+/* The elapsed clock (v3.0.17's ingest pattern, second home), patched in place
+   once a second by startSendClock's tick.
+
+   `#chat-think-elapsed` is a CHAT-OWNED id, not a `pring-` class, so styling it
+   here respects the prefix rule above while still fixing what would otherwise
+   be a contrast shortfall: it renders inside `.pring-sublabel`, whose inherited
+   colour is `--text-3`. On a wait that can legitimately run for MINUTES this is
+   the one number the user is actually reading, so it takes `--text-2` and is
+   measured, not assumed. Size is left to the sublabel (`--text-2xs`) so the
+   component keeps ownership of scale — and so no px literal appears here, which
+   would freeze at 1x under `--font-scale`.
+
+   Tabular figures so a ticking second does not shift the glyphs beside it. */
+#chat-think-elapsed {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
 /* What we measured for the model in flight, once elapsed passes the bound.
    Deliberately NOT amber and NOT animated: nothing has gone wrong, and styling
    a fact as a warning is how a user learns to distrust the whole surface. Same
@@ -562,6 +588,19 @@
   color: var(--text-2);
 }
 
+/* ── RETAINED, AND NO LONGER EMITTED BY chat.js ───────────────────────────
+   The waiting state adopted shared/progress-ring.js, so nothing in this view
+   renders `.chat-spinner` any more. It is kept rather than deleted for one
+   concrete reason: scripts/test-next-reduced-motion.js pins it BY NAME as that
+   suite's canonical example of the "full disable" shape (§ the ENFORCED list,
+   plus two assertions requiring exactly one hardcoded-duration animation here
+   and a matching entry in the reduce block below). Deleting the rule reds a
+   suite this change does not own.
+
+   So removing it is a SEPARATE change that must update that suite in the same
+   commit — not a tidy-up to be done in passing. Recorded here rather than left
+   as an unexplained orphan, because dead CSS with no note is how the next
+   reader deletes it and discovers the coupling the hard way.               */
 .chat-spinner {
   width: 13px; height: 13px;
   border-radius: 50%;

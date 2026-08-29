@@ -186,6 +186,8 @@ import { formatUsdHonest } from '../src/public/next/shared/format-usd.js';
 import { formatModelSummary, formatDurationMs } from '../src/public/next/shared/model-summary.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { progressRingHtml } from '../src/public/next/shared/progress-ring.js';
+
 const ROOT = path.join(__dirname, '..');
 const CHAT_PATH = path.join(ROOT, 'src/public/next/views/chat.js');
 const chatSrc = readFileSync(CHAT_PATH, 'utf8');
@@ -2625,7 +2627,13 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
   // `thinkingBodyHtml` reads module-level `let`s, so the sandbox declares them
   // and hands back setters. Driving the REAL function, not a paraphrase.
   const nowRef = { t: 0 };
-  const clock = new Function('escapeHtml', 'formatDurationMs', 'nowRef',
+  // `progressRingHtml` joined the bindings when the waiting state adopted the
+  // design system's ring (see chat.js `thinkingBodyHtml`). The REAL component is
+  // passed in rather than stubbed, for the same reason `slowTurnNoticeText` is
+  // extracted rather than paraphrased: what is asserted below has to be the
+  // markup that actually ships. See scripts/test-next-chat-waiting.js for the
+  // ring's own contract — this suite only needs the bubble to render.
+  const clock = new Function('escapeHtml', 'formatDurationMs', 'nowRef', 'progressRingHtml',
     'let sendStartedAt = null;\n' +
     'let sendLatencyHint = null;\n' +
     extractConst(chatSrc, 'SLOW_TURN_NOTICE_AFTER_MS') + '\n' +
@@ -2642,7 +2650,7 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
     '  html: () => thinkingBodyHtml(),\n' +
     '  restore() { Date.now = _origNow; },\n' +
     '};'
-  )(escapeHtmlStub, formatDurationMs, nowRef);
+  )(escapeHtmlStub, formatDurationMs, nowRef, progressRingHtml);
   const NOW0 = 1000000;
   const T = clock.SLOW_TURN_NOTICE_AFTER_MS;
   ok(T === 20000, `the notice threshold is ${T}ms — pinned, so a silent change to it is visible here`);

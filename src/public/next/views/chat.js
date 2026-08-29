@@ -36,6 +36,16 @@ import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
 // and the only ones with no keyboard operation at all.
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// The design system's two-layer ring, adopted here for the waiting state. It is
+// the RIGHT component for this case and not merely a nicer spinner: its whole
+// reason for existing (v3.9.0) is a single LLM call with no sub-progress, where
+// the honest outer ring is EMPTY and an orbit carries the liveness. A chat turn
+// is exactly that shape — one non-streaming POST, so time-to-first-byte equals
+// total (measured 186s on `z-ai/glm-5.3-flash`) and there is no fraction to
+// report at any point. Called with no `stages` and `value: null`, which is the
+// component's activity-only mode: track + orbit, `role="progressbar"` with NO
+// `aria-valuenow`, i.e. the standard "running, amount unknown".
+import { progressRingHtml } from '../shared/progress-ring.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -2544,8 +2554,46 @@ function thinkingBodyHtml() {
   // filling toward an invented total is not.
   const slow = slowText ? '<div class="chat-thinking-slow">' + escapeHtml(slowText) + '</div>' : '';
   return (
-    '<div class="chat-thinking"><span class="chat-spinner"></span> thinking… ' +
-      '<span class="mono" id="chat-think-elapsed">' + escapeHtml(formatDurationMs(elapsedMs)) + '</span>' +
+    '<div class="chat-thinking">' +
+      progressRingHtml({
+        // ── THE TWO ARGUMENTS THAT CARRY THE HONESTY RULE ──────────────────
+        // No `stages`, and `value: null`. Together these put the component in
+        // its activity-only mode: `ringSegments` returns [], `ringValueArc`
+        // returns null, so the OUTER RING RENDERS AS TRACK ONLY — empty, and
+        // stationary, because nothing but `value` can ever move it. The orbit
+        // is the only thing in motion, at its fixed 1.15s period.
+        //
+        // THAT IS NOT A LIMITATION BEING WORKED AROUND. It is the correct
+        // report: a chat turn is one non-streaming POST with no sub-progress
+        // frames of any kind, so any advancing arc would be derived from a
+        // clock rather than from work done — the precise inversion
+        // shared/progress-ring.js was built to refuse, and the one this repo
+        // has already paid for once (v3.0.17, a user reporting the app as hung
+        // because ingest's Planning phase genuinely could not move a bar).
+        //
+        // So: never pass `value` here, never pass `stages`, and never derive
+        // either from `elapsedMs`. There is no total to divide by. The elapsed
+        // clock below is a real measurement and is the only number on screen.
+        stages: null,
+        value: null,
+        size: 32,
+        // Suppressed anyway below 40px, but stated so the intent survives a
+        // future size change: there is no number to put in the middle.
+        center: 'none',
+        // Nothing has gone wrong and nothing has finished — a wait in progress
+        // is the accent case. `attention` would dress an ordinary slow model up
+        // as a fault; `success` is for a ring that has settled.
+        tone: 'accent',
+        label: 'Thinking…',
+        // Pre-built so the id survives: `startSendClock`'s tick patches this
+        // node's textContent once a second and must not re-render the ring
+        // (which would restart the orbit's phase every tick). Same seam, and
+        // the same reason, as ingest's `#ing-elapsed`. The component marks
+        // every sublabel aria-hidden, so a screen reader is not read a new
+        // number every second.
+        sublabelHtml: '<span id="chat-think-elapsed">' + escapeHtml(formatDurationMs(elapsedMs)) + '</span>',
+        className: 'chat-think-ring',
+      }) +
     '</div>' +
     '<div id="chat-think-slow">' + slow + '</div>'
   );
