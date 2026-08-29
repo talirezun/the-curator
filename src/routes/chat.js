@@ -14,10 +14,33 @@ const router = Router();
 // path-traversal via crafted IDs.
 const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// List conversations for a domain
+// List conversations for a domain.
+//
+// `?q=` is an OPTIONAL filter, matched against each conversation's title AND
+// every message body (case-insensitive) — see matchConversation in
+// src/brain/files.js for why the bodies are scanned server-side.
+//
+// DELIBERATELY NOT VALIDATED BEYOND "is it a string". There is no shape a
+// query can take that is unsafe here: it never touches the filesystem (the
+// directory is derived from `domain` alone), it is only ever used as the
+// argument to String.prototype.includes, and its LENGTH is bounded inside
+// listConversations, which is the one place that knows what the bound is for.
+//
+// The shape worth naming is `?q=a&q=b`, which express delivers as an ARRAY:
+// an array reaching `.slice()` slices the array and the `.trim()` after it
+// throws, turning a malformed URL into a 500.
+//
+// MEASURED, NOT ASSUMED: removing this typeof test on its own leaves the
+// suite GREEN, because listConversations applies the same test to `opts.q`
+// and is the layer that genuinely stops it (removing THAT one throws). So
+// this line is DEFENCE IN DEPTH at the HTTP boundary — it normalises the one
+// place where a non-string can be introduced by a URL rather than by a
+// programming error — and is recorded as such rather than presented as the
+// fix. Both are pinned, and the pair mutated together goes red.
 router.get('/:domain', async (req, res) => {
   try {
-    const conversations = await listConversations(req.params.domain);
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const conversations = await listConversations(req.params.domain, { q });
     res.json({ conversations });
   } catch (err) {
     res.status(500).json({ error: err.message });

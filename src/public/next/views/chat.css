@@ -35,7 +35,61 @@
 .chat-search-input::placeholder { color: var(--text-3); }
 .chat-search-input:focus-visible { box-shadow: var(--ring-focus); }
 
+.chat-conv-pane { display: flex; flex-direction: column; }
 .chat-conv-list { display: flex; flex-direction: column; gap: 1px; }
+
+/* ── Bulk selection strip ─────────────────────────────────────────────
+   Sits above the list, inside .chat-conv-pane, so the light re-render
+   replaces it and the list together and the two can never disagree about
+   how many rows are selected. */
+.chat-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 4px 4px;
+}
+.chat-bulk-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin-right: auto;
+}
+.chat-bulk-link {
+  flex: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+.chat-bulk-link:hover { color: var(--text-2); }
+.chat-bulk-delete {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--danger-text);
+}
+.chat-bulk-delete:hover { background: var(--danger-tint); border-color: var(--danger); }
+
+.chat-bulk-notice {
+  font-size: var(--text-2xs);
+  color: var(--text-2);
+  padding: 0 4px 6px;
+}
+.chat-bulk-notice.error { color: var(--danger-text); }
 .chat-sidebar-error {
   font: var(--type-body-sm);
   color: var(--danger-text);
@@ -59,6 +113,24 @@
   transition: background var(--t-state);
 }
 .chat-conv-row:hover { background: var(--surface-hover); }
+.chat-conv-row.selected { background: var(--surface-active); }
+/* Always visible — see conversationRowHtml's comment: a hover-only control
+   is not reachable by keyboard, and multi-select with no visible way in is
+   not a feature. Muted until it is checked or hovered so a sidebar of
+   unticked rows stays quiet. */
+.chat-conv-check {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-left: 6px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  opacity: 0.45;
+  transition: opacity var(--t-state);
+}
+.chat-conv-check:checked,
+.chat-conv-check:focus-visible,
+.chat-conv-row:hover .chat-conv-check { opacity: 1; }
 .chat-conv-row.active { background: var(--surface-active); }
 .chat-conv-row.active::before {
   content: '';
@@ -71,7 +143,7 @@
 .chat-conv-row-main {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px 10px 8px 8px;
   cursor: pointer;
 }
 .chat-conv-row.active .chat-conv-title { font-weight: var(--weight-medium); color: var(--text); }
@@ -141,7 +213,34 @@
   border-bottom: 1px solid var(--border-subtle);
   background: var(--canvas);
   overflow-x: auto;
+  /* The domain pills overflow horizontally, so this bar scrolls — and
+     nothing in /next styles scrollbars, so macOS painted its own
+     full-width classic scrollbar hard against the underside of the chips.
+     It reads as a draggable divider between the scope bar and the thread,
+     which is not a control this app has.
+
+     HIDDEN, WITH SCROLLING FULLY PRESERVED — wheel, shift+wheel, trackpad,
+     drag, and the automatic scroll-into-view that focusing an off-screen
+     pill triggers all still work; only the painted track is gone. A thin
+     re-styled scrollbar was the alternative and was rejected on a
+     measurement: `::-webkit-scrollbar { height: N }` makes the scrollbar
+     take layout space instead of overlaying, so this bar (auto height:
+     14px padding + a 26px pill + 14px padding) would grow by N and shove
+     the whole thread down — and it would do so permanently, on every
+     machine, whether or not that user's OS ever shows a scrollbar. The
+     brief's own constraint was not to shift layout.
+
+     TRADE-OFF, STATED RATHER THAN HIDDEN: there is now no visual hint that
+     more pills exist off the right edge. That is the same bargain every
+     hidden-scrollbar chip row makes, and it is accepted here because the
+     row holds one pill per domain — a handful for every real user — and
+     because the alternative was a permanent layout shift for everyone.
+     `scrollbar-width` covers Firefox and modern Chromium; the -webkit rule
+     covers Safari and older Chromium; both are needed. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.chat-scopebar::-webkit-scrollbar { display: none; }
 .chat-scope-eyebrow {
   font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
   letter-spacing: var(--track-eyebrow);

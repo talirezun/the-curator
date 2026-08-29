@@ -207,8 +207,35 @@ const state = {
   booted: false,
   domains: [],           // [{slug, displayName, pageCount, pageCounts, conversationCount}]
   activeDomain: null,
-  conversations: [],      // sidebar list for activeDomain: [{id, title, createdAt, messageCount}]
+  conversations: [],      // sidebar list for activeDomain: [{id, title, createdAt, messageCount, matchField?}]
+  // What the search box currently HOLDS. It is NOT a client-side filter:
+  // `conversations` is already whatever the server returned for the last
+  // COMPLETED search, so this is read only to (a) repopulate the input's
+  // value across a re-render and (b) word the empty state. Filtering moved
+  // to the server because a conversation's title is its first user message
+  // truncated at 57 chars, so a title-only predicate could never reach
+  // anything said after the opening line of a thread — and the bodies that
+  // would have to be searched are never loaded client-side.
   searchQuery: '',
+  // Pending debounced search refetch. Cleared on teardown (timer hygiene:
+  // an armed timer that outlives this mount would fetch and paint into
+  // whatever view came next) and whenever a new keystroke supersedes it.
+  searchTimer: null,
+  // Conversations ticked for bulk delete.
+  //
+  // INVARIANT, and it is the safety property of the whole feature: this may
+  // only ever contain ids that are IN state.conversations — see
+  // pruneSelection(), which runs on every list update. Without it a
+  // selection made before a search, a delete, or a domain switch could
+  // survive into a list that no longer shows those rows, and "Delete
+  // selected" would then destroy conversations the user cannot see. A Set,
+  // so re-ticking a row cannot queue the same id twice.
+  selectedConvIds: new Set(),
+  // Outcome of the last bulk delete: {text, tone}. Rendered in the sidebar
+  // because a partial failure has nowhere else to be seen — the list simply
+  // comes back with some rows still in it, which on its own is
+  // indistinguishable from having mis-clicked.
+  bulkNotice: null,
   activeConversationId: null,
   thread: [],             // [{role, content, citations?, error?}]
   sending: false,
@@ -439,6 +466,11 @@ registerView('chat', {
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
       if (bootGate) { bootGate.cancel(); bootGate = null; }
+      // Same rule, same reason: a debounced search refetch armed by a
+      // keystroke a fifth of a second ago would otherwise fire after this
+      // view is gone. isCurrentMount inside the callback already refuses to
+      // act, but an armed timer is still a timer — cancel it at the source.
+      cancelSearchTimer();
       if (escHandler) document.removeEventListener('keydown', escHandler);
       if (outsideClickHandler) document.removeEventListener('click', outsideClickHandler);
       escHandler = null;
@@ -658,10 +690,23 @@ function applyApiKeys(data) {
 // live module variable re-read late. `convToken` is the pre-existing,
 // unrelated SAME-mount guard (two quick domain switches racing each other);
 // both are needed and check different things.
+// `opts.q` — the search string to ask the SERVER to filter by. Absent or
+// empty means no filter, i.e. byte-identical to the pre-search request.
+// Callers that refresh the list for some other reason (a send, a delete)
+// pass state.searchQuery so a refresh cannot silently drop an active
+// filter while the search box still shows its text.
+//
+// `opts.sidebarOnly` — repaint only the conversation pane and leave the
+// selection AND the open thread exactly as they are. This is the search
+// path: a user typing in the search box has not asked to close the
+// conversation they are reading, and a full renderShell() would rebuild the
+// search input itself and drop their focus and caret mid-word.
 async function loadDomainConversations(domain, mountToken, opts = {}) {
   const convToken = ++state.convToken;
+  const q = typeof opts.q === 'string' ? opts.q.trim() : '';
+  const url = '/api/chat/' + encodeURIComponent(domain) + (q ? '?q=' + encodeURIComponent(q) : '');
   try {
-    const res = await fetch('/api/chat/' + encodeURIComponent(domain));
+    const res = await fetch(url);
     const data = await res.json();
     if (convToken !== state.convToken) return; // a newer domain switch superseded this
     if (!isCurrentMount(mountToken)) return; // H1 fix — this mount may already be gone
@@ -675,6 +720,17 @@ async function loadDomainConversations(domain, mountToken, opts = {}) {
     state.loadError = 'Could not load conversations for this domain (' + err.message + ').';
   }
 
+  // Every path that replaces state.conversations passes through here, which
+  // is what makes "selection only ever names a visible row" true rather than
+  // remembered — including the error path above, where the list becomes
+  // empty and the selection must therefore become empty too.
+  pruneSelection();
+
+  if (opts.sidebarOnly) {
+    renderSidebarConversationsOnly(mountToken);
+    return;
+  }
+
   if (opts.autoSelectMostRecent && state.conversations.length > 0) {
     await selectConversation(state.conversations[0].id, mountToken, { skipSidebarRender: true });
   } else {
@@ -682,6 +738,42 @@ async function loadDomainConversations(domain, mountToken, opts = {}) {
     state.thread = [];
   }
   renderShell(mountToken);
+}
+
+// See the invariant on state.selectedConvIds. Deliberately a prune rather
+// than a clear: a list refresh that leaves the ticked rows on screen (a
+// send, an unrelated delete) has no business discarding the user's ticks.
+function pruneSelection() {
+  if (state.selectedConvIds.size === 0) return;
+  const live = new Set(state.conversations.map(c => c.id));
+  for (const id of [...state.selectedConvIds]) {
+    if (!live.has(id)) state.selectedConvIds.delete(id);
+  }
+}
+
+// How long after the last keystroke the search refetch fires. Long enough
+// that typing a word is one request rather than one per letter; short
+// enough to feel immediate. Measured server-side at 500 conversations /
+// 11.8 MB: the whole request is ~37 ms with no query and ~42 ms on a
+// full-scan miss, so the debounce is here to spare requests, not because
+// the query is expensive.
+const SEARCH_DEBOUNCE_MS = 220;
+
+function cancelSearchTimer() {
+  if (state.searchTimer) { clearTimeout(state.searchTimer); state.searchTimer = null; }
+}
+
+function scheduleConversationSearch(mountToken) {
+  cancelSearchTimer();
+  state.bulkNotice = null; // a stale "Deleted 2 conversations." must not hang over a new search
+  state.searchTimer = setTimeout(() => {
+    state.searchTimer = null;
+    if (!isCurrentMount(mountToken)) return;
+    loadDomainConversations(state.activeDomain, mountToken, {
+      q: state.searchQuery,
+      sidebarOnly: true,
+    }).catch(reportAsyncActionFailure);
+  }, SEARCH_DEBOUNCE_MS);
 }
 
 async function selectConversation(id, mountToken, opts = {}) {
@@ -718,7 +810,23 @@ function switchDomain(slug) {
   state.activeConversationId = null;
   state.thread = [];
   state.searchQuery = '';
-  loadDomainConversations(slug, myMountToken, { autoSelectMostRecent: true }).catch(reportAsyncActionFailure);
+  cancelSearchTimer();          // a keystroke's pending refetch belongs to the OLD domain
+  state.selectedConvIds.clear(); // ids are per-domain; carrying them across would target rows that are gone
+  state.bulkNotice = null;
+  // autoSelectMostRecent: FALSE.
+  //
+  // This function has already cleared activeConversationId and thread three
+  // lines up — the deliberate "you switched scope, here is a blank sheet"
+  // state, which renderMain paints as the empty new-chat placeholder. Passing
+  // `true` here then had loadDomainConversations immediately re-select
+  // conversations[0], so the blank sheet existed only for the duration of the
+  // fetch and the user landed inside whatever thread they happened to have
+  // opened last in that domain — reading as a switch that did not take.
+  //
+  // `true` is still correct for the COLD BOOT call (see boot()): there, the
+  // user has not asked for anything, and restoring the most recent thread is
+  // the useful default rather than an override of an explicit action.
+  loadDomainConversations(slug, myMountToken, { autoSelectMostRecent: false }).catch(reportAsyncActionFailure);
   renderShell(myMountToken); // immediate feedback while the fetch is in flight
 }
 
@@ -768,7 +876,135 @@ async function deleteConversationRow(id, title, mountToken) {
         state.activeConversationId = null;
         state.thread = [];
       }
-      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false });
+      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false, q: state.searchQuery });
+    },
+  });
+}
+
+// How many messages one completed chat turn appends to a conversation.
+//
+// DERIVED FROM THE SERVER, NOT GUESSED: sendMessage in src/brain/chat.js
+// pushes exactly one 'user' message and one assistant message and then
+// writes the file — so a turn that reached the client with a conversation
+// id grew the stored conversation by two. Pinned by a source guard in
+// scripts/test-next-chat-sidebar.js, which counts those pushes in the real
+// brain file, so a change there turns this constant red instead of letting
+// the sidebar quietly drift out of step with the number on disk.
+const MESSAGES_PER_TURN = 2;
+
+/**
+ * Advance one sidebar row's message count for a turn the server PERSISTED.
+ *
+ * Gated on a conversation id, and that gate is load-bearing rather than
+ * defensive: sendMessage has an early return for a domain whose wiki is
+ * empty which answers with prose, writes NOTHING to disk, and reports
+ * `conversationId: null`. That response lands in this same branch (it is
+ * not `isNew`), so counting it would push the sidebar one turn ahead of the
+ * file on every such message. A thrown/aborted turn never reaches here at
+ * all — it lands in the catch — and nothing is persisted there either.
+ *
+ * A row that is not in the list (an active search filtered it out) is left
+ * alone rather than invented: there is nothing on screen for the number to
+ * be wrong on, and the next list load brings the server's own count.
+ *
+ * MEASURED, AND RECORDED RATHER THAN OVERCLAIMED: deleting the id gate alone
+ * leaves the suite GREEN, because the `.find` below can never match a falsy
+ * id either (every id in the list is a server-generated UUID). The gate is
+ * therefore DEFENCE IN DEPTH — it states the rule at the top where the next
+ * reader meets it — and the `.find` is what actually enforces it today. It is
+ * kept, not deleted, because the rule it states is the one a future refactor
+ * (a loose `==`, an id-less optimistic row) would break first; it is just not
+ * claimed as independently load-bearing.
+ */
+function bumpMessageCountForTurn(conversationId) {
+  if (!conversationId) return;
+  const row = state.conversations.find(c => c.id === conversationId);
+  if (!row || typeof row.messageCount !== 'number') return;
+  row.messageCount += MESSAGES_PER_TURN;
+}
+
+/**
+ * Delete every ticked conversation.
+ *
+ * No new endpoint: DELETE /api/chat/:domain/:id already exists and each
+ * conversation is one file, so this is N calls to the route the single-row
+ * delete has always used — no second server-side deletion path to keep in
+ * step with the first, and nothing new to secure.
+ *
+ * The id list is FROZEN at click time, from state.conversations rather than
+ * from the Set: the Set is the source of truth for what is ticked, but
+ * intersecting it with the list that is actually on screen means a row that
+ * has since disappeared cannot be swept up even if pruneSelection had not
+ * already run. Ordering follows the rendered list so the confirm's count and
+ * the sidebar agree.
+ *
+ * Requests are sequential. They are a handful of local file unlinks; firing
+ * them in parallel buys milliseconds and costs the ability to say which ones
+ * actually succeeded when some of them do not.
+ *
+ * PARTIAL FAILURE IS REPORTED, NEVER ASSUMED AWAY. `{ success: true }` comes
+ * back from the route for an id that names no file at all (deleteConversation
+ * is a no-op then), so the honest signal is `res.ok` — the server accepted and
+ * acted on the request — and every non-ok or thrown call is counted and named.
+ * A run that deletes 3 of 5 says so; the 2 survivors stay ticked, so a retry
+ * is one click rather than a re-selection.
+ */
+async function deleteSelectedConversations(mountToken) {
+  const domain = state.activeDomain;
+  const ids = state.conversations.filter(c => state.selectedConvIds.has(c.id)).map(c => c.id);
+  if (!domain || ids.length === 0) return;
+  const n = ids.length;
+  const only = n === 1 ? (state.conversations.find(c => c.id === ids[0]) || {}) : null;
+
+  await confirmThen({
+    // The count is in the TITLE, not only in the body: it is the whole
+    // difference between this dialog and the single-row one, and it is what
+    // catches a select-all the user did not mean.
+    title: 'Delete ' + n + ' conversation' + (n === 1 ? '' : 's') + '?',
+    message: only ? (only.title || 'Untitled') : n + ' selected conversations in ' + domain,
+    detail: 'Their threads and messages are removed from this domain. This cannot be undone.',
+    confirmLabel: 'Delete ' + n,
+    cancelLabel: 'Cancel',
+    tone: 'danger',
+    onConfirm: async () => {
+      const failed = [];
+      let deleted = 0;
+      for (const id of ids) {
+        try {
+          const res = await fetch('/api/chat/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id), { method: 'DELETE' });
+          if (res.ok) { deleted++; state.selectedConvIds.delete(id); }
+          else failed.push(id);
+        } catch { failed.push(id); }
+      }
+      if (!isCurrentMount(mountToken)) return;
+      // The domain can have changed under a long run (the dialog is a normal
+      // in-page overlay and the loop awaits N requests). The deletes already
+      // went to the right domain — `domain` was captured — but the list
+      // refresh and the notice belong to whatever is on screen now, and
+      // painting a "Deleted 3" over a different domain's sidebar would be a
+      // false statement about it.
+      if (state.activeDomain !== domain) return;
+
+      // Only the OPEN conversation being one of the ones actually deleted
+      // may close the thread. Deleting two unrelated rows must not throw away
+      // what the user is reading — which is why the refresh below is
+      // `sidebarOnly` rather than the `autoSelectMostRecent: false` the
+      // single-row path uses (that arm unconditionally blanks the thread,
+      // which is correct there because the row it deleted is usually the open
+      // one, and wrong here).
+      let closedActiveThread = false;
+      if (state.activeConversationId && ids.includes(state.activeConversationId) && !failed.includes(state.activeConversationId)) {
+        state.activeConversationId = null;
+        state.thread = [];
+        closedActiveThread = true;
+      }
+      state.bulkNotice = failed.length === 0
+        ? { text: 'Deleted ' + deleted + ' conversation' + (deleted === 1 ? '' : 's') + '.', tone: 'ok' }
+        : { text: 'Deleted ' + deleted + ' of ' + n + '. ' + failed.length + ' could not be deleted and stayed selected — try again.', tone: 'error' };
+      await loadDomainConversations(domain, mountToken, { sidebarOnly: true, q: state.searchQuery });
+      // sidebarOnly repaints only the pane, so the emptied main area needs
+      // its own paint — and only when the thread genuinely closed.
+      if (closedActiveThread && isCurrentMount(mountToken)) renderShell(mountToken);
     },
   });
 }
@@ -883,7 +1119,7 @@ async function sendCurrentMessage() {
       // sidebar-refreshing call, then restore it — we only wanted the
       // conversation LIST refreshed, never the content we already have.
       const threadSoFar = state.thread;
-      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false });
+      await loadDomainConversations(state.activeDomain, mountToken, { autoSelectMostRecent: false, q: state.searchQuery });
       if (!isCurrentMount(mountToken)) return;
       // loadDomainConversations doesn't know which conversation is "active"
       // beyond auto-select, so restore it explicitly and re-render.
@@ -891,6 +1127,25 @@ async function sendCurrentMessage() {
       state.thread = threadSoFar;
       renderShell(mountToken);
     } else {
+      // THE FIX: this branch used to re-render the sidebar from the SAME
+      // state.conversations array that was already on screen, so the row's
+      // "N messages" label only ever moved after a navigation forced a
+      // refetch — the one number in the sidebar that is supposed to track
+      // what the user is doing right now was the last to know.
+      //
+      // Patched locally rather than by refetching the list, deliberately:
+      // the wasNew branch above already pays for a refetch because a whole
+      // new row has to appear, but an ordinary turn changes exactly one
+      // integer in a list we already hold. Re-reading and re-parsing every
+      // conversation file in the domain (that is what GET /api/chat/:domain
+      // does — see listConversations) on every message, to learn a number we
+      // can derive, would make the common case the expensive one. The one
+      // thing a refetch would additionally buy is re-evaluating an ACTIVE
+      // SEARCH against the message just sent — a conversation can newly
+      // match a live query because of this turn. That is not worth a
+      // full-list reparse per message, and it self-corrects on the next
+      // keystroke or navigation; stated here rather than left as a surprise.
+      bumpMessageCountForTurn(data.conversationId);
       renderThreadOnly(mountToken);
       renderSidebarConversationsOnly(mountToken);
     }
@@ -1404,49 +1659,172 @@ function renderShell(token) {
   renderMain(token);
 }
 
-// `token` is a value the CALLER captured (at onEnter, or at the top of its
-// own async function before any await) — never re-derived from the live
-// myMountToken here. See the H1 doc comment on myMountToken above.
-function renderSidebar(token) {
-  if (!isCurrentMount(token)) return;
-  const query = state.searchQuery.trim().toLowerCase();
-  const filtered = query
-    ? state.conversations.filter(c => (c.title || '').toLowerCase().includes(query))
-    : state.conversations;
+// ── The conversation pane ────────────────────────────────────────────────
+//
+// Row markup, grouping, the empty state and the event wiring all live here
+// ONCE. They used to exist as two hand-maintained copies — one inside
+// renderSidebar (the full paint) and one inside renderSidebarConversationsOnly
+// (the light re-paint) — including two copies of the search predicate. Two
+// copies of a renderer is how a fix lands in one of them: adding a checkbox
+// or a match hint to only one path would have made a row appear and then
+// silently lose its checkbox on the next send. The light path now replaces
+// `.chat-conv-pane`'s contents with the SAME builder the full path used, so
+// they cannot diverge.
 
-  const today = [];
-  const earlier = [];
-  const now = new Date().toISOString();
-  for (const c of filtered) {
-    (isSameLocalDay(c.createdAt, now) ? today : earlier).push(c);
-  }
+// A row's own "why did this match" hint. Compared with === against the one
+// value the server can send, so nothing user- or LLM-derived reaches the
+// markup through this field. A title match needs no hint: the title is
+// right there and the user can see the word in it.
+function matchHint(c) {
+  return c.matchField === 'message' ? ' · matched in a message' : '';
+}
 
-  const row = (c) => (
-    '<div class="chat-conv-row' + (c.id === state.activeConversationId ? ' active' : '') + '" data-conv-id="' + escapeHtml(c.id) + '">' +
+function conversationRowHtml(c) {
+  const selected = state.selectedConvIds.has(c.id);
+  const count = typeof c.messageCount === 'number' ? c.messageCount : 0;
+  const title = c.title || 'Untitled';
+  return (
+    '<div class="chat-conv-row' +
+        (c.id === state.activeConversationId ? ' active' : '') +
+        (selected ? ' selected' : '') +
+      '" data-conv-id="' + escapeHtml(c.id) + '">' +
+      // Always rendered, never hover-revealed: a control that only exists
+      // under the pointer cannot be reached by keyboard at all (the sibling
+      // delete button's `display:none` until :hover has exactly that
+      // problem), and multi-select is unusable if you cannot find the way in.
+      '<input type="checkbox" class="chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
+        (selected ? ' checked' : '') +
+        ' aria-label="Select ' + escapeHtml(title) + '">' +
       '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
-        '<div class="chat-conv-title">' + escapeHtml(c.title || 'Untitled') + '</div>' +
-        '<div class="chat-conv-meta mono">' + c.messageCount + ' message' + (c.messageCount === 1 ? '' : 's') + '</div>' +
+        '<div class="chat-conv-title">' + escapeHtml(title) + '</div>' +
+        '<div class="chat-conv-meta mono">' + count + ' message' + (count === 1 ? '' : 's') + matchHint(c) + '</div>' +
       '</div>' +
       '<button class="chat-conv-delete" data-conv-delete="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title || '') + '" title="Delete conversation" aria-label="Delete conversation">' +
         icon('trash', 13) +
       '</button>' +
     '</div>'
   );
+}
 
-  const groupHtml = (label, list) => list.length === 0 ? '' : (
-    '<div class="chat-conv-group-label mono">' + label + '</div>' + list.map(row).join('')
-  );
+function conversationListHtml() {
+  if (state.domains.length === 0) return '';
+  if (state.loadError) return '<div class="chat-sidebar-error">' + escapeHtml(state.loadError) + '</div>';
 
-  let convListHtml;
-  if (state.domains.length === 0) {
-    convListHtml = '';
-  } else if (state.loadError) {
-    convListHtml = '<div class="chat-sidebar-error">' + escapeHtml(state.loadError) + '</div>';
-  } else if (filtered.length === 0) {
-    convListHtml = '<div class="sidebar-hint">' + (query ? 'No conversations match “' + escapeHtml(state.searchQuery) + '”.' : 'No conversations yet in this domain.') + '</div>';
-  } else {
-    convListHtml = groupHtml('TODAY', today) + groupHtml('EARLIER', earlier);
+  const query = state.searchQuery.trim();
+  // NOT filtered here. state.conversations IS the server's answer for the
+  // last completed search (see loadDomainConversations' `q`); re-applying a
+  // client-side predicate on top would silently throw away exactly the rows
+  // the server-side search exists to find — the ones that matched on a
+  // message body rather than on the title this file renders.
+  const list = state.conversations;
+  if (list.length === 0) {
+    return '<div class="sidebar-hint">' +
+      (query ? 'No conversations match “' + escapeHtml(state.searchQuery) + '”.' : 'No conversations yet in this domain.') +
+      '</div>';
   }
+
+  const today = [];
+  const earlier = [];
+  const now = new Date().toISOString();
+  for (const c of list) (isSameLocalDay(c.createdAt, now) ? today : earlier).push(c);
+
+  const groupHtml = (label, group) => group.length === 0 ? '' : (
+    '<div class="chat-conv-group-label mono">' + label + '</div>' + group.map(conversationRowHtml).join('')
+  );
+  return groupHtml('TODAY', today) + groupHtml('EARLIER', earlier);
+}
+
+// The select-all / count / clear / delete strip. Present whenever there is
+// anything to select, so "select all" is discoverable without first having
+// to guess that ticking a row reveals more controls; the destructive half
+// appears only once something is actually selected.
+function bulkBarHtml() {
+  if (state.domains.length === 0 || state.loadError || state.conversations.length === 0) return '';
+  const n = state.selectedConvIds.size;
+  const allChecked = n > 0 && n >= state.conversations.length;
+  return (
+    '<div class="chat-bulk-bar">' +
+      '<label class="chat-bulk-all">' +
+        '<input type="checkbox" id="chat-bulk-all"' + (allChecked ? ' checked' : '') + ' aria-label="Select all conversations">' +
+        '<span class="mono">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
+      '</label>' +
+      (n > 0
+        ? '<button type="button" class="chat-bulk-link" id="chat-bulk-clear">Clear</button>' +
+          '<button type="button" class="chat-bulk-delete" id="chat-bulk-delete" aria-label="Delete ' + n + ' selected conversation' + (n === 1 ? '' : 's') + '">' +
+            icon('trash', 12) + ' Delete' +
+          '</button>'
+        : '') +
+    '</div>'
+  );
+}
+
+function bulkNoticeHtml() {
+  const notice = state.bulkNotice;
+  if (!notice || !notice.text) return '';
+  return '<div class="chat-bulk-notice' + (notice.tone === 'error' ? ' error' : '') + '" role="status">' +
+    escapeHtml(notice.text) + '</div>';
+}
+
+function conversationPaneHtml() {
+  return bulkBarHtml() + bulkNoticeHtml() + '<div class="chat-conv-list">' + conversationListHtml() + '</div>';
+}
+
+// Wires everything inside the pane: row select (click + keyboard), per-row
+// delete, per-row checkbox, and the bulk strip. One function, called from
+// both render paths, for the same reason the markup is one builder.
+function wireConversationPane(root) {
+  wireConvRows(root);
+
+  root.querySelectorAll('[data-conv-delete]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteConversationRow(el.dataset.convDelete, el.dataset.convTitle, myMountToken).catch(reportAsyncActionFailure);
+    });
+  });
+
+  root.querySelectorAll('[data-conv-check]').forEach(el => {
+    // No stopPropagation: the checkbox is a SIBLING of .chat-conv-row-main,
+    // not a descendant, so a click on it never passes through the row's own
+    // select handler. (The delete button above suppresses defensively; it is
+    // a sibling too.)
+    el.addEventListener('change', () => {
+      if (el.checked) state.selectedConvIds.add(el.dataset.convCheck);
+      else state.selectedConvIds.delete(el.dataset.convCheck);
+      renderSidebarConversationsOnly(myMountToken);
+    });
+  });
+
+  const allBox = root.querySelector('#chat-bulk-all');
+  if (allBox) {
+    const n = state.selectedConvIds.size;
+    // Not expressible as an attribute — indeterminate is a DOM property only.
+    allBox.indeterminate = n > 0 && n < state.conversations.length;
+    allBox.addEventListener('change', () => {
+      if (allBox.checked) for (const c of state.conversations) state.selectedConvIds.add(c.id);
+      else state.selectedConvIds.clear();
+      renderSidebarConversationsOnly(myMountToken);
+    });
+  }
+
+  const clearBtn = root.querySelector('#chat-bulk-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    state.selectedConvIds.clear();
+    renderSidebarConversationsOnly(myMountToken);
+  });
+
+  const deleteBtn = root.querySelector('#chat-bulk-delete');
+  if (deleteBtn) deleteBtn.addEventListener('click', () => {
+    deleteSelectedConversations(myMountToken).catch(reportAsyncActionFailure);
+  });
+}
+
+// ── Sidebar render entry points ──────────────────────────────────────────
+
+// `token` is a value the CALLER captured (at onEnter, or at the top of its
+// own async function before any await) — never re-derived from the live
+// myMountToken here. See the H1 doc comment on myMountToken above.
+function renderSidebar(token) {
+  if (!isCurrentMount(token)) return;
 
   // REMOVED (cutover): a "Drop sources to ingest" zone used to sit here with
   // no drag, drop or click handler of any kind — its own label admitted it
@@ -1466,7 +1844,7 @@ function renderSidebar(token) {
           '<span class="chat-search-icon">' + icon('search', 13) + '</span>' +
           '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Search conversations…" value="' + escapeHtml(state.searchQuery) + '">' +
         '</div>' +
-        '<div class="chat-conv-list">' + convListHtml + '</div>'
+        '<div class="chat-conv-pane">' + conversationPaneHtml() + '</div>'
       : '<div class="sidebar-hint">No domains exist yet — nothing to chat with.</div>'),
     token
   );
@@ -1479,22 +1857,21 @@ function renderSidebar(token) {
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       state.searchQuery = e.target.value;
-      renderSidebarConversationsOnly(myMountToken);
+      // The list is refetched from the server (titles AND message bodies),
+      // debounced — not filtered in place. Nothing repaints on this
+      // keystroke, so the caret and the value the user is typing are
+      // untouched until the answer arrives.
+      scheduleConversationSearch(myMountToken);
     });
   }
 
-  wireConvRows(document);
-  document.querySelectorAll('[data-conv-delete]').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteConversationRow(el.dataset.convDelete, el.dataset.convTitle, myMountToken).catch(reportAsyncActionFailure);
-    });
-  });
+  const pane = document.querySelector('.chat-conv-pane');
+  if (pane) wireConversationPane(pane);
 }
 
-// Lighter re-render used after search input / a completed send that
-// didn't change which conversation is active — rebuilds just the list
-// markup + rewires its own rows, without touching the search input's own
+// Lighter re-render used after a selection change, a search result, or a
+// completed send that didn't change which conversation is active — rebuilds
+// just the pane markup + rewires it, without touching the search input's own
 // focus/caret (a full renderSidebar() would recreate the input and drop
 // focus while the user is typing).
 // H1 fix: this bypasses setSidebar() entirely (it patches an already-
@@ -1502,43 +1879,10 @@ function renderSidebar(token) {
 // setSidebar's built-in guard can't protect a call site that never calls it.
 function renderSidebarConversationsOnly(token) {
   if (!isCurrentMount(token)) return;
-  const listEl = document.querySelector('.chat-conv-list');
-  if (!listEl) { renderSidebar(token); return; }
-  const query = state.searchQuery.trim().toLowerCase();
-  const filtered = query
-    ? state.conversations.filter(c => (c.title || '').toLowerCase().includes(query))
-    : state.conversations;
-  const today = [];
-  const earlier = [];
-  const now = new Date().toISOString();
-  for (const c of filtered) (isSameLocalDay(c.createdAt, now) ? today : earlier).push(c);
-
-  const row = (c) => (
-    '<div class="chat-conv-row' + (c.id === state.activeConversationId ? ' active' : '') + '" data-conv-id="' + escapeHtml(c.id) + '">' +
-      '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
-        '<div class="chat-conv-title">' + escapeHtml(c.title || 'Untitled') + '</div>' +
-        '<div class="chat-conv-meta mono">' + c.messageCount + ' message' + (c.messageCount === 1 ? '' : 's') + '</div>' +
-      '</div>' +
-      '<button class="chat-conv-delete" data-conv-delete="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title || '') + '" title="Delete conversation" aria-label="Delete conversation">' +
-        icon('trash', 13) +
-      '</button>' +
-    '</div>'
-  );
-  const groupHtml = (label, list) => list.length === 0 ? '' : (
-    '<div class="chat-conv-group-label mono">' + label + '</div>' + list.map(row).join('')
-  );
-
-  listEl.innerHTML = filtered.length === 0
-    ? '<div class="sidebar-hint">' + (query ? 'No conversations match “' + escapeHtml(state.searchQuery) + '”.' : 'No conversations yet in this domain.') + '</div>'
-    : groupHtml('TODAY', today) + groupHtml('EARLIER', earlier);
-
-  wireConvRows(listEl);
-  listEl.querySelectorAll('[data-conv-delete]').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteConversationRow(el.dataset.convDelete, el.dataset.convTitle, myMountToken).catch(reportAsyncActionFailure);
-    });
-  });
+  const paneEl = document.querySelector('.chat-conv-pane');
+  if (!paneEl) { renderSidebar(token); return; }
+  paneEl.innerHTML = conversationPaneHtml();
+  wireConversationPane(paneEl);
 }
 
 function renderMain(token) {

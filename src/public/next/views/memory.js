@@ -156,6 +156,23 @@ function freshState() {
     // than to leave a stale document on screen claiming to be current.
     // 0 means "nothing read yet", never "read at the epoch".
     detailFetchedAt: 0,
+    // When the SCOPE LIST currently in the picker was fetched, in ms. Kept
+    // separate from detailFetchedAt on purpose: they answer two different
+    // questions and are healed two different ways.
+    //
+    //   · detailFetchedAt is about the DOCUMENT, which is never swapped
+    //     under a reader — a newer write is OFFERED as a Reload and stays
+    //     offered until the user takes it, so that mark deliberately does
+    //     not move on its own.
+    //   · scopesFetchedAt is about the PICKER, which is a list of what
+    //     EXISTS. A scope that exists and is missing from it is simply a
+    //     wrong answer, and there is nothing to interrupt by correcting it.
+    //
+    // Sharing one mark would force a choice between never healing the picker
+    // (the defect) and re-fetching on every poll for as long as the Reload
+    // notice is up (the notice does not dismiss itself). Two marks cost one
+    // number and make each behaviour say what it means.
+    scopesFetchedAt: 0,
     // An index refresh saw a write NEWER than that read. Rendered as an
     // offer to reload, never as an automatic replacement — see
     // renderStaleNotice for why the document is not swapped underneath a
@@ -349,10 +366,28 @@ async function fetchIndex(token) {
  * to 320s does not. Re-render iff the pixels would differ.
  */
 function screenSignature() {
+  // The scope picker's own contents, deduplicated the same way
+  // renderScopeControls deduplicates them, so this is what is literally in
+  // the <select> rather than the raw (scope, machine) pairs behind it.
+  //
+  // OMITTING THIS WAS HALF THE BUG. Once refreshIndex re-reads the scope
+  // list, a newly written scope changes nothing else the signature looks at
+  // in the general case — the sidebar row can be identical when a save adds
+  // a MACHINE under an existing scope, and staleWrite is already true from
+  // an earlier poll — so the render would be skipped as a no-op and the
+  // fresh data would sit in state, unpainted. A no-op guard that cannot see
+  // a pane is not a guard for that pane.
+  const pr = state.projectRead;
+  const pickerScopes = pr && Array.isArray(pr.scopes)
+    ? [...new Set(pr.scopes.map((s) => s.scope))]
+    : null;
   return JSON.stringify([
     state.activeProject,
     state.staleWrite,
     state.indexError,
+    state.scope,
+    state.machine,
+    pickerScopes,
     state.projects.map((p) => [p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
   ]);
 }
@@ -389,11 +424,83 @@ async function refreshIndex(token) {
     state.staleWrite = Number.isFinite(wroteAt) &&
       state.detailFetchedAt > 0 && wroteAt > state.detailFetchedAt;
 
+    // THE SIDEBAR IS NOT THE ONLY PANE THIS SCREEN HAS.
+    //
+    // Reproduced, view open on a project with two scopes, a third written
+    // over MCP: the sidebar row moved to `3 scopes` and the scope picker
+    // beside it still listed TWO, until the user navigated away and back.
+    // Not a counting bug and not a no-op-guard misclassification — the
+    // picker renders from state.projectRead, which ONLY selectProject and
+    // reloadActive ever set, so no revalidation path re-asked for it. The
+    // index refresh above cannot supply it: GET /api/memory carries
+    // `newestScope`, never the list.
+    //
+    // Gated on the mark for the LIST, not the document, so this costs one
+    // extra request only when the index — which is being fetched anyway —
+    // has already proved something was written since the list was read. In
+    // the steady state, which is nearly always, it costs nothing. That
+    // matters here: the index route stats every (scope, machine) pair
+    // across up to 200 domains, which is why the poll is adaptive at all.
+    if (Number.isFinite(wroteAt) && state.activeProject &&
+        state.scopesFetchedAt > 0 && wroteAt > state.scopesFetchedAt) {
+      await refreshScopeList(token, state.activeProject);
+    }
+
     const before = renderedSignature;
     if (screenSignature() !== before) render(token);
   } finally {
     state.refreshing = false;
   }
+}
+
+/**
+ * Bring the SCOPE PICKER up to date, and nothing else.
+ *
+ * Narrower than reloadActive by design. It replaces the list of what exists
+ * and leaves the selection, the loaded handoff, the open folds and the
+ * scroll position exactly where they are — so the v3.17.3 rule that a
+ * document is never swapped under a reader is not merely respected, it is
+ * unreachable from here: nothing in this function can write state.detail.
+ *
+ * After it runs the Reload notice reads MORE truthfully than before, not
+ * less: the picker is now current, so "what is below may not be the latest"
+ * is a claim about the document alone, which is exactly what it says.
+ *
+ * Two cases where the fresh list is deliberately NOT adopted:
+ *
+ *   · NOTHING SELECTED. An empty project that has just received its first
+ *     save would otherwise gain a picker while state.detail is still null,
+ *     painting a scope name over a document that was never read. The Reload
+ *     offer already covers that case correctly, and one healing path is
+ *     better than two that must agree.
+ *
+ *     STATED RATHER THAN OVER-CLAIMED: this check is DEFENCE IN DEPTH and is
+ *     not independently load-bearing today. Deleting it leaves the suite
+ *     green, because the membership check below already returns for a falsy
+ *     state.scope — no real scope list contains null, and slugSegment cannot
+ *     mint an empty scope name. It is kept because it says what is meant, and
+ *     because it is what still holds if the membership check is ever loosened
+ *     (a mutation removing THAT one goes red). Measured, not assumed.
+ *   · THE SELECTED SCOPE IS GONE. A save can only add, so this needs a
+ *     directory removed out of band — but adopting then would leave the
+ *     <select> unable to show state.scope, and the browser would silently
+ *     display some other scope's name over this scope's handoff. Keeping the
+ *     old list leaves the two consistent, and Reload (which re-picks
+ *     deliberately) is the right way out.
+ *
+ * Never throws, and a failed read changes nothing: keep what is on screen
+ * and try again on the next tick, the same rule refreshIndex follows.
+ */
+async function refreshScopeList(token, project) {
+  const startedAt = Date.now();
+  const read = await fetchState(project, {}, token);
+  if (!isCurrentMount(token) || state.activeProject !== project) return;
+  if (!read.data) return;
+  if (!state.scope) return;
+  const names = (read.data.scopes || []).map((s) => s.scope);
+  if (!names.includes(state.scope)) return;
+  state.projectRead = read.data;
+  state.scopesFetchedAt = startedAt;
 }
 
 /**
@@ -412,6 +519,8 @@ async function reloadActive(token) {
   const wantMachine = state.detail ? state.detail.machine : state.machine;
 
   state.detailFetchedAt = Date.now();
+  // Both reads below start now, so both marks move together here.
+  state.scopesFetchedAt = state.detailFetchedAt;
   state.staleWrite = false;
   state.detailLoading = true;
   render(token);
@@ -478,6 +587,10 @@ async function selectProject(project, token, opts = {}) {
   // stale, which costs one reload the user did not strictly need, rather
   // than leaving a stale document presenting itself as current.
   state.detailFetchedAt = Date.now();
+  // The unscoped read below produces the scope list as well as the handoff,
+  // so the picker's mark starts here too. Set before the await, like its
+  // sibling, so a write landing mid-fetch is reported rather than missed.
+  state.scopesFetchedAt = state.detailFetchedAt;
   state.staleWrite = false;
   render(token);
 

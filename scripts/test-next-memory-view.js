@@ -66,6 +66,15 @@
  *    v3.9.0) and is deliberately not changed from a view file.
  *  · The route's index cost (one journal-tail read per scope/machine pair) is
  *    inherited from listWorkingScopes and is not asserted here.
+ *  · §11 drives the revalidation logic against a FAKE fetch and a FAKE clock.
+ *    It proves what refreshIndex/refreshScopeList/nextPollDelay/schedulePoll
+ *    DO with a given response; it does not prove the browser fires `focus` or
+ *    `visibilitychange`, nor that the listeners are attached and removed —
+ *    that pair is source-scanned in §9 and was verified by hand in a real
+ *    browser (0 fetches over 24 s away from the view).
+ *  · refreshScopeList's `!state.scope` early return is defence in depth and
+ *    is NOT independently pinned: the membership check below it already
+ *    returns for a falsy scope. Said so in the source, and measured.
  */
 
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs';
@@ -907,6 +916,450 @@ ok('wide content scrolls inside its own box (pre gets overflow-x)',
 ok('focus is visible on the project rows', viewCss.includes('.mem-row:focus-visible'));
 ok('focus is visible on the disclosures', viewCss.includes('.mem-fold-summary:focus-visible'));
 ok('focus is visible on the selects', viewCss.includes('.mem-select:focus-visible'));
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§11 — REVALIDATION, driven rather than grepped');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// v3.17.3 shipped the revalidation logic with NO offline assertion over it:
+// §9 above checks timer hygiene only through a `loadGate.cancel()` regex that
+// `stopPoll()` happens to satisfy incidentally. A section driving
+// nextPollDelay, teardown and screenSignature was recorded as owed. This is
+// it, and writing it is what would have caught the defect below.
+//
+// THE DEFECT THIS SECTION EXISTS FOR, reproduced in a real browser first:
+// with the view open, a third scope written over MCP moved the sidebar row to
+// "3 scopes" while the scope <select> beside it still listed TWO, until the
+// user navigated away and back. refreshIndex updated state.projects and
+// nothing else; the picker renders from state.projectRead, which no
+// revalidation path ever re-read.
+//
+// Everything here executes the SHIPPED functions, lifted by brace-matching
+// and given injected collaborators — a fake fetch, a fake clock, a render
+// that does exactly what the real one does to the signature bookkeeping.
+
+// Fidelity guard for the harness below: the real render() is what maintains
+// `renderedSignature`, so the fake one must too. A source check, and labelled
+// as one — it guards the harness, not the behaviour.
+ok('render() is what records renderedSignature (the harness mirrors this)',
+  /function render\(token\) \{[\s\S]{0,200}?renderedSignature = screenSignature\(\);/.test(viewSrc));
+
+/**
+ * The revalidation machinery, executing for real.
+ *
+ * Returns the lifted functions plus the probes a test needs: how many of each
+ * request went out, how many renders happened, and a fake clock so the poll
+ * can be advanced without sleeping.
+ */
+function makeRevalidator(stateObj, responder, opts = {}) {
+  const calls = { index: 0, project: 0, render: 0, urls: [] };
+  let mounted = true;
+
+  // Fake clock. Timers are a queue of {at, fn}; advance(ms) fires everything
+  // due, re-armed timers included, so a setTimeout CHAIN can be walked.
+  let now = 0, seq = 0;
+  const timers = new Map();
+  const fakeSetTimeout = (fn, ms) => { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; };
+  const fakeClearTimeout = (id) => { timers.delete(id); };
+  function advance(ms) {
+    const end = now + ms;
+    for (;;) {
+      let next = null;
+      for (const [id, t] of timers) if (t.at <= end && (!next || t.at < next.t.at)) next = { id, t };
+      if (!next) break;
+      timers.delete(next.id);
+      now = next.t.at;
+      next.t.fn();
+    }
+    now = end;
+  }
+
+  const fakeFetch = async (url) => {
+    calls.urls.push(String(url));
+    if (String(url) === '/api/memory') calls.index++; else calls.project++;
+    return responder(String(url));
+  };
+
+  const body =
+    'let pollTimer = null;\n' +
+    'let renderedSignature = null;\n' +
+    'function render(token) { renderedSignature = screenSignature(); onRender(token); }\n' +
+    extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'screenSignature', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'refreshIndex', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'refreshScopeList', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'nextPollDelay', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'stopPoll', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'schedulePoll', 'memory.js') + '\n' +
+    'return { refreshIndex, refreshScopeList, screenSignature, nextPollDelay, ' +
+    'schedulePoll, stopPoll, render, armed: () => pollTimer !== null, sig: () => renderedSignature };';
+
+  const api = new Function(
+    'state', 'onRender', 'isCurrentMount', 'fetch', 'document',
+    'setTimeout', 'clearTimeout', 'POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS', body)(
+    stateObj,
+    () => { calls.render++; },
+    () => mounted,
+    fakeFetch,
+    { hidden: !!opts.hidden },
+    fakeSetTimeout, fakeClearTimeout,
+    20000, 20, 300000);
+
+  // PRIME, exactly as onEnter does: it calls render(mountToken) before
+  // loadIndex, so by the time any revalidation runs `renderedSignature`
+  // already describes what is painted. Skipping this would leave it null,
+  // every signature would differ from it, and the no-op guard would look
+  // broken when it is the harness that is unmounted.
+  api.render(1);
+  calls.render = 0;
+
+  // Drain the microtask queue. The poll is a setTimeout CHAIN re-armed in a
+  // .finally(), which is a microtask: firing the timer is not enough, the
+  // promise behind it has to settle first. setImmediate outranks every
+  // pending microtask, so awaiting it drains them all.
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  return { ...api, calls, advance, settle, unmount: () => { mounted = false; } };
+}
+
+/** A state shaped exactly like the live one at the moment of the defect. */
+function liveState(over = {}) {
+  const T0 = 1_000_000;
+  const detail = { scope: 'memory-view', machine: 'm1', machines: [{ machine: 'm1', ageSeconds: 5 }],
+    current: { present: true, text: '# Second scope\n' }, journal: [] };
+  return {
+    loading: false, refreshing: false,
+    projects: [{ project: 'projects', hasBrief: true, scopeCount: 2, savedCopies: 2,
+      lastWriteAt: new Date(T0).toISOString(), ageSeconds: 30, headline: 'Second scope' }],
+    indexError: null,
+    activeProject: 'projects',
+    projectRead: { scopes: [{ scope: 'memory-view' }, { scope: 'main' }], savedCopies: 2 },
+    detail,
+    detailError: null, detailLoading: false,
+    scope: 'memory-view', machine: null, journalLimit: 10,
+    openFolds: { 'mem-fold-journal': true },
+    detailFetchedAt: T0, scopesFetchedAt: T0,
+    staleWrite: false, lastRefreshMs: 0,
+    ...over,
+  };
+}
+
+/** Index + project responses describing "a third scope has just been written". */
+function thirdScopeWritten(writeAtMs) {
+  const iso = new Date(writeAtMs).toISOString();
+  return (url) => {
+    if (url === '/api/memory') {
+      return { ok: true, json: async () => ({ ok: true, projects: [{
+        project: 'projects', hasBrief: true, scopeCount: 3, savedCopies: 3,
+        lastWriteAt: iso, ageSeconds: 1, headline: 'THE THIRD SCOPE' }] }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, project: 'projects', savedCopies: 3,
+      scopes: [{ scope: 'third-scope-added-live' }, { scope: 'memory-view' }, { scope: 'main' }] }) };
+  };
+}
+
+// ── §11a — nextPollDelay: the adaptive interval, arithmetic and bounds ────
+
+{
+  const probe = (ms) => { const s = liveState({ lastRefreshMs: ms }); return makeRevalidator(s, () => {}).nextPollDelay(); };
+  eq('nextPollDelay: nothing measured yet -> the floor', probe(0), 20000);
+  eq('nextPollDelay: a fast refresh stays at the floor', probe(500), 20000);
+  eq('nextPollDelay: 2 s of work -> 40 s (1/20th duty cycle)', probe(2000), 40000);
+  eq('nextPollDelay: 15 s of work -> the 5-minute ceiling', probe(15000), 300000);
+  eq('nextPollDelay: a huge measurement cannot exceed the ceiling', probe(9_999_999), 300000);
+  ok('nextPollDelay is monotonic non-decreasing in the measured cost', (() => {
+    let prev = -1;
+    for (let ms = 0; ms <= 40000; ms += 137) { const d = probe(ms); if (d < prev) return false; prev = d; }
+    return true;
+  })());
+  ok('nextPollDelay is inside [floor, ceiling] for every measurement swept', (() => {
+    for (let ms = 0; ms <= 60000; ms += 91) { const d = probe(ms); if (d < 20000 || d > 300000) return false; }
+    return true;
+  })());
+  // A busy poll on a big install is the failure this exists to prevent: the
+  // route stats every (scope, machine) pair across up to 200 domains.
+  ok('a 15 s refresh can never be re-issued more often than every 5 min',
+    probe(15000) >= 300000);
+}
+
+// ── §11b — screenSignature must SEE the scope picker ──────────────────────
+//
+// Half of the defect. Once refreshIndex re-reads the list, a signature blind
+// to it classifies a real change as a no-op and the fresh data is never
+// painted. The decisive case is the one where the SIDEBAR ROW IS IDENTICAL:
+// a save that adds a MACHINE under an existing scope leaves scopeCount,
+// headline and age untouched, so nothing but the picker has moved.
+
+{
+  const base = liveState();
+  const sigOf = (s) => makeRevalidator(s, () => {}).screenSignature();
+
+  eq('screenSignature: identical state -> identical signature',
+    sigOf(liveState()), sigOf(liveState()));
+
+  const grew = liveState();
+  grew.projectRead = { scopes: [{ scope: 'third-scope-added-live' }, { scope: 'memory-view' }, { scope: 'main' }] };
+  ok('screenSignature CHANGES when a scope appears in the picker',
+    sigOf(grew) !== sigOf(base));
+
+  // The mutation-proof case: sidebar row byte-identical, only the picker moved.
+  const sameRow = liveState();
+  sameRow.projectRead = { scopes: [{ scope: 'memory-view' }, { scope: 'main' }, { scope: 'later' }] };
+  ok('screenSignature changes on a picker-only change (sidebar row untouched)',
+    sigOf(sameRow) !== sigOf(base) &&
+    JSON.stringify(sameRow.projects) === JSON.stringify(base.projects));
+
+  const otherScope = liveState({ scope: 'main' });
+  ok('screenSignature changes when the SELECTED scope changes',
+    sigOf(otherScope) !== sigOf(base));
+
+  // Duplicated pairs are one option in the <select>, so they must not read as
+  // a change — renderScopeControls deduplicates and so must the signature.
+  const dupes = liveState();
+  dupes.projectRead = { scopes: [{ scope: 'memory-view' }, { scope: 'memory-view' }, { scope: 'main' }] };
+  ok('screenSignature deduplicates pairs the way the <select> does',
+    sigOf(dupes) === sigOf(base));
+
+  ok('screenSignature still tracks the sidebar (staleWrite)',
+    sigOf(liveState({ staleWrite: true })) !== sigOf(base));
+}
+
+// ── §11c — the headline: refreshIndex heals the PICKER, not just the row ──
+
+{
+  const s = liveState();
+  const detailBefore = s.detail;
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  await r.refreshIndex(1);
+
+  eq('a write since the list was read costs exactly ONE extra request', r.calls.project, 1);
+  ok('the newly written scope is now in the picker',
+    s.projectRead.scopes.map((x) => x.scope).includes('third-scope-added-live'),
+    JSON.stringify(s.projectRead.scopes));
+  eq('the sidebar row updated too', s.projects[0].scopeCount, 3);
+  ok('the screen was re-rendered (the change is on screen, not just in state)', r.calls.render > 0);
+
+  // THE v3.17.3 INVARIANTS. The picker is a list of what exists and is
+  // corrected in place; the DOCUMENT is offered, never swapped.
+  ok('the document was NOT swapped (same object, untouched)', s.detail === detailBefore);
+  eq('the user stays on the scope they chose', s.scope, 'memory-view');
+  eq('the machine selection is untouched', s.machine, null);
+  eq('the journal page size is untouched', s.journalLimit, 10);
+  eq('open folds survive', s.openFolds['mem-fold-journal'], true);
+  ok('the Reload offer still stands for the document', s.staleWrite === true);
+  ok('the document mark did NOT move (Reload stays available until taken)',
+    s.detailFetchedAt === 1_000_000);
+  ok('the picker mark DID move (so this does not re-fire every poll)',
+    s.scopesFetchedAt > 1_000_000);
+}
+
+// ── §11d — the steady state costs nothing ────────────────────────────────
+
+/** The index answering with the row the screen already shows. */
+function unchangedIndex(ageSeconds) {
+  return (url) => url === '/api/memory'
+    ? { ok: true, json: async () => ({ ok: true, projects: [{ project: 'projects', hasBrief: true,
+        scopeCount: 2, savedCopies: 2, lastWriteAt: new Date(999_000).toISOString(),
+        ageSeconds, headline: 'Second scope' }] }) }
+    : { ok: true, json: async () => ({ ok: true, scopes: [] }) };
+}
+
+{
+  const s = liveState();
+  // Newest write is OLDER than both marks: nothing has happened.
+  const r = makeRevalidator(s, unchangedIndex(30));
+  await r.refreshIndex(1);
+  eq('an unchanged poll issues NO project request', r.calls.project, 0);
+  eq('an unchanged poll re-renders NOTHING', r.calls.render, 0);
+  eq('an unchanged poll leaves the picker alone', s.projectRead.scopes.length, 2);
+  eq('an unchanged poll raises no stale offer', s.staleWrite, false);
+}
+
+{
+  // THE SIGNATURE IS OVER RENDERED TEXT, NOT RAW FIELDS — the doc block's own
+  // claim, pinned. An age that moved but still READS the same must not
+  // re-render (it would close a <select> the user has open); one that crossed
+  // a wording boundary must.
+  const quiet = liveState();
+  const rq = makeRevalidator(quiet, unchangedIndex(52));       // 30s -> 52s, both "just now"
+  await rq.refreshIndex(1);
+  eq('an age that ticked without changing the WORDS re-renders nothing', rq.calls.render, 0);
+
+  const loud = liveState();
+  const rl = makeRevalidator(loud, unchangedIndex(61));        // 30s -> 61s: "just now" -> "1 min ago"
+  await rl.refreshIndex(1);
+  eq('an age that crossed into new WORDS does re-render', rl.calls.render, 1);
+}
+
+// ── §11e — a repeat poll while the Reload notice stands is free ──────────
+//
+// staleWrite keys off detailFetchedAt and stays true until the user reloads.
+// Gating the scope re-read on that mark instead of its own would re-fetch on
+// EVERY poll for as long as the notice is up. Two marks, one request.
+
+{
+  const s = liveState();
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  await r.refreshIndex(1);
+  const afterFirst = r.calls.project;
+  await r.refreshIndex(1);
+  await r.refreshIndex(1);
+  eq('the scope list is re-read ONCE per write, not once per poll', r.calls.project, afterFirst);
+  eq('...and the first poll is the one that paid for it', afterFirst, 1);
+  ok('the Reload offer is still standing across all three polls', s.staleWrite === true);
+}
+
+// ── §11f — cases where the fresh list is deliberately NOT adopted ────────
+
+{
+  // The selected scope is gone: adopting would leave the <select> unable to
+  // show state.scope, so the browser would paint another scope's name over
+  // this scope's handoff.
+  const s = liveState();
+  const r = makeRevalidator(s, (url) => url === '/api/memory'
+    ? { ok: true, json: async () => ({ ok: true, projects: [{ project: 'projects', hasBrief: true,
+        scopeCount: 1, savedCopies: 1, lastWriteAt: new Date(1_005_000).toISOString(),
+        ageSeconds: 1, headline: 'x' }] }) }
+    : { ok: true, json: async () => ({ ok: true, scopes: [{ scope: 'something-else' }] }) });
+  await r.refreshIndex(1);
+  ok('a list missing the selected scope is REFUSED (picker and document stay consistent)',
+    s.projectRead.scopes.map((x) => x.scope).join(',') === 'memory-view,main');
+  eq('...and the picker mark does not move, so it will retry', s.scopesFetchedAt, 1_000_000);
+  ok('...while the Reload offer is raised, which is the correct way out', s.staleWrite === true);
+}
+
+{
+  // Nothing selected (an empty project receiving its first save): adopting
+  // would paint a scope name over a document that was never read. The Reload
+  // offer owns this case.
+  // MEASURED LIMIT, recorded rather than implied away: this pins the COMBINED
+  // behaviour, not the `!state.scope` line. Removing that line alone leaves
+  // this green — the membership check below it returns for a falsy scope
+  // anyway — so it is defence in depth and is described as such in the source.
+  // The membership check itself IS load-bearing and is mutation-proven above.
+  const s = liveState({ scope: null, detail: null, projectRead: { scopes: [] } });
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  await r.refreshIndex(1);
+  eq('with nothing selected the picker is left to the Reload offer', s.projectRead.scopes.length, 0);
+  ok('...and that offer is raised', s.staleWrite === true);
+  ok('...and no document was invented for a scope that was never read', s.detail === null);
+}
+
+{
+  // A failed re-read must change nothing — same rule refreshIndex already
+  // follows for the index itself.
+  const s = liveState();
+  const r = makeRevalidator(s, (url) => url === '/api/memory'
+    ? { ok: true, json: async () => ({ ok: true, projects: [{ project: 'projects', hasBrief: true,
+        scopeCount: 3, savedCopies: 3, lastWriteAt: new Date(1_005_000).toISOString(),
+        ageSeconds: 1, headline: 'x' }] }) }
+    : { ok: false, status: 500, json: async () => ({ ok: false, message: 'boom' }) });
+  await r.refreshIndex(1);
+  eq('a failed scope re-read leaves the picker exactly as it was', s.projectRead.scopes.length, 2);
+  eq('...and does not move the mark, so the next poll retries', s.scopesFetchedAt, 1_000_000);
+  eq('...and never surfaces as a detail error', s.detailError, null);
+}
+
+{
+  // A throwing fetch is the same story.
+  const s = liveState();
+  const r = makeRevalidator(s, (url) => {
+    if (url === '/api/memory') {
+      return { ok: true, json: async () => ({ ok: true, projects: [{ project: 'projects',
+        hasBrief: true, scopeCount: 3, savedCopies: 3,
+        lastWriteAt: new Date(1_005_000).toISOString(), ageSeconds: 1, headline: 'x' }] }) };
+    }
+    throw new Error('network down');
+  });
+  await r.refreshIndex(1);
+  eq('a THROWING scope re-read leaves the picker as it was', s.projectRead.scopes.length, 2);
+  eq('...and refreshIndex still completes', s.refreshing, false);
+}
+
+{
+  // A remount mid-flight must abandon the result: this view is re-entered
+  // constantly from the rail, and a late write would land in another mount.
+  const s = liveState();
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  const p = r.refreshIndex(1);
+  r.unmount();
+  await p;
+  eq('a result arriving after a remount is discarded (picker)', s.projectRead.scopes.length, 2);
+  eq('...and the sidebar too', s.projects[0].scopeCount, 2);
+}
+
+{
+  // Re-entrancy: the wake handler and the poll can both fire. The second must
+  // bail rather than double-fetch.
+  const s = liveState({ refreshing: true });
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  await r.refreshIndex(1);
+  eq('a refresh already in flight is not started twice (index)', r.calls.index, 0);
+  eq('...nor the scope re-read', r.calls.project, 0);
+}
+
+// ── §11g — the poll: a CHAIN, hidden-tab skip, and real teardown ─────────
+
+{
+  const s = liveState();
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  ok('no timer is armed before schedulePoll', !r.armed());
+  r.schedulePoll(1);
+  ok('schedulePoll arms a timer', r.armed());
+  r.advance(19_000);
+  eq('nothing fires before the floor elapses', r.calls.index, 0);
+  r.advance(2_000);
+  eq('the poll fires once past the floor', r.calls.index, 1);
+  await r.settle();
+  ok('the chain re-armed after the refresh settled', r.armed());
+  r.advance(60_000);
+  await r.settle();
+  ok('the poll RE-ARMS itself (a chain, not a one-shot)', r.calls.index >= 2, 'index=' + r.calls.index);
+
+  // Teardown. The measured claim is 0 fetches while unmounted; this is that
+  // claim as an assertion rather than as a regex over `loadGate.cancel()`.
+  r.stopPoll();
+  ok('stopPoll disarms the timer', !r.armed());
+  const at = r.calls.index;
+  r.advance(600_000);
+  eq('TEARDOWN: ten minutes unmounted costs ZERO further requests', r.calls.index, at);
+}
+
+{
+  // A hidden tab reschedules WITHOUT fetching — nobody is looking, and the
+  // wake handler covers the moment they are.
+  const s = liveState();
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000), { hidden: true });
+  r.schedulePoll(1);
+  r.advance(300_000);
+  eq('a hidden tab never fetches', r.calls.index, 0);
+  ok('...but keeps its timer armed for when it is shown again', r.armed());
+  r.stopPoll();
+}
+
+{
+  // An unmounted-but-still-armed timer must not fetch either: isCurrentMount
+  // is checked inside the callback, not only at arm time.
+  const s = liveState();
+  const r = makeRevalidator(s, thirdScopeWritten(1_005_000));
+  r.schedulePoll(1);
+  r.unmount();
+  r.advance(120_000);
+  eq('a timer that outlived its mount fetches nothing', r.calls.index, 0);
+  ok('...and does not re-arm itself', !r.armed());
+}
+
+// ── §11h — the two marks are genuinely two ───────────────────────────────
+
+ok('the view tracks a mark for the PICKER distinct from the document mark',
+  /scopesFetchedAt/.test(viewSrc) && /detailFetchedAt/.test(viewSrc));
+ok('refreshScopeList never writes state.detail (the document is unreachable from it)',
+  !/state\.detail\s*=/.test(extractFunction(viewSrc, 'refreshScopeList', 'memory.js')));
+ok('refreshScopeList never moves the selection',
+  !/state\.(scope|machine)\s*=/.test(extractFunction(viewSrc, 'refreshScopeList', 'memory.js')));
 
 // ── Done ─────────────────────────────────────────────────────────────────
 

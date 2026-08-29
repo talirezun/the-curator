@@ -11,20 +11,42 @@
   --font-sans: 'Instrument Sans', ui-sans-serif, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
+  /* ── User-adjustable text scale ────────────────────────────────────────
+     One multiplier over the whole ramp, so a single custom property on
+     <html> re-sizes every piece of text in the app in the same frame with
+     no reload and no per-component override. Settings > General owns the
+     control; app.js's applyFontScale() is the only thing that writes it.
+
+     THE DEFAULT LIVES HERE, NOT IN JS. With no stored preference, no
+     JavaScript run, or storage disabled entirely, this resolves to 1 and
+     the ramp below is byte-for-byte the design system's original values.
+     That is deliberate: the failure mode of the whole feature is "the app
+     looks exactly as it did before", never "the app has no font sizes".
+
+     It is also why the ramp is `calc(<base>px * ...)` rather than the ramp
+     being rewritten in rem against a scaled root font-size: keeping the px
+     literals visible keeps this file readable as the design system's size
+     table, which is what it is.
+
+     NOT SCALED, on purpose: the control heights and layout metrics in
+     space.css, and the px sizes icon() passes to SVG width/height. See the
+     "Text scale" section in app.js for why each. */
+  --font-scale: 1;
+
   /* Size ramp — 1.20 at text sizes, widening to 1.25 for display */
-  --text-2xs: 10px;
-  --text-xs:  11px;
-  --text-sm:  12px;
-  --text-md:  13px;
-  --text-base:14px;
-  --text-lg:  16px;
-  --text-xl:  18px;
-  --text-2xl: 22px;
-  --text-3xl: 27px;
-  --text-4xl: 34px;
-  --text-5xl: 44px;
-  --text-6xl: 56px;
-  --text-7xl: 72px;
+  --text-2xs: calc(10px * var(--font-scale));
+  --text-xs:  calc(11px * var(--font-scale));
+  --text-sm:  calc(12px * var(--font-scale));
+  --text-md:  calc(13px * var(--font-scale));
+  --text-base:calc(14px * var(--font-scale));
+  --text-lg:  calc(16px * var(--font-scale));
+  --text-xl:  calc(18px * var(--font-scale));
+  --text-2xl: calc(22px * var(--font-scale));
+  --text-3xl: calc(27px * var(--font-scale));
+  --text-4xl: calc(34px * var(--font-scale));
+  --text-5xl: calc(44px * var(--font-scale));
+  --text-6xl: calc(56px * var(--font-scale));
+  --text-7xl: calc(72px * var(--font-scale));
 
   --leading-tight:   1.1;
   --leading-snug:    1.25;

@@ -1182,21 +1182,89 @@ export function conversationsPath(domain) {
   return path.join(getDomainsDir(), domain, 'conversations');
 }
 
-export async function listConversations(domain) {
+// Longest search string this will act on. A query is a substring test run
+// once per conversation body, so an unbounded one is a cheap way for a
+// scripted client to make the server do real work per request; 200 is far
+// past any real search and keeps the cap a fact rather than a guess. Over
+// the cap the query is TRUNCATED, never refused: a truncated query still
+// returns a superset of what the full one would (a prefix matches at least
+// as much), so the failure direction is "too many rows", never a silent
+// empty result that reads as "you have no such conversation".
+export const CONVERSATION_SEARCH_MAX_CHARS = 200;
+
+/**
+ * Does this conversation match a search query, and WHERE?
+ *
+ * Returns null for no match, otherwise 'title' or 'message'. Title is
+ * checked first because it is the cheap case and the one the UI already
+ * shows — a conversation whose title matches never needs its bodies read.
+ *
+ * WHY THE BODIES ARE SCANNED AT ALL. A conversation's title is its first
+ * user message truncated at 57 characters (src/brain/chat.js), so before
+ * this, everything said after the opening line of a thread was unreachable
+ * by search — the longer and more useful the conversation, the smaller the
+ * fraction of it that could be found. Bodies are scanned HERE, on the
+ * server, rather than shipped to the client, because listConversations
+ * already parses every conversation file in its loop: the messages are
+ * in memory at this exact moment and scanning them costs no extra I/O,
+ * whereas sending them would multiply the sidebar payload by the whole
+ * transcript of every thread in the domain.
+ *
+ * Case-insensitive: `needle` arrives already lowercased (normalised once by
+ * the caller rather than per-conversation), and each haystack is lowercased
+ * here. Exported for the offline suite.
+ */
+export function matchConversation(conv, needle) {
+  if (!needle) return null;
+  if (typeof conv?.title === 'string' && conv.title.toLowerCase().includes(needle)) return 'title';
+  const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+  for (const m of messages) {
+    if (typeof m?.content === 'string' && m.content.toLowerCase().includes(needle)) return 'message';
+  }
+  return null;
+}
+
+/**
+ * List a domain's conversations, newest first.
+ *
+ * `opts.q` filters them. An absent, non-string, or whitespace-only query is
+ * NO FILTER — the full list, byte-identical to the pre-search behaviour —
+ * so every existing caller (and the route with no `q` parameter) is on
+ * exactly the path it was on before.
+ *
+ * A filtered row carries `matchField` ('title' | 'message') so the sidebar
+ * can say WHY a conversation matched when the reason is not visible in the
+ * title it renders. Unfiltered rows carry no such field: there is no match
+ * to explain, and adding `matchField: null` to every row would put a value
+ * on the wire that means nothing.
+ */
+export async function listConversations(domain, opts = {}) {
   const dir = conversationsPath(domain);
   await mkdir(dir, { recursive: true });
   const entries = await readdir(dir);
+  const rawQuery = typeof opts.q === 'string' ? opts.q : '';
+  const needle = rawQuery.slice(0, CONVERSATION_SEARCH_MAX_CHARS).trim().toLowerCase();
   const convs = [];
   for (const f of entries.filter(f => f.endsWith('.json'))) {
     try {
       const raw = await readFile(path.join(dir, f), 'utf8');
       const conv = JSON.parse(raw);
-      convs.push({
+      // messageCount is read BEFORE any filtering decision so the number the
+      // sidebar shows is the conversation's real length, never a count of
+      // matching messages — those are two different facts and the row label
+      // ("12 messages") claims the first one.
+      const row = {
         id: conv.id,
         title: conv.title,
         createdAt: conv.createdAt,
         messageCount: conv.messages.length,
-      });
+      };
+      if (needle) {
+        const matchField = matchConversation(conv, needle);
+        if (!matchField) continue;
+        row.matchField = matchField;
+      }
+      convs.push(row);
     } catch { /* skip malformed files */ }
   }
   return convs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));

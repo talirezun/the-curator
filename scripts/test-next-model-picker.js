@@ -410,6 +410,15 @@ const stubState = {
   keys: null, keysError: null, keysActionError: null,
   replacing: null, keysBusy: null,
   modelPickerOpen: {},
+  // Which INDIVIDUAL model rows are expanded, by model id — the per-row twin
+  // of modelPickerOpen, added when the row fold stopped being derived solely
+  // from "is this the model being qualified". renderModelOption dereferences
+  // it, so a fixture missing it CRASHES this suite rather than failing it.
+  // Mirrored here rather than made optional in the product: freshState()
+  // always provides it, so an absent key is a shape the app cannot produce,
+  // and defending against it in renderModelOption would only hide a genuinely
+  // missing initialiser.
+  modelRowOpen: {},
   // The picker's own two fields. Same live-object rule: onPickModel (executed
   // in the SECOND sandbox below) mutates these, and renderModelPicker in the
   // FIRST sandbox reads them off the same identity — so §17-§21 can drive the

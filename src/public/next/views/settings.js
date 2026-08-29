@@ -137,6 +137,8 @@ import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
+  preserveMainScroll, resetMainScroll,
+  currentFontScale, fontScaleOptions, setFontScale,
 } from '../app.js';
 // Overlay, not a view — same relationship views/shared.js has with
 // views/shared-brain-wizard.js. It is opened from the MCP section's CTA and
@@ -549,6 +551,21 @@ function freshState() {
     // returning collapses it — the same rule every other transient control
     // in this view follows.
     modelPickerOpen: {},
+    // Which INDIVIDUAL model rows are expanded, by model id. Same reason as
+    // modelPickerOpen above, one level down, and it was missing.
+    //
+    // MEASURED, not assumed. A row's `<details>` used to derive `open` solely
+    // from "is this the model being qualified", so every OTHER expanded row
+    // snapped shut on every repaint — and this list repaints on a keystroke
+    // in the search box, on the sort, on the measured-only toggle, on a key
+    // save, and on the cross-view write gate firing because an ingest started
+    // somewhere else. That is the reported "it throws me back up the page":
+    // rows collapsing makes the document SHORTER, and a shorter document is
+    // the one condition under which the browser clamps the scroll container.
+    // (Browser-measured: an innerHTML swap alone does NOT move scrollTop while
+    // the offset still fits — so preserving the offset cannot fix this on its
+    // own, and the fold state is the actual root cause.)
+    modelRowOpen: {},
     // The model-pick request currently in flight, as '<provider>::<modelId>'
     // ('<provider>::' when clearing back to the app default), or null.
     //
@@ -951,10 +968,37 @@ function requestTheme(target) {
 
 // ── Render ───────────────────────────────────────────────────────────────
 
+/**
+ * THE ONE re-render chokepoint for this view — roughly forty call sites
+ * reach it, from every section.
+ *
+ * IT PRESERVES READING POSITION, AND THE FIX IS HERE RATHER THAN AT THE TWO
+ * HANDLERS THAT WERE REPORTED. The report was "Test on my wiki throws me
+ * back to the top, and so does Start". Those two handlers are not special:
+ * setMain() replaces #view-root wholesale, `.main` is the scroll container,
+ * so EVERY render() from a scrolled position did this — saving a key,
+ * disconnecting a provider, activating one, expanding a model row, running
+ * the system check, opening the live-cost confirm. Two of those are further
+ * down the page than the qualify panel is. Patching the two reported
+ * handlers would have closed the report and left the class open, which is
+ * this repo's most-recorded failure shape, so this wraps the chokepoint.
+ *
+ * The counterpart is in wireGlobalListeners(): a SECTION CHANGE explicitly
+ * resets to the top, because that is a new destination and preserving an
+ * offset into it would drop the user into the middle of a page they have
+ * not seen.
+ *
+ * The fold state was never the problem and is untouched — state.modelPickerOpen
+ * already survived every one of these renders correctly. The section stayed
+ * open the whole time; it was simply scrolled off the top of the viewport,
+ * which is indistinguishable from having been closed.
+ */
 function render(token) {
-  renderSidebar(token);
-  renderMain(token);
-  wireGlobalListeners();
+  preserveMainScroll(() => {
+    renderSidebar(token);
+    renderMain(token);
+    wireGlobalListeners();
+  });
 }
 
 function renderSidebar(token) {
@@ -1022,6 +1066,16 @@ function renderGeneral() {
         '</div>' +
       '</div>' +
 
+      // Text size. Sits directly under Appearance because it is the same
+      // KIND of setting — how the app looks on this screen — and it uses the
+      // same segmented control for the same reason.
+      //
+      // NO SEPARATE PREVIEW, deliberately: the change applies to the whole
+      // app in the same frame, including to this control and the label above
+      // it, so the app IS the preview. A row of sample text next to it would
+      // be a second thing to read that says less than the real one.
+      renderTextSize() +
+
       // System check
       '<div class="settings-field-block">' +
         '<span class="settings-field-label">System check</span>' +
@@ -1070,6 +1124,41 @@ function renderGeneral() {
           '<button type="button" class="btn btn-secondary" id="btn-show-setup-guide">Show setup guide</button>' +
         '</div>' +
       '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * Text size — one app-wide scale over the type ramp.
+ *
+ * The presets and their numbers live in app.js (fontScaleOptions), NOT here:
+ * this view renders whatever the shell offers, so adding or re-tuning a
+ * preset is one edit in one file and cannot leave a control listing an
+ * option the shell does not know. The hint under each name is the trade
+ * being made, in the user's terms — this setting exists to spend screen
+ * space on legibility, and saying which direction each option goes is the
+ * whole point of naming them rather than showing percentages.
+ *
+ * `currentFontScale()` is the shell's, not a local copy, so the active
+ * marking is right on the first render after a reload with no extra load.
+ */
+function renderTextSize() {
+  const active = currentFontScale();
+  const buttons = fontScaleOptions().map(([id, label, hint]) => (
+    '<button type="button" class="theme-seg-btn fs-seg-btn' + (id === active ? ' active' : '') + '"' +
+      ' data-font-scale="' + escapeHtml(id) + '"' +
+      ' aria-pressed="' + (id === active ? 'true' : 'false') + '"' +
+      ' title="' + escapeHtml(hint) + '">' + escapeHtml(label) + '</button>'
+  )).join('');
+
+  return (
+    '<div class="settings-field-block">' +
+      '<span class="settings-field-label">Text size</span>' +
+      '<p class="settings-hint-text">Scales every piece of text in the app. Larger is easier to read; ' +
+      'smaller fits more on screen. Icons, controls and the layout keep their size, so this trades ' +
+      'density for legibility rather than zooming the whole window — your browser’s own zoom still ' +
+      'does that. Saved in this browser, and it applies straight away.</p>' +
+      '<div class="theme-segmented fs-segmented" role="group" aria-label="Text size">' + buttons + '</div>' +
     '</div>'
   );
 }
@@ -2835,10 +2924,16 @@ function renderModelFilterBar(provider, f, shown, total, unranked) {
       '<input type="search" class="model-filter-q" data-model-filter-q="' + pid + '"' +
         ' placeholder="Search models…" aria-label="Search models"' +
         ' value="' + escapeHtml(f.q) + '">' +
-      '<select class="model-filter-sort" data-model-filter-sort="' + pid + '" aria-label="Sort models">' +
-        opt('cheapest', 'Cheapest first') + opt('dearest', 'Most expensive first') +
-        opt('newest', 'Newest first') + opt('largest-context', 'Largest context first') +
-      '</select>' +
+      // Wrapper carries the CSS-drawn chevron — see .settings-select-wrap.
+      // It is the flex item now, so the sizing that was on the select
+      // (`flex: 0 0 auto`) moves to it; a wrapper left at the default
+      // `min-width: auto` would refuse to shrink and push the row wide.
+      '<span class="settings-select-wrap model-filter-sort-wrap">' +
+        '<select class="model-filter-sort" data-model-filter-sort="' + pid + '" aria-label="Sort models">' +
+          opt('cheapest', 'Cheapest first') + opt('dearest', 'Most expensive first') +
+          opt('newest', 'Newest first') + opt('largest-context', 'Largest context first') +
+        '</select>' +
+      '</span>' +
       '<label class="model-filter-measured">' +
         '<input type="checkbox" data-model-filter-measured="' + pid + '"' +
           (f.measuredOnly ? ' checked' : '') + '>' +
@@ -3205,10 +3300,15 @@ function renderQualifyPanel(q, minRuns) {
               ? ' on ' + escapeHtml(formatSyncedAt(q.estimate.existing.measuredAt)) : '') +
             '. Running again replaces that result.</p>'
           : '') +
+        // The ids are what preserveMainScroll() restores focus BY — the node
+        // itself cannot survive innerHTML replacement, and this panel
+        // re-renders on every phase change and on every completed run. Only
+        // one qualification panel can exist at a time (state.qualify is a
+        // single object, not a per-model map), so these are unique.
         '<div class="model-qual-actions">' +
-          '<button type="button" class="btn btn-primary btn-xs" data-qualify-go="' +
+          '<button type="button" class="btn btn-primary btn-xs" id="qualify-go" data-qualify-go="' +
             escapeHtml(String(q.modelId)) + '">Start</button>' +
-          '<button type="button" class="btn btn-secondary btn-xs" data-qualify-cancel="1">Cancel</button>' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="qualify-cancel" data-qualify-cancel="1">Cancel</button>' +
         '</div>' +
       '</div>'
     );
@@ -3232,7 +3332,10 @@ function renderQualifyPanel(q, minRuns) {
               : r.outcome).join('  ')) +
         '</p>' +
         '<div class="model-qual-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" data-qualify-stop="1">Stop</button>' +
+          // Re-rendered once per completed run (each can take minutes), so
+          // without a stable id a keyboard user loses focus repeatedly while
+          // watching it. See the ids on the confirm panel's buttons above.
+          '<button type="button" class="btn btn-secondary btn-xs" id="qualify-stop" data-qualify-stop="1">Stop</button>' +
         '</div>' +
       '</div>'
     );
@@ -3443,6 +3546,12 @@ function renderModelOption(m, index, defaultId, ctx) {
   const derivedHtml = derived
     ? '<span class="model-row-line model-row-derived">' + escapeHtml(derived) + '</span>'
     : '';
+  // Declared HERE, above its FIRST use. It was previously declared further
+  // down, next to the Test button — and adding a second use above that
+  // point (the row's data-model-row) put the earlier use in the const's
+  // temporal dead zone: a ReferenceError at render time that `node --check`
+  // cannot see, because it is a runtime error and not a syntax error.
+  const idAttr = escapeHtml(String(m.id === undefined || m.id === null ? '' : m.id));
   const expandable = factsHtml || noteHtml || qualHtml;
   const summaryInner = (
     '<span class="model-row-line">' +
@@ -3464,7 +3573,12 @@ function renderModelOption(m, index, defaultId, ctx) {
     // this repo has already shipped once, where a refusal rendered behind an
     // overlay and the user read it as "my click didn't register" and clicked
     // again. Forced open only while THIS row is the one being measured.
-    ? '<details class="model-row"' + ((c.qualify && c.qualify.modelId === m.id) ? ' open' : '') + '>' +
+    // OPEN IF THE USER OPENED IT, **OR** IF THIS IS THE ROW BEING MEASURED.
+    // The two are independent and the forced arm must stay: a qualification
+    // the user started from the button (a SIBLING of this disclosure) has to
+    // be visible even on a row they never expanded.
+    ? '<details class="model-row" data-model-row="' + idAttr + '"' +
+        (((c.qualify && c.qualify.modelId === m.id) || state.modelRowOpen[m.id] === true) ? ' open' : '') + '>' +
         '<summary class="model-row-summary">' + summaryInner + '</summary>' +
         '<div class="model-row-body">' + factsHtml + noteHtml + qualHtml + '</div>' +
       '</details>'
@@ -3487,7 +3601,6 @@ function renderModelOption(m, index, defaultId, ctx) {
   // one control that spends money behind an expander would be the opposite of
   // the density trade this list already makes (evidence folds, decisions do
   // not).
-  const idAttr = escapeHtml(String(m.id === undefined || m.id === null ? '' : m.id));
   const isPending = !!(c.busyId && c.busyId === c.provider + '::' + m.id);
   let control;
   if (isSelected) {
@@ -3629,7 +3742,13 @@ function renderMcp() {
       '<span class="settings-field-label">Default domain for MCP writes</span>' +
       '<p class="settings-hint-text">When a client calls a write tool and the user says “my wiki” without naming a ' +
       'domain, this one is used. Leave unset to force the model to always name a domain.</p>' +
-      '<select class="settings-select mono" id="select-default-domain"' + (state.defaultDomainSaving ? ' disabled' : '') + '>' + options + '</select>' +
+      // The wrapper is required, not decorative: it is what the CSS-drawn
+      // chevron is positioned against, now that `appearance: none` has
+      // removed the UA's own indicator. See .settings-select-wrap in
+      // settings.css for what is replaced and what stays native.
+      '<span class="settings-select-wrap">' +
+        '<select class="settings-select mono" id="select-default-domain"' + (state.defaultDomainSaving ? ' disabled' : '') + '>' + options + '</select>' +
+      '</span>' +
       (state.defaultDomainSaving ? '<span class="mono settings-saving-note">saving…</span>' : '') +
     '</div>'
   );
@@ -3730,6 +3849,14 @@ function wireGlobalListeners() {
     btn.addEventListener('click', () => {
       state.section = btn.dataset.section;
       render(myMountToken);
+      // THE ONE PLACE THAT DOES NOT PRESERVE SCROLL, and the reason
+      // render() preserves everywhere else rather than resetting: this is
+      // the only transition to a DIFFERENT destination. Carrying an offset
+      // from Providers (a very long section) into Health (a short one)
+      // would land the user mid-page in something they have never seen, or
+      // be clamped to a bottom that means nothing to them. Ordered AFTER
+      // render() because render() restores the old offset first.
+      resetMainScroll();
       ensureSectionData(state.section, myMountToken).catch(reportAsyncActionFailure);
     });
   });
@@ -3745,8 +3872,26 @@ function wireGlobalListeners() {
 }
 
 function wireGeneralListeners() {
-  document.querySelectorAll('.theme-seg-btn').forEach((btn) => {
+  // Scoped by the presence of data-theme-choice rather than by class: the
+  // text-size buttons reuse .theme-seg-btn for its look, and a bare
+  // `.theme-seg-btn` selector would bind the theme handler to them too —
+  // `requestTheme(undefined)` then falls through to the light branch, so
+  // picking a text size would silently switch the theme.
+  document.querySelectorAll('[data-theme-choice]').forEach((btn) => {
     btn.addEventListener('click', () => requestTheme(btn.dataset.themeChoice));
+  });
+
+  // Text size. setFontScale applies AND persists, and normalises anything
+  // it does not recognise, so a hand-edited data attribute cannot get a
+  // junk value into the CSS custom property. render() afterwards re-marks
+  // the active button — and because render() preserves scroll position,
+  // choosing a size does not move the page out from under the control that
+  // was just clicked, which at the largest setting it otherwise would.
+  document.querySelectorAll('[data-font-scale]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setFontScale(btn.dataset.fontScale);
+      render(myMountToken);
+    });
   });
   const runBtn = document.getElementById('btn-run-quick-check');
   if (runBtn) runBtn.addEventListener('click', () => onRunQuickCheck(myMountToken));
@@ -3800,6 +3945,16 @@ function wireProviderListeners() {
       // the user is looking at. This records it for the NEXT repaint.
       if (el.open) state.modelPickerOpen[el.dataset.modelPicker] = true;
       else delete state.modelPickerOpen[el.dataset.modelPicker];
+    });
+  });
+  // Individual model rows, same contract one level down: record, never
+  // re-render (see the note above — repainting here would throw away the DOM
+  // the user is looking at). Recorded so the next repaint, which the user did
+  // not ask for, does not close what they opened.
+  document.querySelectorAll('[data-model-row]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      if (el.open) state.modelRowOpen[el.dataset.modelRow] = true;
+      else delete state.modelRowOpen[el.dataset.modelRow];
     });
   });
   // ── THE FILTER CONTROLS ────────────────────────────────────────────────

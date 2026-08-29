@@ -247,6 +247,7 @@ import { queueBusyTransition } from './shared/ingest-queue-logic.js';
 
 const THEME_KEY = 'curator-next-theme';
 const VIEW_KEY = 'curator-next-view';
+const FONT_SCALE_KEY = 'curator-next-font-scale';
 
 // Rail order matches ARCHITECTURE.md's rail table exactly: your brain
 // (Domains) -> your team's brain (Shared Brain) -> your agents' brain
@@ -403,6 +404,7 @@ const state = {
   view: null,
   theme: 'dark',
   reader: null,          // { slug, title } or null — overlay open/closed
+  fontScale: 'default',  // key into FONT_SCALES — see the Text scale section
 };
 
 // ── View registry ──────────────────────────────────────────────────────
@@ -1107,6 +1109,125 @@ async function revealReaderSource(domain, pagePath, btn) {
   }
 }
 
+// ── Text scale ─────────────────────────────────────────────────────────
+//
+// One user-adjustable knob that trades screen real estate against
+// legibility across the WHOLE app, not per-view.
+//
+// HOW IT WORKS. tokens/typography.css's size ramp (--text-2xs .. --text-7xl)
+// is now `calc(<base>px * var(--font-scale))`, and --font-scale is defined
+// there as 1. Everything downstream — the composed roles (--type-body,
+// --type-h1, ...) and every rule in the app that reads a ramp token — moves
+// with it for free, because they were already expressed in terms of the
+// ramp. This function only ever writes that one custom property on <html>.
+//
+// WHY DISCRETE PRESETS AND NOT A SLIDER.
+//   1. A slider yields values like 1.037, i.e. 14.518px, which the browser
+//      renders at sub-pixel sizes that differ per glyph and per platform.
+//      Four presets are four layouts, and four layouts can actually be
+//      LOOKED AT at both extremes — which is the acceptance criterion here.
+//      "It does not break at any point on a continuum" is not checkable.
+//   2. It matches what this app already does for presentation choices: the
+//      theme control in Settings > General is a segmented control, and the
+//      chat Length selector is three named options. A slider would be the
+//      only one of its kind.
+//   3. It stores as a short enum, so a corrupt value is detectable by
+//      exact membership rather than by range-clamping a number.
+//
+// WHY THE STORED VALUE IS THE NAME AND NOT THE NUMBER. Re-tuning a preset
+// later then applies to everyone who chose it, instead of stranding them on
+// a numeric literal we no longer ship.
+//
+// WHY THE RANGE STOPS AT 1.18. Control heights are FIXED (--control-sm 28px
+// / --control-md 32px, space.css) and deliberately not scaled — see the
+// note there. At 1.18 the largest text that sits inside a 28px control is
+// --text-xs 11px -> 12.98px, which at --leading-normal 1.45 is 18.8px and
+// clears the box; past roughly 1.25 it does not. Growing the controls too
+// would scale the whole chrome, which is browser zoom, not a text setting —
+// and browser zoom is already available to anyone who wants it.
+//
+// WHAT IT DELIBERATELY DOES NOT MOVE. icon() takes a px size as a JS
+// ARGUMENT and writes it to the SVG's width/height, and the progress ring
+// carries its own geometry — neither reads the type ramp, so both are
+// immune by construction rather than by an exception written here. That is
+// the intended behaviour: a rail glyph and a ring are diagrams, and a
+// diagram that grows with the body text stops lining up with its own row.
+//
+// KNOWN LIMIT, stated rather than implied away: 22 of the 350 font-size
+// declarations under /next are hardcoded px rather than a ramp token (most
+// of them in views/chat.css). Those do not scale. They degrade in the safe
+// direction — they stay at today's size rather than breaking — and closing
+// the gap means editing view CSS owned by other people.
+
+const FONT_SCALES = {
+  compact: 0.92,
+  default: 1,
+  large: 1.09,
+  largest: 1.18,
+};
+
+const FONT_SCALE_DEFAULT = 'default';
+
+// Presentation order + labels for the Settings control. Kept beside the
+// numbers so a new preset cannot be added to one and forgotten in the other.
+const FONT_SCALE_OPTIONS = [
+  ['compact', 'Compact', 'More on screen'],
+  ['default', 'Default', 'As designed'],
+  ['large', 'Large', 'Easier to read'],
+  ['largest', 'Largest', 'Largest that still fits'],
+];
+
+/**
+ * Any input -> a scale name that is certainly one of ours.
+ *
+ * `Object.hasOwn`, NOT truthiness or `in`: FONT_SCALES is a plain object, so
+ * `FONT_SCALES['constructor']` is a FUNCTION and `FONT_SCALES['__proto__']`
+ * is an object — both truthy, both would sail through a `if (FONT_SCALES[id])`
+ * guard and then be written into a CSS custom property as `[object Object]`
+ * or the whole source of Object. This repo has shipped that exact bug once
+ * (v3.0.9, normalizeResponseStyle) and pre-empted it twice since.
+ */
+function normalizeFontScale(id) {
+  return (typeof id === 'string' && Object.hasOwn(FONT_SCALES, id)) ? id : FONT_SCALE_DEFAULT;
+}
+
+/**
+ * Apply a scale immediately and remember it. Returns the name actually used,
+ * which is not necessarily the one passed in.
+ *
+ * No reload: writing the custom property on the root element re-resolves
+ * every calc() that reads it, in the same frame.
+ */
+function applyFontScale(id) {
+  const chosen = normalizeFontScale(id);
+  state.fontScale = chosen;
+  document.documentElement.style.setProperty('--font-scale', String(FONT_SCALES[chosen]));
+  // Same swallow as applyTheme: private mode / disabled storage must cost
+  // the user the persistence, never the setting they just chose.
+  try { localStorage.setItem(FONT_SCALE_KEY, chosen); } catch { /* ignore */ }
+  return chosen;
+}
+
+/** The scale in force, by name. */
+export function currentFontScale() {
+  return state.fontScale;
+}
+
+/** The presets, for a view that renders the control. */
+export function fontScaleOptions() {
+  return FONT_SCALE_OPTIONS;
+}
+
+/**
+ * Change the scale from a view. Exported rather than letting a view write
+ * the custom property itself, so <html> stays a shell-owned surface (see
+ * views/README.md rule 4) and there is one place that both applies and
+ * persists — a view that did one without the other is the drift this avoids.
+ */
+export function setFontScale(id) {
+  return applyFontScale(id);
+}
+
 // ── Theme ──────────────────────────────────────────────────────────────
 
 function applyTheme(theme) {
@@ -1434,6 +1555,94 @@ export function setSidebar(html, token) {
 export function setMain(html, token) {
   if (!guardMountToken('setMain', token)) return;
   document.getElementById('view-root').innerHTML = '<div class="main-inner">' + html + '</div>';
+}
+
+/**
+ * Run a full re-render WITHOUT throwing the reader back to the top of the
+ * page, and with focus returned to the control they were on.
+ *
+ * THE DEFECT. setMain() replaces #view-root's child wholesale. The scroll
+ * container is its PARENT, `.main` (#main, `overflow-y: auto` —
+ * shell.css), so the instant innerHTML is cleared the content height is 0,
+ * the browser clamps scrollTop to 0, and the replacement content is
+ * inserted under a viewport that is now at the top. Focus goes the same
+ * way: the focused node no longer exists, document.activeElement falls back
+ * to <body>, and the next Tab restarts from the rail.
+ *
+ * For a view that paints once on entry this is invisible — the user was at
+ * the top anyway. For a view that re-renders on ACTION it is the whole
+ * defect. Reported against Settings' "Test on my wiki": that panel renders
+ * inside an expanded model row a long way down the Providers section and
+ * both of its handlers re-render, so pressing the button appeared to eject
+ * the user, and pressing Start appeared to eject them again. Note what was
+ * NOT wrong there — the fold state survived correctly, so the section was
+ * still open the whole time; it was simply off-screen above.
+ *
+ * THIS IS OPT-IN, and deliberately not folded into setMain() itself.
+ * setMain has callers across every view, and views/chat.js drives `.main`'s
+ * scroll ITSELF (it pins the thread to the bottom on each new message and
+ * scrolls a compile card into view) — a preserve wrapper inside setMain
+ * would silently fight that, in someone else's file, with no test in this
+ * change able to see it. A view adopts this when its own re-renders are
+ * action-driven.
+ *
+ * It is also why a view does not read #main directly: views/README.md rule
+ * 4 says the main column is reached only through the shell functions, and
+ * this is that function.
+ *
+ * FOCUS IS RESTORED BY ID, not by node — the node cannot survive innerHTML
+ * replacement. Unlike views/memory.js's version of this (v3.17.1) there is
+ * no allow-list of ids, because the containment check below gives the same
+ * guarantee structurally: an id is only ever captured if it was focused,
+ * inside the two surfaces this shell owns, one turn ago. It can therefore
+ * never reach out to the rail or to another view, and it cannot rot the way
+ * a hand-listed set of ids does when a control is renamed. A control with
+ * no id simply is not restored, which is the safe direction.
+ */
+export function preserveMainScroll(renderFn) {
+  const host = typeof document !== 'undefined' ? document.getElementById('main') : null;
+  const top = host ? host.scrollTop : 0;
+
+  let focusId = null;
+  const active = typeof document !== 'undefined' ? document.activeElement : null;
+  if (active && active.id && typeof active.closest === 'function' &&
+      active.closest('#view-root, #sidebar')) {
+    focusId = active.id;
+  }
+
+  try {
+    renderFn();
+  } finally {
+    // In a `finally` so a throwing render still leaves the user where they
+    // were rather than at the top of a half-painted page.
+    if (host) {
+      // Assigning past the new maximum is clamped by the browser, which is
+      // the right degradation: land at the bottom of a page that shrank,
+      // never somewhere past its end.
+      host.scrollTop = top;
+    }
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      // preventScroll: the position was just restored on the line above, and
+      // letting the browser scroll the element into view would undo it.
+      if (el && typeof el.focus === 'function') {
+        try { el.focus({ preventScroll: true }); } catch { /* not focusable in this state */ }
+      }
+    }
+  }
+}
+
+/**
+ * Send the main column back to the top.
+ *
+ * The counterpart to preserveMainScroll, and it exists because "preserve"
+ * is wrong exactly once: arriving at a DIFFERENT destination. Restoring a
+ * scroll offset of 900px into a section the user has never seen lands them
+ * in the middle of it with no idea what is above.
+ */
+export function resetMainScroll() {
+  const host = typeof document !== 'undefined' ? document.getElementById('main') : null;
+  if (host) host.scrollTop = 0;
 }
 
 export function eyebrow(text) {
@@ -1923,13 +2132,23 @@ document.addEventListener('keydown', (e) => {
 function boot() {
   let savedTheme = 'dark';
   let savedView = 'chat';
+  let savedFontScale = FONT_SCALE_DEFAULT;
   try {
     const t = localStorage.getItem(THEME_KEY);
     if (t === 'light' || t === 'dark') savedTheme = t;
     const v = localStorage.getItem(VIEW_KEY);
     if (v && ALL_VIEWS.includes(v)) savedView = v;
+    // normalizeFontScale absorbs null (never set), a value from an older
+    // build, and anything hand-edited into storage — all three land on the
+    // default rather than writing junk into a CSS custom property.
+    savedFontScale = normalizeFontScale(localStorage.getItem(FONT_SCALE_KEY));
   } catch { /* private mode / disabled storage — defaults are fine */ }
 
+  // BEFORE renderRail()/navigate(), so the first painted text is already at
+  // the chosen size. Nothing textual exists at this point — #view-root and
+  // #sidebar are empty and the rail has not been built — so there is no
+  // frame in which the app is visible at the wrong scale.
+  applyFontScale(savedFontScale);
   applyTheme(savedTheme);
   renderRail();
   navigate(savedView);

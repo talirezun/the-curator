@@ -76,7 +76,11 @@
   background: var(--attention-tint);
   color: var(--attention-text);
   border: 1px solid var(--accent-border);
-  font-size: 9px;
+  /* Was 9px. Converted to the ramp so the whole Settings screen follows the
+     Text size setting — a screen where the control scales and the badge beside
+     it does not reads as a rendering bug. --text-2xs is 10px at scale 1, the
+     nearest ramp step; the 1px difference is the cost of being on the ramp. */
+  font-size: var(--text-2xs);
 }
 
 /* ── Section content shell ───────────────────────────────────────────── */
@@ -169,7 +173,7 @@
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-2);
-  font-size: 12.5px;
+  font-size: var(--text-sm);   /* was 12.5px — on the ramp so it scales */
   line-height: var(--leading-relaxed);
   margin-top: 22px;
 }
@@ -222,13 +226,29 @@
   border: none;
   cursor: pointer;
   font-family: inherit;
-  font-size: 12.5px;
+  /* Was 12.5px. THIS ONE IS LOAD-BEARING for the Text size control, which
+     reuses .theme-seg-btn: a fixed size there would leave the one control
+     that changes text size as the only thing on screen not changing. */
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   background: transparent;
   color: var(--text-3);
   transition: background var(--t-state), color var(--t-state);
 }
 .theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
+
+/* ── General: text size ──────────────────────────────────────────────────
+   Reuses .theme-segmented / .theme-seg-btn wholesale — it is the same kind
+   of control making the same kind of choice, and a second look-alike set of
+   rules would be two things to keep in step for no gain.
+
+   The only additions are the two things four options need that two did not:
+   room to wrap, and slightly tighter padding so the row still fits the
+   272px-constrained main column at the LARGEST setting it can itself
+   select. That last part is the trap in a control that resizes the app:
+   picking "Largest" must not push the control that picked it off screen. */
+.fs-segmented { flex-wrap: wrap; }
+.fs-seg-btn { padding: 0 11px; }
 
 /* ── System check results (shared by quick check + live check) ─────── */
 
@@ -356,7 +376,7 @@
   flex-direction: column;
   gap: 2px;
 }
-.provider-name { font-size: 13.5px; font-weight: var(--weight-medium); color: var(--text); }
+.provider-name { font-size: var(--text-md);   /* was 13.5px */ font-weight: var(--weight-medium); color: var(--text); }
 .provider-model { font-size: var(--text-2xs); color: var(--text-3); }
 .provider-key-field {
   flex: 1;
@@ -469,7 +489,7 @@
 .status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
 .status-pill-muted { background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-3); }
-.mcp-path-line { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.mcp-path-line { font-size: var(--text-sm); color: var(--text-3); overflow-wrap: anywhere; }
 .mcp-config-snippet {
   margin-top: 12px;
   padding: 12px 14px;
@@ -482,9 +502,88 @@
   max-height: 320px;
   overflow-y: auto;
 }
+/* ── Selects ─────────────────────────────────────────────────────────────
+   THE ELEMENT IS STILL A NATIVE <select>. Only its CHROME is replaced.
+
+   `appearance: none` turns off the UA-drawn menulist widget. Without it the
+   browser draws its own indicator glyph, whose colour and metrics we do not
+   control and which does not follow the theme — which is what these two
+   controls looked like before, alone among the app's form controls. A
+   hand-rolled listbox would also match the OPEN menu, but it costs the
+   keyboard model, the screen-reader model and the platform picker on touch,
+   all of which a <select> gives for nothing. That trade is not worth a
+   chevron.
+
+   STATED PLAINLY, BECAUSE IT IS WHAT REMAINS: the OPEN dropdown list is
+   drawn by the OS and no CSS here reaches it. `appearance: none` does not
+   change that and never has. Matching the open state needs either a custom
+   listbox (the a11y cost above) or `appearance: base-select`, which is
+   Chromium-only today and whose fallback is untested here.
+
+   WHY THIS IS A SECOND COPY OF views/memory.css's version rather than a
+   shared rule. views/README.md's rule 3 is per-view CSS, duplicated on
+   purpose, "so an edit to another view's CSS can never silently change
+   this one" — and hoisting it to shell.css would have to be a bare
+   `select` rule to be worth it, which would strip the native chevron off
+   views/ingest.css's `.ing-select` too and leave it with NO indicator at
+   all. Two named copies is the honest cost of that safety. */
+
+/* Deliberately carries NO sizing of its own. The wrapper is the flex item
+   now, so whatever the select used to contribute to its parent's layout has
+   to move here — but the two usages sit in different parents (a column
+   block and a wrapping row), so that lands in the two scoped rules below
+   rather than in one shape that is wrong for one of them. */
+.settings-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Default-domain: parent is a COLUMN flex, so without align-self the
+   wrapper stretches the full width and the absolutely-positioned chevron
+   goes with it — landing far to the right of the select it belongs to.
+   These two declarations were on .settings-select before the wrapper
+   existed; they are moved, not added. */
+.settings-field-block > .settings-select-wrap {
+  align-self: flex-start;
+  max-width: 280px;
+}
+
+/* Model sort: parent is the wrapping filter ROW (align-items: center), so
+   it inherits the centring and only needs to refuse to grow or shrink —
+   what .model-filter-sort itself used to declare. */
+.model-filter-sort-wrap { flex: 0 0 auto; }
+/* The filter-bar select is the compact one (5/7px padding against the
+   default-domain select's 32px control height), so its chevron sits in
+   tighter and the padding-right on .model-filter-sort matches this. */
+.model-filter-sort-wrap::after { right: 8px; }
+
+/* The chevron, drawn in CSS rather than as a background-image data URI. A
+   data URI carries its own colour baked in, so it cannot follow the theme
+   and would need one copy per theme; two rotated borders take a token and
+   flip for free. pointer-events: none so the click still reaches the select
+   underneath — without it the chevron is a 6px dead zone on the control. */
+.settings-select-wrap::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-2);
+  border-bottom: 1.5px solid var(--text-2);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+
 .settings-select {
+  appearance: none;
+  -webkit-appearance: none;              /* Safari still needs the prefix */
   height: var(--control-md);
-  padding: 0 11px;
+  /* Right padding clears the chevron above; without it a long domain name
+     runs underneath it. */
+  padding: 0 26px 0 11px;
   border-radius: 6px;
   background: var(--surface-raised);
   border: 1px solid var(--border);
@@ -492,7 +591,22 @@
   font-size: var(--text-md);
   align-self: flex-start;
   max-width: 280px;
+  cursor: pointer;
 }
+.settings-select:hover { border-color: var(--border-strong); }
+.settings-select:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
+}
+/* A disabled select is not a thing you can open, so the chevron dims with
+   it. COSMETIC ONLY, and chosen knowing `:has()` is the newest thing in
+   this file: where it is unsupported the chevron simply stays at full
+   contrast beside a dimmed control. Nothing about layout or hit-testing
+   depends on it — that is why the two sizing rules above use explicit
+   classes instead. */
+.settings-select-wrap:has(.settings-select[disabled])::after { opacity: 0.45; }
+.settings-select[disabled] { opacity: 0.55; cursor: not-allowed; }
 
 /* ── Health & scan limits ────────────────────────────────────────────── */
 
@@ -776,14 +890,26 @@
   color: var(--text);
   font: var(--type-body-sm);
 }
+/* `flex: 0 0 auto` has moved to .model-filter-sort-wrap — the wrapper is
+   the flex item now. See the Selects section above for what `appearance:
+   none` replaces and what stays OS-drawn. */
 .model-filter-sort {
-  flex: 0 0 auto;
-  padding: 5px 7px;
+  appearance: none;
+  -webkit-appearance: none;              /* Safari still needs the prefix */
+  /* Right padding clears the wrapper's chevron. */
+  padding: 5px 22px 5px 7px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text-2);
   font-size: var(--text-xs);
+  cursor: pointer;
+}
+.model-filter-sort:hover { border-color: var(--border-strong); }
+.model-filter-sort:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: var(--ring-focus);
 }
 .model-filter-measured {
   display: flex;
@@ -832,7 +958,7 @@
   overflow-wrap: anywhere;
 }
 
-.model-name { font-size: 13px; font-weight: var(--weight-medium); color: var(--text); }
+.model-name { font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--text); }
 .model-id { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
 
 .model-badge {
@@ -1073,13 +1199,13 @@
   background: var(--surface-sunken);
 }
 .model-qual-head { margin: 0 0 5px; font-weight: var(--weight-medium); }
-.model-qual-facts { margin: 0 0 5px; font-size: 12px; color: var(--text-2); }
+.model-qual-facts { margin: 0 0 5px; font-size: var(--text-sm); color: var(--text-2); }
 /* WHICH wiki and WHEN. Quiet, but never hidden: a measurement without its scope
    is a claim about the model, which it is not. */
-.model-qual-stamp { margin: 0; font-size: 12px; color: var(--text-3); }
+.model-qual-stamp { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
 /* The rule-of-three caveat and the stale-catalogue note. Same recessed weight —
    they qualify the number rather than warn about it. */
-.model-qual-caveat { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+.model-qual-caveat { margin: 6px 0 0; font-size: var(--text-sm); color: var(--text-3); }
 
 /* A LEFT RULE, NOT A FILL. The outcome is a fact about what happened, and a
    filled panel would read as a status banner about the app. */
@@ -1097,8 +1223,8 @@
 /* TIME LEADS THE CONFIRM. It is the binding constraint (measured: 6 to 57
    minutes for nine runs, against $0.08-$0.38), so it is the one line that is
    not recessed. */
-.model-qual-time { margin: 6px 0 0; font-size: 13px; }
-.model-qual-cost { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
+.model-qual-time { margin: 6px 0 0; font-size: var(--text-md); } /* was 13px */
+.model-qual-cost { margin: 4px 0 0; font-size: var(--text-md); color: var(--text-2); }
 .model-qual-actions { display: flex; gap: 8px; margin-top: 9px; }
 
 /* The probe control sits beside the "chat only" state, never inside the row's

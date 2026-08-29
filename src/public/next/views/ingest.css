@@ -48,6 +48,35 @@
   margin-bottom: 6px;
 }
 
+/* THE SELECT IS STILL A NATIVE <select>. Only its CLOSED chrome is replaced,
+   using the same approach views/memory.css landed in v3.17.3 — read that
+   file's own note for the full reasoning; the short version is repeated
+   here because this is the file someone editing this select will open.
+
+   `appearance: none` turns off the UA-drawn menulist widget. Without it
+   macOS draws its own indicator glyph, whose colour and metrics we do not
+   control and which does not follow the theme.
+
+   STATED PLAINLY, because it is what remains: the OPEN dropdown list is
+   drawn by the OS and NO CSS HERE REACHES IT. `appearance: none` does not
+   change that and never has. Matching the open state needs either a
+   hand-rolled listbox (which costs the keyboard model, the screen-reader
+   model and the platform picker on touch — not worth a chevron) or
+   `appearance: base-select`, which is Chromium-only today. Not attempted.
+
+   The `select.` type qualifier is LOAD-BEARING, not tidiness: `.ing-select`
+   is deliberately shared with the batch confirm gate's budget field, which
+   is an <input type="number"> (see renderQueueEstimate in views/ingest.js).
+   An unqualified `appearance: none` would strip that input's spinner too —
+   a silent behaviour change to a control this pass was not asked to touch. */
+select.ing-select {
+  appearance: none;
+  -webkit-appearance: none;              /* Safari still needs the prefix */
+  /* Right padding clears the chevron below; without it a long domain name
+     runs underneath it. */
+  padding-right: 28px;
+}
+
 .ing-select {
   width: 100%;
   height: var(--control-md);
@@ -60,31 +89,168 @@
 }
 .ing-select[disabled] { opacity: 0.55; cursor: not-allowed; }
 
+/* The wrapper exists only to anchor the chevron. `display: block` (not
+   inline-flex as in memory.css) because this select is a full-width field
+   control, not an inline toolbar control. */
+.ing-select-wrap { position: relative; display: block; }
+
+/* The chevron, drawn in CSS rather than as a background-image data URI. A
+   data URI carries its own colour, so it cannot follow the theme and would
+   need one copy per theme; two rotated borders take a token and flip for
+   free. pointer-events: none so the click still reaches the select. */
+.ing-select-wrap::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid var(--text-2);
+  border-bottom: 1.5px solid var(--text-2);
+  transform: translateY(-4px) rotate(45deg);
+  pointer-events: none;
+}
+.ing-select-wrap:has(select[disabled])::after { opacity: 0.55; }
+
 /* ── Drop zone ────────────────────────────────────────────────────────── */
 
+/* The drop zone is the app's PRIMARY INPUT SURFACE — the one thing this
+   whole view exists to offer — and it used to render as a 28px-padded
+   strip of dashed border carrying a single line of grey text. It is now
+   sized and structured like the thing it is: a target you aim a file at.
+
+   Only `transition` is used, never `animation`. Motion here is a state
+   change, not a performance, and it inherits the reduced-motion behaviour
+   of the tokens rather than needing its own escape (see
+   scripts/test-next-reduced-motion.js for why a hardcoded animation
+   duration in this tree is a defect). */
 .ing-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 168px;
   background: var(--surface-inset);
-  border: 1.5px dashed var(--border);
+  border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
-  padding: 28px;
+  padding: 28px 24px;
   text-align: center;
   color: var(--text-3);
   font: var(--type-body-sm);
   cursor: pointer;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
 }
-.ing-drop-zone:hover,
-.ing-drop-zone-active {
-  border-color: var(--accent);
-  background: var(--accent-tint);
+.ing-drop-zone:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
   color: var(--text-2);
 }
+/* The drag-over state is deliberately LOUDER than hover: hover means "you
+   could drop here", drag-over means "let go and this happens". A solid
+   border against the dashed idle border is the cheapest unambiguous
+   difference, and it does not depend on colour alone. */
+.ing-drop-zone-active,
+.ing-drop-zone:hover.ing-drop-zone-active {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.ing-drop-zone:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.ing-drop-icon {
+  color: var(--text-2);
+  margin-bottom: 6px;
+  transition: color var(--t-state);
+}
+.ing-drop-zone:hover .ing-drop-icon { color: var(--accent-text); }
+.ing-drop-zone-active .ing-drop-icon { color: var(--accent-text); }
+
+.ing-drop-headline {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+/* --text-2, NOT --text-3. Measured in a real browser at this exact
+   nesting: --text-3 gives 4.33 dark / 3.87 light against --surface-inset,
+   under the 4.5:1 AA floor for normal text in BOTH themes. --text-2
+   measures 8.30 / 7.06 here. Same finding, and the same fix, as v3.17.1's
+   contrast pass on the memory view. Hierarchy is carried by size and
+   weight (the headline is larger, medium, and at full --text), not by
+   spending contrast the reader needs. */
+.ing-drop-sub { font-size: var(--text-sm); color: var(--text-2); }
+/* The accepted-format line is a FACT the user needs before they pick, not
+   decoration — an unsupported extension is refused after the fact by
+   pickSingleFile, and this is what stops that happening. */
+.ing-drop-formats {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  letter-spacing: var(--track-mono);
+}
+.ing-drop-formats .mono { color: var(--text); }
+.ing-drop-batch-hint {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
 .ing-browse-link {
   color: var(--accent-text);
   cursor: pointer;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* ── Sidebar: destination list ────────────────────────────────────────
+   Every other /next view's sidebar carries a primary action plus the
+   navigable list of what the view operates on (Domains: domains; Chat:
+   conversations; Agent memory: projects). Ingest's is the DESTINATION —
+   which domain the next file lands in. The counts on each row come from
+   the SAME `GET /api/domains/stats` response loadDomains already fetches;
+   `pageCount` and `lastIngestDate` were being parsed and thrown away. */
+
+.ing-dest-list { display: flex; flex-direction: column; gap: 1px; }
+
+.ing-dest-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background var(--t-state), color var(--t-state);
+}
+.ing-dest-row:hover:not([disabled]) { background: var(--surface-hover); }
+.ing-dest-row.active { background: var(--surface-active); color: var(--text); }
+.ing-dest-row.active .ing-dest-name { font-weight: var(--weight-medium); }
+.ing-dest-row[disabled] { cursor: not-allowed; opacity: 0.5; }
+
+.ing-dest-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ing-dest-name {
+  font-size: var(--text-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Also --text-2 rather than the --text-3 the equivalent row in
+   views/domains.css uses: measured 3.74 dark / 3.51 light there, under AA.
+   This is the same class of finding v3.17.1 recorded; only this view's own
+   copy is corrected here, because domains.css belongs to another file. */
+.ing-dest-meta { font-size: var(--text-2xs); color: var(--text-2); }
+.ing-dest-mark { flex: none; color: var(--accent-text); display: flex; }
+
+.ing-sidebar-pick-btn { width: 100%; margin: 10px 0 4px; justify-content: center; }
 .ing-file-name {
   display: block;
   margin-top: 8px;

@@ -301,9 +301,22 @@ async function loadDomains(token) {
     const data = await res.json();
     if (!isCurrentMount(token)) return;
     const readonly = new Set(data.readonlyDomains || []);
+    // pageCount and lastIngestDate come from the SAME response this call
+    // already makes (GET /api/domains/stats returns them per domain — see
+    // getDomainStats in src/brain/files.js). They used to be parsed off the
+    // wire and dropped on the floor here, which is this repo's named
+    // dead-data shape: the producer does honest work and the consumer
+    // throws the answer away. The sidebar's destination list renders them.
+    // Both are optional on the wire as far as this view is concerned — a
+    // missing value renders as "unknown", never as a fabricated 0/date.
     const list = (data.domains || [])
       .filter((d) => d && d.slug && !readonly.has(d.slug))
-      .map((d) => ({ slug: d.slug, displayName: d.displayName || d.slug }));
+      .map((d) => ({
+        slug: d.slug,
+        displayName: d.displayName || d.slug,
+        pageCount: Number.isFinite(d.pageCount) ? d.pageCount : null,
+        lastIngestDate: typeof d.lastIngestDate === 'string' && d.lastIngestDate ? d.lastIngestDate : null,
+      }));
     state.domains = list;
     state.domain = list.length ? list[0].slug : null;
     state.domainsError = null;
@@ -332,6 +345,64 @@ function render(token) {
   wireListeners(token);
 }
 
+// The ONE place `state.domain` changes in response to a USER action. Both
+// the in-form <select> and the sidebar's destination rows call this, so the
+// two controls cannot drift: there is one writer and the whole view
+// re-renders from state. (Two further writers exist and are legitimate —
+// applyQueueJobSnapshot and checkActiveQueueJob adopt a live job's domain,
+// which is SERVER truth and must beat a local selection on a cross-mount
+// reattach. scripts/test-next-ingest-view.js §2 pins the whole set.)
+//
+// The re-estimate branch is the behaviour ported from src/public/app.js's
+// own domain-select listener and must stay attached to the WRITE, not to
+// one of the controls — a domain change at the confirm gate means a
+// different index size and therefore a different cost, whichever control
+// the user reached for. It cannot fire once a job exists: by then
+// renderQueueSection returns the panel, so neither control is on screen.
+function selectDomain(slug) {
+  if (!slug || slug === state.domain) return;
+  state.domain = slug;
+  if (state.queueModeActive && !state.queueJob) {
+    startQueueSelection(myMountToken);
+  } else {
+    render(myMountToken);
+  }
+}
+
+// Is the hidden multi-file <input> currently in the DOM AND enabled? It
+// lives in the MAIN column (renderIngestForm / renderQueueConfirmGate both
+// emit it via renderDropZoneHtml), so a sidebar button that opens the
+// picker is only honest while one of those two is what's rendered.
+function isFilePickerAvailable() {
+  if (state.loadingDomains || state.domainsError || !state.domains.length) return false;
+  if (state.queueJob || queueJobId) return false;
+  // The input is rendered with `disabled` while a single-file ingest is in
+  // flight (renderDropZoneHtml({ disabled: state.submitting })), and
+  // .click() on a disabled input is a native NO-OP. Measured in a real
+  // browser: without this line the sidebar button stayed enabled during a
+  // live ingest and did nothing when pressed — a control that looks live
+  // and isn't, which is a worse state than a disabled one.
+  if (state.submitting) return false;
+  return true;
+}
+
+// A destination row's second line. Both numbers are the ones GET
+// /api/domains/stats already returns; neither is invented when absent.
+//
+// "last write", NOT "last ingest": lastIngestDate is the most recent
+// `## [YYYY-MM-DD]` heading in the domain's wiki/log.md, and appendLog is
+// called by conversation COMPILE as well as by ingest (see
+// src/brain/compile.js). Labelling a compile-only domain's date "last
+// ingest" would be a small false statement on a screen whose whole job is
+// telling you where material goes.
+function formatDestinationMeta(d) {
+  const pages = Number.isFinite(d.pageCount)
+    ? (d.pageCount + ' page' + (d.pageCount === 1 ? '' : 's'))
+    : 'page count unknown';
+  const when = d.lastIngestDate ? ('last write ' + d.lastIngestDate) : 'nothing written yet';
+  return pages + ' · ' + when;
+}
+
 function renderSidebar(token) {
   const inQueueMode = state.queueModeActive || !!state.queueJob;
   const crossBusy = !inQueueMode && state.domain && !state.submitting && isDomainWriteBusy(state.domain);
@@ -346,17 +417,69 @@ function renderSidebar(token) {
       'interrupted batch picks back up where it left off.'
     : 'One file at a time, so a failure never costs more than that one file. Each source is decomposed into ' +
       'entity, concept and summary pages and merged into what already exists.';
-  const note = inQueueMode
-    ? '<div class="sidebar-note">Drop 2+ files (or add to a selection already started) to build a batch.</div>'
-    : '<div class="sidebar-note">Drop 2 or more files at once to start a batch.</div>';
+
+  const pickerAvailable = isFilePickerAvailable();
+  const pickBtn =
+    '<button class="btn btn-primary ing-sidebar-pick-btn" id="ing-sidebar-pick-btn"' +
+      (pickerAvailable ? '' : ' disabled') + '>' +
+      icon('plus', 14) + ' Choose files' +
+    '</button>';
+
+  // The destination list. Every other /next view's sidebar carries a
+  // primary action plus the navigable list of what the view operates on
+  // (Domains: domains; Chat: conversations; Agent memory: projects).
+  // Ingest's is the DESTINATION — which domain the next file lands in.
+  //
+  // Rows are LOCKED (not hidden) while this view is mid-write: switching
+  // destination during a single-file ingest would point the form at one
+  // domain while the request in flight writes to another, and once a batch
+  // job exists the server already owns the domain. Disabling states that
+  // plainly; hiding the list would make the sidebar blink empty at exactly
+  // the moment there's most to look at.
+  const rowsLocked = state.submitting || !!state.queueJob || !!queueJobId;
+  const rows = state.domains.map((d) => {
+    const isActive = d.slug === state.domain;
+    return (
+      '<button type="button" class="ing-dest-row' + (isActive ? ' active' : '') + '"' +
+        ' data-dest-slug="' + escapeHtml(d.slug) + '"' +
+        (rowsLocked ? ' disabled' : '') +
+        (isActive ? ' aria-current="true"' : '') + '>' +
+        '<span class="ing-dest-main">' +
+          '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
+          '<span class="ing-dest-meta mono">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
+        '</span>' +
+        (isActive ? '<span class="ing-dest-mark" aria-hidden="true">' + icon('check', 13) + '</span>' : '') +
+      '</button>'
+    );
+  }).join('');
+
+  const listBlock = state.domains.length
+    ? '<div class="cur-eyebrow" style="margin-top:10px">DESTINATION</div>' +
+      '<div class="ing-dest-list">' + rows + '</div>'
+    : '';
 
   setSidebar(
     '<div class="sidebar-title">Ingest</div>' +
+    pickBtn +
     '<div class="sidebar-hint">' + hint + '</div>' +
-    note +
+    listBlock +
     busyNote,
     token
   );
+
+  // setSidebar is a no-op on a stale mount, so binding after it would
+  // otherwise attach a SECOND set of listeners to the sidebar DOM the
+  // previous mount left standing. Same guard shape as
+  // renderSidebarConversationsOnly in views/chat.js, for the same reason.
+  if (!isCurrentMount(token)) return;
+
+  const pickBtnEl = document.getElementById('ing-sidebar-pick-btn');
+  if (pickBtnEl) {
+    pickBtnEl.addEventListener('click', () => document.getElementById('ing-file-input')?.click());
+  }
+  document.querySelectorAll('.ing-dest-row[data-dest-slug]').forEach((btn) => {
+    btn.addEventListener('click', () => selectDomain(btn.dataset.destSlug));
+  });
 }
 
 function renderMain(token) {
@@ -405,7 +528,9 @@ function renderIngestForm() {
   return (
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-domain">Domain</label>' +
-      '<select class="ing-select" id="ing-domain"' + (state.submitting ? ' disabled' : '') + '>' + domainOptions + '</select>' +
+      '<span class="ing-select-wrap">' +
+        '<select class="ing-select" id="ing-domain"' + (state.submitting ? ' disabled' : '') + '>' + domainOptions + '</select>' +
+      '</span>' +
     '</div>' +
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-file-input">File</label>' +
@@ -436,12 +561,36 @@ function renderIngestForm() {
 // mention batching (shown only in the single-file idle state, where a
 // user might not know dropping 2+ files does something different).
 function renderDropZoneHtml({ disabled, multiHint }) {
-  const hint = multiHint
-    ? 'Drop file(s) here or <label for="ing-file-input" class="ing-browse-link">browse</label> — 2 or more starts a batch'
-    : 'Drop more files here or <label for="ing-file-input" class="ing-browse-link">browse</label>';
+  // Drag-over is a DIFFERENT sentence, not a restyle of the same one: the
+  // idle copy tells you what this surface takes, the active copy tells you
+  // what letting go will do. Both are one line; nothing reflows the panel.
+  const headline = state.dragActive
+    ? 'Release to add'
+    : (multiHint ? 'Drop a source here' : 'Drop more files here');
+  const sub = state.dragActive
+    ? '&nbsp;'
+    : ('or <label for="ing-file-input" class="ing-browse-link">browse your files</label>');
+
+  // ALLOWED_EXT is the same array pickSingleFile validates against, so this
+  // line cannot claim a format the picker would then refuse. Rendered from
+  // the constant rather than typed out, for exactly that reason.
+  const formats = ALLOWED_EXT
+    .map((ext) => '<span class="mono">' + escapeHtml(ext) + '</span>')
+    .join(' · ');
+
+  const batchHint = multiHint
+    ? '<div class="ing-drop-batch-hint">2 or more files at once starts a batch</div>'
+    : '<div class="ing-drop-batch-hint">These are added to the batch you already started</div>';
+
   return (
-    '<div class="ing-drop-zone' + (state.dragActive ? ' ing-drop-zone-active' : '') + '" id="ing-drop-zone">' +
-      '<span>' + hint + '</span>' +
+    '<div class="ing-drop-zone' + (state.dragActive ? ' ing-drop-zone-active' : '') + '" id="ing-drop-zone"' +
+      ' role="button" tabindex="0"' +
+      ' aria-label="Choose a file to ingest, or drop one here">' +
+      '<span class="ing-drop-icon">' + icon('upload', 26) + '</span>' +
+      '<div class="ing-drop-headline">' + headline + '</div>' +
+      '<div class="ing-drop-sub">' + sub + '</div>' +
+      '<div class="ing-drop-formats">Accepts ' + formats + '</div>' +
+      batchHint +
       '<input type="file" id="ing-file-input" accept=".txt,.md,.pdf" multiple hidden' + (disabled ? ' disabled' : '') + ' />' +
     '</div>'
   );
@@ -777,25 +926,37 @@ function formatElapsedMs(ms) {
 function wireListeners() {
   const domainSelect = document.getElementById('ing-domain');
   if (domainSelect) {
-    domainSelect.addEventListener('change', (e) => {
-      state.domain = e.target.value || null;
-      // Ported from src/public/app.js's own domain-select listener: a
-      // domain change at the confirm gate (pre-job) means a different
-      // index size and a different cost, so re-estimate. Never fires once
-      // a job exists — the select is disabled by then (see renderQueuePanel).
-      if (state.queueModeActive && !state.queueJob) {
-        startQueueSelection(myMountToken);
-      } else {
-        render(myMountToken);
-      }
-    });
+    // Routed through selectDomain — the single writer of state.domain,
+    // shared with the sidebar's destination rows so the two controls
+    // cannot drift. The re-estimate-at-the-confirm-gate behaviour ported
+    // from src/public/app.js lives in there; see its comment.
+    domainSelect.addEventListener('change', (e) => selectDomain(e.target.value));
   }
 
   const dropZone = document.getElementById('ing-drop-zone');
   const fileInput = document.getElementById('ing-file-input');
   if (dropZone) {
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); state.dragActive = true; render(myMountToken); });
-    dropZone.addEventListener('dragleave', () => { state.dragActive = false; render(myMountToken); });
+    // `dragover` fires CONTINUOUSLY (many times a second) while a file is
+    // held over the zone, and render() here replaces the whole main column
+    // and sidebar via innerHTML. Re-rendering only when the flag actually
+    // CHANGES is not an optimisation for its own sake: repainting the very
+    // element the pointer is over, dozens of times a second, is how a drag
+    // gets dropped on the floor. Same guard on dragleave.
+    const setDragActive = (next) => {
+      if (state.dragActive === next) return;
+      state.dragActive = next;
+      render(myMountToken);
+    };
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); setDragActive(true); });
+    // The zone now has CHILD elements (icon, headline, sub, formats line),
+    // and dragleave fires when the pointer crosses from the zone onto any
+    // of them. `relatedTarget` is the node being entered, so a move that
+    // stays inside the zone is not a leave — without this the active state
+    // strobes while the user is still holding the file over the target.
+    dropZone.addEventListener('dragleave', (e) => {
+      if (e.relatedTarget && dropZone.contains(e.relatedTarget)) return;
+      setDragActive(false);
+    });
     dropZone.addEventListener('drop', (e) => {
       e.preventDefault();
       state.dragActive = false;
@@ -803,6 +964,17 @@ function wireListeners() {
     });
     dropZone.addEventListener('click', (e) => {
       if (e.target.closest('label')) return; // the <label for=...> already opens the picker natively
+      if (fileInput) fileInput.click();
+    });
+    // The zone carries role="button" tabindex="0", so it MUST answer the
+    // keys a button answers. A focusable element that announces itself as a
+    // button and then ignores Enter/Space is worse than a plain div: it
+    // puts a keyboard user in a stop with no exit. Space is preventDefault'd
+    // so the page does not scroll underneath the picker.
+    dropZone.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      if (e.target.closest('label')) return;
+      e.preventDefault();
       if (fileInput) fileInput.click();
     });
   }
@@ -1554,7 +1726,9 @@ function renderQueueConfirmGate() {
   return (
     '<div class="ing-field">' +
       '<label class="ing-label" for="ing-domain">Domain</label>' +
-      '<select class="ing-select" id="ing-domain">' + domainOptions + '</select>' +
+      '<span class="ing-select-wrap">' +
+        '<select class="ing-select" id="ing-domain">' + domainOptions + '</select>' +
+      '</span>' +
     '</div>' +
     '<div class="ing-field">' +
       renderDropZoneHtml({ disabled: false, multiHint: false }) +
