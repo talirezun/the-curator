@@ -412,6 +412,27 @@ Entity page additions:
 
 ---
 
+## 6. Terminology
+
+The Curator uses precise language for what it does. These terms appear in the app, in the docs,
+and in the page structure described above.
+
+| Term | Definition |
+|------|-----------|
+| **Atomic Decomposition** | Breaking a large document into three discrete network components: Entities, Concepts, and Summaries |
+| **Entities (the nouns)** | Specific people, companies, tools, datasets — nodes with a proper name. Filed under `entities/` |
+| **Concepts (the verbs / ideas)** | Broad theories, techniques, frameworks, principles — ideas without a single owner. Filed under `concepts/` |
+| **Summaries (the glue)** | The narrative that connects specific entities to concepts for one source document. Filed under `summaries/`, one per ingested source |
+| **Semantic Intelligence** | The system's ability to read raw text, comprehend context, and extract structured knowledge rather than storing chunks |
+| **Hidden Relations** | Intersections between concepts that only become visible in the graph — what a search bar can never show you |
+| **Contextual Provenance** | The ability to trace any synthesised idea back to its exact source page |
+| **Network Compounding** | Each new source updates existing pages rather than duplicating them — knowledge builds on itself |
+
+> Shared Brain has its own vocabulary — see
+> [Shared Brain User Guide § 7](shared-brain-user-guide.md#7--terminology).
+
+---
+
 ## See also
 
 - **[User Guide § 10](user-guide.md#10-manage-your-domains)** — short walkthrough of the Domains view

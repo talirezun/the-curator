@@ -352,7 +352,33 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 
 > At `/old` the same actions live in **Settings → Shared Brain (beta)** (enable) and the **Sync** tab's "Shared Brains" block (everything else).
 
-## 7 — Related documentation
+## 7 — Terminology
+
+These terms appear in the wizard, in the docs, and in audit logs. Confusing two of them —
+**invite token vs. Personal Access Token** — is the single most common setup mistake.
+
+| Term | Definition | ⚠️ Don't confuse it with… |
+|------|-----------|---------------------------|
+| **Shared Brain** | A collective Curator wiki shared with a cohort, team, or research group. Each contributor's personal Curator stays private; only opted-in domains push to a shared private GitHub repo | Personal Sync, which backs up YOUR full wiki to YOUR own private repo |
+| **Contributor** | Anyone in the cohort who joins and pushes contributions. There are N contributors per cohort | The Admin (just one per cohort) |
+| **Admin** | The one person who creates the GitHub repo, generates the invite token, invites collaborators, and runs synthesis | A contributor — though the admin is also a contributor with their own data |
+| **Invite token** (`sbi_…`) | **Metadata-only** label that tells the wizard which repo to connect to. Contains NO credentials. Safe to share with the whole cohort via Slack or email | A PAT — they are completely different things |
+| **Personal Access Token** (`github_pat_…`) | **Credential** issued by GitHub. Each contributor creates their OWN. Never shared with anyone. Stays on the contributor's machine only | The invite token. Sharing your PAT is a security disaster |
+| **Opted-in domain** | A personal Curator domain that the contributor explicitly chose to push to the Shared Brain. Other personal domains stay private | A `shared-<slug>` mirror domain (which is the pull destination, not the push source) |
+| **Mirror domain** (`shared-<slug>/`) | The local read-only copy of the synthesised collective wiki, pulled to every contributor's machine | An opted-in domain. The Curator app, MCP write tools, and Health fixes refuse direct writes to mirror domains by design |
+| **Delta summary** | The LLM-pre-processed payload that gets pushed to shared storage — `{new_facts, removed_links, …}` for each changed page. Not a raw markdown file | The wiki page itself — a Delta is the structured *change*, not the page |
+| **Synthesis** | The admin-triggered process that merges all contributions into the collective wiki, applies the merge rules (union facts, resolve contradictions, attribute provenance, rebuild index) | Push (which sends contributions) or Pull (which fetches synthesised pages) |
+| **Provenance** | The auto-appended section on every collective page listing contributor UUIDs (or names, where the admin enabled that) | Authorship of a personal opted-in page — that stays purely on the contributor's machine |
+| **Conflict marker** | The block synthesis inserts when two contributors disagree and the LLM can't unify their facts | A Wiki Health broken-link issue. Conflict markers are specific to Shared Brain synthesis |
+| **Data handling terms** | The admin's IP-mode choice at brain setup: `contributor_retains` (default; educational/cohort) or `organisational` (enterprise IP transfer). **Locked once invites go out** | Privacy controls. This is specifically about *copyright in contributed content*, not about who sees what |
+| **Revocation** (GDPR Article 17) | Admin-triggered operation that permanently deletes a contributor's submissions, removes their facts from collective pages, and appends an audit log entry. Irreversible | Removing a contributor as a GitHub collaborator (which stops future pushes but doesn't erase past contributions) |
+
+> The Curator's own core vocabulary — Atomic Decomposition, Entities / Concepts / Summaries,
+> Network Compounding — is in [Domains § 6](domains.md#6-terminology).
+
+---
+
+## 8 — Related documentation
 
 - [`docs/shared-brain.md`](shared-brain.md) — the architecture & design decisions behind Shared Brain
 - [`docs/shared-brain-admin.md`](shared-brain-admin.md) — advanced admin operations (synthesis cadence, contributor management, revocation, health monitoring)
