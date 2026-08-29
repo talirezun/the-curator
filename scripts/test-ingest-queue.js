@@ -248,6 +248,23 @@ async function waitStatus(jobId, status, opts) {
     return j && j.status === status ? j : null;
   }, opts);
 }
+/**
+ * Wait until the job STOPS MOVING — paused or terminal, whichever comes first.
+ *
+ * FOR TESTS WHOSE FAILURE MODE IS "IT DID NOT PAUSE". `waitStatus(id,'paused')`
+ * is the wrong instrument there: a job that runs to `done` instead of pausing
+ * fails as `waitFor timed out` after 8 s, with a stack trace and no statement
+ * of what went wrong. That is red for the right reason wearing the disguise of
+ * a flake, and this repo has twice mistaken one for the other. Waiting for
+ * either outcome and asserting on WHICH one arrived turns the same defect into
+ * a named assertion that prints the status it actually got.
+ */
+async function waitSettled(jobId, opts) {
+  return waitFor(async () => {
+    const j = await getJob(jobId);
+    return j && (j.status === 'paused' || TERMINAL.has(j.status)) ? j : null;
+  }, opts);
+}
 /** Waits until the worker loop has fully released the process-wide claim. */
 // HAZARD for anyone copying a call to this: it polls the in-memory worker
 // claim, so it is only meaningful AFTER an awaited startOrResumeJob() has
@@ -974,6 +991,109 @@ async function testBudgetCapWithoutTokenUsage() {
   assertEq(paused.pausedReason, 'budget', 'the budget cap STILL fires with no real usage data anywhere');
   assertEq(paused.spendIsEstimated, true, 'spendIsEstimated flips true — the UI can say the figure is approximate');
   assert(paused.spentUsd > 0, `spentUsd (${paused.spentUsd}) is non-zero — it did NOT silently stay at 0 forever`);
+  await requestCancel(job.jobId);
+}
+
+/**
+ * ── 8d. THE CACHED-READ MULTIPLIER DECIDES WHEN THE CAP BITES ───────────────
+ *
+ * `chargeForItem` used to apply ANTHROPIC's 0.1x cached-read discount to EVERY
+ * provider. OpenRouter bills cached reads at FULL input price (measured against
+ * real credit-balance deltas: a cold run matching actual spend to 8 decimal
+ * places as the control, a warm run up to 2.17x UNDER), and Gemini's implicit
+ * cache rate is unmeasured — so both now charge full price, which is the
+ * over-stating direction and the only safe one on a spend surface.
+ *
+ * IN THE CHAT VIEW that bug was a misreport. HERE IT IS A CONTROL FAILURE, and
+ * this section exists because that does NOT follow from the arithmetic: the cap
+ * is enforced in the worker loop, between items, against the accumulated
+ * `job.spentUsd`. Under-counting cached reads by 10x let a batch run PAST the
+ * ceiling the user set.
+ *
+ * WHY THE FIXTURE IS SHAPED LIKE THIS. Every item reports 1,000,000 cached-read
+ * tokens and NOTHING else, so the charge is the cached-read term alone and the
+ * multiplier is the only variable. `gemini-2.5-flash-lite` bills $0.10/MTok
+ * input, so per item:
+ *
+ *     OLD (universal 0.1x):  1e6/1e6 x $0.10 x 0.1  = $0.01
+ *     NEW (full price):      1e6/1e6 x $0.10 x 1.0  = $0.10
+ *
+ * Against a $0.15 cap over 5 items the two differ in OUTCOME, not in a decimal:
+ * at $0.10 the cap is reached after item 2 and the job PAUSES with 2 done; at
+ * $0.01 it never reaches $0.15 at all and the whole batch runs to `done`. So
+ * this asserts a pause the pre-fix code could not have produced, rather than a
+ * figure that merely looks different.
+ */
+async function testBudgetCapChargesCachedReadsAtProviderRate() {
+  const { userDataDir } = await freshEnv({ withProviderKey: true });
+  const domain = await makeDomain();
+  const files = [];
+  for (let i = 0; i < 5; i++) files.push(await makeUpload(`c${i}.md`, 1000 - i, userDataDir));
+  const tokenUsage = {
+    provider: 'gemini', model: 'gemini-2.5-flash-lite', calls: 1,
+    inputTokens: 0, outputTokens: 0, cachedReadTokens: 1_000_000, cacheWriteTokens: 0,
+  };
+  const plan = {};
+  for (let i = 0; i < 5; i++) plan[`c${i}.md`] = 'ok';
+  const fake = makeFakeIngestFile(domain, plan, { tokenUsage });
+  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.15 });
+  await startOrResumeJob(job.jobId, { ingestFile: fake });
+  const paused = await waitSettled(job.jobId);
+  assertEq(paused.status, 'paused',
+    `a GEMINI batch whose entire cost is cached reads STOPS on the cap (got status "${paused.status}" with ${paused.items.filter(i => i.status === 'done').length} item(s) done) — under the old universal 0.1x each item charged $0.01, the cap was never reached, and the whole batch ran to \`done\``);
+  assertEq(paused.pausedReason, 'budget', '…and it stopped for the BUDGET, not for some other pause reason');
+  assertEq(paused.spendIsEstimated, false,
+    'the figure the cap fired on is MEASURED, not an estimate share');
+  const doneCount = paused.items.filter(i => i.status === 'done').length;
+  assertEq(doneCount, 2, 'exactly 2 items completed before the cap engaged — 5 would mean the discount is still being applied');
+  assert(paused.spentUsd >= 0.15 && paused.spentUsd < 0.30,
+    `spentUsd (${paused.spentUsd}) is the full-price figure (~$0.20), not the 10x-discounted $0.02 the old formula produced`);
+  await requestCancel(job.jobId);
+}
+
+/**
+ * ── 8e. …AND ANTHROPIC'S DISCOUNT IS STILL APPLIED ─────────────────────────
+ *
+ * The fix must not become "charge everyone full price". Anthropic's 0.1x
+ * cached-read rate is published by the provider and is the one rate this
+ * project has a source for, so removing it would be a second wrong number
+ * introduced while fixing the first — over-stating instead of under-stating,
+ * but still wrong, and it would pause real batches early.
+ *
+ * Same fixture, same $0.15 cap, ONLY the provider changes. `claude-haiku-4-5`
+ * bills $1.00/MTok input, so per item:
+ *
+ *     WITH the discount:     1e6/1e6 x $1.00 x 0.1 = $0.10  -> cap after item 2
+ *     WITHOUT (full price):  1e6/1e6 x $1.00 x 1.0 = $1.00  -> cap after item 1
+ *
+ * So the assertion is again an item COUNT, and 8d and 8e together pin the SPLIT
+ * rather than either half alone: 8d fails if the discount is universal, 8e
+ * fails if it has been removed. A single-provider test could not tell those two
+ * mistakes apart, and the universal-0.1x formula this release removed passed
+ * 8e perfectly.
+ */
+async function testAnthropicKeepsItsCachedReadDiscount() {
+  const { userDataDir } = await freshEnv({ withProviderKey: true });
+  const domain = await makeDomain();
+  const files = [];
+  for (let i = 0; i < 5; i++) files.push(await makeUpload(`a${i}.md`, 1000 - i, userDataDir));
+  const tokenUsage = {
+    provider: 'anthropic', model: 'claude-haiku-4-5', calls: 1,
+    inputTokens: 0, outputTokens: 0, cachedReadTokens: 1_000_000, cacheWriteTokens: 0,
+  };
+  const plan = {};
+  for (let i = 0; i < 5; i++) plan[`a${i}.md`] = 'ok';
+  const fake = makeFakeIngestFile(domain, plan, { tokenUsage });
+  const job = await createJob({ domain, uploadedFiles: files, budgetUsd: 0.15 });
+  await startOrResumeJob(job.jobId, { ingestFile: fake });
+  const paused = await waitSettled(job.jobId);
+  assertEq(paused.status, 'paused', `the cap stops an Anthropic batch too (got status "${paused.status}")`);
+  assertEq(paused.pausedReason, 'budget', '…for the BUDGET, not for some other pause reason');
+  const doneCount = paused.items.filter(i => i.status === 'done').length;
+  assertEq(doneCount, 2,
+    'exactly 2 items completed — 1 would mean Anthropic lost its documented 0.1x cached-read discount and is being over-charged 10x');
+  assert(paused.spentUsd >= 0.15 && paused.spentUsd < 0.30,
+    `spentUsd (${paused.spentUsd}) is the discounted figure (~$0.20 for 2 items at $1.00/MTok x 0.1), not the ~$2.00 full-price one`);
   await requestCancel(job.jobId);
 }
 
@@ -2096,6 +2216,8 @@ async function testAccountingUnderRandomSequences() {
   await section('8a. Budget cap with real tokenUsage', testBudgetCapWithRealUsage);
   await section('8b. Budget cap still fires when tokenUsage is UNDEFINED', testBudgetCapWithoutTokenUsage);
   await section('8c. A budget that cannot be enforced is REFUSED, not silently inert (M1)', testBudgetRefusedWhenUnpriced);
+  await section('8d. Cached reads are charged at the PROVIDER\'s rate, and the cap bites on it', testBudgetCapChargesCachedReadsAtProviderRate);
+  await section('8e. …and Anthropic keeps its documented 0.1x cached-read discount', testAnthropicKeepsItsCachedReadDiscount);
   await section('9. Pause / cancel / delete state machine', testStateMachine);
   await section('10. Manifest resilience; a corrupt manifest is still deletable (M3)', testManifestResilience);
   await section('11. The wire representation: allow-list, scrubbed, bounded (H2/M2)', testWireRepresentation);

@@ -3,7 +3,9 @@
  *
  * Persistent skip-store control from Claude Desktop. The same JSONL file
  * (domains/<d>/wiki/.health-dismissed.jsonl) is shared with the in-app
- * Health tab — dismissals made here are visible in the Curator app's
+ * Health panel, which lives inside the Domains view since the v3.9.0
+ * cutover moved Health out of the rail — dismissals made here are visible
+ * in the Curator app's
  * Dismissed (N) section, and vice versa. Stale records prune automatically
  * via loadDismissed (v2.5.1+).
  */

@@ -178,7 +178,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel } from '../src/brain/llm.js';
+import { OFFERABLE_MODELS, getModelPrice, resolveModelPrice, isFreeModel, isOfferableModel } from '../src/brain/llm.js';
 // The REAL shared formatter the view imports, driven directly — not a stub. A
 // stub would let a bespoke re-implementation in the view pass unnoticed, which
 // is mutation M4.
@@ -302,7 +302,7 @@ const FN_NAMES = [
   'modelDisplayLabel', 'neutralProviderLabel', 'describeAnswerModel',
   'assistantEyebrowHtml',
   // §11 — the ANSWER cost (what that message cost, from its own tokens).
-  'messageUsageTokens', 'messageCostUsd', 'assistantCostHtml',
+  'messageUsageTokens', 'cacheMultipliers', 'messageCostUsd', 'assistantCostHtml',
   // §15 — the RE-ASK caveat: whether the answer being re-asked is still inside
   // the window the next prompt will carry.
   'answerIsInPromptWindow',
@@ -333,9 +333,19 @@ function iconStub() { return '<svg aria-hidden="true"></svg>'; }
 // injected only `getModelPrice`, and the section died with a ReferenceError
 // after 539 of 646 assertions. §0 now scans this manifest too.
 const QUEUE_PATH = path.join(ROOT, 'src/brain/ingest-queue.js');
-const QUEUE_FN_NAMES = ['chargeForItem'];
+// chargeForItem MUST stay at index 0 — the sandbox returns QUEUE_FN_NAMES[0].
+// The other two are its per-provider cache-rate helpers; §11.1 prices cache
+// terms through them, so extracting the real ones (rather than re-declaring a
+// copy here) is what makes the mirror a measurement of the shipping formula.
+const QUEUE_FN_NAMES = ['chargeForItem', 'cacheRateProvider', 'cacheMultipliers'];
 const QUEUE_INJECTED = {
   getModelPrice,
+  // `cacheRateProvider` decides whose cache RATES apply by exact-`===`
+  // catalogue membership. Injecting the REAL predicate, not a stub, so §11.1c
+  // measures the shipping decision against the shipping catalogue — a stub
+  // returning true/false by prefix would let the suite agree with a formula
+  // that no longer resolves the way production does.
+  isOfferableModel,
   // A free model has NO price by design (`getModelPrice` returns null, because
   // `{input:0,output:0}` is truthy and would re-arm v3.3.0's inert budget cap),
   // so `chargeForItem` must decide free by MEMBERSHIP before it ever reaches
@@ -380,7 +390,7 @@ const {
   measuredLatencyRange, slowTurnNoticeText,
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
-  messageUsageTokens, messageCostUsd, assistantCostHtml,
+  messageUsageTokens, cacheMultipliers, messageCostUsd, assistantCostHtml,
   PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, __setThread,
   answerIsInPromptWindow, modelOptionValue, parseModelOptionValue,
 } = sandbox;
@@ -1974,6 +1984,9 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
       estimate: { usdHigh: 0.42 },
     });
     let checked = 0, freeChecked = 0;
+    // Collected rather than asserted inline, so §11.1c can hold them to the
+    // exact known server-side bug per provider instead of skipping them.
+    const cacheCases = [];
     for (const { e } of everyEntry) {
       for (const u of USAGES) {
         const mine = messageCostUsd(msg(e.id, u), ctx);
@@ -1988,6 +2001,35 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
           if (!(mine === null || mine === 0)) ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: the view produced ${mine} for a FREE model`);
           continue;
         }
+        // ── EXACT EQUALITY, RESTORED ACROSS EVERY CASE INCLUDING THE CACHE ──
+        // For one release this comparison was NARROWED to the cache-free cases,
+        // because `chargeForItem` still applied ANTHROPIC's 0.1x cached-read
+        // multiplier to EVERY provider while the view had already been fixed
+        // (measured against real OpenRouter credit deltas: cold run exact, warm
+        // run up to 2.17x under). ingest-queue.js belonged to another
+        // workstream, so the divergence was real rather than decided, and
+        // §11.1c held the pair to the exact known bug with a tracker that fails
+        // in BOTH directions.
+        //
+        // THE TRACKER FIRED, ON 22 DISCRIMINATING CASES, and the server copy is
+        // now provider-aware too — so the narrowing is undone here, exactly as
+        // that tracker's failure text instructed. Bit-for-bit equality is the
+        // right test again over all 180 (model × token-shape) pairs.
+        //
+        // §11.1c IS KEPT, and that is not belt-and-braces. Equality alone is
+        // satisfied by two copies that are wrong the SAME way — which is
+        // precisely the state this pair was in before the OpenRouter
+        // measurement. §11.1c recomputes the expectation independently, from
+        // each entry's own published price, so it pins WHICH multiplier is
+        // correct while this line pins that the two agree.
+        // Collected for §11.1c, which prices the cache terms against an
+        // independently-derived expectation. Only the cache-BEARING cases
+        // belong there — a case with both cache terms at zero exercises no
+        // multiplier at all, and folding those in would let §11.1c's counts
+        // read as coverage it does not have.
+        if ((u.cachedReadTokens || 0) > 0 || (u.cacheWriteTokens || 0) > 0) {
+          cacheCases.push({ e, u, mine, theirs });
+        }
         if (mine !== theirs) {
           ok(false, `§11.1 ${e.id} ${JSON.stringify(u)}: mirror ${mine} !== chargeForItem ${theirs}`);
         }
@@ -1997,6 +2039,106 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     ok(true, `§11.1 the view's arithmetic equals the REAL chargeForItem exactly, ` +
       `over ${checked} PAID (model × token-shape) cases generated from the live catalogue` +
       (freeChecked ? `, plus ${freeChecked} FREE cases held to the zero-or-absent rule (§11.1b)` : ''));
+    ok(checked > 100,
+      `§11.1 exact equality covers all ${checked} paid cases INCLUDING the cache-bearing ones — the narrowing this guard carried for one release is undone, not merely relaxed`);
+    // BOTH shapes must be genuinely populated. Stated as two counts rather than
+    // one total: a total is satisfied by an all-cache-free corpus, which is the
+    // exact state the narrowed version left behind, so it could not tell a
+    // restored guard from the narrowed one it replaced.
+    ok(cacheCases.length > 0 && (checked - cacheCases.length) > 0,
+      `§11.1 …and that total spans BOTH shapes — ${cacheCases.length} cache-bearing and ${checked - cacheCases.length} cache-free — so the restored arm is not passing by covering only the half that never diverged`);
+
+    // ── §11.1c  THE CACHE MULTIPLIER IS A PROPERTY OF THE PROVIDER ─────────
+    //
+    // Every case here is computed from the entry's OWN published price by this
+    // suite, independently of BOTH implementations, so neither side gets to
+    // define its own correctness. The rule pinned as arithmetic: cached reads
+    // bill at 0.1x base input on Anthropic and at FULL price everywhere else.
+    //
+    // ── WHY THIS SURVIVED THE TRACKER IT WAS BUILT AROUND ─────────────────
+    // This section shipped holding the view to that rule while a two-way
+    // tracker held `chargeForItem` to the KNOWN BUG — universally 0.1x — in the
+    // server path that feeds the ingest batch queue's BUDGET CAP. The tracker
+    // fired on 22 discriminating cases the day ingest-queue.js was fixed, which
+    // is what it was for, and it is now gone: there is no divergence left to
+    // track and a tracker asserting one would be asserting a lie.
+    //
+    // WHAT IS NOT GONE IS THE INDEPENDENT RECOMPUTATION, and deleting that
+    // along with the tracker was the tempting mistake. §11.1 above pins the two
+    // implementations to EACH OTHER, bit for bit — and that is satisfied by two
+    // copies that are wrong in the SAME way, which is precisely the state this
+    // pair was in before OpenRouter's rate was measured. Only an expectation
+    // derived outside both of them can say which number is right, so BOTH are
+    // now held to it here.
+    {
+      const ANTHROPIC_READ = 0.1, WRITE = 1.25;
+      // ── WHY THIS ONE COMPARISON IS NOT `===` ────────────────────────────
+      // §11.1 above compares the view against chargeForItem, two implementations
+      // that sum the SAME terms in the SAME order, so bit-for-bit equality is the
+      // right test there and stays. Here the expectation is
+      // recomputed INDEPENDENTLY, in a different term order, precisely so neither
+      // implementation gets to define its own correctness — and IEEE-754 addition
+      // is not associative, so `0.00485` and `0.004849999999999999` are the same
+      // computation written two ways. A relative tolerance of 1e-12 is ~4 orders
+      // tighter than any real defect: the bug this section exists for is a 10x
+      // multiplier, and even the smallest live catalogue price would show it at
+      // ~1e-1 relative. Verified below by a control that a wrong multiplier is
+      // still caught.
+      const nearly = (a, b) => Math.abs(a - b) <= 1e-12 * Math.max(Math.abs(a), Math.abs(b), 1e-9);
+      ok(cacheCases.length > 0,
+        `§11.1c ${cacheCases.length} (model × token-shape) cases carry a non-zero cache term — this section is measuring something`);
+      const providersSeen = new Set();
+      let viewOk = 0, queueOk = 0;
+      // Cases where the CORRECT figure and the OLD universal-0.1x figure are
+      // genuinely different numbers. On ANTHROPIC they coincide by construction
+      // (0.1x IS the correct rate there), so a corpus of only Anthropic cases
+      // would make this whole section structurally unable to see the defect
+      // while still reporting green — the could-not-fail shape. Counted and
+      // asserted below, and it is what made the tracker's firing trustworthy.
+      let discriminating = 0;
+      for (const { e, u, mine, theirs } of cacheCases) {
+        const row = resolveChatModel(e.id, OFF, ANY);
+        if (!row) { ok(false, `§11.1c ${e.id} did not resolve — the provider dimension is unreadable`); continue; }
+        providersSeen.add(row.provider);
+        const base = (u.inputTokens / 1e6) * e.input + (u.outputTokens / 1e6) * e.output
+                   + (u.cacheWriteTokens / 1e6) * e.input * WRITE;
+        const readTokens = u.cachedReadTokens / 1e6 * e.input;
+        // The independent expectation: full price unless Anthropic.
+        const expect = base + readTokens * (row.provider === 'anthropic' ? ANTHROPIC_READ : 1);
+        const rate = row.provider === 'anthropic' ? '0.1x' : 'FULL price';
+        if (!nearly(mine, expect)) {
+          ok(false, `§11.1c ${e.id} (${row.provider}) ${JSON.stringify(u)}: the VIEW produced ${mine}, but this provider's cached reads bill at ${rate} => ${expect}`);
+        } else viewOk++;
+        // The SERVER copy, held to the same independently-derived number. This
+        // is the arm the ingest budget cap depends on: under-counting here does
+        // not merely misreport, it lets a batch run past the ceiling the user
+        // set (see cacheMultipliers' docblock in src/brain/ingest-queue.js).
+        if (!nearly(theirs, expect)) {
+          ok(false, `§11.1c ${e.id} (${row.provider}) ${JSON.stringify(u)}: chargeForItem produced ${theirs}, but this provider's cached reads bill at ${rate} => ${expect}`);
+        } else queueOk++;
+        // The pre-fix figure both copies used to produce: 0.1x for everyone.
+        if (!nearly(base + readTokens * ANTHROPIC_READ, expect)) discriminating++;
+      }
+      ok(viewOk === cacheCases.length,
+        `§11.1c the VIEW charges cached reads per PROVIDER across all ${viewOk} cache-bearing cases — Anthropic 0.1x, everyone else full price`);
+      ok(queueOk === cacheCases.length,
+        `§11.1c chargeForItem (src/brain/ingest-queue.js) charges them the same way across all ${queueOk} — measured against an expectation derived from each entry's own price, not against the view, so the two agreeing is a result rather than the test`);
+      ok(providersSeen.size > 1,
+        `§11.1c both a discounted and a full-price provider are represented (${[...providersSeen].sort().join(', ')}) — a single-provider corpus could not tell the two rules apart`);
+      ok(providersSeen.has('anthropic'),
+        '§11.1c …including anthropic, so the 0.1x arm is exercised and not merely declared');
+      // ── CONTROL: this section CAN see the defect it was built for ──────
+      // On Anthropic the correct figure and the old universal-0.1x figure are
+      // the same number, so those cases can never distinguish a fixed
+      // implementation from a broken one. If every case were Anthropic both
+      // assertions above would be green forever and prove nothing. This asserts
+      // a real discriminating population, and that `nearly` separates the two
+      // values rather than absorbing them.
+      ok(discriminating > 0,
+        `§11.1c CONTROL — ${discriminating} of ${cacheCases.length} cases would produce a DIFFERENT figure under the old universal-0.1x rule, so the two assertions above are capable of failing (Anthropic cases coincide by construction and cannot discriminate)`);
+      ok(!nearly(1 + 9000 / 1e6 * 0.6 * 0.1, 1 + 9000 / 1e6 * 0.6 * 1),
+        '§11.1c CONTROL — …and the tolerance genuinely separates a 0.1x charge from a full-price one on the smallest live spread, so `nearly` is not absorbing the defect it looks for');
+    }
     ok(checked > 100 && freeChecked > 0,
       `§11.1 both arms are populated — ${checked} paid, ${freeChecked} free — so neither is passing by covering nothing`);
     // The ONE deliberate divergence, asserted so it is a decision on the record

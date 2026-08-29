@@ -418,6 +418,12 @@ console.log('\n§3b  An expanded model row survives a repaint');
     'the shelf renders open from state, not from a native attribute a repaint would discard');
   ok(/modelShelfOpen: false,/.test(settingsSrc),
     'and it is per-mount state, reset on leaving the view like every other transient fold here');
+  ok(/data-model-lane="/.test(settingsSrc),
+    'the "Chat only" lane fold carries a hook so its toggle can be recorded');
+  ok(/state\.modelLaneOpen\[laneKey\] === true/.test(settingsSrc),
+    'and the render consults state.modelLaneOpen — the fold survives a repaint the user did not ask for');
+  ok(/modelLaneOpen: \{\}/.test(settingsSrc),
+    'the lane map is part of the per-mount state (reset on leaving the view), like every other fold here');
   ok(/data-model-shelf="/.test(settingsSrc), 'the shelf carries a hook so its toggle can be recorded');
   ok(/querySelectorAll\('\[data-model-shelf\]'\)[\s\S]{0,320}addEventListener\('toggle'/.test(settingsSrc),
     'and a toggle listener records it');
@@ -602,8 +608,16 @@ console.log('\n§3c  The wiring is driven, not grepped');
       '[data-model-row]': [{ modelRow: 'z-ai/glm-4.7' }],
       '[data-model-shelf]': [{ modelShelf: 'all' }],
       '[data-model-picker]': [{ modelPicker: 'gemini' }],
+      // The "Chat only" LANE FOLD. It had no writer at all, and that was a live
+      // defect rather than a coverage gap: with 193 chat-only models it is the
+      // fold every "Test on my wiki" button sits inside, so pressing one
+      // re-rendered the section, the fold snapped shut, and the confirm panel
+      // the press exists to produce landed inside a collapsed disclosure.
+      // Browser-measured at 1280x900: `#main.scrollHeight` 15,471 -> 3,734,
+      // scrollTop clamped 4,691 -> 2,880, Start 1,803px outside the scroll area.
+      '[data-model-lane]': [{ modelLane: 'openrouter' }],
     });
-    const wireState = { modelRowOpen: {}, modelShelfOpen: false, modelPickerOpen: {} };
+    const wireState = { modelRowOpen: {}, modelShelfOpen: false, modelPickerOpen: {}, modelLaneOpen: {} };
     let renders = 0;
     const deps = {
       document: dom.document, state: wireState, myMountToken: 1,
@@ -630,6 +644,13 @@ console.log('\n§3c  The wiring is driven, not grepped');
     eq(wireState.modelShelfOpen, true, 'EXECUTED: …and expanding it is recorded');
     eq(fire('[data-model-picker]', true), 1, 'EXECUTED: and so does each provider list');
     eq(wireState.modelPickerOpen.gemini, true, 'EXECUTED: …recorded under its OWN provider id');
+    eq(fire('[data-model-lane]', true), 1,
+      'EXECUTED: a toggle listener is bound to [data-model-lane] — the ONLY writer of state.modelLaneOpen');
+    eq(wireState.modelLaneOpen.openrouter, true,
+      'EXECUTED: …recorded under its own provider id, so one provider\'s fold does not open another\'s');
+    fire('[data-model-lane]', false);
+    ok(!Object.hasOwn(wireState.modelLaneOpen, 'openrouter'),
+      'EXECUTED: …and collapsing it forgets it');
     ok(errs.length === 0, `no fold handler threw (${errs.join(' | ') || 'none'})`);
     eq(renders, 0,
       'EXECUTED: recording a fold triggers ZERO re-renders — repainting here would throw away the DOM the user just opened, and a one-line repaint HELPER (which defeats a proximity regex) is counted the same way');
@@ -964,6 +985,43 @@ function blockFor(css, selector) {
   const re = new RegExp(`(?:^|\\n)${esc}\\s*\\{([^}]*)\\}`);
   const m = re.exec(css);
   return m ? m[1] : null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// §8  A REFUSAL RENDERS IN THE ROW, WHICH NEEDS THE ROW TO WRAP
+// ═════════════════════════════════════════════════════════════════════════
+// The markup fix (settings.js) puts the build-pick refusal in the clicked row's
+// own <li>. `.model-option` is `display: flex`, so without `flex-wrap: wrap`
+// that third child sits BESIDE the pick control and is crushed to whatever the
+// row has left — which would put the message on screen and still make it
+// unreadable. These two declarations are what make the placement legible, so
+// they are guarded rather than left to be "obviously fine".
+//
+// SOURCE ASSERTIONS, and the limit is stated: there is no CSSOM here, so this
+// proves the declarations EXIST, not that they cascade to the element. The
+// cascade was verified in a real browser at 1280x900 in both themes.
+{
+  const block = (sel) => {
+    const i = settingsCss.indexOf(sel + ' {');
+    if (i === -1) return '';
+    const j = settingsCss.indexOf('}', i);
+    return j === -1 ? '' : settingsCss.slice(i, j + 1);
+  };
+  const optionRule = block('.model-option');
+  ok(optionRule !== '', '.model-option has a rule in settings.css');
+  ok(/flex-wrap:\s*wrap/.test(optionRule),
+    '.model-option wraps, so a refused pick can be a full-width third child under the button rather than competing with it for the row');
+  const errRule = block('.model-pick-error-row');
+  ok(errRule !== '', '.model-pick-error-row is styled — the in-row refusal is not unstyled markup');
+  ok(/flex-basis:\s*100%/.test(errRule),
+    '…on its own line, full width, directly beneath the control that produced it');
+  ok(/\.model-option-refused\s*\{/.test(settingsCss),
+    'and the row itself is marked, so the refusal is findable at a glance in a ~19-row list');
+  // CONTROL: the block extractor is not returning '' for everything, which
+  // would make all four regex assertions above vacuously... false, not true —
+  // but a '' would fail for the WRONG reason, so state what it found.
+  ok(block('.model-option-pick') !== '',
+    'CONTROL: the block extractor finds a known sibling rule, so the scans above read real CSS');
 }
 
 function walk(dir, out = []) {

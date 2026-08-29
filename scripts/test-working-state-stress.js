@@ -58,6 +58,10 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createHash } from 'crypto';
+// Shared source-scanning helpers. Self-tested WITH POSITIVE CONTROLS by
+// scripts/test-source-scan-helpers.js — §10 uses them so its call-site and
+// literal assertions cannot be the vacuous shapes that module exists to close.
+import { stripComments, callSiteCount, checkLiteral } from './test-helpers/source-scan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
@@ -122,6 +126,7 @@ const {
   DEFAULT_JOURNAL_ENTRIES, MAX_ITEM_CHARS, MAX_HEADLINE_CHARS,
   MIN_PROTECTED_BODY_BYTES, REPLACE_RATIO,
   CURRENT_FILENAME, JOURNAL_FILENAME, BRIEF_FILENAME,
+  finaliseNotes,
 } = WS;
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1186,7 +1191,174 @@ section('9. The recovery instruction must actually work');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('10. The real tree is untouched');
+section('10. Disclosure survives its own budget');
+// THE DEFECT, measured end to end on 2026-08-29 BEFORE the fix: input of 60
+// items x ~700 chars across five lists plus a 30 KB nowState produced a saved
+// DOCUMENT reporting 4 sections and 93 items dropped over the size budget,
+// and an API `notes` array reporting ZERO of them — all four omission notes
+// crowded out by 19 near-identical per-item truncation notes from ONE field,
+// because omissions can only be computed after rendering and were pushed last
+// into a first-come budget. `notes_meaning` meanwhile told the caller to
+// "read `notes` and re-save what matters".
+//
+// This section compares the TWO LAYERS against each other rather than
+// checking either alone, which is the only way this class shows up: the
+// store's own document is the oracle for what the store's own notes must say.
+{
+  const PD = 'disclosureproj';
+  mkdirSync(path.join(DOMAINS, PD, 'wiki'), { recursive: true });
+  writeFileSync(path.join(DOMAINS, PD, 'CLAUDE.md'), '# d\n');
+
+  // Lengths ascend so each item yields a DISTINCT truncation note — that is
+  // what makes the per-field chatter numerous enough to overrun the budget,
+  // and it is the shape real prose has (no two handoff bullets are the same
+  // length). Identical lengths de-duplicate and hide the defect.
+  const list = (tag) => Array.from({ length: 60 }, (_, i) => `${tag} item ${i} ` + 'x'.repeat(700 + i));
+  const res = await saveWorkingState(PD, {
+    scope: 'main', machine: 'm', headline: 'over budget',
+    nowState: 'y'.repeat(30000),
+    nextSteps: list('ns'), decisions: list('dc'), traps: list('tr'),
+    openQuestions: list('oq'),
+    observations: list('ob').map(t => ({ text: t, observedAt: '2026-01-01T00:00:00Z' })),
+  });
+  assert(res.ok === true, '10a: the over-budget save still succeeds', JSON.stringify(res).slice(0, 200));
+
+  const doc = readFileSync(path.join(DOMAINS, PD, 'state', 'main', 'm', CURRENT_FILENAME), 'utf8');
+  const docOmissions = [...doc.matchAll(/\((\d+) more omitted/g)].map(m => Number(m[1]));
+  const docSections = docOmissions.length;
+  const docItems = docOmissions.reduce((a, b) => a + b, 0);
+
+  // POSITIVE CONTROL. Without this the two comparisons below are vacuous:
+  // 0 === 0 passes on a save that never trimmed anything.
+  assert(docSections >= 4 && docItems >= 50,
+    '10b: positive control — the DOCUMENT really did drop whole sections of content',
+    `sections=${docSections} items=${docItems}`);
+
+  const noteOmissions = res.notes.filter(n => /item\(s\) omitted over the state size budget/.test(n));
+  const noteItems = noteOmissions
+    .map(n => Number(/^(?:[^:]+): (\d+) item/.exec(n)?.[1] ?? 0))
+    .reduce((a, b) => a + b, 0);
+
+  // THE HEADLINE. Pre-fix these read 0 and 0 against 4 and 93.
+  assert(noteOmissions.length === docSections,
+    '10c: every whole-section omission the DOCUMENT reports is also named in `notes`',
+    `document ${docSections} sections, notes ${noteOmissions.length}`);
+  assert(noteItems === docItems,
+    '10d: the ITEM COUNT disclosed in `notes` equals the item count in the document',
+    `document ${docItems} items, notes ${noteItems}`);
+
+  // FAIR SHARE. Pre-fix a single field spent 19 of 20 slots and the other
+  // four fields' losses were invisible. Every field that lost content must be
+  // named by at least one surviving note.
+  const lostFields = ['nowState', 'decisions', 'traps', 'nextSteps', 'openQuestions', 'observations'];
+  const unnamed = lostFields.filter(f => !res.notes.some(n => n.startsWith(f + ':')));
+  assert(unnamed.length === 0,
+    '10e: every field that lost content is named by a surviving note',
+    `unnamed: ${unnamed.join(', ') || 'none'}`);
+
+  // THE CAP STILL BITES — this is a prioritisation fix, not a raised ceiling.
+  assert(res.notes.length === 20,
+    '10f: the cap is still enforced at exactly 20 notes (the cliff was not merely moved)',
+    `got ${res.notes.length}`);
+
+  const terminal = res.notes[res.notes.length - 1];
+  assert(/^disclosure: \d+ further note\(s\)/.test(terminal),
+    '10g: the LAST note states how many further notes were suppressed', terminal);
+  const suppressedCount = Number(/^disclosure: (\d+)/.exec(terminal)?.[1] ?? 0);
+  assert(suppressedCount > 0,
+    '10h: the suppressed count is a real number, not a zero placeholder', terminal);
+  // A warning that does not fit the channel it travels in is not a warning:
+  // the MCP layer slices every note to 200 chars (REJECTION_CHARS).
+  assert(terminal.length <= 200,
+    '10i: the terminal note survives the MCP 200-char per-note cap intact',
+    `${terminal.length} chars`);
+
+  // CROSS-LAYER. notes_meaning is derived from note TEXT by the MCP handler.
+  // The regex is pinned to a HAND-WRITTEN LITERAL and then checked against the
+  // real source, so this cannot pass by reading the same constant the code
+  // reads, and it goes red if the MCP's classifier drifts away from it.
+  const LOSSY_LITERAL = '/\\b(dropped|omitted|truncated)\\b/i';
+  const mcpSrc = stripComments(readFileSync(path.join(REPO, 'mcp', 'tools', 'working-state.js'), 'utf8'));
+  const declared = /const LOSSY_NOTE_RE = (.+);/.exec(mcpSrc)?.[1];
+  const lit = checkLiteral(LOSSY_LITERAL, declared, '10j: the MCP lossy-note classifier is still the regex this section pins');
+  assert(lit.pass, lit.message);
+  assert(res.notes.some(n => /\b(dropped|omitted|truncated)\b/i.test(n)),
+    '10k: a lossy note survives, so notes_meaning can never report "nothing was dropped" over this save');
+
+  // THE NON-LOSS BRANCH, which the end-to-end path cannot reach (normalisation
+  // notes are aggregated one-per-field, so 20 of them with zero losses is not
+  // producible through a real save). Driving the exported function directly is
+  // the only way to prove the terminal note does NOT raise a false alarm.
+  const benign = Array.from({ length: 25 }, (_, i) =>
+    `field${i}: no observation time was supplied for 1 observation(s), so the save time was recorded`);
+  const trimmedBenign = finaliseNotes(benign);
+  const benignTerminal = trimmedBenign[trimmedBenign.length - 1];
+  assert(trimmedBenign.length === 20 && /^disclosure: 6 further note\(s\)/.test(benignTerminal),
+    '10l: a purely-normalisation overflow is still disclosed', benignTerminal);
+  assert(!/\b(dropped|omitted|truncated|rejected|discarded|lost)\b/i.test(benignTerminal),
+    '10m: and it carries NO loss vocabulary, so it cannot make notes_meaning cry wolf', benignTerminal);
+
+  // NO-OP UNDER THE CAP — proves a normal save is untouched by all of this.
+  const few = ['a: one', 'b: two', 'c: three'];
+  assert(JSON.stringify(finaliseNotes(few)) === JSON.stringify(few),
+    '10n: at or under the cap, finaliseNotes changes nothing');
+
+  // THE BRIEF takes the same path. A brief trimmed at its own size budget is
+  // exactly the case a caller must be told about.
+  const briefRes = await saveProjectBrief(PD, {
+    brief: 'z'.repeat(40000),
+    decisions: list('bd'), pointers: list('bp'),
+  });
+  assert(briefRes.ok === true, '10o: the over-budget brief save still succeeds', JSON.stringify(briefRes).slice(0, 160));
+  const briefDoc = readFileSync(path.join(DOMAINS, PD, 'state', BRIEF_FILENAME), 'utf8');
+  const briefDocSections = [...briefDoc.matchAll(/\(\d+ more omitted/g)].length;
+  const briefNoteSections = briefRes.notes.filter(n => /item\(s\) omitted over the brief size budget/.test(n)).length;
+  assert(briefDocSections > 0,
+    '10p: positive control — the brief document really did drop content', `${briefDocSections}`);
+  assert(briefNoteSections === briefDocSections,
+    '10q: the brief discloses every omission its own document reports',
+    `document ${briefDocSections}, notes ${briefNoteSections}`);
+
+  // CALL SITES. Root cause 3: finaliseNotes is executed above, but that proves
+  // nothing about the product calling it. Both savers must, or the cap silently
+  // reverts to whatever the pushes happen to do.
+  //
+  // NOTE — why this does NOT use the shared helper's `within:` option, which
+  // would be the obvious choice. `functionSource` finds the declaration and
+  // then brace-matches from the first `{` it sees; both savers are declared
+  // `saveWorkingState(project, input = {})`, so the first `{` is the DEFAULT
+  // PARAMETER's empty object and the helper returns a 51-character slice of
+  // the signature. Measured: callSiteCount(..., {within:'saveWorkingState'})
+  // returns 0 over source that plainly contains the call. It fails in the
+  // SAFE direction (a real call reads as absent), but an assertion written as
+  // `=== 0` would pass vacuously over it. The helper is shared with three
+  // other suites and is not changed from here; this section scopes the region
+  // itself instead, and the limitation is reported rather than worked around
+  // silently.
+  const wsSrc = stripComments(readFileSync(path.join(REPO, 'src', 'brain', 'working-state.js'), 'utf8'));
+  const exportedRegion = (name) => {
+    const m = new RegExp(`^export (?:async )?function ${name}\\(`, 'm').exec(wsSrc);
+    if (!m) return null;
+    const rest = wsSrc.slice(m.index + m[0].length);
+    const next = /\n(?=export )/.exec(rest);
+    return next ? rest.slice(0, next.index) : rest;
+  };
+  for (const [id, fn] of [['10r', 'saveWorkingState'], ['10s', 'saveProjectBrief']]) {
+    const region = exportedRegion(fn);
+    // Fail loudly rather than scanning an empty string — a scan over null is
+    // exactly the vacuous pass the helper module exists to stop.
+    assert(region !== null, `${id}-pre: the region for ${fn} was actually located`, 'not found');
+    assert(region !== null && /(?<![.\w$])finaliseNotes\s*\(/.test(region),
+      `${id}: ${fn} actually calls finaliseNotes — the cap is not left to the pushes`);
+  }
+  // And nothing may re-introduce a silent cap upstream of it: a `push` that
+  // drops notes on the floor is the defect this section exists to prevent.
+  assert(!/notes\.length < MAX_NOTES/.test(stripComments(wsSrc)),
+    '10t: no note is discarded before finaliseNotes has seen it (no upstream silent cap)');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('11. The real tree is untouched');
 {
   const after = realTreeFingerprint();
   assert(after.domainsHash === BASELINE.domainsHash,

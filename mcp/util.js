@@ -181,7 +181,17 @@ export async function refuseIfReadonly(domain) {
         `Direct writes here would not propagate to other contributors ` +
         `and would be overwritten on the next pull. To contribute, ` +
         `call this tool on your personal opted-in domain (e.g. 'work-ai'), ` +
-        `then run "Push contributions" from the Sync tab.`,
+        // LOCATION, verified against the shipping frontend rather than from
+        // memory: the rail item is VIEW_META.shared.label === 'Shared Brain'
+        // (src/public/next/app.js) and the button is "Push contributions"
+        // (src/public/next/views/shared.js). Push moved out of Sync at the
+        // v3.9.0 cutover, and views/sync.js now says so in as many words:
+        // "Shared Brain pushes are managed in Shared Brain. This tab only
+        // reports them." This string is MODEL-READ, so a stale location does
+        // not merely misinform a reader — it sends an agent, and through it
+        // the user, to a screen that cannot do the thing. v3.17.2 fixed this
+        // same phrase at eight sites in the skills; this copy survived.
+        `then run "Push contributions" from the Shared Brain view.`,
     };
   }
   return null;

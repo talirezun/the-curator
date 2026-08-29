@@ -47,6 +47,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { callSiteCount, checkLiteral } from './test-helpers/source-scan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -675,17 +676,36 @@ section('9. Staleness discipline (D-F) — captured LOCALLY, compared live');
     'one check sits before the await and one after it');
 
   // Every caller captures synchronously.
-  for (const fn of ['go', 'openOnboardingPanel', 'startRefresh']) {
+  for (const fn of ['go', 'openOnboardingPanel']) {
     const body = extractFunction(ob, fn);
     ok(/const myGen = panelGen;\s*\n\s*refresh\(myGen\)/.test(body) || /refresh\(panelGen\)/.test(body),
       `${fn}() passes the counter into refresh() rather than letting refresh read it`);
+  }
+
+  // startRefresh is the THIRD caller and it is now a parameter away from the
+  // counter: openPanel captures panelGen synchronously and threads it in, so
+  // the timer callback — which fires seconds later, potentially after a
+  // close-and-reopen — compares a value frozen at arm time. Asserting the
+  // parameter is strictly stronger than the old "captures it itself" check:
+  // a startRefresh that re-derived the counter inside its own callback would
+  // be the inert-guard shape even though it looked like a capture.
+  {
+    const sr = extractFunction(obCode, 'startRefresh');
+    ok(/^function startRefresh\(myGen\)/.test(sr),
+      'startRefresh() takes myGen as a PARAMETER rather than reading panelGen');
+    ok(!/panelGen/.test(sr),
+      'and never mentions panelGen at all — the armed timer cannot re-derive a fresher counter and wave itself through');
+    ok(/isFresh\(myGen\)/.test(sr),
+      'the timer callback checks freshness against that frozen value');
+    ok(/startRefresh\(panelGen\)/.test(extractFunction(obCode, 'openPanel')),
+      'openPanel() supplies it, synchronously, after bumping the counter');
   }
 
   ok(/panelGen \+= 1;/.test(extractFunction(ob, 'openPanel')), 'opening bumps the counter');
   ok(/panelGen \+= 1;/.test(extractFunction(ob, 'closePanel')), 'closing bumps it too, staling every in-flight handler');
 
   // The refresh loop must be self-terminating, not a forever background poll.
-  ok(/clearInterval\(refreshTimer\)/.test(obCode), 'the interval is cleared');
+  ok(/clearTimeout\(refreshTimer\)/.test(obCode), 'the pending timer is cleared');
   ok(/stopRefresh\(\);/.test(extractFunction(ob, 'closePanel')), 'closing the panel stops the loop');
   ok(/document\.visibilityState === 'hidden'/.test(obCode), 'and it does nothing while the tab is hidden');
 }
@@ -943,6 +963,175 @@ section('12. refresh() must not strand focus when it re-renders');
     `the focus restore follows render() (restore ${iRestore} > render ${iRender})`);
   ok(/querySelector\('#'\s*\+/.test(refreshBody) || /getElementById/.test(refreshBody),
     'the restore re-queries by id — the captured NODE cannot survive innerHTML replacement, so restoring the node reference would be inert');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('13. The re-check must STOP — teardown, stop condition, backoff');
+// ═════════════════════════════════════════════════════════════════════════
+// THE DEFECT THIS PINS. The panel is appended to document.body, so it
+// survives navigate(); its re-check was a setInterval at 5 s; and the
+// all-done stop lived inside `if (autoCloseOnComplete)`, which Settings'
+// "Show setup guide" sets to FALSE. Net effect on a COMPLETE install: a user
+// who clicks that button gets a panel that can never close itself and a poll
+// that runs in every view for the life of the page, hitting an endpoint that
+// read 598 KB of CLAUDE.md and log.md per request — ~420 MB/hour, growing
+// with the wiki.
+//
+// A poll's absence is invisible, so every assertion here is EXECUTED against
+// the real functions where it can be, and scoped with callSiteCount (which
+// strips comments and throws rather than passing vacuously) where it cannot.
+// The old suite "guarded" this with one file-wide `clearInterval` regex —
+// satisfied by a clear that never runs, which is exactly how the leak shipped.
+{
+  // A SECOND sandbox, because these three functions read module STATE (root,
+  // steps, lastRefreshMs) rather than taking arguments — so unlike the pure
+  // sandbox above they need those declared around them and settable. The
+  // three POLL_* constants are lifted from the real source, never retyped:
+  // retyping them is root cause 4, expected-equals-actual by construction.
+  // The EXPECTED delays below are hand-written literals checked with
+  // checkLiteral, which is where the pinning belongs.
+  const POLL_CONSTS = ['POLL_BASE_MS', 'POLL_DUTY', 'POLL_MAX_MS'];
+  const POLL_FNS = ['shouldKeepPolling', 'nextPollDelay', 'screenSignature'];
+  const pollBox = new Function(
+    // autoCloseOnComplete is declared here even though the CORRECT
+    // shouldKeepPolling never touches it: a version that regressed to
+    // consulting it must fail BEHAVIOURALLY, on the wrong answer, rather than
+    // crashing on an undeclared name. A red for the wrong reason is not a
+    // guard — it looks identical to a broken test, and the next person
+    // deletes it. Set FALSE, which is the Settings "Show setup guide" path,
+    // i.e. exactly the case where the shipped defect made the poll permanent.
+    'let root = null;\nlet steps = [];\nlet lastRefreshMs = 0;\nlet autoCloseOnComplete = false;\n' +
+    POLL_CONSTS.map((c) => extractConst(ob, c)).join('\n') + '\n' +
+    POLL_FNS.map((n) => extractFunction(ob, n)).join('\n\n') + '\n' +
+    `return { ${POLL_FNS.join(', ')},
+       __setRoot(v) { root = v; },
+       __setSteps(v) { steps = v; },
+       __setLastRefreshMs(v) { lastRefreshMs = v; } };`
+  )();
+  const { shouldKeepPolling, nextPollDelay, screenSignature } = pollBox;
+  const setRoot = pollBox.__setRoot;
+  const setSteps = pollBox.__setSteps;
+  const setLast = pollBox.__setLastRefreshMs;
+
+  // ── The stop condition, driven ────────────────────────────────────────
+  setRoot({});
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  ok(shouldKeepPolling() === true, 'an incomplete checklist keeps polling — the first-run path is not slowed down');
+
+  setSteps([{ id: 'api-key', done: true }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  ok(shouldKeepPolling() === true, 'one step done is still incomplete');
+
+  setSteps([{ id: 'api-key', done: true }, { id: 'domain', done: true }, { id: 'ingest', done: true }]);
+  ok(shouldKeepPolling() === false,
+    'ALL THREE DONE -> STOP. This is the reported defect: a completed checklist has nothing left to find out');
+
+  setRoot(null);
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  ok(shouldKeepPolling() === false,
+    'a CLOSED panel never polls, incomplete or not — the panel outliving navigate() is why this matters');
+
+  // The stop condition must NOT consult autoCloseOnComplete. That flag
+  // decides whether a finished panel VANISHES; reading it as if it also
+  // decided whether to keep fetching is precisely what made the leak
+  // permanent on the path a user reaches deliberately.
+  const skpSrc = extractFunction(obCode, 'shouldKeepPolling');
+  ok(!/autoCloseOnComplete/.test(skpSrc),
+    'shouldKeepPolling() does not consult autoCloseOnComplete — a visible completed panel is still an IDLE one');
+  ok(callSiteCount(ob, 'shouldKeepPolling', { within: 'startRefresh' }) >= 1,
+    'startRefresh() consults it — a stop condition nothing calls is a comment');
+
+  // ── Teardown ──────────────────────────────────────────────────────────
+  // Timer AND listener. The generation bump makes their bodies no-ops, but a
+  // listener that is merely pointless is still attached to window forever.
+  ok(callSiteCount(ob, 'stopRefresh', { within: 'closePanel' }) === 1,
+    'closePanel() clears the pending timer exactly once');
+  const closeSrc = extractFunction(obCode, 'closePanel');
+  ok(/removeEventListener\('focus', wakeHandler\)/.test(closeSrc),
+    'closePanel() removes the focus listener');
+  ok(/removeEventListener\('visibilitychange', wakeHandler\)/.test(closeSrc),
+    'closePanel() removes the visibilitychange listener');
+  ok(/wakeHandler = null/.test(closeSrc),
+    'and drops the reference, so a second close cannot remove a listener that is no longer ours');
+  const openSrc = extractFunction(obCode, 'openPanel');
+  const added = (openSrc.match(/addEventListener\(/g) || []).length;
+  const removed = (closeSrc.match(/removeEventListener\(/g) || []).length;
+  ok(added === removed && added === 2,
+    `every listener openPanel() adds, closePanel() removes (added ${added}, removed ${removed})`);
+
+  // ── setInterval must not come back ────────────────────────────────────
+  ok(!/setInterval\s*\(/.test(obCode),
+    'no setInterval anywhere in the module — a chain that re-arms after settling cannot stack a second fetch on a slow one');
+  ok(/setTimeout\s*\(/.test(extractFunction(obCode, 'startRefresh')),
+    'startRefresh() arms a setTimeout');
+  ok(callSiteCount(ob, 'startRefresh', { within: 'startRefresh' }) >= 1,
+    'and re-arms itself — the chain link');
+
+  // ── Hidden tab ────────────────────────────────────────────────────────
+  const srSrc = extractFunction(obCode, 'startRefresh');
+  const iHidden = srSrc.indexOf("visibilityState === 'hidden'");
+  const iRefresh = srSrc.indexOf('refresh(myGen)');
+  ok(iHidden !== -1, 'startRefresh() checks visibilityState');
+  ok(iHidden < iRefresh && iRefresh !== -1,
+    `the hidden check precedes the fetch (${iHidden} < ${iRefresh}) — a background tab reschedules without hitting the disk`);
+
+  // ── Adaptive delay ────────────────────────────────────────────────────
+  // Same shape views/memory.js uses, and for the same reason: this panel is
+  // shown on FULLY POPULATED installs (the .env-only-key case this file
+  // documents), so a number tuned against an empty one is a busy poll there.
+  setLast(0);
+  const base = nextPollDelay();
+  const vBase = checkLiteral(5000, base,
+    'a free re-check waits the base delay — IDENTICAL to the interval it replaces, so first-run responsiveness is unchanged');
+  ok(vBase.pass, vBase.message);
+
+  setLast(10);
+  ok(nextPollDelay() === 5000, 'a 10 ms re-check still waits the base delay (10 x 20 = 200 < 5000)');
+
+  setLast(500);
+  const vDuty = checkLiteral(10000, nextPollDelay(),
+    'a 500 ms re-check backs off to 20x its own cost — a big install throttles itself with nothing to tune');
+  ok(vDuty.pass, vDuty.message);
+
+  setLast(60000);
+  const vCap = checkLiteral(300000, nextPollDelay(),
+    'and the backoff is capped, so a pathological measurement cannot park the re-check for a day');
+  ok(vCap.pass, vCap.message);
+
+  ok(callSiteCount(ob, 'nextPollDelay', { within: 'startRefresh' }) === 1,
+    'startRefresh() derives its delay from it — a computed delay nobody reads is decoration');
+  ok(/lastRefreshMs = Date\.now\(\) - startedAt/.test(extractFunction(obCode, 'refresh')),
+    'refresh() records what it actually cost, so the backoff tracks the real install rather than an estimate');
+
+  // ── No-op guard ───────────────────────────────────────────────────────
+  // render() replaces root.innerHTML wholesale. Unconditional re-rendering
+  // destroyed and rebuilt the panel twelve times a minute forever, taking
+  // focus with it each time.
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  const sigA = screenSignature();
+  const sigA2 = screenSignature();
+  ok(sigA === sigA2 && sigA.length > 0, 'the signature is stable and non-empty for unchanged steps');
+  setSteps([{ id: 'api-key', done: true }, { id: 'domain', done: false }, { id: 'ingest', done: false }]);
+  ok(screenSignature() !== sigA,
+    'a step ticking over CHANGES the signature — a guard that cannot see the change would freeze the panel, which is worse than the re-render');
+  setSteps([{ id: 'api-key', done: false }, { id: 'domain', done: true }, { id: 'ingest', done: false }]);
+  ok(screenSignature() !== sigA,
+    'and so does a DIFFERENT step, so the guard is not keyed on the count alone');
+
+  const refreshSrc = extractFunction(obCode, 'refresh');
+  ok(/if \(screenSignature\(\) === renderedSignature\) return;/.test(refreshSrc),
+    'refresh() skips render() when nothing on screen would differ');
+  ok(refreshSrc.indexOf('screenSignature() === renderedSignature') < refreshSrc.lastIndexOf('render()'),
+    'and the guard sits BEFORE the render it is guarding');
+  ok(/renderedSignature = screenSignature\(\)/.test(extractFunction(obCode, 'render')),
+    'render() stamps the signature itself — stamping at the call site would let a render by another caller leave a stale value that passes the guard');
+  ok(callSiteCount(ob, 'screenSignature', { within: 'render' }) === 1,
+    'exactly once per paint');
+
+  // ── One re-check at a time ────────────────────────────────────────────
+  ok(/if \(refreshing\) return;/.test(refreshSrc),
+    'refresh() refuses to overlap itself — go() fires a manual re-check while the chain is armed independently');
+  ok(/finally \{\s*refreshing = false;/.test(refreshSrc),
+    'and clears the flag in a finally, so a thrown fetch cannot wedge the loop off permanently');
 }
 
 console.log(`\nPassed: ${passed}   Failed: ${failed}`);

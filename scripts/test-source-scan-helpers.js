@@ -43,6 +43,20 @@ ok(functionSource('async function f(a) { body(); }', 'f') !== null, 'async funct
 ok(functionSource('const f = function (a) { body(); };', 'f') !== null, 'function-expression form');
 ok(functionSource('function g() {}', 'nope') === null, 'a missing name returns null so a caller can fail LOUDLY rather than scan an empty string');
 
+section('§4b a DEFAULT OBJECT PARAMETER must not be mistaken for the body');
+// Found by an agent adopting this module: `f(project, input = {})` made the
+// brace matcher lock onto the DEFAULT's `{}` and return a slice of the
+// signature. It failed SAFE — the scan found nothing — which is precisely why
+// it was dangerous: an assertion written `=== 0` passes vacuously over source
+// that plainly contains the call.
+const defaulted = 'function save(project, input = {}) { validate(input); persist(project); }';
+const body = functionSource(defaulted, 'save');
+ok(/validate\(input\)/.test(body), 'the real body is returned, not the default parameter object');
+ok(/persist\(project\)/.test(body), 'and the whole body, not a signature slice');
+ok(callSiteCount(defaulted, 'validate', { within: 'save' }) === 1, 'POSITIVE CONTROL: a call inside a defaulted-param function is COUNTED, where the old matcher returned 0');
+const nestedDefault = 'const f = (a, o = { x: 1 }, b = [2]) => { inner(); };';
+ok(/inner\(\)/.test(functionSource(nestedDefault, 'f')), 'nested braces and brackets inside defaults are skipped too');
+
 section('§5 callSiteCount counts CALLS, not declarations — root cause 3');
 const wired = `function stopPoll() {} function onEnter() { schedulePoll(); return () => { stopPoll(); }; }`;
 ok(callSiteCount(wired, 'stopPoll') === 1, 'one real call site is counted, the declaration is not');

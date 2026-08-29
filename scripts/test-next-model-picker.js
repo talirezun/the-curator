@@ -424,6 +424,16 @@ const stubState = {
   keys: null, keysError: null, keysActionError: null,
   replacing: null, keysBusy: null,
   modelPickerOpen: {},
+  // Which "Chat only" LANE FOLDS are expanded, by provider id. It was missing,
+  // and its absence was a live defect rather than a test gap: the fold is where
+  // every "Test on my wiki" button lives, so a press re-rendered the section,
+  // the fold snapped shut, and the confirm panel the press exists to produce
+  // landed inside a collapsed disclosure. See §45.
+  modelLaneOpen: {},
+  // WHICH ROW owns the `build` refusal, as '<provider>::<modelId>'. Rendered in
+  // that row rather than at the top of the block, because a refusal announced
+  // above the fold is not announced at all. See §44.
+  modelPickErrorAt: '',
   // Which INDIVIDUAL model rows are expanded, by model id — the per-row twin
   // of modelPickerOpen, added when the row fold stopped being derived solely
   // from "is this the model being qualified". renderModelOption dereferences
@@ -487,7 +497,17 @@ const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_RE
   // re-declared here: the field NAMES are the contract between llm.js and the
   // picker, and a local copy would keep passing after the wire field was
   // renamed underneath it.
-  'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL'];
+  'MODEL_SORT_KEYS', 'MODEL_SORT_UNRANKED_LABEL',
+  // 2026-08-29 — the id the refused pick renders under and revealInMain
+  // scrolls to. Extracted, never re-declared here: §44 asserts the row and the
+  // block-level fallback are MUTUALLY EXCLUSIVE by matching on this id, and a
+  // local copy would keep that assertion green after the module renamed it and
+  // the reveal stopped finding anything.
+  'BUILD_PICK_ERROR_ID',
+  // The confirm panel's id, for the same reason: §45 asserts the panel is
+  // addressable so revealInMain can scroll to it, and a literal copied here
+  // would keep that green after the module renamed it.
+  'QUALIFY_CONFIRM_ID'];
 const RENDER_FN_NAMES = [
   // The REAL providerLabel: renderModelPicker names the ACTIVE provider in the
   // inactive section's sentence, and a stub would prove something about the
@@ -563,6 +583,8 @@ const RENDER_FN_NAMES = [
   // render halves.
   'buildModelFacts', 'inertPins', 'buildCandidates', 'chatModelCount',
   'renderBuildCurrent', 'renderBuildList', 'renderBuildBlock', 'renderChatBlock',
+  // The pick button's id, from the module. §44 focuses BY it after a refusal.
+  'buildPickButtonId',
 ];
 
 /**
@@ -655,9 +677,65 @@ const ACTION_FN_NAMES = ['modelPickErrorMessage', 'onPickModel',
   // onPickModel, and a sharper failure mode if it breaks: the list it must
   // not clear reads as "this provider has no models", which is a lie about
   // capability rather than a missing update.
-  'catalogueSyncErrorMessage', 'onSyncCatalogue'];
+  'catalogueSyncErrorMessage', 'onSyncCatalogue',
+  // 2026-08-29 — the two layers that put a refusal in front of the user.
+  // `revealPickRefusal` is settings.js's own helper; `buildPickButtonId` is the
+  // id it focuses BY. Both extracted, never re-declared, so §44 cannot keep
+  // passing over a renamed id scheme that finds nothing.
+  'revealPickRefusal', 'buildPickButtonId'];
+// From app.js, and the REAL ones — the shell owns `.main`, so a stub here would
+// make §44's whole claim ("the refusal is scrolled into view") a measurement of
+// this file rather than of the shipping scroll maths.
+const ACTION_APP_FN_NAMES = ['mainRevealDelta', 'revealInMain'];
+const ACTION_CONSTS = ['BUILD_PICK_ERROR_ID'];
+
+// ── A RECORDING FAKE DOM, so the reveal is DRIVEN rather than grepped ──────
+// `revealInMain` reads two getBoundingClientRects and writes `#main.scrollTop`;
+// `revealPickRefusal` then focuses a button by id. Both are real code here —
+// only the nodes are fake, and they are faithful about the three things the
+// assertions read: geometry, scrollTop, and which element took focus.
+const fakeDom = {
+  // `max` mirrors the browser CLAMP: scrollTop can never go below 0 or past
+  // scrollHeight - clientHeight. Without it a fake would accept a scroll no
+  // real container would perform, and an assertion resting on that would be
+  // measuring this file rather than the app.
+  main: { scrollTop: 0, max: 100000, rect: { top: 0, bottom: 800 } },
+  nodes: new Map(),
+  focused: null,
+  reset(mainRect, scrollTop, max) {
+    this.main.rect = mainRect;
+    this.main.scrollTop = scrollTop;
+    this.main.max = (typeof max === 'number') ? max : 100000;
+    this.nodes.clear();
+    this.focused = null;
+  },
+  put(id, rect, opts) {
+    const self = this;
+    this.nodes.set(id, {
+      id,
+      disabled: !!(opts && opts.disabled),
+      getBoundingClientRect: () => rect,
+      focus() { self.focused = id; },
+    });
+  },
+};
+const fakeDocument = {
+  getElementById(id) {
+    if (id === 'main') {
+      return {
+        get scrollTop() { return fakeDom.main.scrollTop; },
+        set scrollTop(v) {
+          fakeDom.main.scrollTop = Math.max(0, Math.min(fakeDom.main.max, v));
+        },
+        getBoundingClientRect: () => fakeDom.main.rect,
+      };
+    }
+    return fakeDom.nodes.get(id) || null;
+  },
+};
 const ACTION_INJECTED_VALUES = {
   state: stubState,
+  document: fakeDocument,
   fetch: (...args) => { fetchCalls.push(args); return fetchImpl(...args); },
   // Every call to render() captures the markup the picker WOULD paint at that
   // instant. That is how the "not optimistic" claim is measured: the render
@@ -723,6 +801,7 @@ const {
   providerHasSavedKey, qualIndex, activeModelLine, measurementChip, renderMeasurementChip,
   buildModelFacts, inertPins, buildCandidates, chatModelCount,
   renderBuildCurrent, renderBuildList, renderBuildBlock, renderChatBlock,
+  BUILD_PICK_ERROR_ID, QUALIFY_CONFIRM_ID, buildPickButtonId,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -1086,7 +1165,7 @@ function unresolvedCallees(src, names, provided, where) {
   for (const n of [...RENDER_FN_NAMES, ...ACTION_FN_NAMES]) {
     ok(settingsTopLevel.has(n), `manifest entry "${n}" is a real top-level function in settings.js`);
   }
-  for (const n of APP_FN_NAMES) {
+  for (const n of [...APP_FN_NAMES, ...ACTION_APP_FN_NAMES]) {
     ok(topLevelFunctionNames(appJs).has(n), `manifest entry "${n}" is a real top-level function in app.js`);
   }
 
@@ -1095,11 +1174,15 @@ function unresolvedCallees(src, names, provided, where) {
   ]);
   const actionProvided = new Set([
     ...ACTION_FN_NAMES, ...ACTION_INJECTED, ...RENDER_CONSTS,
+    // Lifted from app.js into the action sandbox — the shell owns `.main`, so
+    // the reveal maths is the shipping code here, not a stub.
+    ...ACTION_APP_FN_NAMES, ...ACTION_CONSTS,
   ]);
   const unresolved = [
     ...unresolvedCallees(settings, RENDER_FN_NAMES, renderProvided, 'settings.js'),
     ...unresolvedCallees(settings, ACTION_FN_NAMES, actionProvided, 'settings.js'),
     ...unresolvedCallees(appJs, APP_FN_NAMES, renderProvided, 'app.js'),
+    ...unresolvedCallees(appJs, ACTION_APP_FN_NAMES, actionProvided, 'app.js'),
   ];
   ok(unresolved.length === 0,
     'every function an extracted helper calls is itself extracted, injected or a standard global' +
@@ -2880,10 +2963,13 @@ let mountIsCurrent = true;
 
 const actions = new Function(
   ...ACTION_INJECTED,
+  ACTION_APP_FN_NAMES.map((n) => extractFunction(appJs, n, 'app.js')).join('\n') + '\n' +
+  ACTION_CONSTS.map((n) => extractConst(settings, n)).join('\n') + '\n' +
   ACTION_FN_NAMES.map((n) => extractFunction(settings, n, 'settings.js')).join('\n') + '\n' +
-  'return { ' + ACTION_FN_NAMES.join(', ') + ' };'
+  'return { ' + [...ACTION_APP_FN_NAMES, ...ACTION_CONSTS, ...ACTION_FN_NAMES].join(', ') + ' };'
 )(...ACTION_INJECTED.map((n) => ACTION_INJECTED_VALUES[n]));
-const { onPickModel, onPickBuildModel, modelPickErrorMessage, onSyncCatalogue, catalogueSyncErrorMessage } = actions;
+const { onPickModel, onPickBuildModel, modelPickErrorMessage, onSyncCatalogue, catalogueSyncErrorMessage,
+  mainRevealDelta, revealInMain, revealPickRefusal } = actions;
 
 /** Reset every injected seam between sections. */
 function resetActionHarness(provider) {
@@ -2897,6 +2983,7 @@ function resetActionHarness(provider) {
   renderProviderId = provider;
   stubState.modelPickBusy = null;
   stubState.modelPickError = {};
+  stubState.modelPickErrorAt = '';
   stubState.modelPickerOpen = { [provider]: true };
   stubState.catalogueSyncBusy = null;
   stubState.catalogueSync = {};
@@ -6303,7 +6390,15 @@ section('§43  THE CATALOGUE MUST NEVER BE SILENTLY PARTIAL');
     ok(/build your wiki/i.test(panel), 'the confirm names the OUTCOME the user is deciding about');
     ok(/on your own material/i.test(panel), '…and that it is checked on their own pages');
     okContains(panel, '9', 'the real run count survives the reframing');
-    okContains(panel, '341130', 'the real prompt size survives');
+    // ── THE VALUE SURVIVES; ONLY ITS PRESENTATION CHANGED ────────────────
+    // Pinned as a HAND-WRITTEN literal, not read back through formatTokenCount,
+    // so a formatter that started dropping digits would be caught rather than
+    // agreeing with itself. The negative is what proves the format APPLIED: it
+    // was the one raw number on a panel whose "230,400 max output" two lines up
+    // is separated, and "341130" is measurably harder to size at a glance.
+    okContains(panel, '341,130', 'the real prompt size survives, thousands-separated');
+    ok(!panel.includes('341130'),
+      'and the RAW unseparated figure is gone — the same number, formatted like every other on this panel');
     okContains(panel, 'articles', 'the wiki it will run against is named');
     ok(/writes nothing/i.test(panel), 'that it writes nothing survives');
     ok(/stop it at any point/i.test(panel), 'that it is cancellable survives');
@@ -6312,6 +6407,347 @@ section('§43  THE CATALOGUE MUST NEVER BE SILENTLY PARTIAL');
       'and it does NOT overstate what one passing run proves');
     okContains(panel, 'data-qualify-go="zz/model"', 'the control is still there');
   }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§44  A REFUSAL RENDERS WHERE THE USER CLICKED, AND IS SCROLLED TO');
+// ═════════════════════════════════════════════════════════════════════════
+// MEASURED IN A BROWSER FIRST, not reasoned about. On an isolated instance at
+// 1280x900 with a REAL ingest holding the write lock, three successively lower
+// build rows were clicked with the button fully visible and hit-tested by
+// `elementFromPoint`. The 409 landed correctly every time — and rendered at
+// y = -135, -436 and -678: entirely ABOVE the viewport. `#main.scrollTop` did
+// not move, the clicked button still read "Use this", and `document.activeElement`
+// was <body>. Nothing at all happened where the user was looking.
+//
+// That is v3.9.0's shape without the overlay, on the one screen where the retry
+// it invites is a refused WRITE the user is choosing to be billed for.
+//
+// TWO LAYERS, and the FIRST is structural. The message renders inside the row's
+// own <li>, so it cannot be off-screen while the control is on screen — no
+// scroll has to fire correctly for that to hold. The scroll is the second
+// layer, for a row at the very bottom edge and for the block-level fallback.
+{
+  const prov = POPULATED[0];
+  const target = WIRE[prov][1].id;
+
+  // ── LAYER ONE: THE MESSAGE IS IN THE ROW ─────────────────────────────
+  {
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(409, {
+      error: 'Cannot change the AI model while a write operation is running: articles (ingest).',
+      conflict: 'write_in_progress',
+    });
+    await onPickBuildModel(prov, target, null);
+
+    const html = buildSnapshots[buildSnapshots.length - 1] || '';
+    const li = liFor(html, target);
+    ok(li !== '', 'the clicked row is still rendered after the refusal');
+    okContains(li, 'role="alert"',
+      'the refusal is INSIDE the <li> of the row that was clicked — adjacent to the button, so it cannot be off-screen while the button is on screen');
+    okContains(li, 'Cannot change the AI model',
+      '…carrying the server’s own message, which names the running operation');
+    okContains(li, 'NOT saved',
+      '…and the fact the user most needs: nothing changed');
+    okContains(li, 'id="' + BUILD_PICK_ERROR_ID + '"',
+      '…under the id revealInMain scrolls to');
+    // ── THE TWO HALVES MUST AGREE ON THE ID ──────────────────────────
+    // Found by mutation, not by review: dropping the id from the rendered
+    // button left the focus assertion below GREEN, because the fake DOM is
+    // populated by this file rather than by parsing the markup. So the RENDERED
+    // id is pinned against the SAME helper the handler focuses by — if the
+    // markup and the handler ever disagree, focus lands on nothing.
+    okContains(li, 'id="' + escapeHtml(buildPickButtonId(prov, target)) + '"',
+      'the rendered button carries the exact id revealPickRefusal focuses by — otherwise the focus half is a no-op nobody notices');
+
+    // ── ONE REFUSAL, ONE ALERT ───────────────────────────────────────
+    // Two sites can emit it (the row, and renderBuildBlock's fallback). Both
+    // at once would duplicate the id AND make a screen reader announce the
+    // same refusal twice.
+    const alerts = (html.match(/role="alert"/g) || []).length;
+    ok(alerts === 1,
+      `exactly ONE role="alert" in the block — the row owns it and the block-level copy stands down (got ${alerts})`);
+    const ids = (html.match(new RegExp('id="' + BUILD_PICK_ERROR_ID + '"', 'g')) || []).length;
+    ok(ids === 1, `and the id is unique in the document (got ${ids})`);
+
+    // NO OTHER ROW carries it. Matched on provider AND model, so a refusal can
+    // never be shown against a row the user did not click.
+    const others = WIRE[prov].filter((m) => m.id !== target);
+    let leaked = 0;
+    for (const m of others) {
+      const other = liFor(html, m.id);
+      if (other && other.includes('role="alert"')) leaked++;
+    }
+    ok(leaked === 0, `no OTHER row claims the refusal (${leaked} leaked)`);
+
+    // ── AND THE CHOICE STILL DID NOT MOVE ────────────────────────────
+    // The whole point of rendering the refusal in the row is that the row is
+    // where the user is looking — which is also where an optimistic write
+    // would be most convincing. It must still say what it said before.
+    ok(!li.includes('Building your wiki'),
+      'the refused row does NOT claim to be building the wiki — a model choice is a spending decision and nothing moves until the server says so');
+    okContains(li, 'Use this',
+      '…and its control is back to "Use this", not stuck on "Saving…"');
+    okContains(html, escapeHtml(defaultModelFor(prov)),
+      '…while the headline still names the model that never stopped building the wiki');
+  }
+
+  // ── LAYER TWO: IT IS SCROLLED INTO VIEW, AND FOCUS COMES BACK ────────
+  // Driven through the REAL revealInMain (lifted from app.js) against a
+  // recording fake DOM. The geometry is the one measured in the browser: the
+  // alert 678px above a viewport that starts at y=46.
+  {
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    // The geometry is the browser's own, for the deepest row measured: viewport
+    // 46..900, `#main.scrollTop` 1091, alert at y = -678.
+    const START = 1091;
+    fakeDom.reset({ top: 46, bottom: 900 }, START);
+    fakeDom.put(BUILD_PICK_ERROR_ID, { top: -678, bottom: -619 });
+    fakeDom.put(buildPickButtonId(prov, target), { top: 810, bottom: 836 });
+    fetchImpl = async () => reply(409, { error: 'busy' });
+    await onPickBuildModel(prov, target, null);
+
+    ok(fakeDom.main.scrollTop < START,
+      `the view SCROLLED to the refusal (${START} -> ${fakeDom.main.scrollTop}) — before this fix it measured 1091 -> 1091 with the message 678px off-screen`);
+    // Where the alert ENDS UP: scrolling up by d moves content down by d.
+    const applied = fakeDom.main.scrollTop - START;
+    const newTop = -678 - applied, newBottom = -619 - applied;
+    ok(newTop >= 46 && newBottom <= 900,
+      `and it landed the alert fully inside the viewport (${newTop}..${newBottom} within 46..900)`);
+    ok(mainRevealDelta(46, 900, newTop, newBottom, 12) === 0,
+      '…far enough inside that a second reveal would move nothing');
+    ok(fakeDom.focused === buildPickButtonId(prov, target),
+      `focus is returned to the button that was pressed (got ${JSON.stringify(fakeDom.focused)}) — the first render disables it, so <body> is where focus falls without this`);
+  }
+
+  // ── A REFUSAL ALREADY ON SCREEN MUST NOT JOLT THE PAGE ───────────────
+  // Moving a page the reader did not ask to move is its own defect, and the
+  // structural fix means the common case IS already visible.
+  {
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fakeDom.reset({ top: 46, bottom: 900 }, 585);
+    fakeDom.put(BUILD_PICK_ERROR_ID, { top: 400, bottom: 459 });
+    fakeDom.put(buildPickButtonId(prov, target), { top: 360, bottom: 386 });
+    fetchImpl = async () => reply(409, { error: 'busy' });
+    await onPickBuildModel(prov, target, null);
+    ok(fakeDom.main.scrollTop === 585,
+      `an already-visible refusal scrolls NOTHING (${fakeDom.main.scrollTop})`);
+    ok(fakeDom.focused === buildPickButtonId(prov, target),
+      '…and focus still comes back to the button');
+  }
+
+  // ── THE FALLBACK: A REFUSAL NO ROW OWNS ──────────────────────────────
+  // An unknown provider never reaches a rendered candidate, so the block-level
+  // copy is the only place it can go. Deleting it would make that refusal
+  // invisible — the original defect, in the arm nobody looks at.
+  {
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fakeDom.reset({ top: 46, bottom: 900 }, 585);
+    fakeDom.put(BUILD_PICK_ERROR_ID, { top: -300, bottom: -241 });
+    fetchImpl = async () => reply(200, { ok: true });
+    await onPickBuildModel('zzz-mystery-provider', 'whatever', null);
+    void 0;
+    ok(fetchCalls.length === 0, 'an unknown provider is still refused before the wire');
+    const html = buildSnapshots[buildSnapshots.length - 1] || '';
+    okContains(html, 'role="alert"',
+      'a refusal no row owns still renders — at block level, which is the only place left');
+    okContains(html, 'unknown provider', '…and says what happened');
+    ok(fakeDom.main.scrollTop < 585,
+      `…and is scrolled to as well (585 -> ${fakeDom.main.scrollTop})`);
+  }
+
+  // ── A STALE PICK STILL RENDERS SOMEWHERE ─────────────────────────────
+  // `modelPickErrorAt` pointing at a model that has since left the list must
+  // fall back to the block, not vanish. A message that disappears because the
+  // catalogue moved is the invisible refusal again, arriving by a new door.
+  {
+    stubState.keys = buildKeysFor(prov);
+    stubState.modelPickBusy = null;
+    stubState.modelPickError = { build: 'Something was refused.' };
+    stubState.modelPickErrorAt = prov + '::a-model-that-is-no-longer-offered';
+    const html = renderBuildBlock(stubState.keys, false);
+    okContains(html, 'role="alert"',
+      'a refusal whose row has left the list falls back to the block rather than vanishing');
+    okContains(html, 'Something was refused.', '…with its message intact');
+    const n = (html.match(/role="alert"/g) || []).length;
+    ok(n === 1, `…exactly once (got ${n})`);
+    stubState.modelPickError = {};
+    stubState.modelPickErrorAt = '';
+  }
+
+  // ── mainRevealDelta: THE TRUTH TABLE, driven exhaustively ────────────
+  // The pure core of the scroll decision. Pinned to HAND-WRITTEN literals, not
+  // recomputed from the function under test.
+  {
+    const H_TOP = 100, H_BOT = 900, PAD = 12;   // an 800px viewport
+    const cases = [
+      // [elTop, elBottom, expected, why]
+      [400, 460, 0, 'comfortably inside — move nothing'],
+      [112, 460, 0, 'exactly on the pad at the top — still inside'],
+      [400, 888, 0, 'exactly on the pad at the bottom — still inside'],
+      [-678, -619, -790, 'far ABOVE (the measured defect) — bring its top to the pad'],
+      [50, 110, -62, 'clipped at the top — the smallest move that clears the pad'],
+      [1000, 1059, 171, 'below the fold — the smallest move that puts its bottom on screen'],
+      [880, 940, 52, 'straddling the bottom edge — nudged, not centred, so the control above stays visible'],
+      [500, 1600, 388, 'TALLER than the viewport — top-first, because a confirm is read from its first line'],
+    ];
+    for (const [t, b, want, why] of cases) {
+      const got = mainRevealDelta(H_TOP, H_BOT, t, b, PAD);
+      ok(got === want, `mainRevealDelta(${t}, ${b}) === ${want} — ${why} (got ${got})`);
+    }
+    // Garbage in, no movement out: a missing rect must never fling the page.
+    for (const bad of [[NaN, 1], [1, Infinity], ['4', 5], [null, 5], [undefined, 5]]) {
+      ok(mainRevealDelta(H_TOP, H_BOT, bad[0], bad[1], PAD) === 0,
+        `mainRevealDelta refuses ${JSON.stringify(bad)} and moves nothing`);
+    }
+    // CONTROL: the pure core is not "always 0" — the cases above include real
+    // non-zero moves, and this states it as a property.
+    ok(cases.some(([, , w]) => w !== 0) && cases.some(([, , w]) => w === 0),
+      'the table exercises BOTH arms — a comparator stuck on 0 would fail it');
+  }
+
+  // ── revealInMain: MISSING NODES ARE A NO-OP, NEVER A THROW ───────────
+  // It runs inside an async handler on a view that may already have been left.
+  {
+    fakeDom.reset({ top: 0, bottom: 800 }, 300);
+    ok(revealInMain('a-node-that-does-not-exist') === 0,
+      'revealInMain on a missing element moves nothing and does not throw');
+    ok(fakeDom.main.scrollTop === 300, '…and leaves the scroll position alone');
+    ok(revealInMain('') === 0, 'an empty id is refused the same way');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§45  THE LANE FOLD SURVIVES A REPAINT — a confirm inside a collapsed disclosure is no confirm');
+// ═════════════════════════════════════════════════════════════════════════
+// MEASURED IN A BROWSER on an isolated instance at 1280x900 with a synced
+// OpenRouter catalogue (193 chat-only models, so the fold renders). Every
+// "Test on my wiki" button lives inside that fold. Pressing one re-rendered
+// the section; the fold carried no `open` attribute and therefore snapped shut
+// around the row it had just been pressed in. Result: `#main.scrollHeight`
+// collapsed 15,471 -> 3,734, `scrollTop` was clamped 4,691 -> 2,880, and the
+// confirm panel's Start button sat 1,803px OUTSIDE the scrollable area — with
+// the row the user pressed no longer on screen either.
+//
+// renderModelOption's own docblock already describes this failure and forces
+// the ROW open for exactly this reason. The protection simply stopped one level
+// short of the fold wrapping it.
+{
+  const prov = 'openrouter';
+  // Enough chat-only models to render the fold at all.
+  const chatModels = [];
+  for (let i = 0; i < CHAT_LANE_COLLAPSE_AT + 3; i++) {
+    chatModels.push({
+      id: 'vendor/chat-' + i, label: 'Chat ' + i, suitability: 'chat-only',
+      jsonRaw: null, maxOutput: 8192, input: 0.1, output: 0.4,
+    });
+  }
+  const buildModel = {
+    id: 'vendor/build-1', label: 'Build 1', suitability: 'general',
+    jsonRaw: true, maxOutput: 65536, input: 0.2, output: 0.8,
+  };
+  const list = [buildModel, ...chatModels];
+  const ctxFor = (over) => Object.assign({
+    provider: prov, selectedId: '', busyId: '', pickDisabled: false, crossBusy: false,
+    quals: Object.create(null), qualify: null, minRuns: 9, readOnlyList: true,
+    inUseId: '',
+  }, over || {});
+
+  const foldTag = (html) => {
+    const m = /<details class="model-lane-fold"[^>]*>/.exec(html);
+    return m ? m[0] : '';
+  };
+
+  // ── CLOSED BY DEFAULT, and it renders at all ─────────────────────────
+  stubState.modelLaneOpen = {};
+  stubState.qualify = null;
+  const closed = renderModelLanes(list, buildModel.id, ctxFor());
+  ok(foldTag(closed) !== '', 'the "Chat only" lane fold renders above the collapse threshold');
+  ok(!/ open/.test(foldTag(closed)), 'and is CLOSED by default — nothing has asked for it');
+  okContains(foldTag(closed), 'data-model-lane="' + prov + '"',
+    'it carries the hook the toggle listener records state through, keyed by provider');
+
+  // ── WHAT THE USER OPENED SURVIVES THE NEXT REPAINT ───────────────────
+  stubState.modelLaneOpen = { [prov]: true };
+  const reopened = renderModelLanes(list, buildModel.id, ctxFor());
+  ok(/ open/.test(foldTag(reopened)),
+    'a fold the user opened is still open after a repaint — this section repaints on a keystroke, on the sort, and on an ingest starting in another view');
+  // And it is keyed, not global: another provider's fold is unaffected.
+  const otherProv = renderModelLanes(list, buildModel.id, ctxFor({ provider: 'gemini' }));
+  ok(!/ open/.test(foldTag(otherProv)),
+    'the record is keyed by provider — opening one provider’s fold does not open another’s');
+
+  // ── AND IT IS FORCED OPEN FOR THE ROW BEING MEASURED ─────────────────
+  // The recorded arm is dropped on every mount (freshState), so a probe still
+  // in flight when the user leaves and returns would otherwise come back
+  // invisible. This is the arm that makes the button's own confirm reachable.
+  stubState.modelLaneOpen = {};
+  const measuring = renderModelLanes(list, buildModel.id,
+    ctxFor({ qualify: { modelId: chatModels[4].id, phase: 'confirm', runs: [], estimate: {} } }));
+  ok(/ open/.test(foldTag(measuring)),
+    'the fold is FORCED open while a model inside it is being measured — the confirm panel renders in there, and a click that renders into a collapsed disclosure is a click that appears to do nothing');
+  okContains(measuring, 'data-model-row="' + chatModels[4].id + '"',
+    '…and the row itself is present inside it');
+
+  // NEGATIVE CONTROL: qualifying a BUILD-lane model, which is not in the fold,
+  // must NOT force it open — otherwise the forced arm is "always open" wearing
+  // a condition.
+  stubState.modelLaneOpen = {};
+  const buildMeasuring = renderModelLanes(list, buildModel.id,
+    ctxFor({ qualify: { modelId: buildModel.id, phase: 'confirm', runs: [], estimate: {} } }));
+  ok(!/ open/.test(foldTag(buildMeasuring)),
+    'CONTROL: measuring a model OUTSIDE the fold leaves it closed — the forced arm is conditional, not a constant');
+
+  // ── THE CONFIRM PANEL IS ADDRESSABLE, so it can be scrolled to ────────
+  {
+    const panel = renderQualifyPanel({
+      modelId: chatModels[4].id, phase: 'confirm',
+      estimate: { runs: 9, domain: 'business', promptChars: 78481,
+        time: { fastestSeconds: 480, slowestSeconds: 3420, note: 'measured' },
+        cost: { kind: 'priced', usd: 0.31, note: 'at the published price' } },
+    }, 9);
+    okContains(panel, 'id="' + QUALIFY_CONFIRM_ID + '"',
+      'the confirm panel carries the id revealInMain scrolls to — a Start button off-screen is the same defect as an off-screen refusal, on a control that can start a run of tens of minutes');
+    okContains(panel, '78,481',
+      'and its prompt size is thousands-separated, like the "max output" figure two lines above it');
+    ok(!panel.includes('78481'),
+      '…with the raw unseparated figure gone');
+  }
+
+  // ── THE CALL SITE, not just the function ─────────────────────────────
+  // Root cause 3 (test-helpers/source-scan.js): a function can be extracted,
+  // executed and fully asserted while having ZERO callers. `revealPickRefusal`
+  // is driven behaviourally in §44 (the fake DOM's scrollTop moves), but the
+  // qualify confirm's reveal has no such seam here, so its call site is scanned
+  // — SCOPED to the one function and over COMMENT-STRIPPED source, so a `//`
+  // and a matching line in a different handler both fail to satisfy it.
+  {
+    const stripped = stripComments(settings);
+    ok(functionSource(stripped, 'onQualifyEstimate') !== null,
+      'onQualifyEstimate exists (a scan over a missing function would pass vacuously)');
+    ok(callSiteCount(settings, 'revealInMain', { within: 'onQualifyEstimate' }) >= 1,
+      'onQualifyEstimate REVEALS the confirm panel it just rendered — without it a panel opened from a row near the bottom edge leaves Start off-screen');
+    okContains(functionSource(stripped, 'onQualifyEstimate'), 'QUALIFY_CONFIRM_ID',
+      '…addressing it by the shared id, not a literal that could drift from the markup');
+    // CONTROL: the scoping is real — the same scan in a handler that does NOT
+    // reveal returns 0, so the assertion above is not a file-wide grep.
+    ok(callSiteCount(settings, 'revealInMain', { within: 'onQualifyStop' }) === 0,
+      'CONTROL: the scan is function-scoped — an unrelated handler shows 0, so a stray call elsewhere could not have satisfied it');
+    // And the shell function is actually IMPORTED. An extracted-and-executed
+    // copy in this suite proves nothing about whether the module can reach it.
+    ok(/import \{[\s\S]*?\brevealInMain\b[\s\S]*?\} from '\.\.\/app\.js'/.test(stripped),
+      'settings.js imports revealInMain from the shell — views reach `.main` only through app.js (views/README.md rule 4)');
+    ok(/export function revealInMain\b/.test(stripComments(appJs)),
+      '…and app.js exports it');
+  }
+
+  stubState.modelLaneOpen = {};
+  stubState.qualify = null;
 }
 
 console.log('\n────────────────────────────────────────────────────────────');

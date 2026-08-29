@@ -141,7 +141,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 // 0 because those phases report nothing while they run. Planning is the
 // one v3.0.17 was reported as "hung" on.
 import {
-  progressRingHtml, INGEST_STAGES, mapIngestPctToStage,
+  progressRingHtml, INGEST_STAGES, mapIngestPctToStage, ringAria,
 } from '../shared/progress-ring.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
@@ -195,6 +195,13 @@ let myMountToken = 0;
 // Delay-gated loading indicator for this view's entry load. Built in
 // onEnter, cancelled in the teardown. See shared/loading-gate.js.
 let loadGate = null;
+
+// Re-entrancy guard for refreshDomainStats. Module-scoped rather than on
+// `state`, which onEnter replaces wholesale per mount: an in-flight refresh
+// outlives that replacement, and a flag on the dead object would leave the new
+// mount thinking nothing is running while a fetch is still landing. Cleared in
+// a `finally`, so a thrown parse cannot wedge it true for the process lifetime.
+let refreshingDomainStats = false;
 
 // Closure state for the currently-running ingest's elapsed-time clock
 // (v3.0.17 in the shipping app — ticks every second, resets only on a
@@ -298,6 +305,141 @@ registerView('ingest', {
   },
 });
 
+/**
+ * Fetch + parse the destination list. ONE request shape, ONE parse, shared by
+ * the initial load and by every revalidation.
+ *
+ * Factored out for the reason views/memory.js records for its own `fetchIndex`:
+ * a revalidation that builds its own request is a second copy of the parse, and
+ * two copies of a parse drift. Returns a plain result — `{ list }` or
+ * `{ error }` — and writes NOTHING to `state`, so each caller decides what a
+ * failure means for it. That difference is the whole point: on the initial load
+ * an error IS the answer and must be shown; on a revalidation it is not, and
+ * the right response is to keep what is already on screen.
+ *
+ * pageCount and lastIngestDate come from the SAME response
+ * (GET /api/domains/stats returns them per domain — see getDomainStats in
+ * src/brain/files.js). Both are optional on the wire as far as this view is
+ * concerned — a missing value renders as "unknown", never as a fabricated
+ * 0/date.
+ */
+async function fetchDomainStats() {
+  try {
+    const res = await fetch('/api/domains/stats');
+    const data = await res.json();
+    const readonly = new Set(data.readonlyDomains || []);
+    return {
+      list: (data.domains || [])
+        .filter((d) => d && d.slug && !readonly.has(d.slug))
+        .map((d) => ({
+          slug: d.slug,
+          displayName: d.displayName || d.slug,
+          pageCount: Number.isFinite(d.pageCount) ? d.pageCount : null,
+          lastIngestDate: typeof d.lastIngestDate === 'string' && d.lastIngestDate ? d.lastIngestDate : null,
+        })),
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+/**
+ * The rendered identity of everything a destination-stats revalidation can
+ * change. Compared before/after so a refresh that found nothing new costs no
+ * render at all.
+ *
+ * ── WHY A SIGNATURE AND NOT JUST "RENDER AGAIN" ──────────────────────────
+ * `render()` replaces BOTH panes wholesale and re-binds every listener, so an
+ * unconditional re-render on every revalidation would drop the file the user
+ * has staged mid-interaction out from under an open picker, and churn focus.
+ * views/memory.js hit exactly this and its `screenSignature` is the pattern
+ * copied here.
+ *
+ * ── IT IS BUILT FROM RENDERED TEXT, NOT RAW FIELDS ───────────────────────
+ * `formatDestinationMeta(d)` is the string the row actually shows, so anything
+ * that changes the row changes the signature and anything that does not, does
+ * not. Comparing raw `pageCount` would be equivalent today and would silently
+ * stop covering the row the moment the formatter learns to round or bucket.
+ *
+ * ── THE RECORDED FAILURE THIS AVOIDS ─────────────────────────────────────
+ * memory.js: "OMITTING THIS WAS HALF THE BUG… A no-op guard that cannot see a
+ * pane is not a guard for that pane." Every pane a stats revalidation can
+ * change must appear here — that is the sidebar's destination rows and nothing
+ * else, because `refreshDomainStats` writes only `state.domains`.
+ */
+function destinationsSignature() {
+  return JSON.stringify(
+    (state.domains || []).map((d) => [d.slug, d.displayName, formatDestinationMeta(d)])
+  );
+}
+
+/**
+ * Re-ask for the destination stats and repaint ONLY if they moved.
+ *
+ * ── THE DEFECT, MEASURED ────────────────────────────────────────────────
+ * The sidebar read "Business · 59 pages" while both disk and
+ * /api/domains/stats said 96. `loadDomains` had exactly ONE call site — inside
+ * `onEnter` — so `state.domains` was written once per mount and never again.
+ * An ingest that wrote 37 pages could not move the number sitting beside the
+ * button that started it. Navigating away and back fixed it, which is the tell
+ * for a mount-only load.
+ *
+ * ── A CORRECTION TO THE BRIEF, WORTH RECORDING ──────────────────────────
+ * This was reported as "the BATCH path refreshes and the single-file path does
+ * not". Reading the code, that is not so: NEITHER path refreshed. Neither
+ * `applyQueueJobSnapshot` nor `attachQueueStream` nor `dismissQueuePanel` ever
+ * touched `state.domains`. The batch panel merely LOOKS correct because its own
+ * summary is rendered from the job snapshot off the wire, so the main column is
+ * fresh while the sidebar beside it is just as stale as after a single file.
+ * Both completion paths are wired below; fixing only the reported one would
+ * have left the identical bug live one panel away.
+ *
+ * ── WHY THIS IS NOT `loadDomains` CALLED AGAIN ──────────────────────────
+ * `loadDomains` unconditionally does `state.domain = list[0].slug`. Re-running
+ * it to refresh counts would SNAP THE USER'S CHOSEN DESTINATION BACK TO THE
+ * FIRST DOMAIN — and silently, right as they are about to write to it. It would
+ * also make it a fifth writer of `state.domain`, a set
+ * scripts/test-next-ingest-view.js §2 pins deliberately. This function writes
+ * `state.domains` and nothing else.
+ *
+ * ── FAILURE IS A NO-OP, NOT A BLANK ─────────────────────────────────────
+ * `loadDomains`' catch clears the list and shows an error, which is right when
+ * there is nothing on screen yet. Here there IS something on screen and it was
+ * true a moment ago, so a failed refresh keeps it and tries again at the next
+ * user action. Blanking a populated sidebar because one poll-adjacent fetch
+ * failed would be a worse bug than the staleness.
+ *
+ * ── NOT A POLL, DELIBERATELY ────────────────────────────────────────────
+ * Every trigger rides a moment the user has already caused: an ingest they ran
+ * finishing, or a destination row they clicked (whose click re-renders anyway,
+ * so the fetch is free at the interaction level). memory.js needs a timer
+ * because something ELSE — an agent over MCP — writes while you watch. Nothing
+ * writes a domain's page count except this app, so there is nothing to poll for
+ * and a timer here would be cost with no reachable benefit.
+ */
+async function refreshDomainStats(token) {
+  if (refreshingDomainStats) return;      // cleared in `finally`
+  refreshingDomainStats = true;
+  try {
+    const got = await fetchDomainStats();
+    if (!isCurrentMount(token)) return;
+    if (got.error) return;                // keep what we have — see above
+    const before = destinationsSignature();
+    state.domains = got.list;
+    // A destination that has since disappeared must not stay selected. This is
+    // NOT the `loadDomains` snap-to-first: it only fires when the current
+    // selection is genuinely gone from the server's own list.
+    if (state.domain && !got.list.some((d) => d.slug === state.domain)) {
+      state.domain = got.list.length ? got.list[0].slug : null;
+      render(token);
+      return;
+    }
+    if (destinationsSignature() !== before) render(token);
+  } finally {
+    refreshingDomainStats = false;
+  }
+}
+
 async function loadDomains(token) {
   // Capture the gate for THIS call. `loadGate` is module-scoped and the
   // next mount replaces it, so settling the module variable from a stale
@@ -306,26 +448,10 @@ async function loadDomains(token) {
   // the stale path becomes a no-op instead.
   const gate = loadGate;
   try {
-    const res = await fetch('/api/domains/stats');
-    const data = await res.json();
+    const got = await fetchDomainStats();
     if (!isCurrentMount(token)) return;
-    const readonly = new Set(data.readonlyDomains || []);
-    // pageCount and lastIngestDate come from the SAME response this call
-    // already makes (GET /api/domains/stats returns them per domain — see
-    // getDomainStats in src/brain/files.js). They used to be parsed off the
-    // wire and dropped on the floor here, which is this repo's named
-    // dead-data shape: the producer does honest work and the consumer
-    // throws the answer away. The sidebar's destination list renders them.
-    // Both are optional on the wire as far as this view is concerned — a
-    // missing value renders as "unknown", never as a fabricated 0/date.
-    const list = (data.domains || [])
-      .filter((d) => d && d.slug && !readonly.has(d.slug))
-      .map((d) => ({
-        slug: d.slug,
-        displayName: d.displayName || d.slug,
-        pageCount: Number.isFinite(d.pageCount) ? d.pageCount : null,
-        lastIngestDate: typeof d.lastIngestDate === 'string' && d.lastIngestDate ? d.lastIngestDate : null,
-      }));
+    if (got.error) throw new Error(got.error);
+    const list = got.list;
     state.domains = list;
     state.domain = list.length ? list[0].slug : null;
     state.domainsError = null;
@@ -487,7 +613,18 @@ function renderSidebar(token) {
     pickBtnEl.addEventListener('click', () => document.getElementById('ing-file-input')?.click());
   }
   document.querySelectorAll('.ing-dest-row[data-dest-slug]').forEach((btn) => {
-    btn.addEventListener('click', () => selectDomain(btn.dataset.destSlug));
+    btn.addEventListener('click', () => {
+      selectDomain(btn.dataset.destSlug);
+      // Revalidate on the action the user has already taken — views/memory.js's
+      // `revalidateIndex` pattern. Picking a destination re-renders this pane
+      // anyway, so the refresh costs the user nothing they can perceive, and it
+      // is the moment they are most likely to be reading the page count they
+      // are about to write into. Fired for EVERY click, including a re-click on
+      // the already-selected row, because `selectDomain` early-returns on that
+      // one and a user clicking the row again is plainly asking to see it
+      // afresh. Never awaited: a click must not wait on the network.
+      refreshDomainStats(myMountToken).catch(() => {});
+    });
   });
 }
 
@@ -658,12 +795,56 @@ function renderProgress() {
   // whole point of the component and must not be "improved".
   const { stage, stageProgress } = mapIngestPctToStage(pct);
   const stageOrdinal = Math.min(stage + 1, INGEST_STAGES.length);
+
+  // ── ONE QUANTITY, ONE NUMBER — THE THREE-FIGURE DEFECT ──────────────────
+  // MEASURED: at one instant, on one single-file ingest, this block put THREE
+  // disagreeing figures on screen together — a centre counter reading "2/5",
+  // a ring reporting aria-valuenow=40, and this sublabel reading
+  // "stage 3 of 5 · 15%". Sampled twice, 150 ms apart; not a race — the render
+  // is a pure function of `state.progress.pct` and all three were derived from
+  // the same 15. They disagreed because they were expressed on THREE DIFFERENT
+  // SCALES:
+  //
+  //   "2/5"          completed stages           (ringCenterText)
+  //   40             stage-space, (stage+frac)/n (ringAria, and the ring FILL)
+  //   "stage 3 of 5" the IN-FLIGHT stage        (stage + 1, here)
+  //   "15%"          the server's RAW pct        (here, unmapped)
+  //
+  // The last is the root cause. `mapIngestPctToStage` bands the pct axis
+  // NON-UNIFORMLY (>=90 -> 4, >=20 -> 3, >=10 -> 2, >=8 -> 1) onto five EQUAL
+  // ring segments, so raw pct and stage-space can only ever coincide at 0 and
+  // 100. Printing the raw pct beside a ring drawn in stage-space was showing
+  // two incompatible axes as if they were one measurement.
+  //
+  // THE FIX IS A SINGLE DERIVATION, NOT A RECONCILIATION. `stage` and
+  // `stageProgress` are the one source of truth; the percentage is now taken
+  // from `ringAria` — the SAME function `progressRingHtml` calls to stamp
+  // `aria-valuenow`, given the same three fields — so the number a sighted user
+  // reads and the number a screen reader announces are one computation, not two
+  // that happen to agree. Recomputing `(stage+frac)/n*100` inline here would
+  // have been a fourth copy of the arithmetic and is exactly how this started.
+  //
+  // AND THE STAGE IS STATED ONCE. The ring's centre glyph is suppressed
+  // (`center: 'none'` below) because "2/5" is a THIRD framing of the same
+  // quantity, and an ambiguous one: `ringCenterText` prints the completed count
+  // while a stage sits at frac 0 but the in-flight count once frac > 0, so it
+  // means different things at different moments. The sublabel's ordinal is
+  // unambiguous (always the running stage, matching the phase name in the label
+  // beside it), so that is the one kept. The segments and the orbit still carry
+  // the whole visual; nothing about the ring's honesty changes.
+  //
+  // WHAT IS DELIBERATELY NOT DONE: the ring is NOT made to move more smoothly.
+  // v3.9.0's rule stands — a live stage reporting stageProgress 0 shows an EMPTY
+  // segment, and Planning (one LLM call, no sub-progress, the phase v3.0.17 was
+  // reported as hung on) is exactly that. The figures now agree because they
+  // share a derivation, not because motion was invented to make them line up.
+  const shownPct = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
   const sublabelHtml =
     (pct >= 100
       ? 'finished'
       : 'stage <span class="mono">' + stageOrdinal + '</span> of <span class="mono">' + INGEST_STAGES.length + '</span>') +
     ' · <span class="mono" id="ing-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
-    ' · <span class="mono">' + pct + '%</span>';
+    ' · <span class="mono">' + shownPct + '%</span>';
 
   return (
     '<div class="ing-progress">' +
@@ -672,6 +853,12 @@ function renderProgress() {
         stage,
         stageProgress,
         size: 48,
+        // The stage is stated ONCE, in the sublabel — see the block above.
+        // 'auto' would print a centre "2/5" here, a third framing of the same
+        // quantity on a scale that matches neither the sublabel's ordinal nor
+        // its percentage. `center: 'none'` is the component's own supported
+        // option (domains.js:1916, and the queue panel at :2108 below).
+        center: 'none',
         // waiting === a retry/backoff sub-event, which re-sends the SAME
         // pct — so the ring correctly does not advance, and amber says why.
         tone: pct >= 100 ? 'success' : (p.waiting ? 'attention' : 'accent'),
@@ -1238,6 +1425,15 @@ async function runIngest(token, overwrite) {
         unchangedExpanded: false,
       };
       render(token);
+      // The write that just landed is exactly what makes the sidebar's page
+      // count wrong — measured at 59 on screen against 96 on disk. Refresh it
+      // now, on the one event that guarantees it moved. Deliberately AFTER the
+      // result render, so the outcome panel paints immediately and the sidebar
+      // number settles behind it rather than the user waiting on a second
+      // round-trip to see what their ingest produced. Not awaited for the same
+      // reason; `refreshDomainStats` re-checks the mount token itself and
+      // repaints only if the numbers actually moved.
+      refreshDomainStats(token).catch(() => {});
     }
   } catch (err) {
     if (isCurrentMount(token)) {
@@ -1456,6 +1652,10 @@ function applyQueueBusyForStatus(nextStatus, domain) {
     if (release) release();
   }
   _queueLastStatus = nextStatus;
+  // Returned so the caller can act on the busy->terminal edge. This is the
+  // one place in the file that already knows a batch has STOPPED writing,
+  // and it fires exactly once per transition rather than on every snapshot.
+  return decision;
 }
 
 // THE single chokepoint every job snapshot flows through. Updates the
@@ -1469,7 +1669,7 @@ function applyQueueJobSnapshot(job, token) {
   if (!job) return;
   queueJobId = job.jobId || queueJobId;
   const domain = job.domain || state.domain;
-  applyQueueBusyForStatus(job.status, domain);
+  const busyDecision = applyQueueBusyForStatus(job.status, domain);
   // HIGH-2 fix: kick the SHELL's own active-job watcher (app.js, near the
   // write gate) so the gate stays correct from server truth even after
   // THIS view's own handle (above) is released by a later teardown — see
@@ -1486,6 +1686,14 @@ function applyQueueJobSnapshot(job, token) {
     // actually in this mount's own domains list.
     if (job.domain && state.domains.some((d) => d.slug === job.domain)) state.domain = job.domain;
     render(token);
+    // A batch that has just STOPPED writing moved the same page counts a
+    // single-file ingest does. Reported as "only the single-file path is
+    // stale"; reading the code, NEITHER path refreshed — the batch panel only
+    // looks right because its own summary comes off the job snapshot, while
+    // the sidebar beside it is equally stale. Hooked to the busy->terminal
+    // EDGE, not to the snapshot, so it fires once per batch instead of on
+    // every progress frame.
+    if (busyDecision === 'exit') refreshDomainStats(token).catch(() => {});
   }
   // Structural guarantee, ported from app.js's own comment: a snapshot can
   // report 'running' from a source that never attaches a stream in THIS

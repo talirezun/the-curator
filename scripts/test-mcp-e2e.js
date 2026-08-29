@@ -513,6 +513,47 @@ ok(util.isValidSlug('claude-sonnet-3.5') === true && util.isValidSlug('a..b') ==
    && util.isValidSlug('x.') === false,
   'every claim the new refusal makes is true of isValidSlug (dots legal; "..", spaces, leading/trailing dot refused)');
 
+// ── §9a2  The mirror refusal must name a screen that EXISTS ────────────────
+// The refusal told the caller to run "Push contributions" from the **Sync
+// tab**. Push moved to the Shared Brain view at the v3.9.0 cutover, and
+// views/sync.js now says so itself: "Shared Brain pushes are managed in
+// Shared Brain. This tab only reports them." v3.17.2 fixed this exact phrase
+// at eight sites in the skills; the copy in mcp/util.js survived.
+//
+// This string is MODEL-READ, so a stale location does not merely misinform a
+// reader — it routes an agent, and through it the user, to a screen that
+// cannot do the thing, on the one path where the user's contribution is
+// otherwise silently going nowhere.
+//
+// THE DURABLE HALF is the last assertion: the location the refusal names is
+// checked against the SHIPPING FRONTEND's own rail labels, so if the view is
+// renamed or moved again this goes red instead of rotting. Pinning the word
+// alone would only have restated today's answer.
+const mirrorRefusal = rawText(await callTool('compile_to_wiki', {
+  domain: MIRROR, title: 'E2E mirror probe', summary_content: '# probe\n\nbody\n',
+}));
+ok(/read-only Shared Brain mirror/i.test(mirrorRefusal),
+  'the mirror refusal still fires (precondition — otherwise the wording checks below are vacuous)');
+ok(!/Sync tab/i.test(mirrorRefusal),
+  'the mirror refusal no longer sends the caller to the Sync tab, which has not owned Push since v3.9.0');
+ok(/Push contributions/.test(mirrorRefusal),
+  'it still names the real button label, which did NOT change — only its location did');
+const railLabels = Object.values(
+  JSON.parse('[' + (/const VIEW_META = \{([\s\S]*?)\n\};/.exec(
+    readFileSync(path.join(REPO_ROOT, 'src/public/next/app.js'), 'utf8'))?.[1] || '')
+    .split('\n').map((l) => /label:\s*'([^']+)'/.exec(l)?.[1]).filter(Boolean)
+    .map((x) => JSON.stringify(x)).join(',') + ']'),
+).map(String);
+ok(railLabels.length >= 5,
+  `precondition: the shipping rail labels were actually parsed (${JSON.stringify(railLabels)})`);
+ok(railLabels.includes('Shared Brain'),
+  'the shipping frontend really does have a "Shared Brain" rail item');
+ok(!railLabels.includes('Health'),
+  'and no "Health" rail item — Health lives inside Domains, which is why "Health tab" was stale in mcp/tools/*.js too');
+const namedView = railLabels.find((l) => new RegExp(`from the ${l} view`).test(mirrorRefusal));
+ok(Boolean(namedView),
+  `the refusal points at a view that EXISTS in the shipping rail (named: ${JSON.stringify(namedView ?? null)})`);
+
 // ── §9b  fixed:0 must distinguish "refused" from "already resolved" ─────────
 const invented = await callTool('fix_wiki_issue', {
   domain: FIX, type: 'brokenLinks',

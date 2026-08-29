@@ -141,7 +141,10 @@ console.log('\n§ 0  Positive control — the extractor reaches its targets');
 
 const NEEDED = ['formatDestinationMeta', 'isFilePickerAvailable', 'selectDomain', 'renderSidebar', 'renderDropZoneHtml', 'loadDomains',
   // The ONE builder both domain pickers render from (see §9).
-  'domainListboxCfg'];
+  'domainListboxCfg',
+  // The ONE fetch+parse both the initial load and every revalidation use, and
+  // the revalidation itself (§7/§8/§12).
+  'fetchDomainStats', 'refreshDomainStats'];
 const bodies = {};
 for (const name of NEEDED) {
   const body = extractFunction(js, name);
@@ -191,12 +194,36 @@ ok(!/last ingest/i.test(meta({ pageCount: 4, lastIngestDate: '2026-05-01' })),
 // ── §2 — state.domain has exactly ONE writer ────────────────────────────
 console.log('\n§ 2  Two destination controls, ONE writer (the anti-drift invariant)');
 
+// ── THE SCAN RUNS OVER CODE, NOT PROSE ──────────────────────────────────
+// MEASURED: this scan used to run over the RAW file, so a DOCBLOCK that
+// merely quotes `state.domain = list[0].slug` while explaining why a
+// refresh path must NOT do that registered as a rogue writer at module
+// scope. Root cause 1 from scripts/test-helpers/source-scan.js, arriving
+// through the other door: not a comment SATISFYING a scan, a comment
+// POLLUTING one. It fails loudly here, but the same blindness would let a
+// commented-out assignment mask a real one in the attribution, so the scan
+// is repointed at code. `jsCode` is asserted sane below before use.
+const jsCode = (() => {
+  const stripped = js
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+  // Tripwire: over-stripping would silently shrink the population this scan
+  // classifies, and an empty population passes every filter below.
+  for (const needle of ['function selectDomain(slug)', 'function loadDomains(token)']) {
+    if (!stripped.includes(needle)) throw new Error(`comment-strip over-reached: "${needle}" is gone`);
+  }
+  return stripped;
+})();
 const assignRe = /state\.domain\s*=/g;
 const writers = [];
 let am;
-while ((am = assignRe.exec(js)) !== null) {
-  writers.push(enclosingFunctionName(js, am.index) || '(module scope / unknown)');
+while ((am = assignRe.exec(jsCode)) !== null) {
+  writers.push(enclosingFunctionName(jsCode, am.index) || '(module scope / unknown)');
 }
+// CONTROL: the strip did not simply delete the thing being counted.
+ok(writers.length >= 4,
+  `§2 CONTROL — the comment-stripped source still contains ${writers.length} real state.domain writes, so this scan is classifying a real population rather than an empty one`);
 ok(writers.length > 0, 'found at least one state.domain assignment to classify');
 // The allow-list, and why each entry is on it:
 //   selectDomain            — the USER's choice; the only writer the two
@@ -211,8 +238,21 @@ ok(writers.length > 0, 'found at least one state.domain assignment to classify')
 // is a SECOND user-facing writer and is exactly what this assertion exists
 // to catch. Widening this list is a decision, not a fix; record the reason
 // here the way these four are recorded.
+//   refreshDomainStats      — NOT a user-facing selection. It writes
+//                             state.domain in exactly one branch: the
+//                             currently-selected destination has DISAPPEARED
+//                             from the server's own list, so leaving it
+//                             selected would point the Ingest button at a
+//                             domain that no longer exists. It deliberately
+//                             does NOT do what loadDomains does (snap to
+//                             list[0] on every load) — doing that on a refresh
+//                             would silently move the user's chosen
+//                             destination out from under them right before
+//                             they write to it, which is why refreshing could
+//                             not simply re-call loadDomains.
 const ALLOWED_WRITERS = new Set([
   'selectDomain', 'freshState', 'loadDomains', 'applyQueueJobSnapshot', 'checkActiveQueueJob',
+  'refreshDomainStats',
 ]);
 const rogue = writers.filter((w) => !ALLOWED_WRITERS.has(w));
 ok(rogue.length === 0,
@@ -318,15 +358,26 @@ ok(/rowsLocked \? ' disabled' : ''/.test(bodies.renderSidebar),
 // ── §7 — the read-only mirror exclusion survives ────────────────────────
 console.log('\n§ 7  Read-only Shared Brain mirrors stay out of the destination list');
 
-ok(/readonlyDomains/.test(bodies.loadDomains) && /!readonly\.has\(d\.slug\)/.test(bodies.loadDomains),
-  'loadDomains still filters readonlyDomains out — one filter feeds BOTH the ' +
-  '<select> and the new sidebar list, so a mirror cannot appear in either');
+// The filter MOVED into fetchDomainStats when the revalidation path landed —
+// it is not gone. That is a strengthening, not a loosening: it used to live in
+// the one function that loaded destinations, and now lives in the one function
+// that FETCHES them, which both the initial load and every revalidation call.
+// So the assertion follows it, and gains the property that actually protects
+// the invariant: neither caller may grow a second parse.
+ok(/readonlyDomains/.test(bodies.fetchDomainStats) && /!readonly\.has\(d\.slug\)/.test(bodies.fetchDomainStats),
+  '§7 fetchDomainStats filters readonlyDomains out — ONE filter feeds the <select>, the sidebar list, and every revalidation, so a mirror cannot appear in any of them');
+for (const caller of ['loadDomains', 'refreshDomainStats']) {
+  ok(/fetchDomainStats\(/.test(bodies[caller]),
+    `§7 ${caller} goes through fetchDomainStats rather than issuing its own request — a second copy of the parse is how the readonly filter would come back for one path and not the other`);
+  ok(!/\/api\/domains\/stats/.test(bodies[caller]),
+    `§7 …and ${caller} does NOT build that request itself`);
+}
 
 // ── §8 — the stats fields reach a consumer (the dead-data guard) ────────
 console.log('\n§ 8  pageCount / lastIngestDate are parsed AND consumed');
 
-ok(/pageCount:/.test(bodies.loadDomains) && /lastIngestDate:/.test(bodies.loadDomains),
-  'loadDomains keeps pageCount and lastIngestDate off the wire');
+ok(/pageCount:/.test(bodies.fetchDomainStats) && /lastIngestDate:/.test(bodies.fetchDomainStats),
+  '§8 fetchDomainStats keeps pageCount and lastIngestDate off the wire (moved here with the fetch — see §7)');
 ok(/formatDestinationMeta\(/.test(bodies.renderSidebar),
   'renderSidebar CONSUMES them — this repo\'s recurring defect is a producer ' +
   'doing honest work and the layer above throwing the answer away');
@@ -424,6 +475,84 @@ ok(!/animation:/.test(css),
   'no `animation` anywhere in this stylesheet — motion here is a state change ' +
   'via `transition`, which inherits the tokens\' reduced-motion behaviour ' +
   'instead of needing its own escape hatch (see test-next-reduced-motion.js)');
+
+// ── §12 — the destination sidebar revalidates ───────────────────────────
+console.log('\n§ 12  The destination sidebar is not frozen at mount time');
+
+// THE DEFECT, MEASURED: the sidebar read "Business · 59 pages" while both disk
+// and GET /api/domains/stats said 96. `loadDomains` had exactly ONE call site,
+// in onEnter, so state.domains was written once per mount and never again — an
+// ingest could not move the number sitting beside the button that started it.
+//
+// A CORRECTION WORTH KEEPING: this was reported as "the batch path refreshes,
+// the single-file path does not". Reading the code, NEITHER did. The batch
+// panel only looks right because its own summary renders from the job snapshot
+// off the wire while the sidebar beside it is equally stale. Both paths are
+// asserted below; pinning only the reported one would have left the same bug
+// live one panel away.
+{
+  const runIngest = extractFunction(js, 'runIngest');
+  const applySnap = extractFunction(js, 'applyQueueJobSnapshot');
+  // The destination rows are bound in renderSidebar (it re-binds after its own
+  // isCurrentMount re-check), not in wireListeners.
+  const wire = extractFunction(js, 'renderSidebar');
+  ok(!!runIngest && !!applySnap && !!wire, '§12 sanity: the three trigger sites extracted');
+
+  // Code, not prose — §2's own lesson, applied here from the start.
+  const code = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  ok(/refreshDomainStats\(/.test(code(runIngest)),
+    '§12 the SINGLE-FILE completion path revalidates the destination stats — the reported defect');
+  ok(/busyDecision === 'exit'/.test(code(applySnap)) && /refreshDomainStats\(/.test(code(applySnap)),
+    '§12 the BATCH path revalidates too, on the busy->terminal EDGE so it fires once per batch rather than on every progress frame');
+  ok(/refreshDomainStats\(/.test(code(wire)),
+    '§12 a destination-row click revalidates — memory.js\'s revalidate-on-an-action-the-user-already-took pattern, riding a re-render that happens anyway');
+
+  const rds = bodies.refreshDomainStats;
+  // A refresh must not be able to blank a populated sidebar…
+  ok(/if \(got\.error\) return;/.test(code(rds)),
+    '§12 a FAILED refresh is a no-op that keeps what is on screen — unlike the initial load, where an error IS the answer. Blanking a correct sidebar because one fetch failed would be worse than the staleness');
+  // …and must not silently move the user's chosen destination.
+  ok(!/state\.domain = .*list\[0\]\.slug/.test(code(rds)) || /some\(\(d\) => d\.slug === state\.domain\)/.test(code(rds)),
+    '§12 it does NOT snap the selection to list[0] the way loadDomains does — only clears a destination the server no longer lists');
+  // The no-op guard, and the recorded reason it must see the pane it protects.
+  // MEASURED, by mutation, during this section's own verification: asserting
+  // merely that `destinationsSignature()` APPEARS in the body stayed GREEN when
+  // the comparison was deleted and `render(token)` made unconditional — the
+  // `const before = destinationsSignature()` line alone satisfied it. Root
+  // cause 3 from scripts/test-helpers/source-scan.js: a function executed but
+  // its DECIDING SITE never asserted. What has to be pinned is the COMPARISON
+  // gating the render, not the presence of the helper.
+  ok(/if \(destinationsSignature\(\) !== before\) render\(/.test(code(rds)),
+    '§12 the render is GATED on the signature changing — render() replaces both panes and re-binds every listener, so an unconditional repaint would churn a staged file and focus');
+  // ORDER, not presence. MEASURED by mutation: asserting only that the line
+  // EXISTS stayed green when it was moved BELOW `state.domains = got.list`,
+  // which makes the two signatures identical by construction — the guard then
+  // suppresses EVERY repaint and the sidebar is frozen again, i.e. the original
+  // defect restored behind a green suite. Offsets are compared instead.
+  {
+    const iBefore = code(rds).indexOf('const before = destinationsSignature();');
+    const iWrite = code(rds).indexOf('state.domains = got.list;');
+    ok(iBefore >= 0 && iWrite >= 0 && iBefore < iWrite,
+      `§12 …and that "before" is captured BEFORE state.domains is replaced (offsets ${iBefore} < ${iWrite}); taken after, the comparison is equal by construction and the guard suppresses every repaint — the staleness defect, restored`);
+  }
+  ok(/refreshingDomainStats/.test(code(rds)),
+    '§12 …and it is re-entrancy-guarded, so a click during an in-flight refresh cannot stack fetches');
+  ok(/formatDestinationMeta\(d\)/.test(code(extractFunction(js, 'destinationsSignature'))),
+    '§12 the signature is built from the RENDERED row text, so anything that changes a row changes it — memory.js: "a no-op guard that cannot see a pane is not a guard for that pane"');
+
+  // NOT A POLL — stated and enforced. memory.js needs a timer because an agent
+  // over MCP writes while you watch; nothing but this app writes a page count.
+  ok(!/setInterval\(|setTimeout\(/.test(code(rds)),
+    '§12 the revalidation is event-driven, not polled — every trigger rides a moment the user caused');
+
+  // CONTROL: these regexes can fail. Without this, a typo'd helper name would
+  // make every assertion above vacuous in the same direction.
+  ok(!/refreshDomainStats\(/.test(code(bodies.formatDestinationMeta)),
+    '§12 CONTROL — the refresh scan does NOT match an unrelated function, so the greens above are locating a real call rather than matching anything');
+  ok(/refreshDomainStats\(/.test(code(js)) && (code(js).match(/refreshDomainStats\(/g) || []).length >= 4,
+    `§12 CONTROL — ${(code(js).match(/refreshDomainStats\(/g) || []).length} real call/definition sites exist in code (definition + three triggers)`);
+}
 
 // ── Summary ─────────────────────────────────────────────────────────────
 console.log('\n' + '─'.repeat(60));

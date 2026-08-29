@@ -80,6 +80,120 @@ function providerDisplayName(provider) {
   }
 }
 
+/**
+ * ── PER-PROVIDER REMEDY LINKS ────────────────────────────────────────────────
+ *
+ * A transient-failure message has to tell the user where to look NEXT, and that
+ * destination is provider-specific. Before this table both the 429 and the 503
+ * message interpolated the provider NAME correctly and then hardcoded GOOGLE's
+ * remedy — so an OpenRouter user who hit a rate limit was told to "consider
+ * upgrading at ai.google.dev/pricing", and an Anthropic outage sent them to
+ * status.cloud.google.com.
+ *
+ * WHY IT READ AS FIXED FOR SO LONG: v3.0.4 made the provider NAME dynamic and
+ * left the figures and the links Google's. The sentence therefore named the
+ * right provider and the wrong vendor in one breath, which is far harder to
+ * notice than a message that is wrong throughout — and it survived every later
+ * pass because the obvious tell (a hardcoded "Gemini") was already gone.
+ * Fixing the name is not fixing the message. This table exists so the two
+ * halves cannot drift apart again.
+ *
+ * DELIBERATELY NO RATE-LIMIT FIGURES. The removed text asserted "~15
+ * requests/min and ~20-50 requests/day" for EVERY provider. Those are Google
+ * free-tier numbers, they move, and v3.15.0 records this project declining to
+ * print free-tier limits precisely because they could not be verified. An
+ * unverifiable number on an error screen is worse than none: it is the one
+ * thing a frustrated user will act on. We link the provider's own limits page,
+ * which is authoritative and stays current without us having to track it.
+ *
+ * UNKNOWN PROVIDER ⇒ NO LINK, never a default one. `null` here makes the
+ * message degrade to generic advice that is still correct ("check your
+ * provider's own status page"). Falling back to any one vendor is exactly the
+ * defect being fixed, so a future provider added to KNOWN_PROVIDERS without an
+ * entry here says less rather than something false.
+ *
+ * URLs verified 2026-08-29: each returned HTTP 200.
+ */
+const PROVIDER_REMEDIES = Object.freeze({
+  gemini: Object.freeze({
+    statusUrl: 'https://status.cloud.google.com',
+    limitsUrl: 'https://ai.google.dev/gemini-api/docs/rate-limits',
+  }),
+  anthropic: Object.freeze({
+    statusUrl: 'https://status.anthropic.com',
+    limitsUrl: 'https://docs.anthropic.com/en/api/rate-limits',
+  }),
+  openrouter: Object.freeze({
+    statusUrl: 'https://status.openrouter.ai',
+    limitsUrl: 'https://openrouter.ai/docs/api-reference/limits',
+  }),
+});
+
+/**
+ * Remedy links for a provider id, or null when we have none.
+ *
+ * Own-property lookup rather than a bare `PROVIDER_REMEDIES[provider]`: a bare
+ * index returns Object.prototype members for `__proto__` / `constructor` /
+ * `toString`, and this repo has shipped that exact bug twice (v3.0.9's
+ * prototype-key finding; v3.13.0, where a naive index returned a FUNCTION).
+ * A function reaching the template literal below would render
+ * "[object Function]" into the user's error message.
+ */
+function providerRemedies(provider) {
+  if (typeof provider !== 'string') return null;
+  if (!Object.hasOwn(PROVIDER_REMEDIES, provider)) return null;
+  return PROVIDER_REMEDIES[provider];
+}
+
+/**
+ * ── THE TWO TRANSIENT-FAILURE MESSAGES ───────────────────────────────────────
+ *
+ * Pure builders, extracted from `generateText` so a suite can execute them for
+ * every provider — including ones whose SDK has no injectable client — instead
+ * of proving their content with a source regex. A test that asserts a line of
+ * source exists proves nothing about what it renders (v3.0.17).
+ *
+ * LOAD-BEARING LITERALS, none of which may be reworded. Several classifiers
+ * read these finished messages as text:
+ *   - "(HTTP 429)" / "(HTTP 503)" — `ingest-queue.js` MESSAGE_PATTERNS, the
+ *     fallback used when a wrapped error has lost the structured tag. Losing
+ *     these stops a rate limit PAUSING the batch, so 30 files would fail one
+ *     by one against a provider that has said stop.
+ *   - "429" / "503" / "temporarily overloaded" — `is429`/`is503` here,
+ *     `isTransientLlmError` in sharedbrain.js (which uses them to keep a
+ *     provider blip off a page's permanent-skip strike counter), and
+ *     `hasTransientMarker` in scripts/ci-flake.js (which keeps a provider
+ *     outage from reddening the live CI gate).
+ * The remedy CLAUSES are free to change; the diagnosis clauses are not.
+ */
+function buildRateLimitMessage(providerName, providerId, delaySec) {
+  const remedies = providerRemedies(providerId);
+  const limitsAdvice = remedies
+    ? `${providerName}'s current limits for your account tier are documented at ${remedies.limitsUrl}.`
+    : `Check your provider's own rate-limit documentation for the limits that apply to your account.`;
+  return (
+    `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
+    `not an issue with The Curator. Limits differ by provider and by the tier your account is on, and a ` +
+    `bulk operation such as a large ingest can reach them even on a paid plan. ` +
+    `Please wait ${delaySec} seconds and try again. ${limitsAdvice} ` +
+    `You can also switch to a different provider in Settings.`
+  );
+}
+
+function buildServiceUnavailableMessage(providerName, providerId) {
+  const remedies = providerRemedies(providerId);
+  const statusAdvice = remedies
+    ? `check ${remedies.statusUrl}`
+    : `check your provider's own status page`;
+  return (
+    `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
+    `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
+    `problem with The Curator or your API key. The Curator already retried 4 times with backoff over ` +
+    `~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, ${statusAdvice} ` +
+    `or temporarily switch to a different provider in Settings.`
+  );
+}
+
 // DELIBERATELY UNCHANGED in the 2026-08-24 chain repair. Both ids were probed
 // live that day and both remain the CHEAPEST working model on their provider
 // (gemini-2.5-flash-lite $0.10/$0.40; claude-haiku-4-5 $1/$5 — every live
@@ -3522,9 +3636,15 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   // (e.g. no key configured), let the underlying call throw the original
   // "No LLM API key found" message — don't shadow it here.
   let providerName = 'AI provider';
+  // The provider ID, not the display name, keys the remedy table: the display
+  // name is prose ('Claude' for `anthropic`) and must never be a lookup key.
+  // Stays null when resolution fails, which degrades the messages below to
+  // generic advice rather than to some other vendor's links.
+  let providerId = null;
   try {
     const info = getProviderInfo(providerOverride, modelOverride);
     providerName = providerDisplayName(info.provider);
+    providerId = info.provider;
   } catch { /* surface real error from callLLM below */ }
 
   // Already cancelled before we even dispatch: never spend on a call the user
@@ -3563,24 +3683,13 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
           // a rate limit instead of failing just the one item. Message text
           // is UNCHANGED (existing tests assert on it); this only adds
           // properties.
-          const e = new Error(
-            `⚠ Rate limit hit on ${providerName} (HTTP 429). This is an upstream limit on your API account, ` +
-            `not an issue with The Curator. Free tiers cap at ~15 requests/min and ~20–50 requests/day; ` +
-            `paid plans have much higher limits but can still be reached during bulk operations. ` +
-            `Please wait ${delaySec} seconds and try again. If you are on the free tier, consider upgrading at https://ai.google.dev/pricing.`
-          );
+          const e = new Error(buildRateLimitMessage(providerName, providerId, delaySec));
           e.curatorTransient = 'rate_limit';
           e.curatorRetryAfterMs = parseRetryDelay(err);
           throw e;
         }
         if (unavailable) {
-          const e = new Error(
-            `⚠ ${providerName} infrastructure is temporarily overloaded (HTTP 503). This is a transient backend ` +
-            `issue on the provider's side — it affects ALL accounts equally (free and paid), and is NOT a ` +
-            `problem with The Curator or your API key. The Curator already retried 4 times with backoff over ` +
-            `~40 seconds. What to do: wait 2–3 minutes and try again; if the issue persists, check ` +
-            `https://status.cloud.google.com or temporarily switch to a different provider in Settings.`
-          );
+          const e = new Error(buildServiceUnavailableMessage(providerName, providerId));
           e.curatorTransient = 'service_unavailable';
           throw e;
         }
@@ -4415,6 +4524,13 @@ export const __testing = {
   // and `isDeterministicProviderError` is what stops a 39-second retry of a
   // failure that cannot succeed.
   looksLikeMovingAlias, isDeterministicProviderError,
+  // Transient-failure messaging. Exposed so a suite can EXECUTE the builders
+  // for every provider — Gemini's SDK has no injectable client, so the
+  // end-to-end path can only reach two of the three — and can drive
+  // `providerRemedies` with prototype keys directly.
+  PROVIDER_REMEDIES, providerRemedies,
+  buildRateLimitMessage, buildServiceUnavailableMessage,
+  is429, is503,
   // The private half of the model-resolution path, so a suite can assert the
   // build-lane refusal without having to reach it through a config write.
   applyModelOverride, defaultModelFor, storedSelection, resolveProviderDefault,

@@ -113,13 +113,59 @@ function setDocked(on) {
   } catch { /* no body / no classList — the panel still renders, unducked */ }
 }
 
-// While the panel is open the user is, by definition, mid-setup — so this
-// re-check is running against an install with zero or very few domains and
-// both endpoints are readdir-only local reads. It stops the moment the
-// panel closes AND the moment all three steps go done (see tick()), so it
-// is self-terminating rather than a background loop that runs forever.
-// Skipped entirely while the tab is hidden.
-const REFRESH_MS = 5000;
+// ── THE RE-CHECK, AND WHY IT USED TO RUN FOREVER ────────────────────────
+// The panel has to notice a step being completed in ANOTHER view of the same
+// SPA — the user clicks "Open Settings", pastes a key, and step 1 must tick
+// over without them coming back and clicking anything. There is no event to
+// listen to (views/settings.js owns that save and does not announce it), so
+// the panel re-checks.
+//
+// An earlier version of this comment said the re-check "is running against
+// an install with zero or very few domains", that "both endpoints are
+// readdir-only local reads", and that it "stops the moment the panel closes
+// AND the moment all three steps go done". All three were wrong, and the
+// first two were contradicted by this same file: the header records,
+// knowingly, that a developer whose only key lives in .env sees this panel —
+// on a FULLY POPULATED install, where hasKey can never go true, so the
+// checklist never completes and the loop never ends. The third was wrong
+// because the all-done stop lived inside `if (autoCloseOnComplete)`, and
+// Settings' "Show setup guide" passes that as FALSE. On a complete install
+// that panel cannot close itself, so its poll ran for the life of the page,
+// in every view, because the panel is appended to document.body and survives
+// navigate().
+//
+// And it was not readdir-only. GET /api/domains/stats read every CLAUDE.md
+// (twice, until this release) and every wiki/log.md IN FULL: 598 KB per poll
+// on the maintainer's own tree, twelve times a minute, forever — roughly
+// 420 MB an hour of filesystem reads per open tab, growing with the wiki.
+// That endpoint is now 16 KB a poll (src/brain/files.js, src/routes/
+// domains.js), but a cheaper leak is still a leak, so the loop itself is
+// fixed here too, following the shape views/memory.js established in
+// v3.17.3 for the same class of problem:
+//
+//   · a setTimeout CHAIN, not setInterval — a slow re-check must delay the
+//     next one, not stack a second fetch on top of it;
+//   · an ADAPTIVE delay derived from how long the last one actually took,
+//     so an install far larger than the one this was tuned against throttles
+//     itself instead of becoming a busy poll;
+//   · a HARD STOP once all three steps are done, whatever autoCloseOnComplete
+//     says — a finished checklist has nothing left to watch for, and keeping
+//     the panel VISIBLE (which that flag is really about) does not require
+//     keeping it BUSY;
+//   · nothing at all while the tab is hidden, plus a focus/visibilitychange
+//     revalidation so coming back is instant rather than up to one delay late;
+//   · a no-op guard, so a re-check that found nothing new does not rebuild
+//     the panel's DOM — which it did, every five seconds, destroying and
+//     restoring focus each time.
+//
+// POLL_BASE_MS is deliberately the SAME 5 s the old interval used. Setup
+// responsiveness is the entire point of this panel and lengthening the
+// interval would have traded the user's first five minutes for the leak;
+// the leak is fixed by the stop condition and the duty cycle, not by making
+// the first-run path slower.
+const POLL_BASE_MS = 5000;
+const POLL_DUTY = 20;          // spend at most 1/20th of the wall clock re-checking
+const POLL_MAX_MS = 300000;
 
 // ═════════════════════════════════════════════════════════════════════════
 // PURE LOGIC — no DOM, no fetch, no storage. Everything this panel DECIDES
@@ -285,6 +331,16 @@ let root = null;
 let steps = buildSteps(UNKNOWN_FACTS);
 let refreshTimer = null;
 let prevFocus = null;
+// How long the last re-check actually took, in ms. Feeds nextPollDelay().
+let lastRefreshMs = 0;
+// Guards against a manual re-check (go()) and a scheduled one overlapping.
+let refreshing = false;
+// Wake-on-focus listener, held so closePanel can remove it. A listener that
+// outlives the panel is the same leak as a timer that does.
+let wakeHandler = null;
+// The signature of what render() last painted, so a re-check that changed
+// nothing costs no DOM work — see screenSignature().
+let renderedSignature = null;
 
 // D-D applies to the panel that put ITSELF on screen. A panel the user
 // explicitly asked for from Settings must not vanish under them the moment
@@ -422,6 +478,12 @@ function openPanel(nextSteps, opts) {
     steps = nextSteps;
     render();
     if (focus) focusHeading();
+    // Re-arm if this re-open made the checklist incomplete again. Cheap and
+    // self-guarding: startRefresh() returns immediately when shouldKeepPolling()
+    // is false, so the ordinary "already complete, still complete" re-open
+    // starts nothing. Without it, a poll that correctly stopped on completion
+    // could never come back within the same panel session.
+    startRefresh(panelGen);
     return;
   }
   panelGen += 1;
@@ -437,13 +499,46 @@ function openPanel(nextSteps, opts) {
   // — someone who opened the app to type a message keeps their caret.
   if (focus) focusHeading();
 
-  startRefresh();
+  // REVALIDATE ON WAKE. The step this panel is most often waiting on is an
+  // API key, and the cheapest signal that one may have appeared is the user
+  // coming back: `focus` covers alt-tabbing from the provider's console after
+  // copying a key, `visibilitychange` covers a background tab being brought
+  // forward, which fires no focus event. Both cost nothing while the user is
+  // away — which is exactly when the thing being waited for happens.
+  //
+  // myGen is CAPTURED, not read from panelGen inside the handler: a listener
+  // that outlived its panel would otherwise hand a newer session's counter to
+  // isFresh() and be waved through. closePanel() removes it, so that cannot
+  // happen — capturing means it does not depend on remembering to.
+  const myGen = panelGen;
+  wakeHandler = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (!isFresh(myGen) || !shouldKeepPolling()) return;
+    refresh(myGen);
+  };
+  if (typeof window !== 'undefined') window.addEventListener('focus', wakeHandler);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wakeHandler);
+
+  startRefresh(myGen);
 }
 
 function closePanel() {
   if (!root) return;
   panelGen += 1; // every in-flight handler from this session is now stale
+  // TEARDOWN. Both of these outlive the panel if they are not undone here,
+  // and both keep FETCHING for something nobody can see: an armed timer for
+  // the life of the page, and a wake listener every time the window regains
+  // focus. The generation bump above makes their bodies no-ops, but a guard
+  // that merely makes work pointless is not the same as not doing it — the
+  // listener would still be attached to window for the life of the document.
   stopRefresh();
+  if (wakeHandler) {
+    if (typeof window !== 'undefined') window.removeEventListener('focus', wakeHandler);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wakeHandler);
+    wakeHandler = null;
+  }
+  renderedSignature = null;
+  lastRefreshMs = 0;
 
   // Do not strand focus on a node that is about to be removed (D-E). If the
   // user was inside the panel, hand focus back to whatever had it when the
@@ -514,6 +609,10 @@ function render() {
           'Settings → General → Show setup guide brings it back.</p>') +
     '</section>';
 
+  // Recorded HERE, next to the paint it describes, rather than at the call
+  // site: render() has several callers and a signature stamped by only some
+  // of them would let a stale value pass the no-op guard in refresh().
+  renderedSignature = screenSignature();
   bind();
 }
 
@@ -574,16 +673,74 @@ function goToDomainsCreate() {
 
 // ── Refresh loop ─────────────────────────────────────────────────────────
 
-function startRefresh() {
+// THE STOP CONDITION, in exactly one place so it cannot be half-applied the
+// way the old `if (autoCloseOnComplete && …)` one was. A closed panel and a
+// finished checklist both mean "there is nothing left to find out".
+//
+// Note what it is NOT gated on: autoCloseOnComplete. That flag decides
+// whether a completed panel VANISHES, which is a question about what the
+// user sees after asking for it from Settings. It has never had anything to
+// say about whether the app should keep hitting the disk, and reading it as
+// if it did is what made the leak permanent on exactly the path a user
+// reaches deliberately.
+function shouldKeepPolling() {
+  return !!root && !steps.every((s) => s && s.done === true);
+}
+
+/**
+ * How long to wait before the next re-check.
+ *
+ * Derived from the measured cost of the LAST one rather than fixed, so this
+ * cannot become a busy poll on an install far larger than the one it was
+ * tuned against — the case that actually bit here, where the panel is shown
+ * on a fully populated wiki because the only API key lives in .env.
+ */
+function nextPollDelay() {
+  return Math.min(POLL_MAX_MS, Math.max(POLL_BASE_MS, lastRefreshMs * POLL_DUTY));
+}
+
+/**
+ * A setTimeout CHAIN, re-armed only after the previous re-check has settled.
+ * setInterval would queue a second pair of GETs on top of a slow first pair;
+ * this structurally cannot.
+ *
+ * A hidden tab reschedules WITHOUT fetching — nobody is looking, and
+ * wakeHandler re-checks the moment they are.
+ *
+ * `myGen` is captured by the CALLER and threaded through (D-F), never
+ * re-read from the module variable inside the callback: a timer that
+ * outlived its session would otherwise compare the live counter against
+ * itself and be waved through.
+ */
+function startRefresh(myGen) {
   stopRefresh();
-  refreshTimer = setInterval(() => {
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-    refresh(panelGen);
-  }, REFRESH_MS);
+  if (!shouldKeepPolling()) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    if (!isFresh(myGen) || !shouldKeepPolling()) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      startRefresh(myGen);
+      return;
+    }
+    refresh(myGen).finally(() => {
+      if (isFresh(myGen)) startRefresh(myGen);
+    });
+  }, nextPollDelay());
 }
 
 function stopRefresh() {
-  if (refreshTimer != null) { clearInterval(refreshTimer); refreshTimer = null; }
+  if (refreshTimer != null) { clearTimeout(refreshTimer); refreshTimer = null; }
+}
+
+// What render() actually paints, reduced to a comparable string. Everything
+// visible is a pure function of the steps' ids and done-ness: the title, body
+// and action text all come from STEP_COPY keyed on exactly those two, the
+// progress line counts them, and the footer branches on all-done. So a
+// signature over (id, done) is not an approximation of the screen — it IS
+// the screen, and a re-check that leaves it unchanged can skip render()
+// entirely rather than tearing down the panel's DOM and putting focus back.
+function screenSignature() {
+  return steps.map((s) => (s && s.id) + ':' + (s && s.done === true)).join('|');
 }
 
 // D-F: myGen is captured by the CALLER, synchronously, and passed in as a
@@ -591,17 +748,41 @@ function stopRefresh() {
 // await and wrongly compare equal to a newer session.
 async function refresh(myGen) {
   if (!isFresh(myGen) || !root) return;
+  // One re-check at a time. go() fires a manual one on every step click while
+  // the scheduled chain is armed independently, so without this a click
+  // landing near a tick issues both pairs of GETs at once — on the endpoint
+  // this release is trying to stop hammering.
+  if (refreshing) return;
+  refreshing = true;
   let facts;
+  const startedAt = Date.now();
   try {
     facts = await loadFacts();
   } catch {
     return; // leave the panel showing whatever it already had
+  } finally {
+    refreshing = false;
   }
   if (!isFresh(myGen) || !root) return;
+  // Feeds nextPollDelay(). Recorded from the REAL request pair rather than
+  // estimated, so the backoff tracks the install this is actually running on.
+  lastRefreshMs = Date.now() - startedAt;
   steps = buildSteps(facts);
   // D-D: finishing setup dismisses the panel by itself — but only for a
   // panel that opened itself. See autoCloseOnComplete's own comment.
   if (autoCloseOnComplete && steps.every((s) => s.done)) { closePanel(); return; }
+  // A complete checklist the user asked to SEE still stays on screen (that is
+  // what autoCloseOnComplete is for) — but shouldKeepPolling() now reads
+  // false, so startRefresh() will not re-arm and the loop ends here. Falling
+  // through to render() is deliberate: the ticks must appear.
+
+  // NOTHING CHANGED -> DO NOTHING. render() replaces root.innerHTML wholesale,
+  // so an unconditional re-render every tick destroyed and rebuilt the panel
+  // forever, taking the user's focus with it and relying on the restore below
+  // to put it back. In the steady state — which is nearly always, because the
+  // panel is waiting for a change that has not happened yet — the correct
+  // amount of DOM work is none.
+  if (screenSignature() === renderedSignature) return;
 
   // PRESERVE FOCUS ACROSS THE RE-RENDER. render() replaces root.innerHTML, so
   // every node inside it is destroyed — including whichever one the user was

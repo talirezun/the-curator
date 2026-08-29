@@ -1645,6 +1645,72 @@ export function resetMainScroll() {
   if (host) host.scrollTop = 0;
 }
 
+/**
+ * How far `.main` must scroll for [elTop, elBottom] to be fully on screen —
+ * the pure decision behind revealInMain, split out so the truth table can be
+ * driven exhaustively with no DOM.
+ *
+ * ZERO WHEN IT IS ALREADY VISIBLE, and that arm is the important one: moving a
+ * page the reader did not ask to move is its own defect, so a message that is
+ * already on screen must not jolt the view.
+ *
+ * TWO NON-ZERO ARMS, and they are not symmetric.
+ *  · ABOVE the viewport, or TALLER than it — bring the TOP into view. Reading
+ *    starts at the first line, and an element scrolled to its last line is
+ *    unread even though `getBoundingClientRect` says it intersects.
+ *  · BELOW — the SMALLEST move that puts its bottom on screen, so whatever the
+ *    reader was looking at (on this screen, the control they just pressed)
+ *    stays visible above it wherever the geometry allows.
+ *
+ * `pad` keeps the element off the exact edge, where a sticky header or a
+ * rounded corner can clip the first line of text.
+ */
+export function mainRevealDelta(hostTop, hostBottom, elTop, elBottom, pad) {
+  const nums = [hostTop, hostBottom, elTop, elBottom];
+  if (!nums.every((n) => typeof n === 'number' && Number.isFinite(n))) return 0;
+  const p = (typeof pad === 'number' && Number.isFinite(pad)) ? pad : 0;
+  const viewport = hostBottom - hostTop;
+  const height = elBottom - elTop;
+  if (elTop >= hostTop + p && elBottom <= hostBottom - p) return 0;
+  if (elTop < hostTop + p || height > viewport - 2 * p) {
+    return Math.round(elTop - hostTop - p);
+  }
+  return Math.round(elBottom - hostBottom + p);
+}
+
+/**
+ * Scroll `.main` the minimum distance that makes `#<elementId>` visible.
+ *
+ * WHY THIS IS A SHELL FUNCTION. `.main` is the scroll container and
+ * views/README.md rule 4 says a view reaches the main column only through
+ * these helpers — the same reason preserveMainScroll lives here rather than in
+ * the view that first needed it.
+ *
+ * WHY IT EXISTS AT ALL. A refusal rendered off-screen is not a refusal. v3.9.0
+ * shipped one behind an overlay and the measured consequence was that the user
+ * read the unchanged button as "my click didn't register" and clicked again —
+ * on a write. Settings reproduced the same shape without an overlay: a build
+ * model chosen from a row below the fold rendered its 409 at the top of the
+ * block, measured 678px ABOVE the viewport, with nothing at the click site.
+ *
+ * Returns the applied delta (0 when nothing moved, or when either element is
+ * missing) so a caller can be tested on what it actually did.
+ */
+export function revealInMain(elementId, pad) {
+  if (typeof document === 'undefined') return 0;
+  const host = document.getElementById('main');
+  const el = typeof elementId === 'string' && elementId
+    ? document.getElementById(elementId) : null;
+  if (!host || !el || typeof el.getBoundingClientRect !== 'function' ||
+      typeof host.getBoundingClientRect !== 'function') return 0;
+  const h = host.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const delta = mainRevealDelta(h.top, h.bottom, r.top, r.bottom,
+    (typeof pad === 'number' && Number.isFinite(pad)) ? pad : 12);
+  if (delta !== 0) host.scrollTop += delta;
+  return delta;
+}
+
 export function eyebrow(text) {
   return '<div class="view-eyebrow cur-eyebrow">' + escapeHtml(text) + '</div>';
 }

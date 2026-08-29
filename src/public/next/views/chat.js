@@ -2758,6 +2758,20 @@ function messageUsageTokens(m) {
  * function agrees with it to the last bit across a matrix generated from the
  * real catalogue. Change either one alone and that goes red naming the case.
  *
+ * ⚠ THE MIRROR IS CURRENTLY BROKEN ON PURPOSE, AND ONLY IN ONE DIRECTION.
+ * `chargeForItem` still applies Anthropic's 0.1x cached-read multiplier to
+ * EVERY provider — the same defect measured below, in the server-side path that
+ * feeds the ingest batch queue's BUDGET CAP, where under-counting does not just
+ * mis-report a figure but lets a batch overshoot the ceiling the user set. It
+ * was not fixed here because that module was owned by another workstream in
+ * this release. §11.1 no longer asserts blanket equality on the cache terms:
+ * it asserts equality wherever the cache terms are zero (every case that
+ * existed before this change), and pins the divergence to EXACTLY this known
+ * bug with a tracker that goes RED the day `chargeForItem` is fixed — telling
+ * whoever fixes it to delete the tracker and restore plain equality. Do not
+ * "repair" the mirror by reinstating the universal 0.1x here; that would make
+ * two files agree on a wrong number, which is what let this ship.
+ *
  * ── PRICE AT RENDER TIME, AND THE ONE APPROXIMATION IN IT ────────────────
  * `entry.input` / `entry.output` are the LIVE, promotion-resolved figures
  * (llm.js resolves them per-request through getters, so the JSON the client
@@ -2771,17 +2785,30 @@ function messageUsageTokens(m) {
  * failure resolves upward, and it is the price of not freezing a dollar figure
  * into a conversation record. See src/brain/chat.js's `usage` comment.
  *
- * ── A PRE-EXISTING APPROXIMATION, INHERITED KNOWINGLY ────────────────────
- * `cachedReadTokens * price.input * 0.1` is ANTHROPIC's cached-read multiplier.
- * Chat sends no cache breakpoint at all (`cachePrefixChars` is passed only by
- * ingest.js), so both providers measure 0 cache-write here — but GEMINI's
- * IMPLICIT cache can still populate `cachedReadTokens`, and Gemini's implicit
- * discount is not 0.1x. Applying one provider's multiplier to the other is
- * therefore an approximation on that one term. It is inherited deliberately and
- * unchanged from `chargeForItem`, which has always done exactly this: fixing it
- * would mean diverging from the formula this mirrors, which is the drift the
- * mirror exists to prevent. Recorded here so the next reader knows it is a known
- * approximation rather than an oversight.
+ * ── THE CACHE MULTIPLIER IS PER-PROVIDER — MEASURED, NOT INHERITED ───────
+ * This block used to record `cachedReadTokens * price.input * 0.1` as a known
+ * approximation "inherited deliberately and unchanged from `chargeForItem`".
+ * It was not an approximation. It was a MONEY DEFECT, and it has now been
+ * measured against real credit-balance deltas on OpenRouter:
+ *
+ *   cold cache (0 cached)        app $0.00007191   actual $0.00007191  exact
+ *   warm cache (1280+1920 cached) app $0.00148150   actual $0.00320950  2.17x under
+ *
+ * The cold run is the POSITIVE CONTROL: it proves the input/output rates and
+ * the measurement harness are right, so the warm gap is the cache term alone.
+ * A full-price-cache model predicts $0.00320950 to eight decimal places, and
+ * the implied input rate falls out at exactly $0.60/Mtok — `kimi-k2-0905`'s
+ * published price. OPENROUTER BILLS CACHED READS AT FULL INPUT PRICE.
+ *
+ * 0.1x is ANTHROPIC's number and Anthropic's alone (their own docs: cached read
+ * ~0.1x, cache write ~1.25x of base input). Applying it to every provider
+ * silently under-reported every multi-turn OpenRouter chat by up to 2.17x — on
+ * the one surface whose entire purpose is letting a user see what an answer
+ * cost. Under-reporting on a spending surface is the failure direction this
+ * repo's own rule forbids (v3.9.0: an unrecognised cost tier resolves to
+ * 'unknown', never 'similar'), so the multiplier is now resolved from the
+ * SERVED model's provider by `cacheMultipliers` below, and anything we have
+ * not verified charges FULL price rather than a flattering guess.
  *
  * ── A FREE MODEL NEVER REACHES THE PRICED BRANCH — MADE EXPLICIT ─────────
  * `chargeForItem`'s own fix (src/brain/ingest-queue.js) states the rule this
@@ -2805,6 +2832,53 @@ function messageUsageTokens(m) {
  * sentinel guard above both exist to prevent. `assistantCostHtml` is what
  * turns this `null` into the word "free" — see its own docblock.
  */
+/**
+ * What ONE provider charges for a cached-read token and a cache-write token,
+ * expressed as a multiple of that model's BASE INPUT rate.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT TWO CONSTANTS ─────────────────────────
+ * Because the two numbers are NOT a property of caching, they are a property
+ * of the PROVIDER, and treating them as universal is what produced a measured
+ * 2.17x under-report on every multi-turn OpenRouter chat (see
+ * `messageCostUsd`'s docblock for the paired cold/warm measurement). A named
+ * function is also the only shape a test can drive per provider; two inline
+ * literals could only ever be checked by reading them.
+ *
+ * ── ANTHROPIC: 0.1x / 1.25x, FROM THE PROVIDER'S OWN DOCUMENTATION ───────
+ * `cache_read_input_tokens` bills at ~0.1x base input and
+ * `cache_creation_input_tokens` at ~1.25x. This is the ONLY provider whose
+ * cache rates this project has a published source for, and the only one that
+ * gets a discount here.
+ *
+ * ── EVERYONE ELSE: FULL PRICE ON READS, AND THAT IS THE POINT ────────────
+ * OpenRouter is MEASURED at full price. Gemini's implicit cache is NOT
+ * measured — its real discount is neither 1.0x nor 0.1x, and inventing a
+ * third number from memory is exactly the move that put the wrong constant in
+ * this file in the first place. So an unverified provider charges FULL price:
+ * over-stating a bill sends a user to a cheaper model than they needed, while
+ * under-stating one tells them a paid answer was nearly free. Only the second
+ * is a lie the user cannot detect. When a provider's rate is measured the way
+ * OpenRouter's was — a cold run as the control, a warm run as the case, both
+ * against a real balance delta — add it here with the numbers in the comment,
+ * not from a spec sheet.
+ *
+ * ── WRITES STAY AT 1.25x EVERYWHERE, DELIBERATELY ────────────────────────
+ * Only Anthropic's write rate is published, but 1.25 > 1.0, so applying it
+ * universally errs UPWARD — the same direction llm.js's `normalizeOpenRouterUsage`
+ * already reasons about explicitly when it declines to subtract
+ * `cache_write_tokens` from `prompt_tokens`. Dropping it to 1.0 for unverified
+ * providers would be a second under-report introduced while fixing the first.
+ * Chat sends no cache breakpoint at all, so Anthropic and Gemini report 0 here
+ * regardless; OpenRouter can report a non-zero write, and it is billed high.
+ *
+ * An unknown/absent provider takes the same full-price path as any unverified
+ * one — fail-safe, never a discount by default.
+ */
+function cacheMultipliers(provider) {
+  if (provider === 'anthropic') return { read: 0.1, write: 1.25 };
+  return { read: 1, write: 1.25 };
+}
+
 function messageCostUsd(m, ctx) {
   const u = messageUsageTokens(m);
   if (!u) return null;
@@ -2827,11 +2901,15 @@ function messageCostUsd(m, ctx) {
   const output = row.entry.output;
   if (typeof input !== 'number' || !Number.isFinite(input) || input < 0) return null;
   if (typeof output !== 'number' || !Number.isFinite(output) || output < 0) return null;
-  // ── chargeForItem's formula, term for term ──────────────────────────────
+  // ── chargeForItem's formula, with the cache terms resolved per PROVIDER ──
+  // `row.provider` — the provider of the SERVED model, from the same key-scoped
+  // walk that produced the price two lines up, so the rate and the multiplier
+  // applied to it can never come from two different catalogue entries.
+  const mult = cacheMultipliers(row.provider);
   const inCost = (u.inputTokens || 0) / 1e6 * input;
   const outCost = (u.outputTokens || 0) / 1e6 * output;
-  const cachedReadCost = (u.cachedReadTokens || 0) / 1e6 * input * 0.1;
-  const cacheWriteCost = (u.cacheWriteTokens || 0) / 1e6 * input * 1.25;
+  const cachedReadCost = (u.cachedReadTokens || 0) / 1e6 * input * mult.read;
+  const cacheWriteCost = (u.cacheWriteTokens || 0) / 1e6 * input * mult.write;
   const total = inCost + outCost + cachedReadCost + cacheWriteCost;
   return Number.isFinite(total) ? total : null;
 }

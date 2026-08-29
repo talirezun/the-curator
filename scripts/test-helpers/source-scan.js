@@ -98,7 +98,22 @@ export function functionSource(src, name) {
     if (m) { start = m.index; break; }
   }
   if (start === -1) return null;
-  const open = src.indexOf('{', start);
+  // Skip the PARAMETER LIST before looking for the body brace. A default
+  // object parameter — `f(project, input = {})`, which this codebase uses —
+  // otherwise brace-matches the `{}` of the DEFAULT and returns a ~50-char
+  // slice of the signature. That fails safe (a scan finds nothing) but an
+  // assertion written `=== 0` then passes VACUOUSLY over source that plainly
+  // contains the thing. Found by an agent adopting this module, not by review.
+  const paren = src.indexOf('(', start);
+  let afterParams = start;
+  if (paren !== -1) {
+    let pd = 0;
+    for (let i = paren; i < src.length; i++) {
+      if (src[i] === '(') pd++;
+      else if (src[i] === ')') { pd--; if (pd === 0) { afterParams = i + 1; break; } }
+    }
+  }
+  const open = src.indexOf('{', afterParams);
   if (open === -1) return null;
   let depth = 0;
   for (let i = open; i < src.length; i++) {

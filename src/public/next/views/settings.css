@@ -736,8 +736,23 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
+  /* So a refused pick can be a THIRD child on its own full-width line,
+     directly beneath the button that produced it. Without wrapping, the
+     refusal would compete with the model row for horizontal space and the
+     control would be squeezed — and the whole point of putting it here is
+     that it sits where the user clicked. */
+  flex-wrap: wrap;
 }
-.model-option-main { flex: 1 1 auto; min-width: 0; }
+/* `flex: 1 1 0`, not `1 1 auto`. MEASURED, not stylistic: `.model-option` now
+   wraps (so a refused pick can be a full-width third child), and under
+   `flex-wrap: wrap` a flex item is placed by its HYPOTHETICAL main size before
+   any shrinking — so an `auto` basis pushed the pick button onto its own line
+   on every row whose derived summary is long. Browser-measured on a 232-row
+   list at 1280px: 6 rows wrapped their control with `auto`, 0 with `0`, and 0
+   before this rule existed. A zero basis makes the row's hypothetical width 0,
+   so main + pick always share one line and only the alert — which asks for
+   `flex-basis: 100%` — breaks to the next. */
+.model-option-main { flex: 1 1 0; min-width: 0; }
 /* flex: none so a long model id can never squeeze the control to zero width;
    the padding-top matches .model-row-summary's so the button sits on the
    name's baseline row rather than floating against an expanded body. */
@@ -767,6 +782,24 @@
 /* Sits between the honesty line and the rows, inside the list the user just
    clicked in — the one surface guaranteed to be on screen at that moment. */
 .model-pick-error { margin-bottom: 9px; }
+/* ── THE REFUSAL, IN THE ROW THE USER CLICKED ───────────────────────────────
+   `flex-basis: 100%` is what puts it on its own line under the button rather
+   than beside it. No bottom margin: it is the last child of the <li>, so the
+   list's own gap already separates it from the next row, and a margin here
+   would read as a gap inside the row it belongs to.
+   The border-top is what ties it to THIS row visually — the alert and the
+   button it answers have to read as one unit, or a reader scanning ~19 rows
+   has to work out which one refused. */
+.model-pick-error-row {
+  flex-basis: 100%;
+  margin: 0;
+  border-radius: 0 0 7px 7px;
+  border-width: 1px 0 0 0;
+}
+/* The row itself carries the danger colour, so the refusal is findable at a
+   glance from anywhere in the list — the same reasoning as .model-option-default
+   marking the in-use row. */
+.model-option-refused { border-color: var(--danger-text); }
 
 .model-row-summary, .model-row-flat {
   display: flex;

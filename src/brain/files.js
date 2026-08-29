@@ -110,6 +110,31 @@ export async function isDomainReadonly(domain) {
   } catch {
     return false; // no CLAUDE.md → not a domain we recognise → don't block
   }
+  return parseReadonlyFlag(content);
+}
+
+/**
+ * The readonly-frontmatter PARSER, split out of isDomainReadonly so that a
+ * caller which has ALREADY read CLAUDE.md can reach the same verdict without
+ * reading the file a second time — see getDomainStats, which needs both the
+ * display name and this flag out of one read.
+ *
+ * It is a SPLIT, not a copy. Two hand-maintained copies of a predicate is the
+ * v3.2.0 CRITICAL shape, and this one decides whether a Shared Brain mirror
+ * accepts writes, so a drift between them would be a correctness bug and not
+ * merely an inconsistency. isDomainReadonly is now `read the file, then call
+ * this` and holds no parsing of its own; every behaviour documented on it —
+ * missing/empty/unparseable frontmatter, and any value that is not literally
+ * `true` — is decided here and nowhere else.
+ *
+ * Exported so scripts/test-domain-stats.js can drive the parser directly and
+ * assert the two entry points cannot disagree.
+ *
+ * @param {string} content  raw CLAUDE.md text
+ * @returns {boolean}
+ */
+export function parseReadonlyFlag(content) {
+  if (typeof content !== 'string' || !content) return false;
   // Match opening "---\n", then capture everything up to the closing "\n---\n" or "\n---" at EOF.
   // Anchored at very start of file (no leading whitespace allowed in YAML frontmatter).
   const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
@@ -1846,6 +1871,85 @@ export function extractDomainDisplayName(content, slug) {
   return name || slug;
 }
 
+// ── Last-ingest-date cache ───────────────────────────────────────────────
+//
+// WHY A CACHE AND NOT A CHEAPER READ. `lastIngestDate` is the newest
+// `## [YYYY-MM-DD]` heading in wiki/log.md, and the way it is computed —
+// read the WHOLE file, collect every heading, take the lexicographic max —
+// is load-bearing rather than lazy. See the block inside getDomainStats:
+// v3.0.1-beta.10 exists because a first-match read reported the OLDEST
+// ingest as the newest, and the max-over-every-heading form is what makes
+// the answer robust to a hand-reordered log. Reading only the TAIL would be
+// cheaper and would quietly give that property back up — a log whose newest
+// entry has been moved to the top would report an older date, which is the
+// exact defect beta.10 fixed, in a new costume.
+//
+// So the READ is left byte-identical and only its FREQUENCY changes. This
+// matters because /api/domains/stats is a POLLED endpoint (the first-run
+// guide re-checks it while it is open) and on the maintainer's own tree the
+// six log.md files total 565 KB — measured, and re-read in full on every
+// single poll, with a regex scan over each. Log files only change when an
+// ingest appends to them, i.e. rarely; polls are frequent. Keying the parsed
+// answer on the file's own identity converts an O(polls) cost into an
+// O(ingests) one and leaves the value provably unchanged, because a cache
+// MISS runs the original code path with nothing removed.
+//
+// THE SIGNATURE IS mtime-IN-NANOSECONDS PLUS SIZE, both of which must match.
+// `stat(..., { bigint: true })` is used specifically for mtimeNs: millisecond
+// mtime has a real same-millisecond blind spot, and while `size` closes it in
+// practice (appendLog only ever appends, so the size always grows), "in
+// practice" is a hedge and nanosecond precision removes the need for one.
+// A stat failure is NOT cached — a log.md that is missing today may exist
+// after the next ingest, and caching `null` for it would outlive the fact.
+const LOG_DATE_CACHE_MAX = 512;
+const logDateCache = new Map();
+
+function readLogDate(content) {
+  const matches = [...content.matchAll(/^## \[(\d{4}-\d{2}-\d{2})\]/gm)];
+  if (matches.length === 0) return null;
+  let max = matches[0][1];
+  for (const m of matches) if (m[1] > max) max = m[1];
+  return max;
+}
+
+async function lastIngestDate(logPath) {
+  let sig = null;
+  try {
+    const st = await stat(logPath, { bigint: true });
+    sig = `${st.mtimeNs}:${st.size}`;
+    const hit = logDateCache.get(logPath);
+    if (hit && hit.sig === sig) return hit.date;
+  } catch {
+    // No log.md (or an unreadable one). Same answer the pre-cache version
+    // gave, and deliberately not remembered.
+    logDateCache.delete(logPath);
+    return null;
+  }
+  let date;
+  try {
+    date = readLogDate(await readFile(logPath, 'utf8'));
+  } catch {
+    logDateCache.delete(logPath);
+    return null;
+  }
+  // Bounded so a long-lived process that has seen many domains (renames,
+  // creates, deletes) cannot grow this without limit. A wholesale clear
+  // rather than an LRU eviction: the map is a pure cache, the next poll
+  // refills exactly the entries still in use, and an eviction ORDER is one
+  // more thing that can be subtly wrong for no benefit at this size.
+  if (logDateCache.size >= LOG_DATE_CACHE_MAX) logDateCache.clear();
+  logDateCache.set(logPath, { sig, date });
+  return date;
+}
+
+// Test-only. The cache is keyed on the file's own mtime+size, so it is
+// self-invalidating in production and nothing needs to clear it — but a suite
+// that writes a log, reads it, rewrites it and reads again inside the same
+// process wants to prove the FRESH path too, not only the cached one.
+export function __clearLastIngestDateCache() {
+  logDateCache.clear();
+}
+
 export async function getDomainStats(slug) {
   // Defense in depth (v3.2.0 audit finding L1). Every HTTP caller now gates
   // on listDomains() first, but this function takes a raw slug and joins it
@@ -1860,11 +1964,30 @@ export async function getDomainStats(slug) {
 
   const base = domainPath(slug);
 
-  const [displayName, pageCounts, conversationCount, lastIngestDate] = await Promise.all([
-    // Display name from CLAUDE.md — see extractDomainDisplayName() above.
+  const [schema, pageCounts, conversationCount, ingestDate] = await Promise.all([
+    // ONE read of CLAUDE.md, TWO answers out of it: the display name (see
+    // extractDomainDisplayName() above) and the readonly flag.
+    //
+    // It used to be one read here and a SECOND, independent one in
+    // GET /api/domains/stats, which called isDomainReadonly(d) for every
+    // domain alongside this — so the polled bulk endpoint opened and read
+    // every CLAUDE.md in the install twice per request (measured: 32.6 KB
+    // per poll across six domains, exactly half of it redundant). Both
+    // answers come from the same bytes, so there is no reason for two reads
+    // and one good reason against: two reads of one file can disagree if it
+    // changes between them, and this pair is rendered side by side.
+    //
+    // parseReadonlyFlag is the SAME parser isDomainReadonly uses — split out
+    // rather than copied, so the two entry points cannot drift.
     readFile(path.join(base, 'CLAUDE.md'), 'utf8')
-      .then(content => extractDomainDisplayName(content, slug))
-      .catch(() => slug),
+      .then(content => ({
+        displayName: extractDomainDisplayName(content, slug),
+        readonly: parseReadonlyFlag(content),
+      }))
+      // Same degradation isDomainReadonly has for a missing CLAUDE.md:
+      // slug for the name, and NOT readonly (uncertainty must never block a
+      // legitimate write).
+      .catch(() => ({ displayName: slug, readonly: false })),
 
     // All four page numbers from ONE traversal — see countWikiPages() above
     // for why pageCount is no longer computed separately from the per-type
@@ -1892,16 +2015,15 @@ export async function getDomainStats(slug) {
     // this is both robust to manually-edited logs (a user reordering
     // entries doesn't lie about "most recent") and free of false positives
     // (only headings of the documented log-entry format match).
-    readFile(path.join(base, 'wiki', 'log.md'), 'utf8')
-      .then(content => {
-        const matches = [...content.matchAll(/^## \[(\d{4}-\d{2}-\d{2})\]/gm)];
-        if (matches.length === 0) return null;
-        let max = matches[0][1];
-        for (const m of matches) if (m[1] > max) max = m[1];
-        return max;
-      })
-      .catch(() => null),
+    //
+    // That parse now lives in readLogDate() and runs behind a mtime+size
+    // cache — see lastIngestDate() above for why the read was made RARER
+    // rather than CHEAPER. The parse itself is unchanged: a cache miss still
+    // reads the whole file and still takes the max over every heading, so
+    // the beta.10 guarantee holds byte for byte.
+    lastIngestDate(path.join(base, 'wiki', 'log.md')),
   ]);
+  const { displayName, readonly } = schema;
 
   // INVARIANT (v3.2.0): pageCount === entities + concepts + summaries + other,
   // always, on every wiki — because all five numbers come from the same
@@ -1937,10 +2059,17 @@ export async function getDomainStats(slug) {
     displayName,
     pageCount,
     conversationCount,
-    lastIngestDate,
+    lastIngestDate: ingestDate,
     // Additive (v3.1.x): per-type breakdown for the redesigned Domains view.
     // `other` is additive in v3.2.0 — see the invariant above.
     pageCounts,
+    // Additive: the same verdict isDomainReadonly() returns, from the single
+    // CLAUDE.md read above. It is here so GET /api/domains/stats stops making
+    // a second pass over every CLAUDE.md in the install on a POLLED endpoint.
+    // It does not replace isDomainReadonly anywhere a WRITE is being gated —
+    // those callers hold one domain, not the whole list, and reading one small
+    // file at the moment of a write is not a cost worth engineering away.
+    readonly,
   };
 }
 

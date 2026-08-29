@@ -27,24 +27,48 @@ router.get('/', async (req, res) => {
 // trip per domain. MUST be registered before '/:domain/stats' would ever
 // matter for a route with a matching segment count — it doesn't here
 // ('/stats' is one segment, '/:domain/stats' is two) but the two are kept
-// adjacent for readability. Stays cheap like getDomainStats itself: no
-// file-content reads, no LLM, no network — just readdir calls. Each
-// domain's stats are individually try/caught so one domain with a
+// adjacent for readability.
+//
+// NO LLM AND NO NETWORK — but it is NOT free, and an earlier version of this
+// comment claimed "no file-content reads, just readdir calls", which its own
+// callee contradicts: getDomainStats reads each domain's CLAUDE.md, and
+// reads wiki/log.md to find the newest ingest date. On the maintainer's tree
+// that was 598 KB per request, and THIS ENDPOINT IS POLLED — the /next
+// first-run guide re-checks it for as long as it is open. A comment
+// asserting a cost profile the code does not have is what let that sit
+// unnoticed; the real profile is one readdir walk of wiki/ per domain, one
+// small CLAUDE.md read, and a stat of log.md that only turns into a read
+// when the log has actually changed (see lastIngestDate in files.js).
+//
+// `readonly` now comes OUT of each domain's stats rather than from a second
+// isDomainReadonly() pass over the same CLAUDE.md files — that pass doubled
+// this endpoint's CLAUDE.md reads for a flag getDomainStats already had in
+// hand. isDomainReadonly is still imported and still used, for the single
+// domain on GET /api/domains and as the fallback below.
+//
+// Each domain's stats are individually try/caught so one domain with a
 // missing/partial wiki/ folder can never take down the whole response;
 // getDomainStats already degrades every sub-read to a safe default
-// (0 / null), so this is a defensive second layer, not the only one.
-// readonlyDomains is included so read-only Shared Brain mirrors stay
-// distinguishable here exactly as they are on GET /api/domains.
+// (0 / null / not-readonly), so this is a defensive second layer, not the
+// only one. That layer is why the fallback exists: a stats entry that FAILED
+// carries no readonly flag, and silently treating "we could not tell" as
+// "writable" on a mirror is the wrong direction — so those (and only those)
+// domains are asked directly, which is what every domain used to cost.
+// readonlyDomains stays exactly as distinguishable here as on GET /api/domains.
 router.get('/stats', async (req, res) => {
   try {
     const domains = await listDomains();
-    const [statsList, readonlyFlags] = await Promise.all([
-      Promise.all(domains.map(d =>
-        getDomainStats(d).catch(err => ({ slug: d, error: err.message }))
-      )),
-      Promise.all(domains.map(d => isDomainReadonly(d))),
-    ]);
-    const readonlyDomains = domains.filter((d, i) => readonlyFlags[i]);
+    const statsList = await Promise.all(domains.map(d =>
+      getDomainStats(d).catch(err => ({ slug: d, error: err.message }))
+    ));
+    const readonlyDomains = [];
+    for (let i = 0; i < domains.length; i++) {
+      const s = statsList[i];
+      const flag = (s && typeof s.readonly === 'boolean')
+        ? s.readonly
+        : await isDomainReadonly(domains[i]);
+      if (flag) readonlyDomains.push(domains[i]);
+    }
     res.json({ domains: statsList, readonlyDomains });
   } catch (err) {
     res.status(500).json({ error: err.message });

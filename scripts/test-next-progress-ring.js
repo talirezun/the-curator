@@ -705,7 +705,74 @@ section('§11  Adoption — ingest.js');
     'a retry/backoff `wait` event still renders amber — now as tone="attention"');
   ok(rp.includes('isn’t stuck'),
     'the "large documents take a minute per phase / it isn\'t stuck" note is still rendered');
-  ok(/\+ pct \+ '%/.test(rp), 'the pct readout survives the move into the sublabel');
+  // ── §11b  ONE QUANTITY, ONE NUMBER ────────────────────────────────────
+  // THE DEFECT, MEASURED: during one single-file ingest, sampled twice 150 ms
+  // apart, this surface put THREE disagreeing figures on screen at once — a
+  // centre counter "2/5", a ring at aria-valuenow=40, and a sublabel reading
+  // "stage 3 of 5 · 15%". Not a race: the render is a pure function of one
+  // pct, and all three came from the same 15 on three different SCALES. The
+  // "15%" was the server's RAW pct, and `mapIngestPctToStage` bands that axis
+  // NON-UNIFORMLY onto five EQUAL segments, so raw pct and the ring's
+  // stage-space can only coincide at 0 and 100.
+  //
+  // The assertion this replaces was `/\+ pct \+ '%/` — a source regex pinning
+  // the VARIABLE NAME as a proxy for "a percentage is shown". It was green
+  // throughout the entire life of the defect, because the thing it pinned was
+  // the defect. Replaced with the property that actually matters, EXECUTED:
+  // the number the sublabel prints must be the number `aria-valuenow` carries.
+  // ── THE SCAN RUNS OVER CODE, NOT PROSE ────────────────────────────────
+  // MEASURED, during this section's own mutation run: the first draft matched
+  // `/center: 'none'/` against the RAW extracted source, and the fix's own
+  // explanatory COMMENT contains that exact string — so deleting the real
+  // option left the assertion GREEN. Root cause 1 from
+  // scripts/test-helpers/source-scan.js ("a source scan a // comment
+  // satisfies"), reproduced inside the guard written to close a different
+  // defect, and caught only by mutating rather than by reading.
+  const rpCode = stripComments(rp);
+  ok(!/\+ pct \+ '%/.test(rpCode),
+    '§11b renderProgress no longer prints the SERVER\'s raw pct — that figure lives on a different axis from the ring drawn beside it and can only agree with it at 0 and 100');
+  ok(/ringAria\(\{[^}]*stages: INGEST_STAGES[^}]*\}\)\.valueNow/.test(rpCode),
+    '§11b …it takes the percentage from ringAria — the SAME function progressRingHtml calls to stamp aria-valuenow — so the figure a sighted user reads and the one a screen reader announces are ONE computation, not two that happen to agree');
+  ok(/center: 'none'/.test(rpCode),
+    '§11b …and the ring\'s centre glyph is suppressed, so the stage is stated exactly once (the sublabel ordinal) rather than in a third, ambiguous framing');
+
+  // EXECUTED, across the whole pct axis including every band boundary of
+  // mapIngestPctToStage. This is what a source scan cannot do.
+  {
+    let agreed = 0, planningEmpty = 0;
+    const PCTS = [0, 1, 4, 7, 8, 9, 10, 15, 19, 20, 21, 50, 77, 78, 89, 90, 95, 99, 100];
+    for (const pct of PCTS) {
+      const { stage, stageProgress } = mapIngestPctToStage(pct);
+      // What renderProgress now prints…
+      const shown = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
+      // …and what the ring actually stamps, from the real render.
+      const html = progressRingHtml({ stages: INGEST_STAGES, stage, stageProgress, size: 48, center: 'none' });
+      const m = html.match(/aria-valuenow="(\d+)"/);
+      if (!m) { ok(false, `§11b pct ${pct}: the rendered ring carries no aria-valuenow to agree with`); continue; }
+      if (Number(m[1]) !== shown) {
+        ok(false, `§11b pct ${pct}: sublabel would print ${shown}% but the ring announces aria-valuenow=${m[1]} — the three-figure defect, reproduced`);
+      } else agreed++;
+      // The ring must NOT have regained a centre counter — a third figure.
+      if (/class="pring-center"/.test(html)) ok(false, `§11b pct ${pct}: a centre counter is back in the markup`);
+      // v3.9.0 still holds where it matters most.
+      if (stageProgress === 0 && stage < INGEST_STAGES.length) {
+        const live = ringSegments({ stages: INGEST_STAGES, stage, stageProgress, size: 48 })
+          .find((s) => s.state === 'live');
+        if (live && live.fillDash === 0) planningEmpty++;
+        else if (live) ok(false, `§11b pct ${pct}: a stage reporting stageProgress 0 drew a NON-empty fill (${live.fillDash}) — motion invented to make the numbers line up is the v3.0.17 failure this component exists to prevent`);
+      }
+    }
+    ok(agreed === PCTS.length,
+      `§11b the sublabel percentage equals the ring's own aria-valuenow at all ${agreed} sampled pcts, band boundaries included`);
+    ok(planningEmpty > 0,
+      `§11b …and at ${planningEmpty} of them a live stage with no sub-progress still draws an EMPTY segment — the figures agree because they share a derivation, not because the ring was made to move`);
+    // CONTROL: the comparison can distinguish. Without this, "they agreed"
+    // is indistinguishable from "both were undefined".
+    const bad = progressRingHtml({ stages: INGEST_STAGES, stage: 1, stageProgress: 0, size: 48, center: 'none' })
+      .match(/aria-valuenow="(\d+)"/);
+    ok(bad && Number(bad[1]) === 20 && Number(bad[1]) !== 15,
+      '§11b CONTROL — at stage 1 the ring announces 20, which is NOT the raw pct 15 that used to be printed beside it; the equality above is a real match, and the old figure really was a different number');
+  }
   ok(rp.includes('labelContent'), 'the specific done-label (never the word "Done!") still reaches the ring');
 
   // The bar it replaced is gone from BOTH the view and the stylesheet — a

@@ -202,6 +202,115 @@ export const MAX_JOURNAL_ENTRIES = 50;
 export const MAX_INDEX_ENTRIES = 60;
 export const MAX_NOTES = 20;
 
+/**
+ * Trim `notes` to `max` so that the trim is PRIORITISED and always DISCLOSED.
+ *
+ * THE DEFECT THIS REPLACES, measured 2026-08-29 on over-limit input (60 items
+ * of ~700 chars across five lists, plus a 30 KB `nowState`): the saved
+ * DOCUMENT reported 4 sections and 93 items dropped over the size budget, and
+ * the `notes` array handed back to the caller reported ZERO of them. Every
+ * omission note had been crowded out by 19 near-identical per-item truncation
+ * notes from a SINGLE field, because omissions can only be computed after
+ * rendering and were therefore pushed LAST into a first-come, first-served
+ * budget. Meanwhile `notes_meaning` went on telling the caller to "read
+ * `notes` and re-save what matters". The instruction was true and the data
+ * behind it was not.
+ *
+ * That is this project's most recurring defect — a layer computing something
+ * honest and the layer above discarding it — occurring inside the disclosure
+ * mechanism itself, which is the one place it cannot be caught by reading a
+ * different field.
+ *
+ * WHY NOT SIMPLY RAISE THE CAP: it moves the cliff, it does not remove it.
+ * The cap is wanted — `notes` is charged against a model's context window on
+ * every save, and 200 notes about one field's item lengths would push out the
+ * handoff itself. The shape that holds is that the cap may still bite, but
+ * its biting is ALWAYS disclosed and the notes most worth keeping survive.
+ *
+ * TWO ORDERING RULES, both derived from what a caller can act on:
+ *
+ *   1. TIER. Machine identity first (a standing risk to every future save),
+ *      then whole-section omissions over the size budget — content that
+ *      reached the store intact and was dropped by US at render time, which
+ *      nothing else reports, whereas a per-item truncation at least leaves
+ *      the item in the document — then other losses, then normalisations
+ *      (nothing lost; a default applied).
+ *   2. FAIR SHARE. Within a tier, round-robin by the note's `label:` prefix,
+ *      so one noisy field cannot spend the whole budget and leave four other
+ *      fields' losses unmentioned, which is exactly what the measurement
+ *      above showed happening.
+ *
+ * Together these give the invariant worth stating: if ANY field lost content,
+ * at least one note naming that field survives. `notes_meaning` is derived
+ * from note TEXT, so this is what stops it reporting "nothing was dropped"
+ * over a save that dropped something.
+ *
+ * THE TERMINAL NOTE costs one slot and is classified honestly rather than
+ * conservatively: it carries loss vocabulary only when a note reporting LOSS
+ * was among those suppressed. Wording it as a loss unconditionally would be
+ * the easier change and would make `notes_meaning` announce "some input was
+ * DROPPED" over a save where nothing was — a false alarm on the one surface
+ * whose entire job is being believed. Both forms stay inside the MCP layer's
+ * 200-char per-note cap, because a warning that does not fit the channel it
+ * travels in is not a warning (v3.17.1).
+ *
+ * Under the cap this is a NO-OP beyond the de-duplication the callers already
+ * did, so nothing about a normal save changes.
+ */
+export function finaliseNotes(notes, max = MAX_NOTES) {
+  const all = [];
+  for (const n of notes || []) {
+    if (typeof n === 'string' && n && !all.includes(n)) all.push(n);
+  }
+  if (all.length <= max) return all;
+
+  // TIER_REPLACED is first because the caller destroyed a larger handoff that
+  // is not recoverable — the one note here reporting an IRREVERSIBLE act. The
+  // save path already `unshift`s it to lead the list, and a suite asserts that
+  // it "is never silent — the note leads the list", so demoting it would be a
+  // regression dressed as a priority scheme.
+  const TIER_REPLACED = 0, TIER_IDENTITY = 1, TIER_OMITTED = 2,
+    TIER_LOSS = 3, TIER_NORMALISED = 4;
+  const tierOf = (n) =>
+    /\boverwrote\b/i.test(n) ? TIER_REPLACED
+      : /^machine identity:/i.test(n) ? TIER_IDENTITY
+        : /item\(s\) omitted over the /.test(n) ? TIER_OMITTED
+          : /\b(dropped|omitted|truncated)\b/i.test(n) ? TIER_LOSS
+            : TIER_NORMALISED;
+  // The `label:` prefix every field note carries. Anything without one shares
+  // a single group rather than getting a free lane of its own.
+  const labelOf = (n) => { const m = /^([^:]{1,40}):/.exec(n); return m ? m[1] : ''; };
+
+  const ordered = [];
+  for (const tier of [TIER_REPLACED, TIER_IDENTITY, TIER_OMITTED, TIER_LOSS, TIER_NORMALISED]) {
+    const groups = new Map();
+    for (const n of all) {
+      if (tierOf(n) !== tier) continue;
+      const k = labelOf(n);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(n);
+    }
+    const queues = [...groups.values()];
+    for (let more = true; more;) {
+      more = false;
+      for (const q of queues) if (q.length) { ordered.push(q.shift()); more = true; }
+    }
+  }
+
+  const kept = ordered.slice(0, max - 1);
+  const suppressed = ordered.slice(max - 1);
+  const lossSuppressed = suppressed.filter((n) => {
+    const t = tierOf(n);
+    return t === TIER_OMITTED || t === TIER_LOSS;
+  }).length;
+  kept.push(lossSuppressed
+    ? `disclosure: ${suppressed.length} further note(s) omitted to fit the ${max}-note budget, `
+      + `of which ${lossSuppressed} report input that was cut — send less in one save to see them all`
+    : `disclosure: ${suppressed.length} further note(s) were suppressed to fit the ${max}-note budget; `
+      + `each records a normalisation, not a loss of content`);
+  return kept;
+}
+
 const DEFAULT_SCOPE = 'main';
 
 /**
@@ -1291,7 +1400,11 @@ export async function saveWorkingState(project, input = {}) {
 
   const savedAt = new Date().toISOString();
   const notes = [];
-  const push = (ns) => { for (const n of ns) if (notes.length < MAX_NOTES && !notes.includes(n)) notes.push(n); };
+  // Deliberately UNBOUNDED. The cap is applied once, at the end, by
+  // finaliseNotes — which prioritises and then discloses what it drops.
+  // Capping here is what let post-render omission notes be silently starved
+  // by whichever field happened to be noisiest.
+  const push = (ns) => { for (const n of ns) if (!notes.includes(n)) notes.push(n); };
 
   // Pushed BEFORE the field sanitisers so it cannot be crowded out of the
   // MAX_NOTES budget by per-field chatter. A silently-disarmed collision guard
@@ -1343,9 +1456,7 @@ export async function saveWorkingState(project, input = {}) {
   const { doc, omitted } = renderWithinBudget(
     `Working state — ${scope}`, hl.text, provenance, STATE_SECTIONS, data, MAX_STATE_BYTES,
   );
-  for (const [k, n] of Object.entries(omitted)) {
-    if (notes.length < MAX_NOTES) notes.push(`${k}: ${n} item(s) omitted over the state size budget`);
-  }
+  for (const [k, n] of Object.entries(omitted)) notes.push(`${k}: ${n} item(s) omitted over the state size budget`);
 
   const dirRel = `${scope}/${machine}`;
   const dirAbs = resolveInsideState(project, dirRel);
@@ -1407,6 +1518,15 @@ export async function saveWorkingState(project, input = {}) {
       `${Buffer.byteLength(incomingBody, 'utf8')} body bytes) because replace: true was set`);
   }
 
+  // THE CAP IS APPLIED HERE AND NOWHERE ELSE — deliberately AFTER the very
+  // last mutation of `notes`, which is the destructive-replace `unshift`
+  // above, not merely after the sanitisers. Capping earlier is what let the
+  // post-render omission notes be starved by whichever field was noisiest;
+  // capping before this line would have dropped the irreversible-replace
+  // note from the result and the journal entirely. Both mistakes were made
+  // and caught by assertions during this fix; the ordering is load-bearing.
+  const finalNotes = finaliseNotes(notes);
+
   try {
     // writeFileAtomic also REFUSES to write through a symlink; that refusal
     // is load-bearing here and must not be bypassed.
@@ -1435,7 +1555,7 @@ export async function saveWorkingState(project, input = {}) {
       // they are. See the note wording above: nothing here is a rejection
       // unless it says "dropped" or "truncated", which are the only two
       // things this array reports that actually lose content.
-      rejections: notes.slice(0, MAX_NOTES),
+      rejections: finalNotes,
     });
     await appendFile(journalAbs, line + '\n', 'utf8');
   } catch (err) {
@@ -1455,7 +1575,7 @@ export async function saveWorkingState(project, input = {}) {
     // absence must not collapse into one value, which is this module's own
     // stated rule and the reason the silent fallback was a defect.
     installIdAvailable: idAvailable,
-    notes,
+    notes: finalNotes,
   };
 }
 
@@ -1470,7 +1590,11 @@ export async function saveProjectBrief(project, input = {}) {
 
   const savedAt = new Date().toISOString();
   const notes = [];
-  const push = (ns) => { for (const n of ns) if (notes.length < MAX_NOTES && !notes.includes(n)) notes.push(n); };
+  // Deliberately UNBOUNDED. The cap is applied once, at the end, by
+  // finaliseNotes — which prioritises and then discloses what it drops.
+  // Capping here is what let post-render omission notes be silently starved
+  // by whichever field happened to be noisiest.
+  const push = (ns) => { for (const n of ns) if (!notes.includes(n)) notes.push(n); };
 
   const data = {};
   let any = false;
@@ -1496,9 +1620,13 @@ export async function saveProjectBrief(project, input = {}) {
   const { doc, omitted } = renderWithinBudget(
     `Project brief — ${project}`, null, `Updated: ${savedAt}`, BRIEF_SECTIONS, data, MAX_BRIEF_BYTES,
   );
-  for (const [k, n] of Object.entries(omitted)) {
-    if (notes.length < MAX_NOTES) notes.push(`${k}: ${n} item(s) omitted over the brief size budget`);
-  }
+  for (const [k, n] of Object.entries(omitted)) notes.push(`${k}: ${n} item(s) omitted over the brief size budget`);
+
+  // Same rule as the state save: cap once, at the end, prioritised and
+  // disclosed. Tier 1 is scarcer here (four sections, not six), but a brief
+  // trimmed at the size budget is exactly the case a caller must be told
+  // about, so it must not be starved by per-item chatter either.
+  const finalNotes = finaliseNotes(notes);
 
   const rootAbs = stateRoot(project);
   try { await mkdir(rootAbs, { recursive: true }); }
@@ -1515,7 +1643,7 @@ export async function saveProjectBrief(project, input = {}) {
     ok: true, project, savedAt, path: `${STATE_DIRNAME}/${BRIEF_FILENAME}`,
     bytes: Buffer.byteLength(doc, 'utf8'),
     truncated: Object.keys(omitted).length > 0,
-    notes,
+    notes: finalNotes,
   };
 }
 

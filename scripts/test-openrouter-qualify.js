@@ -601,14 +601,32 @@ const settingsSrc = fs.readFileSync(new URL('../src/public/next/views/settings.j
 // dependency, and a crash is not a failure. The try/catch below converts that
 // class into a NAMED assertion, so the next new dependency is reported rather
 // than silently ending the run.
+/**
+ * A top-level `const NAME = <one expression>;` out of settings.js.
+ *
+ * `lift` above brace-matches and therefore cannot take a const with no body.
+ * LIFTED rather than re-declared here for the reason the docblock above gives
+ * for formatSyncedAt: a literal copied into this file keeps every assertion
+ * green after the module renames the id, and the id is what revealInMain
+ * scrolls to — so a stale copy here would hide a confirm panel that has become
+ * unreachable.
+ */
+function liftConst(src, name) {
+  const re = new RegExp(`(?:^|\\n)(?:export\\s+)?const ${name} = [^\\n;]*;`);
+  const m = re.exec(src);
+  if (!m) throw new Error(`liftConst: "${name}" not found in settings.js`);
+  return m[0].trim().replace(/^export\s+/, '');
+}
 let ui;
 try {
 ui = new Function('escapeHtml', 'formatIsoDay', 'formatUsdHonest',
+  liftConst(settingsSrc, 'QUALIFY_CONFIRM_ID') + '\n' +
   lift(settingsSrc, 'formatSyncedAt') + '\n' +
+  lift(settingsSrc, 'formatTokenCount') + '\n' +
   lift(settingsSrc, 'formatDuration') + '\n' +
   lift(settingsSrc, 'renderQualification') + '\n' +
   lift(settingsSrc, 'renderQualifyPanel') + '\n' +
-  'return { renderQualification, renderQualifyPanel, formatDuration };'
+  'return { renderQualification, renderQualifyPanel, formatDuration, QUALIFY_CONFIRM_ID };'
 )(
   str => String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
   iso => String(iso).slice(0, 10),

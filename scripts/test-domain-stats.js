@@ -58,8 +58,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync
 import { tmpdir } from 'os';
 import path from 'path';
 import { createHash } from 'crypto';
-import { execFileSync } from 'child_process';
-import { fileURLToPath } from 'url';
+import { execFileSync, spawnSync } from 'child_process';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 
 // __setDomainsDirOverride is the in-process test seam from
@@ -627,8 +627,222 @@ async function main() {
       'Test 12b: a normal "# Domain: X" domain renames correctly — isolating the cause to the mirror heading shape');
   }
 
+  // ── 14. The polled endpoint's cost ────────────────────────────────────
+  //
+  // WHAT THIS PINS. GET /api/domains/stats is POLLED — the /next first-run
+  // guide re-checks it for as long as it is open, and that panel outlives
+  // navigate(). Every byte it reads is paid once per poll, per open tab, for
+  // as long as the panel is up. Measured on the maintainer's real tree
+  // BEFORE this release: 18 readFile calls totalling 598 KB per request —
+  // 565 KB of it wiki/log.md files read IN FULL to find one date, and 33 KB
+  // of CLAUDE.md, which is every CLAUDE.md in the install read TWICE
+  // (getDomainStats for the display name, then isDomainReadonly again for
+  // the flag). At the guide's cadence that is roughly 420 MB an hour.
+  //
+  // These assertions COUNT REAL READS by wrapping fs.promises rather than
+  // scanning source: a cost claim asserted from source is the same shape as
+  // the comment on the route that claimed "no file-content reads" while its
+  // own callee read two files per domain.
+  console.log('\n[14] GET /api/domains/stats is polled — its per-request read cost');
+  {
+    // Two domains with real logs, so a per-domain double-read shows up as 4
+    // rather than as an ambiguous 2.
+    for (const slug of ['costa', 'costb']) {
+      await createDomain(slug, `Cost ${slug}`, 'd', 'tech');
+      writeFileSync(path.join(tempRoot, slug, 'wiki', 'log.md'),
+        '# Log\n\n## [2026-01-01]\nold\n\n## [2026-08-27]\nnew\n\n## [2026-03-05]\nmiddle\n', 'utf8');
+    }
+    await callRoute(domainsRouter, '/stats', {});
+    const { status, body } = await callRoute(domainsRouter, '/stats', {});
+
+    eq(status, 200, 'Test 14a: the bulk stats route still answers 200');
+    const costa = body.domains.find(d => d.slug === 'costa');
+    eq(costa && costa.lastIngestDate, '2026-08-27',
+      'Test 14b: and still reports the LATEST log entry, not the first — the v3.0.1-beta.10 guarantee, through the cache');
+    truthy(Array.isArray(body.readonlyDomains),
+      'Test 14e: readonlyDomains survives the change');
+
+    // ── COUNTING THE READS, in a CHILD PROCESS and for a reason ─────────
+    // files.js does `import { readFile } from 'fs/promises'`, and an ESM
+    // named export is bound at LINK time — so patching fs.promises.readFile
+    // from here, after files.js is already loaded, silently counts nothing
+    // and every assertion reads 0. (Measured: an in-process version of this
+    // reported "expected 2, got 0" — a counter that cannot see is the
+    // vacuous-pass shape, so it is not used.) Patching before the first
+    // import of fs/promises does work, which needs a fresh process; the
+    // domains dir crosses that boundary via CURATOR_TEST_DOMAINS_DIR, which
+    // is checked ahead of config for exactly this reason.
+    const probePath = path.join(tempRoot, '__read-probe.mjs');
+    writeFileSync(probePath, `
+import fs from 'node:fs';
+const real = fs.promises.readFile;
+const reads = [];
+fs.promises.readFile = async function (p, ...rest) { reads.push(String(p)); return real.call(this, p, ...rest); };
+const { default: router } = await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, 'src/routes/domains.js')).href)});
+const layer = router.stack.find(l => l.route && l.route.path === '/stats');
+const run = () => new Promise((resolve) => {
+  const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { resolve(b); } };
+  layer.route.stack[0].handle({ params: {}, query: {}, body: {} }, res, () => resolve(null));
+});
+await run();                                   // warm
+reads.length = 0;
+await run();                                   // the measured poll
+const tally = (n) => reads.filter(p => p.endsWith(n)).length;
+const { listDomains } = await import(${JSON.stringify(pathToFileURL(path.join(PROJECT_ROOT, 'src/brain/files.js')).href)});
+const domainCount = (await listDomains()).length;
+console.log(JSON.stringify({ steady: { log: tally('log.md'), claude: tally('CLAUDE.md') }, domainCount }));
+`, 'utf8');
+    const probe = spawnSync(process.execPath, [probePath], {
+      env: { ...process.env, CURATOR_TEST_DOMAINS_DIR: tempRoot },
+      encoding: 'utf8',
+    });
+    let counts = null;
+    try { counts = JSON.parse((probe.stdout || '').trim().split('\n').pop()); } catch { /* reported below */ }
+    truthy(counts && counts.steady,
+      'Test 14c-pre: the read probe produced counts (a probe that fails to run must not pass silently)',
+      `stdout=${JSON.stringify(probe.stdout)} stderr=${JSON.stringify((probe.stderr || '').slice(0, 400))}`);
+    if (counts && counts.steady) {
+      eq(counts.steady.log, 0,
+        'Test 14c: a steady-state poll reads ZERO log.md bytes — this is the 565 KB that used to be re-read every 5 s');
+      // ONE read per domain, expressed as a RELATIONSHIP rather than a
+      // hardcoded number: this section runs after earlier ones have created
+      // domains, so a literal would have to be re-tuned every time a test is
+      // added above it — and a re-tuned expectation is how a real regression
+      // gets absorbed. The defect being pinned is a FACTOR of two, and 2N is
+      // never N for any N >= 1.
+      truthy(counts.domainCount >= 2,
+        `Test 14d-pre: the probe saw ${counts.domainCount} domains (a zero-domain probe would pass 14d vacuously)`);
+      eq(counts.steady.claude, counts.domainCount,
+        `Test 14d: exactly ONE CLAUDE.md read per domain (${counts.steady.claude} reads / ${counts.domainCount} domains) — the second, isDomainReadonly pass over the same files is gone`);
+      truthy(counts.steady.claude !== counts.domainCount * 2,
+        'Test 14d-b: and specifically not TWO per domain, which is what the removed pass cost');
+    }
+
+    // ── The cache must INVALIDATE, or it is a correctness bug ───────────
+    // A cache that never refreshes turns "polled endpoint" into "endpoint
+    // that lies", and lying about the last ingest date is the exact defect
+    // beta.10 fixed. Appending a NEWER entry must be seen.
+    writeFileSync(path.join(tempRoot, 'costa', 'wiki', 'log.md'),
+      '# Log\n\n## [2026-01-01]\nold\n\n## [2026-08-27]\nnew\n\n## [2026-09-30]\nnewest\n', 'utf8');
+    const after = await callRoute(domainsRouter, '/stats', {});
+    const costaAfter = after.body.domains.find(d => d.slug === 'costa');
+    eq(costaAfter && costaAfter.lastIngestDate, '2026-09-30',
+      'Test 14f: a log that CHANGED is re-read and the new date surfaces — the cache is keyed on the file, not on time');
+
+    // Same size, different mtime: the signature is mtime-in-NANOSECONDS plus
+    // size, so a same-length rewrite is still seen. A size-only signature
+    // would silently serve the old date here.
+    await new Promise(r => setTimeout(r, 5));
+    writeFileSync(path.join(tempRoot, 'costa', 'wiki', 'log.md'),
+      '# Log\n\n## [2026-01-01]\nold\n\n## [2026-08-27]\nnew\n\n## [2026-09-11]\nnewest\n', 'utf8');
+    const same = await callRoute(domainsRouter, '/stats', {});
+    eq(same.body.domains.find(d => d.slug === 'costa').lastIngestDate, '2026-09-11',
+      'Test 14h: a SAME-LENGTH rewrite is seen too — mtime is part of the signature, not just size');
+
+    // A domain with no log.md at all must read null and must not poison the
+    // cache: the log appears after the first ingest, and a remembered null
+    // would outlive that.
+    const { __clearLastIngestDateCache } = await import('../src/brain/files.js');
+    await createDomain('costnolog', 'No Log', 'd', 'tech');
+    rmSync(path.join(tempRoot, 'costnolog', 'wiki', 'log.md'), { force: true });
+    const noLog = await getDomainStats('costnolog');
+    eq(noLog.lastIngestDate, null, 'Test 14i: a domain with no log.md reports null, as before');
+    writeFileSync(path.join(tempRoot, 'costnolog', 'wiki', 'log.md'),
+      '# Log\n\n## [2026-05-05]\nfirst ingest\n', 'utf8');
+    const nowLog = await getDomainStats('costnolog');
+    eq(nowLog.lastIngestDate, '2026-05-05',
+      'Test 14j: and a log APPEARING afterwards is picked up — a missing file is never cached');
+    truthy(typeof __clearLastIngestDateCache === 'function',
+      'Test 14k: the cache exposes a test-only clear, so a suite can prove the FRESH path and not only the cached one');
+  }
+
+  // ── 15. readonly comes from ONE parser and ONE read ────────────────────
+  //
+  // getDomainStats now returns `readonly`, derived from the CLAUDE.md it was
+  // already reading, and the route consumes that instead of a second
+  // isDomainReadonly pass. The risk that buys is DRIFT: two predicates
+  // deciding whether a Shared Brain mirror accepts writes is the v3.2.0
+  // "two hand-maintained copies of a guard" CRITICAL. So the parser is
+  // shared, and this proves the two entry points agree on every shape the
+  // parser documents — including the ones that must read as NOT readonly.
+  console.log('\n[15] readonly — one parser behind two entry points');
+  {
+    const { isDomainReadonly, parseReadonlyFlag } = await import('../src/brain/files.js');
+    const cases = [
+      ['---\nreadonly: true\n---\n# X\n', true, 'plain readonly: true'],
+      ['---\nReadOnly:  TRUE  \n---\n# X\n', true, 'case- and space-tolerant'],
+      ['---\nreadonly: "true"\n---\n# X\n', true, 'quoted true'],
+      ['---\nreadonly: false\n---\n# X\n', false, 'readonly: false'],
+      ['---\nreadonly: yes\n---\n# X\n', false, 'readonly: yes is NOT true'],
+      ['---\nreadonly: 1\n---\n# X\n', false, 'readonly: 1 is NOT true'],
+      ['---\nother: true\n---\n# X\n', false, 'a different key'],
+      ['# X\n\nno frontmatter\n', false, 'no frontmatter at all'],
+      ['---\nunterminated\n', false, 'unclosed frontmatter'],
+      ['', false, 'empty file'],
+    ];
+    let agreed = 0;
+    for (const [content, expected, label] of cases) {
+      const slug = 'ro' + agreed;
+      await createDomain(slug, 'RO', 'd', 'tech');
+      writeFileSync(path.join(tempRoot, slug, 'CLAUDE.md'), content, 'utf8');
+      const viaParser = parseReadonlyFlag(content);
+      const viaFile = await isDomainReadonly(slug);
+      const viaStats = (await getDomainStats(slug)).readonly;
+      if (viaParser === expected && viaFile === expected && viaStats === expected) {
+        ok(`Test 15.${agreed}: ${label} — parser, isDomainReadonly and getDomainStats.readonly all say ${expected}`);
+      } else {
+        fail(`Test 15.${agreed}: ${label}`,
+          `expected ${expected}; parser=${viaParser} isDomainReadonly=${viaFile} stats.readonly=${viaStats}`);
+      }
+      agreed++;
+    }
+    // isDomainReadonly must hold NO parsing of its own — a copy is what
+    // drifts. It reads the file and delegates.
+    const filesSrc = readFileSync(path.join(PROJECT_ROOT, 'src/brain/files.js'), 'utf8');
+    const fnRe = /export async function isDomainReadonly\(domain\) \{[\s\S]*?\n\}/;
+    const fnSrc = (filesSrc.match(fnRe) || [''])[0];
+    truthy(fnSrc.length > 50, 'Test 15a: isDomainReadonly extracted');
+    truthy(/parseReadonlyFlag\(content\)/.test(fnSrc),
+      'Test 15b: isDomainReadonly delegates to parseReadonlyFlag');
+    truthy(!/readonly\[ \\t\]\*:/.test(fnSrc) && !/fmMatch/.test(fnSrc),
+      'Test 15c: and keeps no frontmatter regex of its own — a split, not a copy, so the two cannot drift');
+
+    // A domain whose stats FAILED carries no readonly flag; the route must
+    // fall back rather than silently treat "we could not tell" as writable.
+    const routeSrc = readFileSync(path.join(PROJECT_ROOT, 'src/routes/domains.js'), 'utf8');
+    truthy(/typeof s\.readonly === 'boolean'/.test(routeSrc),
+      'Test 15d: the route only trusts a readonly flag that is actually a boolean');
+    truthy(/: await isDomainReadonly\(domains\[i\]\)/.test(routeSrc),
+      'Test 15e: and falls back to isDomainReadonly for a domain whose stats failed');
+
+    // ── The two comments that asserted the opposite of their own code ───
+    // A comment contradicted by its own file is this project's most reliable
+    // early-warning shape, and both of these were: the route said "no
+    // file-content reads" above a callee that read two files per domain, and
+    // onboarding.js said the re-check runs against "zero or very few
+    // domains" and "stops the moment all three steps go done" — the second
+    // contradicted by its OWN header (the .env-key case, on a populated
+    // install) and the third by `if (autoCloseOnComplete && …)`.
+    //
+    // These assert the CORRECTION is present rather than the false phrase
+    // absent, because both files deliberately QUOTE the old claim in order
+    // to record what was wrong with it — the reasoning that is still true is
+    // kept, only the expired conclusion is replaced. An absence check would
+    // therefore push the next author to delete the record instead of the
+    // claim, which is the opposite of what this project wants.
+    truthy(/an earlier version of this[\s\S]{0,12}comment claimed/i.test(routeSrc),
+      'Test 15f: the route now records that its "no file-content reads" claim was false, rather than repeating it');
+    truthy(/NOT free|POLLED|is polled/.test(routeSrc),
+      'Test 15g: and states the real profile — that this endpoint is polled and not free');
+    const obSrc = readFileSync(path.join(PROJECT_ROOT, 'src/public/next/views/onboarding.js'), 'utf8');
+    truthy(/All three were wrong|were wrong/.test(obSrc),
+      'Test 15h: onboarding.js records that its three claims about the re-check were wrong');
+    truthy(/autoCloseOnComplete/.test(obSrc) && /never ends|for the life of the page/.test(obSrc),
+      'Test 15i: and names the mechanism — the all-done stop living inside autoCloseOnComplete is what made the loop permanent');
+  }
+
   // ── Real credential-file isolation guard ──────────────────────────────
-  console.log('\n[13] Real credential-file isolation guard');
+  console.log('\n[16] Real credential-file isolation guard');
   assertRealFilesUntouched();
 
   // ── Summary ─────────────────────────────────────────────────────────

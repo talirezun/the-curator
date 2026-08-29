@@ -281,6 +281,64 @@ export async function extractText(filePath) {
  *   3. Bare { … } block somewhere in output  → extract and retry
  *   4. Malformed JSON (unescaped quotes etc.) → jsonrepair and retry
  */
+/**
+ * ── ADVICE THAT MATCHES THE SOURCE THE USER ACTUALLY UPLOADED ────────────────
+ *
+ * Both refusals in `ingestFile` used to give PDF/OCR advice UNCONDITIONALLY,
+ * so a user whose empty `.md` was refused was told "this usually means the PDF
+ * is image-only … run ocrmypdf". The Curator ingests .txt, .md and .pdf
+ * (`src/routes/ingest.js` fileFilter), and only .pdf goes through pdf-parse —
+ * for the other two `extractText` is a plain utf8 `readFile`, so there is no
+ * OCR path and none of that advice can ever apply.
+ *
+ * This keeps the v3.0.1-beta.4 property the whole error surface rests on: a
+ * message must make clear whether the problem is in The Curator, in the user's
+ * input, or upstream — AND what to do next. Instructions for a file format the
+ * user did not upload fail the second half, and worse, they undermine the
+ * first: being told to OCR a Markdown file reads as the app being confused
+ * about its own input rather than as a fact about the file.
+ *
+ * Classified from the ORIGINAL filename, which is what the user recognises,
+ * not from the on-disk staged path. Unknown extensions take the text branch:
+ * the fileFilter admits only these three, so 'other' is unreachable through
+ * the UI, and if it ever became reachable the text advice is the one that does
+ * not assert a format.
+ */
+function sourceKind(originalName) {
+  const name = typeof originalName === 'string' ? originalName.toLowerCase() : '';
+  if (name.endsWith('.pdf')) return 'pdf';
+  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'md';
+  if (name.endsWith('.txt')) return 'txt';
+  return 'other';
+}
+
+/** Advice for "extractText threw" — a read/parse failure. */
+function extractionFailureAdvice(kind) {
+  if (kind === 'pdf') {
+    return 'This is usually caused by an encrypted PDF, a scanned / image-only PDF ' +
+      'that needs OCR first, or a malformed file. Try: opening the PDF and ' +
+      're-saving without encryption; running OCR (e.g. macOS Preview → Tools → ' +
+      'Adjust Text → OCR, or ocrmypdf); or converting to .md / .txt first.';
+  }
+  return 'This is usually caused by a file that is not valid UTF-8 text — for example ' +
+    'a binary file given a text extension — or by a file The Curator could not read ' +
+    'from disk. Try: opening it in a text editor, confirming it shows readable text, ' +
+    'and re-saving it as UTF-8.';
+}
+
+/** Advice for "the file read fine but there is almost nothing in it". */
+function emptySourceAdvice(kind) {
+  if (kind === 'pdf') {
+    return 'This usually means the PDF is image-only (scanned, no embedded text layer) ' +
+      'and needs OCR before ingest. Try: macOS Preview → Tools → Adjust Text → OCR, ' +
+      'or run ocrmypdf, or paste the article text into a .md file and ingest that instead.';
+  }
+  const label = kind === 'md' ? 'Markdown' : 'text';
+  return `This usually means the ${label} file is empty or nearly empty. Try: opening it ` +
+    'and confirming the text you expect is actually saved there, then re-uploading. ' +
+    'If you meant to ingest a PDF, upload the .pdf itself so The Curator can extract its text.';
+}
+
 export function parseJSON(raw) {
   // 1. Fast path — valid as-is
   try { return JSON.parse(raw); } catch { /* fall through */ }
@@ -2413,10 +2471,7 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     try { await unlink(destPath); } catch { /* ignore */ }
     throw new Error(
       `Could not extract text from "${originalName}". ` +
-      `This is usually caused by an encrypted PDF, a scanned / image-only PDF ` +
-      `that needs OCR first, or a malformed file. Try: opening the PDF and ` +
-      `re-saving without encryption; running OCR (e.g. macOS Preview → Tools → ` +
-      `Adjust Text → OCR, or ocrmypdf); or converting to .md / .txt first. ` +
+      `${extractionFailureAdvice(sourceKind(originalName))} ` +
       `(Underlying error: ${err.message.slice(0, 200)})`
     );
   }
@@ -2425,11 +2480,8 @@ export async function ingestFile(domain, filePath, originalName, isOverwrite = f
     const got = fullText ? fullText.trim().length : 0;
     throw new Error(
       `"${originalName}" yielded only ${got} characters of text — too little to ` +
-      `produce meaningful wiki pages. This usually means the PDF is image-only ` +
-      `(scanned, no embedded text layer) and needs OCR before ingest. ` +
-      `Try: macOS Preview → Tools → Adjust Text → OCR, or run ocrmypdf, or paste ` +
-      `the article text into a .md file and ingest that instead. The raw file ` +
-      `has been removed so you can re-upload after fixing it.`
+      `produce meaningful wiki pages. ${emptySourceAdvice(sourceKind(originalName))} ` +
+      `The raw file has been removed so you can re-upload after fixing it.`
     );
   }
   const TEXT_CAP = 80_000;
@@ -3018,6 +3070,12 @@ export const __testing = {
   slugLineCost,
   stubPageContent,
   isOutputTokenLimit,
+  // Source-type-aware refusal advice. Exposed so a suite can execute the
+  // classifier and both advice builders for every accepted extension, rather
+  // than reaching them only through a full ingest (which needs a provider).
+  sourceKind,
+  extractionFailureAdvice,
+  emptySourceAdvice,
   extractPageArray,
   usablePageArray,
   ingestMultiPhase,

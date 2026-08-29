@@ -137,7 +137,7 @@ import {
   registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
-  preserveMainScroll, resetMainScroll,
+  preserveMainScroll, resetMainScroll, revealInMain,
   currentFontScale, fontScaleOptions, setFontScale,
 } from '../app.js';
 // Overlay, not a view — same relationship views/shared.js has with
@@ -574,6 +574,19 @@ function freshState() {
     // the offset still fits — so preserving the offset cannot fix this on its
     // own, and the fold state is the actual root cause.)
     modelRowOpen: {},
+    // Is a provider's "Chat only" LANE FOLD expanded? Keyed by provider id.
+    //
+    // Same reason as modelRowOpen one level up, and it was missing — which was
+    // measured, not inferred: with 193 chat-only models the fold is where every
+    // "Test on my wiki" button lives, so pressing one re-rendered the section,
+    // the fold snapped shut, and the confirm panel the press exists to produce
+    // rendered INSIDE a collapsed disclosure. The row's own `<details>` was
+    // already forced open for exactly that reason (see renderModelOption); the
+    // fold WRAPPING it was not, so the protection stopped one level short.
+    // Browser-measured at 1280x900: Start/Cancel 1803px outside the scrollable
+    // area, `#main.scrollTop` clamped 4691 -> 2880 as the document shrank, and
+    // the row the user pressed no longer on screen at all.
+    modelLaneOpen: {},
     // The model-pick request currently in flight, as '<provider>::<modelId>'
     // ('<provider>::' when clearing back to the app default), or null.
     //
@@ -594,6 +607,26 @@ function freshState() {
     // that they read the reset button as "my click didn't register" and
     // retried a refused write.
     modelPickError: {},
+    // WHICH ROW the `build` refusal above belongs to, as '<provider>::<modelId>',
+    // or '' when no row owns it (an unknown-provider refusal, which never
+    // reached a row).
+    //
+    // IT EXISTS SO THE MESSAGE CAN BE RENDERED WHERE THE CLICK HAPPENED. The
+    // build list is one cross-provider list ~19 rows long; the refusal used to
+    // render once, at the TOP of the block, and a row chosen from below the fold
+    // therefore announced its refusal off-screen — browser-measured at 1280x900
+    // with a real ingest holding the write lock: the alert landed at y = -135,
+    // -436 and -678 for three successively lower rows, the app did not scroll
+    // (585 -> 585), the clicked button still read "Use this", and focus was on
+    // <body>. That is v3.9.0's shape exactly, on a screen where the retry it
+    // invites is a refused WRITE the user is choosing to be billed for.
+    //
+    // A KEY, NOT A BOOLEAN, because the message must follow the row and not
+    // merely "the last click": the list re-renders on the cross-view write gate,
+    // so the row that owns a message has to be identifiable after a repaint
+    // nobody asked for. renderBuildBlock renders the block-level copy ONLY when
+    // no candidate row matches, so the same refusal is never announced twice.
+    modelPickErrorAt: '',
     // Per-provider model filter, SESSION ONLY. Reset by freshState on every
     // onEnter and written to no storage — a filter that survived a reload would
     // make a user's next visit mysteriously show a subset of their models.
@@ -1722,6 +1755,35 @@ function renderProviders() {
 }
 
 /**
+ * ── THE THREE IDS THAT MAKE A REFUSAL REACHABLE ────────────────────────────
+ *
+ * `revealInMain` and `preserveMainScroll` both address the DOM by id, because
+ * a node cannot survive the innerHTML replacement a render performs. These are
+ * the three that have to be addressable after one.
+ *
+ * BUILD_PICK_ERROR_ID IS RENDERED IN AT MOST ONE PLACE AT A TIME. Two sites can
+ * emit it — the row that owns the refusal, and renderBuildBlock's fallback for a
+ * refusal no row owns — and renderBuildBlock decides between them, never both.
+ * That keeps the id unique AND means one `role="alert"` is announced once.
+ */
+const BUILD_PICK_ERROR_ID = 'build-pick-error';
+const QUALIFY_CONFIRM_ID = 'qualify-confirm';
+
+/**
+ * The id of one row's build-pick button.
+ *
+ * Read back with getElementById ONLY. A model id is a third party's string —
+ * `z-ai/glm-4.7`, `minimax/minimax-m3:free` — so it carries `/` and `:`, which
+ * are CSS combinators and would have to be escaped for querySelector.
+ * getElementById takes the string verbatim, and the ids are unique because the
+ * build list holds one row per (provider, model) pair.
+ */
+function buildPickButtonId(provider, modelId) {
+  return 'build-pick::' + String(provider == null ? '' : provider) +
+    '::' + String(modelId == null ? '' : modelId);
+}
+
+/**
  * ── JOB 1: THE ONE MODEL THAT BUILDS THE WIKI ──────────────────────────────
  *
  * ONE CHOICE, ONE LIST, ACROSS PROVIDERS. Provider is a label on a row here.
@@ -1742,8 +1804,19 @@ function renderBuildBlock(k, crossBusy) {
 
   const errText = (state.modelPickError && typeof state.modelPickError.build === 'string')
     ? state.modelPickError.build : '';
-  const errHtml = errText
-    ? '<div class="settings-inline-error model-pick-error" role="alert">' + escapeHtml(errText) + '</div>'
+  // ── THE REFUSAL GOES TO THE ROW THAT PRODUCED IT ───────────────────────
+  // A user picks a model from a list ~19 rows long; rendering every refusal
+  // at the TOP of the block put it off-screen for every row below the fold
+  // (measured: y = -678 for the last one, with no scroll and no signal at the
+  // click site). So the owning row renders it, and this block-level copy is
+  // the FALLBACK for a refusal no row can render — an unknown provider, or a
+  // model that has since left the list. Never both: one refusal, one alert.
+  const errAt = (typeof state.modelPickErrorAt === 'string') ? state.modelPickErrorAt : '';
+  const ownedByRow = !!(errText && errAt &&
+    cands.some(({ p, m }) => p && m && (p.id + '::' + m.id) === errAt));
+  const errHtml = (errText && !ownedByRow)
+    ? '<div id="' + BUILD_PICK_ERROR_ID + '" class="settings-inline-error model-pick-error" role="alert">' +
+      escapeHtml(errText) + '</div>'
     : '';
 
   return (
@@ -1754,7 +1827,8 @@ function renderBuildBlock(k, crossBusy) {
       'provider the active one, so the choice can never end up applying to nothing.</p>' +
       renderBuildCurrent(k, pickDisabled) +
       errHtml +
-      renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId) +
+      renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId,
+        ownedByRow ? errAt : '', ownedByRow ? errText : '') +
     '</div>'
   );
 }
@@ -1883,7 +1957,7 @@ function renderBuildCurrent(k, pickDisabled) {
  * So the badge is not rendered, `ctx.showCheapest: false` says so explicitly,
  * and every row carries its own price unfolded instead. The list is ~19 rows.
  */
-function renderBuildList(cands, k, pickDisabled, crossBusy, busyId) {
+function renderBuildList(cands, k, pickDisabled, crossBusy, busyId, errorAt, errorText) {
   if (cands.length === 0) {
     return '<p class="settings-job-empty">No connected provider currently offers a model that has been ' +
       'measured for building a wiki. Connect a provider below, or open <strong>Every model, by ' +
@@ -1912,6 +1986,11 @@ function renderBuildList(cands, k, pickDisabled, crossBusy, busyId) {
     qualify: state.qualify,
     minRuns: Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9,
     lane,
+    // The refusal for THIS row, or ''. Matched on provider AND model, for the
+    // same reason `isInUse` is: two providers can offer the same id string,
+    // and a refusal shown against the wrong provider's row is worse than one
+    // shown nowhere — it names a model the user did not click.
+    pickError: (errorText && errorAt === p.id + '::' + m.id) ? errorText : '',
   })).join('');
 
   return (
@@ -3714,10 +3793,34 @@ function renderModelLanes(list, defaultId, ctx) {
 
   const chatBody = head('model-lane-head-chat', 'Chat only', chatNote, chat.length) + ul(chat);
 
+  // ── THE FOLD MUST SURVIVE A REPAINT, AND MUST OPEN FOR A MEASUREMENT ──
+  // Two independent arms, exactly as renderModelOption's row `<details>` has:
+  //
+  //  · WHAT THE USER OPENED. render() replaces the section wholesale, so a
+  //    native `<details open>` is discarded on every repaint — and this section
+  //    repaints on a keystroke in the search box, on the sort, and on the
+  //    cross-view write gate firing because an ingest started somewhere else.
+  //  · THE ROW BEING MEASURED. Every "Test on my wiki" button lives in here
+  //    (193 of them on a synced OpenRouter catalogue), and pressing one
+  //    re-renders — so without this arm the confirm panel that press exists to
+  //    produce renders inside a COLLAPSED disclosure and the press appears to
+  //    do nothing. That is the v3.8.0 shape renderModelOption's own docblock
+  //    describes, and it was still live one level up: the row was forced open
+  //    inside a fold that had just snapped shut around it.
+  //
+  // The forced arm is not redundant with the recorded one. The recorded one is
+  // dropped on every mount (freshState), so a qualification still in flight
+  // when the user leaves and returns would otherwise come back invisible.
+  const laneKey = String(ctx && ctx.provider != null ? ctx.provider : '');
+  const qualifyingId = ctx && ctx.qualify ? ctx.qualify.modelId : null;
+  const laneOpen = (state.modelLaneOpen && state.modelLaneOpen[laneKey] === true) ||
+    (!!qualifyingId && chat.some((x) => x.m && x.m.id === qualifyingId));
+
   // No control anywhere in this <summary> — see renderModelPicker's own note
   // on the v3.0.1-beta.18 hazard. It is text and a disclosure marker only.
   const chatHtml = chat.length > CHAT_LANE_COLLAPSE_AT
-    ? '<details class="model-lane-fold">' +
+    ? '<details class="model-lane-fold" data-model-lane="' + escapeHtml(laneKey) + '"' +
+        (laneOpen ? ' open' : '') + '>' +
         '<summary class="model-lane-fold-summary">' +
           icon('chevronRight', 12) +
           '<span class="model-lane-title">Chat only</span>' +
@@ -3958,7 +4061,10 @@ function renderQualifyPanel(q, minRuns) {
         // rendered as a number.
         : 'The cost cannot be estimated — no price is published for this model.';
     return (
-      '<div class="model-qual model-qual-confirm">' +
+      // The id is what revealInMain scrolls to. A confirm whose Start button is
+      // off-screen is the same defect as an off-screen refusal, on a control
+      // that can start a run measured in TENS OF MINUTES.
+      '<div id="' + QUALIFY_CONFIRM_ID + '" class="model-qual model-qual-confirm">' +
         // ── THE BRIDGE, NAMED BY ITS OUTCOME ────────────────────────────
         // The old heading ("Measure this model against your wiki?") described
         // the mechanism. What the user is deciding is whether to let this model
@@ -3972,7 +4078,15 @@ function renderQualifyPanel(q, minRuns) {
         '<p class="model-qual-facts">It will run The Curator’s real ingest planning prompt ' +
           escapeHtml(String(e.runs || minRuns)) + ' times against your <code class="mono">' +
           escapeHtml(String(e.domain || '')) + '</code> wiki (' +
-          escapeHtml(String(e.promptChars || 0)) + ' characters per run, built from your own index and ' +
+          // THOUSANDS-SEPARATED, through the same helper that renders
+          // "230,400 max output" two lines up the same panel. It was the one
+          // raw number on a screen whose other figures are all formatted, and
+          // "78481" is measurably harder to size at a glance than "78,481".
+          // formatTokenCount returns '' for a missing/NaN value, so the
+          // fallback keeps the previous "0" exactly — the VALUE is untouched,
+          // only its presentation.
+          escapeHtml(formatTokenCount(e.promptChars) || '0') +
+            ' characters per run, built from your own index and ' +
           'page list) and report exactly what came back. <strong>It writes nothing</strong> — no pages, ' +
           'no edits — and you can stop it at any point. If nothing goes wrong it joins the list of ' +
           'models that can build your wiki; a single clean run is not the same as the multi-document ' +
@@ -4465,7 +4579,13 @@ function renderModelOption(m, index, defaultId, ctx) {
     // meaning, since something must build the wiki. Keeping both shapes in one
     // function is what stops the two payloads drifting apart.
     control = c.buildChoice === true
+      // The id is what focus comes back TO after a refusal. preserveMainScroll
+      // restores focus by id and cannot help here — the FIRST render of this
+      // pair disables the button ("Saving…"), so focus has already fallen to
+      // <body> by the time the refusal arrives, and only an explicit focus on
+      // the re-enabled control returns the keyboard user to where they were.
       ? '<button type="button" class="btn btn-secondary btn-xs model-pick-btn"' +
+          ' id="' + escapeHtml(buildPickButtonId(c.provider, m.id)) + '"' +
           ' data-build-model="' + idAttr + '"' +
           ' data-build-provider="' + escapeHtml(String(c.provider === undefined || c.provider === null ? '' : c.provider)) + '"' +
           disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>'
@@ -4475,12 +4595,31 @@ function renderModelOption(m, index, defaultId, ctx) {
           disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>';
   }
 
+  // ── THE REFUSAL, IN THE ROW THE USER CLICKED ───────────────────────────
+  // Last child of the <li> and full-width (settings.css gives .model-option
+  // `flex-wrap: wrap`), so it sits directly beneath the button that produced
+  // it. That placement IS the fix: a message adjacent to the control cannot be
+  // off-screen while the control is on screen, which is a structural guarantee
+  // rather than a scroll that has to fire correctly. The scroll in
+  // onPickBuildModel is the second layer, for a row at the very bottom edge.
+  //
+  // `role="alert"` is retained verbatim — the wording and the semantics were
+  // never the defect; only the position was. This is the one place it renders
+  // for a row-owned refusal (see renderBuildBlock), so it is announced once.
+  const pickErrorHtml = (typeof c.pickError === 'string' && c.pickError)
+    ? '<div id="' + BUILD_PICK_ERROR_ID +
+      '" class="settings-inline-error model-pick-error model-pick-error-row" role="alert">' +
+      escapeHtml(c.pickError) + '</div>'
+    : '';
+
   return (
     '<li class="model-option' + (isDefault ? ' model-option-default' : '') +
       (isSelected ? ' model-option-chosen' : '') +
+      (pickErrorHtml ? ' model-option-refused' : '') +
       '" data-model-id="' + idAttr + '">' +
       '<div class="model-option-main">' + inner + '</div>' +
       '<div class="model-option-pick">' + control + '</div>' +
+      pickErrorHtml +
     '</li>'
   );
 }
@@ -4789,6 +4928,16 @@ function wireProviderListeners() {
     el.addEventListener('toggle', () => {
       if (el.open) state.modelRowOpen[el.dataset.modelRow] = true;
       else delete state.modelRowOpen[el.dataset.modelRow];
+    });
+  });
+  // The "Chat only" lane fold, same contract again — record, never re-render.
+  // It is the fold every "Test on my wiki" button lives inside, so losing its
+  // state made a press render its own confirm panel into a collapsed
+  // disclosure. See renderModelLanes.
+  document.querySelectorAll('[data-model-lane]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      if (el.open) state.modelLaneOpen[el.dataset.modelLane] = true;
+      else delete state.modelLaneOpen[el.dataset.modelLane];
     });
   });
   // ── THE FILTER CONTROLS ────────────────────────────────────────────────
@@ -5471,6 +5620,13 @@ async function onQualifyEstimate(modelId, token) {
       state.qualify = { modelId, phase: 'confirm', runs: [], estimate: data };
     }
     render(token);
+    // SECOND LAYER, not the first. renderModelLanes now keeps the fold open and
+    // renderModelOption forces the row open, so the panel is in the flow where
+    // the user clicked; this only covers a row pressed near the bottom edge,
+    // where a ~290px panel would still push Start past the fold. It reveals the
+    // panel's TOP rather than its buttons: a confirm is read from the first
+    // line, and revealInMain moves nothing when it already fits.
+    revealInMain(QUALIFY_CONFIRM_ID);
   } catch (err) {
     if (!isCurrentMount(token)) return;
     state.qualify = { modelId, phase: 'error', runs: [], error: (err && err.message) || 'Could not work out the cost.' };
@@ -5705,13 +5861,18 @@ async function onPickBuildModel(provider, modelId, token) {
     state.modelPickError = Object.assign({}, state.modelPickError, {
       build: 'Cannot choose a model for an unknown provider.',
     });
+    // No row owns this one — the click never came from a rendered candidate —
+    // so renderBuildBlock's block-level fallback is the only place it can go.
+    state.modelPickErrorAt = '';
     render(token);
+    revealInMain(BUILD_PICK_ERROR_ID);
     return;
   }
   // Same key shape as onPickModel's, so renderModelOption's `isPending` test
   // needs no second form to understand.
   state.modelPickBusy = provider + '::' + model;
   state.modelPickError = Object.assign({}, state.modelPickError, { build: '' });
+  state.modelPickErrorAt = '';
   render(token);
   try {
     const res = await fetch('/api/config/api-keys/build-model', {
@@ -5729,7 +5890,9 @@ async function onPickBuildModel(provider, modelId, token) {
       if (!isCurrentMount(token)) return;
       state.modelPickBusy = null;
       state.modelPickError = Object.assign({}, state.modelPickError, { build: message });
+      state.modelPickErrorAt = provider + '::' + model;
       render(token);
+      revealPickRefusal(provider, model);
       return;
     }
     // The route reports the OUTCOME rather than echoing the request, so an
@@ -5748,18 +5911,56 @@ async function onPickBuildModel(provider, modelId, token) {
           'provider. Check that its key is still connected below, then try again.'
         : '',
     });
+    // An inert save is a statement ABOUT THAT ROW, so it is anchored to it and
+    // revealed the same way a refusal is. A clean success owns no row.
+    state.modelPickErrorAt = inert ? provider + '::' + model : '';
     // The ONLY place the rendered choice moves. Refetching (rather than
     // trusting the POST's echo) also picks up what llm.js will now actually
     // resolve, which the headline claims to show.
     await loadKeys(token);
+    if (inert) revealPickRefusal(provider, model);
   } catch (err) {
     if (isCurrentMount(token)) {
       state.modelPickBusy = null;
       state.modelPickError = Object.assign({}, state.modelPickError, {
         build: modelPickErrorMessage(0, { error: err && err.message }),
       });
+      state.modelPickErrorAt = provider + '::' + model;
       render(token);
+      revealPickRefusal(provider, model);
     }
+  }
+}
+
+/**
+ * Put a build-pick refusal in front of the user, and the cursor back on the
+ * control they pressed.
+ *
+ * THE SECOND LAYER, NOT THE FIRST. The message is already rendered INSIDE the
+ * row (see renderModelOption), so it is adjacent to the button by construction;
+ * this only covers the case where that row sits at the very bottom edge and the
+ * message lands a few pixels past it, plus renderBuildBlock's block-level
+ * fallback for a refusal no row owns. `revealInMain` moves nothing when the
+ * element is already fully visible, so the common case is a no-op and the page
+ * does not jolt.
+ *
+ * FOCUS IS RESTORED EXPLICITLY, and preserveMainScroll cannot do it for us: the
+ * first of this handler's two renders DISABLES the button, so focus has already
+ * fallen to <body> before the refusal arrives, and there is nothing left for a
+ * by-id restore to capture. `preventScroll` because the position was just
+ * decided on the line above — letting the browser scroll the button into view
+ * would undo it.
+ *
+ * Every step is optional and independently guarded: a row whose control is not
+ * a button (an inert save re-badges it "Building your wiki") simply keeps focus
+ * where it is, rather than throwing.
+ */
+function revealPickRefusal(provider, model) {
+  revealInMain(BUILD_PICK_ERROR_ID);
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById(buildPickButtonId(provider, model));
+  if (btn && typeof btn.focus === 'function' && !btn.disabled) {
+    try { btn.focus({ preventScroll: true }); } catch { /* not focusable in this state */ }
   }
 }
 

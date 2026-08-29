@@ -55,6 +55,7 @@ const OFFLINE = [
   'test-beta25-compile-prompt.js',
   'test-beta27-compile-fallback.js',
   'test-ci-flake.js',
+  'test-provider-error-remedies.js', // an error must name the RIGHT vendor's remedy. Both llm.js transient messages interpolated the provider NAME correctly and then hardcoded GOOGLE's links and Google's free-tier figures, so a live OpenRouter 429 read "Rate limit hit on OpenRouter … consider upgrading at ai.google.dev/pricing". It read as fixed since v3.0.4, which made the name dynamic and left the rest — a message that is right in one clause and wrong in the next is far harder to spot than one wrong throughout. Same shape in ingest.js, where an empty .md was answered with "run ocrmypdf". §3 drives the REAL retry ladder through the production injection seams (a "retryDelay" hint makes it wait 1ms, so nothing about the classification is stubbed and no paid call is made); §4 proves all five message-substring classifiers across four files still fire, because "(HTTP 429)"/"(HTTP 503)"/"temporarily overloaded" are read as TEXT by the batch queue, sharedbrain's strike counter and the CI flake gate — rewording them breaks a recovery path with nothing else going red. NO rate-limit FIGURES are printed: v3.15.0's rule that an unverifiable number on an error screen is worse than none.
   'test-runner-integration.js',
   'test-ingest-fixes.js',
   'test-sharedbrain-local.js',

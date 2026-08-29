@@ -43,7 +43,7 @@ export const scanWikiHealthDefinition = {
   description:
     "Scan the user's second brain wiki for structural issues — broken links, orphan pages, duplicate entities, hyphenation drift, folder-prefix violations, missing backlinks. " +
     "Use this when the user asks to 'check my wiki', 'find problems', 'clean up the knowledge base', 'audit my second brain', 'see what's broken'. " +
-    "Returns categorized issue lists. Issues the user has already dismissed (via the in-app Health tab or a previous MCP session) are filtered out automatically — counts.dismissed reports how many. " +
+    "Returns categorized issue lists. Issues the user has already dismissed (via the in-app Health panel, in the Domains view, or a previous MCP session) are filtered out automatically — counts.dismissed reports how many. " +
     "Pair this with fix_wiki_issue to apply repairs. Auto-fixable types (folderPrefixLinks, crossFolderDupes, hyphenVariants, missingBacklinks, brokenLinks WITH a suggestedTarget) can be fixed without confirmation. " +
     "Review-only types (orphans, brokenLinks WITHOUT a target) require human judgement — confirm with the user before fixing or dismissing.",
   inputSchema: {
@@ -131,7 +131,7 @@ export const fixWikiIssueDefinition = {
     "Apply ONE fix to the user's second brain wiki. Use after scan_wiki_health to repair an issue you've decided to act on. " +
     "PASS BACK THE ISSUE OBJECT SCAN_WIKI_HEALTH GAVE YOU. Do not compose one, and do not substitute your own idea of the right target — the scanner's suggestions come from deterministic slug normalisation, yours would be a guess, and a wrong retarget writes a factually wrong link into every page that referenced it. " +
     "Safe to apply without asking, PROVIDED the issue object came from scan_wiki_health: folderPrefixLinks, missingBacklinks, and brokenLinks that already carry a suggestedTarget. " +
-    "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the Health tab's AI broken-link fixer, which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
+    "brokenLinks WITHOUT a scanner suggestedTarget is not fixable here — say so and leave the link alone, or point the user at the AI broken-link fixer in the app's Health panel (Domains view), which previews the whole plan before writing. A suggestedTarget you invented is rejected unless it names a page that exists, and even then it is your guess, not the scanner's. " +
     "crossFolderDupes and hyphenVariants merge two pages and DELETE one of them (inbound links are repointed): tell the user which page disappears before you call them. " +
     "Review-only types require user confirmation in chat first: orphanLink (the AI-orphan-rescue pseudo-type — pass it the orphan slug + target slug + bullet description), semanticDupe (the destructive merge pseudo-type). " +
     "semanticDupe is DESTRUCTIVE: it deletes the duplicate file and rewrites every [[old-slug]] link across the domain. " +
