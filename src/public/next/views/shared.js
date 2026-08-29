@@ -161,6 +161,10 @@ import {
 } from '../app.js';
 import { openSharedBrainWizard, closeSharedBrainWizardIfOpen } from './shared-brain-wizard.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// The ONE text system in /next (shared/text.js). The view header owns the
+// eyebrow, the title and the info mark; it has NO parameter that renders a
+// paragraph under the title, which is what this view used to do.
+import { renderViewHeader } from '../shared/text.js';
 
 function freshState() {
   return {
@@ -410,9 +414,14 @@ function renderSidebar(token) {
       '</div>';
   }
 
+  // CUT, not relocated: "Cohorts this install writes to." labelled the list
+  // directly beneath it, which either names the cohorts or says "Not enabled
+  // on this install." — so the label restated what the list already showed.
+  // Hiding 30 characters behind a click would be worse than either keeping
+  // or deleting them. It also sat in `.sidebar-hint`, which paints --text-3
+  // (4.27 dark / 4.14 light, under the 4.5 AA floor).
   setSidebar(
     '<div class="sidebar-title">Shared Brain<span class="sb-beta-pill">beta</span></div>' +
-    '<div class="sidebar-hint">Cohorts this install writes to.</div>' +
     body,
     token
   );
@@ -430,12 +439,18 @@ function renderMain(token) {
     body = renderEnabled();
   }
 
+  // RELOCATED, not cut: this is the only place the contribution model is
+  // explained, and "Nothing else on your machine moves" is a privacy claim a
+  // first-time reader needs once. It is not a warning and carries no cost or
+  // irreversibility, so the fold is the right home for it.
   setMain(
-    eyebrow('your team’s brain') +
-    '<h1 class="view-title">Shared Brain</h1>' +
-    '<div class="view-body">A Shared Brain is a collective wiki a cohort writes together. Contributors push ' +
-    'synthesised summaries of the domains they opt in; the merged wiki comes back as a read-only mirror. Nothing ' +
-    'else on your machine moves.</div>' +
+    renderViewHeader({
+      eyebrow: 'your team’s brain',
+      title: 'Shared Brain',
+      info: 'A Shared Brain is a collective wiki a cohort writes together. Contributors push '
+          + 'synthesised summaries of the domains they opt in; the merged wiki comes back as a '
+          + 'read-only mirror. Nothing else on your machine moves.',
+    }) +
     body,
     token
   );

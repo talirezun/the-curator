@@ -131,8 +131,19 @@ ok('memory.js: the journal count is a READOUT (renderReadout inside renderJourna
   callSiteCount(memSrc, 'renderReadout', { within: 'renderJournal' }) > 0);
 ok('memory.js: the handoff provenance is a READOUT (renderReadout inside renderHandoff)',
   callSiteCount(memSrc, 'renderReadout', { within: 'renderHandoff' }) > 0);
-ok('ingest.js: the view description is a DESCRIPTION (renderDescription inside renderMain)',
-  callSiteCount(ingSrc, 'renderDescription', { within: 'renderMain' }) > 0);
+// EXPIRED CLAIM, REPLACED — the assertion was right and its premise is gone.
+// It pinned a renderDescription call inside ingest's renderMain, i.e. a
+// paragraph rendered under the <h1>. That paragraph is DELETED: every clause of
+// it was already on screen in the drop zone below. The header now goes through
+// renderViewHeader, which has no parameter that can render prose there. So the
+// claim is inverted rather than deleted: renderMain must reach the header
+// component, and must NOT reach the description role.
+ok('ingest.js: renderMain builds its header with renderViewHeader',
+  callSiteCount(ingSrc, 'renderViewHeader', { within: 'renderMain' }) > 0);
+ok('ingest.js: renderMain paints NO description — the header has no slot for one',
+  callSiteCount(ingSrc, 'renderDescription', { within: 'renderMain' }) === 0);
+ok('ingest.js: the sidebar hint moved behind the info mark, not into a floating hint div',
+  callSiteCount(ingSrc, 'renderViewHeader', { within: 'renderSidebar' }) > 0);
 ok('ingest.js: the cost estimate is a READOUT GROUP (inside renderQueueEstimate)',
   callSiteCount(ingSrc, 'renderReadoutGroup', { within: 'renderQueueEstimate' }) > 0);
 
@@ -368,15 +379,23 @@ function ingRenderers(stateObj) {
   ok('...while an absent pause message adds nothing', /Resume when ready\.<\/div>/.test(noMsg), noMsg);
 }
 
-// THE DERIVED FORMATS LINE. The brief's rule: never replace a derived value
-// with a typed one. The description used to type ".pdf, .md or .txt" three
-// lines above a drop zone that derives the same list from ALLOWED_EXT.
+// THE DERIVED FORMATS LINE — and its premise expired with the sentence it
+// served. The rule it encoded ("never replace a derived value with a typed
+// one") is intact and still asserted; what changed is that renderMain no longer
+// states the formats AT ALL. The sentence that typed them was deleted because
+// the drop zone directly beneath it already showed the same derived list, and
+// the second derivation that fed it went with it — an unread computation over
+// the very constant this block exists to protect.
+//
+// So the assertion is inverted, not dropped: renderMain must type no extension
+// (the original rule, still binding) AND must not re-grow a second derivation
+// (the duplication that made the sentence a liability in the first place).
 {
   const rm = functionSource(ingCode, 'renderMain');
-  ok('renderMain builds its accepted-formats list from ALLOWED_EXT',
-    rm !== null && /ALLOWED_EXT[\s\S]{0,40}\.map\(/.test(rm), rm && rm.slice(0, 300));
-  ok('...and does NOT type the extensions out', rm !== null && !/'\.pdf'|'\.md'|'\.txt'/.test(rm),
-    rm && rm.slice(0, 300));
+  ok('renderMain types NO extension out — the never-hand-maintain-a-derived-fact rule, unchanged',
+    rm !== null && !/'\.pdf'|'\.md'|'\.txt'/.test(rm), rm && rm.slice(0, 300));
+  ok('...and carries NO second derivation of the list either: exactly one reader below',
+    rm !== null && !/ALLOWED_EXT/.test(rm), rm && rm.slice(0, 300));
   // The drop zone must KEEP its own inline derivation: test-next-ingest-view.js
   // asserts `ALLOWED_EXT ... .map(` inside that function, so hoisting a shared
   // builder out of it would defeat the guard that stops it regressing.
@@ -524,7 +543,12 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
   const ingSrc = read('views/ingest.js');
   for (const [label, src, fns] of [
     ['memory.js', memSrc, ['renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer']],
-    ['ingest.js', ingSrc, ['renderDescription']],
+    // renderDescription is NO LONGER in ingest's list, and that is the point of
+    // this release rather than a coverage loss: its single call site was the
+    // paragraph under the <h1>. renderViewHeader replaces it as the adopted
+    // role, and renderStatus (already used for every failure box) keeps the
+    // count honest about the roles this view really does reach.
+    ['ingest.js', ingSrc, ['renderViewHeader', 'renderStatus']],
   ]) {
     ok(`${label} imports the ONE text system`, /from '\.\.\/shared\/text\.js'/.test(src));
     for (const fn of fns) {
@@ -532,6 +556,15 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
       ok(`${label} actually CALLS ${fn}() — an unused import is an unadopted component`, n > 0, `${n} call sites`);
     }
   }
+  // NAMED SITES for the header, so a count cannot mask a single view slipping
+  // a paragraph back under its title. Both were literally that paragraph.
+  ok('ingest.js centre: the header is the component, and the deleted sentence has not returned',
+    /renderViewHeader\(\{ eyebrow: 'the way material gets in', title: 'Ingest' \}\)/.test(stripComments(ingSrc))
+    && !/Drop in a ' \+ accepts/.test(stripComments(ingSrc)));
+  ok('ingest.js sidebar: the hint is the header\u2019s info, not a .sidebar-hint div',
+    /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest', info: hint/.test(stripComments(ingSrc))
+    && !/class="sidebar-hint">' \+ hint/.test(stripComments(ingSrc)));
+
   // The exact site the mutation reverted, named so a count cannot mask it.
   ok('the Agent-memory sidebar description goes through renderDescription, not a raw div',
     /renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));

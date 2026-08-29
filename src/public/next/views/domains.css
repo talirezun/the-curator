@@ -135,14 +135,15 @@
   margin-bottom: 6px;
 }
 
-.dm-title-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-.dm-title-row .dm-title { margin: 0; }
+/* `.dm-title-row` and `.dm-title` are GONE, not renamed: shared/text.js's
+   renderViewHeader owns that row now, so a second local copy of the layout
+   would be two hand-maintained answers to one question — this repo's named
+   cause of the v3.2.0 CRITICAL. `.dm-ask-btn` stays and still works, because
+   the shared header's actions group is `flex: 1` precisely so this rule keeps
+   its meaning. (The class name is deliberately not written with its leading
+   dot: shared/text.css owns that prefix and test-next-text-system.js scans
+   raw bytes for it, comments included — correctly, since a rule commented out
+   today is a leak tomorrow.) */
 .dm-ask-btn { margin-left: auto; }
 
 .dm-mirror-pill {

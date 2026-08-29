@@ -167,6 +167,11 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // would be a second hand-maintained copy of that rule. See format-usd.js.
 import { formatUsdHonest } from '../shared/format-usd.js';
 import { formatModelSummary } from '../shared/model-summary.js';
+// The ONE text system in /next (shared/text.js). This view was the largest
+// carrier of the defect renderViewHeader removes: ~3,620 characters of static
+// prose, a paragraph of it directly under the <h1> of four of the five
+// sections. The header component has no parameter that can put it back.
+import { renderViewHeader } from '../shared/text.js';
 
 const SETTINGS_SECTIONS = [
   ['general',   'General',              'Appearance, updates'],
@@ -177,6 +182,52 @@ const SETTINGS_SECTIONS = [
 ];
 
 const SECTION_TITLES = Object.fromEntries(SETTINGS_SECTIONS.map(([id, label]) => [id, label]));
+
+/**
+ * What each section IS, in one place, behind the header's info mark.
+ *
+ * Every string here used to be a `<p class="view-body">` rendered as the first
+ * thing inside its section body — i.e. a paragraph directly under the <h1>, on
+ * four of the five sections. They are RELOCATED rather than cut: each explains
+ * a model the screen below it does not (which of two jobs a key serves; that
+ * the MCP bridge runs without the app; that a ceiling REFUSES rather than
+ * truncates; that the folder is an Obsidian vault).
+ *
+ * `general` is deliberately absent, so that section renders NO mark. Its copy
+ * is per-control hint text sitting beside the control it describes, which is
+ * in-context labelling and not a view description.
+ *
+ * NOTHING THAT WARNS OR COSTS BELONGS HERE. The cross-write banner, the
+ * fallback-model banner (a silent change to what the user is billed) and every
+ * inline error stay in the body, unfolded, exactly where they were.
+ */
+const SECTION_INFO = {
+  providers: {
+    html: true,
+    text: 'There are two jobs here. <strong>One model builds your wiki</strong> — ingest, '
+        + 'Health scans and Compile all share it, and it has to be one somebody has measured '
+        + 'doing that job. <strong>Chat</strong> can use any model you have connected, and you '
+        + 'pick it per message.',
+  },
+  mcp: {
+    html: true,
+    text: 'Exposes your graph to any MCP client — twenty tools: fifteen that read your wiki, '
+        + 'and five that write to it (compiling a conversation into pages, saving an agent\u2019s '
+        + 'working state, and fixing health issues) without leaving Claude. Write tools refuse '
+        + 'on <code class="mono">shared-*</code> mirrors by design. The Curator does not need '
+        + 'to be running: the bridge is a separate process the client launches on demand.',
+  },
+  health: {
+    text: 'Cost ceilings for the AI scans that run from a domain\u2019s health panel. A scan '
+        + 'refuses to start when its estimate exceeds the ceiling — raise it if a scan will '
+        + 'not run on a large wiki.',
+  },
+  storage: {
+    html: true,
+    text: 'Every domain is a folder of plain markdown here. This folder is also your Obsidian '
+        + 'vault — open it with <em>Open folder as vault</em>.',
+  },
+};
 
 // ── Provider display metadata — 3 of these actually run. The remaining one
 // is rendered clearly inert (see honesty note above). ────────────────────
@@ -1097,9 +1148,14 @@ function renderMain(token) {
   else if (state.section === 'health') body = renderHealthLimits();
   else body = renderStorage();
 
+  const info = SECTION_INFO[state.section];
   setMain(
-    eyebrow('configuration') +
-    '<h1 class="view-title">' + escapeHtml(title) + '</h1>' +
+    renderViewHeader({
+      eyebrow: 'configuration',
+      title,
+      info: info ? info.text : null,
+      infoHtml: !!(info && info.html),
+    }) +
     body,
     token
   );
@@ -1664,9 +1720,11 @@ function chatModelCount(k) {
 
 function renderProviders() {
   if (state.keysError) {
-    return '<p class="view-body">One model builds your wiki — ingest, Health scans and Compile all ' +
-      'share it. Chat is separate and you pick it per message. Connect at least one provider below.</p>' +
-      '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
+    // CUT. This was a second, shorter copy of SECTION_INFO.providers rendered
+    // only on the error path — and on that path the useful thing is the error,
+    // not a restatement of the section's premise. The premise is one click away
+    // on the header's info mark, on this branch as on every other.
+    return '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
   }
   if (!state.keys) {
     return gatedLoader(loadGate, 'Loading provider status…');
@@ -1706,9 +1764,11 @@ function renderProviders() {
   const keyRows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy)).join('');
 
   return (
-    '<p class="view-body">There are two jobs here. <strong>One model builds your wiki</strong> — ingest, ' +
-    'Health scans and Compile all share it, and it has to be one somebody has measured doing that job. ' +
-    '<strong>Chat</strong> can use any model you have connected, and you pick it per message.</p>' +
+    // The section description moved to SECTION_INFO.providers, behind the
+    // header's info mark. What follows it here is unchanged and stays
+    // UNFOLDED: a cross-write banner and a fallback-model banner are both
+    // statements about money and timing, and v3.16.1's rule is that a warning
+    // behind a click is not a warning.
     renderCrossWriteBanner('wait for it to finish before changing keys or the model that builds your wiki — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
     // Deliberately ABOVE everything and never behind a disclosure: a fallback
@@ -4687,10 +4747,9 @@ function renderMcp() {
     // "seventeen tools, ten read and seven write", which was wrong on all
     // three numbers and never mentioned that Claude can WRITE at all.
     // scripts/test-next-mcp-wizard.js pins these against the real table.
-    '<p class="view-body">Exposes your graph to any MCP client — twenty tools: fifteen that read your wiki, ' +
-    'and five that write to it (compiling a conversation into pages, saving an agent\'s working state, and fixing health issues) without leaving ' +
-    'Claude. Write tools refuse on <code class="mono">shared-*</code> mirrors by design. The Curator does not ' +
-    'need to be running: the bridge is a separate process the client launches on demand.</p>' +
+    // Description moved to SECTION_INFO.mcp. The tool counts moved WITH it
+    // verbatim; scripts/test-next-mcp-wizard.js pins them against the real
+    // table, so the numbers still have exactly one reader and one guard.
     '<div class="settings-btn-row">' +
       '<button type="button" class="btn btn-primary" id="btn-mcp-wizard">' + escapeHtml(wizardLabel) + '</button>' +
       '<button type="button" class="btn btn-secondary" id="btn-mcp-self-test"' + (state.selfTestLoading ? ' disabled' : '') + '>' +
@@ -4742,8 +4801,9 @@ function renderHealthLimits() {
     return gatedLoader(loadGate, 'Loading scan limits…');
   }
   return (
-    '<p class="view-body">Cost ceilings for the AI scans that run from a domain’s health panel. A scan refuses to ' +
-    'start when its estimate exceeds the ceiling — raise it if a scan will not run on a large wiki.</p>' +
+    // Description moved to SECTION_INFO.health. The two per-field hints below
+    // stay where they are: each states a DEFAULT for the input it sits under,
+    // which is in-context labelling, not a view description.
     '<div class="settings-field-block">' +
       '<span class="settings-field-label">Cost ceiling per scan</span>' +
       '<div class="settings-input-suffix"><input type="number" min="1" class="mono settings-number-input" id="input-cost-ceiling" value="' + escapeHtml(state.costCeilingInput) + '"><span class="mono suffix">tokens</span></div>' +
@@ -4780,8 +4840,9 @@ function renderStorage() {
     ? ' title="' + escapeHtml(crossWriteTitle('changing the knowledge base folder mid-write can scatter its remaining pages into the new folder instead.')) + '"'
     : '';
   return (
-    '<p class="view-body">Every domain is a folder of plain markdown here. This folder is also your Obsidian vault ' +
-    '— open it with <em>Open folder as vault</em>.</p>' +
+    // Description moved to SECTION_INFO.storage. The cross-write banner stays
+    // unfolded — changing this folder mid-write scatters a run's remaining
+    // pages into the new one, which is a data warning, not an explanation.
     renderCrossWriteBanner('wait for it to finish before changing the knowledge base folder.') +
     '<div class="storage-path-row">' +
       '<code class="mono storage-path">' + escapeHtml(state.config.domainsPath) + '</code>' +

@@ -228,7 +228,11 @@ section('§1  IMPORT SITE — the component is actually used');
 // The format-usd.js precedent, and the reason it exists: the renderers being
 // correct is worth nothing if the view kept its own copy.
 {
-  ok(/^import \{\s*\n?\s*renderReadoutGroup, renderDescription, renderStatus,\s*\n?\} from '\.\.\/shared\/text\.js';$/m.test(domainsCode)
+  // The strict half is kept CURRENT rather than left to rot: it sits behind an
+  // `||` with a loose fallback, so a stale spelling of the import list makes it
+  // silently unsatisfiable while the assertion still passes — a decorative half
+  // of a guard, which is the shape this repo keeps finding.
+  ok(/^import \{\s*\n?\s*renderReadoutGroup, renderDescription, renderStatus, renderViewHeader,\s*\n?\} from '\.\.\/shared\/text\.js';$/m.test(domainsCode)
      || /from '\.\.\/shared\/text\.js'/.test(domainsCode),
      'views/domains.js imports from ../shared/text.js');
   for (const name of ['renderReadoutGroup', 'renderDescription', 'renderStatus']) {

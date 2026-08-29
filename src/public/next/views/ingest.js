@@ -135,7 +135,7 @@ import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/li
 // scripts/test-next-memory-ingest-text.js asserts these imports are present AND
 // reached: a component that ships unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadoutGroup,
+  renderStatus, renderReadoutGroup, renderViewHeader,
 } from '../shared/text.js';
 
 // The honest USD renderer. NOT one of the byte-pinned 13 above — it is a
@@ -603,10 +603,16 @@ function renderSidebar(token) {
       '<div class="ing-dest-list">' + rows + '</div>'
     : '';
 
+  // RELOCATED. The hint explains the failure-isolation model and, in queue
+  // mode, that an interrupted batch resumes — neither is stated anywhere
+  // else on screen, so it is kept rather than cut. It is no longer a
+  // paragraph floating under the sidebar title: renderViewHeader puts it
+  // behind the info mark, in a panel that is hidden on first paint. It also
+  // leaves `.sidebar-hint`, which paints --text-3 — measured 4.27 dark /
+  // 4.14 light, under the 4.5 AA floor — for the panel's --text-2.
   setSidebar(
-    '<div class="sidebar-title">Ingest</div>' +
+    renderViewHeader({ variant: 'sidebar', title: 'Ingest', info: hint, infoId: 'tx-vh-info-ingest-sidebar' }) +
     pickBtn +
-    '<div class="sidebar-hint">' + hint + '</div>' +
     listBlock +
     busyNote,
     token
@@ -655,38 +661,22 @@ function renderMain(token) {
     body = renderIngestForm();
   }
 
-  // THE FORMATS ARE DERIVED, and that is the whole reason this line changed
-  // shape. It used to TYPE OUT ".pdf, .md or .txt" three lines above a drop
-  // zone that builds the same list from ALLOWED_EXT — the constant
-  // pickSingleFile actually validates against. Two descriptions of one fact,
-  // in one view, one of them hand-maintained: add a format and this sentence
-  // silently starts lying about what the picker will accept. Read from the
-  // constant here too, so it cannot.
+  // CUT, not relocated. Every clause of the deleted sentence was already on
+  // screen, simultaneously, in the drop zone directly beneath it: "Drop a
+  // source here", an accepted-extension list built from the same ALLOWED_EXT
+  // constant, and "2 or more files at once starts a batch". Relocating it
+  // behind the info mark would have preserved a duplicate; the one clause not
+  // restated below — that the wiki updates automatically — is what the Ingest
+  // button does and is demonstrated by pressing it.
   //
-  // Built inline rather than through a shared helper because
-  // renderDropZoneHtml must keep `ALLOWED_EXT ... .map(` in its OWN body —
-  // scripts/test-next-ingest-view.js §? asserts exactly that, so hoisting the
-  // list-builder out of it would defeat the guard that stops the drop zone
-  // regressing to a typed list. One constant, two readers, no second copy of
-  // the fact.
-  const acceptList = ALLOWED_EXT.map((ext) => '<span class="mono">' + escapeHtml(ext) + '</span>');
-  const accepts = acceptList.length > 1
-    ? acceptList.slice(0, -1).join(', ') + ' or ' + acceptList[acceptList.length - 1]
-    : (acceptList[0] || '');
-
+  // The `acceptList` / `accepts` pair that built the extension list for that
+  // sentence went WITH it. It had no other reader: renderDropZoneHtml derives
+  // its own list from ALLOWED_EXT in its own body, which is what
+  // scripts/test-next-ingest-view.js asserts. Leaving the pair here would have
+  // been an unread computation over the very constant whose single-source-of-
+  // truth the deleted comment was about.
   setMain(
-    eyebrow('the way material gets in') +
-    '<h1 class="view-title">Ingest</h1>' +
-    // STATIC PROSE, in the one role for it. `.view-body` is deliberately NOT
-    // renamed — shell.css owns it and shared/loading-gate.js DEFAULTS to it —
-    // it is retired ROLE BY ROLE, and this was its description role. Its
-    // loading-placeholder role survives below, which is the meaning the class
-    // legitimately keeps.
-    //
-    // `html: true`: the sentence carries the derived <span class="mono">
-    // fragments, every one of them escaped above at the point it was built.
-    renderDescription('Drop in a ' + accepts + ' source — or several at once for a batch. ' +
-      'The Curator reads them and updates the wiki automatically.', { html: true }) +
+    renderViewHeader({ eyebrow: 'the way material gets in', title: 'Ingest' }) +
     body,
     token
   );

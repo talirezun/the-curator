@@ -110,7 +110,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // scripts/test-next-domains-text.js asserts the import AND executes the real
 // render functions; a hand-rolled replacement goes red naming the site.
 import {
-  renderReadoutGroup, renderDescription, renderStatus,
+  renderReadoutGroup, renderDescription, renderStatus, renderViewHeader,
 } from '../shared/text.js';
 
 // The icon set this view needs (activity, sparkles, chevron-right,
@@ -205,7 +205,16 @@ const GIT_UNDO_WARN = 'There is no Undo button in the app. If you use GitHub Syn
 // instrument, and what is left of the sentence is what it always actually was
 // — an explanation of what a domain is. That is this constant.
 const DOMAIN_BLURB = 'A domain is one compounding wiki — a subject you read about often. Everything ingested into it updates the pages already there, so the graph gets denser rather than just bigger.';
-const MIRROR_BLURB = 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages. Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.';
+// MIRROR_BLURB IS NOT A DESCRIPTION AND MUST NOT GO BEHIND THE INFO MARK.
+// Its second half — "changes made here are overwritten on the next Pull" —
+// is a data-loss notice about the wiki the user is looking at, and
+// v3.16.1's rule is that a warning behind a click is not a warning. It is
+// therefore split: the sentence that EXPLAINS what a mirror is joins
+// DOMAIN_BLURB behind the mark, and the sentence that WARNS renders as an
+// unfolded renderStatus box in the body. renderViewHeader has no tone and
+// no warning field, so this split is the only shape it can take.
+const MIRROR_INFO = 'A read-only mirror of a Shared Brain — synthesised from every contributor’s opted-in pages.';
+const MIRROR_WARNING = 'Fix issues in your personal contributing domain instead; changes made here are overwritten on the next Pull.';
 
 // ── Module state ───────────────────────────────────────────────────────────
 // Kept at module scope (not reset on every onEnter) so switching away to
@@ -1416,18 +1425,30 @@ function selectDomain(slug) {
 
 // ── Main column ────────────────────────────────────────────────────────────
 
+/**
+ * The list-view header, in ONE place.
+ *
+ * Four branches of renderMain used to concatenate `eyebrow(...) + '<h1 ...>'`
+ * by hand, which is four hand-maintained copies of one header and four places
+ * a paragraph could be appended under a title. One builder, four callers, and
+ * DOMAIN_BLURB reaches the fold on every branch instead of only the empty one.
+ */
+function domainsHeader() {
+  return renderViewHeader({ eyebrow: 'your brain', title: 'Domains', info: DOMAIN_BLURB });
+}
+
 function renderMain(token) {
   if (!isCurrentMount(token)) return;
   if (!state.loaded) {
     // Chrome (eyebrow + title) is known before the fetch and paints
     // immediately, so the column never blanks; only the BODY waits, and
     // only shows a loader if the gate fires.
-    setMain(eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' + gatedLoader(loadGate, 'Loading…'), token);
+    setMain(domainsHeader() + gatedLoader(loadGate, 'Loading…'), token);
     return;
   }
   if (state.loadError) {
     setMain(
-      eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' +
+      domainsHeader() +
       emptyCard({ title: 'Could not load domains', body: escapeHtml(state.loadError) }),
       token
     );
@@ -1435,9 +1456,8 @@ function renderMain(token) {
   }
   if (state.domains.length === 0) {
     setMain(
-      eyebrow('your brain') + '<h1 class="view-title">Domains</h1>' +
+      domainsHeader() +
       renderLifecycleCard() +
-      renderDescription(DOMAIN_BLURB) +
       emptyCard({
         title: 'No domains yet',
         body: 'Name it, pick a starting schema, and it is ready to ingest into. Nothing is written until you confirm.',
@@ -1451,7 +1471,7 @@ function renderMain(token) {
   }
 
   const domain = state.domains.find((d) => d.slug === state.activeSlug);
-  if (!domain) { setMain(eyebrow('your brain') + '<h1 class="view-title">Domains</h1>', token); return; }
+  if (!domain) { setMain(domainsHeader(), token); return; }
 
   const readonly = state.readonlySet.has(domain.slug);
   // MEDIUM-2 fix (re-audit): `pageCounts.other` is a real, additive backend
@@ -1473,16 +1493,25 @@ function renderMain(token) {
   // The five figures this used to spell out in prose are rendered by
   // renderStatCards below, from these exact variables. See DOMAIN_BLURB for
   // why the sentence was de-duplicated rather than restyled as a readout.
+  // The path line stays OUTSIDE renderViewHeader and keeps `.dm-path-eyebrow
+  // mono`. It is a PATH, and typography.css gives paths to IBM Plex Mono;
+  // routing it through the header's eyebrow slot would render it in the sans
+  // face. It is a location, not prose, so it is not what this change is about.
   const html =
     '<div class="dm-path-eyebrow mono">domains/' + escapeHtml(domain.slug) + '/</div>' +
-    '<div class="dm-title-row">' +
-      '<h1 class="view-title dm-title">' + escapeHtml(domain.displayName || domain.slug) + '</h1>' +
-      (readonly ? '<span class="dm-mirror-pill">' + icon('lock', 11) + ' read-only mirror</span>' : '') +
-      '<button class="btn btn-secondary dm-title-btn" id="dm-rename-btn">Rename</button>' +
-      '<button class="btn btn-ghost dm-title-btn dm-delete-btn" id="dm-delete-btn">' + icon('trash', 13) + ' Delete</button>' +
-      '<button class="btn btn-primary dm-ask-btn" id="dm-ask-btn">' + icon('messageSquare', 14) + ' Ask this domain</button>' +
-    '</div>' +
-    renderDescription(readonly ? MIRROR_BLURB : DOMAIN_BLURB) +
+    renderViewHeader({
+      title: domain.displayName || domain.slug,
+      info: readonly ? MIRROR_INFO : DOMAIN_BLURB,
+      infoId: 'tx-vh-info-domain',
+      actionsHtml:
+        (readonly ? '<span class="dm-mirror-pill">' + icon('lock', 11) + ' read-only mirror</span>' : '') +
+        '<button class="btn btn-secondary dm-title-btn" id="dm-rename-btn">Rename</button>' +
+        '<button class="btn btn-ghost dm-title-btn dm-delete-btn" id="dm-delete-btn">' + icon('trash', 13) + ' Delete</button>' +
+        '<button class="btn btn-primary dm-ask-btn" id="dm-ask-btn">' + icon('messageSquare', 14) + ' Ask this domain</button>',
+    }) +
+    // UNFOLDED, ALWAYS. See MIRROR_WARNING: this is a data-loss notice about
+    // the domain on screen, so it renders in the body and not behind the mark.
+    (readonly ? renderStatus({ state: 'attention', title: 'Edits here are not kept', detail: MIRROR_WARNING }) : '') +
     renderLifecycleCard() +
     renderStatCards(counts, pages) +
     renderHealthPanel(domain, readonly) +

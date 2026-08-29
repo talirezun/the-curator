@@ -403,3 +403,229 @@ export function renderExplainer(o) {
     '</details>'
   );
 }
+
+// ── 6. VIEW HEADER ──────────────────────────────────────────────────────────
+
+/**
+ * The top of a view: EYEBROW + TITLE + an INFO AFFORDANCE. Nothing else.
+ *
+ * ── THE DEFECT THIS EXISTS TO REMOVE ────────────────────────────────────────
+ *
+ * Every view in /next put a paragraph of static prose directly under its <h1>.
+ * The maintainer has raised it repeatedly — "text floating around", "truly bad
+ * UX" — and v3.20.0 did NOT fix it. That release built renderDescription and
+ * adopted it in these very headers, which changed the WORDING and kept the
+ * defect: on Domains the line went from a generated sentence to a static one,
+ * in the same position, still a paragraph under a title.
+ *
+ * THE CONTAINER WAS THE PROBLEM, NOT THE WORDING. So this component owns the
+ * whole header and there is NO PARAMETER THAT PUTS PROSE UNDER THE TITLE.
+ * `info` is the only prose field and it renders inside a panel that is `hidden`
+ * on first paint. An author who reaches for this component to add a subtitle
+ * finds no field for one. That is the same technique renderExplainer uses for
+ * `warning` — the wrong call produces the right output — and the same technique
+ * v3.13.0 used for the <summary> hazard: remove the PATH, not the symptom.
+ *
+ * ── WHY AN ICON AND NOT A COLLAPSED STRIP ───────────────────────────────────
+ *
+ * renderExplainer already hides prose, and was NOT reused here: its <summary>
+ * is a row of text ("About this view"), so adopting it would replace one line
+ * of prose under the title with another line of prose under the title. The
+ * affordance has to be a MARK, not a sentence. This is the macOS convention —
+ * Finder, System Settings and Mail put the explanation behind a control.
+ *
+ * ── THE AFFORDANCE IS A REAL CONTROL ────────────────────────────────────────
+ *
+ * A <button>, not `title=` on a <span>. v3.20.0 recorded 11 pieces of
+ * information in this app carried ONLY by a hover tooltip — invisible to
+ * keyboard and to touch — and this must not become the twelfth. So: focusable,
+ * Enter/Space operable for free because it is a real button, aria-expanded
+ * reflecting state, aria-controls naming the panel, an accessible name, and
+ * Escape closes it and returns focus to the button.
+ *
+ * ── WHY THE PANEL IS IN FLOW AND NOT A FLOATING POPOVER ─────────────────────
+ *
+ * A floating popover is the more Apple-like shape and was rejected on risk: it
+ * needs positioning, overflow and z-index handling against a shell that already
+ * has a fixed rail, a scrolling `.main` and a reader overlay. The native
+ * `popover` attribute would give dismissal and top-layer for free, but its
+ * NO-SUPPORT FALLBACK IS AN ALWAYS-VISIBLE DIV — i.e. exactly the defect being
+ * removed, restored silently on any engine that does not implement it. An
+ * in-flow panel fails in the safe direction and cannot be clipped. It is also
+ * the house pattern: memory.js's renderAbout() is an in-flow <details>.
+ *
+ * ── LISTENERS ARE DELEGATED, ONCE, AT MODULE SCOPE ──────────────────────────
+ *
+ * Views call one render function and bind nothing. A per-view bind step is an
+ * adoption bug waiting to happen — a view that forgets it ships a dead button —
+ * and repeated binds are how listeners stack across re-mounts (the hazard
+ * ingest.js and chat.js both guard by hand). One document-level handler, added
+ * once, guarded on `typeof document` so this module still imports in Node.
+ *
+ * ── ACTIONS ARE CONTROLS, AND THAT IS ENFORCED ──────────────────────────────
+ *
+ * `actionsHtml` is the one caller-supplied HTML slot (Domains needs Rename /
+ * Delete / Ask this domain beside its title). It is the only way prose could
+ * re-enter the header, so prose passed there is DROPPED rather than rendered:
+ * a <p>, or a known prose class, and the slot renders nothing. Narrow by
+ * construction — it cannot catch a bare <div> of prose — so it is a floor, not
+ * a proof, and the suite says so in its NOT ENFORCED block.
+ *
+ * ── WHAT MUST NEVER GO IN `info` ────────────────────────────────────────────
+ *
+ * Warnings, costs, spend figures, irreversibility notices. v3.16.1's rule is
+ * that a warning behind a click is not a warning. There is deliberately no
+ * `warningTone` or `state` field here: a header carrying something that warns
+ * renders renderStatus BESIDE it, in the body, where it is unfoldable — see
+ * views/domains.js, whose read-only-mirror notice ("changes made here are
+ * overwritten on the next Pull") is a status box for exactly this reason and
+ * was NOT put behind the icon.
+ *
+ * ── TWO DENSITIES, ONE VOCABULARY ──────────────────────────────────────────
+ *
+ * `variant: 'sidebar'` renders the title as a <div class="sidebar-title">
+ * rather than an <h1>, because the sidebar sits BESIDE the main region and a
+ * second <h1> on one screen is a document-outline error, not a style choice.
+ * Everything else — the mark, the panel, the delegated behaviour — is the same
+ * component, so the two surfaces cannot drift into two answers about where
+ * explanatory prose lives. This mirrors the deliberate Settings/composer split
+ * v3.16.1 recorded: different density, same vocabulary.
+ *
+ * @param {{eyebrow?:string, title:string, info?:string, infoHtml?:boolean,
+ *          infoId?:string, actionsHtml?:string, variant?:string}} o
+ * @returns {string} HTML, or '' when there is no title
+ */
+export function renderViewHeader(o) {
+  if (!o || typeof o !== 'object') return '';
+  const title = str(o.title);
+  if (title === null) return '';
+  const eyebrowText = str(o.eyebrow);
+  const info = str(o.info);
+  const actions = safeActions(o.actionsHtml);
+  const panelId = str(o.infoId) || ('tx-vh-info-' + slugForId(title));
+  const btnId = panelId + '-btn';
+  const name = 'About ' + title;
+  const sidebar = o.variant === 'sidebar';
+
+  return (
+    '<header class="tx-vh' + (sidebar ? ' tx-vh-sidebar' : '') + '">' +
+      (eyebrowText
+        ? '<div class="view-eyebrow cur-eyebrow tx-vh-eyebrow">' + escapeHtml(eyebrowText) + '</div>'
+        : '') +
+      '<div class="tx-vh-row">' +
+        (sidebar
+          ? '<div class="sidebar-title tx-vh-title">' + escapeHtml(title) + '</div>'
+          : '<h1 class="view-title tx-vh-title">' + escapeHtml(title) + '</h1>') +
+        (info
+          ? '<button type="button" class="tx-vh-info" id="' + escapeHtml(btnId) + '"' +
+              ' data-tx-info="' + escapeHtml(panelId) + '"' +
+              ' aria-expanded="false" aria-controls="' + escapeHtml(panelId) + '"' +
+              ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
+              INFO_GLYPH +
+            '</button>'
+          : '') +
+        (actions ? '<div class="tx-vh-actions">' + actions + '</div>' : '') +
+      '</div>' +
+      (info
+        ? '<div class="tx-vh-panel" id="' + escapeHtml(panelId) + '" role="group"' +
+            ' aria-label="' + escapeHtml(name) + '" hidden>' +
+            (o.infoHtml === true ? info : escapeHtml(info)) +
+          '</div>'
+        : '') +
+    '</header>'
+  );
+}
+
+/**
+ * The circled-i, inlined.
+ *
+ * app.js's icon() cannot be imported — this module takes no imports so it stays
+ * executable in an offline suite (see "WHY IT HAS NO IMPORTS" above) — and
+ * app.js's ICON_BODY has no `info` entry to import anyway; the nearest is
+ * `alertCircle`, which means something else. Same geometry contract as icon():
+ * 24-unit viewBox, currentColor stroke, 1.7 width, aria-hidden.
+ */
+const INFO_GLYPH =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+
+/** A stable DOM id fragment. Non-ASCII titles collapse rather than emit junk. */
+function slugForId(title) {
+  const s = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return s || 'view';
+}
+
+/**
+ * The actions slot accepts CONTROLS. Prose is dropped, not rendered.
+ *
+ * This is the only caller-supplied HTML in the header, so it is the only way
+ * the paragraph-under-the-title could return. Rather than documenting a rule
+ * nobody reads, the wrong call produces the right output.
+ *
+ * NARROW BY CONSTRUCTION, and stated rather than implied away: it matches a <p>
+ * and the four prose class names this tree actually uses. A bare <div> of prose
+ * walks past it. It is a floor.
+ */
+const PROSE_IN_ACTIONS = /<p[\s>]|class="[^"]*\b(?:tx-desc|view-body|sidebar-hint|settings-hint-text)\b/i;
+function safeActions(html) {
+  const h = str(html);
+  if (h === null) return null;
+  return PROSE_IN_ACTIONS.test(h) ? null : h;
+}
+
+// ── The info affordance's behaviour: ONE delegated listener, installed once ──
+//
+// Guarded on `typeof document` so importing this module in Node — which every
+// offline suite does — cannot throw. That guard is why the module still has no
+// imports and still runs headless.
+let txInfoWired = false;
+function wireInfoToggles() {
+  if (txInfoWired || typeof document === 'undefined') return;
+  txInfoWired = true;
+
+  const panelFor = (btn) => document.getElementById(btn.getAttribute('data-tx-info') || '');
+
+  const close = (btn) => {
+    const panel = panelFor(btn);
+    if (panel) panel.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  };
+
+  const openPanels = () =>
+    Array.prototype.slice.call(document.querySelectorAll('[data-tx-info][aria-expanded="true"]'));
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('[data-tx-info]') : null;
+    if (btn) {
+      const panel = panelFor(btn);
+      if (!panel) return;
+      const willOpen = btn.getAttribute('aria-expanded') !== 'true';
+      // Only one at a time, so a second header's panel cannot leave the first
+      // one open off-screen.
+      openPanels().forEach((b) => { if (b !== btn) close(b); });
+      panel.hidden = !willOpen;
+      btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      return;
+    }
+    // Light dismiss: a click anywhere that is not inside an open panel closes
+    // it. Clicks INSIDE the panel are left alone — the prose is selectable.
+    openPanels().forEach((b) => {
+      const panel = panelFor(b);
+      if (!panel || !(e.target && panel.contains(e.target))) close(b);
+    });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const open = openPanels();
+    if (open.length === 0) return;
+    open.forEach(close);
+    // Focus goes back to the control that opened it, not to <body>. Dropping
+    // focus to body is the v3.17.1 defect that stranded keyboard users on the
+    // memory view.
+    const last = open[open.length - 1];
+    if (last && typeof last.focus === 'function') last.focus();
+  });
+}
+wireInfoToggles();

@@ -239,3 +239,127 @@
 @media (prefers-reduced-motion: reduce) {
   .tx-explainer-summary::before { transition: none; }
 }
+
+/* ── 6. View header — eyebrow, title, an info mark. No paragraph. ────────
+   The container that used to hold a paragraph under every <h1> does not
+   exist here: renderViewHeader has no parameter that renders prose in the
+   header body, and `.tx-vh-panel` below is `hidden` on first paint.
+
+   THE PANEL IS IN FLOW, NOT FLOATING. A floating popover would need
+   positioning against a shell that already has a fixed rail, a scrolling
+   `.main` and a reader overlay; and the native `popover` attribute's
+   no-support fallback is an always-visible div — the exact defect this
+   removes, restored silently. In flow fails in the safe direction.
+
+   CONTRAST, and the icon is the only new colour decision here: the glyph
+   strokes --text-2, an ICON and therefore non-text (WCAG 1.4.11 floor 3:1),
+   measured 8.34 dark / 7.26 light against --surface. --text-3 would have
+   been the natural "quiet control" choice and measures 4.27 / 4.14; it is
+   not used, for the same reason no other role in this file uses it.
+
+   SIZE: the glyph's width/height are px because they size a BOX, not text.
+   Every font-size below is a --text-* ramp token, so Settings > General's
+   --font-scale still reaches this header. A px font-size here would freeze
+   at 1x — the class v3.20.0 found in 14 rules in chat.css alone.        */
+
+.tx-vh {
+  display: block;
+  margin: 0 0 22px;
+}
+
+.tx-vh-eyebrow { margin-bottom: 8px; }
+
+/* center, matching the `.dm-title-row` this replaces on the Domains detail
+   view: that row put Rename / Delete / Ask beside an <h1> and centred them.
+   Baseline was tried first and drops a button's box below a --type-h1 cap. */
+.tx-vh-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+/* The header owns its own spacing; shell.css's `.view-title` bottom margin
+   would otherwise open a gap exactly where the deleted paragraph used to
+   sit. */
+.tx-vh-title { margin: 0; }
+
+/* `flex: 1`, NOT `margin-left: auto`. The group has to FILL the remaining
+   width so that a member carrying its own `margin-left: auto` — Domains'
+   `.dm-ask-btn` does, and has since that view shipped — still reaches the
+   right edge. Pushing the whole group right instead would have quietly
+   re-laid-out that header, moving Rename and Delete away from the title. */
+.tx-vh-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  gap: 8px;
+}
+
+/* The affordance. A real button — never a `title=` on a span, which is
+   invisible to keyboard and to touch (v3.20.0 counted 11 of those). */
+.tx-vh-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--dur-fast, 80ms) var(--ease-out, ease),
+              background var(--dur-fast, 80ms) var(--ease-out, ease);
+}
+
+.tx-vh-info:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+/* Open state is carried by the glyph colour AND by the panel appearing, and
+   is announced by aria-expanded — never by colour alone. */
+.tx-vh-info[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+/* Belt and braces: `hidden` is a display:none in the UA sheet, and any later
+   rule setting `display` on this class would silently defeat it. Stating it
+   here means the panel cannot become visible-by-default through a cascade
+   accident — which is the whole defect this component removes. */
+.tx-vh-panel[hidden] { display: none; }
+
+.tx-vh-panel {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font: var(--type-body-sm);
+  letter-spacing: var(--track-body);
+  color: var(--text-2);
+  max-width: 68ch;
+  overflow-wrap: anywhere;
+}
+
+.tx-vh-panel > * + * { margin-top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tx-vh-info { transition: none; }
+}
+
+/* The sidebar density. Same component, same vocabulary — a <div> title
+   instead of an <h1>, because the sidebar sits BESIDE the main region and a
+   second <h1> on one screen is a document-outline error. */
+/* No bottom margin: `.sidebar-inner` is a flex column with `gap: 12px`, so a
+   margin here would DOUBLE the space under the sidebar title. */
+.tx-vh-sidebar { margin: 0; }
+.tx-vh-sidebar .tx-vh-panel { font-size: var(--text-xs); }
