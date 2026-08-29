@@ -533,45 +533,17 @@
   color: var(--text-3);
 }
 
-/* Dropdowns (model / length pickers) — open UPWARD from the composer,
-   matching the shipping app's chat composer precedent. */
-.chat-dd { position: relative; }
-.chat-dd-btn {
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12.5px;
-  white-space: nowrap;
-}
-.chat-dd-btn:hover { background: var(--surface-hover); }
-.chat-dd-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
-.chat-dd-menu {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  min-width: 220px;
-  padding: 5px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--surface-overlay);
-  box-shadow: 0 12px 32px -12px rgba(0,0,0,0.5);
-  display: flex;
-  flex-direction: column;
-  /* The base rule's `display: flex` has equal specificity to the UA's
-     `[hidden] { display: none }` and is declared later in the cascade, so
-     it silently wins and the `hidden` attribute this view toggles in JS
-     does nothing without this override (caught by browser testing — both
-     dropdowns rendered permanently open). */
-  gap: 1px;
-  z-index: 5;
-}
-.chat-dd-menu[hidden] { display: none; }
+/* ── THE COMPOSER'S OWN DROPDOWN IS GONE ──────────────────────────────────
+   `.chat-dd`, `.chat-dd-btn`, `.chat-dd-dot` and `.chat-dd-menu` used to style
+   a hand-rolled menu that carried listbox ARIA roles and had no keyboard
+   support at all. Both composer pickers now use shared/listbox.js, which owns
+   the trigger AND the popup, so those four rules had zero remaining consumers
+   and are DELETED rather than left behind — dead CSS is how a stylesheet stops
+   describing the app (v3.9.1 shipped a whole file that was never even linked).
+
+   `.chat-dd-opt` and its two children SURVIVE and are used below: the browse
+   dialog's rows reuse them, so the composer menu and the browse list lay a
+   model out identically. */
 .chat-dd-opt {
   display: flex;
   flex-direction: column;
@@ -857,4 +829,317 @@
   border-radius: var(--radius-md);
   padding: 10px 14px;
   font-size: var(--text-sm);
+}
+
+/* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
+   THREE tokens defined HERE and not in tokens/color.css, deliberately: they are
+   a chat-view concern (the model picker and its browse dialog are the only
+   surfaces that group by provider), and tokens/*.css is shared ground this view
+   does not own. If a second view ever groups by provider they should move.
+
+   They follow the file-wide theming rule: dark values on `:root`, light values
+   under `[data-theme="light"]`. There is no prefers-color-scheme query here and
+   there may not be one — the shell stamps the attribute.
+
+   ── THE PALETTE IS THE TYPE TRIAD, REUSED, AND THAT IS A DECISION ────────
+   color.css reserves cyan/green/amber for entity/concept/summary and says
+   plainly they are "never used to mean a data type" outside that. These are not
+   data-type markers, they appear only inside a model menu, and inventing three
+   more hues would put six unrelated colour families in one app. Amber is
+   avoided for a provider because it is the attention colour and already carries
+   the `caution` badge on the same row — a provider chip in the same hue as the
+   warning beside it would read as a warning.
+
+   MEASURED IN A REAL BROWSER, on the resolved computed colours, against the
+   menu's own painted background — not estimated from the hex values. (An
+   earlier draft of this comment carried figures written from expectation and
+   was wrong on every one of the six; the numbers below were read back off the
+   page. The helper was self-checked against white-on-black = 21.00:1 before
+   any of them counted, because v3.17.3 records a contrast helper in this repo
+   reporting 2.34 for an element genuinely at 7.26.)
+
+     dot  gemini      dark 11.19:1   light 3.47:1
+     dot  claude      dark 11.24:1   light 3.22:1
+     dot  openrouter  dark  6.19:1   light 6.57:1
+
+   All six clear WCAG 1.4.11's 3:1 floor for a non-text indicator. Light-theme
+   claude is the tightest at 3.22:1 and is recorded rather than rounded away.
+
+   THE DOT IS NOT THE DISTINCTION — THE WORD IS. The provider NAME renders
+   beside every dot in --text-2, measured 8.09:1 dark / 7.26:1 light, well above
+   the 4.5:1 AA floor for body text. Colour alone never carries meaning here, so
+   a viewer who cannot tell the three hues apart loses a scanning aid and no
+   information. */
+:root {
+  --prov-gemini:     var(--entity-400);
+  --prov-anthropic:  var(--concept-400);
+  --prov-openrouter: var(--violet-400);
+}
+[data-theme="light"] {
+  --prov-gemini:     var(--entity-600);
+  --prov-anthropic:  var(--concept-600);
+  --prov-openrouter: var(--violet-600);
+}
+
+/* The provider marker on EVERY row. See renderModelRowBodyHtml for why a group
+   heading alone stopped being enough at ~194 rows. */
+.chat-mm-prov {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.chat-mm-prov-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);   /* unknown provider: neutral, never a lie */
+  flex: none;
+}
+.chat-mm-prov.is-gemini     .chat-mm-prov-dot { background: var(--prov-gemini); }
+.chat-mm-prov.is-anthropic  .chat-mm-prov-dot { background: var(--prov-anthropic); }
+.chat-mm-prov.is-openrouter .chat-mm-prov-dot { background: var(--prov-openrouter); }
+
+/* Why a row is in the working set. --text-2, not --text-3: this is body text a
+   user reads, so it takes the AA 4.5:1 floor (the same reasoning listbox.css
+   records for its own detail column). */
+.chat-mm-mark {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: none;
+}
+.chat-mm-mark.is-star { color: var(--attention-text); font-size: var(--text-xs); letter-spacing: 0; }
+
+/* The one ACTION row in the model menu. Reads as a control rather than as a
+   model: no price, no id, no badges, and a rule above it. */
+.chat-mm-browse {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent-text);
+  font-size: var(--text-sm);
+}
+/* `[data-lb-action]`, emitted by shared/listbox.js, NOT `:has(.chat-mm-browse)`:
+   settings.css records the house position that `:has()` is acceptable for
+   cosmetics and not for layout, and this rule adds a border and padding. */
+.lb-menu.chat-mm-menu .lb-opt[data-lb-action] {
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  margin-top: 3px;
+  padding-top: 9px;
+}
+
+/* The composer's two listbox triggers. `.chat-lb` only narrows the shared
+   `.lb-sm` variant to this row's rhythm — everything else about the control is
+   shared/listbox.css's, which is the point of adopting it. */
+.chat-composer-pickers { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-lb { max-width: 220px; }
+
+/* ── ASK AGAIN ────────────────────────────────────────────────────────────
+   Quiet by construction: it sits under an answer the user is reading, and it
+   spends money when pressed. No accent fill, no icon colour, no animation —
+   it appears where a footnote would. */
+.chat-reask-row { margin-top: 8px; }
+.chat-reask-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
+}
+.chat-reask-btn:hover { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
+.chat-reask-btn:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+/* ── THE BROWSE DIALOG ────────────────────────────────────────────────────
+   A <body> child, like every other fixed surface in /next (confirm, onboarding,
+   both wizards, the listbox menu). The reason is recorded in shared/listbox.js
+   and in shell.css: `#view-root` carries a transform during the view-enter
+   animation, and a transformed ancestor becomes the containing block for its
+   fixed descendants — v3.10.0 measured a fixed probe moving 340px through it. */
+.chat-browse-root { position: fixed; inset: 0; z-index: 70; }
+/* An EXPLICIT rgba pair rather than the shell's scrim custom property. That
+   name is not defined anywhere in the /next universe: shell.css's ONE reference
+   to it carries a hex fallback and is baselined in test-css-tokens.js at
+   exactly one site, and test-next-chat-compile.js asserts this file adds no
+   second one (it greps for the literal, so the name is deliberately not spelled
+   out here either). Adding a reference would either grow that baseline or fail
+   two suites, for a token that does not exist. */
+.chat-browse-scrim { position: absolute; inset: 0; background: rgba(5,5,10,0.68); }
+[data-theme="light"] .chat-browse-scrim { background: rgba(20,20,31,0.42); }
+.chat-browse {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  width: min(680px, calc(100vw - 32px));
+  /* Capped so the LIST scrolls and the search field never does. A dialog whose
+     own search box scrolls out of view is a dialog you cannot re-search from. */
+  max-height: min(720px, calc(100vh - 64px));
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.chat-browse-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.chat-browse-title { margin: 0; font: var(--type-h3); color: var(--text); }
+.chat-browse-title:focus-visible { outline: none; }
+.chat-browse-sub {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+.chat-browse-close {
+  flex: none;
+  margin-left: auto;
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.chat-browse-close:hover { background: var(--surface-hover); color: var(--text); }
+.chat-browse-close:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+.chat-browse-tools { padding: 12px 16px; border-bottom: 1px solid var(--border-subtle); }
+.chat-browse-q {
+  width: 100%;
+  height: var(--control-md);
+  padding: 0 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-md);
+}
+.chat-browse-q::placeholder { color: var(--text-3); }
+.chat-browse-q:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+.chat-browse-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chat-browse-sep { width: 1px; height: 16px; background: var(--border); margin: 0 3px; }
+.chat-browse-chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
+}
+.chat-browse-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chat-browse-chip:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+.chat-browse-chip.is-on {
+  border-color: var(--accent-border);
+  background: var(--accent-tint);
+  color: var(--accent-text);
+}
+
+.chat-browse-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px 12px; }
+.chat-browse-count { padding: 4px 6px 8px; font-size: var(--text-2xs); color: var(--text-2); }
+.chat-browse-ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* One row = the pick button + the star button, SIBLINGS. See
+   renderModelMenuHtml for why the star is not nested inside the option. */
+.chat-browse-row { display: flex; align-items: flex-start; gap: 4px; }
+.chat-browse-pick { flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.chat-browse-pick:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.chat-browse-pick[aria-current="true"] { background: var(--accent-tint); }
+
+.chat-mm-star {
+  flex: none;
+  width: 28px; height: 28px;
+  margin-top: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  /* --text-3 sits below the 4.5:1 AA floor for TEXT, but this is an icon
+     control and WCAG 1.4.11's 3:1 non-text floor is the one that applies.
+     Measured in a browser (method as above), against the surface behind it:
+
+       star OFF (--text-3)          dark  4.15:1   light 4.14:1
+       star ON  (--attention-text)  dark 10.70:1   light 3.58:1
+
+     All four clear 3:1. Light-theme ON is the lowest at 3.58 and is LOWER than
+     its own off state — recorded rather than smoothed over, because the honest
+     reading is that colour is not what distinguishes the two states here: the
+     ON glyph is FILLED (`fill: currentColor`) where the OFF one is an outline,
+     and `aria-pressed` carries the state non-visually regardless. */
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--t-state), background var(--t-state);
+}
+.chat-mm-star:hover { background: var(--surface-hover); color: var(--text); }
+.chat-mm-star:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+.chat-mm-star.is-on { color: var(--attention-text); }
+.chat-mm-star.is-on svg { fill: currentColor; }
+
+.chat-browse-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
+}
+.chat-browse-clear {
+  margin-top: 12px;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.chat-browse-clear:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.chat-browse-clear:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
+
+/* The browse dialog's rows reuse .chat-mm-opt, which is a flex COLUMN inside the
+   composer menu; nothing here re-declares that, so both surfaces lay a model out
+   identically. */
+.chat-browse-pick.chat-mm-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--text);
+}
+.chat-browse-pick.chat-mm-opt:hover { background: var(--surface-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-reask-btn, .chat-browse-chip, .chat-mm-star { transition: none; }
 }

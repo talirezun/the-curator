@@ -360,8 +360,25 @@ section('7. Class-level: the /next tree actually consumes fallback + activeModel
   ok(providersBody.length > 300, 'sanity: renderProviders() extracted (a truncated extract would pass the next two vacuously)');
   ok(providersBody.includes('renderFallbackBanner('),
     'renderProviders() CALLS renderFallbackBanner — the banner is reachable from the rendered section');
-  ok(providersBody.includes('renderActiveModelLine('),
-    'renderProviders() CALLS renderActiveModelLine');
+  // ── THE ACTIVE-MODEL READOUT MOVED, AND SO DID THIS ASSERTION ─────────
+  // Settings is organised by JOB now. "Active: <provider> — <model>" was a
+  // statement about which model builds the wiki, so it moved INTO the block
+  // that makes that claim — renderBuildCurrent, which says the same thing and
+  // three more (where the choice came from, whether it is actually in force,
+  // and who measured it). The guard is re-pointed, not relaxed: the readout
+  // must still be reachable from the rendered section, through a real call
+  // chain, or `activeModel` is dead data again in a new coat.
+  ok(providersBody.includes('renderBuildBlock('),
+    'renderProviders() CALLS renderBuildBlock — the model-in-force readout is reachable from the rendered section');
+  const buildBlockBody = extractFunction(settings, 'renderBuildBlock');
+  ok(buildBlockBody.includes('renderBuildCurrent('),
+    'renderBuildBlock() CALLS renderBuildCurrent');
+  const buildCurrentBody = extractFunction(settings, 'renderBuildCurrent');
+  ok(buildCurrentBody.includes('activeModelLine('),
+    'renderBuildCurrent() CALLS activeModelLine — so `activeModel` still has a reader, ' +
+    'on the degraded path a backend without `buildModel` takes');
+  ok(buildCurrentBody.includes('buildModelFacts('),
+    '…and reads the new derived buildModel field on the normal path');
 
   // Not behind a disclosure: a <details>/summary wrapper would technically
   // "read" the field while keeping a billing change one click away from

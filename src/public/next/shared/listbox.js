@@ -118,6 +118,25 @@ function normaliseOptions(options) {
       detail: typeof o.detail === 'string' ? o.detail : '',
       group: typeof o.group === 'string' ? o.group : '',
       disabled: o.disabled === true,
+      // ── AN OPTION THAT DOES SOMETHING RATHER THAN SELECTING SOMETHING ────
+      // `action: true` marks a row that runs the caller's handler and closes,
+      // WITHOUT becoming the control's value or relabelling the trigger. The
+      // composer's model menu needs exactly one: "Browse all 213 models…",
+      // which opens a search dialog.
+      //
+      // Why this is a first-class flag rather than something the handler
+      // papers over: without it, `commit()` writes the sentinel into
+      // `state.value` and stamps "Browse all 213 models…" onto the trigger,
+      // and the caller's only recovery is to re-render the whole control
+      // afterwards to undo a label it never wanted. That leaves the picker
+      // briefly claiming a model that does not exist — on the surface whose
+      // entire job is naming the model that will answer.
+      //
+      // It cannot affect the six pre-existing adoptions: none passes `action`,
+      // so every one of them takes the identical `action === false` path.
+      // scripts/test-next-listbox.js §8 drives both branches, and the
+      // "commits normally without it" half is the regression guard.
+      action: o.action === true,
       // `html` lets a caller own the whole row body (badges, prices, notes)
       // while this file still owns the row ELEMENT and therefore all of the
       // keyboard and ARIA behaviour. That split is what lets the composer's
@@ -194,10 +213,18 @@ function optionRowHtml(id, opt, index, selectedValue) {
   const cls = ['lb-opt'];
   if (selected) cls.push('is-selected');
   if (opt.disabled) cls.push('is-disabled');
+  // Marked in the MARKUP, not only in the JS, so a caller can style an action
+  // row apart from the models beside it without a `:has()` on its own body
+  // content — settings.css records the house position that `:has()` is for
+  // cosmetics and not for layout, and a rule that adds a border and padding is
+  // layout. It is an attribute rather than a class so it cannot collide with a
+  // caller's own class names.
+  if (opt.action) cls.push('is-action');
   return (
     '<div class="' + escapeHtml(cls.join(' ')) + '"' +
       ' id="' + escapeHtml(id) + '-opt-' + index + '"' +
       ' role="option"' +
+      (opt.action ? ' data-lb-action="1"' : '') +
       ' aria-selected="' + (selected ? 'true' : 'false') + '"' +
       (opt.disabled ? ' aria-disabled="true"' : '') +
       ' data-lb-value="' + escapeHtml(opt.value) + '">' +
@@ -459,6 +486,22 @@ export function mountListbox(cfg) {
   function commit(value) {
     const opt = findOption(state.options, value);
     if (!opt || opt.disabled) return;
+    // An ACTION row (see `action` in normaliseOptions): run the handler, close,
+    // and change NOTHING about the control. `state.value` and the trigger text
+    // are untouched, so a menu that offers "Browse all…" beside real models
+    // cannot end up claiming that a browse is the selected model.
+    //
+    // Fired after close() for the same reason the ordinary path is: the handler
+    // routinely opens a dialog or re-renders the view, and neither should be
+    // racing a live menu it does not know about.
+    if (opt.action) {
+      close();
+      if (typeof cfg.onChange === 'function') {
+        cfg.onChange(value, opt);
+        restoreFocusAfterRerender();
+      }
+      return;
+    }
     const changed = value !== state.value;
     state.value = value;
     const textEl = state.trigger.querySelector('[data-lb-text]');

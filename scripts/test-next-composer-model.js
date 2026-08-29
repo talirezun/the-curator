@@ -292,7 +292,12 @@ function scanTags(html) {
 const FN_NAMES = [
   'normalizeOfferable', 'offerableEntries', 'resolveChatModel',
   'formatPricePerM', 'formatLivePrice', 'formatIsoDay', 'formatPromotionRise',
-  'renderModelOptionHtml', 'renderModelMenuHtml',
+  'renderModelRowBodyHtml', 'renderModelOptionHtml', 'renderModelMenuHtml',
+  // §13 — the WORKING SET. Pure, so the whole "which models does the composer
+  // show by default" decision is executable offline with no DOM and no server.
+  'parseIdList', 'pushRecent', 'toggleStar', 'buildWorkingSet', 'filterCatalogue',
+  // §12 — the honest slow-turn notice and the span it derives from.
+  'measuredLatencyRange', 'slowTurnNoticeText',
   // §10 — the ANSWER label (which model actually wrote a message).
   'modelDisplayLabel', 'neutralProviderLabel', 'describeAnswerModel',
   'assistantEyebrowHtml',
@@ -301,7 +306,18 @@ const FN_NAMES = [
 ];
 
 /** Bindings the sandbox supplies to the extracted code, in call order. */
-const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary'];
+const INJECTED = ['escapeHtml', 'formatUsdHonest', 'formatModelSummary', 'icon', 'formatDurationMs'];
+
+/**
+ * The shell's `icon()`, reproduced as an inert stub.
+ *
+ * Deliberately NOT a pass-through of its argument into markup: the real one
+ * looks a name up in a frozen table and returns an <svg>, so a name it does not
+ * know can never become markup. Emitting a fixed, attribute-free element here
+ * keeps §8's tag scanner honest — anything hostile that shows up in a scanned
+ * tag came from a value under test, not from this stub.
+ */
+function iconStub() { return '<svg aria-hidden="true"></svg>'; }
 
 // ── §11's SECOND EXTRACTION SITE, declared here so §0 can see it ──────────
 // §11.1 lifts the REAL `chargeForItem` out of the server module and asserts
@@ -327,15 +343,23 @@ const sandbox = new Function(
   ...INJECTED,
   extractConst(chatSrc, 'PROVIDER_LABELS') + '\n' +
   extractConst(chatSrc, 'SUITABILITY_LABELS') + '\n' +
+  // The working set's three tunables, lifted from the REAL source rather than
+  // re-declared here: a suite that hardcodes the threshold it is testing tests
+  // its own copy of the number.
+  extractConst(chatSrc, 'WORKING_SET_COLLAPSE_ABOVE') + '\n' +
+  extractConst(chatSrc, 'MAX_RECENTS') + '\n' +
+  extractConst(chatSrc, 'MAX_STARRED') + '\n' +
   FN_NAMES.map(n => extractFunction(chatSrc, n)).join('\n') + '\n' +
-  'return { SUITABILITY_LABELS, ' + FN_NAMES.join(', ') + ' };'
-)(escapeHtmlStub, formatUsdHonest, formatModelSummary);
+  'return { SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED, ' + FN_NAMES.join(', ') + ' };'
+)(escapeHtmlStub, formatUsdHonest, formatModelSummary, iconStub, formatDurationMs);
 
 const {
-  SUITABILITY_LABELS,
+  SUITABILITY_LABELS, WORKING_SET_COLLAPSE_ABOVE, MAX_RECENTS, MAX_STARRED,
   normalizeOfferable, offerableEntries, resolveChatModel,
   formatPricePerM, formatLivePrice, formatIsoDay, formatPromotionRise,
-  renderModelOptionHtml, renderModelMenuHtml,
+  renderModelRowBodyHtml, renderModelOptionHtml, renderModelMenuHtml,
+  parseIdList, pushRecent, toggleStar, buildWorkingSet, filterCatalogue,
+  measuredLatencyRange, slowTurnNoticeText,
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
   messageUsageTokens, messageCostUsd, assistantCostHtml,
@@ -478,10 +502,21 @@ function serverOfferable(keyed) {
   for (const p of ALL_PROVIDERS) out[p] = keyed.includes(p) ? REAL[p].slice() : [];
   return out;
 }
+/**
+ * `renderModelMenuHtml` takes a FLAT, already-filtered row list now (the browse
+ * dialog's search and filters decide what belongs on screen, and a second walk
+ * of `offerable` would let the group headers disagree with the body rows). This
+ * reproduces the composition the view performs — scope, flatten, render — in one
+ * place, so the ~20 call sites below did not each grow their own copy of it.
+ */
+function menuHtmlFor(offerable, providers, selectedId = null, opts = undefined) {
+  return renderModelMenuHtml(offerableEntries(offerable, providers), selectedId, opts);
+}
+
 /** Build the menu the way the view does, with the CLIENT doing the scoping. */
 function menuFor(keyed, selectedId = null) {
   const norm = normalizeOfferable(rawFull(), keyed);
-  return { norm, html: renderModelMenuHtml(norm, keyed, selectedId) };
+  return { norm, html: menuHtmlFor(norm, keyed, selectedId) };
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -937,7 +972,7 @@ section('§4  v3.0.13 GUARD — an unkeyed provider\'s models are NOT selectable
   for (const only of ALL_PROVIDERS) {
     const clientScoped = normalizeOfferable(rawFull(), [only]);
     const serverScoped = normalizeOfferable(serverOfferable([only]), [only]);
-    ok(renderModelMenuHtml(clientScoped, [only], null) === renderModelMenuHtml(serverScoped, [only], null),
+    ok(menuHtmlFor(clientScoped, [only], null) === menuHtmlFor(serverScoped, [only], null),
       `key=${only} only → client-side scoping of the FULL catalogue matches the server-gated payload byte-for-byte`);
   }
   // LAYER 2, DRIVEN INDEPENDENTLY. `normalizeOfferable` (layer 1) empties the
@@ -955,7 +990,7 @@ section('§4  v3.0.13 GUARD — an unkeyed provider\'s models are NOT selectable
       `unscoped map + key=${only} → offerableEntries still yields only that provider's ${REAL[only].length} models`);
     ok(REAL[other].every(e => resolveChatModel(e.id, unscoped, [only]) === null),
       `unscoped map + key=${only} → resolveChatModel still refuses every "${other}" model`);
-    const html = renderModelMenuHtml(unscoped, [only], null);
+    const html = menuHtmlFor(unscoped, [only], null);
     ok(REAL[other].every(e => !html.includes('data-model-id="' + e.id + '"')),
       `unscoped map + key=${only} → no "${other}" row reaches the rendered menu`);
     ok(offerableEntries(unscoped, []).length === 0,
@@ -1223,17 +1258,31 @@ section('§6d  The rise date is timezone-proof — asserted, not merely commente
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§6c  Suitability vocabulary matches Settings, word for word');
+section('§6c  Suitability: the composer badges a WARNING, never a lane');
 // ═════════════════════════════════════════════════════════════════════════
 //
-// The v3.13.1 finding, applied to the second label: the same measured field
-// rendered in two vocabularies across two surfaces, and NO assertion on either
-// side checked the literal WORD — only the CSS marker class — so the two could
-// have disagreed forever and stayed green. "chat only" understates what was
-// measured; "chat only — not for ingest" is the fact.
+// ── WHAT CHANGED, AND WHY THE OLD ASSERTION WAS RIGHT UNTIL IT WAS NOT ───
+// This section used to pin the composer's `chat-only` badge to Settings'
+// wording, word for word — the v3.13.1 finding applied to a second label, and
+// correct while both surfaces badged it.
+//
+// The composer no longer badges `chat-only` at all. Counted against a synced
+// catalogue: 194 of 213 offerable models carry it, because every fetched
+// OpenRouter entry is admitted chat-only BY CONSTRUCTION. A flag on 97% of a
+// list carries no information — the same finding v3.16.1 recorded about the
+// caution flag, arriving through a different field — and there is no ingest
+// decision on this screen for it to warn about.
+//
+// So the assertion is INVERTED rather than deleted: the composer must not badge
+// it, Settings must go on doing so, and `caution` — a genuine measured hazard on
+// a small number of models — must survive on both. Deleting the section would
+// have left the removal unguarded in the direction that matters: a future edit
+// re-adding the badge, or dropping `caution` along with it.
 {
-  ok(SUITABILITY_LABELS['chat-only'] === 'chat only — not for ingest',
-    'the chat-only label is Settings\' full phrasing, not the composer\'s old short form');
+  ok(!Object.hasOwn(SUITABILITY_LABELS, 'chat-only'),
+    'the composer has NO chat-only label — a badge on 97% of the list is not a warning');
+  ok(SUITABILITY_LABELS.caution === 'caution',
+    'caution survives, word-for-word with settings.js');
 
   const chatOnly = [];
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
@@ -1242,19 +1291,36 @@ section('§6c  Suitability vocabulary matches Settings, word for word');
   ok(chatOnly.length > 0, 'the live catalogue still contains a chat-only model (this section is not vacuous)');
   for (const { p, e } of chatOnly) {
     const html = renderModelOptionHtml(p, e, null);
-    ok(html.includes('>chat only — not for ingest<'),
-      `${e.id}: renders the full phrase "chat only — not for ingest" (matches settings.js)`);
-    // The RAW FIELD NAME must never reach the user as a label. It legitimately
-    // appears nowhere else in a row, so this is a clean rejection.
-    ok(!html.includes('>chat-only<'),
-      `${e.id}: the raw field name "chat-only" is never shown as a label`);
+    ok(!html.includes('chat only'),
+      `${e.id}: the composer does not badge chat-only`);
+    // ── THE FALLBACK THAT WOULD HAVE MADE THIS WORSE THAN BEFORE ─────────
+    // The old renderer gated on `suitability !== 'general'` and printed the RAW
+    // FIELD VALUE when the label table had no entry. Dropping 'chat-only' from
+    // the table under that gate would have put the bare string "chat-only" on
+    // 194 rows instead of removing the badge. The renderer now gates on the
+    // table HAVING an entry, and this is the assertion that keeps it that way.
+    ok(!html.includes('chat-only<') && !html.includes('>chat-only'),
+      `${e.id}: and does NOT fall back to printing the raw field value instead`);
   }
-  // Control: a model with no suitability caveat gains no such badge, so the
-  // assertions above discriminate rather than matching everything.
+
+  // ── THE FIELD IS UNTOUCHED, ONLY THE LABEL IS GONE ──────────────────────
+  // `suitability` is still enforced at two layers in llm.js and still rendered
+  // by Settings. This is a label removed from one menu, not a constraint
+  // removed from the app — asserted against the real table so a future edit
+  // that actually DELETED the field would go red here.
+  ok(chatOnly.every(({ e }) => e.suitability === 'chat-only'),
+    'the underlying suitability field still ships on the wire and still says chat-only');
+
+  // Control: a `caution` model DOES still get its badge, so the assertions
+  // above discriminate rather than matching everything.
+  const cautions = [];
   for (const p of ALL_PROVIDERS) for (const e of REAL[p]) {
-    if (e.suitability === 'chat-only') continue;
-    ok(!renderModelOptionHtml(p, e, null).includes('chat only'),
-      `${e.id}: a non-chat-only model carries no chat-only wording`);
+    if (e.suitability === 'caution') cautions.push({ p, e });
+  }
+  ok(cautions.length > 0, 'control: the live catalogue contains a caution model');
+  for (const { p, e } of cautions) {
+    ok(renderModelOptionHtml(p, e, null).includes('>caution<'),
+      `${e.id}: a genuinely-cautioned model IS still badged`);
   }
 }
 
@@ -1474,7 +1540,7 @@ section('§8  Escaping — hostile catalogue strings cannot break out');
   ok(escapeHtmlStub(XSS) !== XSS, 'control: the escaper actually transforms the hostile payload');
   ok(XSS.includes('<img src=x'), 'control: the raw payload WOULD be detected if it reached the markup unescaped');
   // Whole-menu path escapes too.
-  const menu = renderModelMenuHtml(
+  const menu = menuHtmlFor(
     normalizeOfferable({ gemini: [hostile], anthropic: [] }, ['gemini']), ['gemini'], null);
   ok(!menu.includes('<img src=x') && !menu.includes('<script>'), 'renderModelMenuHtml escapes just as the row renderer does');
 }
@@ -2401,6 +2467,10 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
     'let sendStartedAt = null;\n' +
     'let sendLatencyHint = null;\n' +
     extractConst(chatSrc, 'SLOW_TURN_NOTICE_AFTER_MS') + '\n' +
+    // The sentence builder BOTH callers share (the first paint and the
+    // once-a-second tick). Extracted rather than stubbed, so what is asserted
+    // below is the wording that actually ships.
+    extractFunction(chatSrc, 'slowTurnNoticeText') + '\n' +
     extractFunction(chatSrc, 'thinkingBodyHtml') + '\n' +
     'const _origNow = Date.now;\n' +
     'Date.now = () => nowRef.t;\n' +
@@ -2415,7 +2485,8 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
   const T = clock.SLOW_TURN_NOTICE_AFTER_MS;
   ok(T === 20000, `the notice threshold is ${T}ms — pinned, so a silent change to it is visible here`);
 
-  const MEASURED = { label: 'DeepSeek V4 Flash', ms: 382000 };
+  const MEASURED = { kind: 'measured', label: 'DeepSeek V4 Flash', ms: 382000 };
+  const UNMEASURED = { kind: 'unmeasured', label: 'Some Fetched Model', lowMs: 13000, highMs: 382000 };
   const bubble = (elapsedMs, hint) => { clock.set(NOW0, hint); nowRef.t = NOW0 + elapsedMs; return clock.html(); };
 
   // The clock is present and ticking from the very first paint.
@@ -2433,27 +2504,74 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
   ok(late.includes('DeepSeek V4 Flash'), 'naming the model it belongs to');
   ok(!/error|sorry|problem|wrong|failed/i.test(late.replace(/onerror/g, '')),
     'stated as a fact — no apology, no error vocabulary');
+  // ── 12b-2. THE PROVENANCE, WHICH WAS MISSING AND MADE THE NUMBER A LIE ──
+  // `medianLatencyMs` is measured on an INGEST OUTLINE call against a
+  // ~300,000-character prompt, and this notice quotes it during a CHAT turn
+  // whose prompt is a fraction of that. Without naming the workload the figure
+  // reads as a prediction for the thing on screen. It must name it.
+  ok(/ingest outline/i.test(late),
+    'the measured notice names the WORKLOAD the figure came from (an ingest outline)');
+  ok(/larger prompt than a chat turn/i.test(late),
+    '…and says plainly that a chat turn is a smaller prompt');
+  // And it must NOT turn that into a prediction. We have not measured chat-turn
+  // latency for any model, so "will be quicker" would be an inference stated as
+  // a fact on the surface whose whole job is being evidence.
+  ok(!/will be (quick|fast)/i.test(late) && !/should (only )?take/i.test(late),
+    '…without promising this turn will be quicker, which we have not measured');
 
   // ── 12c. THE ABSENCE RULE, which is the assertion most able to fail ───
-  // ~176 of ~190 models carry no latency. Their turns must get a live clock and
-  // NO expectation — not "0s", not "unknown", not a guess.
+  // NULL still means SILENCE. `latencyHintForTurn` returns null when it cannot
+  // name the model at all, or when it can name it but the catalogue holds fewer
+  // than two measurements to describe a span with. In both cases the turn gets a
+  // live clock and NO claim — not "0s", not "unknown", not a guess.
   for (const elapsed of [T + 1000, T * 10, T * 60]) {
     const h = bubble(elapsed, null);
     const secs = Math.round(elapsed / 1000);
-    ok(!h.includes('chat-thinking-slow'), `an UNMEASURED model shows no expectation even after ${secs}s`);
+    ok(!h.includes('chat-thinking-slow'), `a null hint shows no expectation even after ${secs}s`);
     ok(!/measured at about/.test(h), `…and never the words "measured at about" (${secs}s)`);
     ok(!/\b0s per call\b/.test(h), `…and never "0s per call" (${secs}s)`);
     ok(/id="chat-think-elapsed">/.test(h), `…while the clock itself keeps running (${secs}s)`);
   }
-  // The label is server-supplied and is escaped.
-  ok(!bubble(T + 1000, { label: '<img src=x onerror=alert(1)>', ms: 61000 }).includes('<img src=x'),
-    'a hostile model label in the expectation is escaped');
+
+  // ── 12c-2. THE UNMEASURED MODEL, WHICH IS 207 OF 213 OF THEM ──────────
+  // The old behaviour returned null for every model with no figure, so ~97% of
+  // turns got a bare counter — and a bare counter at four minutes is
+  // indistinguishable from a hang. The fix must NOT be a guess: what an
+  // unmeasured model gets is a statement about OUR DATA (the span of call times
+  // we recorded across the models we did measure), which is a fact about the
+  // catalogue and explicitly not a prediction about this model.
+  {
+    const u = bubble(T + 1000, UNMEASURED);
+    ok(u.includes('chat-thinking-slow'), 'an UNMEASURED model does get a notice after the threshold');
+    ok(/no timing measurement/i.test(u),
+      '…which SAYS we have no measurement for it, rather than implying one');
+    ok(u.includes('Some Fetched Model'), '…naming the model it has no measurement for');
+    ok(/13s/.test(u) && /6m 22s/.test(u), '…and reports the span we DID measure, both ends');
+    // The sharpest property here: the span must be attributed to other models,
+    // never phrased as an expectation for this one.
+    ok(/across the models we have measured/i.test(u),
+      '…attributed to the models we measured, never presented as this model\'s own range');
+    ok(!/measured at about/.test(u),
+      '…and never borrows the MEASURED phrasing, which would read as this model\'s own figure');
+    ok(!bubble(T - 1000, UNMEASURED).includes('chat-thinking-slow'),
+      'before the threshold an unmeasured model says nothing either');
+  }
+
+  // The label is server-supplied and is escaped, on BOTH branches.
+  ok(!bubble(T + 1000, { kind: 'measured', label: '<img src=x onerror=alert(1)>', ms: 61000 }).includes('<img src=x'),
+    'a hostile model label in the measured expectation is escaped');
+  ok(!bubble(T + 1000, { kind: 'unmeasured', label: '<img src=x onerror=alert(1)>', lowMs: 13000, highMs: 61000 }).includes('<img src=x'),
+    'a hostile model label in the UNMEASURED notice is escaped too');
   clock.restore();
 
   // ── 12d. THE HINT IS RESOLVED FROM MEASURED DATA ONLY ─────────────────
   {
-    const mkHint = new Function('resolveChatModel', 'stateRef',
+    const mkHint = new Function('resolveChatModel', 'offerableEntries', 'stateRef',
       'const state = stateRef;\n' +
+      // The span helper the hint falls back to. Extracted, not stubbed: the
+      // whole point of 12d-2 is that the range is DERIVED from the live
+      // catalogue and cannot be a pair of numbers typed into prose.
+      extractFunction(chatSrc, 'measuredLatencyRange') + '\n' +
       extractFunction(chatSrc, 'latencyHintForTurn') + '\n' +
       'return latencyHintForTurn;'
     );
@@ -2468,12 +2586,19 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
       chatModel: null, modelProvider: null, models: {},
       offerable: OFFER, availableProviders: ['openrouter'],
     }, over);
-    const call = (st) => mkHint(resolveChatModel, st)();
+    const call = (st) => mkHint(resolveChatModel, offerableEntries, st)();
 
+    // NOTE ON THIS FIXTURE: it holds exactly ONE model at or above a second, so
+    // `measuredLatencyRange` returns null for it and every case below that used
+    // to be null STAYS null. That is deliberate — it keeps the original
+    // assertions measuring the same property they always did — and 12d-2 adds a
+    // second fixture that does have a span.
     ok(call(mk({ chatModel: 'slow/model' })).ms === 382000,
       'an explicitly picked, MEASURED model yields its measurement');
+    ok(call(mk({ chatModel: 'slow/model' })).kind === 'measured',
+      '…tagged as a measurement, so the renderer cannot confuse the two branches');
     ok(call(mk({ chatModel: 'quiet/model' })) === null,
-      'an explicitly picked UNMEASURED model yields null — never a substitute figure');
+      'an explicitly picked UNMEASURED model yields null when there is no SPAN to report either');
     ok(call(mk({ chatModel: 'sub/second' })) === null,
       'a sub-second figure yields null rather than an expectation reading "0s"');
     ok(call(mk({})) === null,
@@ -2488,6 +2613,65 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
       'a provider with no default id yields null');
     ok(call(mk({ modelProvider: '__proto__', models: {} })) === null,
       'a prototype-shaped provider name yields null, not the prototype object');
+
+    // ── 12d-2. THE SPAN IS DERIVED, AND IT ONLY EXISTS WHEN IT IS ONE ────
+    // A hardcoded "13s to 6m 22s" would be a measurement living in prose, which
+    // is exactly the defect v3.16.1 recorded when a docblock quoted 491 seconds
+    // for a run that never happened. These drive the real helper.
+    const RANGED = {
+      openrouter: [
+        { id: 'a', label: 'A', medianLatencyMs: 13000 },
+        { id: 'b', label: 'B', medianLatencyMs: 48000 },
+        { id: 'c', label: 'C', medianLatencyMs: 382000 },
+        { id: 'q', label: 'Q', medianLatencyMs: null },
+        { id: 'sub', label: 'Sub', medianLatencyMs: 400 },
+      ],
+    };
+    const ranged = (over) => Object.assign({
+      chatModel: null, modelProvider: null, models: {},
+      offerable: RANGED, availableProviders: ['openrouter'],
+    }, over);
+
+    const h = call(ranged({ chatModel: 'q' }));
+    ok(h && h.kind === 'unmeasured', 'an unmeasured model in a catalogue WITH a span gets the unmeasured branch');
+    ok(h.lowMs === 13000 && h.highMs === 382000,
+      '…carrying the real min and max of what we measured, derived from the catalogue');
+    ok(h.label === 'Q', '…and naming the model we have nothing for');
+    // The sub-second entry must not become the floor: `formatDurationMs` renders
+    // it "0s", and a span starting at "0s" is the zero-for-absent claim arriving
+    // through rounding rather than through a null.
+    ok(h.lowMs !== 400, 'a sub-second entry is excluded from the span, never rendered as its "0s" floor');
+    // A MEASURED model still reports its own figure and never the span.
+    ok(call(ranged({ chatModel: 'c' })).kind === 'measured',
+      'a measured model in the same catalogue still gets its own figure, not the span');
+
+    // ── The span refuses to exist when it would be a fiction ────────────
+    ok(measuredLatencyRange({ openrouter: [] }, ['openrouter']) === null,
+      'no measured models: no span');
+    ok(measuredLatencyRange({ openrouter: [{ id: 'a', medianLatencyMs: 48000 }] }, ['openrouter']) === null,
+      'ONE measured model: no span — "from 48s to 48s" is worse than saying nothing');
+    ok(measuredLatencyRange({ openrouter: [
+      { id: 'a', medianLatencyMs: 48000 }, { id: 'b', medianLatencyMs: 48000 },
+    ] }, ['openrouter']) === null,
+      'two IDENTICAL measurements: still no span, for the same reason');
+    ok(measuredLatencyRange({ openrouter: [
+      { id: 'a', medianLatencyMs: 400 }, { id: 'b', medianLatencyMs: 900 },
+    ] }, ['openrouter']) === null,
+      'two SUB-SECOND measurements: no span, so nothing can render as "0s to 0s"');
+    {
+      const r = measuredLatencyRange({ openrouter: [
+        { id: 'a', medianLatencyMs: 13000 }, { id: 'b', medianLatencyMs: 382000 },
+      ] }, ['openrouter']);
+      ok(r && r.lowMs === 13000 && r.highMs === 382000 && r.count === 2,
+        'control: a real span IS reported, so the four refusals above discriminate');
+    }
+    // And it is key-scoped like everything else: an unkeyed provider's
+    // measurements must not contribute to a span shown to a user who cannot
+    // reach those models.
+    ok(measuredLatencyRange({ openrouter: [
+      { id: 'a', medianLatencyMs: 13000 }, { id: 'b', medianLatencyMs: 382000 },
+    ] }, []) === null,
+      'an UNKEYED provider contributes nothing to the span (key scoping, same as everywhere else)');
   }
 
   // ── 12e. THE CLOCK STOPS. Executed, not read. ─────────────────────────
@@ -2563,6 +2747,312 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
       'control: the extracted onEnter really is the block that resets the send-lock');
     ok(/stopSendClock\(\)/.test(enter),
       'and stopped on the ABANDON path too — a re-mount must be able to stop a previous mount timer');
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§13  THE WORKING SET — a short list that hides nothing');
+// ═════════════════════════════════════════════════════════════════════════
+// A synced OpenRouter catalogue puts ~194 rows in the composer menu beside the
+// 19 this project hand-measured, so the models we know something about became
+// the hardest ones in the list to reach.
+//
+// THE THING THIS SECTION IS REALLY GUARDING is not the shortening — it is that
+// the shortening is built from FACTS ABOUT US and never from a judgement about a
+// model. v3.16.0 measured why that distinction is load-bearing: `z-ai/glm-4.7`
+// passes every structural filter, is fast, and returned 0 usable outlines in 9
+// runs; `minimax/minimax-m3` failed 9/9 while its own free sibling passed 8/9.
+// Price, size, recency and vendor all pointed the wrong way. So `measuredBy` is
+// a fact about OUR testing, `starred` and `recent` are facts about the USER, and
+// there is deliberately no fifth tier derived from anything else.
+{
+  const mkEntry = (id, over) => Object.assign({ id, label: id, provider: 'openrouter' }, over || {});
+  const rows = (list) => list.map(e => ({ provider: e.provider || 'openrouter', entry: e }));
+
+  // ── 13a. parseIdList: EVERY failure mode lands on [] ──────────────────
+  // A picker that throws while rendering the composer is worse than one that
+  // forgets a star, so every bad shape degrades to the measured tier.
+  ok(Array.isArray(parseIdList(null, 10)) && parseIdList(null, 10).length === 0, 'null -> []');
+  ok(parseIdList(undefined, 10).length === 0, 'undefined -> []');
+  ok(parseIdList('', 10).length === 0, 'empty string -> []');
+  ok(parseIdList('not json', 10).length === 0, 'invalid JSON -> []');
+  ok(parseIdList('{"a":1}', 10).length === 0, 'an OBJECT where an array was stored -> []');
+  ok(parseIdList('"a"', 10).length === 0, 'a bare string -> []');
+  ok(parseIdList('[1,2,3]', 10).length === 0, 'an array of numbers -> [] (nothing usable survives)');
+  ok(parseIdList('["a",1,"b",null,"a",""]', 10).join(',') === 'a,b',
+    'mixed junk is filtered to unique non-empty strings, order preserved');
+  ok(parseIdList('["a","b","c","d"]', 2).join(',') === 'a,b', 'the cap is applied');
+  // Prototype-shaped ids survive parsing as ORDINARY STRINGS and are inert
+  // downstream, because nothing indexes an object by them — they only ever meet
+  // Set.has and a `===` walk over catalogue entries.
+  {
+    const p = parseIdList('["__proto__","constructor","toString"]', 10);
+    ok(p.length === 3, 'prototype-shaped ids parse as ordinary strings');
+    const ws = buildWorkingSet(rows([mkEntry('real')]), { recents: p, starred: p, selectedId: null });
+    ok(ws.rows.every(r => r.entry.id === 'real'),
+      '…and match no catalogue entry, so they contribute no row and cannot resolve a prototype member');
+  }
+
+  // ── 13b. pushRecent / toggleStar are PURE ─────────────────────────────
+  {
+    const a = ['x', 'y'];
+    const b = pushRecent(a, 'z', 6);
+    ok(a.join(',') === 'x,y', 'pushRecent does not mutate its input');
+    ok(b.join(',') === 'z,x,y', '…and puts the new id first');
+    ok(pushRecent(['x', 'y', 'z'], 'y', 6).join(',') === 'y,x,z', 'an existing id MOVES to the front rather than duplicating');
+    ok(pushRecent(['a', 'b', 'c'], 'd', 3).join(',') === 'd,a,b', 'the cap displaces the oldest');
+    ok(pushRecent(['a'], '', 6).join(',') === 'a', 'an empty id is a no-op');
+    ok(pushRecent(null, 'a', 6).join(',') === 'a', 'a missing list is treated as empty');
+
+    const s0 = ['m1'];
+    const s1 = toggleStar(s0, 'm2', 40);
+    ok(s0.join(',') === 'm1', 'toggleStar does not mutate its input');
+    ok(s1.join(',') === 'm2,m1', '…and adds');
+    ok(toggleStar(s1, 'm2', 40).join(',') === 'm1', '…and removes on a second call');
+    ok(toggleStar(['a', 'b'], 'c', 2).length === 2, 'the star cap is applied');
+  }
+
+  // ── 13c. THE COLLAPSE ONLY HAPPENS WHEN IT SAVES SOMETHING ────────────
+  // The single most important property here. A user with only the built-in
+  // providers must see every model at once and never meet a "browse all"
+  // affordance that leads to the list already in front of them.
+  {
+    const small = rows(Array.from({ length: WORKING_SET_COLLAPSE_ABOVE }, (_, i) =>
+      mkEntry('m' + i, { measuredBy: i === 0 ? 'curator' : null })));
+    const ws = buildWorkingSet(small, { recents: [], starred: [], selectedId: null });
+    ok(ws.collapsed === false, `at the threshold (${WORKING_SET_COLLAPSE_ABOVE}) the catalogue is shown WHOLE`);
+    ok(ws.rows.length === WORKING_SET_COLLAPSE_ABOVE, '…every row, not the measured one alone');
+    ok(ws.total === WORKING_SET_COLLAPSE_ABOVE, '…and total reports the real size');
+  }
+  {
+    // Above the threshold but EVERY model measured: still no collapse, because
+    // the working set is not actually smaller.
+    const all = rows(Array.from({ length: WORKING_SET_COLLAPSE_ABOVE + 20 }, (_, i) =>
+      mkEntry('m' + i, { measuredBy: 'curator' })));
+    const ws = buildWorkingSet(all, { recents: [], starred: [], selectedId: null });
+    ok(ws.collapsed === false, 'above the threshold but with EVERY model measured: no collapse');
+    ok(ws.rows.length === all.length, '…so nothing is folded away behind a click that buys nothing');
+  }
+  {
+    // The real shape: a large catalogue with a small measured tier.
+    const big = rows(Array.from({ length: 200 }, (_, i) =>
+      mkEntry('m' + i, { measuredBy: i < 6 ? 'curator' : null })));
+    const ws = buildWorkingSet(big, { recents: [], starred: [], selectedId: null });
+    ok(ws.collapsed === true, 'a large catalogue with a small measured tier DOES collapse');
+    ok(ws.rows.length === 6, '…to exactly the measured tier');
+    ok(ws.total === 200, '…while total still reports every model, which is what the escape hatch counts');
+  }
+
+  // ── 13d. AN EMPTY WORKING SET SHOWS EVERYTHING ────────────────────────
+  // A backend too old to send `measuredBy`, with no stars and no recents. There
+  // is no fact to select on, so the only honest answer is the whole list — never
+  // an empty menu, which would read as "you have no models".
+  {
+    const big = rows(Array.from({ length: 200 }, (_, i) => mkEntry('m' + i)));
+    const ws = buildWorkingSet(big, { recents: [], starred: [], selectedId: null });
+    ok(ws.collapsed === false, 'no measuredBy anywhere: no collapse');
+    ok(ws.rows.length === 200, '…the whole catalogue is shown rather than nothing');
+  }
+
+  // ── 13e. THE FOUR MEMBERSHIP FACTS, AND ONLY THOSE ────────────────────
+  {
+    const big = rows(Array.from({ length: 200 }, (_, i) => mkEntry('m' + i, {
+      measuredBy: i < 3 ? 'curator' : (i === 3 ? 'user' : null),
+      // Deliberately give the UNMEASURED models the attributes a capability
+      // ranking would have reached for. None of them may put a row in the set.
+      free: i > 100, dominated: i === 50, thinks: i === 51, input: 0.01,
+    })));
+    const ws = buildWorkingSet(big, { recents: ['m150'], starred: ['m180'], selectedId: 'm199' });
+    const ids = ws.rows.map(r => r.entry.id);
+    ok(ids.includes('m0') && ids.includes('m1') && ids.includes('m2'), 'curator-measured models are in');
+    ok(ids.includes('m3'), 'a USER-measured model is in — this installation probed it on its own pages');
+    ok(ids.includes('m150'), 'a recent model is in');
+    ok(ids.includes('m180'), 'a starred model is in');
+    ok(ids.includes('m199'), 'THE CURRENT SELECTION is always in — a picker that cannot show what is selected is broken');
+    ok(ids.length === 7, `exactly those seven and nothing else (got ${ids.length})`);
+    ok(!ids.includes('m101') && !ids.includes('m50') && !ids.includes('m51'),
+      'free / dominated / thinks put NO row in the set — none of them is a fact about our testing or the user');
+
+    // ORDER IS THE CATALOGUE'S, not the recency list's. A menu whose rows move
+    // every time you use it is a menu you have to re-read every time you open it.
+    const idx = ids.map(id => Number(id.slice(1)));
+    ok(idx.every((v, i) => i === 0 || v > idx[i - 1]),
+      'rows come back in CATALOGUE order, so membership changes with use but position does not');
+
+    // The reasons ride on the row so it can say WHY without re-sorting.
+    const rec = ws.rows.find(r => r.entry.id === 'm150');
+    ok(rec.reasons.includes('recent'), 'a recent row carries its reason');
+    ok(ws.rows.find(r => r.entry.id === 'm180').reasons.includes('starred'), 'a starred row carries its reason');
+    ok(ws.rows.find(r => r.entry.id === 'm199').reasons.includes('selected'), 'the selection carries its reason');
+    ok(ws.rows.find(r => r.entry.id === 'm0').reasons.includes('measured'), 'a measured row carries its reason');
+  }
+
+  // ── 13f. THE ROW RENDERS ITS REASON, AND NEVER A JUDGEMENT ────────────
+  {
+    const e = mkEntry('some/model', { label: 'Some Model', input: 1, output: 2, measuredBy: 'curator' });
+    const plain = renderModelRowBodyHtml('openrouter', e, { reasons: ['measured'] });
+    const recent = renderModelRowBodyHtml('openrouter', e, { reasons: ['recent'] });
+    const starred = renderModelRowBodyHtml('openrouter', e, { reasons: ['starred'] });
+    ok(recent.includes('recent'), 'a recent row says so');
+    ok(starred.includes('is-star'), 'a starred row shows its star');
+    ok(!plain.includes('>recent<'), 'a merely-measured row claims nothing about recency');
+    // The SELECTED reason is deliberately NOT rendered: the check mark and the
+    // trigger label already carry it, and a third copy is noise.
+    ok(!renderModelRowBodyHtml('openrouter', e, { reasons: ['selected'] }).includes('selected'),
+      'the selected reason is not repeated as a badge — the check mark and the trigger already say it');
+    // NO CAPABILITY VOCABULARY ANYWHERE. We hold capability data for 19 of 213
+    // ids and this project has measured that every available proxy lies.
+    for (const html of [plain, recent, starred]) {
+      ok(!/\b(recommended|best|fastest|smartest|most capable|top pick|premium)\b/i.test(html),
+        'no capability or ranking vocabulary reaches a row');
+    }
+  }
+
+  // ── 13g. THE PROVIDER IS ON EVERY ROW ─────────────────────────────────
+  // Group headings alone stopped working at ~194 rows under one of them: scroll
+  // past the first screen and no heading is in view, so a row 40 deep names a
+  // model and not who serves it — the one fact that decides whose key pays.
+  {
+    for (const p of ALL_PROVIDERS) {
+      const e = REAL[p][0];
+      const html = renderModelRowBodyHtml(p, e, {});
+      ok(html.includes('chat-mm-prov'), `${p}: the row carries a provider marker`);
+      ok(html.includes('is-' + p), `${p}: …with the family class the stylesheet colours`);
+      // THE WORD, not only the dot. Colour alone is not an accessible
+      // distinction, so the marker must carry text a screen reader can read.
+      const label = { gemini: 'Gemini', anthropic: 'Claude', openrouter: 'OpenRouter' }[p];
+      ok(html.includes('>' + label + '</span>') || html.includes(label),
+        `${p}: …and the provider NAME, not colour alone`);
+    }
+    // An unknown provider gets the neutral swatch and its own name back, never
+    // another vendor's identity and never an interpolated class.
+    const odd = renderModelRowBodyHtml('weird-vendor', mkEntry('z'), {});
+    ok(odd.includes('chat-mm-prov"'), 'an unknown provider gets the bare marker class');
+    ok(!odd.includes('is-weird-vendor'),
+      'the family class comes from an ALLOW-LIST, never interpolated from the provider string');
+    ok(odd.includes('weird-vendor'), '…while its own name is still shown rather than a substitute');
+  }
+  // A hostile provider string cannot smuggle a class or break out of the markup.
+  {
+    const html = renderModelRowBodyHtml('"><img src=x onerror=alert(1)>', mkEntry('z'), {});
+    ok(!html.includes('<img src=x'), 'a hostile provider name is escaped');
+    const tags = scanTags(html);
+    ok(!tags.some(t => t.attrs.some(a => /^on[a-z]+$/i.test(a))),
+      '…and no tag in the row carries an event-handler attribute');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§14  THE BROWSE DIALOG — search and filter on FACTS only');
+// ═════════════════════════════════════════════════════════════════════════
+{
+  const mkEntry = (id, over) => Object.assign({ id, label: id, provider: 'openrouter' }, over || {});
+  const R = [
+    { provider: 'gemini', entry: mkEntry('gemini-2.5-flash-lite', { label: 'Flash Lite 2.5', provider: 'gemini', input: 0.1, output: 0.4 }) },
+    { provider: 'anthropic', entry: mkEntry('claude-opus-5', { label: 'Opus 5', provider: 'anthropic', input: 5, output: 25 }) },
+    { provider: 'openrouter', entry: mkEntry('minimax/minimax-m3:free', { label: 'MiniMax M3', free: true }) },
+    { provider: 'openrouter', entry: mkEntry('deepseek/deepseek-v4-flash-0731', { label: 'DeepSeek V4 Flash', input: 0.2, output: 0.8 }) },
+  ];
+
+  // ── 14a. SEARCH reaches the ID as well as the LABEL ───────────────────
+  // A user who knows a model by its OpenRouter id must be able to type it; a
+  // user who knows the friendly name must be able to type that.
+  ok(filterCatalogue(R, { q: 'opus' }).length === 1, 'a label substring matches');
+  ok(filterCatalogue(R, { q: 'deepseek' }).length === 1, 'an ID substring matches');
+  ok(filterCatalogue(R, { q: 'OPUS' }).length === 1, 'matching is case-insensitive');
+  ok(filterCatalogue(R, { q: '  opus  ' }).length === 1, 'surrounding whitespace is trimmed');
+  ok(filterCatalogue(R, { q: '' }).length === R.length, 'an empty query filters nothing');
+  ok(filterCatalogue(R, { q: 'zzzz' }).length === 0, 'no match returns nothing (the caller says so and offers the way back)');
+
+  // ── 14b. THE FILTERS ARE FACTS THE PROVIDER TOLD US ───────────────────
+  ok(filterCatalogue(R, { provider: 'openrouter' }).length === 2, 'the provider filter is exact');
+  ok(filterCatalogue(R, { provider: 'nope' }).length === 0, 'an unknown provider matches nothing rather than everything');
+  {
+    const free = filterCatalogue(R, { freeOnly: true });
+    ok(free.length === 1 && free[0].entry.free === true, 'free-only keys off entry.free');
+    // NEVER a price of zero and never a ":free" id substring — llm.js records
+    // that the suffix is not a safe membership test (a router id and two audio
+    // models are zero-priced but not actually free).
+    const trap = [{ provider: 'openrouter', entry: mkEntry('vendor/thing:free', { input: 0, output: 0 }) }];
+    ok(filterCatalogue(trap, { freeOnly: true }).length === 0,
+      'a ":free" id with a zero price is NOT treated as free — membership is the only test');
+  }
+  ok(filterCatalogue(R, { q: 'a', provider: 'openrouter', freeOnly: true }).length === 1,
+    'the three predicates compose');
+
+  // ── 14c. THERE IS NO CAPABILITY FILTER, AND THAT IS THE POINT ─────────
+  // Asserted against the SOURCE of the filter UI, because the absence of a
+  // control is not observable from the pure function. We hold latency for 6 of
+  // 213 ids and quality data for none of the fetched ones.
+  {
+    // COMMENTS STRIPPED FIRST, and this is not tidiness. The listbox suite
+    // records the mutation that proved it: a comment two lines above a real call
+    // satisfied a bare source scan, leaving a deleted call green. Here the
+    // failure runs the other way — this function's own docblock EXPLAINS why
+    // there is no capability filter, using the exact words the scan looks for,
+    // so an unstripped scan fails on prose that is the opposite of the defect.
+    // Either way, a guard a comment can decide is a guard about prose.
+    const tools = extractFunction(chatSrc, 'renderBrowseFiltersHtml')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    ok(!/best|fastest|smartest|capab|quality|recommended|intelligen/i.test(tools),
+      'the filter bar offers no capability, quality or speed filter');
+    ok(/data-browse-free/.test(tools) && /data-browse-provider/.test(tools),
+      'control: it DOES offer the two factual filters, so the assertion above is not vacuous');
+    // Price is a displayed FACT and never a gate — v3.16.0's rule, which this
+    // surface must not quietly reverse.
+    ok(!/price|cheap|budget|under \$/i.test(tools),
+      'and no price ceiling: price is displayed on every row and is the user\'s trade-off, never ours');
+  }
+
+  // ── 14d. THE LIST REGROUPS WHAT IT WAS GIVEN ──────────────────────────
+  // Headers are derived from the SAME rows the body renders, so a filter cannot
+  // leave a header standing over models it has removed.
+  {
+    const html = renderModelMenuHtml(filterCatalogue(R, { provider: 'openrouter' }), null, { starred: new Set() });
+    ok(html.includes('OpenRouter'), 'the surviving provider has its heading');
+    ok(!html.includes('>Gemini<') && !html.includes('>Claude<'),
+      'a filtered-out provider leaves NO orphan heading behind');
+    ok(renderModelMenuHtml([], null, {}) === '',
+      'an empty result renders nothing at all, so the caller can say "no match" instead of showing an empty box');
+  }
+
+  // ── 14e. THE STAR IS A SIBLING, NOT A CHILD ───────────────────────────
+  // The v3.13.0 pattern: a control nested inside another control has to suppress
+  // propagation to work at all, and any later edit dropping the suppression
+  // silently re-breaks it. As a sibling there is no propagation path to suppress.
+  {
+    const html = renderModelMenuHtml(R, null, { starred: new Set(['claude-opus-5']) });
+    // The pick button must CLOSE before the star button opens.
+    const pickAt = html.indexOf('data-model-id="claude-opus-5"');
+    const starAt = html.indexOf('data-star-id="claude-opus-5"');
+    ok(pickAt !== -1 && starAt !== -1 && starAt > pickAt, 'both controls are present, star after pick');
+    const between = html.slice(pickAt, starAt);
+    ok(between.includes('</button>'),
+      'the pick button is CLOSED before the star button begins — the star is a sibling, never nested');
+    ok(html.includes('aria-pressed="true"'), 'a starred model reports its toggle state to a screen reader');
+    ok(html.includes('aria-pressed="false"'), '…and an unstarred one reports the other state');
+    ok(/aria-label="Unstar Opus 5"/.test(html),
+      'the star names the MODEL — "Star" alone is meaningless in a list of 213');
+    // No nested interactive control inside the pick button, which would be the
+    // v3.0.1-beta.18 hazard in a shape stopPropagation cannot fix.
+    const pickHtml = html.slice(pickAt, html.indexOf('</button>', pickAt));
+    ok(!/<(button|a|input|select|textarea)\b/i.test(pickHtml),
+      'the pick button contains NO second interactive control');
+  }
+
+  // ── 14f. AND THE WHOLE DIALOG PATH ESCAPES ────────────────────────────
+  {
+    const hostile = mkEntry('"><script>alert(1)</script>', {
+      label: '<img src=x onerror=alert(1)>', input: 1, output: 2,
+    });
+    const html = renderModelMenuHtml([{ provider: 'openrouter', entry: hostile }], null, { starred: new Set() });
+    ok(!html.includes('<img src=x') && !html.includes('<script>'), 'a hostile entry cannot break out of a browse row');
+    const tags = scanTags(html);
+    ok(!tags.some(t => t.attrs.some(a => /^on[a-z]+$/i.test(a))), '…and no tag carries an event-handler attribute');
+    // Including the star's own aria-label and data attribute, which interpolate
+    // the id and the label into ATTRIBUTE context.
+    ok(!/aria-label="[^"]*<img/.test(html), 'the star\'s aria-label is escaped too');
   }
 }
 

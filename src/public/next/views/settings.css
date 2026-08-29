@@ -1073,20 +1073,15 @@
    not double as a second heading directly above it. */
 .model-lane-fold-body > .model-lane-head { padding-top: 0; }
 
-/* "Never measured here" is a DIFFERENT claim to the amber flags: those mean
-   "we measured this and here is the finding", this one means "there is no
-   finding". Neutral, outlined, deliberately not amber — an absence of
-   evidence must not be dressed as a warning about evidence. */
-.model-badge-unmeasured {
-  background: transparent;
-  color: var(--text-3);
-  border: 1px dashed var(--border-strong);
-}
 /* Where a build-lane row shows its "Use this" button, a chat-only row states
    the rule instead. Recessed, because it is an explanation and not an action
    the user has failed to take. */
+/* PRE-EXISTING at --text-3 and measured at 4.27:1 — under the AA floor. Fixed
+   in passing rather than left, because it now sits directly beside
+   .model-pick-state-elsewhere in the same column: two paired states at
+   different legibility would read as one of them being disabled. */
 .model-pick-state-chat {
-  color: var(--text-3);
+  color: var(--text-2);
   font-weight: var(--weight-regular);
   cursor: help;
 }
@@ -1106,13 +1101,10 @@
    "you measured this on your wiki" must never look like a hand-measured
    verdict: it is a different claim (nine runs, one corpus, one moment) and the
    whole reason the build lane grew a THIRD state rather than widening
-   `suitability` is so this screen can keep the two apart. Outlined and
-   accent-tinted rather than solid, so it reads as "yours" beside our badges. */
-.model-badge-local {
-  background: transparent;
-  color: var(--accent-text, var(--text-2));
-  border: 1px solid var(--accent-border, var(--border-strong));
-}
+   `suitability` is so this screen can keep the two apart. That distinction now
+   lives on .model-measured-user, appended at the end of this file — the badge
+   this comment used to introduce was one of three ways of saying something
+   about measurement, and all three collapsed into one chip. */
 
 /* The result block, and the live confirm/progress panel, both live in the model
    row BODY. Recessed frame so the evidence never competes with the price and
@@ -1157,3 +1149,242 @@
    <summary> — the v3.0.1-beta.18 hazard, where a control inside a summary
    toggles its own section on click. */
 .model-qualify-btn { margin-left: 8px; }
+
+/* ── THE TWO JOBS ───────────────────────────────────────────────────────────
+   Providers & keys is organised by JOB now, not by provider: one block for the
+   model that builds the wiki, one for chat, then the keys, then the reference
+   shelf. See renderProviders()'s docblock in settings.js for why the order is
+   the argument.
+
+   The block is a plain framed region rather than a card with its own surface:
+   the page already has one level of chrome (the section) and the model rows
+   inside carry another, so a third would make the build list read as nested
+   twice. What separates the blocks is a rule and a heading, which is what the
+   reader is actually using to navigate. */
+.settings-job-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.settings-job-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.settings-job-lede {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.settings-job-lede strong { color: var(--text); font-weight: var(--weight-semibold); }
+.settings-job-lede code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.settings-job-empty {
+  margin: 0;
+  padding: 12px 13px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--text-md);
+  color: var(--text-2);
+}
+.settings-job-empty strong { color: var(--text); }
+
+/* ── WHAT BUILDS THE WIKI RIGHT NOW ─────────────────────────────────────────
+   The headline fact, and the one element on this screen that answers "which
+   model does what" without any expanding. Raised rather than inset: it is a
+   statement about the live system, not a form control.
+
+   CONTRAST IS MEASURED, NOT ASSUMED. --text-2 on --surface-raised is the pair
+   used throughout this file for body copy and clears AA; the model id sits at
+   full --text because it is the answer, not the explanation. */
+.build-current {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success-text);
+  border-radius: var(--radius-md, 8px);
+}
+/* A pin the engine refused. Amber, because this IS a finding about something
+   that went wrong — unlike the neutral "no pin" state beside it, which is the
+   ordinary case and must not be dressed as a problem. */
+.build-current-warn { border-left-color: var(--attention-text); }
+/* Nothing can build the wiki at all: a first-run state, not an error. Neutral. */
+.build-current-none { border-left-color: var(--border-strong); }
+.build-current-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.build-current-provider {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text);
+}
+.build-current-model {
+  font-size: var(--text-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.build-current-why {
+  font-size: var(--text-md);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.build-current-why strong { color: var(--text); font-weight: var(--weight-semibold); }
+.build-current-why code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text); }
+.build-current-warn .build-current-why strong { color: var(--attention-text); }
+/* A pin under a provider that is not active — it governs nothing. Stated, not
+   warned about: it is inert rather than broken, and the sentence says how to
+   make it take effect. */
+.build-current-inert {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-2);
+  padding-top: 2px;
+  border-top: 1px dashed var(--border);
+}
+.build-current-inert code { font-family: var(--font-mono); color: var(--text); }
+.build-current-inert strong { color: var(--text); font-weight: var(--weight-medium); }
+
+/* The choice. One list, across providers. */
+.build-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding-top: 4px;
+}
+.build-list-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+.build-list-count { font-size: var(--text-2xs); color: var(--text-2); margin-left: auto; }  /* 4.38 -> 8.09, measured */
+.build-list { margin: 0; }
+
+/* The provider, as a LABEL on a row rather than the structure of the page. */
+.model-provider-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text-2);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.model-provider-chip .provider-dot { width: 6px; height: 6px; }
+
+/* ── ONE MEASUREMENT VOCABULARY ─────────────────────────────────────────────
+   Three states, three treatments, and the palette carries the distinction
+   because it is epistemic rather than decorative:
+
+     curator  — solid-outlined neutral. We measured it across documents.
+     user     — accent outline. YOURS: nine runs, one corpus, one moment. It
+                must never look like a hand-measured verdict, which is the
+                whole reason the build lane grew a third state rather than
+                widening `suitability`.
+     none     — dashed, recessed. An ABSENCE of evidence, deliberately not
+                amber: dressing "nobody looked" as a warning would say
+                something about the model that we have not measured. */
+.model-measured {
+  background: transparent;
+  font-weight: var(--weight-regular);
+  cursor: help;
+}
+.model-measured-curator {
+  color: var(--text-2);
+  border: 1px solid var(--border-strong);
+}
+.model-measured-user {
+  color: var(--accent-text, var(--accent));
+  border: 1px solid var(--accent-border, var(--border-strong));
+}
+/* MEASURED, NOT ASSUMED. This was --text-3 and came back at 4.46:1 against the
+   row surface — under the 4.5 AA floor, on a chip that states a FACT on a
+   spending surface. --text-2 measures 8.09. The recession this chip needs is
+   carried by the DASHED border and by the word "not", which are non-colour
+   channels; buying it with contrast instead put the fact below the readable
+   floor. Same finding v3.17.1 recorded: --text-3 fails AA in all ten cases it
+   measured (3.87-4.38) and --text-2 clears it (6.79-8.55). */
+.model-measured-none {
+  color: var(--text-2);
+  border: 1px dashed var(--border-strong);
+}
+
+/* ── THE WARNING TREATMENT THAT REPLACED THE `caution` BADGE ────────────────
+   `cautionReason` is the first clause of the derived summary and is REQUIRED
+   for any flagged entry, so the reason is always unfolded. This is the visual
+   signal the badge used to buy, applied to the sentence that carries the
+   information rather than to a word that repeated it. Amber text on the row's
+   own surface — measured against --surface-raised, not guessed. */
+/* MEASURED IN BOTH THEMES, and the first cut failed one of them. Amber TEXT
+   (--attention-text) measured 11.03 dark but only 3.58 light — under the 4.5 AA
+   floor, on the sentence that carries a measured warning. So the colour moved
+   to the GLYPH and the text went to --text-2:
+
+     · the glyph is a graphic, governed by WCAG 1.4.11's 3:1 floor, which 3.58
+       clears — so the amber signal survives intact;
+     · the sentence measures 7.26 light / 8.09 dark, so the warning is readable.
+
+   Strictly better than the `caution` badge it replaced, which measures 3.21 in
+   light — a warning nobody could read is not a warning either. */
+.model-row-derived-warn {
+  color: var(--text-2);
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+.model-row-derived-warn svg { flex: none; margin-top: 2px; color: var(--attention-text); }
+
+/* Every model, by provider — the reference shelf. Folded by default: it
+   answers "show me everything", which most users never ask. */
+.settings-shelf { gap: 0; }
+.settings-shelf-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  list-style: none;
+  padding-bottom: 10px;
+}
+.settings-shelf-summary::-webkit-details-marker { display: none; }
+.settings-shelf-summary svg {
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-fast, 0.12s) var(--ease-out, ease);
+}
+.settings-shelf[open] > .settings-shelf-summary svg { transform: rotate(90deg); }
+.settings-shelf-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+  border-radius: var(--radius-sm, 5px);
+}
+.settings-shelf-count { font-size: var(--text-2xs); color: var(--text-2); margin-left: auto; }  /* 4.38 -> 8.09, measured */
+.settings-shelf-body { display: flex; flex-direction: column; gap: 10px; }
+/* A provider whose whole catalogue is already in the build list above. Stated
+   rather than left as an empty section, which reads as a failed load. */
+.model-lane-all-above { margin: 0; }
+/* A build-lane row on the reference shelf. It CAN build the wiki; the control
+   for saying so lives once, in the build block. Recessed like its chat-only
+   sibling, because it is an explanation of where the control is and not an
+   action the user has failed to take. */
+.model-pick-state-elsewhere {
+  color: var(--text-2);   /* measured 4.27 at --text-3; 8.09 here */
+  font-weight: var(--weight-regular);
+  cursor: help;
+  white-space: nowrap;
+}

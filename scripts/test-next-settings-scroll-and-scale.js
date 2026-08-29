@@ -341,6 +341,32 @@ console.log('\n§3b  An expanded model row survives a repaint');
     'and a toggle listener records it');
   ok(/\[data-model-row\][\s\S]{0,320}state\.modelRowOpen\[el\.dataset\.modelRow\] = true/.test(settingsSrc),
     'recording it, deliberately WITHOUT a render() — repainting here would throw away the DOM the user just opened');
+
+  // ── THE THIRD FOLD, ADDED WITH THE JOB RESTRUCTURE ────────────────────
+  // "Every model, by provider" is a <details> at the SECTION level. It has
+  // exactly the hazard the two folds above have and for the same reason:
+  // render() replaces the section wholesale, and this section repaints on
+  // things the user did not do — the cross-view write gate fires whenever an
+  // ingest starts or finishes anywhere in the app. A native `open` attribute
+  // is discarded on that repaint, so a shelf someone is reading would snap
+  // shut for no visible cause.
+  //
+  // Asserted as the same THREE properties: state-backed, per-mount, and a
+  // toggle listener that RECORDS without re-rendering.
+  ok(/state\.modelShelfOpen === true \? ' open' : ''/.test(settingsSrc),
+    'the shelf renders open from state, not from a native attribute a repaint would discard');
+  ok(/modelShelfOpen: false,/.test(settingsSrc),
+    'and it is per-mount state, reset on leaving the view like every other transient fold here');
+  ok(/data-model-shelf="/.test(settingsSrc), 'the shelf carries a hook so its toggle can be recorded');
+  ok(/querySelectorAll\('\[data-model-shelf\]'\)[\s\S]{0,320}addEventListener\('toggle'/.test(settingsSrc),
+    'and a toggle listener records it');
+  ok(/\[data-model-shelf\][\s\S]{0,320}state\.modelShelfOpen = !!el\.open/.test(settingsSrc),
+    'recording it WITHOUT a render(), exactly like the two folds above');
+  // NOT ENFORCED, stated rather than implied away: this is a SOURCE scan, like
+  // its two neighbours. It proves the listener and the render condition exist
+  // and reference the same field; it does not execute them. The behavioural
+  // half — that renderProviders() actually emits ` open` from that state — is
+  // §42 of test-next-model-picker.js, which drives the real function.
 }
 {
   // TEMPORAL DEAD ZONE. This bug was introduced by this change and caught by

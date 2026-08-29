@@ -307,26 +307,25 @@ section('§5  The adoptions — ONE component, six call sites');
 
 const VIEWS = path.join(NEXT, 'views');
 const viewFiles = readdirSync(VIEWS).filter((f) => f.endsWith('.js'));
-const ADOPTERS = ['memory.js', 'ingest.js', 'settings.js'];
+const ADOPTERS = ['memory.js', 'ingest.js', 'settings.js', 'chat.js'];
 
 // A whole-tree walk, never a hardcoded file list: a hardcoded list is how a
 // previous guard in this repo went blind (v3.9.2).
 let selectOffenders = [];
 for (const f of viewFiles) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
-  // chat.js is the ONE deliberate exclusion and it is named, not silent. Its
-  // composer carries its own click-only menu with listbox roles and NO
-  // keyboard support — the highest-value remaining adoption, recorded as a
-  // gap rather than swept under a passing assertion. It renders no <select>
-  // either, so this exclusion costs nothing today; it exists so that adding
-  // one there would still be caught.
+  // chat.js WAS the one deliberate exclusion — its composer carried a
+  // click-only menu with listbox roles and no keyboard support at all, recorded
+  // here as a gap rather than swept under a passing assertion. It has now been
+  // adopted (§5 counts it below), so there is no exclusion left in this walk.
   if (/<select/.test(src)) selectOffenders.push(f);
 }
 ok(selectOffenders.length === 0,
   'NO view under /next contains a <select>, in markup OR in a comment' +
   (selectOffenders.length ? ' — found: ' + selectOffenders.join(', ') : ''));
 
-const expectAdoptions = { 'memory.js': 2, 'ingest.js': 2, 'settings.js': 2 };
+// chat.js: the composer's MODEL picker and its LENGTH picker.
+const expectAdoptions = { 'memory.js': 2, 'ingest.js': 2, 'settings.js': 2, 'chat.js': 2 };
 let total = 0;
 for (const f of ADOPTERS) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
@@ -343,11 +342,11 @@ for (const f of ADOPTERS) {
   ok((code.match(/closeAllListboxes\(\)/g) || []).length >= 1,
     `${f} closes any open menu on teardown/repaint (in CODE, not in a comment)`);
 }
-ok(total === 6, `SIX adoptions across three views (found ${total})`);
+ok(total === 8, `EIGHT adoptions across four views (found ${total})`);
 
 // The render -> wire handoff. This is the assertion that makes "one
 // component" mean something: markup and behaviour must come from ONE object.
-for (const f of ['memory.js', 'settings.js']) {
+for (const f of ['memory.js', 'settings.js', 'chat.js']) {
   const src = readFileSync(path.join(VIEWS, f), 'utf8');
   ok(/const pendingListboxes = \[\]/.test(src),
     `${f} uses the render -> wire handoff array`);
@@ -355,6 +354,23 @@ for (const f of ['memory.js', 'settings.js']) {
     `${f} clears it before rendering, so a branch that emits no picker leaves nothing to mount`);
   ok(/for \(const cfg of pendingListboxes\)[\s\S]{0,900}mountListbox\(cfg\)/.test(src),
     `${f} mounts from the SAME cfg objects the markup came from`);
+}
+{
+  // chat.js: TWO builders, one per control, each used by BOTH halves. Same
+  // property ingest.js is held to below, for the same reason — an inline second
+  // cfg literal is the two-copies drift this component exists to remove, and on
+  // this surface the two copies would be describing which model spends money.
+  const src = readFileSync(path.join(VIEWS, 'chat.js'), 'utf8');
+  ok(/function modelListboxCfg\(/.test(src) && /function lengthListboxCfg\(/.test(src),
+    'chat.js has ONE cfg builder per composer picker');
+  const lbCalls = src.match(/renderListboxHtml\([^)]*/g) || [];
+  ok(lbCalls.length === 2
+    && lbCalls.some(c => c.includes('cfg'))
+    && lbCalls.every(c => !/\{/.test(c)),
+    'BOTH renderListboxHtml calls pass a builder\'s output (a `cfg` binding), never an inline literal ' +
+    '(found: ' + lbCalls.length + ' calls)');
+  ok(/mountListbox\(cfg\)/.test(src),
+    'and the wiring pass mounts from the SAME cfg objects the markup came from');
 }
 {
   const src = readFileSync(path.join(VIEWS, 'ingest.js'), 'utf8');
@@ -423,6 +439,113 @@ ok(!/<select/.test('<div><button role="combobox"></button></div>'),
     'control: the adoption counter counts what is actually there');
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+section('§8  ACTION ROWS — a row that DOES something, not one that IS the value');
+// ═══════════════════════════════════════════════════════════════════════
+//
+// The composer's model menu needs one row that is not a model: "Browse all 213
+// models", which opens a search dialog. Without a first-class flag, `commit()`
+// writes that sentinel into the control's value and stamps its label onto the
+// trigger, and the caller's only recovery is to re-render afterwards to undo a
+// label it never asked for — leaving the picker briefly claiming a model that
+// does not exist, on the surface whose entire job is naming the model that will
+// answer.
+{
+  const OPTS_A = [
+    { value: 'a', label: 'Alpha' },
+    { value: 'b', label: 'Beta' },
+    { value: ' browse', label: 'Browse all', action: true },
+  ];
+  const norm = render.normaliseOptions(OPTS_A);
+  ok(norm[0].action === false && norm[1].action === false,
+    'an ordinary option is NOT an action — the six pre-existing adoptions all take this path');
+  ok(norm[2].action === true, 'and the flagged one is');
+  ok(render.normaliseOptions([{ value: 'x', label: 'X', action: 'yes' }])[0].action === false,
+    'only a literal `true` counts — a truthy string does not silently make a row an action');
+
+  const m = render.menuHtml('zz', norm, 'a', '');
+  ok(/data-lb-action="1"/.test(m), 'an action row is marked in the MARKUP');
+  ok((m.match(/data-lb-action/g) || []).length === 1, '…on exactly the one row that carries the flag');
+  ok(/class="lb-opt is-action"/.test(m), '…and carries a class, so a caller can style it without :has()');
+  // It must never look SELECTED. `aria-selected="true"` on a row that is not the
+  // value would tell a screen reader the control holds something it does not.
+  const actionRow = m.slice(m.indexOf('data-lb-action'));
+  ok(/aria-selected="false"/.test(m.slice(m.lastIndexOf('<div', m.indexOf('data-lb-action')))),
+    'an action row is never aria-selected');
+  ok(!/is-selected/.test(actionRow.slice(0, actionRow.indexOf('</div>'))),
+    '…and never carries the selected class');
+
+  // ── THE BEHAVIOUR, from the REAL commit() ────────────────────────────
+  // Extracted and driven, not read: this is the branch that must NOT write the
+  // control's value.
+  // `commit` is NESTED inside `mountListbox`, so it is indented and the
+  // file-level extractor (anchored at a line start) cannot see it. Brace-matched
+  // locally rather than by loosening that extractor: an anchor that also matched
+  // indented declarations would start matching object-literal methods and
+  // nested helpers across every other suite that shares this technique.
+  const commitSrc = (() => {
+    const at = lbJs.indexOf('function commit(value) {');
+    if (at === -1) throw new Error('§8: listbox.js commit() not found — the extraction anchor has moved');
+    let i = lbJs.indexOf('{', at), depth = 0;
+    for (; i < lbJs.length; i++) {
+      if (lbJs[i] === '{') depth++;
+      else if (lbJs[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+    }
+    const out = lbJs.slice(at, i);
+    if (!/\n  \}$/.test(out)) throw new Error('§8: commit() extraction desynced');
+    return out;
+  })();
+  const runCommit = new Function('opts', 'startValue', 'onChange', 'sink',
+    'const state = { options: opts, value: startValue, trigger: { querySelector: () => null, classList: { remove(){}, add(){} } } };\n' +
+    'const cfg = { onChange };\n' +
+    'function findOption(list, v) { for (const o of list) if (o.value === v) return o; return null; }\n' +
+    'function close() { sink.closed = (sink.closed || 0) + 1; }\n' +
+    'function restoreFocusAfterRerender() { sink.refocused = (sink.refocused || 0) + 1; }\n' +
+    commitSrc + '\n' +
+    'return (v) => { commit(v); return state.value; };'
+  );
+  {
+    const sink = {};
+    const fired = [];
+    const run = runCommit(norm, 'a', (v) => fired.push(v), sink);
+    const after = run(' browse');
+    ok(after === 'a', 'committing an ACTION row leaves the control\'s value UNCHANGED');
+    ok(fired.length === 1 && fired[0] === ' browse', '…while the handler still fires with the sentinel');
+    ok(sink.closed === 1, '…and the menu is closed');
+    ok(sink.refocused === 1, '…and focus is restored after a handler that may re-render');
+  }
+  {
+    // THE REGRESSION HALF. An ordinary option must still commit normally — this
+    // is what proves the new branch did not swallow the shipped path that six
+    // other adoptions depend on.
+    const sink = {};
+    const fired = [];
+    const run = runCommit(norm, 'a', (v) => fired.push(v), sink);
+    ok(run('b') === 'b', 'an ORDINARY option still becomes the control\'s value');
+    ok(fired.length === 1 && fired[0] === 'b', '…and still fires onChange');
+  }
+  {
+    // Re-committing the SAME ordinary value must not fire onChange — unchanged
+    // behaviour, asserted here because the action branch sits directly above the
+    // `changed` computation and a careless edit could bypass it.
+    const sink = {};
+    const fired = [];
+    const run = runCommit(norm, 'a', (v) => fired.push(v), sink);
+    run('a');
+    ok(fired.length === 0, 'committing the value it already holds fires nothing (unchanged)');
+  }
+  {
+    // A disabled ACTION row is still refused, so `action` cannot be a way past
+    // the disabled gate.
+    const dis = render.normaliseOptions([{ value: 'z', label: 'Z', action: true, disabled: true }]);
+    const sink = {};
+    const fired = [];
+    const run = runCommit(dis, null, (v) => fired.push(v), sink);
+    run('z');
+    ok(fired.length === 0 && !sink.closed, 'a DISABLED action row does nothing at all');
+  }
+}
+
 console.log('\n────────────────────────────────────────────────────────────');
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed) {
@@ -431,4 +554,4 @@ if (failed) {
   console.log('❌ /next listbox assertions FAILED');
   process.exit(1);
 }
-console.log('✅ /next shared listbox + six adoptions green');
+console.log('✅ /next shared listbox + eight adoptions green');

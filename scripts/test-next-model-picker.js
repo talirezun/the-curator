@@ -447,7 +447,15 @@ const stubState = {
 // §6's whole claim is "the shipping escaper handles this input"; a local
 // stand-in would prove something about the stand-in instead.
 const APP_FN_NAMES = ['escapeHtml'];
-const RENDER_CONSTS = ['PROVIDER_ROWS', 'MODEL_SUITABILITY_BADGES', 'ACTIVATION_SKIP_REASONS',
+// `MODEL_SUITABILITY_BADGES` IS GONE, and its removal is the point of §40.
+// It held two display strings — `chat only — not for ingest` and `caution` —
+// and both stopped being labels: the first was true of 194 of ~199 rows once
+// the live catalogue landed (a flag on 97% of a list carries no information,
+// the v3.16.1 finding one level up) and is now stated structurally by a model's
+// ABSENCE from the build list; the second printed a WORD beside a line that
+// already opened with the REASON. `MEASUREMENT_CHIPS` replaces the three
+// separate measurement badges with one vocabulary.
+const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
   // v3.16.0 — the four lane states. Extracted, never re-declared here: §39
   // drives the real predicate against the real rows, and a local copy of the
   // string values would keep passing after the module renamed one.
@@ -514,6 +522,33 @@ const RENDER_FN_NAMES = [
   'renderModelFilterBar', 'renderModelFilterEmpty',
   // v3.17.0 — absence handling for the recency/size sorts.
   'modelSortKey', 'countUnrankedForSort',
+  // ── THE TWO JOBS (this release) ───────────────────────────────────────
+  // Settings is organised by JOB now, not by provider. These are the pieces of
+  // that restructure, and every one of them is EXTRACTED rather than stubbed:
+  // renderProviders calls them, so a stub would make any assertion driven
+  // through the real section wrapper vacuous — the same reason §16 executes
+  // renderProviders instead of grepping its call site.
+  //
+  // `providerHasSavedKey` and `qualIndex` are shared helpers lifted out of
+  // renderModelPicker so the build block and the shelf read the SAME gate and
+  // the SAME index. That is the whole reason they exist: two hand-maintained
+  // copies of a lookup is how one row came to claim both lanes.
+  'providerHasSavedKey', 'qualIndex',
+  // renderBuildCurrent's DEGRADED path — a backend that predates the derived
+  // `buildModel` field still resolves a provider and a model, and telling that
+  // user "nothing can build your wiki" would be false. Extracted rather than
+  // stubbed: a `() => ({show:false})` stub would make the degradation
+  // untestable and would let the readout silently disappear.
+  'activeModelLine',
+  // The one measurement vocabulary, and its renderer. `measurementChip` is the
+  // decision (which of three states) and `renderMeasurementChip` is the markup;
+  // both are extracted so §40 can drive the decision directly rather than
+  // inferring it from a string in the output.
+  'measurementChip', 'renderMeasurementChip',
+  // The build block: the payload readers, the candidate set, and the three
+  // render halves.
+  'buildModelFacts', 'inertPins', 'buildCandidates', 'chatModelCount',
+  'renderBuildCurrent', 'renderBuildList', 'renderBuildBlock', 'renderChatBlock',
 ];
 
 /**
@@ -597,6 +632,11 @@ const RENDER_INJECTED = Object.keys(RENDER_INJECTED_VALUES);
  * removes.
  */
 const ACTION_FN_NAMES = ['modelPickErrorMessage', 'onPickModel',
+  // The ATOMIC build choice (this release). Same not-optimistic invariant as
+  // onPickModel and a wider blast radius: this route can move the ACTIVE
+  // PROVIDER as well as the pin, so a UI that showed the choice before the
+  // server confirmed could claim a different provider is billing.
+  'onPickBuildModel',
   // v3.15.2 — the catalogue refresh. Same not-optimistic invariant as
   // onPickModel, and a sharper failure mode if it breaks: the list it must
   // not clear reads as "this provider has no models", which is a lie about
@@ -611,6 +651,12 @@ const ACTION_INJECTED_VALUES = {
   render: () => {
     renderSnapshots.push(
       renderModelPicker(rowFor(renderProviderId), stubState.keys, true, false));
+    // ── THE PICK CONTROL MOVED, SO THE SNAPSHOT FOLLOWED IT ─────────────
+    // The build choice is made in ONE cross-provider list now, through the
+    // atomic /build-model route; the per-provider shelf above is reference and
+    // carries no pick control at all. A separate array so every existing
+    // renderSnapshots index is unchanged.
+    buildSnapshots.push(renderBuildBlock(stubState.keys, false));
     // The sync panel is a SIBLING of the picker, so it is not inside the
     // markup above and would be unobservable without its own capture. Pushed
     // to a separate array so every existing renderSnapshots index is
@@ -629,6 +675,7 @@ const ACTION_INJECTED_VALUES = {
     if (mountIsCurrent) {
       renderSnapshots.push(
         renderModelPicker(rowFor(renderProviderId), stubState.keys, true, false));
+      buildSnapshots.push(renderBuildBlock(stubState.keys, false));
       syncSnapshots.push(
         renderCatalogueSync(rowFor(renderProviderId), stubState.keys, false));
     }
@@ -650,7 +697,7 @@ const {
   escapeHtml, PROVIDER_ROWS, providerLabel, formatIsoDay, formatTokenCount,
   formatModelPrice, renderModelPicker, renderModelPickerScope, renderModelOption,
   renderEmptyModelPicker, renderActivationNotice, classifyActivationOutcome,
-  ACTIVATION_SKIP_REASONS, renderProviders, MODEL_SUITABILITY_BADGES,
+  ACTIVATION_SKIP_REASONS, renderProviders, MEASUREMENT_CHIPS,
   formatSyncedAt, renderCatalogueSync, renderModelLanes, CHAT_LANE_COLLAPSE_AT,
   MODEL_LANES, qualificationFor, modelLaneOf, laneBuildsWiki,
   splitSentences, withoutLaneClaim, renderQualifyPanel,
@@ -658,6 +705,10 @@ const {
   renderModelFilterBar, renderModelFilterEmpty, MODEL_SORTS, MODEL_FILTER_MIN_ROWS,
   modelSortKey, countUnrankedForSort, MODEL_SORT_KEYS, MODEL_SORT_UNRANKED_LABEL,
   MODEL_SORT_OPTIONS,
+  // ── The two jobs (this release) ──────────────────────────────────────────
+  providerHasSavedKey, qualIndex, activeModelLine, measurementChip, renderMeasurementChip,
+  buildModelFacts, inertPins, buildCandidates, chatModelCount,
+  renderBuildCurrent, renderBuildList, renderBuildBlock, renderChatBlock,
 } = sandbox;
 
 // ── The real catalogue, exactly as the wire carries it ────────────────────
@@ -732,6 +783,38 @@ function rowFor(provider) {
   const found = PROVIDER_ROWS.find((p) => p.id === provider);
   return found || { id: provider, name: provider, available: true };
 }
+/**
+ * A payload carrying the derived `buildModel` block the route now sends.
+ *
+ * Built from the SAME facts the route derives it from — the active provider,
+ * that provider's resolved model, and its stored pin — rather than hand-typed
+ * per case, so a fixture cannot express a combination the server never
+ * produces. `source` follows the route's own ladder (env > selected > default)
+ * and `selectedHonoured` its own definition (a pin exists AND it is what
+ * resolved).
+ */
+function buildKeysFor(provider, over = {}) {
+  const k = keysFor(provider, over);
+  const resolved = (k.models && k.models[provider]) || null;
+  // The route sends `activeModel` beside `buildModel` (it predates it and /old
+  // still reads it). Set here rather than in keysFor, so no existing assertion
+  // built on that fixture changes shape.
+  if (!Object.hasOwn(over, 'activeModel')) {
+    k.activeModel = over.__resolved !== undefined ? over.__resolved : resolved;
+  }
+  const pin = (k.selectedModels && k.selectedModels[provider]) || null;
+  if (!Object.hasOwn(over, 'buildModel')) {
+    k.buildModel = {
+      provider,
+      model: over.__resolved !== undefined ? over.__resolved : resolved,
+      source: pin ? 'selected' : 'default',
+      selectedHonoured: !!pin && pin === (over.__resolved !== undefined ? over.__resolved : resolved),
+      measuredBy: 'curator',
+    };
+  }
+  delete k.__resolved;
+  return k;
+}
 /** Slice out one model's <li>. Returns '' when the model is absent. */
 function liFor(html, id) {
   const needle = '<li class="model-option';
@@ -775,8 +858,23 @@ const scopeOf = (html) => {
   const m = /<p class="model-picker-scope[^"]*">([\s\S]*?)<\/p>/.exec(html);
   return m ? m[1] : '';
 };
-const claimsBuild = (s) => /this model builds your wiki/i.test(s);
-const disclaimsBuild = (s) => /this model does not build your wiki/i.test(s);
+// ── THE LANE CLAIM HAS MOVED, AND THESE PREDICATES MOVED WITH IT ─────────
+// It used to be made per provider ("This model builds your wiki" / "…does not
+// build your wiki"), once per section. Settings is organised by JOB now: the
+// claim itself is made ONCE, in the build block, and each provider section says
+// only whether it is the ACTIVE provider — the relationship, not the verdict.
+//
+// Both predicates are kept and re-pointed rather than deleted, because what
+// they guard is unchanged and is the whole reason §31 exists: exactly one
+// section may claim the build path, and the claim must MOVE when the active
+// provider does. A hardcoded "gemini builds the wiki" still cannot pass.
+const claimsBuild = (s) => /is what builds your wiki/i.test(s);
+const disclaimsBuild = (s) => /nothing here builds your wiki/i.test(s);
+/** The build block's headline — where the single lane claim now lives. */
+const buildCurrentOf = (html) => {
+  const m = /<div class="build-current[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?:<div class="build-list-head"|<p class="settings-job-empty"|$)/.exec(html);
+  return m ? m[1] : (html.includes('build-current') ? html : '');
+};
 const laneIsLive = (head) => /model-picker-lane-live/.test(head);
 /** Whole-word presence in the VISIBLE text, so a class name or an attribute
  *  can never be mistaken for prose naming a provider. */
@@ -1595,8 +1693,21 @@ section('§4  Every FLAGGED model shows its measured note, verbatim (M2)');
       flagged++;
       okContains(li, escapeHtml(m.note),
         `"${m.id}" (${m.suitability}${m.dominated ? ', dominated' : ''}): renders its note VERBATIM`);
-      ok(li.includes('model-badge-flag'),
-        `"${m.id}": carries a flag badge, so the note has something to explain`);
+      // ── THE FLAG IS NOW EITHER A BADGE OR THE WARNING TREATMENT ─────────
+      // `dominated` keeps its badge (`out-performed`) — it is a comparative
+      // measurement with no other home on this surface, and the composer
+      // renders the same word. `caution` LOST its badge, deliberately: the
+      // badge printed the WORD beside a line that already opened with the
+      // REASON (`cautionReason` is `formatModelSummary`'s first clause, and
+      // `defineOfferableModel` refuses to build a flagged entry without one).
+      // What replaced it is `model-row-derived-warn` — the same visual signal,
+      // applied to the sentence that carries the information.
+      //
+      // The assertion is written as a DISJUNCTION rather than being split by
+      // suitability, so it stays true whichever way a future entry is flagged,
+      // and §40c pins the two halves apart so this cannot go vacuous.
+      ok(li.includes('model-badge-flag') || li.includes('model-row-derived-warn'),
+        `"${m.id}": carries a flag treatment, so the note has something to explain`);
       // WORD-LEVEL PIN, not merely "a flag badge exists": the `dominated`
       // field renders as the literal text "out-performed" on THIS surface,
       // matching the word chat.js's renderModelOptionHtml uses for the
@@ -1958,36 +2069,110 @@ section('§11  The honesty line — what a choice does, and does not, do');
 // This is a guard on a CLAIM, not on behaviour. It previously pinned the
 // words "not wired up yet" — true while nothing could store a choice, and
 // FALSE the moment POST /api/config/api-keys/model landed. That is the whole
-// point of pinning a claim: the four assertions here went red and forced the
-// sentence to be rewritten rather than left standing as a stale falsehood on
-// a screen about money.
+// point of pinning a claim: the assertions went red and forced the sentence to
+// be rewritten rather than left standing as a stale falsehood on a screen
+// about money.
 //
-// What it must say NOW is the distinction the user cannot infer from "using
-// X": whether X is pinned by them (an update will not move it) or is our
-// default (an update can). Those are different bills.
+// THE CLAIM HAS MOVED, AND THIS SECTION MOVED WITH IT. It used to live in the
+// per-provider scope paragraph, once per provider. Settings is organised by JOB
+// now: there is ONE build model, so the pinned-vs-default distinction is stated
+// ONCE, by renderBuildCurrent, which also has the payload to say two more
+// things that sentence never could — that `LLM_MODEL` is overriding everything,
+// and that a stored pin was refused on read. Re-pointing rather than deleting
+// is the point: the claim is still pinned, at its new address.
+//
+// What it must say is the distinction the user cannot infer from "using X":
+// whether X is pinned by them (an update will not move it) or is our default
+// (an update can). Those are different bills.
 {
   for (const prov of POPULATED) {
-    const defaultId = WIRE[prov][0].id;
-    const html = renderModelPicker(rowFor(prov), keysFor(prov));
-    ok(html.includes('model-picker-scope'), `"${prov}": the list states its scope`);
-    ok(!html.includes('not wired up yet'),
-      `"${prov}": the stale "not wired up yet" claim is GONE — a choice now persists`);
-    ok(!html.includes('nothing on this list changes what you are billed'),
-      `"${prov}": and so is the claim that picking cannot change the bill`);
-    ok(html.includes('follows the app default'),
-      `"${prov}": with no pick stored, it says the model can move when The Curator updates`);
-    okContains(html, escapeHtml(defaultId),
-      `"${prov}": it names the model actually in force (${defaultId})`);
+    const defaultId = defaultModelFor(prov);
 
-    // The other half of the same sentence, on a payload that HAS a pick.
+    // NO PICK STORED -> the app default, which a release can move.
+    const plain = renderBuildCurrent(buildKeysFor(prov), false);
+    ok(plain.includes('build-current'), `"${prov}": the build block states what is in force`);
+    ok(!plain.includes('not wired up yet'),
+      `"${prov}": the stale "not wired up yet" claim is GONE — a choice now persists`);
+    ok(!plain.includes('nothing on this list changes what you are billed'),
+      `"${prov}": and so is the claim that picking cannot change the bill`);
+    ok(plain.includes('follows the app default'),
+      `"${prov}": with no pick stored, it says the model can move when The Curator updates`);
+    okContains(plain, escapeHtml(defaultId),
+      `"${prov}": it names the model actually in force (${defaultId})`);
+    ok(!plain.includes('data-pick-clear='),
+      `"${prov}": and offers no "Follow the app default" button — there is nothing to clear`);
+
+    // A PICK STORED, AND HONOURED -> pinned, and a way back.
     const pinnedId = WIRE[prov][1] ? WIRE[prov][1].id : WIRE[prov][0].id;
-    const pinnedHtml = renderModelPicker(rowFor(prov), keysFor(prov, {
+    const pinned = renderBuildCurrent(buildKeysFor(prov, {
       selectedModels: { [prov]: pinnedId },
-    }));
-    ok(pinnedHtml.includes('pinned this choice'),
-      `"${prov}": with a pick stored, it says the choice is pinned`);
-    ok(!pinnedHtml.includes('follows the app default'),
+      models: Object.assign({}, keysFor(prov).models, { [prov]: pinnedId }),
+      __resolved: pinnedId,
+    }), false);
+    ok(pinned.includes('You chose this one'),
+      `"${prov}": with a pick stored, it says the choice is the user's`);
+    ok(pinned.includes('app updates will not move you off it'),
+      `"${prov}": …and that an update cannot move it`);
+    ok(!pinned.includes('follows the app default'),
       `"${prov}": and does NOT also claim it follows the default — the two states are exclusive`);
+    okContains(pinned, 'data-pick-clear="' + escapeHtml(prov) + '"',
+      `"${prov}": …and offers the one route back to the app default`);
+
+    // ── THE TWO STATES THE OLD SENTENCE COULD NOT EXPRESS ────────────────
+    // An LLM_MODEL override. It outranks a Settings click by design, so a
+    // screen that says "you chose this one" while the shell is deciding would
+    // be a falsehood about who is in control.
+    const env = renderBuildCurrent(buildKeysFor(prov, {
+      buildModel: { provider: prov, model: defaultId, source: 'env',
+        selectedHonoured: false, measuredBy: 'curator' },
+    }), false);
+    okContains(env, 'LLM_MODEL', `"${prov}": an environment override is NAMED, not hidden`);
+    ok(/overrides anything chosen here/.test(env),
+      `"${prov}": …and says it beats anything picked on this screen`);
+    ok(!env.includes('follows the app default') && !env.includes('You chose this one'),
+      `"${prov}": …and makes neither of the other two claims`);
+
+    // A pin the engine REFUSED on read. The pin is real, and it is not what is
+    // running — silence here is the dead-data shape, in the direction the user
+    // notices least.
+    const refused = renderBuildCurrent(buildKeysFor(prov, {
+      buildModel: { provider: prov, model: defaultId, source: 'selected',
+        selectedHonoured: false, measuredBy: 'curator' },
+    }), false);
+    ok(refused.includes('build-current-warn'),
+      `"${prov}": a refused pin is flagged, not reported as a normal choice`);
+    ok(/not the one running/.test(refused),
+      `"${prov}": …and says plainly that the choice is not in force`);
+  }
+
+  // ── AND AN INERT PIN UNDER A NON-ACTIVE PROVIDER ──────────────────────
+  // The old per-provider route can still create this and the pins already on
+  // disk are still there, so it is surfaced rather than assumed away.
+  {
+    const active = POPULATED[0];
+    const other = POPULATED.find((p) => p !== active);
+    if (other) {
+      const k = buildKeysFor(active, {
+        [wireHasField(other)]: true,
+        selectedModels: { [other]: WIRE[other][0].id },
+      });
+      const html = renderBuildCurrent(k, false);
+      okContains(html, escapeHtml(WIRE[other][0].id),
+        'an inert pin under a NON-active provider is named');
+      ok(/governs nothing/.test(html),
+        '…and is stated to govern nothing, rather than being silently dropped');
+      ok(/would switch to/.test(html),
+        '…and says what would make it take effect');
+      // The control class invariant: it must be derived from the payload, not
+      // from a provider id.
+      const pins = inertPins(k);
+      ok(pins.length === 1 && pins[0].provider === other,
+        'inertPins reads the payload — active provider excluded, non-active pin found');
+      ok(inertPins(buildKeysFor(active)).length === 0,
+        'CONTROL: with no pin anywhere, nothing is reported as inert');
+    } else {
+      ok(false, 'expected at least two populated providers to exercise the inert-pin case');
+    }
   }
 }
 
@@ -2453,6 +2638,10 @@ function tagNamesIn(html) {
 const fetchCalls = [];
 let fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
 let renderSnapshots = [];
+// The BUILD BLOCK as it stood at each render. The pick control lives there now
+// (one cross-provider list, one atomic route), so the "not optimistic" claim is
+// measured off this array rather than off the per-provider shelf.
+let buildSnapshots = [];
 let syncSnapshots = [];
 let renderProviderId = 'gemini';
 let loadKeysCalls = 0;
@@ -2464,12 +2653,13 @@ const actions = new Function(
   ACTION_FN_NAMES.map((n) => extractFunction(settings, n, 'settings.js')).join('\n') + '\n' +
   'return { ' + ACTION_FN_NAMES.join(', ') + ' };'
 )(...ACTION_INJECTED.map((n) => ACTION_INJECTED_VALUES[n]));
-const { onPickModel, modelPickErrorMessage, onSyncCatalogue, catalogueSyncErrorMessage } = actions;
+const { onPickModel, onPickBuildModel, modelPickErrorMessage, onSyncCatalogue, catalogueSyncErrorMessage } = actions;
 
 /** Reset every injected seam between sections. */
 function resetActionHarness(provider) {
   fetchCalls.length = 0;
   renderSnapshots = [];
+  buildSnapshots = [];
   syncSnapshots = [];
   loadKeysCalls = 0;
   loadKeysImpl = async () => {};
@@ -2496,6 +2686,11 @@ function reply(status, body) {
 /** The <li> for one model, out of the LAST render the handler triggered. */
 function lastLiFor(id) {
   const html = renderSnapshots[renderSnapshots.length - 1] || '';
+  return liFor(html, id);
+}
+/** The same, out of the BUILD BLOCK — where the pick control lives. */
+function lastBuildLiFor(id) {
+  const html = buildSnapshots[buildSnapshots.length - 1] || '';
   return liFor(html, id);
 }
 
@@ -2528,16 +2723,26 @@ section('§17  Selecting a model POSTs the right thing to the right place');
       `"${prov}": the payload is REFETCHED on success — the render is never trusted to the echo`);
   }
 
-  // The button the user actually clicks carries both halves of that body.
+  // ── WHICH BUTTON REACHES THIS HANDLER, AND WHICH NO LONGER DOES ───────
+  // `onPickModel` still owns the CLEAR path — the build-model route has no
+  // clearing arm by design, since something must build the wiki — so its
+  // control is `data-pick-clear`, rendered by renderBuildCurrent.
   const prov = PROVIDERS[0];
-  stubState.keys = keysFor(prov);
-  const html = renderModelPicker(rowFor(prov), stubState.keys, true, false);
-  const target = WIRE[prov][1] ? WIRE[prov][1].id : WIRE[prov][0].id;
-  const li = liFor(html, target);
-  ok(li.includes('data-pick-model="' + escapeHtml(target) + '"'),
-    'the row carries the model id the handler will POST');
-  ok(li.includes('data-pick-provider="' + escapeHtml(prov) + '"'),
-    'and the provider, off the control itself rather than inferred from position');
+  stubState.keys = buildKeysFor(prov, { selectedModels: { [prov]: WIRE[prov][1].id },
+    models: Object.assign({}, keysFor(prov).models, { [prov]: WIRE[prov][1].id }),
+    __resolved: WIRE[prov][1].id });
+  const cur = renderBuildCurrent(stubState.keys, false);
+  ok(cur.includes('data-pick-clear="' + escapeHtml(prov) + '"'),
+    'the clear control carries the provider this handler will POST with an empty model');
+
+  // And the SHELF carries no pick control at all: two buttons writing one
+  // setting through two endpoints — one of which can leave the choice inert —
+  // is the confusion this restructure removes.
+  const shelf = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+  ok(!shelf.includes('data-pick-model='),
+    'the per-provider shelf offers NO "Use this" control — reference and decision are different surfaces');
+  ok(!shelf.includes('data-build-model='),
+    '…and no build control either; the choice is made once, in the build block');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -2557,10 +2762,14 @@ section('§18  The selection is NOT shown as active until the server confirms (M
     stubState.keys = keysFor(prov, { selectedModels: { [prov]: before } });
 
     let midFlight = null;
+    let midBuild = null;
     fetchImpl = async () => {
       // Whatever the UI is painting right now, at the exact moment the
-      // request is outstanding.
+      // request is outstanding. BOTH surfaces are captured: the shelf carries
+      // the "your choice" badge, and the build list carries the control — the
+      // two halves of the claim live in different places now.
       midFlight = renderSnapshots[renderSnapshots.length - 1] || '';
+      midBuild = buildSnapshots[buildSnapshots.length - 1] || '';
       return reply(200, { ok: true });
     };
     loadKeysImpl = async () => {
@@ -2578,19 +2787,23 @@ section('§18  The selection is NOT shown as active until the server confirms (M
     const midOld = liFor(midFlight, before);
     ok(!midNew.includes('model-badge-chosen'),
       `"${prov}": mid-flight, the clicked model is NOT yet badged as the choice`);
-    ok(!midNew.includes('model-pick-state'),
+    ok(!midNew.includes('model-pick-state">Selected'),
       `"${prov}": mid-flight, it is NOT shown in the settled "Selected" state either`);
     ok(midOld.includes('model-badge-chosen'),
       `"${prov}": mid-flight, the PREVIOUS choice is still the one shown as chosen`);
-    ok(midNew.includes('Saving…'),
+    // The CONTROL half, read off the build list — the surface that now holds
+    // the button. `state.modelPickBusy` uses one key shape for both handlers,
+    // so the in-flight row says the same thing whichever route is writing.
+    const midBuildNew = liFor(midBuild, after);
+    ok(midBuildNew.includes('Saving…'),
       `"${prov}": the clicked row says what is happening instead of lying about the outcome`);
-    ok(midNew.includes('disabled'),
+    ok(midBuildNew.includes('disabled'),
       `"${prov}": and cannot be clicked again while it is in flight`);
 
     // …and only after the refetch does the selection move.
     const settledNew = lastLiFor(after);
     const settledOld = lastLiFor(before);
-    ok(settledNew.includes('model-pick-state'),
+    ok(settledNew.includes('model-pick-state">Selected'),
       `"${prov}": once confirmed, the new model renders as the settled choice`);
     ok(!settledOld.includes('model-badge-chosen'),
       `"${prov}": and the old one no longer claims to be`);
@@ -2921,13 +3134,26 @@ section('§24  The control cannot toggle the disclosure it sits in');
       ok(!/<button|<input|<select|<textarea|<a\s/i.test(body),
         `"${prov}": no interactive control inside a <summary> (${body.slice(0, 40).replace(/\s+/g, ' ')}…)`);
     }
-    // And the control genuinely exists, outside — otherwise the assertion
-    // above passes vacuously on a picker that has no control at all.
-    ok(html.includes('data-pick-model'),
-      `"${prov}": the pick control exists, outside every <summary>`);
     // Structurally a sibling of the row block, not nested inside it.
     ok(/<div class="model-option-main">[\s\S]*?<\/div><div class="model-option-pick">/.test(html),
       `"${prov}": the control is a SIBLING of the row's disclosure block`);
+  }
+
+  // ── AND THE CONTROL GENUINELY EXISTS, IN THE BLOCK THAT OWNS IT ───────
+  // Without this the loop above passes vacuously on a surface that has no
+  // control at all — which is now true of the shelf BY DESIGN, so the
+  // non-vacuity check has to be made where the button actually lives.
+  for (const prov of POPULATED) {
+    const build = renderBuildBlock(buildKeysFor(prov), false);
+    ok(build.includes('data-build-model'),
+      `"${prov}": the build control exists in the build block`);
+    for (const m of build.split('<summary').slice(1)) {
+      const body = m.slice(0, m.indexOf('</summary>'));
+      ok(!/<button|<input|<select|<textarea|<a\s/i.test(body),
+        `"${prov}": no interactive control inside a <summary> in the build block either`);
+    }
+    ok(/<div class="model-option-main">[\s\S]*?<\/div><div class="model-option-pick">/.test(build),
+      `"${prov}": and it is a SIBLING of the row's disclosure block there too`);
   }
 }
 
@@ -2938,18 +3164,26 @@ section('§25  A running write disables the control before it can be refused');
 // This just stops the common case producing a refusal at all.
 {
   for (const prov of POPULATED) {
-    const busy = renderModelPicker(rowFor(prov), keysFor(prov), true, true);
-    const buttons = busy.match(/<button[^>]*data-pick-model[^>]*>/g) || [];
+    const busy = renderBuildBlock(buildKeysFor(prov), true);
+    const buttons = busy.match(/<button[^>]*data-build-model[^>]*>/g) || [];
     ok(buttons.length > 0, `"${prov}": there are pick controls to check`);
     ok(buttons.every((b) => b.includes('disabled')),
       `"${prov}": every pick control is disabled while a write runs elsewhere`);
     ok(buttons.every((b) => b.includes('title=')),
       `"${prov}": each says why, so a dead button is not a mystery`);
 
-    const idle = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
-    const idleButtons = idle.match(/<button[^>]*data-pick-model[^>]*>/g) || [];
+    const idle = renderBuildBlock(buildKeysFor(prov), false);
+    const idleButtons = idle.match(/<button[^>]*data-build-model[^>]*>/g) || [];
     ok(idleButtons.every((b) => !b.includes('disabled')),
       `"${prov}": and they are live again when nothing is writing`);
+
+    // The CLEAR control is gated by the same flag — it is a write too.
+    const pinnedBusy = renderBuildCurrent(buildKeysFor(prov, {
+      selectedModels: { [prov]: WIRE[prov][1].id },
+      models: Object.assign({}, keysFor(prov).models, { [prov]: WIRE[prov][1].id }),
+      __resolved: WIRE[prov][1].id }), true);
+    ok(/data-pick-clear="[^"]*" disabled/.test(pinnedBusy),
+      `"${prov}": the "Follow the app default" control is disabled while a write runs too`);
   }
 }
 
@@ -2962,14 +3196,22 @@ section('§26  Clearing goes back to the app default, through the same endpoint'
 {
   const prov = PROVIDERS[0];
   const pinned = WIRE[prov][1].id;
-  const withPick = renderModelPicker(rowFor(prov), keysFor(prov, {
+  // The control moved with the claim: there is ONE build model, so there is
+  // one place that says whether it is pinned and one control to un-pin it.
+  const withPick = renderBuildCurrent(buildKeysFor(prov, {
     selectedModels: { [prov]: pinned },
-  }), true, false);
+    models: Object.assign({}, keysFor(prov).models, { [prov]: pinned }),
+    __resolved: pinned,
+  }), false);
   ok(withPick.includes('data-pick-clear="' + escapeHtml(prov) + '"'),
     'a pinned provider offers a way back to the app default');
-  const noPick = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+  const noPick = renderBuildCurrent(buildKeysFor(prov), false);
   ok(!noPick.includes('data-pick-clear'),
     'and an un-pinned one does not offer a control that would do nothing');
+  // And the shelf offers neither — one setting, one control.
+  ok(!renderModelPicker(rowFor(prov), keysFor(prov, { selectedModels: { [prov]: pinned } }),
+    true, false).includes('data-pick-clear'),
+    'the per-provider shelf carries no clear control — it is reference, not a control surface');
 
   resetActionHarness(prov);
   stubState.keys = keysFor(prov, { selectedModels: { [prov]: pinned } });
@@ -2984,6 +3226,8 @@ section('§26  Clearing goes back to the app default, through the same endpoint'
   const after = renderModelPicker(rowFor(prov), stubState.keys, false, false);
   ok(!after.includes('model-picker-chosen'),
     'after clearing, the collapsed header no longer marks a user choice');
+  ok(!renderBuildCurrent(buildKeysFor(prov), false).includes('data-pick-clear'),
+    '…and the build headline stops offering a clear control it has nothing to clear');
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -3029,7 +3273,16 @@ section('§28  CLASS INVARIANT — no binary provider ternary in the pick path (
   const src = extractFunction(settings, 'onPickModel', 'settings.js') + '\n' +
               extractFunction(settings, 'renderModelPicker', 'settings.js') + '\n' +
               extractFunction(settings, 'renderModelOption', 'settings.js') + '\n' +
-              extractFunction(settings, 'renderModelPickerScope', 'settings.js');
+              extractFunction(settings, 'renderModelPickerScope', 'settings.js') + '\n' +
+              // The new half of the pick path — the atomic build choice and
+              // everything that composes it. Omitting these would leave the
+              // invariant guarding only the code the decision moved AWAY from.
+              extractFunction(settings, 'onPickBuildModel', 'settings.js') + '\n' +
+              extractFunction(settings, 'renderBuildBlock', 'settings.js') + '\n' +
+              extractFunction(settings, 'renderBuildCurrent', 'settings.js') + '\n' +
+              extractFunction(settings, 'renderBuildList', 'settings.js') + '\n' +
+              extractFunction(settings, 'buildCandidates', 'settings.js') + '\n' +
+              extractFunction(settings, 'providerHasSavedKey', 'settings.js');
   const ternary = /===\s*['"](gemini|anthropic)['"]\s*\?/;
   ok(!ternary.test(src),
     'no `provider === "gemini" ? … : …` anywhere in the pick path — a lookup or nothing');
@@ -3050,7 +3303,7 @@ section('§28  CLASS INVARIANT — no binary provider ternary in the pick path (
 
 
 // ═════════════════════════════════════════════════════════════════════════
-section('§29  THE LANE — the ACTIVE provider’s section says its model builds the wiki');
+section('§29  THE LANE — the build block says what builds the wiki, once');
 // ═════════════════════════════════════════════════════════════════════════
 // The defect this closes was the maintainer's own: he pinned a model under
 // one provider, had the OTHER active, and asked whether his next ingest
@@ -3058,19 +3311,20 @@ section('§29  THE LANE — the ACTIVE provider’s section says its model build
 // Compile all resolve through getActiveProvider(). Nothing on the screen
 // said so, and every section looked equally in force.
 //
-// Enumerated over the REAL provider catalogue, never a hardcoded id, and run
-// with EACH provider taking its turn as the active one — so an
-// implementation that hardcodes "gemini is the one that builds" cannot pass
-// (that is §31's job to prove explicitly, and this section's data feeds it).
+// THE FIX MOVED, AND SO DID THIS SECTION. Repeating a lane claim per provider
+// was itself the framing that made every section look equally live. There is
+// ONE build model, so the claim is made ONCE — by the build block, which also
+// names the provider, the model, where the choice came from, and whether it is
+// actually in force. This section asserts that block makes the claim in full.
+//
+// Enumerated over the REAL provider catalogue, never a hardcoded id, with EACH
+// provider taking its turn as the active one — so an implementation that
+// hardcodes "gemini is the one that builds" cannot pass (§31 proves that
+// explicitly; this section's data feeds it).
 {
   for (const prov of POPULATED) {
-    const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
-    const scope = scopeOf(html);
-    ok(scope !== '', `${prov}: the active section renders its scope line at all`);
-    ok(claimsBuild(scope),
-      `${prov} ACTIVE: states plainly that this model builds the wiki`);
-    ok(!disclaimsBuild(scope),
-      `${prov} ACTIVE: and does not simultaneously deny it`);
+    const block = renderBuildBlock(buildKeysFor(prov), false);
+    ok(block.includes('build-current'), `${prov}: the build block renders its headline at all`);
 
     // ── M5 ────────────────────────────────────────────────────────────────
     // The claim must cover the WHOLE lane. Naming only ingest would let a
@@ -3080,15 +3334,33 @@ section('§29  THE LANE — the ACTIVE provider’s section says its model build
     // FOUR-argument and compile.js's is five, while provider/model live in
     // argument SIX, so an override is not merely unused there — it cannot
     // be expressed.
-    ok(/\bingest\b/i.test(scope), `${prov} ACTIVE: names ingest`);
-    ok(/health scan/i.test(scope), `${prov} ACTIVE: names Health scans (M5)`);
-    ok(/\bcompile\b/i.test(scope), `${prov} ACTIVE: names Compile (M5)`);
+    ok(/builds your wiki/i.test(block), `${prov}: states plainly what builds the wiki`);
+    ok(/\bingest\b/i.test(block), `${prov}: names ingest`);
+    ok(/health scan/i.test(block), `${prov}: names Health scans (M5)`);
+    ok(/\bcompile\b/i.test(block), `${prov}: names Compile (M5)`);
+    ok(/share/i.test(block) && /nothing separate to set/i.test(block),
+      `${prov}: says the three SHARE one model, so nobody looks for a second knob`);
 
-    // The second lane, stated as a choice rather than as an exception.
-    ok(/\bchat\b/i.test(scope),
-      `${prov} ACTIVE: names chat as the separately-chosen lane`);
-    ok(!/not active/i.test(scope),
-      `${prov} ACTIVE: never describes itself as not active`);
+    // It names the provider AND the model in force — the answer to "which
+    // model does what", which no catalogue can give.
+    const label = providerLabel(prov);
+    ok(wordIn(block, label), `${prov}: names the provider in force`);
+    okContains(block, escapeHtml(defaultModelFor(prov)), `${prov}: and the model`);
+
+    // And it says choosing here also moves the provider — the fact that makes
+    // an inert pin impossible through this control.
+    ok(/active/i.test(block),
+      `${prov}: says the choice also makes that model's provider the active one`);
+  }
+
+  // The CHAT block is a statement and a pointer, never a second picker.
+  {
+    const chat = renderChatBlock(buildKeysFor(POPULATED[0]));
+    ok(/\bchat\b/i.test(chat), 'the chat block names the other job');
+    ok(/composer/i.test(chat), '…and points at the composer, where the control actually is');
+    ok(/per message/i.test(chat), '…and says the choice is per message');
+    ok(!/data-pick-model|data-build-model|data-listbox|<select/.test(chat),
+      'the chat block contains NO control — duplicating the composer here is what it exists to avoid');
   }
 }
 
@@ -3117,10 +3389,14 @@ section('§30  THE OTHER LANE — the INACTIVE section disclaims it WITHOUT goin
       ok(scope.includes(escapeHtml(label)),
         `${prov} (active=${active}): names ${label} as the provider that does`);
 
-      // The pin is not useless — both halves asserted.
-      ok(/make .* active/i.test(scope) && /takes over/i.test(scope),
-        `${prov} (active=${active}): says this pin takes over on activation`);
-      ok(/chat can still use/i.test(scope),
+      // The section is not dead — both halves asserted. The WORDING changed
+      // with the restructure (a choice is made at the top of the screen now,
+      // not by "activating a provider" as a separate act) but the two facts a
+      // user needs are the same: this can still become the build provider, and
+      // its models are usable today.
+      ok(/switch to/i.test(scope) && /take over/i.test(scope),
+        `${prov} (active=${active}): says choosing one of these takes over the build job`);
+      ok(/available in <strong>chat<\/strong>/i.test(scope),
         `${prov} (active=${active}): says chat can still use it today`);
     }
   }
@@ -3600,10 +3876,16 @@ section('§36  Models admitted through the REAL runtime path are chat-only, mark
   for (const m of fetched) {
     const li = liFor(html, m.id);
     ok(li !== '', `${m.id}: rendered`);
-    okContains(li, 'never measured here',
-      `${m.id}: badged as never measured against our ingest prompt`);
-    okContains(li, MODEL_SUITABILITY_BADGES['chat-only'],
-      `${m.id}: also carries the chat-only verdict badge`);
+    // ── ONE CHIP, NOT TWO BADGES ────────────────────────────────────────
+    // `never measured here` and `chat only — not for ingest` used to be two
+    // separate badges on the same row saying two things about one fact. The
+    // chip is now the whole vocabulary, and the lane claim moved OFF the row:
+    // the shelf's lane heading states it once for the group, and the model's
+    // absence from the build list states it structurally.
+    okContains(li, MEASUREMENT_CHIPS.none.label,
+      `${m.id}: badged as not measured against our ingest prompt`);
+    ok(!li.includes('chat only — not for ingest'),
+      `${m.id}: does NOT repeat the lane claim as a per-row badge — it was true of ~97% of rows`);
     // REQUIREMENT: a fetched model must never be offered as the BUILD model.
     // The route 400s on it; the UI must not produce the click.
     ok(!li.includes('data-pick-model='),
@@ -3612,9 +3894,34 @@ section('§36  Models admitted through the REAL runtime path are chat-only, mark
   }
   // …and the hand-measured ones DO offer it, so the assertion above is about
   // the lane and not about the button having disappeared everywhere.
-  const buildLi = liFor(html, stillBuild.find((m) => m.id !== (k.selectedModels && k.selectedModels.openrouter)).id);
-  ok(buildLi.includes('data-pick-model=') || buildLi.includes('model-pick-state">Selected'),
-    'control: a hand-measured build-lane model still offers the pick control');
+  const buildId = stillBuild.find((m) => m.id !== (k.selectedModels && k.selectedModels.openrouter)).id;
+  const buildLi = liFor(html, buildId);
+  // ON THE SHELF a build-lane row carries no control — the choice is made once,
+  // in the build block, through the atomic route. It says where instead of
+  // going silent, so the assertion above is about the LANE and not about the
+  // button having quietly disappeared everywhere.
+  ok(buildLi.includes('model-pick-state-elsewhere') || buildLi.includes('model-pick-state">Selected'),
+    'control: a hand-measured build-lane model says where its control is, rather than nothing');
+  ok(!buildLi.includes('model-pick-state-chat'),
+    'control: …and is NOT refused as chat-only, which is what separates it from the rows above');
+  // …and it DOES offer the control in the block that owns it. The model in USE
+  // renders "Building your wiki" rather than a button (a control whose only
+  // outcome is rewriting its own value is not offered), so the assertion is
+  // made against a build-lane model that is NOT the one currently running.
+  const buildKeys = buildKeysFor('openrouter',
+    { offerable: Object.assign({}, WIRE, { openrouter: live }) });
+  const buildBlock = renderBuildBlock(buildKeys, false);
+  const inUseId = buildKeys.buildModel && buildKeys.buildModel.model;
+  const offerableId = stillBuild.map((m) => m.id).find((id) => id !== inUseId);
+  ok(!!offerableId, 'control: the fixture has a build-lane model that is not the one in use');
+  okContains(buildBlock, 'data-build-model="' + escapeHtml(offerableId) + '"',
+    'control: and the build block offers a real pick control for that model');
+  okContains(liFor(buildBlock, inUseId), 'Building your wiki',
+    'control: while the model in USE states that, rather than a button that would do nothing');
+  for (const m of fetched) {
+    ok(!buildBlock.includes('data-model-id="' + escapeHtml(m.id) + '"'),
+      `${m.id}: a fetched, unmeasured model never appears in the build list at all`);
+  }
 
   // gemini-3.5-flash-lite is the OTHER kind of chat-only: MEASURED, and found
   // unfit. It must be unpinnable too, and must NOT be badged "never measured".
@@ -3626,8 +3933,10 @@ section('§36  Models admitted through the REAL runtime path are chat-only, mark
       const li = liFor(gHtml, m.id);
       ok(!li.includes('data-pick-model='),
         `${m.id}: a measured-unfit model is also unpinnable as the build model`);
-      ok(!li.includes('never measured here'),
-        `${m.id}: is NOT badged "never measured" — it was measured, and nine live runs say so`);
+      ok(!li.includes(MEASUREMENT_CHIPS.none.label),
+        `${m.id}: is NOT badged "not measured" — it was measured, and nine live runs say so`);
+      ok(li.includes(MEASUREMENT_CHIPS.curator.label),
+        `${m.id}: IS badged as measured by The Curator — "we measured it and it cannot" is a different claim to "nobody looked"`);
       ok(typeof m.jsonRaw === 'boolean',
         `${m.id}: carries a measured jsonRaw verdict, which is what separates the two tiers`);
     }
@@ -4029,8 +4338,10 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
   // ── NEGATIVE CONTROL FIRST: the corpus CAN express the defect ──────────
   const ctrlHtml = renderModelPicker(rowFor('openrouter'), keysWith([]), true, false);
   const ctrlLi = liFor(ctrlHtml, REC.id);
-  okContains(ctrlLi, MODEL_SUITABILITY_BADGES['chat-only'],
-    'CONTROL: without the qualification the SAME entry is badged "chat only — not for ingest"');
+  okContains(ctrlLi, MEASUREMENT_CHIPS.none.label,
+    'CONTROL: without the qualification the SAME entry is badged "not measured"');
+  okOmits(ctrlLi, MEASUREMENT_CHIPS.user.label,
+    'CONTROL: …and it does NOT claim the user measured it');
   okContains(ctrlLi, 'never measured against',
     'CONTROL: …and its note still carries the lane claim');
   // The pick-control control is read off the UNPINNED row: `isSelected` is
@@ -4045,25 +4356,40 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
     'CONTROL: …and it is filed under the Chat only lane');
 
   // ── THE ROW NOW STATES ONE LANE ────────────────────────────────────────
-  okOmits(li, MODEL_SUITABILITY_BADGES['chat-only'],
-    'a locally-qualified row does NOT carry "chat only — not for ingest"');
+  okOmits(li, MEASUREMENT_CHIPS.none.label,
+    'a locally-qualified row is NOT badged "not measured" — it was measured, by the user');
+  okOmits(li, 'chat only — not for ingest',
+    'a locally-qualified row does NOT carry the retired "chat only — not for ingest" badge (nothing does)');
   okOmits(li, 'never measured against',
     'a locally-qualified row does NOT carry the "never measured against our ingest prompt" note');
   okOmits(li, 'nothing here says how it would build',
     'a locally-qualified row does NOT deny that anything is known about how it would build a wiki');
   okOmits(li, 'model-pick-state-chat',
     'a locally-qualified row does NOT say "chat only" where the pick control goes');
-  okOmits(li, 'never measured here',
-    'a locally-qualified row is NOT badged "never measured here" — it was measured, by the user');
 
   // …and it still says the true things, including the ones seen live.
-  okContains(li, 'you measured this on your wiki', 'it IS badged as measured BY THE USER');
+  okContains(li, MEASUREMENT_CHIPS.user.label, 'it IS badged as measured BY THE USER');
+  okOmits(li, MEASUREMENT_CHIPS.curator.label,
+    'and NOT as measured by The Curator — the two provenances must never collapse into one badge');
   okContains(li, 'in use', 'it still reports that it is the model in use');
   okContains(li, 'your choice', 'it still reports that it is the pinned choice');
   okContains(li, 'model-pick-state">Selected',
     'the PINNED qualified row reads "Selected" — a control whose only outcome is re-writing its own value is not offered');
-  okContains(li2, 'data-pick-model=',
-    'an UNPINNED qualified row offers the build-model control, because the server accepts this pin');
+  // ON THE SHELF the control is absent by design (see §36); what the row must
+  // do is stop refusing, and say where the control is. The REAL control is
+  // asserted one line down, in the block that owns it — a locally-qualified
+  // model reaching the build LIST is the whole point of the third lane.
+  okContains(li2, 'model-pick-state-elsewhere',
+    'an UNPINNED qualified row stops saying "chat only" and points at the build block');
+  okOmits(li2, 'model-pick-state-chat',
+    '…and is no longer refused as a chat-only model');
+  {
+    const qBlock = renderBuildBlock(keysWith(QUALS), false);
+    okContains(qBlock, 'data-build-model="' + escapeHtml(REC2.id) + '"',
+      'an UNPINNED qualified model offers the build-model control, because the server accepts this pin');
+    okContains(qBlock, MEASUREMENT_CHIPS.user.label,
+      '…and is badged in the build list as the USER\'s measurement, never as ours');
+  }
   okOmits(li, 'data-qualify-model=', 'it is not offered a "Test on my wiki" button it has already passed');
   okOmits(li2, 'data-qualify-model=', '…nor is the unpinned one');
 
@@ -4084,7 +4410,7 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
   {
     const handMeasured = live.find((m) => m.suitability !== 'chat-only');
     if (handMeasured) {
-      okOmits(liFor(html, handMeasured.id), 'you measured this on your wiki',
+      okOmits(liFor(html, handMeasured.id), MEASUREMENT_CHIPS.user.label,
         `${handMeasured.id}: a hand-measured model is NOT relabelled as the user's measurement`);
     } else {
       ok(false, 'expected at least one hand-measured OpenRouter model in the live catalogue');
@@ -4102,6 +4428,8 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
   const buildNote = html.slice(buildAt, chatAt);
   okContains(buildNote, 'you</strong> measured',
     'the build lane names the USER as the source for the locally-qualified one');
+  okContains(buildNote, MEASUREMENT_CHIPS.user.label,
+    'the build lane names the badge by the SAME words the row carries — one vocabulary, not two');
   ok(!/Measured by The Curator against its real ingest prompt\. Any of these/.test(buildNote),
     'the build lane no longer asserts The Curator measured every model in it');
   // With no locally-qualified model present the original sentence is restored
@@ -4116,8 +4444,13 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
     const bad = Object.assign({}, QUAL, { qualifies: false, outcome: 'DEFECT_OBSERVED',
       counts: { raw: 0, repaired: 0, unrepairable: 9, unusable: 0 } });
     const badLi = liFor(renderModelPicker(rowFor('openrouter'), keysWith([bad]), true, false), REC.id);
-    okContains(badLi, MODEL_SUITABILITY_BADGES['chat-only'],
-      'a DEFECT_OBSERVED record leaves the model chat-only');
+    okContains(badLi, MEASUREMENT_CHIPS.none.label,
+      'a DEFECT_OBSERVED record leaves the model unpromoted — the chip still reads "not measured"');
+    // NOT asserted here: `model-pick-state-chat`. REC is the PINNED model in
+    // this fixture and `isSelected` is tested BEFORE the lane (deliberately —
+    // see renderModelOption), so the pinned row reads "Selected" in either
+    // lane. The refusal for an UNPINNED failed row is covered by the class
+    // invariant below, which reads every model in the live catalogue.
     okContains(badLi, 'failed on your wiki', '…and says so on the row');
     okContains(badLi, 'never measured against',
       '…and its catalogue note is untouched, because nothing overturned it');
@@ -4127,7 +4460,7 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
   for (const junk of [1, 'yes', {}, [], 'true']) {
     const li2 = liFor(renderModelPicker(rowFor('openrouter'),
       keysWith([Object.assign({}, QUAL, { qualifies: junk })]), true, false), REC.id);
-    okContains(li2, MODEL_SUITABILITY_BADGES['chat-only'],
+    okContains(li2, MEASUREMENT_CHIPS.none.label,
       `qualifies: ${JSON.stringify(junk)} does NOT promote into the build lane — only \`true\` does`);
   }
 
@@ -4151,8 +4484,18 @@ section('§39  A LOCALLY-QUALIFIED model states ONE lane — and it is the build
       const row = liFor(allHtml, m.id);
       if (!row) { ok(false, `${m.id}: expected a rendered row`); continue; }
       const at = allHtml.indexOf('data-model-id="' + escapeHtml(m.id) + '"');
-      ok(row.includes(MODEL_SUITABILITY_BADGES['chat-only']) === !builds,
-        `${m.id} [${lane}]: the chat-only BADGE matches the lane`);
+      // THE BADGE SURFACE IS NOW THE MEASUREMENT CHIP. `not measured` is
+      // rendered exactly when the lane is CHAT_UNMEASURED, and never on a row
+      // that builds — so the chip is still a faithful reading of the lane, on
+      // the axis it actually describes. `chat only — not for ingest` is gone
+      // from every row, which the next assertion pins so this cannot silently
+      // become vacuous by the needle disappearing.
+      ok(row.includes(MEASUREMENT_CHIPS.none.label) === (lane === MODEL_LANES.CHAT_UNMEASURED),
+        `${m.id} [${lane}]: the measurement CHIP matches the lane`);
+      ok(!row.includes('chat only — not for ingest'),
+        `${m.id} [${lane}]: carries no per-row lane badge — the group heading says it once`);
+      ok(builds ? !row.includes(MEASUREMENT_CHIPS.none.label) : true,
+        `${m.id} [${lane}]: a build-lane row is never badged "not measured"`);
       // `isSelected` is tested before the lane, so the PINNED row reads
       // "Selected" in either lane. Stated exactly rather than skipped, so the
       // assertion covers every row including that one.
@@ -4962,6 +5305,585 @@ section('§23  Newest / Largest context — ranking a published fact, and REFUSI
       'an unranked model is still RENDERED in both views — grouped, never excluded');
     stubState.modelFilter = null;
     setOpenRouterCatalogue([]);
+  }
+}
+
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§40  ONE VOCABULARY — cost, who measured it, and one plain line');
+// ═════════════════════════════════════════════════════════════════════════
+// THE REPORT: "it's really hard to distinguish between model families… it is
+// truly hard to get your head around which model does what."
+//
+// A row used to carry SIX vocabularies — `caution`, `chat only — not for
+// ingest`, `never measured here`, `out-performed`, `thinks`, `free` — three of
+// which were different ways of saying something about MEASUREMENT. This section
+// pins the reduction, and pins it in BOTH directions: the retired strings must
+// be gone, and what replaced them must actually be present. A deletion with no
+// replacement assertion is how a screen loses information silently.
+{
+  // ── 40a. The chip is a total function over the three wire states ────────
+  const chipCases = [
+    ['curator', MEASUREMENT_CHIPS.curator],
+    ['user', MEASUREMENT_CHIPS.user],
+    [null, MEASUREMENT_CHIPS.none],
+  ];
+  for (const [wire, expected] of chipCases) {
+    ok(measurementChip({ measuredBy: wire }, null) === expected,
+      `measuredBy: ${JSON.stringify(wire)} -> "${expected.label}"`);
+  }
+  // A value we do not recognise is NOT read as a measurement. Fails closed:
+  // over-claiming that somebody measured a model is the direction that costs.
+  for (const junk of ['CURATOR', 'anybody', 1, true, {}, []]) {
+    ok(measurementChip({ measuredBy: junk }, MODEL_LANES.BUILD_MEASURED) === MEASUREMENT_CHIPS.none,
+      `an unrecognised measuredBy (${JSON.stringify(junk)}) claims no measurement`);
+  }
+
+  // ── 40b. The lane fallback, and the bug it was written wrong once ───────
+  // An older backend sends no `measuredBy` at all. THREE of the four lanes are
+  // measurements and only one is an absence — the first draft of this fallback
+  // got that wrong and badged `gemini-3.5-flash-lite` "not measured", deleting
+  // the evidence for its own verdict (nine live runs, 2 of 9 unrepairable).
+  const fallback = [
+    [MODEL_LANES.BUILD_MEASURED, MEASUREMENT_CHIPS.curator],
+    [MODEL_LANES.BUILD_LOCAL, MEASUREMENT_CHIPS.user],
+    [MODEL_LANES.CHAT_UNFIT, MEASUREMENT_CHIPS.curator],
+    [MODEL_LANES.CHAT_UNMEASURED, MEASUREMENT_CHIPS.none],
+  ];
+  for (const [lane, expected] of fallback) {
+    ok(measurementChip({}, lane) === expected,
+      `with the field ABSENT, lane ${lane} falls back to "${expected.label}"`);
+  }
+  ok(Object.keys(MODEL_LANES).length === fallback.length,
+    'every lane has a fallback — a new lane cannot silently default to "not measured"');
+  // An explicit `null` is the route saying "nobody measured this" and must NOT
+  // take the fallback. Two different facts, and only one is an absence of data.
+  ok(measurementChip({ measuredBy: null }, MODEL_LANES.BUILD_MEASURED) === MEASUREMENT_CHIPS.none,
+    'an explicit null is honoured — "we were not told" and "nobody measured it" are different facts');
+
+  // ── 40c. The retired badges are gone from EVERY row, everywhere ─────────
+  const RETIRED = ['chat only — not for ingest', 'never measured here',
+    'you measured this on your wiki'];
+  let rowsChecked = 0;
+  for (const prov of POPULATED) {
+    const surfaces = [
+      renderModelPicker(rowFor(prov), keysFor(prov), true, false),
+      renderBuildBlock(buildKeysFor(prov), false),
+    ];
+    for (const html of surfaces) {
+      for (const m of WIRE[prov]) {
+        const li = liFor(html, m.id);
+        if (!li) continue;
+        rowsChecked++;
+        for (const word of RETIRED) {
+          ok(!li.includes(word), `"${m.id}": no retired badge "${word}"`);
+        }
+        // …and exactly ONE measurement chip, so the three did not become three
+        // again under new names.
+        const chips = (li.match(/class="model-badge model-measured /g) || []).length;
+        ok(chips === 1, `"${m.id}": carries exactly one measurement chip (got ${chips})`);
+      }
+    }
+  }
+  ok(rowsChecked > 20, `the sweep is non-vacuous (${rowsChecked} rows checked)`);
+
+  // ── 40d. `caution` lost its badge and KEPT its warning ──────────────────
+  // v3.16.1's rule: a warning behind a click is not a warning. `cautionReason`
+  // is `formatModelSummary`'s first clause and `defineOfferableModel` REQUIRES
+  // it for any flagged entry, so the reason is always unfolded — the badge was
+  // a label for text sitting directly beneath it. What must survive is the
+  // reason AND a visual signal.
+  let flaggedSeen = 0, unflaggedSeen = 0;
+  for (const prov of POPULATED) {
+    const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+    for (const m of WIRE[prov]) {
+      const li = liFor(html, m.id);
+      if (!li) continue;
+      const hasReason = typeof m.cautionReason === 'string' && m.cautionReason.trim();
+      if (hasReason) {
+        flaggedSeen++;
+        okContains(li, escapeHtml(m.cautionReason.replace(/\.\s*$/, '')),
+          `"${m.id}": the measured REASON is on the row, not the word "caution"`);
+        ok(li.includes('model-row-derived-warn'),
+          `"${m.id}": …and carries the warning treatment, so it still catches the eye`);
+        // Unfolded: in the <summary>, never behind the expand.
+        const summ = li.slice(0, li.indexOf('</summary>') === -1 ? li.length : li.indexOf('</summary>'));
+        ok(summ.includes('model-row-derived-warn'),
+          `"${m.id}": …and it is UNFOLDED — a warning behind a click is not a warning`);
+      } else {
+        unflaggedSeen++;
+        ok(!li.includes('model-row-derived-warn'),
+          `"${m.id}": an unflagged model gets no warning treatment`);
+      }
+    }
+  }
+  ok(flaggedSeen > 0 && unflaggedSeen > 0,
+    `both arms are exercised by the real catalogue (${flaggedSeen} flagged, ${unflaggedSeen} not)`);
+
+  // ── 40e. `out-performed` is KEPT, and that is a decision ────────────────
+  // It is the only home on this surface for `dominated` — a comparative
+  // measurement `formatModelSummary` deliberately excludes — and the composer
+  // renders the same word. Dropping it would delete a measured comparison from
+  // the one screen built for comparing, and make the two pickers disagree.
+  {
+    const dom = [];
+    for (const prov of POPULATED) {
+      const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+      for (const m of WIRE[prov]) {
+        if (!m.dominated) continue;
+        dom.push(m.id);
+        okContains(liFor(html, m.id), '>out-performed<',
+          `"${m.id}": the dominated flag keeps its word (matches chat.js)`);
+      }
+    }
+    ok(dom.length > 0, `the real catalogue contains a dominated model (${dom.join(', ')})`);
+  }
+
+  // ── 40f. Price is a displayed FACT and never a gate ─────────────────────
+  // A mutation ADDING a price ceiling must red. Measured by requiring that the
+  // dearest model in each catalogue is still fully offered.
+  for (const prov of POPULATED) {
+    const priced = WIRE[prov].filter((m) => typeof m.input === 'number');
+    if (priced.length === 0) continue;
+    const dearest = priced.reduce((a, b) => (b.input > a.input ? b : a));
+    const html = renderModelPicker(rowFor(prov), keysFor(prov), true, false);
+    ok(liFor(html, dearest.id) !== '',
+      `"${prov}": the dearest model (${dearest.id}) is still listed — price is a fact, not a gate`);
+    const cands = buildCandidates(keysFor(prov)).map((c) => c.m.id);
+    if (dearest.suitability !== 'chat-only') {
+      ok(cands.includes(dearest.id),
+        `"${prov}": …and is still offered as a build model`);
+    }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§41  THE ATOMIC BUILD CHOICE — one act, and never optimistic');
+// ═════════════════════════════════════════════════════════════════════════
+// `POST /api-keys/build-model` names PROVIDER AND MODEL together and applies
+// both, so it cannot produce the inert pin the older per-provider route can.
+// That is the whole reason it exists, and this section is the money assertion
+// for it: this handler can move the ACTIVE PROVIDER as well as the pin, so a UI
+// that painted the choice before the server confirmed would be claiming a
+// different provider is billing.
+{
+  for (const prov of POPULATED) {
+    const target = WIRE[prov][1] ? WIRE[prov][1].id : WIRE[prov][0].id;
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(200, { ok: true, provider: prov, selectedModel: target, inert: false });
+
+    await onPickBuildModel(prov, target, null);
+
+    ok(fetchCalls.length === 1, `"${prov}": exactly one request is issued`);
+    const [url, opts] = fetchCalls[0] || [];
+    ok(url === '/api/config/api-keys/build-model',
+      `"${prov}": to the ATOMIC endpoint, not the per-provider one (${url})`);
+    ok(opts && opts.method === 'POST', `"${prov}": as a POST`);
+    let body = null;
+    try { body = JSON.parse(opts.body); } catch { body = null; }
+    ok(body && body.provider === prov && body.model === target,
+      `"${prov}": naming provider AND model together — that is what makes it one act`);
+    ok(loadKeysCalls === 1,
+      `"${prov}": the payload is REFETCHED on success — the echo is never trusted`);
+    ok(!stubState.modelPickError.build,
+      `"${prov}": and a clean success queues no error`);
+  }
+
+  // ── NOT OPTIMISTIC, measured mid-flight ────────────────────────────────
+  {
+    const prov = POPULATED[0];
+    const before = defaultModelFor(prov);
+    const after = WIRE[prov].find((m) => m.id !== before && m.suitability !== 'chat-only');
+    if (after) {
+      resetActionHarness(prov);
+      stubState.keys = buildKeysFor(prov);
+      let mid = null;
+      fetchImpl = async () => {
+        mid = buildSnapshots[buildSnapshots.length - 1] || '';
+        return reply(200, { ok: true });
+      };
+      loadKeysImpl = async () => {
+        stubState.keys = buildKeysFor(prov, {
+          selectedModels: { [prov]: after.id },
+          models: Object.assign({}, keysFor(prov).models, { [prov]: after.id }),
+          __resolved: after.id,
+        });
+      };
+      await onPickBuildModel(prov, after.id, null);
+
+      ok(mid !== null && mid !== '', 'the UI repainted before the request resolved');
+      okContains(mid, escapeHtml(before),
+        'mid-flight, the headline still names the model that is ACTUALLY building the wiki');
+      ok(!liFor(mid, after.id).includes('Building your wiki'),
+        'mid-flight, the clicked model does NOT yet claim to be building the wiki');
+      okContains(liFor(mid, after.id), 'Saving…',
+        'the clicked row says what is happening instead of lying about the outcome');
+      const settled = buildSnapshots[buildSnapshots.length - 1] || '';
+      okContains(settled, escapeHtml(after.id),
+        'and only after the refetch does the headline move');
+    } else {
+      ok(false, 'expected a second build-lane model to move to');
+    }
+  }
+
+  // ── A REFUSAL IS VISIBLE AND MOVES NOTHING ─────────────────────────────
+  {
+    const prov = POPULATED[0];
+    const target = WIRE[prov][1].id;
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(400, { error: 'That model is not available.', reason: 'not_build_lane' });
+    await onPickBuildModel(prov, target, null);
+    ok(loadKeysCalls === 0, 'a refusal does not refetch — nothing changed to read back');
+    okContains(stubState.modelPickError.build || '', 'not available',
+      'the server message is surfaced verbatim rather than replaced with our own guess');
+    const html = buildSnapshots[buildSnapshots.length - 1] || '';
+    okContains(html, 'model-pick-error', 'and it is rendered where the user clicked');
+    okContains(html, 'role="alert"', 'as an alert, so it is announced and not merely painted');
+    okContains(html, escapeHtml(defaultModelFor(prov)),
+      'while the headline still names the model that never stopped building the wiki');
+  }
+
+  // ── A 409 SAYS A WRITE IS RUNNING, AND THAT NOTHING WAS SAVED ──────────
+  {
+    const prov = POPULATED[0];
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(409, { error: 'Cannot change the AI model while an ingest is running on articles.' });
+    await onPickBuildModel(prov, WIRE[prov][1].id, null);
+    const msg = stubState.modelPickError.build || '';
+    ok(/running/i.test(msg), 'the 409 says a write is in progress');
+    ok(/NOT saved|unchanged/i.test(msg), '…and that the choice was not saved');
+    ok(!/Unexpected token/i.test(msg), '…and never leaks a JSON parse error at the user');
+    // A non-JSON 409 (a proxy) must still be legible.
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(409, '__NOT_JSON__');
+    await onPickBuildModel(prov, WIRE[prov][1].id, null);
+    ok(/running/i.test(stubState.modelPickError.build || ''),
+      'an unreadable 409 body still explains itself');
+  }
+
+  // ── `inert: true` IS REPORTED, NOT SWALLOWED ───────────────────────────
+  // The route's one honest failure mode: the pin landed and the provider did
+  // not move, so the choice governs nothing. Silence is the dead-data shape.
+  {
+    const prov = POPULATED[0];
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(200, { ok: true, inert: true });
+    loadKeysImpl = async () => { stubState.keys = buildKeysFor(prov); };
+    await onPickBuildModel(prov, WIRE[prov][1].id, null);
+    const msg = stubState.modelPickError.build || '';
+    ok(msg !== '', 'an inert save is REPORTED — the pin landed and governs nothing');
+    ok(/not building your wiki/i.test(msg), '…and says exactly that');
+    ok(loadKeysCalls === 1, '…while still refetching, because something DID change on disk');
+  }
+
+  // ── AN UNKNOWN PROVIDER NEVER REACHES THE WIRE ─────────────────────────
+  for (const bad of ['zzz-mystery-provider', 'openai', '__proto__', 'constructor', '', null]) {
+    resetActionHarness(POPULATED[0]);
+    stubState.keys = buildKeysFor(POPULATED[0]);
+    fetchImpl = async () => reply(200, { ok: true });
+    await onPickBuildModel(bad, 'some-model', null);
+    ok(fetchCalls.length === 0,
+      `provider ${JSON.stringify(bad)}: refused before any request — under-writing is recoverable, writing into the wrong slot is not`);
+  }
+  // …and an empty model is refused too: the route has no clearing arm, and a
+  // blank model would be a 400 the user cannot act on.
+  {
+    resetActionHarness(POPULATED[0]);
+    stubState.keys = buildKeysFor(POPULATED[0]);
+    fetchImpl = async () => reply(200, { ok: true });
+    await onPickBuildModel(POPULATED[0], '', null);
+    ok(fetchCalls.length === 0, 'an empty model is refused client-side — clearing goes through the OTHER route');
+  }
+  // CONVERSE: every real provider IS accepted, so the refusals above are not
+  // a handler that refuses everything.
+  for (const prov of PROVIDERS) {
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => reply(200, { ok: true });
+    await onPickBuildModel(prov, 'anything', null);
+    ok(fetchCalls.length === 1, `provider ${prov}: accepted — the refusal list is not "everything"`);
+  }
+
+  // ── A STALE MOUNT CANNOT REPAINT ───────────────────────────────────────
+  {
+    const prov = POPULATED[0];
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    fetchImpl = async () => { mountIsCurrent = false; return reply(200, { ok: true }); };
+    await onPickBuildModel(prov, WIRE[prov][1].id, null);
+    ok(loadKeysCalls === 0, 'a success landing on a stale mount does not refetch into a dead view');
+
+    resetActionHarness(prov);
+    stubState.keys = buildKeysFor(prov);
+    const n = buildSnapshots.length;
+    fetchImpl = async () => { mountIsCurrent = false; return reply(400, { error: 'nope' }); };
+    await onPickBuildModel(prov, WIRE[prov][1].id, null);
+    ok(buildSnapshots.length === n + 1,
+      'a refusal landing on a stale mount repaints nothing further');
+    ok(!stubState.modelPickError.build,
+      'and leaves no error queued for a view the user has left');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§42  ORGANISED BY JOB — two blocks, one control each, in order');
+// ═════════════════════════════════════════════════════════════════════════
+// Executed through the REAL renderProviders, never grepped: §16 records that
+// grepping a call site proves a line exists, not what it does.
+{
+  const prov = POPULATED[0];
+  stubState.keys = buildKeysFor(prov);
+  stubState.keysError = null;
+  stubState.modelPickerOpen = {};
+  stubState.modelShelfOpen = false;
+  const html = renderProviders();
+
+  // ── THE ORDER IS THE ARGUMENT ──────────────────────────────────────────
+  // Indexed by the HEADING markup, not by the words: "Chat" also appears in the
+  // page lede, and matching that made the ordering assertion read 205 for a
+  // heading at 12,000 — a green-looking measurement of the wrong thing.
+  const H = (t) => html.indexOf('<h2 class="settings-job-title">' + t + '</h2>');
+  const iBuild = H('This model builds your wiki');
+  const iChat = H('Chat');
+  const iKeys = H('Connections');
+  const iShelf = html.indexOf('<span class="settings-job-title">Every model, by provider</span>');
+  ok(iBuild !== -1, 'the build job is named');
+  ok(iChat !== -1, 'the chat job is named');
+  ok(iKeys !== -1, 'the keys are named as Connections');
+  ok(iShelf !== -1, 'the reference shelf is named');
+  ok(iBuild < iChat && iChat < iKeys && iKeys < iShelf,
+    'jobs first (build, then chat), then the plumbing, then the reference shelf');
+
+  // ── ONE CONTROL PER DECISION ───────────────────────────────────────────
+  const buildBtns = (html.match(/data-build-model=/g) || []).length;
+  ok(buildBtns > 0, 'the build choice has controls');
+  const legacyBtns = (html.match(/data-pick-model=/g) || []).length;
+  ok(legacyBtns === 0,
+    'and the older per-provider pick control ships NOWHERE — it can leave a choice inert');
+
+  // The chat block states and points; it never duplicates the composer.
+  const chatBlock = html.slice(iChat, iKeys);
+  ok(/composer/i.test(chatBlock), 'the chat block points at the composer');
+  ok(!/data-build-model|data-pick-model|data-listbox|<select/.test(chatBlock),
+    'the chat block carries no control at all');
+
+  // ── PROVIDER IS A LABEL ON A ROW, NOT THE STRUCTURE ────────────────────
+  const buildBlock = html.slice(iBuild, iChat);
+  ok(/model-provider-chip/.test(buildBlock),
+    'build rows carry a provider chip — provider is a label here, not a heading');
+  // One list, not one per provider.
+  ok((buildBlock.match(/<ul class="model-list build-list">/g) || []).length === 1,
+    'the build choice is ONE list, across providers');
+
+  // ── THE SHELF IS FOLDED, AND ITS STATE SURVIVES A REPAINT ──────────────
+  ok(/<details class="settings-job-block settings-shelf" data-model-shelf/.test(html),
+    'the shelf is collapsed by default — it answers a question most users never ask');
+  stubState.modelShelfOpen = true;
+  ok(/<details class="settings-job-block settings-shelf" open data-model-shelf/.test(renderProviders()),
+    'and re-opens from state, because render() replaces the section wholesale');
+  stubState.modelShelfOpen = false;
+
+  // ── EVERY MODEL IS STILL REACHABLE ─────────────────────────────────────
+  // Nothing is hidden by the restructure: a model absent from the build list
+  // is in the shelf, and the union is the whole catalogue.
+  {
+    let missing = [];
+    for (const p of POPULATED) {
+      if (!stubState.keys[wireHasField(p)]) continue;
+      for (const m of WIRE[p]) {
+        if (!html.includes('data-model-id="' + escapeHtml(m.id) + '"')) missing.push(m.id);
+      }
+    }
+    ok(missing.length === 0,
+      `every model in every connected catalogue is still on the page (missing: ${missing.join(', ') || 'none'})`);
+  }
+
+  // ── "IN USE" MEANS ONE MODEL ON THE WHOLE PAGE ─────────────────────────
+  // Found in a REAL BROWSER, not by reading: the first cut painted FOUR `in
+  // use` badges at once — one in the build list plus one per provider on the
+  // shelf, because each section badged its own default. Beside a block stating
+  // that ONE model builds the wiki, that is the contradiction this screen
+  // exists to remove.
+  {
+    // The measurement: the badge may appear at most ONCE per surface — the
+    // build list, and the ACTIVE provider's shelf section — and where both
+    // appear they must name the SAME model. That is the invariant that
+    // matters: two badges on one model is a consistent statement made twice;
+    // two badges on DIFFERENT models would mean the page believes two models
+    // are building one wiki, which is what four badges amounted to.
+    //
+    // It is also a genuine cross-check on the wire: the build list reads
+    // `buildModel.model` and the shelf reads `models[activeProvider]`. Both are
+    // derived server-side from the same getProviderInfo() resolution, so a
+    // divergence here is a real backend defect and not a rendering choice.
+    const badged = [];
+    for (const p2 of POPULATED) {
+      for (const m of WIRE[p2]) {
+        const li2 = liFor(html, m.id);
+        if (li2 && li2.includes('model-badge-default')) badged.push(m.id);
+      }
+    }
+    const distinct = [...new Set(badged)];
+    ok(distinct.length === 1,
+      `every "in use" badge on the page names ONE model (got: ${distinct.join(', ') || 'none'})`);
+    ok(distinct[0] === defaultModelFor(prov),
+      'and it is the model the engine actually resolved');
+    ok(badged.length <= 2,
+      `the badge appears at most once per surface (build list + active shelf) — got ${badged.length}`);
+    // A non-active provider's section badges NOTHING as in use — "what it would
+    // use" is a different claim and must not read like this one.
+    for (const other of POPULATED) {
+      if (other === prov) continue;
+      const sec = renderModelPicker(rowFor(other), buildKeysFor(prov, {
+        [wireHasField(other)]: true,
+      }), true, false);
+      ok(!sec.includes('model-badge-default'),
+        `${other} (not active): badges nothing as in use`);
+    }
+    // CONTROL: the same section under its OWN provider being active DOES badge
+    // one, so the assertion above is not vacuous on an empty render.
+    const own = renderModelPicker(rowFor(prov), buildKeysFor(prov), true, false);
+    ok((own.match(/model-badge-default/g) || []).length === 1,
+      'CONTROL: the ACTIVE provider\'s section still badges exactly one row in use');
+  }
+
+  // ── A BACKEND WITHOUT `buildModel` DEGRADES, IT DOES NOT LIE ───────────
+  // `buildModel` is a NEW derived field. An older backend sends nothing there
+  // while resolving a provider and a model perfectly well, and "nothing can
+  // build your wiki" would be a false statement about a working install — the
+  // exact failure this block exists to remove, arriving through another door.
+  {
+    const degraded = Object.assign({}, buildKeysFor(prov));
+    delete degraded.buildModel;
+    const html2 = renderBuildCurrent(degraded, false);
+    okContains(html2, escapeHtml(providerLabel(prov)),
+      'with no buildModel the block falls back to activeProvider/activeModel and names the provider');
+    okContains(html2, escapeHtml(defaultModelFor(prov)), '…and the model');
+    ok(!/Nothing can build your wiki/i.test(html2),
+      '…and does NOT claim nothing builds the wiki on a working install');
+    // …and it claims correspondingly less: no provenance it was not told.
+    ok(!/You chose this one|follows the app default|LLM_MODEL/.test(html2),
+      '…while making none of the three provenance claims the older payload cannot support');
+
+    // The genuinely-empty case is still reported as empty.
+    const none = Object.assign({}, keysFor(prov), { activeProvider: null, activeModel: null });
+    delete none.buildModel;
+    ok(/Nothing can build your wiki/i.test(renderBuildCurrent(none, false)),
+      'CONTROL: with no provider at all, it DOES say nothing can build the wiki');
+  }
+
+  // ── THE KEY ROWS ARE UNTOUCHED ─────────────────────────────────────────
+  for (const p of PROVIDER_ROWS) {
+    ok(html.includes('data-replace="' + escapeHtml(p.id) + '"') || !p.available,
+      `${p.id}: its key row still renders in Connections`);
+  }
+  stubState.keys = null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§43  THE CATALOGUE MUST NEVER BE SILENTLY PARTIAL');
+// ═════════════════════════════════════════════════════════════════════════
+// The direct cause of "the models sometimes show and sometimes do not". The
+// list can be ABSENT, STALE or FAILED and none of those used to say so. The
+// freshness THRESHOLD stays server-side — re-deriving "older than a day" here
+// would be a second copy of a rule, and the client half is the one that rots.
+{
+  const row = rowFor('openrouter');
+  const base = keysFor('openrouter');
+
+  // ── ABSENT: the state that produced the complaint ──────────────────────
+  {
+    const k = Object.assign({}, base, {
+      openrouterCatalogue: { syncedAt: null, source: null, count: 0, loaded: false,
+        ageMs: null, stale: true, reason: 'absent', maxAgeMs: 86400000 },
+    });
+    const html = renderCatalogueSync(row, k, false);
+    ok(/No model list has been fetched/i.test(html),
+      'an absent catalogue SAYS it is absent, rather than reading as "this provider has nothing"');
+    ok(/Only the models The Curator has measured/i.test(html),
+      '…and says what IS still listed, so the list on screen is not a mystery');
+    ok(/free/i.test(html) && /costs no tokens/i.test(html),
+      '…and that refreshing is free, which is the fact that makes the action easy to take');
+    okContains(html, 'data-sync-catalogue="openrouter"', '…and offers the refresh');
+    ok(!/Not refreshed yet/.test(html),
+      '…and does not fall through to the older, vaguer sentence');
+  }
+
+  // ── STALE: fetched, but old enough that membership may have moved ──────
+  {
+    const k = Object.assign({}, base, {
+      openrouterCatalogue: { syncedAt: '2026-08-01T09:00:00.000Z', source: 'disk', count: 194,
+        loaded: true, ageMs: 99999999, stale: true, reason: 'stale', maxAgeMs: 86400000 },
+    });
+    const html = renderCatalogueSync(row, k, false);
+    ok(/may be out of date/i.test(html), 'a stale catalogue says so');
+    ok(/more than a day ago/i.test(html), '…and says how stale, in words rather than a raw age');
+    okContains(html, formatSyncedAt('2026-08-01T09:00:00.000Z'),
+      '…and still names when it was fetched');
+    okContains(html, '194 loaded', '…and how many it holds');
+    ok(!/[0-9]{4}-[0-9]{2}-[0-9]{2}T/.test(html), '…never as a raw ISO instant');
+  }
+
+  // ── FRESH: no alarm, and still dated ───────────────────────────────────
+  {
+    const k = Object.assign({}, base, {
+      openrouterCatalogue: { syncedAt: '2026-08-29T07:22:35.043Z', source: 'disk', count: 194,
+        loaded: true, ageMs: 3600000, stale: false, reason: 'fresh', maxAgeMs: 86400000 },
+    });
+    const html = renderCatalogueSync(row, k, false);
+    ok(/Last refreshed/.test(html), 'a fresh catalogue reports when');
+    ok(!/may be out of date/i.test(html), '…and raises no alarm it has no cause for');
+    ok(!/No model list has been fetched/i.test(html), '…and does not claim to be absent');
+  }
+
+  // ── THE THRESHOLD IS THE SERVER'S ──────────────────────────────────────
+  // `stale: false` with a huge `ageMs` must read as FRESH: the age is a
+  // reported number, the verdict is the server's, and a client that re-derived
+  // the rule would be a second copy of it.
+  {
+    const k = Object.assign({}, base, {
+      openrouterCatalogue: { syncedAt: '2020-01-01T00:00:00.000Z', source: 'disk', count: 5,
+        loaded: true, ageMs: 999999999999, stale: false, reason: 'fresh', maxAgeMs: 86400000 },
+    });
+    ok(!/may be out of date/i.test(renderCatalogueSync(row, k, false)),
+      'the client does NOT re-derive the freshness threshold — it reports the verdict it was given');
+  }
+
+  // ── AND THE BRIDGE IS NAMED WHERE THE CONSEQUENCE LANDS ────────────────
+  {
+    const html = renderCatalogueSync(row, base, false);
+    ok(/Want one of them to build your wiki\?/i.test(html),
+      'the panel names the bridge from "fetched" to "builds your wiki"');
+    ok(/check it on your own material/i.test(html),
+      '…in terms of what the user gets, not of the mechanism');
+    ok(/never been measured/.test(html) && /cannot build\s+your wiki/.test(html),
+      '…while still stating plainly why they cannot build one today');
+  }
+
+  // ── THE CONFIRM PANEL KEEPS EVERY HONEST FACT ──────────────────────────
+  {
+    const panel = renderQualifyPanel({
+      modelId: 'zz/model', phase: 'confirm',
+      estimate: { runs: 9, domain: 'articles', promptChars: 341130,
+        time: { fastestSeconds: 480, slowestSeconds: 3420, note: 'measured across candidates' },
+        cost: { kind: 'priced', usd: 0.31, note: 'at the published price' } },
+    }, 9);
+    ok(/build your wiki/i.test(panel), 'the confirm names the OUTCOME the user is deciding about');
+    ok(/on your own material/i.test(panel), '…and that it is checked on their own pages');
+    okContains(panel, '9', 'the real run count survives the reframing');
+    okContains(panel, '341130', 'the real prompt size survives');
+    okContains(panel, 'articles', 'the wiki it will run against is named');
+    ok(/writes nothing/i.test(panel), 'that it writes nothing survives');
+    ok(/stop it at any point/i.test(panel), 'that it is cancellable survives');
+    ok(/8 to 57 minutes/.test(panel), 'the measured duration range survives');
+    ok(/not the same as the multi-document measurement/i.test(panel),
+      'and it does NOT overstate what one passing run proves');
+    okContains(panel, 'data-qualify-go="zz/model"', 'the control is still there');
   }
 }
 

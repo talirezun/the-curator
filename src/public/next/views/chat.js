@@ -31,6 +31,10 @@ import { renderMarkdown } from '../shared/markdown.js';
 import { formatUsdHonest } from '../shared/format-usd.js';
 import { formatModelSummary, formatDurationMs } from '../shared/model-summary.js';
 import { confirmThen, closeConfirmIfOpen } from '../shared/confirm.js';
+// The one dropdown surface in /next. Adopted here for the composer's model and
+// length pickers, which until now were the last hand-rolled menus in the tree
+// and the only ones with no keyboard operation at all.
+import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
@@ -149,6 +153,16 @@ const LS_PROVIDER = 'curator-chat-model-provider';
 // different value FORMATS must never share one key — that is how a stale value
 // from the other writer gets applied as if it were ours.
 const LS_MODEL = 'curator-next-chat-model';
+// ── THE WORKING SET'S TWO CLIENT-SIDE LISTS ──────────────────────────────
+// Both are JSON arrays of model-id strings, /next-namespaced, and both follow
+// the precedent already set by LS_MODEL / LS_STYLE / theme: per-browser
+// convenience state, never anything the server needs. A corrupt, absent or
+// hand-edited value degrades to an EMPTY list (see `parseIdList`), which
+// degrades the working set to its measured tier — never to an exception and
+// never to a smaller catalogue, because "every model stays reachable" must not
+// depend on localStorage being intact.
+const LS_MODEL_RECENTS = 'curator-next-chat-model-recents';
+const LS_MODEL_STARRED = 'curator-next-chat-model-starred';
 
 /**
  * ── THE GATE IS OPEN: THE BACKEND LANDED IN v3.13.0 ────────────────────────
@@ -275,8 +289,15 @@ const state = {
   // silent surprise the moment it does not. Removing the per-message label
   // would remove the argument for keeping this sticky.
   chatModel: null,
+  // ── THE WORKING SET'S TWO USER-DRIVEN LISTS ─────────────────────────────
+  // Model ids, most-recent-first / newest-star-first, restored from
+  // localStorage in applyApiKeys and written on every pick or star. They are
+  // CONVENIENCE state, exactly like the theme and the sticky model pick: a
+  // browser that loses them shows the measured tier and every model is still
+  // one click away, so nothing a user can reach depends on them surviving.
+  modelRecents: [],
+  modelStarred: [],
   activeProvider: null,   // global active provider (fallback label when modelProvider is null)
-  openPicker: null,       // 'model' | 'length' | null
   loadError: null,
   convToken: 0,           // guards against out-of-order conversation-list fetches (SAME mount, e.g. two quick conversation clicks)
   selectToken: 0,         // guards against out-of-order selectConversation resolutions (SAME mount)
@@ -326,7 +347,6 @@ const state = {
 let compileRunSeq = 0;
 
 let escHandler = null;
-let outsideClickHandler = null;
 
 // `myMountToken` still exists so a handler invoked SYNCHRONOUSLY by a real
 // user event (a click, a keydown — no `await` between the event firing and
@@ -449,18 +469,21 @@ registerView('chat', {
         });
       });
 
+    // ── ESCAPE, NOW OWNED BY EXACTLY ONE THING AT A TIME ──────────────────
+    // The composer's pickers used to need their own Escape and outside-click
+    // handlers; shared/listbox.js owns both for a menu now (it stops
+    // propagation on Escape while open, and closes on a document pointerdown
+    // outside itself), so this handler is left with ONE job: the browse dialog.
+    //
+    // The ordering is the listbox's, not ours: a menu open INSIDE the dialog
+    // stops the Escape event before it reaches here, so the first press closes
+    // the menu and the second closes the dialog — which is what a user expects
+    // and is why this must not also close the dialog unconditionally.
     escHandler = (e) => {
       if (e.key !== 'Escape') return;
-      if (state.openPicker) { state.openPicker = null; renderComposerPickers(); }
-    };
-    outsideClickHandler = (e) => {
-      if (state.openPicker && !e.target.closest('.chat-dd')) {
-        state.openPicker = null;
-        renderComposerPickers();
-      }
+      if (isBrowseDialogOpen()) { e.preventDefault(); closeBrowseDialog(); }
     };
     document.addEventListener('keydown', escHandler);
-    document.addEventListener('click', outsideClickHandler);
 
     return () => {
       // Timer hygiene (load-bearing): an armed delay timer that survives
@@ -472,21 +495,25 @@ registerView('chat', {
       // act, but an armed timer is still a timer — cancel it at the source.
       cancelSearchTimer();
       if (escHandler) document.removeEventListener('keydown', escHandler);
-      if (outsideClickHandler) document.removeEventListener('click', outsideClickHandler);
       escHandler = null;
-      outsideClickHandler = null;
 
       // Shell hard rule #2 (see app.js's navigate() doc comment): rail
       // selection must close the composer's model/length picker,
       // unconditionally, before the next view mounts. The shell has no
-      // way to reach in and do this itself — this picker is OUR state —
+      // way to reach in and do this itself — these surfaces are OURS —
       // so navigate() relies on THIS teardown running (which it always
       // does, before the next view's onEnter) to honour that guarantee.
-      // Do not remove this as "redundant cleanup": it is the only place
-      // the guarantee is enforced for the real composer. If Chat ever
-      // grows another transient overlay-like flag (another dropdown, an
-      // inline confirm), reset it here too.
-      state.openPicker = null;
+      // Do not remove either call as "redundant cleanup": they are the only
+      // place the guarantee is enforced for the real composer. If Chat ever
+      // grows another transient overlay, close it here too.
+      //
+      // The listbox menu lives on <body>, so it does NOT go away with the
+      // view's own markup — its rAF loop would close it a frame later on
+      // detection of the detached trigger, but a menu that outlives its view
+      // even for a frame is the detached-orphan shape this repo keeps paying
+      // for. Closed explicitly, here, unconditionally.
+      closeAllListboxes();
+      closeBrowseDialog();
 
       // Same rule, one level up: the delete confirm is a real overlay on
       // document.body, so it would otherwise outlive this view entirely.
@@ -670,6 +697,19 @@ function applyApiKeys(data) {
   // Re-scoped client-side against the SAME `providers` list built above from
   // hasGeminiKey/hasAnthropicKey — config-only, never .env (v3.0.13).
   state.offerable = normalizeOfferable(data.offerable, providers);
+
+  // ── THE WORKING SET'S STORED LISTS ──────────────────────────────────────
+  // Restored here rather than at module load, so a Settings Disconnect that
+  // re-runs this pass re-reads them too. Deliberately NOT filtered against the
+  // live catalogue at read time: an id whose provider was Disconnected simply
+  // matches nothing in `buildWorkingSet`'s membership test and contributes no
+  // row, and PRUNING it here would silently forget a star the moment a key was
+  // temporarily removed — the list survives, the row does not.
+  let rawRecents = null, rawStarred = null;
+  try { rawRecents = localStorage.getItem(LS_MODEL_RECENTS); } catch { /* ignore */ }
+  try { rawStarred = localStorage.getItem(LS_MODEL_STARRED); } catch { /* ignore */ }
+  state.modelRecents = parseIdList(rawRecents, MAX_RECENTS);
+  state.modelStarred = parseIdList(rawStarred, MAX_STARRED);
 
   // While the picker is gated off the model stays pinned null, so nothing
   // downstream (the label, the request body) can name a model the backend
@@ -1977,19 +2017,31 @@ function renderCompileButtonHtml() {
   );
 }
 
-function renderComposerHtml(active) {
-  const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
-  // Provider mode (v3.0.11): 2+ providers that can actually serve a MODEL-LESS
-  // turn, otherwise there is nothing to choose between. Counting merely-keyed
-  // providers here would open the picker for a pair like Gemini + a provider
-  // with nothing measured, whose only extra row is one the app cannot use.
-  // Model mode: ONE keyed provider is enough, because that provider alone
-  // offers several models — but still nothing at all with zero keys, since
-  // `offerable` is empty for an unkeyed provider.
-  const showModelPicker = MODEL_PICKER_ENABLED
+/**
+ * Should the composer carry a model picker at all?
+ *
+ * Provider mode (v3.0.11): 2+ providers that can actually serve a MODEL-LESS
+ * turn, otherwise there is nothing to choose between. Counting merely-keyed
+ * providers here would open the picker for a pair like Gemini + a provider with
+ * nothing measured, whose only extra row is one the app cannot use.
+ * Model mode: ONE keyed provider is enough, because that provider alone offers
+ * several models — but still nothing at all with zero keys, since `offerable` is
+ * empty for an unkeyed provider.
+ *
+ * FACTORED OUT of renderComposerHtml because `renderComposerPickers` repaints
+ * the picker strip on its own after a pick, and both have to agree about whether
+ * a model picker exists. Two copies of that predicate is how a repaint silently
+ * grows or drops a control the first paint did not.
+ */
+function composerShowsModelPicker() {
+  return MODEL_PICKER_ENABLED
     ? (state.providerOnlyProviders.length >= 2
         || offerableEntries(state.offerable, state.availableProviders).length > 0)
     : state.providerOnlyProviders.length >= 2;
+}
+
+function renderComposerHtml(active) {
+  const placeholder = active ? 'Ask ' + (active.displayName || active.slug) + '…' : 'Ask this domain…';
 
   return (
     '<div class="chat-composer-wrap">' +
@@ -2002,8 +2054,11 @@ function renderComposerHtml(active) {
         // and the only thing they learn is that the product ships broken
         // buttons. Attaching a source is Ingest's job (rail, one click).
         '<div class="chat-composer-controls">' +
-          (showModelPicker ? renderModelDropdownHtml() : '') +
-          renderLengthDropdownHtml() +
+          // The pickers are painted by renderComposerPickers() into this host,
+          // from ONE cfg object each, and repainted there after every pick. An
+          // empty host in the first paint is deliberate: it means there is
+          // exactly one code path that ever builds these two controls.
+          '<div class="chat-composer-pickers" id="chat-composer-pickers"></div>' +
           '<div class="chat-composer-spacer"></div>' +
           '<span class="chat-cost-hint mono">cost varies with response length</span>' +
           '<button class="chat-send-btn" id="chat-send-btn" title="Send (⌘/Ctrl + Enter)" aria-label="Send">' +
@@ -2023,21 +2078,34 @@ function renderComposerHtml(active) {
 // parameter — which is what makes "an unkeyed provider is not selectable"
 // provable rather than asserted about source text.
 
-// Kept WORD-FOR-WORD in sync with settings.js's MODEL_SUITABILITY_BADGES.
-// Same underlying `OFFERABLE_MODELS[].suitability` field (src/brain/llm.js, not
-// owned by this view), so the two surfaces must not describe one measured fact
-// in two different vocabularies — the composer said "chat only" where Settings
-// said "chat only — not for ingest", which reads as a narrower claim than the
-// measurement actually makes. There is no single shared JS constant the two
-// views both import (they are independent modules with independent badge
-// tables), so this comment is the enforcement point: change a word here and
-// change it in settings.js's MODEL_SUITABILITY_BADGES in the same commit.
-// scripts/test-next-composer-model.js pins these literals on this side and
-// scripts/test-next-model-picker.js pins them on the other — two mirrored
-// assertions, NOT one source of truth. Stated rather than implied: nothing
-// mechanically prevents the two tables drifting apart again.
+// ── THE BADGE THAT WAS ON 97% OF THE LIST, AND IS NOW ON NONE OF IT ───────
+//
+// `chat-only` used to render here as "chat only — not for ingest". Counted
+// against a synced catalogue: 194 of 213 offerable models carry it — every
+// fetched OpenRouter entry, by construction, because `defineOfferableModel`
+// admits a dynamic entry only as chat-only. A flag on 97% of a list is not a
+// warning, it is wallpaper; it is the same finding v3.16.1 recorded about the
+// caution flag ("every FETCHED catalogue entry is 'flagged' by construction"),
+// arriving through a different field.
+//
+// It is also redundant on THIS surface specifically. The composer picks the
+// model that answers a CHAT turn; there is no ingest decision on this screen to
+// warn about, and the fact a user actually needs — which model builds the wiki —
+// is stated positively in Settings ("This model builds your wiki", v3.14.0). A
+// model's absence from the BUILD list is the message.
+//
+// THE UNDERLYING FIELD IS UNTOUCHED. `suitability` is still enforced at two
+// layers in llm.js (`isBuildLaneModel` and the lane split), still rendered by
+// Settings' picker, and still pinned by scripts/test-next-model-picker.js. This
+// removes a LABEL from one menu, not a constraint from the app.
+//
+// `caution` stays, and stays word-for-word aligned with settings.js's
+// MODEL_SUITABILITY_BADGES: it flags a specific measured hazard on a small
+// number of models, and its reason is on the row (`cautionReason`, the first
+// clause of the derived summary). There is no shared JS constant the two views
+// import, so this comment is the enforcement point: change the word here and
+// change it in settings.js in the same commit.
 const SUITABILITY_LABELS = Object.assign(Object.create(null), {
-  'chat-only': 'chat only — not for ingest',
   caution: 'caution',
 });
 
@@ -2078,21 +2146,70 @@ let sendLatencyHint = null;
 const SLOW_TURN_NOTICE_AFTER_MS = 20000;
 
 /**
- * What we measured for the model that will serve this turn — `{label, ms}` — or
- * null when we cannot name the model or have never measured it.
+ * The SPAN of call times this project has actually measured, across every model
+ * currently offerable — `{lowMs, highMs, count}` — or null when fewer than two
+ * models carry a figure, in which case there is no span to report.
  *
- * NULL IS THE COMMON CASE AND MUST STAY CHEAP. Roughly 14 ids carry a latency
- * figure against a synced catalogue of ~190, so most turns have nothing to say
- * and say nothing. There is no fallback here — not an average, not a guess from
- * price or context length, not the provider's other models. Inventing an
- * expectation is worse than silence, because the user would act on it.
+ * DERIVED FROM THE LIVE CATALOGUE, never a hardcoded pair of numbers. The
+ * figures move whenever llm.js's table does, and a hardcoded "13s to 6m 22s"
+ * would be a measurement in prose that rots silently — which is exactly the
+ * defect v3.16.1 recorded when a docblock quoted 491 seconds for a run that
+ * never happened.
  *
- * IT ALSO RETURNS NULL WHEN NO MODEL IS NAMED. With `state.chatModel` unset the
+ * `>= 1000` for the same reason shared/model-summary.js's speedClause uses it:
+ * below a second `formatDurationMs` renders "0s", and a range starting at "0s"
+ * would be the zero-for-absent claim arriving through rounding.
+ */
+function measuredLatencyRange(offerable, availableProviders) {
+  let low = Infinity, high = -Infinity, count = 0;
+  for (const row of offerableEntries(offerable, availableProviders)) {
+    const ms = row.entry && row.entry.medianLatencyMs;
+    if (!Number.isFinite(ms) || ms < 1000) continue;
+    count++;
+    if (ms < low) low = ms;
+    if (ms > high) high = ms;
+  }
+  // A "range" of one point is not a range, and rendering "from 48s to 48s" is
+  // worse than saying nothing.
+  if (count < 2 || low === high) return null;
+  return { lowMs: low, highMs: high, count };
+}
+
+/**
+ * What we can honestly say about how long THIS turn may take.
+ *
+ * ── THE TWO PROBLEMS THIS ANSWERS, AND WHAT IT REFUSES TO DO ─────────────
+ *
+ * 1. ONLY 6 OF 213 OFFERABLE MODELS CARRY A LATENCY FIGURE. The previous
+ *    version returned null for the other 207, so ~97% of turns got a bare
+ *    counter and no expectation at all — and a bare counter at four minutes is
+ *    indistinguishable from a hang. The answer is NOT to guess: there is still
+ *    no average, no extrapolation from price or context length, and no
+ *    borrowing of a sibling model's number. Instead an unmeasured model gets a
+ *    statement about OUR DATA — the span of call times we have recorded across
+ *    the models we did measure — which is a fact about the catalogue and
+ *    explicitly not a prediction about this model.
+ *
+ * 2. THE FIGURE WAS MEASURED ON THE WRONG WORKLOAD. `medianLatencyMs` comes
+ *    from an INGEST OUTLINE call on a ~300,000-character prompt (see
+ *    docs/model-lifecycle.md and the qualification harness), and this notice
+ *    quoted it during a CHAT turn, whose prompt is a fraction of that size. The
+ *    provenance was missing, so the number read as a prediction for the thing
+ *    on screen. It now names the workload it came from. It deliberately does NOT
+ *    add "so a chat turn will be quicker": fewer input tokens usually means less
+ *    time, but output length dominates and we have not measured that, and a
+ *    plausible inference stated as fact is how this surface stops being evidence.
+ *
+ * IT STILL RETURNS NULL WHEN NO MODEL IS NAMED. With `state.chatModel` unset the
  * server picks the provider's default, and which provider is "active" is a
- * server-side fact this view does not hold — so we would be quoting a
- * measurement for a model that may not be the one running. `state.modelProvider`
- * being set is the case where we DO know the id (`state.models[provider]` is the
- * backend's own default for it), and that path is taken.
+ * server-side fact this view does not hold — so we would be attaching a claim to
+ * a model that may not be the one running. `state.modelProvider` being set is
+ * the case where we DO know the id (`state.models[provider]` is the backend's
+ * own default for it), and that path is taken.
+ *
+ * @returns {{kind:'measured', label:string, ms:number}
+ *          |{kind:'unmeasured', label:string, lowMs:number, highMs:number}
+ *          |null}
  */
 function latencyHintForTurn() {
   let row = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
@@ -2102,12 +2219,33 @@ function latencyHintForTurn() {
     row = resolveChatModel(defaultId, state.offerable, state.availableProviders);
   }
   if (!row) return null;
+  const label = row.entry.label || row.entry.id;
   const ms = row.entry.medianLatencyMs;
-  // `>= 1000` for the same reason shared/model-summary.js's speedClause uses it:
-  // below a second the formatter renders "0s", and a notice reading "measured at
-  // about 0s per call" would be the zero-for-absent claim in a new place.
-  if (!Number.isFinite(ms) || ms < 1000) return null;
-  return { label: row.entry.label || row.entry.id, ms };
+  if (Number.isFinite(ms) && ms >= 1000) return { kind: 'measured', label, ms };
+  const range = measuredLatencyRange(state.offerable, state.availableProviders);
+  // No range either (a catalogue with fewer than two measured models): nothing
+  // to say, so nothing is said. The clock still ticks.
+  if (!range) return null;
+  return { kind: 'unmeasured', label, lowMs: range.lowMs, highMs: range.highMs };
+}
+
+/**
+ * The slow-turn notice as PLAIN TEXT — one sentence pair, no markup.
+ *
+ * Returns '' for a null hint, so both callers (the initial paint and the
+ * once-per-second tick) render exactly the same words from exactly one place.
+ * Two copies of a sentence about a measurement is how the live text and the
+ * repainted text come to disagree.
+ */
+function slowTurnNoticeText(hint) {
+  if (!hint) return '';
+  if (hint.kind === 'measured') {
+    return hint.label + ' measured at about ' + formatDurationMs(hint.ms) +
+      ' per call in our testing, on a full ingest outline — a much larger prompt than a chat turn.';
+  }
+  return 'We have no timing measurement for ' + hint.label + '. ' +
+    'Across the models we have measured, one call took anywhere from ' +
+    formatDurationMs(hint.lowMs) + ' to ' + formatDurationMs(hint.highMs) + '.';
 }
 
 /**
@@ -2119,15 +2257,17 @@ function latencyHintForTurn() {
  */
 function thinkingBodyHtml() {
   const elapsedMs = sendStartedAt == null ? 0 : Math.max(0, Date.now() - sendStartedAt);
-  const slow = sendLatencyHint && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS
-    // NOT an error, an apology or an animation — a fact, stated once, in the
-    // recessed colour the composer already uses for measured detail. It names
-    // what WE measured and does not promise this turn will match it.
-    ? '<div class="chat-thinking-slow">' +
-        escapeHtml(sendLatencyHint.label + ' measured at about ' +
-          formatDurationMs(sendLatencyHint.ms) + ' per call in our testing.') +
-      '</div>'
-    : '';
+  const slowText = elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS ? slowTurnNoticeText(sendLatencyHint) : '';
+  // NOT an error, an apology or an animation — a fact, stated once, in the
+  // recessed colour the composer already uses for measured detail. It names what
+  // WE measured, on what, and does not promise this turn will match it.
+  //
+  // NO DETERMINATE PROGRESS BAR, ever, and this repo has a doctrine for it: one
+  // chat turn is a single LLM call with no sub-progress to report, and advancing
+  // a ring to look busy is the exact dishonesty shared/progress-ring.js was
+  // built to refuse (v3.9.0). A ticking clock is a real measurement; a bar
+  // filling toward an invented total is not.
+  const slow = slowText ? '<div class="chat-thinking-slow">' + escapeHtml(slowText) + '</div>' : '';
   return (
     '<div class="chat-thinking"><span class="chat-spinner"></span> thinking… ' +
       '<span class="mono" id="chat-think-elapsed">' + escapeHtml(formatDurationMs(elapsedMs)) + '</span>' +
@@ -2157,12 +2297,17 @@ function startSendClock(token) {
     // may have replaced the node since, and re-deriving from elapsed is
     // idempotent. `sendLatencyHint` null => this stays empty forever, which is
     // the absence rule — an unmeasured model gets a live clock and no claim.
-    if (slotEl && sendLatencyHint && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS && !slotEl.firstChild) {
-      const note = document.createElement('div');
-      note.className = 'chat-thinking-slow';
-      note.textContent = sendLatencyHint.label + ' measured at about ' +
-        formatDurationMs(sendLatencyHint.ms) + ' per call in our testing.';
-      slotEl.appendChild(note);
+    if (slotEl && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS && !slotEl.firstChild) {
+      // The SAME sentence builder the initial paint uses. It returns '' for a
+      // null hint, which is the absence rule intact: a turn we can say nothing
+      // honest about gets a live clock and no claim.
+      const text = slowTurnNoticeText(sendLatencyHint);
+      if (text) {
+        const note = document.createElement('div');
+        note.className = 'chat-thinking-slow';
+        note.textContent = text;
+        slotEl.appendChild(note);
+      }
     }
   }, 1000);
 }
@@ -2260,6 +2405,180 @@ function resolveChatModel(modelId, offerable, availableProviders) {
     if (row.entry.id === modelId) return row;
   }
   return null;
+}
+
+// ── THE WORKING SET ───────────────────────────────────────────────────────
+//
+// ── THE PROBLEM, MEASURED ────────────────────────────────────────────────
+// A synced OpenRouter catalogue puts ~194 rows in this menu beside the 19 the
+// project hand-measured. The two built-in provider groups are 7 rows each and
+// sit above a scroll of two hundred — so the models we actually know something
+// about are the hardest ones in the list to reach.
+//
+// ── WHAT THIS IS NOT ─────────────────────────────────────────────────────
+// It is NOT a shortlist of "good" models, and there is deliberately no
+// capability ranking, no fast/smart/cheap character label, and no "recommended"
+// tier anywhere in this file. v3.16.0 measured why: `z-ai/glm-4.7` passes every
+// structural filter, is FAST, and returned 0 usable outlines in 9 runs;
+// `minimax/minimax-m3` failed 9/9 while its own FREE sibling passed 8/9. Price,
+// size, recency and vendor all pointed the wrong way. We hold capability data
+// for 19 of 213 ids. A ranking built from anything else would be a confident
+// lie on a spending surface.
+//
+// ── WHAT IT IS ───────────────────────────────────────────────────────────
+// A set assembled from four facts, none of which is a judgement about a model:
+//
+//   1. THE CURRENT SELECTION. Always present, even if it is in no other tier —
+//      a picker that cannot show you what is selected is broken.
+//   2. STARRED. The user said so.
+//   3. RECENT. The user did so.
+//   4. MEASURED (`measuredBy` — 'curator' or 'user'). A fact about OUR testing,
+//      not about the model: 'curator' means this project ran it against the real
+//      ingest prompt, 'user' means this installation probed it on its own pages.
+//      `null` means UNMEASURED, never BAD — and an unmeasured model is one click
+//      away, never removed.
+//
+// ── AND IT ONLY EXISTS WHEN IT SAVES ANYTHING ────────────────────────────
+// Below `WORKING_SET_COLLAPSE_ABOVE` the whole catalogue is shown, so a user
+// with only the built-in providers (7, 14 or 19 rows) sees every model at once
+// and never meets a "browse all" affordance that leads to the list they are
+// already looking at. The collapse is a consequence of a 200-row catalogue,
+// not a permanent gate on the product.
+const WORKING_SET_COLLAPSE_ABOVE = 24;
+// Recents are capped; the measured tier deliberately is NOT. The measured tier
+// is small, fixed and stable, and truncating it would mean hiding one of the
+// few models we can say anything grounded about. Recents are a rolling window
+// by nature — an eighth one displaces the first.
+const MAX_RECENTS = 6;
+// A generous cap on an explicit user list, present only so a corrupted or
+// adversarially-large stored value cannot make this menu unbounded.
+const MAX_STARRED = 40;
+
+/**
+ * A stored id list, defensively. Returns a plain array of unique, non-empty
+ * strings, capped — or `[]` for anything else at all.
+ *
+ * EVERY failure mode lands on `[]`: absent key, localStorage throwing (private
+ * mode, blocked site data), invalid JSON, an object where an array was stored,
+ * an array of numbers, a hand-edited file. `[]` degrades the working set to its
+ * measured tier, which is the safe direction — the alternative is a picker that
+ * throws while rendering the composer.
+ *
+ * NOTHING HERE INDEXES AN OBJECT BY A STORED STRING, which is what keeps
+ * `__proto__` and `constructor` inert: ids only ever reach `Array.includes`,
+ * `Set.has` and `resolveChatModel`'s `===` walk over catalogue entries. A stored
+ * `"__proto__"` is simply an id no catalogue entry has, so it resolves to
+ * nothing and is dropped by `buildWorkingSet`'s own membership test.
+ */
+function parseIdList(raw, cap) {
+  let parsed = null;
+  try { parsed = JSON.parse(String(raw == null ? '' : raw)); } catch { return []; }
+  if (!Array.isArray(parsed)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const v of parsed) {
+    if (typeof v !== 'string' || !v) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+/** Move `id` to the front of a recents list, capped. Pure — returns a new array. */
+function pushRecent(list, id, cap) {
+  if (typeof id !== 'string' || !id) return Array.isArray(list) ? list.slice(0, cap) : [];
+  const rest = (Array.isArray(list) ? list : []).filter(v => typeof v === 'string' && v && v !== id);
+  return [id, ...rest].slice(0, cap);
+}
+
+/** Add or remove `id`. Pure — returns a new array. */
+function toggleStar(list, id, cap) {
+  const cur = Array.isArray(list) ? list.filter(v => typeof v === 'string' && v) : [];
+  if (typeof id !== 'string' || !id) return cur.slice(0, cap);
+  if (cur.includes(id)) return cur.filter(v => v !== id);
+  return [id, ...cur].slice(0, cap);
+}
+
+/**
+ * The working set, in CATALOGUE ORDER.
+ *
+ * ORDER IS THE CATALOGUE'S, NOT THE RECENCY LIST'S, and that is deliberate: a
+ * menu whose rows move every time you use it is a menu you have to re-read every
+ * time you open it. Membership changes with use; position does not. Each row
+ * carries `reasons` so the row can say WHY it is here without the list
+ * re-sorting itself around that.
+ *
+ * @returns {{rows: Array, collapsed: boolean, total: number}}
+ *   `collapsed: false` means the caller should render every entry — either the
+ *   catalogue is small enough to show whole, or the working set would not
+ *   actually be smaller (a fresh install where every model is measured), in
+ *   which case offering "browse all" would lead to the list already on screen.
+ */
+function buildWorkingSet(all, opts) {
+  const entries = Array.isArray(all) ? all : [];
+  const o = opts || {};
+  const recents = new Set(Array.isArray(o.recents) ? o.recents : []);
+  const starred = new Set(Array.isArray(o.starred) ? o.starred : []);
+  const selectedId = typeof o.selectedId === 'string' && o.selectedId ? o.selectedId : null;
+  const total = entries.length;
+
+  const rows = [];
+  for (const row of entries) {
+    const id = row && row.entry ? row.entry.id : null;
+    if (!id) continue;
+    const reasons = [];
+    if (selectedId && id === selectedId) reasons.push('selected');
+    if (starred.has(id)) reasons.push('starred');
+    if (recents.has(id)) reasons.push('recent');
+    const by = row.entry.measuredBy;
+    if (by === 'curator' || by === 'user') reasons.push('measured');
+    if (reasons.length) rows.push({ ...row, reasons });
+  }
+
+  // Two independent reasons NOT to collapse, and each has to hold on its own:
+  //   • the catalogue is small enough to read whole; or
+  //   • the working set is not actually smaller than it, so the fold would buy
+  //     the user nothing and cost them a click.
+  // An EMPTY working set also lands here (a backend too old to send
+  // `measuredBy`, with no stars and no recents): showing everything is the only
+  // honest answer, since we have no fact to select on.
+  if (total <= WORKING_SET_COLLAPSE_ABOVE || rows.length >= total || rows.length === 0) {
+    return { rows: entries.map(r => ({ ...r, reasons: [] })), collapsed: false, total };
+  }
+  return { rows, collapsed: true, total };
+}
+
+/**
+ * Filter the whole catalogue for the browse dialog.
+ *
+ * THREE PREDICATES, AND ALL THREE ARE FACTS THE PROVIDER TOLD US: a substring
+ * of the id or label, the provider that serves it, and whether it bills nothing
+ * (`entry.free === true` — llm.js's own flag, never a ":free" id substring,
+ * which its docblock records is not a safe membership test).
+ *
+ * THERE IS DELIBERATELY NO CAPABILITY OR SPEED FILTER. We hold latency for 6 of
+ * 213 ids and quality data for none of the fetched ones, so such a filter would
+ * either hide almost everything or sort on a proxy this project has measured to
+ * be wrong. Price is displayed on every row and is never a filter for the same
+ * reason v3.16.0 refused to make it a gate: it is the USER'S trade-off to make.
+ */
+function filterCatalogue(all, opts) {
+  const entries = Array.isArray(all) ? all : [];
+  const o = opts || {};
+  const q = typeof o.q === 'string' ? o.q.trim().toLowerCase() : '';
+  const provider = typeof o.provider === 'string' && o.provider ? o.provider : null;
+  const freeOnly = o.freeOnly === true;
+  return entries.filter(row => {
+    if (!row || !row.entry) return false;
+    if (provider && row.provider !== provider) return false;
+    if (freeOnly && row.entry.free !== true) return false;
+    if (!q) return true;
+    const id = String(row.entry.id || '').toLowerCase();
+    const label = String(row.entry.label || '').toLowerCase();
+    return id.includes(q) || label.includes(q);
+  });
 }
 
 /**
@@ -2707,7 +3026,14 @@ function formatPromotionRise(entry) {
 }
 
 /**
- * One selectable row. Every interpolated value is server-supplied → escaped.
+ * THE BODY of one model row — everything inside it, and none of its wrapper.
+ * Every interpolated value is server-supplied → escaped.
+ *
+ * TWO SURFACES RENDER THIS: the composer's shared-listbox menu (which owns the
+ * row ELEMENT, and therefore all of the keyboard and ARIA behaviour, and takes
+ * this string as `html`) and the browse dialog (via `renderModelOptionHtml`
+ * below). Splitting the body from the wrapper is what lets those two be one
+ * description of one model rather than two that can drift.
  *
  * ── WHY THIS ROW NO LONGER CARRIES THE FULL `note` ──────────────────────────
  * It used to render `entry.note` inline for every FLAGGED model — and once the
@@ -2725,25 +3051,33 @@ function formatPromotionRise(entry) {
  * existed only to gate that note, and re-deriving "is this flagged" here is how
  * the badge and the prose drift apart.
  *
- * WHY THERE IS NO DISCLOSURE ON THIS SURFACE. The menu is `role="listbox"` and
- * every row is a `<button role="option">`. A `<details>` inside a button is
- * invalid content and would put an interactive control inside an interactive
- * control — the v3.0.1-beta.18 hazard, in the shape that cannot be fixed with
- * `stopPropagation` because it breaks the listbox's own semantics. So the
- * composer summarises and Settings discloses, and the menu carries one footer
- * line saying so.
+ * WHY THERE IS NO DISCLOSURE ON THIS SURFACE. Every row is a `[role="option"]`.
+ * A `<details>` inside one would put an interactive control inside an
+ * interactive control — the v3.0.1-beta.18 hazard, in the shape that cannot be
+ * fixed with `stopPropagation` because it breaks the listbox's own semantics.
+ * So the composer summarises and Settings discloses, and the menu carries one
+ * footer line saying so. The STAR in the browse dialog is a sibling BUTTON
+ * outside the option element for exactly the same reason — the v3.13.0 pattern.
  */
-function renderModelOptionHtml(provider, entry, selectedId) {
-  const isActive = entry.id === selectedId;
+function renderModelRowBodyHtml(provider, entry, opts) {
+  const o = opts || {};
   // COMPACT on this surface. A dropdown opened mid-thought needs the model, the
   // price and any warning — not the measured coverage, which is what Settings'
   // denser row and its expand are for. Same builder, same words, less of them.
   const summary = formatModelSummary(entry, { compact: true });
   const rise = formatPromotionRise(entry);
   const badges = [];
-  if (entry.suitability !== undefined && entry.suitability !== 'general') {
-    badges.push('<span class="chat-mm-badge is-warn">' +
-      escapeHtml(SUITABILITY_LABELS[entry.suitability] || entry.suitability) + '</span>');
+  // ── SUITABILITY, NARROWED TO WHAT IS ACTUALLY A WARNING ──────────────────
+  // Gated on the LABEL TABLE having an entry, not on `!== 'general'`. That is
+  // the load-bearing difference: the old test rendered the raw field value as a
+  // fallback, so dropping 'chat-only' from the table would have printed the bare
+  // string "chat-only" on 194 rows instead of removing the badge. A value with
+  // no label is a value this surface has decided not to badge.
+  const suitLabel = typeof entry.suitability === 'string'
+    && Object.hasOwn(SUITABILITY_LABELS, entry.suitability)
+    ? SUITABILITY_LABELS[entry.suitability] : null;
+  if (suitLabel) {
+    badges.push('<span class="chat-mm-badge is-warn">' + escapeHtml(suitLabel) + '</span>');
   }
   // Label kept in sync with settings.js's MODEL_SUITABILITY_BADGES-adjacent
   // `dominated` badge (search for "out-performed" there): same underlying
@@ -2759,36 +3093,138 @@ function renderModelOptionHtml(provider, entry, selectedId) {
   if (entry.dominated === true) badges.push('<span class="chat-mm-badge is-warn">out-performed</span>');
   if (entry.thinks === true) badges.push('<span class="chat-mm-badge">thinks</span>');
 
+  // ── THE PROVIDER, ON EVERY ROW ───────────────────────────────────────────
+  // Group headings alone stopped working the moment ~194 OpenRouter rows landed
+  // under one of them: scroll past the first screen and no heading is in view,
+  // so a row 40 deep names a model and not who serves it — which is the one
+  // fact that decides whose key pays for it. A per-row marker costs the same
+  // wherever the scroll happens to be.
+  //
+  // TEXT PLUS A DOT, never a dot alone: colour alone is not an accessible
+  // distinction, so the three families are told apart by the WORD and the colour
+  // is a scanning aid on top of it. chat.css records the measured contrast of
+  // both halves in both themes.
+  const provLabel = Object.hasOwn(PROVIDER_LABELS, provider) ? PROVIDER_LABELS[provider] : provider;
+  // The class comes from an ALLOW-LIST, never interpolated from the provider
+  // string — a class attribute assembled out of payload text is a way to smuggle
+  // a selector. An unknown provider gets the neutral swatch and its own name.
+  const provClass = Object.hasOwn(PROVIDER_LABELS, provider) ? ' is-' + provider : '';
+  const prov =
+    '<span class="chat-mm-prov' + provClass + '">' +
+      '<span class="chat-mm-prov-dot" aria-hidden="true"></span>' +
+      escapeHtml(provLabel) +
+    '</span>';
+
+  // Why a row is in the working set — rendered only where it says something the
+  // row does not already say. `selected` is deliberately absent: the check mark
+  // and the trigger label both already carry it.
+  const marks = [];
+  const reasons = Array.isArray(o.reasons) ? o.reasons : [];
+  if (reasons.includes('starred') || o.starred === true) {
+    marks.push('<span class="chat-mm-mark is-star" title="Starred">★</span>');
+  }
+  if (reasons.includes('recent')) {
+    marks.push('<span class="chat-mm-mark" title="You used this recently">recent</span>');
+  }
+
   return (
-    '<button type="button" class="chat-dd-opt chat-mm-opt' + (isActive ? ' is-active' : '') +
-      '" role="option" aria-selected="' + (isActive ? 'true' : 'false') +
-      '" data-model-id="' + escapeHtml(entry.id) + '" data-model-provider="' + escapeHtml(provider) + '">' +
-      '<span class="chat-mm-head">' +
-        '<span class="chat-dd-opt-title">' + escapeHtml(entry.label || entry.id) + '</span>' +
-        badges.join('') +
-      '</span>' +
-      '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
-      '<span class="chat-mm-price mono">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
-      (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
-      (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '') +
+    '<span class="chat-mm-head">' +
+      '<span class="chat-dd-opt-title">' + escapeHtml(entry.label || entry.id) + '</span>' +
+      prov +
+      marks.join('') +
+      badges.join('') +
+    '</span>' +
+    '<span class="chat-dd-opt-desc mono">' + escapeHtml(entry.id) + '</span>' +
+    '<span class="chat-mm-price mono">' + escapeHtml(formatLivePrice(entry)) + '</span>' +
+    (rise ? '<span class="chat-mm-rise">' + escapeHtml(rise) + '</span>' : '') +
+    (summary ? '<span class="chat-mm-note">' + escapeHtml(summary) + '</span>' : '')
+  );
+}
+
+/**
+ * The BROWSE DIALOG's wrapper around the same body.
+ *
+ * ONE BODY BUILDER, TWO WRAPPERS, and that is the point. The composer's menu row
+ * is a shared-listbox `div[role="option"]` this file does not own; the browse
+ * dialog's is a `<button>` it does. If each surface built its own body, the
+ * price, the badges and the warning would be free to disagree between the two
+ * lists the user is comparing models across — two hand-maintained descriptions
+ * of one measured fact, this repo's named cause of the v3.2.0 CRITICAL.
+ */
+function renderModelOptionHtml(provider, entry, selectedId, opts) {
+  const isActive = entry.id === selectedId;
+  // ── A PLAIN BUTTON, NOT A `role="option"` ────────────────────────────────
+  // The browse dialog is a SEARCH RESULTS list, not a listbox: each row carries
+  // a pick control AND a star control, and a `role="listbox"` whose options
+  // contain a second interactive control is a broken listbox — the
+  // v3.0.1-beta.18 hazard, and the reason the composer's rich rows delegate
+  // their semantics to shared/listbox.js instead of hand-rolling them here.
+  // Two native buttons per row means native focus, native activation and a
+  // native tab order, with no ARIA to get wrong.
+  //
+  // `aria-current` rather than `aria-selected`: valid outside a listbox, and it
+  // says the true thing — this is the model currently in use.
+  return (
+    '<button type="button" class="chat-dd-opt chat-mm-opt chat-browse-pick' + (isActive ? ' is-active' : '') +
+      '"' + (isActive ? ' aria-current="true"' : '') +
+      ' data-model-id="' + escapeHtml(entry.id) + '" data-model-provider="' + escapeHtml(provider) + '">' +
+      renderModelRowBodyHtml(provider, entry, opts) +
     '</button>'
   );
 }
 
 /**
- * The whole menu: one group per KEYED provider, each cheapest-first exactly as
- * the server ordered it. Returns '' when nothing is pickable, so the caller can
- * decide not to render a dropdown at all rather than render an empty one.
+ * The BROWSE DIALOG's list: one group per KEYED provider, each cheapest-first
+ * exactly as the server ordered it. Returns '' when nothing is pickable, so the
+ * caller can say "no model matches" rather than render an empty box.
+ *
+ * Takes a FLAT, already-filtered row list (`[{provider, entry, reasons?}]`) and
+ * regroups it, rather than walking `offerable` itself — because the dialog's
+ * search and its free-only/provider filters have already decided what belongs
+ * here, and a second walk would let the header rows disagree with the body rows
+ * about what is on screen.
  */
-function renderModelMenuHtml(offerable, availableProviders, selectedId) {
-  const providers = Array.isArray(availableProviders) ? availableProviders : [];
+function renderModelMenuHtml(rowList, selectedId, opts) {
+  const list = Array.isArray(rowList) ? rowList : [];
+  const o = opts || {};
+  const starred = o.starred instanceof Set ? o.starred : new Set(Array.isArray(o.starred) ? o.starred : []);
   let html = '';
   let rows = 0;
-  for (const p of providers) {
-    const list = offerable && Object.hasOwn(offerable, p) && Array.isArray(offerable[p]) ? offerable[p] : [];
-    if (!list.length) continue;
-    html += '<div class="chat-mm-group">' + escapeHtml(PROVIDER_LABELS[p] || p) + '</div>';
-    for (const entry of list) { html += renderModelOptionHtml(p, entry, selectedId); rows++; }
+  let lastProvider = null;
+  for (const row of list) {
+    if (!row || !row.entry) continue;
+    if (row.provider !== lastProvider) {
+      // An `<li>`, not a `<div>`: this list is a real `<ul>` and a `<div>` is
+      // not valid content inside one. `role="presentation"` keeps it out of the
+      // list's item count for a screen reader, where it is a heading and not an
+      // eighth model.
+      html += '<li class="chat-mm-group" role="presentation">' +
+        escapeHtml(Object.hasOwn(PROVIDER_LABELS, row.provider) ? PROVIDER_LABELS[row.provider] : row.provider) +
+        '</li>';
+      lastProvider = row.provider;
+    }
+    const isStarred = starred.has(row.entry.id);
+    html += '<li class="chat-browse-row">' +
+      renderModelOptionHtml(row.provider, row.entry, selectedId, {
+        reasons: row.reasons,
+        starred: isStarred,
+      }) +
+      // ── THE STAR IS A SIBLING, NOT A CHILD ─────────────────────────────
+      // The v3.13.0 pattern, for the reason recorded there: a control nested
+      // inside another control has to suppress propagation to work at all, and
+      // any later edit that drops the suppression silently re-breaks it. As a
+      // sibling there is NO propagation path to suppress, so it cannot regress.
+      // `aria-pressed` makes it a real toggle to a screen reader; the label
+      // names the model, because "Star" alone is meaningless in a list of 213.
+      '<button type="button" class="chat-mm-star' + (isStarred ? ' is-on' : '') + '"' +
+        ' data-star-id="' + escapeHtml(row.entry.id) + '"' +
+        ' aria-pressed="' + (isStarred ? 'true' : 'false') + '"' +
+        ' title="' + (isStarred ? 'Starred — always in your working set' : 'Star: keep this in your working set') + '"' +
+        ' aria-label="' + (isStarred ? 'Unstar ' : 'Star ') + escapeHtml(row.entry.label || row.entry.id) + '">' +
+        icon('star', 13) +
+      '</button>' +
+    '</li>';
+    rows++;
   }
   // ── WHERE THE FULL MEASUREMENT WENT ──────────────────────────────────────
   // Each row now carries a derived one-liner instead of the model's whole
@@ -2797,36 +3233,137 @@ function renderModelMenuHtml(offerable, availableProviders, selectedId) {
   // the menu rather than leaving the reader to guess that the evidence was
   // deleted rather than moved.
   //
-  // A PLAIN DIV, CARRYING NO `data-model-id`. The option handler binds to
+  // A PLAIN DIV, CARRYING NO `data-model-id`. The pick handler binds to
   // `[data-model-id]` only, so nothing here is clickable and nothing can be
   // selected by mistake; it sits alongside the existing `.chat-mm-group`
-  // headers, which are already non-option children of this listbox.
+  // headers, which are already non-row children of this list.
   const foot = rows
     ? '<div class="chat-mm-foot">Full measurements for each model: Settings → API keys</div>'
     : '';
-  return rows ? html + foot : '';
+  return rows ? '<ul class="chat-browse-ul">' + html + '</ul>' + foot : '';
 }
 
-function renderModelDropdownHtml() {
-  return (
-    '<div class="chat-dd" id="chat-model-dd">' +
-      '<button type="button" class="chat-dd-btn" id="chat-model-btn" aria-haspopup="listbox" aria-expanded="false">' +
-        '<span class="chat-dd-dot"></span><span id="chat-model-value" class="mono"></span>' + icon('chevronDown', 12) +
-      '</button>' +
-      '<div class="chat-dd-menu" id="chat-model-menu" role="listbox" hidden></div>' +
-    '</div>'
-  );
+// ── THE COMPOSER'S TWO PICKERS, ON THE SHARED LISTBOX ─────────────────────
+//
+// ── WHAT THIS REPLACED, AND WHY IT HAD TO GO ─────────────────────────────
+// A hand-rolled `.chat-dd` menu that carried `role="listbox"` and
+// `role="option"` and had ZERO keyboard support: no arrows, no Home/End, no
+// Enter, no Escape, no type-ahead, no `aria-activedescendant`. It announced
+// itself to a screen reader as a listbox and then behaved like a div. With ~194
+// OpenRouter models in it, it was simultaneously the only dropdown in /next
+// without keyboard operation and the one that needed it most.
+//
+// shared/listbox.js was written against exactly this case — contiguous groups,
+// per-option rich HTML for the badges/price/summary, `menuClass`, `footHtml`
+// and `prefer: 'up'` for a control that sits at the bottom of the viewport —
+// and was then never adopted here. This is that adoption.
+//
+// ── THE RENDER -> WIRE HANDOFF ───────────────────────────────────────────
+// The house pattern from memory.js and settings.js: each picker's cfg is built
+// ONCE and used for BOTH `renderListboxHtml` (markup) and `mountListbox`
+// (behaviour), so the two cannot describe different controls. Cleared before
+// every render, so a branch that emits no picker leaves nothing to mount.
+const pendingListboxes = [];
+
+// The value of the one ACTION row (see `action` in shared/listbox.js). Chosen
+// to be un-typeable as a model id, and never sent anywhere: `commit()` refuses
+// to make an action row the control's value, and `resolveChatModel` would
+// refuse it anyway since no catalogue entry carries it.
+const BROWSE_MODEL_VALUE = ' browse-all';
+
+/**
+ * ONE cfg builder for the model picker - the ingest.js `domainListboxCfg`
+ * precedent. Called by the render half and the mount half with its output used
+ * for both, so an inline second literal cannot drift from it.
+ */
+function modelListboxCfg() {
+  const all = offerableEntries(state.offerable, state.availableProviders);
+  const ws = buildWorkingSet(all, {
+    recents: state.modelRecents,
+    starred: state.modelStarred,
+    selectedId: state.chatModel,
+  });
+  const starred = new Set(Array.isArray(state.modelStarred) ? state.modelStarred : []);
+
+  const options = ws.rows.map(row => ({
+    value: row.entry.id,
+    label: row.entry.label || row.entry.id,
+    group: Object.hasOwn(PROVIDER_LABELS, row.provider) ? PROVIDER_LABELS[row.provider] : row.provider,
+    // Type-ahead reaches the ID as well as the label, so "deepseek" and "opus"
+    // both land somewhere. The listbox tries a prefix match first and falls back
+    // to a substring, so the label still wins for a leading match.
+    typeahead: (row.entry.label || '') + ' ' + row.entry.id,
+    html: renderModelRowBodyHtml(row.provider, row.entry, {
+      reasons: row.reasons,
+      starred: starred.has(row.entry.id),
+    }),
+  }));
+
+  // THE ESCAPE HATCH, PRESENT ONLY WHEN IT LEADS SOMEWHERE ELSE.
+  // `collapsed` is false whenever the working set is not actually smaller than
+  // the catalogue, so a user looking at every model they have is never offered
+  // a button that opens the list already in front of them.
+  if (ws.collapsed) {
+    options.push({
+      value: BROWSE_MODEL_VALUE,
+      label: 'Browse all ' + ws.total + ' models',
+      action: true,
+      html: '<span class="chat-mm-browse">' + icon('search', 13) +
+        '<span>Browse all ' + ws.total + ' models - search, filter, star</span></span>',
+    });
+  }
+
+  // ── NO `|| 'gemini'` TERMINAL FALLBACK ───────────────────────────────────
+  // This chain used to end in the literal 'gemini', so with NOTHING resolved -
+  // no selection, no active provider, no keyed provider at all - the composer
+  // confidently rendered "Gemini default" to a user who may have no Gemini key.
+  // Naming a specific vendor as a stand-in for "we do not know" is a small lie
+  // on a surface whose entire job is saying which model answers.
+  const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || null;
+  const shownLabel = (shownProvider && PROVIDER_LABELS[shownProvider]) || shownProvider || null;
+
+  return {
+    id: 'chat-model-lb',
+    options,
+    value: state.chatModel,
+    // Reached only when `value` names no option - i.e. no model is pinned, or
+    // the pinned one is outside the working set (impossible: `buildWorkingSet`
+    // always includes the selection). "<Provider> default" only where the
+    // provider can be named; a bare "Default" claims only what is known.
+    placeholder: shownLabel ? shownLabel + ' default' : 'Default',
+    ariaLabel: 'Model for this chat',
+    triggerClass: 'lb-sm chat-lb',
+    menuClass: 'lb-rich chat-mm-menu',
+    prefer: 'up',
+    minWidth: 360,
+    // ── WHERE THE FULL MEASUREMENT WENT ────────────────────────────────────
+    // Each row carries a derived one-liner rather than the model's whole
+    // measured `note`. The note still exists, whole and verbatim, behind
+    // Settings' per-model expand, so this says so once rather than leaving the
+    // reader to guess the evidence was deleted rather than moved.
+    footHtml: 'Full measurements for each model: Settings → API keys',
+    onChange: (value) => {
+      if (value === BROWSE_MODEL_VALUE) { openBrowseDialog({ mode: 'pick' }); return; }
+      selectChatModel(value);
+    },
+  };
 }
 
-function renderLengthDropdownHtml() {
-  return (
-    '<div class="chat-dd" id="chat-length-dd">' +
-      '<button type="button" class="chat-dd-btn" id="chat-length-btn" aria-haspopup="listbox" aria-expanded="false">' +
-        '<span id="chat-length-value" class="mono"></span>' + icon('chevronDown', 12) +
-      '</button>' +
-      '<div class="chat-dd-menu" id="chat-length-menu" role="listbox" hidden></div>' +
-    '</div>'
-  );
+/** ONE cfg builder for the length picker, same contract. */
+function lengthListboxCfg() {
+  return {
+    id: 'chat-length-lb',
+    options: STYLE_ORDER.map(s => ({ value: s, label: STYLE_LABELS[s] })),
+    value: state.responseStyle,
+    ariaLabel: 'Answer length',
+    triggerClass: 'lb-sm chat-lb',
+    prefer: 'up',
+    onChange: (value) => {
+      if (!STYLE_ORDER.includes(value)) return;
+      state.responseStyle = value;
+      try { localStorage.setItem(LS_STYLE, value); } catch { /* ignore */ }
+    },
+  };
 }
 
 function wireComposer() {
@@ -2840,158 +3377,479 @@ function wireComposer() {
     autosize(ta);
   }
   if (sendBtn) sendBtn.addEventListener('click', sendCurrentMessage);
-
-  const modelBtn = document.getElementById('chat-model-btn');
-  if (modelBtn) modelBtn.addEventListener('click', () => togglePicker('model'));
-  const lengthBtn = document.getElementById('chat-length-btn');
-  if (lengthBtn) lengthBtn.addEventListener('click', () => togglePicker('length'));
-}
-
-function togglePicker(which) {
-  state.openPicker = state.openPicker === which ? null : which;
+  // The pickers are BUILT here, not in renderComposerHtml — one code path
+  // paints them on first mount and on every repaint after a pick.
   renderComposerPickers();
 }
 
-function renderComposerPickers() {
-  // Model dropdown
-  const modelValue = document.getElementById('chat-model-value');
-  const modelMenu = document.getElementById('chat-model-menu');
-  const modelBtn = document.getElementById('chat-model-btn');
-  if (modelValue && modelMenu && modelBtn) {
-    // ── NO `|| 'gemini'` TERMINAL FALLBACK ─────────────────────────────────
-    // This chain used to end in the literal 'gemini', which meant that when
-    // NONE of the three sources resolved — no composer selection, no active
-    // provider, and no keyed provider at all — the composer confidently
-    // rendered "Gemini default" to a user who may have no Gemini key. Naming
-    // a specific vendor as a stand-in for "we do not know" is a small lie on
-    // a surface whose entire job is to say which model answers, and it gets
-    // worse as providers are added: an OpenRouter-only user was told Gemini.
-    //
-    // `null` instead, and the two readers below render a neutral label for
-    // it. Same rule as v3.13.2's per-message eyebrow, which renders the
-    // neutral provider label when no model is recorded and NEVER the current
-    // selection — because inventing the likely answer is exactly how a
-    // display stops being evidence of anything.
-    const shownProvider = state.modelProvider || state.activeProvider || state.availableProviders[0] || null;
-    // `PROVIDER_LABELS[null]` is undefined on a null-prototype object, and
-    // `undefined || null` is null, so this is null precisely when
-    // shownProvider is null or is an id we have no name for. Both cases mean
-    // the same thing to the reader: we cannot name the provider.
-    const shownLabel = (shownProvider && PROVIDER_LABELS[shownProvider]) || shownProvider || null;
-
-    // MODEL mode (gated — see MODEL_PICKER_ENABLED). Falls through to the
-    // v3.0.11 PROVIDER menu below whenever the gate is off OR nothing is
-    // actually pickable, so a catalogue that arrives empty (an older backend,
-    // a provider list we do not recognise) degrades to the shipped behaviour
-    // rather than to an empty menu.
-    const modelMenuHtml = MODEL_PICKER_ENABLED
-      ? renderModelMenuHtml(state.offerable, state.availableProviders, state.chatModel)
-      : '';
-    if (modelMenuHtml) {
-      const chosen = resolveChatModel(state.chatModel, state.offerable, state.availableProviders);
-      // "<Provider> default" only when we can name the provider. With no
-      // keyed provider at all there is nothing true to put here, and the
-      // pre-v3.15.0 code said "Gemini default" regardless — see shownProvider
-      // above. A bare "Default" claims only what is actually known.
-      modelValue.textContent = chosen
-        ? (chosen.entry.label || chosen.entry.id)
-        : (shownLabel ? shownLabel + ' default' : 'Default');
-      modelMenu.innerHTML = modelMenuHtml;
-      modelMenu.classList.add('chat-mm-menu');
-      modelMenu.hidden = state.openPicker !== 'model';
-      modelBtn.setAttribute('aria-expanded', state.openPicker === 'model' ? 'true' : 'false');
-      modelMenu.querySelectorAll('[data-model-id]').forEach(opt => {
-        opt.addEventListener('click', () => {
-          const id = opt.dataset.modelId;
-          // Re-validated against the LIVE catalogue at click time, not trusted
-          // from the markup: this is the gate that makes an unkeyed provider's
-          // model unselectable even if a row for it somehow reached the DOM.
-          const picked = resolveChatModel(id, state.offerable, state.availableProviders);
-          if (!picked) return;
-          state.chatModel = picked.entry.id;
-          state.modelProvider = picked.provider;
-          try { localStorage.setItem(LS_MODEL, picked.entry.id); } catch { /* ignore */ }
-          try { localStorage.setItem(LS_PROVIDER, picked.provider); } catch { /* ignore */ }
-          state.openPicker = null;
-          renderComposerPickers();
-        });
-      });
-      renderLengthPicker();
-      return;
-    }
-
-    // Legacy PROVIDER menu (no model catalogue available). `shownLabel` is
-    // null when no provider is keyed at all; the button previously rendered
-    // the string "Gemini" there and, once shownProvider stopped defaulting,
-    // would render the literal text "null" — so state the absence instead.
-    const shown = shownProvider;
-    modelValue.textContent = shownLabel || 'No provider';
-    modelMenu.classList.remove('chat-mm-menu');
-    // ── ROWS COME FROM providerOnlyProviders, NOT availableProviders ────────
-    // This menu names NO MODEL: picking a row sends `provider` alone, so a row
-    // may only exist for a provider that can resolve its own default. Listing
-    // every keyed provider put OpenRouter on screen with an empty model column
-    // while the backend discarded the selection and billed whichever provider
-    // was active — a user watching "OpenRouter" sit selected above answers
-    // labelled with another vendor's model, and nothing anywhere explaining it.
-    //
-    // `p` comes from state.availableProviders, which this file builds from
-    // its own frozen PROVIDER_KEY_FLAGS list — so it is never payload text.
-    // Escaped anyway: "safe because of where the value came from" is a
-    // property a reader has to go and verify, and it stops being true the
-    // day someone sources this list from the wire instead.
-    modelMenu.innerHTML = state.providerOnlyProviders.map(p => (
-      '<button type="button" class="chat-dd-opt' + (p === shown ? ' is-active' : '') + '" role="option" data-provider="' + escapeHtml(p) + '">' +
-        '<span class="chat-dd-opt-title">' + escapeHtml(PROVIDER_LABELS[p] || p) + '</span>' +
-        '<span class="chat-dd-opt-desc mono">' + escapeHtml(state.models[p] || '') + '</span>' +
-      '</button>'
-    )).join('');
-    modelMenu.hidden = state.openPicker !== 'model';
-    modelBtn.setAttribute('aria-expanded', state.openPicker === 'model' ? 'true' : 'false');
-    modelMenu.querySelectorAll('[data-provider]').forEach(opt => {
-      opt.addEventListener('click', () => {
-        const p = opt.dataset.provider;
-        // Re-validated at CLICK time against the live list, not trusted from the
-        // markup — the same gate the model branch applies via resolveChatModel.
-        // providerOnlyProviders, so a row that somehow reached the DOM for a
-        // provider with no resolvable model still cannot be selected.
-        if (!state.providerOnlyProviders.includes(p)) return;
-        state.modelProvider = p;
-        try { localStorage.setItem(LS_PROVIDER, p); } catch { /* ignore */ }
-        state.openPicker = null;
-        renderComposerPickers();
-      });
-    });
-  }
-
-  renderLengthPicker();
+function renderModelDropdownHtml() {
+  const cfg = modelListboxCfg();
+  pendingListboxes.push(cfg);
+  return renderListboxHtml(cfg);
 }
 
-function renderLengthPicker() {
-  // Length dropdown
-  const lengthValue = document.getElementById('chat-length-value');
-  const lengthMenu = document.getElementById('chat-length-menu');
-  const lengthBtn = document.getElementById('chat-length-btn');
-  if (lengthValue && lengthMenu && lengthBtn) {
-    lengthValue.textContent = STYLE_LABELS[state.responseStyle] || 'Balanced';
-    lengthMenu.innerHTML = STYLE_ORDER.map(s => (
-      '<button type="button" class="chat-dd-opt' + (s === state.responseStyle ? ' is-active' : '') + '" role="option" data-style="' + s + '">' +
-        '<span class="chat-dd-opt-title">' + STYLE_LABELS[s] + '</span>' +
-      '</button>'
-    )).join('');
-    lengthMenu.hidden = state.openPicker !== 'length';
-    lengthBtn.setAttribute('aria-expanded', state.openPicker === 'length' ? 'true' : 'false');
-    lengthMenu.querySelectorAll('[data-style]').forEach(opt => {
-      opt.addEventListener('click', () => {
-        const s = opt.dataset.style;
-        if (!STYLE_ORDER.includes(s)) return;
-        state.responseStyle = s;
-        try { localStorage.setItem(LS_STYLE, s); } catch { /* ignore */ }
-        state.openPicker = null;
-        renderComposerPickers();
-      });
-    });
+function renderLengthDropdownHtml() {
+  const cfg = lengthListboxCfg();
+  pendingListboxes.push(cfg);
+  return renderListboxHtml(cfg);
+}
+
+/**
+ * Commit a model choice from anywhere - the composer menu, the browse dialog,
+ * or a re-ask. ONE function, because a pick made in one place and a pick made in
+ * another must land in the same state, the same storage and the same recents
+ * list; three copies of that is how a model gets pinned without being recorded.
+ *
+ * Re-validated against the LIVE catalogue rather than trusted from the caller:
+ * this is the gate that makes an unkeyed provider's model unselectable even if a
+ * row for it somehow reached the DOM.
+ *
+ * @returns {boolean} whether the pick was accepted
+ */
+function selectChatModel(id) {
+  const picked = resolveChatModel(id, state.offerable, state.availableProviders);
+  if (!picked) return false;
+  state.chatModel = picked.entry.id;
+  state.modelProvider = picked.provider;
+  state.modelRecents = pushRecent(state.modelRecents, picked.entry.id, MAX_RECENTS);
+  try { localStorage.setItem(LS_MODEL, picked.entry.id); } catch { /* ignore */ }
+  try { localStorage.setItem(LS_PROVIDER, picked.provider); } catch { /* ignore */ }
+  try { localStorage.setItem(LS_MODEL_RECENTS, JSON.stringify(state.modelRecents)); } catch { /* ignore */ }
+  renderComposerPickers();
+  return true;
+}
+
+/** Star/unstar, persisted. Pure logic in `toggleStar`; this is the state half. */
+function toggleChatModelStar(id) {
+  state.modelStarred = toggleStar(state.modelStarred, id, MAX_STARRED);
+  try { localStorage.setItem(LS_MODEL_STARRED, JSON.stringify(state.modelStarred)); } catch { /* ignore */ }
+}
+
+/**
+ * Repaint BOTH pickers and re-hydrate them.
+ *
+ * A FULL RE-RENDER OF THE TRIGGERS, not `api.setOptions`, and the reason is the
+ * placeholder: the trigger's fallback text ("Gemini default") is derived from
+ * live state, while `setOptions` recomputes it from the cfg CAPTURED AT MOUNT.
+ * Keeping the instances alive would mean a stale placeholder after a provider
+ * change - a wrong vendor name on the one control whose job is naming the model.
+ * Re-rendering is cheap (two buttons) and cannot go stale.
+ *
+ * Focus survives: shared/listbox.js restores it BY ID after an onChange, and the
+ * re-rendered trigger keeps the same id.
+ */
+function renderComposerPickers() {
+  const host = document.getElementById('chat-composer-pickers');
+  if (!host) return;
+  // Any menu still open belongs to a trigger we are about to destroy. The
+  // listbox's own rAF loop would notice the detachment and close it a frame
+  // later, but closing first means there is never a frame in which a menu is
+  // anchored to an element that has left the document.
+  closeAllListboxes();
+  pendingListboxes.length = 0;
+  const showModelPicker = composerShowsModelPicker();
+  host.innerHTML =
+    (showModelPicker ? renderModelDropdownHtml() : '') +
+    renderLengthDropdownHtml();
+  for (const cfg of pendingListboxes) mountListbox(cfg);
+}
+
+// ── THE BROWSE DIALOG ─────────────────────────────────────────────────────
+//
+// ── WHY THIS IS NOT INSIDE THE LISTBOX MENU ──────────────────────────────
+// A search FIELD inside a `role="listbox"` popup is a second interactive
+// control inside a control — the v3.0.1-beta.18 hazard — and it breaks the
+// select-only combobox contract shared/listbox.js is built on, where focus
+// never leaves the trigger and a blur closes the menu. Six other controls
+// depend on that contract. So browsing 213 models is its own surface: a
+// dialog, with a real text input, real filter buttons, and rows that are plain
+// buttons with native focus and a native tab order.
+//
+// ── AND IT IS ONE SURFACE, TWO MODES ─────────────────────────────────────
+// `pick` changes the composer's model. `reask` changes it AND immediately
+// re-asks one question with it. The alternative was mounting a listbox per
+// assistant message, which on a long thread is dozens of live rAF loops and
+// dozens of <body> menus for a control almost none of which will be used.
+//
+// State lives in a module-level object, not in `state`: this is a document-level
+// overlay like the confirm dialog, it must survive `state` being rebuilt, and it
+// must be closable from teardown.
+let browseUi = null;
+
+function isBrowseDialogOpen() {
+  return browseUi !== null;
+}
+
+function closeBrowseDialog() {
+  if (!browseUi) return;
+  const { root, restoreFocusTo } = browseUi;
+  browseUi = null;
+  if (root && root.parentNode) root.parentNode.removeChild(root);
+  // Focus BY ID, never by holding the node: the element that opened this may
+  // have been replaced by a repaint while the dialog was up (a composer pick
+  // re-renders the trigger; a send re-renders the whole thread). The v3.8.0
+  // pattern that views/onboarding.js established.
+  if (restoreFocusTo) {
+    const el = document.getElementById(restoreFocusTo);
+    if (el) { try { el.focus(); } catch { /* detached */ } }
   }
+}
+
+/**
+ * Everything the dialog can currently show, as a FLAT row list in catalogue
+ * order. Read fresh on every repaint so a Settings change that lands while the
+ * dialog is open cannot leave a Disconnected provider's models pickable.
+ */
+function browseAllRows() {
+  return offerableEntries(state.offerable, state.availableProviders);
+}
+
+function renderBrowseBodyHtml() {
+  const all = browseAllRows();
+  const rows = filterCatalogue(all, {
+    q: browseUi.q,
+    provider: browseUi.provider,
+    freeOnly: browseUi.freeOnly,
+  });
+  const starred = new Set(Array.isArray(state.modelStarred) ? state.modelStarred : []);
+  const list = renderModelMenuHtml(rows, state.chatModel, { starred });
+
+  // ── AN EMPTY RESULT SAYS SO, AND OFFERS THE WAY BACK ────────────────────
+  // "no results" with no exit is how a search box becomes a trap. The button
+  // clears every filter at once, because a user who typed one thing and toggled
+  // two others cannot be expected to reverse-engineer which of the three
+  // emptied the list.
+  const body = list || (
+    '<div class="chat-browse-empty">' +
+      '<div>No model matches ' +
+        (browseUi.q ? '&ldquo;' + escapeHtml(browseUi.q) + '&rdquo;' : 'these filters') +
+      '.</div>' +
+      '<button type="button" class="chat-browse-clear" data-browse-clear>' +
+        'Show all ' + all.length + ' models' +
+      '</button>' +
+    '</div>'
+  );
+
+  // A COUNT, ALWAYS, and it is the honest kind: how many of how many. It is the
+  // only thing on screen that says a filter is hiding something.
+  const count = rows.length === all.length
+    ? all.length + ' models'
+    : rows.length + ' of ' + all.length + ' models';
+
+  return '<div class="chat-browse-count mono" role="status">' + escapeHtml(count) + '</div>' + body;
+}
+
+function renderBrowseFiltersHtml() {
+  // Providers come from state.availableProviders, which this file builds from
+  // its own frozen PROVIDER_KEY_FLAGS list — never payload text. Escaped anyway:
+  // "safe because of where it came from" is a property a reader has to go and
+  // verify, and it stops being true the day someone sources this from the wire.
+  const chips = [{ id: null, label: 'All providers' }].concat(
+    state.availableProviders.map(p => ({
+      id: p,
+      label: Object.hasOwn(PROVIDER_LABELS, p) ? PROVIDER_LABELS[p] : p,
+    })),
+  );
+  const provHtml = chips.map(c => (
+    '<button type="button" class="chat-browse-chip' + (browseUi.provider === c.id ? ' is-on' : '') + '"' +
+      ' data-browse-provider="' + escapeHtml(c.id === null ? '' : c.id) + '"' +
+      ' aria-pressed="' + (browseUi.provider === c.id ? 'true' : 'false') + '">' +
+      escapeHtml(c.label) +
+    '</button>'
+  )).join('');
+
+  // ── ONLY FACTS ARE FILTERABLE ────────────────────────────────────────────
+  // Provider and free-vs-paid are things the provider TOLD us. There is
+  // deliberately no capability, quality or speed filter: we hold latency for 6
+  // of 213 ids and quality data for none of the fetched ones, and v3.16.0
+  // measured that every available proxy for capability points the wrong way.
+  // Price is on every row and is never a gate — that is the user's trade-off.
+  return (
+    '<div class="chat-browse-filters" role="group" aria-label="Filter models">' +
+      provHtml +
+      '<span class="chat-browse-sep" aria-hidden="true"></span>' +
+      '<button type="button" class="chat-browse-chip' + (browseUi.freeOnly ? ' is-on' : '') + '"' +
+        ' data-browse-free aria-pressed="' + (browseUi.freeOnly ? 'true' : 'false') + '">' +
+        'Free only' +
+      '</button>' +
+    '</div>'
+  );
+}
+
+/** Repaint the list + filters in place, keeping the search field and its caret. */
+function refreshBrowseDialog() {
+  if (!browseUi) return;
+  const filters = browseUi.root.querySelector('[data-browse-filters]');
+  const body = browseUi.root.querySelector('[data-browse-body]');
+  if (filters) filters.innerHTML = renderBrowseFiltersHtml();
+  if (body) body.innerHTML = renderBrowseBodyHtml();
+}
+
+/**
+ * @param {{mode: 'pick'|'reask', messageIndex?: number, question?: string,
+ *          restoreFocusTo?: string}} opts
+ */
+function openBrowseDialog(opts) {
+  const o = opts || {};
+  closeBrowseDialog();
+
+  const root = document.createElement('div');
+  root.className = 'chat-browse-root';
+  const total = browseAllRows().length;
+  const reask = o.mode === 'reask';
+  const titleId = 'chat-browse-title';
+
+  root.innerHTML =
+    '<div class="chat-browse-scrim" data-browse-scrim></div>' +
+    '<div class="chat-browse" role="dialog" aria-modal="true" aria-labelledby="' + titleId + '">' +
+      '<div class="chat-browse-head">' +
+        '<div>' +
+          '<h2 class="chat-browse-title" id="' + titleId + '" tabindex="-1">' +
+            (reask ? 'Ask again with another model' : 'Choose a model') +
+          '</h2>' +
+          '<div class="chat-browse-sub">' +
+            (reask
+              // ── THE CAVEAT, STATED BEFORE THE SPEND, NOT AFTER ──────────
+              // The re-ask goes into the SAME conversation, and src/brain/chat.js
+              // builds every prompt from the last 20 messages — so the second
+              // model reads the first model's answer. That is a materially
+              // different question from the one the first model got, and calling
+              // it a clean comparison would be a claim the mechanism does not
+              // support. Said here, plainly, where the decision is being made.
+              ? 'Re-asks your question in this conversation. The new model can see the answer above, so this is a second opinion rather than an independent run.'
+              : 'Every model you have a key for. Picking one changes the model for this chat until you change it again.') +
+          '</div>' +
+        '</div>' +
+        '<button type="button" class="chat-browse-close" data-browse-close aria-label="Close">' +
+          icon('x', 16) +
+        '</button>' +
+      '</div>' +
+      '<div class="chat-browse-tools">' +
+        '<input type="search" class="chat-browse-q" id="chat-browse-q" autocomplete="off" spellcheck="false"' +
+          ' placeholder="Search ' + total + ' models by name or id"' +
+          ' aria-label="Search models by name or id">' +
+        '<div data-browse-filters></div>' +
+      '</div>' +
+      '<div class="chat-browse-body" data-browse-body></div>' +
+    '</div>';
+
+  document.body.appendChild(root);
+  browseUi = {
+    root,
+    q: '',
+    provider: null,
+    freeOnly: false,
+    mode: reask ? 'reask' : 'pick',
+    messageIndex: Number.isInteger(o.messageIndex) ? o.messageIndex : null,
+    question: typeof o.question === 'string' ? o.question : '',
+    restoreFocusTo: typeof o.restoreFocusTo === 'string' ? o.restoreFocusTo : 'chat-model-lb',
+  };
+  refreshBrowseDialog();
+
+  const input = root.querySelector('#chat-browse-q');
+  if (input) {
+    input.addEventListener('input', () => {
+      if (!browseUi) return;
+      browseUi.q = input.value;
+      refreshBrowseDialog();
+    });
+    // ARROW KEYS FROM THE FIELD, so a search and a choice are one gesture. Tab
+    // reaches every row too (they are real buttons); this is the fast path, not
+    // the only path.
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'Enter') return;
+      const first = root.querySelector('.chat-browse-pick');
+      if (!first) return;
+      e.preventDefault();
+      first.focus();
+    });
+    try { input.focus(); } catch { /* detached */ }
+  }
+
+  // ── THE FOCUS TRAP, WHICH `aria-modal="true"` IS A PROMISE OF ───────────
+  // Declaring `aria-modal` tells a screen reader that everything outside this
+  // dialog is inert. Without a trap that is a false statement: Tab walks
+  // straight out into the composer behind the scrim, where the user is
+  // operating controls their reader has been told do not exist. The wizards and
+  // the confirm dialog in this tree already trap; this one owes the same debt.
+  //
+  // Computed on each Tab rather than cached, because the row list is replaced
+  // wholesale on every keystroke in the search field — a cached list would hold
+  // detached nodes within one keypress of opening.
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || !browseUi) return;
+    const focusables = [...root.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter(el => el.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    // `document.activeElement` may be the dialog itself or something the browser
+    // put focus on that is no longer in this list; wrapping from either end is
+    // the behaviour that matters and both directions are handled.
+    if (e.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+
+  // ONE delegated handler for the whole dialog. Every control inside is
+  // identified by a data attribute, so a repaint (which replaces the filter and
+  // body markup wholesale) never needs re-wiring and can never leave a stale
+  // listener on a node that has gone.
+  root.addEventListener('click', (e) => {
+    if (!browseUi) return;
+    const t = e.target;
+    if (t.closest('[data-browse-scrim]') || t.closest('[data-browse-close]')) {
+      closeBrowseDialog();
+      return;
+    }
+    const star = t.closest('[data-star-id]');
+    if (star) {
+      toggleChatModelStar(star.getAttribute('data-star-id'));
+      refreshBrowseDialog();
+      // The composer's working set just changed membership; repaint it so the
+      // two lists cannot disagree about what is starred.
+      renderComposerPickers();
+      return;
+    }
+    if (t.closest('[data-browse-clear]')) {
+      browseUi.q = '';
+      browseUi.provider = null;
+      browseUi.freeOnly = false;
+      const q = root.querySelector('#chat-browse-q');
+      if (q) q.value = '';
+      refreshBrowseDialog();
+      return;
+    }
+    const provBtn = t.closest('[data-browse-provider]');
+    if (provBtn) {
+      const v = provBtn.getAttribute('data-browse-provider');
+      // Re-validated against the live list at click time — the same gate the
+      // model pick applies via resolveChatModel, for the same reason.
+      browseUi.provider = v && state.availableProviders.includes(v) ? v : null;
+      refreshBrowseDialog();
+      return;
+    }
+    if (t.closest('[data-browse-free]')) {
+      browseUi.freeOnly = !browseUi.freeOnly;
+      refreshBrowseDialog();
+      return;
+    }
+    const pick = t.closest('[data-model-id]');
+    if (pick) {
+      const id = pick.getAttribute('data-model-id');
+      const mode = browseUi.mode;
+      const messageIndex = browseUi.messageIndex;
+      const question = browseUi.question;
+      if (!selectChatModel(id)) return;   // refused: unkeyed provider, stale id
+      closeBrowseDialog();
+      if (mode === 'reask') reaskMessage(messageIndex, question);
+    }
+  });
+}
+
+
+// ── ASK AGAIN WITH ANOTHER MODEL ──────────────────────────────────────────
+//
+// ── THE DECISION, AND THE CONSTRAINT THAT FORCED IT ──────────────────────
+// The re-ask re-sends the SAME question into the SAME conversation. It does not
+// open a hidden conversation, and it does not send the question in isolation.
+//
+// That is not the cleanest possible comparison and it is not pretended to be.
+// `sendMessage` (src/brain/chat.js) builds every prompt from
+// `conversation.messages.slice(-20)`, so the second model reads the first
+// model's answer. Getting an independent run would mean sending with
+// `conversationId: null`, which creates a SEPARATE conversation server-side —
+// and then either the second answer does not live in this thread at all, or it
+// lives here until the next reload and vanishes, and the sidebar grows a stray
+// row per comparison. Both are worse than a stated caveat, so the caveat is
+// stated: the browse dialog's re-ask mode says in its own subtitle that the new
+// model can see the answer above, BEFORE the spend happens.
+//
+// ── WHAT IT COSTS TO BUILD, AND WHY THAT MATTERS ─────────────────────────
+// Nothing new. It puts the question back in the composer and calls the ordinary
+// `sendCurrentMessage()`, so it inherits the mount guard, the domain/
+// conversation capture, the elapsed clock, the served-model capture, the usage
+// capture, the error path and the persistence — every one of which was hard-won
+// and none of which is re-implemented here. A second send path is how two
+// answers come to be recorded differently.
+//
+// ── AND IT PERSISTS FOR FREE ─────────────────────────────────────────────
+// The server appends the re-asked question and its answer to the conversation
+// JSON exactly as it appends any other turn. NO NEW STORED FIELD IS INTRODUCED,
+// so an existing conversation loads byte-unchanged, and a reloaded thread reads
+// Q / A-from-model-1 / Q / A-from-model-2 — the literal history, each answer
+// already carrying the model that produced it and what it cost (v3.13.2 /
+// v3.14.0). The comparison is auditable after a reload, not only during.
+//
+// ── ONE DELIBERATE RE-ASK PER CLICK ──────────────────────────────────────
+// It never fires automatically and never fans out across models in parallel.
+// Every run is a real API call the user pays for, so every run is a decision the
+// user made; the model's price is on the row they pick it from.
+
+/**
+ * The question an assistant message at `index` was answering: the nearest
+ * PRECEDING user turn. Null when there is none — a thread that opens with an
+ * assistant message (a compile card, an error) has nothing to re-ask.
+ *
+ * Compile cards sit in `state.thread` with `role: 'compile'` and are skipped
+ * like any other non-user row, so a compile between the question and the answer
+ * cannot make this pick the wrong text.
+ */
+function questionForAnswerIndex(index) {
+  if (!Number.isInteger(index) || index < 0) return null;
+  for (let i = index - 1; i >= 0; i--) {
+    const m = state.thread[i];
+    if (m && m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+      return m.content;
+    }
+  }
+  return null;
+}
+
+/**
+ * The control itself, or '' when there is nothing to re-ask.
+ *
+ * SUPPRESSED WHILE A SEND IS IN FLIGHT, because `sendCurrentMessage` refuses a
+ * second send anyway (`state.sending`) and a button that silently does nothing
+ * is the inert-control defect this repo has shipped and recorded twice. Also
+ * suppressed on an errored message and where the composer has no model picker at
+ * all — with one model there is no other model to ask.
+ */
+function reaskButtonHtml(index) {
+  if (state.sending) return '';
+  if (!composerShowsModelPicker()) return '';
+  if (!questionForAnswerIndex(index)) return '';
+  return (
+    '<div class="chat-reask-row">' +
+      '<button type="button" class="chat-reask-btn" data-reask="' + index + '"' +
+        ' title="Re-ask this question in this conversation using a different model">' +
+        icon('refresh', 12) + ' <span>Ask again with another model</span>' +
+      '</button>' +
+    '</div>'
+  );
+}
+
+/**
+ * Run the re-ask. The model has ALREADY been committed by `selectChatModel`
+ * before this is called, so this is only the send half.
+ *
+ * Refuses while a send is in flight rather than queueing: a queued paid call
+ * that fires after the user has moved on is spend they did not authorise at the
+ * moment it happens.
+ */
+function reaskMessage(index, question) {
+  if (state.sending) return;
+  if (typeof question !== 'string' || !question.trim()) return;
+  const ta = document.getElementById('chat-input');
+  if (!ta) return;
+  ta.value = question;
+  autosize(ta);
+  sendCurrentMessage();
 }
 
 // H1 fix: reaches into #chat-send-btn/#chat-input directly, bypassing
@@ -3053,7 +3911,7 @@ function renderThreadOnly(token) {
     chatModel: state.chatModel,
   };
 
-  el.innerHTML = state.thread.map(m => {
+  el.innerHTML = state.thread.map((m, i) => {
     // Compile-to-Wiki outcome cards (see the "Compile to Wiki" section
     // above runCompile()). Pushed into `state.thread` itself — NOT
     // appended to the DOM directly — specifically so they survive being
@@ -3099,6 +3957,7 @@ function renderThreadOnly(token) {
         assistantEyebrowHtml(m, eyebrowCtx) +
         '<div class="chat-answer">' + renderMarkdown(m.content || '') + '</div>' +
         (chips ? '<div class="chat-cite-row">' + chips + '</div>' : '') +
+        reaskButtonHtml(i) +
       '</div>'
     );
   }).join('') + (state.sending ? (
@@ -3107,6 +3966,28 @@ function renderThreadOnly(token) {
       thinkingBodyHtml() +
     '</div>'
   ) : '');
+
+  // Delegated click for the re-ask control. One handler for the whole thread,
+  // not one per message: `renderThreadOnly` replaces this element's entire
+  // innerHTML on every send, so per-row listeners would be re-bound (and their
+  // predecessors orphaned) on every turn.
+  el.querySelectorAll('[data-reask]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = Number(btn.getAttribute('data-reask'));
+      const q = questionForAnswerIndex(i);
+      if (!q) return;
+      openBrowseDialog({
+        mode: 'reask',
+        messageIndex: i,
+        question: q,
+        // Focus returns to the composer's model trigger rather than to this
+        // button: by the time the dialog closes the thread has usually been
+        // rebuilt by the re-ask itself, so this button's element is gone. The
+        // trigger is stable and is the control that now reflects the choice.
+        restoreFocusTo: 'chat-model-lb',
+      });
+    });
+  });
 
   // Delegated click for the citation-chip row below the message. `data-cite`
   // is safe here — `c` is a plain filename from the API's `citations` array,

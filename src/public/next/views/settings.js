@@ -552,6 +552,13 @@ function freshState() {
     // returning collapses it — the same rule every other transient control
     // in this view follows.
     modelPickerOpen: {},
+    // Is the "Every model, by provider" reference shelf expanded? Same reason
+    // as modelPickerOpen one level up: render() replaces the section wholesale,
+    // so a native <details open> would be discarded on the next repaint — and
+    // this section repaints on things the user did not do (the cross-view write
+    // gate fires whenever an ingest starts or finishes anywhere). A shelf that
+    // snapped shut mid-read, for no visible reason, would look like a bug.
+    modelShelfOpen: false,
     // Which INDIVIDUAL model rows are expanded, by model id. Same reason as
     // modelPickerOpen above, one level down, and it was missing.
     //
@@ -1335,11 +1342,297 @@ function renderLiveResult() {
 }
 
 // ── Providers & keys ──────────────────────────────────────────────────────
+//
+// ── THE SCREEN IS ORGANISED BY JOB, NOT BY PROVIDER ─────────────────────────
+//
+// THE REPORT. "I don't know how to add additional models to the chat… it's
+// really hard to distinguish between model families… it is truly hard to get
+// your head around which model does what, which is appropriate for what, how to
+// set the models. This is truly complicated."
+//
+// THE DIAGNOSIS. There are genuinely TWO JOBS here and, until this change, the
+// screen never named either of them:
+//
+//   BUILDING THE WIKI — ingest, Health scans and Compile. ONE model does all
+//     three; there is no second knob (see renderModelPickerScope's docblock for
+//     why an override on the other two is not merely unused but INEXPRESSIBLE).
+//     It has to be a model somebody measured against the real ingest prompt,
+//     because a model that quietly emits JSON the parser cannot repair writes
+//     broken pages while looking fine.
+//   ANSWERING QUESTIONS — chat. Any model can do it. Nothing is at risk but the
+//     cost of one answer, and the choice is per message, in the composer.
+//
+// EVERY CONFUSING ARTEFACT ON THE OLD SCREEN FOLLOWED FROM THAT SPLIT BEING
+// INVISIBLE. The `chat only — not for ingest` badge, `never measured here`,
+// "Test on my wiki", the two admission standards — each of them was CORRECT and
+// each of them explained a piece of MACHINERY instead of stating the CHOICE. So
+// the machinery is not deleted; it is put underneath a sentence that says what
+// the user is actually deciding.
+//
+// THE ORDER IS THE ARGUMENT, and it is deliberately not the old one:
+//
+//   1. THE BUILD MODEL — one choice, one list, across every connected provider.
+//      Provider is a LABEL on a row here, not the structure of the page.
+//   2. CHAT — a statement and a pointer, never a second picker. Duplicating the
+//      composer's control here would recreate exactly the "which one of these
+//      am I setting?" question this change exists to remove.
+//   3. CONNECTIONS — the keys. Below the two jobs, because a key is plumbing:
+//      you touch it once and then you are choosing models for the rest of the
+//      product's life.
+//   4. EVERY MODEL, BY PROVIDER — the reference shelf. The full catalogue with
+//      search, and the one path from "nobody has measured this" into the build
+//      list. Folded, because it answers a question most users never ask.
+//
+// WHAT IS DELIBERATELY NOT HIDDEN. Nothing is removed from the catalogue and no
+// measured warning moves behind a click. A model's ABSENCE from the build list
+// is now the message that it cannot build a wiki — which is why the per-row
+// `chat only — not for ingest` badge could go: it was true of 194 of ~199 rows,
+// and a flag on 97% of a list carries no information (the finding v3.16.1
+// recorded about the caution flag, one level up).
+
+/**
+ * ── ONE VOCABULARY: WHO MEASURED THIS MODEL FOR THIS JOB ────────────────────
+ *
+ * A row used to mix six vocabularies — `caution`, `chat only — not for ingest`,
+ * `never measured here`, `out-performed`, `thinks`, `free` — three of which were
+ * different ways of saying something about measurement. This is the one that
+ * remains, and it has exactly three values because `measuredBy` on the wire has
+ * exactly three (llm.js's `measurementProvenance`: 'curator' / 'user' / null).
+ *
+ * IT IS NOT A QUALITY SCORE, and the copy is written so it cannot be read as
+ * one. `not measured` means UNMEASURED, never BAD: `z-ai/glm-5.3-flash` is
+ * hand-measured AND carries a caution, while a fetched entry may be excellent
+ * and simply unprobed. What a model actually costs, and what we actually found,
+ * are the other two facts on the row and neither is folded away.
+ *
+ * `curator` and `user` STAY APART, and that is the whole reason the build lane
+ * grew a third state rather than widening `suitability`: "we measured this
+ * across documents, against its siblings" and "you ran nine of these on one
+ * document, on one day" are different epistemic claims. Collapsing them would
+ * badge a nine-run local probe identically to a multi-document measurement.
+ */
+const MEASUREMENT_CHIPS = Object.freeze({
+  curator: Object.freeze({
+    key: 'curator',
+    label: 'measured by The Curator',
+    cls: 'model-measured-curator',
+    title: 'The Curator ran this model against its real ingest planning prompt, on real prose, ' +
+      'across documents. The price and the limits on this row are things we observed.',
+  }),
+  user: Object.freeze({
+    key: 'user',
+    label: 'measured on your wiki',
+    cls: 'model-measured-user',
+    title: 'You measured this model yourself, on your own pages. What you ran, on which wiki and ' +
+      'when is inside the row. That is a screen, not a guarantee.',
+  }),
+  none: Object.freeze({
+    key: 'none',
+    label: 'not measured',
+    cls: 'model-measured-none',
+    title: 'Nobody has run this model against The Curator’s ingest prompt. That says nothing ' +
+      'about whether it is good — only that we cannot tell you how it would build a wiki.',
+  }),
+});
+
+/**
+ * The chip for one row.
+ *
+ * `measuredBy` is READ OFF THE WIRE where the route sends it, so this file owns
+ * no second copy of the rule. The lane fallback fires only when the field is
+ * genuinely ABSENT (an older backend that predates it) — never when it is an
+ * explicit `null`, which is the route saying "nobody measured this". Those two
+ * are different facts and collapsing them would report every Gemini and
+ * Anthropic model as unmeasured against a backend that simply does not send the
+ * field yet.
+ */
+function measurementChip(m, lane) {
+  const v = (m && typeof m === 'object') ? m.measuredBy : undefined;
+  if (v === 'curator') return MEASUREMENT_CHIPS.curator;
+  if (v === 'user') return MEASUREMENT_CHIPS.user;
+  if (v === undefined) {
+    // ── ONLY *ONE* LANE MEANS NOBODY LOOKED ────────────────────────────
+    // Three of the four lanes are measurements, and the first draft of this
+    // fallback got that wrong — it mapped everything except the two BUILD
+    // lanes to "not measured", which badged `gemini-3.5-flash-lite` as
+    // unmeasured. That model has NINE live runs behind it and is chat-only
+    // precisely BECAUSE of what they found (2 of 9 returned JSON neither the
+    // parser nor the repair pass could fix). "We measured it and it cannot do
+    // this job" and "nobody has looked" are different claims, and printing the
+    // second over the first deletes the evidence for the verdict.
+    //
+    // CHAT_UNMEASURED is the one lane whose definition IS the absence of a
+    // measurement (`jsonRaw === null`, which llm.js permits only on a
+    // chat-only entry, exactly so a null can never be read as `false`).
+    if (lane === MODEL_LANES.BUILD_LOCAL) return MEASUREMENT_CHIPS.user;
+    if (lane === MODEL_LANES.BUILD_MEASURED || lane === MODEL_LANES.CHAT_UNFIT) {
+      return MEASUREMENT_CHIPS.curator;
+    }
+  }
+  return MEASUREMENT_CHIPS.none;
+}
+
+/** The rendered chip. Kept next to the table so the two cannot drift. */
+function renderMeasurementChip(m, lane) {
+  const c = measurementChip(m, lane);
+  return '<span class="model-badge model-measured ' + escapeHtml(c.cls) + '" title="' +
+    escapeHtml(c.title) + '">' + escapeHtml(c.label) + '</span>';
+}
+
+/**
+ * Does this provider have a key SAVED IN SETTINGS?
+ *
+ * The v3.0.13 rule, in one place instead of the three inline lookup tables this
+ * file used to carry. Null-prototype for the reason renderProviderRow's own
+ * table states: on a plain literal `['constructor']` is TRUTHY, so an inherited
+ * name would read as "keyed" — the opposite of the fail-safe direction. An id
+ * absent from the table reads as NO KEY, which hides a section rather than
+ * offering one that cannot work.
+ */
+function providerHasSavedKey(id, k) {
+  if (!k) return false;
+  const HAS_KEY_BY_PROVIDER = Object.assign(Object.create(null), {
+    gemini: k.hasGeminiKey,
+    anthropic: k.hasAnthropicKey,
+    openrouter: k.hasOpenrouterKey,
+  });
+  return !!HAS_KEY_BY_PROVIDER[id];
+}
+
+/**
+ * The qualification records, indexed by model id, on a NULL-PROTOTYPE object.
+ *
+ * Lifted out of renderModelPicker so the build block and the browse shelf read
+ * the SAME index rather than each building one — two hand-maintained copies of
+ * a lookup is how one row came to claim both lanes (see modelLaneOf).
+ * Null-prototype because an OpenRouter id is a third party's string: on a plain
+ * literal a model called `constructor` would resolve a FUNCTION where a record
+ * belongs (the v3.0.9 shape).
+ */
+function qualIndex(k) {
+  const quals = Object.create(null);
+  const list = (k && Array.isArray(k.qualifications)) ? k.qualifications : [];
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (r && typeof r.modelId === 'string') quals[r.modelId] = r;
+  }
+  return quals;
+}
+
+/**
+ * `k.buildModel`, normalised — or null when the payload cannot answer.
+ *
+ * READ, NEVER RE-DERIVED. The route computes this off the very resolution
+ * ingest, Health and Compile use, so it cannot disagree with them; a client-side
+ * re-derivation would be a second copy of the precedence ladder and would be the
+ * copy that rots. Every field is validated against the values the route
+ * documents, and an unrecognised `source` becomes null rather than being
+ * defaulted to 'default' — inventing a provenance on a spending surface is worse
+ * than admitting we were not told.
+ */
+function buildModelFacts(k) {
+  const b = (k && k.buildModel && typeof k.buildModel === 'object') ? k.buildModel : null;
+  if (!b) return null;
+  const provider = typeof b.provider === 'string' ? b.provider : '';
+  const model = typeof b.model === 'string' ? b.model : '';
+  if (!provider || !model) return null;
+  const source = (b.source === 'env' || b.source === 'selected' || b.source === 'default')
+    ? b.source : null;
+  return {
+    provider,
+    model,
+    source,
+    // `=== true`, not truthiness: the route sends a real boolean, so anything
+    // else is a wire anomaly and must not be read as "your pick is in force".
+    honoured: b.selectedHonoured === true,
+    measuredBy: (b.measuredBy === 'curator' || b.measuredBy === 'user') ? b.measuredBy : null,
+  };
+}
+
+/**
+ * ── PINS THAT GOVERN NOTHING ────────────────────────────────────────────────
+ *
+ * `POST /api-keys/model` — still live, and still the surface for going back to
+ * the app default — stores a pin PER PROVIDER without touching which provider is
+ * active. Only the ACTIVE provider's pin reaches ingest, so a pin under any
+ * other provider is INERT: the user chose a model, the screen agreed, and
+ * nothing obeys it. `docs/user-guide.md` calls that the likeliest user-facing
+ * surprise in the whole router.
+ *
+ * The new build-model route cannot CREATE this state (it names provider and
+ * model together and applies both), but it cannot un-create the ones already on
+ * disk either, and the old route is still reachable. So it is SURFACED rather
+ * than assumed away.
+ *
+ * Derived from the payload — `selectedModels` against `activeProvider` — never
+ * from a provider id, so a fourth provider is covered with no edit here.
+ */
+function inertPins(k) {
+  const out = [];
+  if (!k || !k.selectedModels || typeof k.selectedModels !== 'object') return out;
+  const active = typeof k.activeProvider === 'string' ? k.activeProvider : '';
+  for (const p of PROVIDER_ROWS) {
+    if (!p.available || p.id === active) continue;
+    if (!Object.hasOwn(k.selectedModels, p.id)) continue;
+    const pin = k.selectedModels[p.id];
+    if (typeof pin === 'string' && pin) out.push({ provider: p.id, name: p.name, model: pin });
+  }
+  return out;
+}
+
+/**
+ * Every model that can build the wiki right now, across every connected
+ * provider, in delivered (cheapest-first-per-provider) order.
+ *
+ * ── LANE FROM THE SHARED PREDICATE, NEVER A SECOND TEST ────────────────────
+ * `modelLaneOf` + `laneBuildsWiki` are the same pair the browse shelf, the row
+ * badges and the pick control read, and they mirror `isBuildLaneModel` — the
+ * server's own gate — disjunct for disjunct. So a row can appear in this list
+ * only if the route would accept it as a pin, and the "offer no control that is
+ * guaranteed to be refused" rule holds by construction rather than by care.
+ *
+ * KEY-GATED per provider, the v3.0.13 rule, as a second layer over the route's
+ * own gating (a provider with no SAVED key serialises `offerable: []`).
+ *
+ * `index` is the model's position in its OWN provider's delivered list, carried
+ * through only so a caller can reason about it. It is NOT used to badge a
+ * cheapest row here — see renderBuildList.
+ */
+function buildCandidates(k) {
+  const out = [];
+  if (!k) return out;
+  const quals = qualIndex(k);
+  for (const p of PROVIDER_ROWS) {
+    if (!p.available || !providerHasSavedKey(p.id, k)) continue;
+    const list = (k.offerable && Array.isArray(k.offerable[p.id])) ? k.offerable[p.id] : [];
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (!m || typeof m !== 'object' || typeof m.id !== 'string') continue;
+      const qual = Object.hasOwn(quals, m.id) ? quals[m.id] : null;
+      const lane = modelLaneOf(m, qual);
+      if (!laneBuildsWiki(lane)) continue;
+      out.push({ p, m, index: i, lane, qual });
+    }
+  }
+  return out;
+}
+
+/** How many models a provider offers for CHAT — i.e. all of them. */
+function chatModelCount(k) {
+  let n = 0;
+  if (!k) return n;
+  for (const p of PROVIDER_ROWS) {
+    if (!p.available || !providerHasSavedKey(p.id, k)) continue;
+    const list = (k.offerable && Array.isArray(k.offerable[p.id])) ? k.offerable[p.id] : [];
+    n += list.length;
+  }
+  return n;
+}
 
 function renderProviders() {
   if (state.keysError) {
-    return '<p class="view-body">At least one key is required. One provider is <strong>active</strong>: its model builds your ' +
-      'wiki (ingest, Health scans and Compile). Every provider with a key stays available in the chat model picker.</p>' +
+    return '<p class="view-body">One model builds your wiki — ingest, Health scans and Compile all ' +
+      'share it. Chat is separate and you pick it per message. Connect at least one provider below.</p>' +
       '<div class="settings-inline-error">' + escapeHtml(state.keysError) + '</div>';
   }
   if (!state.keys) {
@@ -1367,30 +1660,300 @@ function renderProviders() {
   // unreachable until the user expanded a list they have no reason to expand
   // — and the refusal it can produce would land inside a section that may not
   // be open at all.
+  // ── THE SHELF: every model, still grouped by provider ─────────────────
+  // The FULL catalogue per provider, both lanes, with search — so "I know I
+  // want Kimi" still works, which is the reason the filter exists at all. What
+  // is not here is a CONTROL: the build choice is made once, above, through the
+  // atomic route. Reference and decision are different surfaces, and only one
+  // of them should have buttons.
   const rows = PROVIDER_ROWS.map((p) =>
-    renderProviderRow(p, k, crossBusy) +
     renderCatalogueSync(p, k, crossBusy) +
     renderModelPicker(p, k, state.modelPickerOpen[p.id] === true, crossBusy)).join('');
 
+  const keyRows = PROVIDER_ROWS.map((p) => renderProviderRow(p, k, crossBusy)).join('');
+
   return (
-    '<p class="view-body">At least one key is required. One provider is <strong>active</strong>: its model builds your ' +
-    'wiki (ingest, Health scans and Compile). Every provider with a key stays available in the chat model picker.</p>' +
-    renderCrossWriteBanner('wait for it to finish before changing keys or the active provider — it may be mid-call.') +
+    '<p class="view-body">There are two jobs here. <strong>One model builds your wiki</strong> — ingest, ' +
+    'Health scans and Compile all share it, and it has to be one somebody has measured doing that job. ' +
+    '<strong>Chat</strong> can use any model you have connected, and you pick it per message.</p>' +
+    renderCrossWriteBanner('wait for it to finish before changing keys or the model that builds your wiki — it may be mid-call.') +
     (state.keysActionError ? '<div class="settings-inline-error">' + escapeHtml(state.keysActionError) + '</div>' : '') +
-    // Deliberately ABOVE the provider list and never behind a disclosure:
-    // a fallback is a silent change to what the user is billed, so it has
-    // to be unmissable on the section that owns providers.
+    // Deliberately ABOVE everything and never behind a disclosure: a fallback
+    // is a silent change to what the user is billed.
     renderFallbackBanner(k.fallback) +
-    // Directly above the Active line, because it exists to explain why that
-    // line reads what it reads. Below the fallback banner, which is a money
-    // warning and keeps the top slot.
-    renderActivationNotice(state.keysActivationNotice) +
-    renderActiveModelLine(k) +
-    '<div class="provider-row-list">' + rows + '</div>' +
-    '<div class="settings-note-row">' +
-      icon('lockAlt', 15) +
-      '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
-      'never sent anywhere except the provider you call.</span>' +
+    // ── JOB 1 ───────────────────────────────────────────────────────────
+    renderBuildBlock(k, crossBusy) +
+    // ── JOB 2 ───────────────────────────────────────────────────────────
+    renderChatBlock(k) +
+    // ── THE PLUMBING ────────────────────────────────────────────────────
+    '<div class="settings-job-block settings-job-keys">' +
+      '<h2 class="settings-job-title">Connections</h2>' +
+      '<p class="settings-job-lede">One key per provider. Connecting a provider makes its models ' +
+      'available for both jobs above; it does not by itself change what builds your wiki.</p>' +
+      // Directly above the key rows, because it exists to explain why the row
+      // the user just saved did not become the active one.
+      renderActivationNotice(state.keysActivationNotice) +
+      '<div class="provider-row-list">' + keyRows + '</div>' +
+      '<div class="settings-note-row">' +
+        icon('lockAlt', 15) +
+        '<span>Keys live in <code class="mono">.curator-config.json</code> at 0600 on this machine. Never committed, ' +
+        'never sent anywhere except the provider you call.</span>' +
+      '</div>' +
+    '</div>' +
+    // ── THE REFERENCE SHELF ─────────────────────────────────────────────
+    // Folded: it answers "show me everything", which most users never ask. It
+    // is NOT where the build decision is made, and it is not a second picker
+    // for chat — it is the catalogue, plus the one path from unmeasured into
+    // the build list.
+    '<details class="settings-job-block settings-shelf"' +
+      (state.modelShelfOpen === true ? ' open' : '') + ' data-model-shelf="1">' +
+      '<summary class="settings-shelf-summary">' +
+        icon('chevronRight', 12) +
+        '<span class="settings-job-title">Every model, by provider</span>' +
+        '<span class="mono settings-shelf-count">' + escapeHtml(String(chatModelCount(k))) + ' in total</span>' +
+      '</summary>' +
+      '<div class="settings-shelf-body">' +
+        '<p class="settings-job-lede">The full catalogue for each provider you have connected, with ' +
+        'search. The models that can build your wiki are listed above and are not repeated here.</p>' +
+        rows +
+      '</div>' +
+    '</details>'
+  );
+}
+
+/**
+ * ── JOB 1: THE ONE MODEL THAT BUILDS THE WIKI ──────────────────────────────
+ *
+ * ONE CHOICE, ONE LIST, ACROSS PROVIDERS. Provider is a label on a row here.
+ * That is the substantive change: `POST /api/config/api-keys/build-model` names
+ * provider AND model together and applies both, so choosing a model from a
+ * different provider is one act rather than "pin a model, then remember to
+ * activate its provider" — the two-step that produced the inert pins this block
+ * also has to report.
+ *
+ * IT LEADS WITH WHAT IS TRUE RIGHT NOW, not with the list. "Which model does
+ * what" is unanswerable from a catalogue; it is answered by one line naming the
+ * model in force, where it came from, and who measured it.
+ */
+function renderBuildBlock(k, crossBusy) {
+  const cands = buildCandidates(k);
+  const busyId = typeof state.modelPickBusy === 'string' ? state.modelPickBusy : '';
+  const pickDisabled = !!crossBusy || busyId !== '';
+
+  const errText = (state.modelPickError && typeof state.modelPickError.build === 'string')
+    ? state.modelPickError.build : '';
+  const errHtml = errText
+    ? '<div class="settings-inline-error model-pick-error" role="alert">' + escapeHtml(errText) + '</div>'
+    : '';
+
+  return (
+    '<div class="settings-job-block settings-job-build">' +
+      '<h2 class="settings-job-title">This model builds your wiki</h2>' +
+      '<p class="settings-job-lede">Ingest, Health scans and Compile all run on it. They always share ' +
+      'one model — there is nothing separate to set for each. Choosing here also makes that model’s ' +
+      'provider the active one, so the choice can never end up applying to nothing.</p>' +
+      renderBuildCurrent(k, pickDisabled) +
+      errHtml +
+      renderBuildList(cands, k, pickDisabled, !!crossBusy, busyId) +
+    '</div>'
+  );
+}
+
+/**
+ * The headline: what builds the wiki right now, and why that model.
+ *
+ * ── `source` IS THE FACT THE OLD SCREEN COULD NOT STATE ────────────────────
+ * "using gemini-2.5-flash-lite" cannot tell a user whether that is THEIRS
+ * (pinned, and it will stay) or OURS (a default, and a release may move them) or
+ * their SHELL's (`LLM_MODEL`, which outranks anything they click here). Those
+ * are three different answers to "am I in control of this", and the route
+ * reports which one applies rather than leaving it to be inferred.
+ *
+ * ── AND IT NAMES INERTNESS PLAINLY RATHER THAN PRETENDING IT CANNOT HAPPEN ──
+ * Two distinct shapes, both real:
+ *   · `source: 'selected'` with `selectedHonoured: false` — the user's pin is on
+ *     the ACTIVE provider and the engine still refused it (a stale id, a model
+ *     pulled after a bad probe, a chat-only id pinned before that gate existed).
+ *   · a pin under a NON-active provider — `inertPins`. The new route cannot
+ *     create one; the old route still can, and the ones already on disk are
+ *     still there.
+ * Silence on either is the dead-data shape this repo keeps re-finding, in the
+ * direction the user notices least: a choice nobody obeys, with no symptom.
+ */
+function renderBuildCurrent(k, pickDisabled) {
+  const b = buildModelFacts(k);
+  if (!b) {
+    // ── TWO DIFFERENT ABSENCES, AND ONLY ONE OF THEM IS "NOTHING BUILDS" ──
+    // `buildModel` is a NEW derived field. A backend that predates it sends
+    // nothing here while still resolving a provider and a model perfectly well,
+    // and telling that user "nothing can build your wiki" would be a false
+    // statement about a working install — the failure mode this whole block
+    // exists to remove, arriving through a different door.
+    //
+    // So degrade to the OLDER pair (`activeProvider` + `activeModel`) rather
+    // than to an error. It is the same value from the same resolution — the
+    // route derives `buildModel.model` from `getProviderInfo()`, which is what
+    // `activeModel` already reported — so this cannot contradict the new field;
+    // it just carries less (no `source`, no `selectedHonoured`, no provenance),
+    // and the copy claims correspondingly less.
+    const a = activeModelLine(k);
+    if (a.show) {
+      return '<div class="build-current" role="status">' +
+        '<span class="build-current-head">' +
+          '<span class="build-current-provider">' + escapeHtml(a.providerLabel) + '</span>' +
+          '<code class="mono build-current-model">' + escapeHtml(a.model) + '</code>' +
+        '</span>' +
+        '<span class="build-current-why">This is what ingest, Health scans and Compile run on.</span>' +
+        '</div>';
+    }
+    return '<div class="build-current build-current-none" role="status">' +
+      '<span class="build-current-head">Nothing can build your wiki yet.</span>' +
+      '<span class="build-current-why">Connect a provider below, then choose a model here. ' +
+      'Until then ingest, Health scans and Compile have no model to run on.</span>' +
+      '</div>';
+  }
+
+  const name = providerLabel(b.provider) || b.provider;
+  const chip = measurementChip({ measuredBy: b.measuredBy }, null);
+
+  let why;
+  if (b.source === 'env') {
+    why = 'Set by <code class="mono">LLM_MODEL</code> in the environment this app was started from. ' +
+      'That overrides anything chosen here, so a choice below will not take effect until it is unset.';
+  } else if (b.source === 'selected' && b.honoured) {
+    why = 'You chose this one, so app updates will not move you off it.';
+  } else if (b.source === 'selected') {
+    why = 'You chose a model, and it is <strong>not the one running</strong> — The Curator refused it ' +
+      'on read (it may no longer be offered, or may never have been measured for this job) and fell ' +
+      'back to the model named above. Choose again below to fix it.';
+  } else if (b.source === 'default') {
+    why = 'Nobody has chosen one, so this follows the app default and can change when The Curator updates.';
+  } else {
+    // An unrecognised `source`. Say nothing rather than pick one of the three —
+    // a fabricated provenance on a spending surface is worse than a gap.
+    why = '';
+  }
+
+  // The ONLY way back to "follow the app default". Picking the default model by
+  // hand PINS it, which is a different state, so the control is offered only
+  // when there is a pin to clear and never renders as a no-op.
+  const clear = (b.source === 'selected')
+    ? ' <button type="button" class="btn btn-secondary btn-xs model-pick-clear"' +
+        ' data-pick-clear="' + escapeHtml(b.provider) + '"' + (pickDisabled ? ' disabled' : '') +
+        '>Follow the app default</button>'
+    : '';
+
+  const inert = inertPins(k).map((pin) =>
+    '<span class="build-current-inert">You also chose <code class="mono">' + escapeHtml(pin.model) +
+    '</code> under <strong>' + escapeHtml(pin.name) + '</strong>. It governs nothing while ' +
+    escapeHtml(name) + ' builds your wiki. Choosing it in the list below would switch to ' +
+    escapeHtml(pin.name) + ' and make it take over.</span>').join('');
+
+  const warn = (b.source === 'selected' && !b.honoured) ? ' build-current-warn' : '';
+
+  return (
+    '<div class="build-current' + warn + '" role="status">' +
+      '<span class="build-current-head">' +
+        '<span class="build-current-provider">' + escapeHtml(name) + '</span>' +
+        '<code class="mono build-current-model">' + escapeHtml(b.model) + '</code>' +
+        '<span class="model-badge model-measured ' + escapeHtml(chip.cls) + '" title="' +
+          escapeHtml(chip.title) + '">' + escapeHtml(chip.label) + '</span>' +
+      '</span>' +
+      (why ? '<span class="build-current-why">' + why + clear + '</span>'
+           : (clear ? '<span class="build-current-why">' + clear + '</span>' : '')) +
+      inert +
+    '</div>'
+  );
+}
+
+/**
+ * The choice: every build-lane model, across providers, cheapest-first within
+ * each provider.
+ *
+ * ── NO `cheapest` BADGE HERE, AND THAT IS A REFUSAL RATHER THAN AN OMISSION ─
+ * The route ships each provider's catalogue cheapest-first, so "index 0 is the
+ * cheapest" is true PER PROVIDER. Concatenated, three providers produce three
+ * index-0 rows — three `cheapest` badges, at most one of which could be true, on
+ * the one screen whose purpose is comparing spend. Re-sorting across providers
+ * to find the real cheapest would mean a client-side price comparator, which is
+ * a second opinion about a money fact and would be the copy that rots (and would
+ * have to decide what `null` means for a free model — the coercion bug §11 of
+ * test-chat-model.js already found sitting in a green assertion).
+ *
+ * So the badge is not rendered, `ctx.showCheapest: false` says so explicitly,
+ * and every row carries its own price unfolded instead. The list is ~19 rows.
+ */
+function renderBuildList(cands, k, pickDisabled, crossBusy, busyId) {
+  if (cands.length === 0) {
+    return '<p class="settings-job-empty">No connected provider currently offers a model that has been ' +
+      'measured for building a wiki. Connect a provider below, or open <strong>Every model, by ' +
+      'provider</strong> and test one on your own pages.</p>';
+  }
+
+  const defaultId = (k && k.buildModel && typeof k.buildModel.model === 'string')
+    ? k.buildModel.model : '';
+  const activeProvider = (k && typeof k.activeProvider === 'string') ? k.activeProvider : '';
+
+  const items = cands.map(({ p, m, index, lane, qual }) => renderModelOption(m, index, defaultId, {
+    provider: p.id,
+    providerName: p.name,
+    providerDot: p.dot,
+    // "in use" must mean THIS provider's model, not merely a matching id: two
+    // providers could in principle offer the same id string, and badging both
+    // would claim two models are building one wiki.
+    isInUse: p.id === activeProvider && m.id === defaultId,
+    // The build choice is made through the ATOMIC route, so a row here can
+    // never leave a pin stranded under a provider that is not active.
+    buildChoice: true,
+    showCheapest: false,
+    selectedId: '',
+    busyId, pickDisabled, crossBusy,
+    quals: qual ? Object.assign(Object.create(null), { [m.id]: qual }) : Object.create(null),
+    qualify: state.qualify,
+    minRuns: Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9,
+    lane,
+  })).join('');
+
+  return (
+    '<div class="build-list-head">' +
+      '<span class="build-list-title">Choose the one</span>' +
+      '<span class="mono build-list-count">' + escapeHtml(String(cands.length)) + ' measured for this job</span>' +
+    '</div>' +
+    '<ul class="model-list build-list">' + items + '</ul>'
+  );
+}
+
+/**
+ * ── JOB 2: CHAT ────────────────────────────────────────────────────────────
+ *
+ * A STATEMENT AND A POINTER. Never a second picker.
+ *
+ * The composer already owns this control, and it owns it for a reason: the
+ * choice is per message, so it belongs beside the message. A duplicate here
+ * would put two controls on one setting and immediately reopen the question this
+ * whole restructure exists to close — "which of these two am I actually
+ * setting?" — with the added trap that the Settings copy would be the stale one,
+ * because chat's is sticky per browser and this screen has no idea which
+ * conversation you are in.
+ *
+ * The COUNT is stated because it is the fact that makes the pointer worth
+ * following: "every model" is abstract, "199 models" is a reason to look.
+ */
+function renderChatBlock(k) {
+  const total = chatModelCount(k);
+  const count = total > 0
+    ? '<strong>' + escapeHtml(String(total)) + '</strong> models are available to it right now'
+    : 'No models are available to it yet';
+
+  return (
+    '<div class="settings-job-block settings-job-chat">' +
+      '<h2 class="settings-job-title">Chat</h2>' +
+      '<p class="settings-job-lede">Chat can use <strong>any</strong> model from any provider you have ' +
+      'connected — including the ones that cannot build your wiki, because nothing is at stake in an ' +
+      'answer but the cost of that answer. ' + count + '.</p>' +
+      '<p class="settings-job-lede">You choose it <strong>per message, in the composer</strong> — the ' +
+      'model control sits next to Send in the Chat view. It changes that conversation only and never ' +
+      'touches what builds your wiki. There is deliberately no second control for it here.</p>' +
     '</div>'
   );
 }
@@ -1835,10 +2398,27 @@ function renderProviderRow(p, k, crossBusy) {
 //     runs, `selectedModels[p.id]` = what the user asked for, straight off
 //     the wire) is what keeps that claim honest now that it can be acted on.
 // See `renderModelPicker()` and `onPickModel()` below for the mechanics.
-const MODEL_SUITABILITY_BADGES = {
-  'chat-only': 'chat only — not for ingest',
-  caution: 'caution',
-};
+//
+// ── `MODEL_SUITABILITY_BADGES` IS GONE, AND IT IS A DELETION, NOT A MOVE ───
+// It held two labels and both have stopped being labels:
+//
+//   'chat-only' -> 'chat only — not for ingest'. True of 194 of ~199 rows once
+//     the live catalogue landed. A flag on 97% of a list carries no
+//     information — the finding v3.16.1 recorded about the caution flag, one
+//     level up. What replaced it is STRUCTURAL: a model's absence from the
+//     build list is the claim, and the shelf's lane heading states it once for
+//     the group instead of ~194 times per screen.
+//   'caution' -> 'caution'. It printed the WORD beside a line that already
+//     opened with the REASON: `cautionReason` is the first clause of
+//     `formatModelSummary`, unfolded, and `defineOfferableModel` REFUSES to
+//     build a flagged entry without one. The badge was a label for text sitting
+//     directly beneath it. The visual signal it bought is kept by styling that
+//     line (`model-row-derived-warn`), which is strictly more information.
+//
+// The underlying `suitability` FIELD is untouched: it is enforced at two layers
+// server-side, it is what `modelLaneOf` reads, and suites pin it. Only these
+// two display strings are gone, and the const with them — a table nothing reads
+// is the dead-data shape this file's own comments keep naming.
 
 /**
  * ── THE ONE PLACE A ROW'S LANE IS DECIDED ──────────────────────────────
@@ -2184,9 +2764,39 @@ function renderCatalogueSync(p, k, crossBusy) {
   const when = formatSyncedAt(meta && meta.syncedAt) ||
     (last ? formatSyncedAt(last.syncedAt) : '');
 
+  // ── THE CATALOGUE MUST NEVER BE SILENTLY PARTIAL ───────────────────────
+  // The maintainer's report — "the models sometimes show and sometimes do not"
+  // — had exactly one cause: this list can be ABSENT, STALE or FAILED, and none
+  // of those said so where the consequence lands. `getOpenRouterCatalogueMeta`
+  // now reports `loaded`, `stale`, `reason`, `count` and `maxAgeMs`, and the
+  // freshness THRESHOLD stays server-side: re-deriving "older than a day" here
+  // would be a second copy of a rule, and the client half is the one that rots.
+  //
+  // `loaded` is read rather than inferred from `count > 0`, because "the
+  // catalogue is absent" and "it is present and holds nothing" are different
+  // facts and a consumer that infers the first from a zero will misreport the
+  // second the day it becomes reachable.
+  const loadedCount = (meta && typeof meta.count === 'number' && Number.isFinite(meta.count))
+    ? meta.count : null;
+  const notLoaded = !!(meta && meta.loaded === false);
+  const isStale = !!(meta && meta.stale === true && meta.reason === 'stale');
+
   let statusLine;
-  if (when) {
-    statusLine = 'Last refreshed <strong>' + escapeHtml(when) + '</strong>.';
+  if (notLoaded) {
+    // The state that produced the complaint. Say what is missing, what is still
+    // there, and what to do — never a bare silence that reads as "this provider
+    // has nothing", which is a lie about capability.
+    statusLine = '<strong>No model list has been fetched from ' + escapeHtml(p.name) + ' yet.</strong> ' +
+      'Only the models The Curator has measured itself are listed. Refresh to fetch the rest — ' +
+      'it is a free, public request and costs no tokens.';
+  } else if (isStale && when) {
+    statusLine = 'Last refreshed <strong>' + escapeHtml(when) + '</strong> — more than a day ago, so ' +
+      'this list <strong>may be out of date</strong>. ' + escapeHtml(p.name) + ' adds and retires ' +
+      'models most weeks. Refresh to be sure.' +
+      (loadedCount !== null ? ' <span class="mono">' + escapeHtml(formatTokenCount(loadedCount) + ' loaded') + '</span>' : '');
+  } else if (when) {
+    statusLine = 'Last refreshed <strong>' + escapeHtml(when) + '</strong>.' +
+      (loadedCount !== null ? ' <span class="mono">' + escapeHtml(formatTokenCount(loadedCount) + ' loaded') + '</span>' : '');
   } else if (last || hasFetched) {
     // A refresh has demonstrably happened — either this session, or the list
     // carries fetched models — but no usable instant came with it. Say that,
@@ -2281,10 +2891,12 @@ function renderCatalogueSync(p, k, crossBusy) {
       // Said once, here, rather than on every fetched row. It is the whole
       // point of the control and it must not be discoverable only by
       // expanding something.
-      '<span class="catalogue-sync-note">Fetched models are <strong>chat only</strong>. ' +
+      '<span class="catalogue-sync-note">Fetched models arrive <strong>chat only</strong>. ' +
       'They have never been measured against The Curator’s ingest prompt, so they cannot build ' +
-      'your wiki — ' + escapeHtml(p.name) + ' tells us what a model costs; only we can measure ' +
-      'whether it does our job.</span>' +
+      'your wiki — ' + escapeHtml(p.name) + ' tells us what a model costs; only a real run can ' +
+      'measure whether it does our job. <strong>Want one of them to build your wiki?</strong> Open its ' +
+      'row below and check it on your own material first — that is the only way in, and it is ' +
+      'yours to run.</span>' +
       sessionOnly +
       funnelHtml +
       errHtml +
@@ -2341,44 +2953,55 @@ function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled, s
   const other = s.activeLabel ? escapeHtml(s.activeLabel) : 'the active provider';
   const self = s.providerLabel ? escapeHtml(s.providerLabel) : 'this provider';
 
+  // ── THIS PARAGRAPH NO LONGER MAKES THE LANE CLAIM ──────────────────────
+  // It used to open "This model builds your wiki" / "This model does not build
+  // your wiki", once per provider — and that repetition IS the framing being
+  // removed. Every section looked equally in force; only the ACTIVE provider's
+  // pin ever reached ingest; and the maintainer hit exactly that, pinning a
+  // model under one provider with the other active and having to ask which one
+  // his next ingest would use.
+  //
+  // The claim is now made ONCE, at the top of the screen, by renderBuildCurrent
+  // — which has the payload to say more than this ever could: whether the model
+  // is a pin or a default, whether `LLM_MODEL` is overriding both, and whether
+  // a stored pin was refused on read. Here the section is a CATALOGUE, so the
+  // paragraph says what the catalogue is, names which provider is active so the
+  // relationship is still legible, and stops.
+  //
+  // The chain is unchanged and still worth stating, because it is why there is
+  // only one claim to make: ingest, Health scans and Compile all call
+  // `generateText` with NO override, so each resolves getProviderInfo() ->
+  // getActiveProvider() -> defaultModelFor(provider) -> applyModelOverride(...).
+  // The governing pair is (ACTIVE provider, that provider's pin) — and on
+  // health-ai.js and compile.js an override is not merely unused, it is
+  // INEXPRESSIBLE (their `generateText` calls are four- and five-argument; the
+  // provider/model live in argument SIX). There is no second knob to look for.
   const lane = s.isActive
-    ? '<strong>This model builds your wiki.</strong> Ingest, Health scans and Compile all run on ' +
-      idCode + ' — they always share one model, so there is nothing separate to set. ' +
-      'Chat is the one place you choose per message, and choosing there does not change this.'
-    : '<strong>This model does not build your wiki.</strong> Ingest, Health scans and Compile all run on ' +
-      other + ', the active provider. Make ' + self + ' active and this choice takes over all three. ' +
-      'Until then chat can still use ' + idCode + ' any time you pick it in the composer.';
+    ? 'Every model ' + self + ' offers, with what each one costs. ' + self + ' is the ' +
+      '<strong>active provider</strong>, so ' + idCode + ' is what builds your wiki — chosen at the ' +
+      'top of this screen, not here. Everything listed below is available in <strong>chat</strong>, ' +
+      'which you pick per message in the composer.'
+    : 'Every model ' + self + ' offers, with what each one costs. ' + other + ' is the ' +
+      '<strong>active provider</strong> right now, so nothing here builds your wiki today — choosing ' +
+      'one of these at the top of this screen would switch to ' + self + ' and make it take over. ' +
+      'Everything listed below is available in <strong>chat</strong>, which you pick per message in ' +
+      'the composer.';
 
-  // Two genuinely different states, and conflating them is the reason this
-  // sentence exists. "Following the default" means a future release can bump
-  // you onto a newer model; "pinned" means it cannot. A user deciding what to
-  // spend needs to know which of those they are in.
-  const pinned = selectedId
-    ? ' You have pinned this choice, so app updates will not move you off it.'
-    : ' You have not picked one, so this follows the app default and can change when The Curator updates.';
-
-  // The ONLY way back to "follow the default" — picking the default model by
-  // hand pins it, which is a different thing. Offered only when there is
-  // something to clear, so the control never appears as a no-op.
-  const clear = selectedId
-    // btn-secondary, not btn-ghost: a ghost button inside this tinted
-    // paragraph rendered as plain prose in the browser, so the one route back
-    // to the un-pinned state did not read as a control at all.
-    ? ' <button type="button" class="btn btn-secondary btn-xs model-pick-clear"' +
-        ' data-pick-clear="' + escapeHtml(String(provider === undefined || provider === null ? '' : provider)) + '"' +
-        (pickDisabled ? ' disabled' : '') +
-        '>Follow the app default</button>'
-    : '';
-
-  // Tinted amber only on the ACTIVE section. The inactive one is a plain
-  // recessed note: amber there would read as a warning about a provider that
-  // is simply not selected, and would give both sections the same visual
-  // weight — which is the confusion being fixed.
-  const cls = s.isActive ? 'model-picker-scope model-picker-scope-live' : 'model-picker-scope';
+  // ── WHAT MOVED OUT OF THIS PARAGRAPH, AND WHERE IT WENT ────────────────
+  // The pinned-vs-default sentence and the "Follow the app default" button both
+  // live in renderBuildCurrent now. They moved rather than disappeared, and the
+  // move is the point: there is ONE build model, so there is one place to say
+  // whether it is pinned and one control to un-pin it. Repeating either per
+  // provider is what made three sections look equally live.
+  //
+  // `selectedId` and `pickDisabled` stay in the signature. They are what those
+  // two surfaces were derived from, so a caller that stops passing them would
+  // be a caller that has lost track of what it is rendering — and the shape is
+  // pinned by assertions.
 
   return (
-    '<p class="' + cls + '">' + lane + pinned +
-    ' Prices are per 1M tokens, as billed today.' + clear + '</p>'
+    '<p class="model-picker-scope">' + lane +
+    ' Prices are per 1M tokens, as billed today.</p>'
   );
 }
 
@@ -2404,20 +3027,13 @@ function renderModelPickerScope(defaultId, selectedId, provider, pickDisabled, s
 function renderModelPicker(p, k, isOpen, crossBusy) {
   if (!p || !p.available || !k) return '';
 
-  // Null-prototype for the same reason KEY_INFO_BY_PROVIDER above is: on a
-  // plain literal `HAS_KEY_BY_PROVIDER['constructor']` is truthy, so the gate
-  // below would PASS for an inherited name — the opposite of the fail-safe
-  // direction this docblock promises.
-  const HAS_KEY_BY_PROVIDER = Object.assign(Object.create(null), {
-    gemini: k.hasGeminiKey,
-    anthropic: k.hasAnthropicKey,
-    // v3.15.0 — OpenRouter. A further provider (a local runtime) adds ONE
-    // line here and one entry to PROVIDER_ROWS. Nothing else in this file
-    // needs to change: the section, its header and its list are all derived
-    // from the catalogue the route sends for that id.
-    openrouter: k.hasOpenrouterKey,
-  });
-  if (!HAS_KEY_BY_PROVIDER[p.id]) return '';
+  // The v3.0.13 saved-key gate, now through the one shared helper. It is
+  // null-prototype for the reason that helper's docblock states: on a plain
+  // literal `['constructor']` is truthy, so the gate would PASS for an
+  // inherited name — the opposite of the fail-safe direction this docblock
+  // promises. A further provider (a local runtime) adds ONE line there and one
+  // entry to PROVIDER_ROWS; nothing else in this file needs to change.
+  if (!providerHasSavedKey(p.id, k)) return '';
 
   // TWO DIFFERENT ABSENCES, and only one of them is a fact worth rendering.
   //   `offerable[p.id]` is an ARRAY  — the server TOLD us this provider's
@@ -2491,17 +3107,29 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
   // `constructor` or `__proto__` cannot resolve through the prototype chain and
   // hand a row a function where a record should be — the v3.0.9 shape, and an
   // OpenRouter id is a third party's string, not ours.
-  const quals = Object.create(null);
-  const qualList = (k && Array.isArray(k.qualifications)) ? k.qualifications : [];
-  for (let i = 0; i < qualList.length; i++) {
-    const r = qualList[i];
-    if (r && typeof r.modelId === 'string') quals[r.modelId] = r;
-  }
+  const quals = qualIndex(k);
   const ctx = {
     provider: p.id, selectedId, busyId, pickDisabled, crossBusy: !!crossBusy,
     quals,
     qualify: state.qualify,
     minRuns: Number.isFinite(k && k.minRunsToQualify) ? k.minRunsToQualify : 9,
+    // ── THIS LIST IS REFERENCE, NOT A CONTROL SURFACE ───────────────────
+    // Every model is still shown, in both lanes, with search — so "I know I
+    // want Kimi" still works, which is the reason the filter exists. What is
+    // NOT here is the pick control: the ONE model that builds the wiki is
+    // chosen once, at the top of the screen, through the atomic route that
+    // names provider and model together. Two controls writing the same setting
+    // through two endpoints — one of which can leave the choice inert — is the
+    // confusion this restructure removes, not a convenience.
+    //
+    // UNCONDITIONAL, deliberately. It was briefly a parameter; that left the
+    // old per-provider copy as a branch production could never reach, with
+    // assertions still driving it — a guard that cannot fail, over dead code.
+    readOnlyList: true,
+    // Only the ACTIVE provider's section may badge a row `in use` — see
+    // renderModelOption's isDefault. A non-active provider's default is what it
+    // WOULD use, which is not the same claim and must not read like one.
+    inUseId: (k.activeProvider === p.id) ? defaultId : '',
   };
   // ── FILTER, THEN RENDER ────────────────────────────────────────────────
   // Applied to the DELIVERED list, so the lane grouping and every row below it
@@ -2590,9 +3218,16 @@ function renderModelPicker(p, k, isOpen, crossBusy) {
   // Identity test against this row's own id, so it is symmetric for any
   // provider and a third one cannot fall into another's arm.
   const isActive = !!(k.activeProvider && k.activeProvider === p.id);
+  // On the shelf the marker states what THIS list is, because the lane claim
+  // now belongs to the build block at the top of the screen and must be made in
+  // exactly one place. Off the shelf it is unchanged.
+  // The marker states which provider is ACTIVE — a fact about this row that is
+  // still worth a glance — but no longer claims that this SECTION is where the
+  // wiki's model is set, because it is not. That claim is made once, in the
+  // build block, where it can also say why.
   const scopeBadge = isActive
-    ? '<span class="model-picker-lane model-picker-lane-live">builds your wiki</span>'
-    : '<span class="model-picker-lane model-picker-lane-idle">not active — chat can still use it</span>';
+    ? '<span class="model-picker-lane model-picker-lane-live">active provider</span>'
+    : '<span class="model-picker-lane model-picker-lane-idle">chat</span>';
 
   return (
     '<details class="model-picker"' + (isOpen === true ? ' open' : '') +
@@ -3059,17 +3694,21 @@ function renderModelLanes(list, defaultId, ctx) {
       (localBuild.length === 1 ? 'one is' : escapeHtml(String(localBuild.length)) + ' are') +
       ' here because <strong>you</strong> measured ' +
       (localBuild.length === 1 ? 'it' : 'them') + ' on your own wiki — badged ' +
-      '<span class="model-badge model-badge-local">you measured this on your wiki</span>, ' +
+      '<span class="model-badge model-measured model-measured-user">measured on your wiki</span>, ' +
       'with what you ran, on which wiki and when inside the row.';
 
   const buildHtml =
     head('model-lane-head-build', 'Can build your wiki', buildNote, build.length) +
     ul(build);
 
+  // ── ONE SENTENCE FOR THE WHOLE GROUP, INSTEAD OF A BADGE ON EVERY ROW ──
+  // This is where `chat only — not for ingest` used to be repeated ~194 times.
+  // The lane heading states it once for the group; the per-row chip says only
+  // WHO measured the model, which is the fact that differs between rows.
   const chatNote =
-    'These cannot run ingest, Health scans or Compile. Some were measured and found unfit for that ' +
-    'job; the rest have never been measured against it at all and are marked ' +
-    '<span class="model-badge model-badge-unmeasured">never measured here</span> — the provider ' +
+    'These cannot run ingest, Health scans or Compile. Some we measured and found unfit for that ' +
+    'job; the rest nobody has measured against it at all, and are marked ' +
+    '<span class="model-badge model-measured model-measured-none">not measured</span> — the provider ' +
     'tells us what they cost, not whether they can do the job. All of them stay fully usable in chat, ' +
     'which you pick per message in the composer.';
 
@@ -3320,12 +3959,24 @@ function renderQualifyPanel(q, minRuns) {
         : 'The cost cannot be estimated — no price is published for this model.';
     return (
       '<div class="model-qual model-qual-confirm">' +
-        '<p class="model-qual-head">Measure this model against your wiki?</p>' +
-        '<p class="model-qual-facts">It will run the real ingest planning prompt ' +
+        // ── THE BRIDGE, NAMED BY ITS OUTCOME ────────────────────────────
+        // The old heading ("Measure this model against your wiki?") described
+        // the mechanism. What the user is deciding is whether to let this model
+        // build their wiki, and the answer is "not until somebody has watched
+        // it try". Every honest fact below is unchanged and none is softened:
+        // the real run count, the real prompt size, the measured duration
+        // range, the cost, that it writes nothing, and — in renderQualification
+        // — that a clean result is a screen and not a certificate.
+        '<p class="model-qual-head">Want this model to build your wiki? Let’s check it on your own ' +
+          'material first.</p>' +
+        '<p class="model-qual-facts">It will run The Curator’s real ingest planning prompt ' +
           escapeHtml(String(e.runs || minRuns)) + ' times against your <code class="mono">' +
           escapeHtml(String(e.domain || '')) + '</code> wiki (' +
           escapeHtml(String(e.promptChars || 0)) + ' characters per run, built from your own index and ' +
-          'page list) and report exactly what came back. It writes nothing.</p>' +
+          'page list) and report exactly what came back. <strong>It writes nothing</strong> — no pages, ' +
+          'no edits — and you can stop it at any point. If nothing goes wrong it joins the list of ' +
+          'models that can build your wiki; a single clean run is not the same as the multi-document ' +
+          'measurement behind the models we ship, and it is labelled differently.</p>' +
         '<p class="model-qual-time"><strong>Time: roughly ' +
           escapeHtml(String(Math.round((t.fastestSeconds || 0) / 60))) + ' to ' +
           escapeHtml(String(Math.round((t.slowestSeconds || 0) / 60))) + ' minutes.</strong> ' +
@@ -3396,7 +4047,33 @@ function renderModelOption(m, index, defaultId, ctx) {
   if (!m || typeof m !== 'object') return '';
   const c = ctx || {};
 
-  const isDefault = !!(defaultId && m.id === defaultId);
+  // "In use" defaults to a plain id match (every existing caller), but the
+  // cross-provider build list overrides it: two providers can in principle
+  // offer the same id string, and badging both would claim two models are
+  // building one wiki.
+  // ── "IN USE" MUST MEAN ONE MODEL ON THE WHOLE PAGE ────────────────────
+  // MEASURED IN A BROWSER, not reasoned about: the first cut rendered FOUR
+  // `in use` badges at once — one in the build list plus one per provider on
+  // the shelf, because each section badged its OWN default. That was the old
+  // per-section semantics and it was defensible while provider WAS the
+  // structure. Beside a block stating that ONE model builds the wiki, four
+  // claims of "in use" is the contradiction this screen exists to remove.
+  //
+  // Three ways to answer, in falling specificity, so a caller says exactly as
+  // much as it knows:
+  //   `isInUse`  a boolean the caller resolved per row — the build list, which
+  //              must also compare PROVIDER (two providers could offer the same
+  //              id string, and badging both would claim two models build one
+  //              wiki).
+  //   `inUseId`  the id genuinely in force, or '' for "nothing here is". The
+  //              shelf passes '' for every non-active provider.
+  //   neither    the original behaviour, byte-identical: badge the model this
+  //              provider would use. Every direct-render caller keeps it.
+  const isDefault = typeof c.isInUse === 'boolean'
+    ? c.isInUse
+    : (typeof c.inUseId === 'string'
+        ? (!!c.inUseId && m.id === c.inUseId)
+        : !!(defaultId && m.id === defaultId));
 
   // ── THE LANE, RESOLVED ONCE FOR THE WHOLE ROW ────────────────────────
   // Every claim below about what this model may be used FOR reads `lane`.
@@ -3404,8 +4081,14 @@ function renderModelOption(m, index, defaultId, ctx) {
   // nothing re-derives "is it locally qualified" — that is what let the badge,
   // the note and the control drift into contradicting each other. See
   // modelLaneOf.
+  //
+  // `c.lane` is an OPTIONAL pre-resolved value from a caller that has already
+  // run the same predicate over the same record (the build list, which had to
+  // partition on it to build itself). It is a reuse, not a second opinion: the
+  // fallback below is the identical call, so passing it or omitting it produces
+  // the same lane for the same inputs.
   const qual = qualificationFor(c, m);
-  const lane = modelLaneOf(m, qual);
+  const lane = c.lane || modelLaneOf(m, qual);
   const buildsWiki = laneBuildsWiki(lane);
   // THREE INDEPENDENT AXES, all shown at once and never collapsed into one
   // marker. "in use" is what the app runs; "your choice" is what the user
@@ -3416,24 +4099,46 @@ function renderModelOption(m, index, defaultId, ctx) {
   // and did I ask for that?).
   const isSelected = !!(c.selectedId && m.id === c.selectedId);
   const badges = [];
+  // The provider, as a LABEL on the row. Rendered only where the list mixes
+  // providers (the build choice) — inside a per-provider section it would
+  // repeat the section heading on every row.
+  if (c.providerName) {
+    badges.push('<span class="model-provider-chip">' +
+      (c.providerDot ? '<span class="provider-dot" style="background:' + c.providerDot + '"></span>' : '') +
+      escapeHtml(c.providerName) + '</span>');
+  }
   if (isDefault) badges.push('<span class="model-badge model-badge-default">in use</span>');
   if (isSelected) badges.push('<span class="model-badge model-badge-chosen">your choice</span>');
-  if (index === 0) badges.push('<span class="model-badge model-badge-cheapest">cheapest</span>');
-  // A non-'general' verdict and a `dominated` flag are INDEPENDENT axes and
-  // both are shown: a model can be honestly priced and fully usable while a
-  // same-priced sibling measured better (claude-opus-4-5), and that is a
-  // different fact from "measured unfit for ingest".
-  // `chat-only` is a LANE claim, so it is derived from `lane` and never read
-  // straight off `suitability` — that direct read is precisely what stamped
-  // "chat only — not for ingest" on a model the user had qualified and the app
-  // was running ingest with. Every OTHER suitability value ('caution') is an
-  // independent axis about quality rather than lane, and is read as before.
-  const suitabilityBadge = m.suitability === 'chat-only'
-    ? (buildsWiki ? '' : MODEL_SUITABILITY_BADGES['chat-only'])
-    : MODEL_SUITABILITY_BADGES[m.suitability];
-  if (suitabilityBadge) {
-    badges.push('<span class="model-badge model-badge-flag">' + escapeHtml(suitabilityBadge) + '</span>');
+  // `showCheapest: false` suppresses it where "index 0" stops meaning cheapest
+  // — see renderBuildList for why a concatenation of per-provider lists cannot
+  // carry this badge honestly, and why re-sorting to recover it was refused.
+  if (index === 0 && c.showCheapest !== false) {
+    badges.push('<span class="model-badge model-badge-cheapest">cheapest</span>');
   }
+
+  // ── THE ONE MEASUREMENT VOCABULARY ─────────────────────────────────────
+  // Three states, one chip, from the wire's own `measuredBy`. It REPLACES
+  // three separate badges that all said something about measurement in
+  // different words — `chat only — not for ingest`, `never measured here` and
+  // `you measured this on your wiki`.
+  //
+  // WHY `chat only — not for ingest` IS GONE ENTIRELY. It was true of 194 of
+  // ~199 rows once the live catalogue landed: a flag on 97% of a list carries
+  // no information, which is the finding v3.16.1 recorded about the caution
+  // flag one level up. What replaces it is STRUCTURAL — a model's ABSENCE from
+  // the build list above is the statement that it cannot build a wiki, and the
+  // shelf's own lane heading says it once for the whole group instead of ~194
+  // times. The underlying `suitability` field is UNTOUCHED: it is enforced at
+  // two layers server-side and pinned by suites; only this label is dropped.
+  badges.push(renderMeasurementChip(m, lane));
+
+  // KEPT, and it is the one measured fact with no other home. `dominated`
+  // means a SAME-PRICED sibling measured better on every axis we recorded
+  // (claude-opus-4-5 against claude-opus-5) — a comparative claim that
+  // `formatModelSummary` deliberately excludes, and that both this surface and
+  // the composer render with this same word. Dropping it here would delete a
+  // measured comparison from the one screen built for comparing, and would
+  // make the two pickers disagree about one model.
   if (m.dominated) {
     badges.push('<span class="model-badge model-badge-flag">out-performed</span>');
   }
@@ -3462,15 +4167,12 @@ function renderModelOption(m, index, defaultId, ctx) {
   // THIRD state rather than widening `suitability` is so this screen can keep
   // them apart. A locally-qualified model still reports `suitability:
   // 'chat-only'` on the wire; only this badge and the control below change.
-  if (lane === MODEL_LANES.BUILD_LOCAL) {
-    badges.push('<span class="model-badge model-badge-local">you measured this on your wiki</span>');
-  } else if (lane === MODEL_LANES.CHAT_UNMEASURED) {
-    badges.push('<span class="model-badge model-badge-unmeasured">never measured here</span>');
-  }
   // A record that found a DEFECT is the single most valuable thing this feature
   // produces — `z-ai/glm-4.7` returned unrepairable JSON in 9 of 9 runs while
   // passing every structural filter the app has — so it is badged on the row
   // itself, not folded away behind the expand with the rest of the evidence.
+  // It is NOT the same claim as the measurement chip: the chip says who looked,
+  // this says what they found.
   if (qual && !qual.qualifies && qual.outcome === 'DEFECT_OBSERVED') {
     badges.push('<span class="model-badge model-badge-flag">failed on your wiki</span>');
   }
@@ -3584,9 +4286,22 @@ function renderModelOption(m, index, defaultId, ctx) {
   // lane claim: it records what WE measured (gemini-3.5-flash-lite returned
   // unrepairable JSON in 2 of 9 ingest runs), which stays true however many runs
   // the user does on their own wiki.
+  //
+  // THE WARNING TREATMENT REPLACES THE `caution` BADGE, and is strictly more
+  // information than it was. That badge printed the WORD "caution" beside a
+  // line that already began with the REASON — `cautionReason` is the first
+  // clause of this summary, by construction, and `defineOfferableModel` refuses
+  // to build a flagged entry without one. So the badge was a label for text
+  // sitting unfolded directly beneath it. What a badge bought was the visual
+  // signal that a row is flagged; that is kept by styling THIS line rather than
+  // by adding a second element saying less. The rule v3.16.1 set — a warning
+  // behind a click is not a warning — still holds: this line is in the
+  // <summary>, never in the fold.
   const derived = formatModelSummary(m);
+  const flagged = !!(typeof m.cautionReason === 'string' && m.cautionReason.trim());
   const derivedHtml = derived
-    ? '<span class="model-row-line model-row-derived">' + escapeHtml(derived) + '</span>'
+    ? '<span class="model-row-line model-row-derived' + (flagged ? ' model-row-derived-warn' : '') +
+      '">' + (flagged ? icon('alertTriangle', 12) : '') + escapeHtml(derived) + '</span>'
     : '';
   // Declared HERE, above its FIRST use. It was previously declared further
   // down, next to the Test button — and adding a second use above that
@@ -3651,6 +4366,15 @@ function renderModelOption(m, index, defaultId, ctx) {
     // does nothing, and — while a write is running — a click that is refused
     // for no reason the user can act on.
     control = '<span class="model-pick-state">Selected</span>';
+  } else if (c.buildChoice === true && isDefault) {
+    // Same rule one axis over, and it only arises on the cross-provider build
+    // list: the row that is ALREADY building the wiki gets no button, because
+    // the only thing clicking it could do is rewrite the value it has. The
+    // build list deliberately passes no `selectedId` — "your choice" is
+    // reported once, in the headline above, where the distinction between a
+    // pin and a default can actually be explained — so without this arm the
+    // in-use row would offer a guaranteed no-op.
+    control = '<span class="model-pick-state">Building your wiki</span>';
   } else if (!buildsWiki) {
     // ── NO BUILD CONTROL ON A MODEL THE SERVER WILL REFUSE ─────────────────
     // This button pins the model that builds the wiki, and
@@ -3680,30 +4404,75 @@ function renderModelOption(m, index, defaultId, ctx) {
     // WE measured and found unfit (`gemini-3.5-flash-lite`, jsonRaw false)
     // stays a dead end, and offering a button whose only outcome is a refusal
     // is worse than offering none.
+    //
+    // ── THE BRIDGE, LABELLED AS ONE ───────────────────────────────────────
+    // This is the ONLY path from "nobody has measured this" into the list that
+    // builds the wiki, and on the old screen it read as an obscure technical
+    // action sitting beside a refusal. The refusal is still stated — it is the
+    // reason the bridge exists — but the button now says what it is FOR rather
+    // than what it does mechanically. Every honest fact about the run lives in
+    // the confirm panel it opens (renderQualifyPanel): the real run count, the
+    // real character size of the prompt, the measured duration range, that it
+    // is cancellable, and that it writes nothing.
     const canMeasure = c.provider === 'openrouter' && lane === MODEL_LANES.CHAT_UNMEASURED;
     const measuring = !!(c.qualify && c.qualify.modelId === m.id);
     const measureBtn = canMeasure
       ? '<button type="button" class="btn btn-secondary btn-xs model-qualify-btn"' +
           ' data-qualify-model="' + idAttr + '"' +
           (measuring || c.pickDisabled ? ' disabled' : '') +
-          '>' + escapeHtml(qual ? 'Test again' : 'Test on my wiki') + '</button>'
+          ' title="' + escapeHtml('Run The Curator’s real ingest planning prompt against your own pages ' +
+            'and report exactly what came back. It writes nothing and you can stop it at any point.') + '"' +
+          '>' + escapeHtml(qual ? 'Test again on my wiki' : 'Test on my wiki') + '</button>'
       : '';
     control = '<span class="model-pick-state model-pick-state-chat"' +
-      ' title="' + escapeHtml('This model has not been measured for ingest, Health scans or Compile, ' +
-        'so it cannot be set as the model that builds your wiki. Pick it per message in the chat composer instead.') +
+      ' title="' + escapeHtml('Nobody has measured this model against The Curator’s ingest prompt, so it ' +
+        'cannot be the model that builds your wiki. It is fully usable in chat, which you pick per ' +
+        'message in the composer.') +
       '">chat only</span>' + measureBtn;
+  } else if (c.readOnlyList === true) {
+    // ── REFERENCE, NOT A CONTROL SURFACE ──────────────────────────────────
+    // A build-lane row on the shelf. It CAN build the wiki, so the chat-only
+    // refusal above would be a false statement — but the choice is made once,
+    // in the build block, through the atomic route that names provider and
+    // model together. Offering a second button here that writes the same
+    // setting through the OLDER endpoint would reinstate exactly the inert-pin
+    // state renderBuildCurrent has to report: that route pins per provider
+    // without activating it, so a click here could look like it worked and
+    // govern nothing.
+    //
+    // So the row states where the control is instead of carrying a duplicate.
+    control = '<span class="model-pick-state model-pick-state-elsewhere"' +
+      ' title="' + escapeHtml('This model can build your wiki. The choice is made once, at the top of ' +
+        'this screen, so that it always applies — a per-provider pin can end up governing nothing.') +
+      '">can build — choose above</span>';
   } else {
     const label = isPending ? 'Saving…' : 'Use this';
     const disabledAttr = (c.pickDisabled || isPending) ? ' disabled' : '';
     const titleAttr = (c.crossBusy && !isPending)
       ? ' title="' + escapeHtml(crossWriteTitle('changing the model mid-run would plan on one model and write on another, and would invalidate the prompt cache.')) + '"'
       : '';
-    control = (
-      '<button type="button" class="btn btn-secondary btn-xs model-pick-btn"' +
-        ' data-pick-model="' + idAttr + '"' +
-        ' data-pick-provider="' + escapeHtml(String(c.provider === undefined || c.provider === null ? '' : c.provider)) + '"' +
-        disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>'
-    );
+    // ── TWO ROUTES, AND THE ATOMIC ONE IS THE ONLY WAY TO CHOOSE ──────────
+    // `data-build-model` posts to /api-keys/build-model, which names PROVIDER
+    // AND MODEL together and applies both — so a choice made here can never
+    // land as a pin under a provider that is not active (the inert state
+    // renderBuildCurrent has to report for the pins already on disk). It is
+    // what the build list renders and it is the only pick control that ships.
+    //
+    // `data-pick-model` is the older per-provider route. It is retained for a
+    // caller that passes no `buildChoice`, because `onPickModel` is still live:
+    // it owns the CLEAR path ("Follow the app default"), which the build-model
+    // route deliberately has no arm for — "clear the one build model" has no
+    // meaning, since something must build the wiki. Keeping both shapes in one
+    // function is what stops the two payloads drifting apart.
+    control = c.buildChoice === true
+      ? '<button type="button" class="btn btn-secondary btn-xs model-pick-btn"' +
+          ' data-build-model="' + idAttr + '"' +
+          ' data-build-provider="' + escapeHtml(String(c.provider === undefined || c.provider === null ? '' : c.provider)) + '"' +
+          disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>'
+      : '<button type="button" class="btn btn-secondary btn-xs model-pick-btn"' +
+          ' data-pick-model="' + idAttr + '"' +
+          ' data-pick-provider="' + escapeHtml(String(c.provider === undefined || c.provider === null ? '' : c.provider)) + '"' +
+          disabledAttr + titleAttr + '>' + escapeHtml(label) + '</button>';
   }
 
   return (
@@ -4088,6 +4857,20 @@ function wireProviderListeners() {
   document.querySelectorAll('[data-pick-model]').forEach((btn) => {
     btn.addEventListener('click', () =>
       onPickModel(btn.dataset.pickProvider, btn.dataset.pickModel, myMountToken));
+  });
+  // The build choice — a DIFFERENT endpoint, so a different attribute pair
+  // rather than a mode flag on the one above. Two controls that write different
+  // things through one dispatcher keyed on a string is one typo away from the
+  // wrong write, and this one can move the active provider.
+  document.querySelectorAll('[data-build-model]').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      onPickBuildModel(btn.dataset.buildProvider, btn.dataset.buildModel, myMountToken));
+  });
+  // The reference shelf. Record, never re-render — <details> has already
+  // applied the change, so repainting here would throw away the DOM the user is
+  // looking at. Same contract as the per-provider pickers and the model rows.
+  document.querySelectorAll('[data-model-shelf]').forEach((el) => {
+    el.addEventListener('toggle', () => { state.modelShelfOpen = !!el.open; });
   });
   // Clearing is the SAME endpoint with an empty model — never a second write
   // path with its own idea of what "no selection" means.
@@ -4881,6 +5664,99 @@ async function onPickModel(provider, modelId, token) {
       state.modelPickBusy = null;
       state.modelPickError = Object.assign({}, state.modelPickError, {
         [provider]: modelPickErrorMessage(0, { error: err && err.message }),
+      });
+      render(token);
+    }
+  }
+}
+
+/**
+ * ── CHOOSING THE ONE MODEL THAT BUILDS THE WIKI ────────────────────────────
+ *
+ * `POST /api/config/api-keys/build-model` names PROVIDER AND MODEL together and
+ * applies both, so — unlike `onPickModel`, which this does NOT replace — it
+ * cannot produce a pin that governs nothing. That is the whole reason it exists
+ * and the whole reason the build list posts here.
+ *
+ * THE NOT-OPTIMISTIC RULE IS IDENTICAL, and it matters more here, because this
+ * request can also move the ACTIVE PROVIDER: nothing is written into
+ * `state.keys`, the rendered choice moves only after `loadKeys()` has re-read
+ * the server's own answer, and that answer is not necessarily the id just sent
+ * — the route reports `inert: true` when the pin landed and the provider did
+ * not move. A picker claiming a model is in force while the wire still says
+ * otherwise is this repo's named dead-data shape on the one screen where it
+ * costs money.
+ *
+ * `onPickModel` is left alone and still owns the CLEAR path ("Follow the app
+ * default"), because the build-model route has no clearing arm by design —
+ * "clear the one build model" has no meaning, since something must build the
+ * wiki.
+ */
+async function onPickBuildModel(provider, modelId, token) {
+  // Refuse rather than guess, exactly as onPickModel and onSaveKey do.
+  // Null-prototype: on a plain literal `KNOWN['constructor']` is truthy, so an
+  // inherited name would skip this refusal and POST under a provider the server
+  // does not know.
+  const KNOWN = Object.assign(Object.create(null), {
+    gemini: true, anthropic: true, openrouter: true,
+  });
+  const model = typeof modelId === 'string' ? modelId : '';
+  if (!KNOWN[provider] || !model) {
+    state.modelPickError = Object.assign({}, state.modelPickError, {
+      build: 'Cannot choose a model for an unknown provider.',
+    });
+    render(token);
+    return;
+  }
+  // Same key shape as onPickModel's, so renderModelOption's `isPending` test
+  // needs no second form to understand.
+  state.modelPickBusy = provider + '::' + model;
+  state.modelPickError = Object.assign({}, state.modelPickError, { build: '' });
+  render(token);
+  try {
+    const res = await fetch('/api/config/api-keys/build-model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    });
+    if (!res.ok) {
+      // Read the body defensively: a 409 from a proxy, or any non-JSON
+      // response, must still produce a legible refusal rather than an
+      // "Unexpected token '<'" — the class this repo has fixed twice.
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      const message = modelPickErrorMessage(res.status, data);
+      if (!isCurrentMount(token)) return;
+      state.modelPickBusy = null;
+      state.modelPickError = Object.assign({}, state.modelPickError, { build: message });
+      render(token);
+      return;
+    }
+    // The route reports the OUTCOME rather than echoing the request, so an
+    // `inert: true` body means the pin landed and the provider did not move —
+    // not an error, but not what was asked for either, and silence would be the
+    // dead-data shape. Read defensively: a body we cannot parse is not a claim
+    // that anything went wrong.
+    let body = null;
+    try { body = await res.json(); } catch { body = null; }
+    if (!isCurrentMount(token)) return;
+    state.modelPickBusy = null;
+    const inert = !!(body && body.inert === true);
+    state.modelPickError = Object.assign({}, state.modelPickError, {
+      build: inert
+        ? 'Saved, but it is not building your wiki yet — The Curator could not switch to that ' +
+          'provider. Check that its key is still connected below, then try again.'
+        : '',
+    });
+    // The ONLY place the rendered choice moves. Refetching (rather than
+    // trusting the POST's echo) also picks up what llm.js will now actually
+    // resolve, which the headline claims to show.
+    await loadKeys(token);
+  } catch (err) {
+    if (isCurrentMount(token)) {
+      state.modelPickBusy = null;
+      state.modelPickError = Object.assign({}, state.modelPickError, {
+        build: modelPickErrorMessage(0, { error: err && err.message }),
       });
       render(token);
     }
