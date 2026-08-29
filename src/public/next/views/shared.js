@@ -161,6 +161,45 @@ import {
 } from '../app.js';
 import { openSharedBrainWizard, closeSharedBrainWizardIfOpen } from './shared-brain-wizard.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// ── THE TEXT SYSTEM (shared/text.js) ──────────────────────────────────────
+//
+// THIS IS THE VIEW THE DEFECT WAS REPORTED AGAINST: a description in the LEFT
+// sidebar and a near-duplicate in the CENTRE pane, both on screen at once, and
+// the centre one rendered in `.view-body` — the same class domains.js uses for
+// a GENERATED scan sentence and loading-gate.js paints its placeholder in. A
+// measurement and an explanation in one voice.
+//
+// Adopted role by role. Nothing here is a rename and nothing is a recolour:
+//   static prose        -> renderDescription   (ONE treatment, --text-2)
+//   a computed figure   -> renderReadout       (mono value, sans label)
+//   a state / a report  -> renderStatus        (3px left rail, no sentence)
+//   a flag on a row     -> renderBadge         (tone in tint + border only)
+//
+// SIX of the treatments replaced here failed WCAG AA as shipped — measured,
+// not assumed, from tokens/color.css with var() chains resolved and rgba
+// tints composited over their surface, in both themes:
+//
+//   .sb-conn-state    --text-faint     on --surface        2.26 / 2.34
+//   .sb-fellow-pill   --text-faint     on --surface-inset  2.29 / 2.18
+//   .sb-card-note     --text-faint     on --surface        2.26 / 2.34
+//   .sb-cta-desc      --text-3         on --surface        4.27 / 4.14
+//   .sb-admin-hint    --text-3         on --surface        4.27 / 4.14
+//   .sb-card-pending  --attention-text on its own tint     9.11 / **3.21**
+//
+// The first three are under 3:1 — they fail even the floor for NON-text UI —
+// and `.sb-conn-state` is the sidebar's only per-connection state readout.
+//
+// WHAT IS DELIBERATELY *NOT* FOLDED. renderExplainer exists to hide prose, and
+// v3.16.1's rule is that a warning behind a click is not a warning. The
+// shown-once admin token (a credential displayed exactly once) and the GDPR
+// Article 17 revocation warning ("Permanently erases…") therefore stay
+// unfolded, and renderExplainer is NOT imported into this file at all — so
+// there is no way to fold one by accident. The component makes that hard on
+// purpose (`body` takes no tone; the one field that warns renders OUTSIDE the
+// <details>) and that awkwardness is honoured rather than worked around.
+import {
+  renderDescription, renderReadout, renderReadoutGroup, renderStatus, renderBadge,
+} from '../shared/text.js';
 
 function freshState() {
   return {
@@ -398,12 +437,31 @@ function renderSidebar(token) {
       '<div class="sb-conn-list">' +
       state.connections.map((c) => {
         const pending = typeof c.pending_pages === 'number' ? c.pending_pages : 0;
-        const stateLabel = c.read_only ? 'read-only' : (pending > 0 ? pending + ' pending' : 'up to date');
+        // A ONE-OR-TWO-WORD FLAG ON A ROW — the badge role, exactly. It used
+        // to be `.sb-conn-state`, `--text-faint` on the sidebar's --surface:
+        // measured 2.26 dark / 2.34 light, which fails not just the 4.5 AA
+        // text floor but the 3:1 floor for non-text UI. The fix is the role,
+        // not the colour: a badge puts the tone in the tint and the 1px
+        // border (non-text, 3:1, cleared in both themes) and the LABEL at
+        // --text — measured 13.81 dark / 16.39 light on the attention tint.
+        //
+        // ONLY `pending` IS AMBER, and that is the badge's own rule: every
+        // flag carries the same INSTRUCTION to the reader rather than a
+        // severity rank, so a third colour is not introduced to separate
+        // "read-only" from "up to date". Both are ordinary states with
+        // nothing to do about them, so both are neutral; the dot beside them
+        // already distinguishes membership. Amber means "there is work
+        // waiting", and nothing else on this row means that.
+        const stateBadge = c.read_only
+          ? renderBadge({ label: 'read-only', tone: 'neutral' })
+          : pending > 0
+          ? renderBadge({ label: pending + ' pending', tone: 'attention' })
+          : renderBadge({ label: 'up to date', tone: 'neutral' });
         return (
           '<div class="sb-conn-row">' +
             '<span class="sb-conn-dot' + (c.read_only ? ' sb-conn-dot-readonly' : '') + '"></span>' +
             '<span class="sb-conn-name mono">' + escapeHtml(c.label || '(unnamed)') + '</span>' +
-            '<span class="sb-conn-state mono">' + escapeHtml(stateLabel) + '</span>' +
+            stateBadge +
           '</div>'
         );
       }).join('') +
@@ -412,7 +470,7 @@ function renderSidebar(token) {
 
   setSidebar(
     '<div class="sidebar-title">Shared Brain<span class="sb-beta-pill">beta</span></div>' +
-    '<div class="sidebar-hint">Cohorts this install writes to.</div>' +
+    renderDescription('Cohorts this install writes to.') +
     body,
     token
   );
@@ -433,9 +491,21 @@ function renderMain(token) {
   setMain(
     eyebrow('your team’s brain') +
     '<h1 class="view-title">Shared Brain</h1>' +
-    '<div class="view-body">A Shared Brain is a collective wiki a cohort writes together. Contributors push ' +
-    'synthesised summaries of the domains they opt in; the merged wiki comes back as a read-only mirror. Nothing ' +
-    'else on your machine moves.</div>' +
+    // THE REPORTED DEFECT, at its centre-pane end. `.sb-lede` is a SPACING
+    // wrapper only (the 22px `.view-body` used to carry) — the treatment is
+    // the component's. Keeping the margin off the shared class is the point:
+    // per-view spacing on a shared text class is how the 81 one-off classes
+    // this component replaces came about.
+    //
+    // `.view-body` itself SURVIVES in shell.css and is not renamed —
+    // loading-gate.js's loaderHtml() DEFAULTS to it, so deleting the class
+    // would silently unstyle every gated placeholder in the app. What is
+    // retired here is this view's USE of it.
+    '<div class="sb-lede">' +
+      renderDescription('A Shared Brain is a collective wiki a cohort writes together. Contributors push ' +
+        'synthesised summaries of the domains they opt in; the merged wiki comes back as a read-only mirror. ' +
+        'Nothing else on your machine moves.') +
+    '</div>' +
     body,
     token
   );
@@ -445,9 +515,9 @@ function renderDisabled() {
   return (
     '<div class="sb-enable-card">' +
       '<div class="sb-enable-title">Shared Brain is off on this install</div>' +
-      '<p class="settings-hint-text">Turning it on doesn’t connect you to anything by itself — it just unlocks ' +
-      'this view so you can join a cohort with an invite token, or set one up for others to join. Nothing is sent ' +
-      'anywhere until you push a domain to a Shared Brain you’ve configured.</p>' +
+      renderDescription('Turning it on doesn’t connect you to anything by itself — it just unlocks ' +
+        'this view so you can join a cohort with an invite token, or set one up for others to join. Nothing is sent ' +
+        'anywhere until you push a domain to a Shared Brain you’ve configured.') +
       (state.enableError ? '<div class="settings-inline-error">' + escapeHtml(state.enableError) + '</div>' : '') +
       '<button type="button" class="btn btn-primary" id="btn-sb-enable"' + (state.enabling ? ' disabled' : '') + '>' +
         (state.enabling ? 'Enabling…' : 'Enable Shared Brain (beta)') +
@@ -469,14 +539,14 @@ function renderEnabled() {
         '<div class="sb-cta-card">' +
           '<div class="sb-cta-content">' +
             '<h4 class="sb-cta-title">' + icon('users', 16) + ' I have an invite token</h4>' +
-            '<p class="sb-cta-desc">From my cohort, team, or research group.</p>' +
+            renderDescription('From my cohort, team, or research group.') +
           '</div>' +
           '<button type="button" class="btn btn-primary" id="btn-sb-join">Join →</button>' +
         '</div>' +
         '<div class="sb-cta-card">' +
           '<div class="sb-cta-content">' +
             '<h4 class="sb-cta-title">' + icon('sparkles', 16) + ' I’m starting a new Shared Brain</h4>' +
-            '<p class="sb-cta-desc">Set one up for my cohort or team.</p>' +
+            renderDescription('Set one up for my cohort or team.') +
           '</div>' +
           '<button type="button" class="btn btn-secondary" id="btn-sb-create">Set up →</button>' +
         '</div>' +
@@ -557,35 +627,81 @@ function renderCard(conn) {
         repoCell +
       '</div>' +
 
+      // ── FIVE INSTRUMENTS ─────────────────────────────────────────────
+      // Every one of these is computed from the user's own connection, and
+      // the grid used to render its LABELS at --text-3 (4.27 / 4.14, under
+      // the 4.5 AA floor). As readouts the label is --text-2 (8.34 / 7.26)
+      // and the figure is mono at --text — typography.css's own rule, which
+      // gives "counts, versions, tokens, timestamps" to IBM Plex Mono.
+      //
+      // ABSENT IS NOT ZERO: formatRelativeTime already returns a real
+      // never-label rather than a fabricated stamp, and that is passed
+      // through unchanged. Nothing here invents a reading.
+      //
+      // Data handling is the one non-timestamp: its VALUE is the stored
+      // choice (a token — mono is correct) and the clause explaining what
+      // that choice means rides in `provenance`, so the full sentence
+      // survives without a sixth text treatment being invented for it.
+      //
+      // `.sb-card-stats` survives as a SPACING wrapper only — a view-owned
+      // class positioning the component from the outside. No rule in
+      // views/shared.css may name a `tx-` class: shared/text.css owns that
+      // prefix and its suite asserts no other stylesheet defines a rule on
+      // it, which is what stops an adopter re-styling a shared role locally
+      // and re-growing the very classes it replaced.
       '<div class="sb-card-stats">' +
-        '<span><span class="sb-card-stat-label">Last pushed</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_push_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last pulled</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_pull_at, 'never')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Last synthesis</span><span class="mono">' + escapeHtml(formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis')) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Domains</span><span class="mono">' + escapeHtml(domainsLabel) + '</span></span>' +
-        '<span><span class="sb-card-stat-label">Data handling</span><span>' + escapeHtml(dataHandlingLabel) + '</span></span>' +
+      renderReadoutGroup([
+        { label: 'Last pushed', value: formatRelativeTime(conn.last_push_at, 'never') },
+        { label: 'Last pulled', value: formatRelativeTime(conn.last_pull_at, 'never') },
+        { label: 'Last synthesis', value: formatRelativeTime(conn.last_synthesis_at, 'never — ask your admin to run synthesis') },
+        { label: 'Domains', value: domainsLabel },
+        {
+          label: 'Data handling',
+          value: conn.data_handling_terms === 'organisational' ? 'organisational' : 'contributor retains',
+          provenance: dataHandlingLabel,
+        },
+      ]) +
       '</div>' +
 
+      // ── STATE, not a coloured sentence ───────────────────────────────
+      // `.sb-card-pending` painted --attention-text as TEXT on
+      // --attention-tint: measured 9.11 dark but **3.21 light**, under AA,
+      // on a notice about work waiting to be spent on. As a status the amber
+      // is the 3px rail (a border, floor 3:1, measured 10.70 / 3.58) and the
+      // words are --text / --text-2.
+      //
+      // The missing cost estimate stays in the DETAIL, unfolded. It is the
+      // one honest thing this notice says about money and it does not go
+      // behind a click.
       (!readOnly && (pendingCount > 0 || retryCount > 0)
-        ? '<div class="sb-card-pending">' + icon('alertTriangle', 13) +
-          '<span>' +
-            (pendingCount > 0 ? '<span class="mono">' + pendingCount + '</span> page' + (pendingCount === 1 ? '' : 's') + ' ready to push' : '') +
-            (pendingCount > 0 && retryCount > 0 ? ' · ' : '') +
-            (retryCount > 0 ? '<span class="mono">' + retryCount + '</span> queued for automatic retry' : '') +
-          '</span>' +
-          '<span class="sb-card-pending-note">(no cost estimate available for Shared Brain pushes yet)</span>' +
-        '</div>'
+        ? '<div class="sb-card-block">' + renderStatus({
+            state: 'attention',
+            title: [
+              pendingCount > 0 ? pendingCount + ' page' + (pendingCount === 1 ? '' : 's') + ' ready to push' : '',
+              retryCount > 0 ? retryCount + ' queued for automatic retry' : '',
+            ].filter(Boolean).join(' · '),
+            detail: 'No cost estimate is available for Shared Brain pushes yet.',
+          }) + '</div>'
         : '') +
 
+      // A write running elsewhere is an ORDINARY wait, not a finding — the
+      // `.build-current` precedent this status is adopted from is explicit
+      // that a state which "must not be dressed as a problem" stays neutral.
+      // The button is already disabled; this says why.
       (pushBusyDomain
-        ? '<div class="sb-card-busy-note">' + icon('alertTriangle', 13) +
-          '<span>A write (' + escapeHtml(getDomainWriteLabel(pushBusyDomain) || 'write') + ') is already running for <span class="mono">' +
-          escapeHtml(pushBusyDomain) + '</span> — Push is disabled until it finishes.</span></div>'
+        ? '<div class="sb-card-block">' + renderStatus({
+            state: 'neutral',
+            title: 'Push is paused while another write finishes',
+            detail: 'A write (' + (getDomainWriteLabel(pushBusyDomain) || 'write') + ') is already running for ' + pushBusyDomain + '.',
+          }) + '</div>'
         : '') +
 
       (mirrorBusy
-        ? '<div class="sb-card-busy-note">' + icon('alertTriangle', 13) +
-          '<span>A write (' + escapeHtml(getDomainWriteLabel(mirrorDomain) || 'write') + ') is already running for <span class="mono">' +
-          escapeHtml(mirrorDomain) + '</span> — Pull and Synthesize are disabled until it finishes.</span></div>'
+        ? '<div class="sb-card-block">' + renderStatus({
+            state: 'neutral',
+            title: 'Pull and Synthesize are paused while another write finishes',
+            detail: 'A write (' + (getDomainWriteLabel(mirrorDomain) || 'write') + ') is already running for ' + mirrorDomain + '.',
+          }) + '</div>'
         : '') +
 
       renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) +
@@ -596,18 +712,53 @@ function renderCard(conn) {
 
       renderAdmin(conn, card, busy, mirrorBusy) +
 
-      (card.message ? '<div class="sb-card-status' + (card.error ? ' error' : '') + '" aria-live="polite">' + escapeHtml(card.message) + '</div>' : '') +
+      // AN ACTION REPORT — generated by the push/pull/synthesize this user
+      // just ran, and previously rendered in `.sb-card-status`: --text-2 body
+      // prose, i.e. the same voice as this view's own static description. As
+      // a status it reads as a statement about the live system, which is what
+      // it is, and the error case gets the danger rail instead of a colour
+      // modifier on a paragraph.
+      //
+      // THE LIVE REGION NOW ALWAYS EXISTS. It used to be created together
+      // with its first message, which is the classic aria-live failure: a
+      // region inserted at the same moment as its content is frequently not
+      // announced at all. The wrapper is emitted unconditionally and only its
+      // contents change.
+      '<div class="sb-card-live" aria-live="polite">' +
+        (card.message
+          ? renderStatus({ state: card.error ? 'danger' : 'success', title: card.message })
+          : '') +
+      '</div>' +
 
-      (mirrorDomain ? '<p class="sb-card-note">Pulled content appears as the read-only domain <span class="mono">' + escapeHtml(mirrorDomain) + '</span> in the Domains tab.</p>' : '') +
+      // `.sb-card-note` was --text-faint on --surface: measured 2.26 dark /
+      // 2.34 light, which fails even the 3:1 floor for non-text UI. html:true
+      // keeps the mono span on the domain slug; the caller owns escaping and
+      // the one interpolated value is escaped here explicitly.
+      (mirrorDomain
+        ? '<div class="sb-card-note">' +
+            renderDescription(
+              'Pulled content appears as the read-only domain <span class="mono">' +
+              escapeHtml(mirrorDomain) + '</span> in the Domains tab.',
+              { html: true },
+            ) +
+          '</div>'
+        : '') +
 
       '<div class="sb-card-footer">' +
-        '<span class="sb-fellow-pill mono">fellow ' + escapeHtml(fellowShort) + '…</span>' +
+        // A computed identifier flagged on a row — the badge role. It was
+        // --text-faint on --surface-inset: measured 2.29 dark / 2.18 light,
+        // under even the 3:1 non-text floor, on the one string an admin needs
+        // to read out loud to identify themselves in a cohort.
+        renderBadge({ label: 'fellow ' + fellowShort + '…', tone: 'neutral' }) +
         (card.leaveConfirmOpen
           ? '<div class="sb-confirm-inline">' +
-              '<span>Leave this Shared Brain? Your local wiki files stay exactly as they are, including the read-only ' +
-              (mirrorDomain ? '<span class="mono">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
-              ' — only the sync connection is removed from this machine. This does not remove you as a GitHub ' +
-              'collaborator on the repo; ask the admin for that. You can rejoin any time with a new invite token.</span>' +
+              '<div class="sb-confirm-text">' +
+                renderDescription('Leave this Shared Brain? Your local wiki files stay exactly as they are, including the read-only ' +
+                  (mirrorDomain ? '<span class="mono">' + escapeHtml(mirrorDomain) + '</span> mirror' : 'mirror domain') +
+                  ' — only the sync connection is removed from this machine. This does not remove you as a GitHub ' +
+                  'collaborator on the repo; ask the admin for that. You can rejoin any time with a new invite token.',
+                  { html: true }) +
+              '</div>' +
               '<div class="sb-confirm-actions">' +
                 '<button type="button" class="btn btn-secondary btn-xs" data-sb-action="leave-confirm"' + (busy ? ' disabled' : '') + '>' +
                   (card.acting === 'leave' ? 'Leaving…' : 'Leave') +
@@ -662,11 +813,16 @@ function renderPushConfirm(conn, busy) {
   const domains = Array.isArray(conn.local_domains) && conn.local_domains.length ? conn.local_domains.join(', ') : '(no domains configured)';
   const pendingCount = typeof conn.pending_pages === 'number' ? conn.pending_pages : 0;
   return (
+    // A COST GATE, so it is NOT folded and NOT dimmed. renderExplainer is
+    // not even imported into this file — see the header — precisely so a
+    // later edit cannot tuck a spend warning behind a click.
     '<div class="sb-confirm-inline sb-confirm-block">' +
-      '<span>Push will scan <span class="mono">' + escapeHtml(domains) + '</span> for pages changed since your last push ' +
-      '(currently <span class="mono">' + pendingCount + '</span> pending), summarise each with your configured AI provider ' +
-      '— this spends API credits, and Shared Brain pushes don’t have a cost estimate yet — then send the summaries to the ' +
-      'shared repository. Nothing has been sent yet.</span>' +
+      '<div class="sb-confirm-text">' +
+        renderDescription('Push will scan <span class="mono">' + escapeHtml(domains) + '</span> for pages changed since your last push ' +
+          '(currently <span class="mono">' + pendingCount + '</span> pending), summarise each with your configured AI provider ' +
+          '— this spends API credits, and Shared Brain pushes don’t have a cost estimate yet — then send the summaries to the ' +
+          'shared repository. Nothing has been sent yet.', { html: true }) +
+      '</div>' +
       '<div class="sb-confirm-actions">' +
         '<button type="button" class="btn btn-primary btn-xs" data-sb-action="push-confirm"' + (busy ? ' disabled' : '') + '>Push contributions</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="push-cancel">Cancel</button>' +
@@ -677,10 +833,13 @@ function renderPushConfirm(conn, busy) {
 
 function renderSynthesizeConfirm(busy) {
   return (
+    // Also a cost gate — same rule as renderPushConfirm above.
     '<div class="sb-confirm-inline sb-confirm-block">' +
-      '<span>Synthesis merges every pending contributor submission into the collective wiki, using your AI provider to ' +
-      'resolve any conflicting facts — this spends API credits, and Shared Brain synthesis doesn’t have a cost estimate ' +
-      'yet. It’s usually run by the brain admin, weekly or after a batch of pushes. Nothing has been written yet.</span>' +
+      '<div class="sb-confirm-text">' +
+        renderDescription('Synthesis merges every pending contributor submission into the collective wiki, using your AI provider to ' +
+          'resolve any conflicting facts — this spends API credits, and Shared Brain synthesis doesn’t have a cost estimate ' +
+          'yet. It’s usually run by the brain admin, weekly or after a batch of pushes. Nothing has been written yet.') +
+      '</div>' +
       '<div class="sb-confirm-actions">' +
         '<button type="button" class="btn btn-primary btn-xs" data-sb-action="synthesize-confirm"' + (busy ? ' disabled' : '') + '>Run synthesis</button>' +
         '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="synthesize-cancel">Cancel</button>' +
@@ -710,35 +869,60 @@ function renderCohort(conn, card) {
 
   let networkBody;
   if (c === null) {
-    networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Opens on first view…</div>';
+    networkBody = renderDescription('Opens on first view…');
   } else if (c === 'loading') {
-    networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Loading…</div>';
+    networkBody = renderDescription('Loading…');
   } else if (c.error) {
-    networkBody = '<div class="sb-card-cohort-row sb-card-cohort-note">Could not load: ' + escapeHtml(c.error) + '</div>';
+    networkBody = renderDescription('Could not load: ' + c.error);
   } else {
     const members = c.members || [];
     const total = members.reduce((n, m) => n + (m.pages || 0), 0);
     const self = c.selfFellowId ? members.find((m) => m.fellow_id === c.selfFellowId) : null;
     const selfPages = self ? (self.pages || 0) : 0;
-    const attributionText = total > 0
-      ? '<span class="mono">' + selfPages + ' of ' + total + '</span> pages (<span class="mono">' + Math.round((selfPages / total) * 100) + '%</span>)'
-      : 'no contributions yet';
-
-    let mirrorLine;
+    // "Shared pages" is the one reading with a real PROVENANCE clause — the
+    // count is only true as of the last pull, and this view has never had an
+    // endpoint that reports the live remote count without performing one. It
+    // therefore goes in the provenance slot, which is exactly "when/how it
+    // was taken". Where nothing has been pulled the value states that; it is
+    // a measured fact, not an invented zero.
+    // The branch order is byte-for-byte the one that shipped — including the
+    // `conn.storage_type &&` guard on the first arm, which means a connection
+    // with no storage_type at all falls through to "not available" rather
+    // than "not pulled yet". That distinction is preserved deliberately: this
+    // change is a treatment change, not a semantics change.
+    let mirrorReadout;
     if (conn.storage_type && !c.mirrorStats) {
-      mirrorLine = 'not pulled yet';
+      mirrorReadout = { label: 'Shared pages', value: 'not pulled yet' };
     } else if (c.mirrorStats === 'not-pulled') {
-      mirrorLine = 'not pulled yet';
+      mirrorReadout = { label: 'Shared pages', value: 'not pulled yet' };
     } else if (c.mirrorStats && typeof c.mirrorStats.pageCount === 'number') {
-      mirrorLine = '<span class="mono">' + c.mirrorStats.pageCount + '</span> pages (as of your last pull)';
+      mirrorReadout = {
+        label: 'Shared pages',
+        value: c.mirrorStats.pageCount,
+        provenance: 'as of your last pull',
+      };
     } else {
-      mirrorLine = 'not available';
+      mirrorReadout = { label: 'Shared pages', value: 'not available' };
     }
 
-    networkBody =
-      '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Contributors</span><span class="mono">' + members.length + '</span></div>' +
-      '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Your attribution</span><span>' + attributionText + '</span></div>' +
-      '<div class="sb-card-cohort-row"><span class="sb-card-stat-label">Shared pages</span><span>' + mirrorLine + '</span></div>';
+    // THREE INSTRUMENTS, computed from GET /:id/members and the local mirror
+    // stats. They previously rendered with the same --text-3 stat labels as
+    // the card grid (4.27 / 4.14, under AA), and hand-built their own mono
+    // spans to make the figures scannable — which is precisely the readout's
+    // job, done once, in one place.
+    networkBody = renderReadoutGroup([
+      { label: 'Contributors', value: members.length },
+      total > 0
+        ? {
+            label: 'Your attribution',
+            value: selfPages + ' of ' + total + ' pages',
+            provenance: Math.round((selfPages / total) * 100) + '% of the collective',
+          }
+        // ABSENT IS NOT ZERO — but "no contributions yet" is a real measured
+        // reading (total === 0 was computed), not an absence, so it renders.
+        : { label: 'Your attribution', value: 'no contributions yet' },
+      mirrorReadout,
+    ]);
   }
 
   return (
@@ -746,9 +930,12 @@ function renderCohort(conn, card) {
       '<summary>Cohort &amp; sharing details</summary>' +
       '<div class="sb-card-cohort-body">' +
         networkBody +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Disconnect and re-join to change the selection.</div>' +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.</div>' +
-        '<div class="sb-card-cohort-row sb-card-cohort-note">Exporting your Shared Brain data — coming soon.</div>' +
+        // Three static honesty notes. They are already inside a closed
+        // <details>, so they are NOT folded again — the whole panel is the
+        // fold. One treatment now, at --text-2 rather than --text-3.
+        renderDescription('Which domains contribute is read-only here — changing it means re-entering your access token, which only the setup wizard asks for. Disconnect and re-join to change the selection.') +
+        renderDescription('No automatic synthesis schedule — it’s triggered manually, usually by the brain admin.') +
+        renderDescription('Exporting your Shared Brain data — coming soon.') +
       '</div>' +
     '</details>'
   );
@@ -1313,8 +1500,9 @@ function renderAdmin(conn, card, busy, mirrorBusy) {
         (aff.showRevoke
           ? renderRevoke(conn, card, busy, mirrorBusy)
           : '<div class="sb-admin-note">' + icon('alertCircle', 13) +
-            '<span>Revoking a contributor needs an admin token, and this connection has none stored. ' +
-            'Generate one above first — that is also the provisioning path for brains created before admin tokens existed.</span></div>') +
+            renderDescription('Revoking a contributor needs an admin token, and this connection has none stored. ' +
+              'Generate one above first — that is also the provisioning path for brains created before admin tokens existed.') +
+            '</div>') +
       '</div>' +
     '</details>'
   );
@@ -1326,11 +1514,9 @@ function renderAdminToken(card, aff, busy) {
     '<div class="sb-admin-row">' +
       '<div class="sb-admin-row-text">' +
         '<div class="sb-admin-row-title">Admin token</div>' +
-        '<p class="sb-admin-hint">' +
-          (aff.hasToken
-            ? 'Authorises contributor revocation on this connection. Rotate it if you think it leaked — the current token stops working immediately.'
-            : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection yet.') +
-        '</p>' +
+        renderDescription(aff.hasToken
+          ? 'Authorises contributor revocation on this connection. Rotate it if you think it leaked — the current token stops working immediately.'
+          : 'Authorises contributor revocation (GDPR erasure). None is stored for this connection yet.') +
       '</div>' +
       (card.rotateConfirmOpen
         ? ''
@@ -1397,9 +1583,9 @@ function renderInvite(conn, card, busy) {
     '<div class="sb-admin-row">' +
       '<div class="sb-admin-row-text">' +
         '<div class="sb-admin-row-title">Invite token</div>' +
-        '<p class="sb-admin-hint">Share this with anyone joining the brain — it carries the repository, branch and ' +
-        'data-handling terms, and no credentials. It never expires and it is the same token everyone else already ' +
-        'has, so re-showing it is safe. They still need a GitHub collaborator invitation and their own access token.</p>' +
+        renderDescription('Share this with anyone joining the brain — it carries the repository, branch and ' +
+          'data-handling terms, and no credentials. It never expires and it is the same token everyone else already ' +
+          'has, so re-showing it is safe. They still need a GitHub collaborator invitation and their own access token.') +
       '</div>' +
       (card.inviteOpen
         ? '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="invite-hide">Hide</button>'
@@ -1411,10 +1597,11 @@ function renderInvite(conn, card, busy) {
   if (card.inviteOpen) {
     if (card.inviteError) {
       html +=
-        '<div class="sb-admin-note sb-admin-note-danger" style="margin-top:10px">' + icon('alertCircle', 13) +
-        '<span>' + escapeHtml(card.inviteError) + '</span></div>';
+        '<div class="sb-admin-inset">' +
+          renderStatus({ state: 'danger', title: 'Could not re-derive the invite token', detail: card.inviteError }) +
+        '</div>';
     } else if (card.inviteLoading || !card.inviteToken) {
-      html += '<p class="sb-admin-hint" style="margin-top:10px">Re-deriving the invite token…</p>';
+      html += '<div class="sb-admin-inset">' + renderDescription('Re-deriving the invite token…') + '</div>';
     } else {
       html +=
         '<div style="margin-top:10px;display:flex;flex-direction:column;gap:9px">' +
@@ -1442,8 +1629,20 @@ function renderRevoke(conn, card, busy, mirrorBusy) {
     '<div class="sb-admin-row">' +
       '<div class="sb-admin-row-text">' +
         '<div class="sb-admin-row-title">Revoke a contributor <span class="sb-irreversible-pill">irreversible</span></div>' +
-        '<p class="sb-admin-hint">GDPR Article 17. Permanently erases this contributor’s submissions and every collective page ' +
-        'carrying their provenance, then rebuilds the collective from the remaining contributors. This cannot be undone.</p>' +
+        // ── THE ONE PARAGRAPH IN THIS VIEW THAT MUST NEVER BE FOLDED ────
+        // GDPR Article 17. It describes an IRREVERSIBLE erasure and it is
+        // what an admin reads before serving a data-subject request. It
+        // becomes renderDescription — one treatment, and at --text-2
+        // (8.34 / 7.26) instead of the --text-3 it shipped at, which is
+        // 4.27 / 4.14 and under the AA floor.
+        //
+        // It is NOT renderExplainer and cannot become one by accident:
+        // renderExplainer is not imported into this file at all. A warning
+        // behind a click is not a warning (v3.16.1), and the accompanying
+        // `irreversible` pill above stays on the title where it is read
+        // first.
+        renderDescription('GDPR Article 17. Permanently erases this contributor’s submissions and every collective page ' +
+          'carrying their provenance, then rebuilds the collective from the remaining contributors. This cannot be undone.') +
       '</div>' +
       (card.revokeOpen
         ? '<button type="button" class="btn btn-ghost btn-xs" data-sb-action="revoke-close"' + (card.acting === 'revoke' ? ' disabled' : '') + '>Close</button>'
@@ -1484,20 +1683,22 @@ function selectRevokeMember(card, fellowId) {
 function renderRevokePanel(conn, card, busy, mirrorBusy) {
   const m = card.revokeMembers;
   if (m === null || m === 'loading') {
-    return '<div class="sb-admin-note">Loading the contributor list from the shared repo…</div>';
+    return renderDescription('Loading the contributor list from the shared repo…');
   }
   if (m.error) {
-    return '<div class="sb-admin-note sb-admin-note-danger">' + icon('alertTriangle', 13) +
-      '<span>Could not load the contributor list: ' + escapeHtml(m.error) + '</span></div>';
+    return renderStatus({ state: 'danger', title: 'Could not load the contributor list', detail: m.error });
   }
   const members = Array.isArray(m.members) ? m.members : [];
   if (members.length === 0) {
-    return '<div class="sb-admin-note">No contributions have been made to this brain yet — there is nobody to revoke.</div>';
+    return renderDescription('No contributions have been made to this brain yet — there is nobody to revoke.');
   }
 
   if (card.acting === 'revoke') {
-    return '<div class="sb-admin-note">' + icon('alertTriangle', 13) +
-      '<span>' + escapeHtml(card.revokeProgress || 'Revocation running — do not close the app.') + '</span></div>';
+    return renderStatus({
+      state: 'attention',
+      title: 'Revocation running — do not close the app',
+      detail: card.revokeProgress || undefined,
+    });
   }
 
   const selected = selectedMemberOf(card);
@@ -1533,24 +1734,25 @@ function renderRevokePanel(conn, card, busy, mirrorBusy) {
       '<div class="sb-revoke-step">' +
         '<div class="sb-revoke-step-label">1 · Who</div>' +
         '<div class="sb-member-list">' + memberRows + '</div>' +
-        '<p class="sb-admin-hint">Identity comes from the shared repo’s own storage paths, not from anything a contributor’s payload claims about itself.</p>' +
+        renderDescription('Identity comes from the shared repo’s own storage paths, not from anything a contributor’s payload claims about itself.') +
       '</div>' +
       '<div class="sb-revoke-step">' +
         '<div class="sb-revoke-step-label">2 · Admin token</div>' +
         '<input type="password" class="sb-revoke-input mono" id="sb-revoke-token-' + escapeHtml(conn.id) + '" ' +
           'placeholder="sbat_…" autocomplete="off" spellcheck="false" data-sb-input="token">' +
-        '<p class="sb-admin-hint">Read from your password manager. It is sent once, in the request body, and is never stored by this screen.</p>' +
+        renderDescription('Read from your password manager. It is sent once, in the request body, and is never stored by this screen.') +
       '</div>' +
       '<div class="sb-revoke-step">' +
         '<div class="sb-revoke-step-label">3 · Confirm</div>' +
         '<input type="text" class="sb-revoke-input mono" id="sb-revoke-confirm-' + escapeHtml(conn.id) + '" ' +
           'placeholder="' + escapeHtml(selected ? 'Type ' + expected : 'Select a contributor first') + '" ' +
           'value="' + escapeHtml(card.revokeTyped || '') + '" autocomplete="off" spellcheck="false" data-sb-input="confirm">' +
-        '<p class="sb-admin-hint">' +
-          (selected
-            ? 'Type <span class="mono">' + escapeHtml(expected) + '</span> exactly. It is deliberately not filled in for you.'
-            : 'Pick a contributor above and the exact phrase to type will appear here.') +
-        '</p>' +
+        // html:true only on the `selected` arm, which carries a mono span;
+        // its one interpolated value is escaped here by the caller, which is
+        // the contract renderDescription states for that flag.
+        (selected
+          ? renderDescription('Type <span class="mono">' + escapeHtml(expected) + '</span> exactly. It is deliberately not filled in for you.', { html: true })
+          : renderDescription('Pick a contributor above and the exact phrase to type will appear here.')) +
       '</div>' +
       '<div class="sb-revoke-go">' +
         '<button type="button" class="btn btn-danger" data-sb-action="revoke-run"' + (gate.unlocked ? '' : ' disabled') + '>' +

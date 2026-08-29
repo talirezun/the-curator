@@ -53,6 +53,20 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+// The REAL text-system renderers, not stand-ins. views/shared.js adopted
+// shared/text.js (the five text roles), so the lifted render functions below
+// now call renderDescription/renderStatus/renderReadoutGroup/renderBadge and
+// would throw ReferenceError without them.
+//
+// They are IMPORTED rather than stubbed for the same reason escapeHtml is
+// extracted from app.js rather than re-implemented: a stub would make every
+// assertion below observe the stub's output instead of the shipped one, which
+// is this repo's decorative-guard shape. shared/text.js deliberately takes NO
+// imports precisely so it can be loaded in Node — importing app.js here would
+// throw `ReferenceError: document is not defined`.
+import {
+  renderDescription, renderReadout, renderReadoutGroup, renderStatus, renderBadge,
+} from '../src/public/next/shared/text.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -174,13 +188,15 @@ const PURE_FNS = [
 // stand-in) and an icon() STAND-IN that ECHOES its argument, so if any
 // caller ever passed user data through icon() the leak would show up in the
 // asserted output rather than being hidden by a constant stub.
+const TEXT_ROLES = { renderDescription, renderReadout, renderReadoutGroup, renderStatus, renderBadge };
 const sandbox = new Function(
+  ...Object.keys(TEXT_ROLES),
   'let state = { expandedAdmin: new Set() };\n' +
   extractFunction(appJs, 'escapeHtml', 'app.js') + '\n' +
   'function icon(name, size) { return "<svg data-icon=\\"" + name + "\\" data-size=\\"" + size + "\\"></svg>"; }\n' +
   PURE_FNS.map((n) => extractFunction(shared, n, 'shared.js')).join('\n\n') + '\n' +
   `return { ${PURE_FNS.join(', ')}, escapeHtml, __state: () => state };`
-)();
+)(...Object.values(TEXT_ROLES));
 
 const {
   domainsForAction, adminAffordances, revokeExpectedTyped, revokeConfirmationFor,

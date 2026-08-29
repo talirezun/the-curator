@@ -77,6 +77,28 @@ import {
   refreshSyncBadge, refreshSyncRemoteBadge,
 } from '../app.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// ── THE TEXT SYSTEM (shared/text.js) ──────────────────────────────────────
+// This view used to carry five different treatments for text: `.view-body`
+// and `.sidebar-hint` for static prose, `.settings-hint-text` for more static
+// prose, `.sync-last`/`.sync-pending-note`/`.sync-sb-meta` for GENERATED
+// figures, and `.status-pill-ok` for connection state. The centre pane's
+// description was rendered in `.view-body` — the same class a GENERATED scan
+// sentence uses in domains.js and the same class loading-gate.js paints its
+// placeholder in — which is precisely the reported defect: a measurement and
+// an explanation in one voice.
+//
+// Adopted role by role, never by renaming a class:
+//   static prose          -> renderDescription   (ONE treatment, --text-2)
+//   a computed figure     -> renderReadout       (mono value, sans label)
+//   connection state      -> renderStatus        (3px left rail, no sentence)
+//   background prose      -> renderExplainer     (closed <details>)
+//
+// `.view-body` itself SURVIVES in shell.css — loading-gate.js's loaderHtml()
+// DEFAULTS to it, so deleting the class would silently unstyle every gated
+// placeholder in the app. What is removed here is this view's USE of it.
+import {
+  renderDescription, renderReadout, renderReadoutGroup, renderStatus, renderExplainer,
+} from '../shared/text.js';
 
 function freshState() {
   return {
@@ -301,15 +323,20 @@ function renderSidebar(token) {
   // meaningful once a repo is actually connected, since an unconfigured
   // card's one action (Connect) isn't gated (see this file's header
   // comment for why).
+  // STATE, not prose. This used to be an amber box rendering
+  // `--attention-text` as TEXT on `--attention-tint` — measured 9.11 dark but
+  // **3.21 light**, under the 4.5 AA floor (shared/text.js FINDING 2). As a
+  // status the amber moves to the 3px rail, whose floor is 3:1 as a non-text
+  // border and which it clears in both themes (10.70 / 3.58), while the title
+  // and detail sit at --text / --text-2. Nothing is decoded by colour alone.
   const writeBusy = state.status && state.status.configured && crossWriteBusy();
   const busyNote = writeBusy
-    ? '<div class="sync-sidebar-busy">' + icon('alertTriangle', 13) +
-      '<span>' + escapeHtml(crossWriteTitle()) + '</span></div>'
+    ? renderStatus({ state: 'attention', title: 'Another write is running', detail: crossWriteTitle() })
     : '';
 
   setSidebar(
     '<div class="sidebar-title">Sync</div>' +
-    '<div class="sidebar-hint">Pages, chats and schemas travel; source files and keys stay here.</div>' +
+    renderDescription('Pages, chats and schemas travel; source files and keys stay here.') +
     '<div class="cur-eyebrow" style="margin-top:2px">DOMAINS BACKED UP</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
     busyNote,
@@ -331,7 +358,13 @@ function renderMain(token) {
   setMain(
     eyebrow('where it all lives') +
     '<h1 class="view-title">Sync</h1>' +
-    '<div class="view-body">Your wiki lives on your disk and backs up to a private GitHub repository you own.</div>' +
+    // `.sync-lede` is a SPACING wrapper only (the 22px `.view-body` used to
+    // carry); the treatment is the component's. Wrapping rather than adding
+    // a margin to `.tx-desc` keeps the shared class free of view-specific
+    // spacing — the way the 81 one-off text classes grew in the first place.
+    '<div class="sync-lede">' +
+      renderDescription('Your wiki lives on your disk and backs up to a private GitHub repository you own.') +
+    '</div>' +
     body,
     token
   );
@@ -342,8 +375,8 @@ function renderUnconfigured() {
   return (
     '<div class="sync-setup-card">' +
       '<div class="sync-setup-title">Connect a GitHub repository</div>' +
-      '<p class="settings-hint-text">Paste an empty private repo and a token with Contents: Read and write access. ' +
-      '“Push” sends this machine’s wiki up first; “Pull” starts from what’s already in the repo.</p>' +
+      renderDescription('Paste an empty private repo and a token with Contents: Read and write access. ' +
+        '“Push” sends this machine’s wiki up first; “Pull” starts from what’s already in the repo.') +
       '<div class="sync-setup-field">' +
         '<span class="sync-setup-label">Repository URL</span>' +
         '<input type="text" class="mono sync-setup-input" id="setup-repo-url" placeholder="https://github.com/you/your-wiki" value="' + escapeHtml(f.repoUrl) + '">' +
@@ -390,10 +423,30 @@ function renderConfigured(s) {
 
   return (
     '<div class="sync-status-card">' +
-      '<div class="sync-status-top">' +
-        '<span class="status-pill status-pill-ok"><span class="status-pill-dot"></span>Connected</span>' +
-        '<code class="mono sync-repo">' + escapeHtml(s.repoUrl || '') + '</code>' +
-        '<span class="mono sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
+      // ── STATE, then INSTRUMENTS ──────────────────────────────────────
+      // Three roles used to share one row. `Connected` was a pill rendering
+      // --success-text as TEXT on --success-tint (measured 8.73 dark but
+      // **3.59 light** — under AA); the repo was a 12.5px HARDCODED size, so
+      // it froze at 1x while Settings > General scaled everything around it;
+      // and `last synced` sat at --text-3 (4.27 / 4.14, under AA) reading as
+      // a subtitle rather than as the measurement it is.
+      //
+      // Now: the connection STATE is a status (rail carries the colour, at
+      // the 3:1 non-text floor it clears in both themes), and the two
+      // computed figures are readouts — mono value, sans label, both at or
+      // above --text-2.
+      '<div class="sync-conn">' +
+        renderStatus({ state: 'success', title: 'Connected', detail: s.repoUrl || '' }) +
+        // NO TONE ON A NUMBER. The pending count used to render in
+        // --attention-text. shared/text.js is explicit that colouring a
+        // figure is a JUDGEMENT about it and judgement is renderStatus's
+        // role — and unpushed local changes are the ORDINARY state of a
+        // wiki being used, not a finding. The rail badge in the shell
+        // already carries the alerting; this is the instrument.
+        renderReadoutGroup([
+          { label: 'Last synced', value: lastSyncLabel },
+          { label: 'Local changes not pushed', value: pendingCount },
+        ]) +
       '</div>' +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
       '<div class="sync-status-actions">' +
@@ -402,20 +455,48 @@ function renderConfigured(s) {
         '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
-        '<span class="sync-pending-note mono">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
       '</div>' +
-      (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
+      // An ACTION REPORT — generated from what the push/pull actually moved
+      // (describeResult below composes the real counts). It used to render in
+      // `.sync-action-note`: --text-2 body prose, i.e. the same voice as this
+      // view's own static description two elements above it. As a status it
+      // reads as a statement about the live system, which is what it is.
+      // Only the success path ever sets it (onAction throws on !res.ok), so
+      // the tone is not a guess. The failure path keeps `.settings-inline-error`
+      // deliberately — see this file's note below renderConfigured.
+      (state.actionMessage
+        ? '<div class="sync-action-report">' +
+            renderStatus({ state: 'success', title: state.actionMessage }) +
+          '</div>'
+        : '') +
       (state.actionError ? '<div class="settings-inline-error" style="margin-top:8px">' + escapeHtml(state.actionError) + '</div>' : '') +
     '</div>' +
 
     renderSharedBrainRow() +
 
     '<span class="cur-eyebrow" style="display:block;margin-bottom:11px">History</span>' +
-    '<div class="sync-history-empty">' +
-      '<div class="empty-title">Commit history &amp; revert are coming soon</div>' +
-      '<div class="empty-body">Every sync is already a real git commit, so the data to revert from exists on disk ' +
-      '— there just isn’t a history endpoint yet to list or revert individual commits from this view. Until then, ' +
-      'a git client pointed at your knowledge base folder can do it directly.</div>' +
+    // THE ONE EXPLAINER IN THIS VIEW, and the split is by role rather than by
+    // length. The absence of a history list is STATE (there is no endpoint) —
+    // that is the news, and it stays on screen. The workaround is background
+    // prose: read once, then never again, which is renderAbout's own stated
+    // reason for defaulting a <details> closed. Folding it also makes it
+    // FINDABLE under a label instead of being the tail of a paragraph.
+    //
+    // NOT A WARNING, so `warning` is deliberately not used: nothing here is
+    // lost, at risk, or costs money. Every clause of the previous copy
+    // survives — no claim was added, and the false revert promise this view
+    // used to carry is not being reintroduced under a fold.
+    '<div class="sync-history">' +
+      renderStatus({
+        state: 'neutral',
+        title: 'Commit history & revert are coming soon',
+        detail: 'Every sync is already a real git commit, so the data to revert from exists on disk — ' +
+          'there just isn’t a history endpoint yet to list or revert individual commits from this view.',
+      }) +
+      renderExplainer({
+        summary: 'Reverting a sync today',
+        body: 'A git client pointed at your knowledge base folder can do it directly.',
+      }) +
     '</div>' +
 
     renderDisconnect()
@@ -424,15 +505,41 @@ function renderConfigured(s) {
 
 function renderSharedBrainRow() {
   const sb = state.sb;
-  const lastPush = sb && sb.connection && sb.connection.last_push_at ? formatSyncTime(sb.connection.last_push_at) : null;
-  const label = sb && sb.connection
-    ? escapeHtml(sb.connection.label || 'Shared Brain') + ' · ' + (lastPush ? 'pushed ' + escapeHtml(lastPush) : 'no pushes yet')
-    : 'Not connected to any Shared Brain';
+  const conn = sb && sb.connection ? sb.connection : null;
+  const lastPush = conn && conn.last_push_at ? formatSyncTime(conn.last_push_at) : null;
+
+  // ABSENT IS NOT ZERO, and this row is where the rule bites. `state.sb` is
+  // null only while the read is still in flight; rendering "Not connected to
+  // any Shared Brain" then would state a measurement nobody has taken. It is
+  // omitted instead — renderReadout returns '' for a null value, so the
+  // concatenation stays unconditional.
+  const readout = sb
+    ? renderReadout(conn
+        ? {
+            label: 'Shared Brain',
+            value: conn.label || 'Shared Brain',
+            // Provenance is the "when/how it was taken" slot, which is
+            // exactly what a last-push stamp is. No push yet -> the clause
+            // is OMITTED, never rendered as a zero or a dash.
+            provenance: lastPush ? 'pushed ' + lastPush : undefined,
+          }
+        : { label: 'Shared Brain', value: 'not connected' })
+    : '';
+
   return (
     '<div class="sync-sb-row">' +
       icon('users', 16) +
-      '<span class="sync-sb-text">Shared Brain pushes are managed in <strong>Shared Brain</strong>. This tab only reports them.</span>' +
-      '<span class="mono sync-sb-meta">' + label + '</span>' +
+      '<div class="sync-sb-text">' +
+        // html:true, and the caller owns escaping (shared/text.js states
+        // this). Safe here by construction: the argument is a STATIC literal
+        // with no interpolation, and the <strong> is the cross-reference to
+        // the view that actually owns this control.
+        renderDescription(
+          'Shared Brain pushes are managed in <strong>Shared Brain</strong>. This tab only reports them.',
+          { html: true },
+        ) +
+      '</div>' +
+      readout +
       '<button type="button" class="btn btn-ghost btn-xs" id="btn-sync-open-shared">Open</button>' +
     '</div>'
   );
@@ -452,8 +559,16 @@ function renderDisconnect() {
   if (state.disconnectConfirmOpen) {
     return (
       '<div class="sync-disconnect-confirm">' +
-        '<span>Disconnect this repository? Your local wiki files stay exactly as they are — only the sync ' +
-        'connection is removed. You can reconnect any time.</span>' +
+        // A view-owned wrapper carries the FLEX SIZING. Nothing in this file
+        // may select a `tx-` class: shared/text.css owns that prefix and its
+        // suite asserts no other stylesheet defines a rule on it, which is
+        // what stops an adopter quietly re-styling the shared roles back into
+        // 81 local variants. A view positions the component; it never dresses
+        // it.
+        '<div class="sync-disconnect-text">' +
+          renderDescription('Disconnect this repository? Your local wiki files stay exactly as they are — only the sync ' +
+            'connection is removed. You can reconnect any time.') +
+        '</div>' +
         '<div class="sync-disconnect-actions">' +
           '<button type="button" class="btn btn-secondary btn-xs" id="btn-disconnect-confirm"' + (disabled ? ' disabled' : '') + crossTitle + '>' +
             (acting === 'disconnect' ? 'Disconnecting…' : 'Disconnect') +
