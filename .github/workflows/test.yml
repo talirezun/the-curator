@@ -25,6 +25,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # FULL history, not the default shallow clone. `test-build-model.js`
+          # proves the model resolver is byte-identical to its pre-release
+          # baseline by extracting that baseline with `git show <sha>:file` and
+          # running both side by side over 20 config shapes x 11 call shapes.
+          # A depth-1 checkout has ONE commit, so the blob is unreachable and
+          # the suite fails on CI while passing locally — which is what happened
+          # on 2026-08-29. The suite is right to fail loudly rather than skip:
+          # a guard that quietly opts out on CI is the one place it matters most.
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -47,6 +57,16 @@ jobs:
       || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v5
+        with:
+          # FULL history, not the default shallow clone. `test-build-model.js`
+          # proves the model resolver is byte-identical to its pre-release
+          # baseline by extracting that baseline with `git show <sha>:file` and
+          # running both side by side over 20 config shapes x 11 call shapes.
+          # A depth-1 checkout has ONE commit, so the blob is unreachable and
+          # the suite fails on CI while passing locally — which is what happened
+          # on 2026-08-29. The suite is right to fail loudly rather than skip:
+          # a guard that quietly opts out on CI is the one place it matters most.
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
