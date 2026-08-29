@@ -22,7 +22,7 @@ the files *are* the product, and the app is a convenience over them.
 | **3. Your agents' brain** | Where the work stands: what is settled, what to do next, what was tried and ruled out | **Supersedes**: each save replaces the previous handoff, so a resolved blocker cannot come back | `domains/<d>/state/` |
 
 One format, one owner, three layers. Layers 1 and 2 are built by *ingesting* sources — that is
-the means, not the point. Layer 3 is written by a coding agent over MCP and read back by the next
+the means, not the point. Layer 3 is written by an agent over MCP and read back by the next
 session, on any tool and any machine.
 
 **The boundary between layers 1–2 and layer 3 is worth learning before you use it.** Knowledge
@@ -54,7 +54,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 - **Ingest** any PDF, article, or note — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
 - **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
-- **Carry your work forward** — a coding agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines
+- **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines
 - **Sync** your entire wiki, chat history and working state across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with Push only / Pull only alongside it) for daily use
 - **Build** a personal library that gets smarter over time — the more you add, the richer the connections
 
@@ -66,7 +66,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 
 **Want to sync across computers?** Read the [Sync Guide](sync.md) — a 3-minute setup connects your knowledge to a private GitHub repository. Prefer to let an AI agent do it? See [Set up sync with a coding agent](sync-via-coding-agent.md).
 
-**Coding with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
+**Working with agents and losing context between sessions?** Read [Working state](working-state.md) — layer 3. Point your agent at a domain over MCP and the handoff survives a change of session, agent, model, harness or machine. Start with the [MCP guide](mcp-user-guide.md) to install the bridge.
 
 **Want to contribute to a collective wiki with your cohort or team?** Start with the [Shared Brain User Guide](shared-brain-user-guide.md) — step-by-step setup for contributors and admins. `v3.0.0-beta+`, opt-in beta feature. Each contributor keeps a private brain; only opted-in domains push to the shared repo. The [architecture doc](shared-brain.md) covers what's happening under the hood; [admin operations](shared-brain-admin.md) cover ongoing duties; [compliance reference](shared-brain-compliance.md) covers GDPR/IP/EU residency.
 

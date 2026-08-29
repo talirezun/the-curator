@@ -2,7 +2,7 @@
 
 **Status: shipped in v3.17.0.** The store (`src/brain/working-state.js`) and the MCP
 tool layer are live. The `/next` shell's **Agent memory** rail slot renders it, backed
-by a read-only `/api/memory` route — and it is read and *written* by a coding agent over
+by a read-only `/api/memory` route — and it is read and *written* by an agent over
 MCP, and readable by you in a text editor. Writing is deliberately not exposed anywhere
 else; see §6.
 

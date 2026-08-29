@@ -412,8 +412,7 @@ function renderSidebar(token) {
 
   setSidebar(
     '<div class="sidebar-title">Shared Brain<span class="sb-beta-pill">beta</span></div>' +
-    '<div class="sidebar-hint">A collective wiki a cohort writes together. Contributors push synthesised ' +
-    'summaries of the domains they opt in; the merged wiki comes back as a read-only mirror.</div>' +
+    '<div class="sidebar-hint">Cohorts this install writes to.</div>' +
     body,
     token
   );

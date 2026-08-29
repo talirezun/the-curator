@@ -331,6 +331,44 @@
   margin: -2px 0 8px;
   max-width: 62ch;
 }
+/* ── EVERY SIZE IN THIS FILE IS ON THE RAMP, AND THAT IS THE FEATURE ──────
+   Settings > General ships a user-adjustable text size. It works by one
+   multiplier, `--font-scale`, applied inside the `--text-*` ramp in
+   tokens/typography.css — so a rule that writes `font-size: 14.5px` is
+   frozen at 1x and CANNOT be resized by the control, silently and with no
+   error. An audit found 23 such rules across the whole /next tree and 14 of
+   them were here, including `.chat-answer` — the most-read text in the app.
+   A user who enlarged the text got a bigger rail, bigger titles, and an
+   unchanged answer.
+
+   13 now read a ramp token — the 14th, `.chat-foot-hint`, was deleted
+   outright below, its element having gone in this same release. Do not
+   reintroduce a px literal here: use
+   the nearest `--text-*` step, and if none is close enough, that is an
+   argument about the ramp, not a licence to opt one rule out of the scale.
+   test-css-tokens.js section 10 fails on any px font-size in this file.
+
+   Six of the 13 were already exactly on a step (13, 11, 10px) and did not
+   move at 1x. The rest did, and the two rules used are recorded here rather
+   than left to be re-derived from a diff:
+
+     14.5px -> --text-base (14px, -0.5).  Unambiguous: 14 is 0.5 away and the
+       next step up is 16, a 1.5px / +10% jump on the app's most-read text.
+       It also lands the chat answer on --type-body, which is what it is.
+
+     10.5px -> --text-xs (11px, +0.5).  NOT nearest — 10 and 11 are exactly
+       equidistant, so "nearest" does not decide it. The tie-break is: never
+       make already-tiny text smaller. --text-2xs (10px) is the ramp FLOOR,
+       these lines are painted in --text-3 (which does not clear 4.5:1, see
+       the note at .chat-mm-badge), and two of the three state money
+       (.chat-cost-hint) or a caution reason (.chat-mm-note). Rounding up
+       costs half a pixel and moves the one direction that helps.
+
+   The `em` sizes below (.chat-answer code, .chat-wikilink at 0.92em,
+   .chat-citation-tag at 0.82em) are deliberately LEFT ALONE. They are
+   relative to their parent, which is now on the ramp, so they scale
+   transitively — browser-verified, not assumed. They are the design
+   system's optical adjustment for mono-inside-sans and match base.css. */
 .chat-msg-user { display: flex; flex-direction: column; align-items: flex-end; }
 .chat-bubble {
   max-width: 80%;
@@ -338,14 +376,14 @@
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  font-size: 14.5px;
+  font-size: var(--text-base);
   line-height: 1.6;
   color: var(--text);
   white-space: pre-wrap;
 }
 .chat-msg-assistant { color: var(--text-2); }
 .chat-answer {
-  font-size: 14.5px;
+  font-size: var(--text-base);
   line-height: 1.6;
 }
 /* ── A FAILED TURN ────────────────────────────────────────────────────────
@@ -457,7 +495,7 @@
   padding: 0 9px 0 7px;
   border-radius: var(--radius-full);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   border: none;
   cursor: pointer;
 }
@@ -564,7 +602,7 @@
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 14.5px;
+  font-size: var(--text-base);
   line-height: 1.55;
   font-family: var(--font-sans);
   max-height: 220px;
@@ -591,7 +629,7 @@
   margin-top: 6px;
 }
 .chat-composer-spacer { flex: 1; }
-.chat-cost-hint { font-size: 10.5px; color: var(--text-3); white-space: nowrap; }
+.chat-cost-hint { font-size: var(--text-xs); color: var(--text-3); white-space: nowrap; }
 
 /* .chat-ctrl-btn styled exactly one element: the disabled paperclip in the
    composer, removed at cutover (see chat.js's renderComposerHtml comment).
@@ -660,12 +698,14 @@
   display: block;
 }
 
-.chat-foot-hint {
-  text-align: center;
-  margin-top: 8px;
-  font-size: 10.5px;
-  color: var(--text-3);
-}
+/* `.chat-foot-hint` styled a permanently-visible line under the composer
+   repeating the citation instruction the chat empty state already gives —
+   both on screen at once on the default view. The element was deleted from
+   chat.js, so the rule is DELETED here in the same change rather than left
+   behind: nothing fails on an unused rule (this suite reads CSS off disk and
+   has no view of which classes are rendered), which is exactly how dead CSS
+   survives long enough for someone to half-resurrect the control later —
+   the reasoning the .chat-drop-* and .chat-dd-* removals above record. */
 
 /* ── THE COMPOSER'S OWN DROPDOWN IS GONE ──────────────────────────────────
    `.chat-dd`, `.chat-dd-btn`, `.chat-dd-dot` and `.chat-dd-menu` used to style
@@ -693,8 +733,8 @@
 .chat-dd-opt:hover { background: var(--surface-hover); }
 .chat-dd-opt.is-active { background: var(--accent-tint); }
 .chat-dd-opt.is-active .chat-dd-opt-title { color: var(--accent-text); }
-.chat-dd-opt-title { font-size: 13px; }
-.chat-dd-opt-desc { font-size: 10px; color: var(--text-3); }
+.chat-dd-opt-title { font-size: var(--text-md); }
+.chat-dd-opt-desc { font-size: var(--text-2xs); color: var(--text-3); }
 
 /* ── Model picker (gated: see MODEL_PICKER_ENABLED in chat.js) ─────────────
    A model menu carries far more per row than the provider menu it replaces —
@@ -710,15 +750,31 @@
 }
 .chat-mm-group {
   padding: 6px 9px 2px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
   color: var(--text-3);
 }
 .chat-mm-opt { gap: 3px; width: 100%; }
 .chat-mm-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* WAS 9.5px, which is BELOW the ramp's 10px floor — so this was not a size
+   that had drifted off a step, it was a size the ramp deliberately does not
+   offer. --text-2xs (10px, +0.5) is both the nearest step and the only one
+   that does not visibly resize the pill: --text-xs would be +1.5px / +16% on
+   a bordered chip in a flex-wrap row, for no gain the scale control does not
+   already give. Growing it also nudges the right way on a line that is
+   already hard to read.
+
+   FLAGGED, NOT FIXED HERE: this badge and five other rules in this file paint
+   --text-3, measured at 4.38 (dark) / 4.00 (light) — under the 4.5:1 floor
+   for text. That is a token-wide problem being handled by the wave that
+   retires --text-3; changing colours in a change whose whole purpose is
+   sizes would make neither reviewable. The other five: .chat-cost-hint,
+   .chat-dd-opt-desc, .chat-mm-group, .chat-mm-note, .chat-mm-foot.
+   (.chat-mm-badge.is-warn below overrides to --attention-text and is not
+   affected.) */
 .chat-mm-badge {
-  font-size: 9.5px;
+  font-size: var(--text-2xs);
   line-height: 1.6;
   padding: 0 5px;
   border-radius: var(--radius-full);
@@ -731,8 +787,8 @@
   background: var(--attention-tint);
   color: var(--attention-text);
 }
-.chat-mm-price { font-size: 11px; color: var(--text-2); }
-.chat-mm-rise { font-size: 10px; color: var(--attention-text); }
+.chat-mm-price { font-size: var(--text-xs); color: var(--text-2); }
+.chat-mm-rise { font-size: var(--text-2xs); color: var(--attention-text); }
 /* The DERIVED one-line summary (next/shared/model-summary.js) — no longer the
    model's whole measured `note`, which is now shown in full behind Settings'
    per-model expand. Class name kept so the composer and its suite do not churn
@@ -745,7 +801,7 @@
    line is short by construction now, so there is nothing to gain by truncating
    it and a warning to lose. */
 .chat-mm-note {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   line-height: var(--leading-snug);
   color: var(--text-3);
   white-space: normal;
@@ -755,7 +811,7 @@
    row: it carries no `data-model-id`, so the option handler cannot reach it. */
 .chat-mm-foot {
   padding: 6px 9px 2px;
-  font-size: 10px;
+  font-size: var(--text-2xs);
   line-height: var(--leading-snug);
   color: var(--text-3);
   border-top: 1px solid var(--border);

@@ -77,6 +77,17 @@
      after this point — the same layering the ring documents above. -->
 <link rel="stylesheet" href="/next/shared/listbox.css">
 
+<!-- shared/text.css — the ONE text system in /next: the five roles in
+     shared/text.js (readout, description, status, badge, explainer). It owns
+     the whole `tx-` prefix, and is linked here for the same reason the ring
+     and the listbox are: a view that adopts the component must not have to
+     touch this file.
+
+     Linked ABOVE the views on purpose, so a view may still add placement at
+     equal specificity after this point — the same layering the two
+     components above document. -->
+<link rel="stylesheet" href="/next/shared/text.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

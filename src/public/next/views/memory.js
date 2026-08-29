@@ -1,7 +1,7 @@
 // View: Agent memory — "your agents' brain".
 //
-// Renders the working-state store (src/brain/working-state.js) that coding
-// agents read and write over MCP: a standing project brief, a per-scope /
+// Renders the working-state store (src/brain/working-state.js) that agents
+// read and write over MCP: a standing project brief, a per-scope /
 // per-machine handoff, and an append-only journal of saves.
 //
 // Backend used (read-only, this session — see src/routes/memory.js):
@@ -805,7 +805,7 @@ function restoreFocus() {
 function renderSidebar(token) {
   const head =
     '<div class="sidebar-title">Agent memory</div>' +
-    '<div class="sidebar-hint">The working brief your coding agents leave for each other — read here, written by them.</div>';
+    '<div class="sidebar-hint">The working brief your agents leave for each other — read here, written by them.</div>';
 
   if (state.loading) {
     setSidebar(head + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
@@ -895,7 +895,7 @@ function renderNoProjects() {
     '<div class="empty-card">' +
       '<div class="empty-title">No domains yet</div>' +
       '<div class="empty-body">Agent memory is kept per domain, under <code>state/</code> beside that domain’s wiki. ' +
-      'Create a domain first, then point a coding agent at it — the brief appears here the moment one saves.</div>' +
+      'Create a domain first, then point an agent at it — the brief appears here the moment one saves.</div>' +
     '</div>'
   );
 }
@@ -1061,7 +1061,7 @@ function renderBriefOnlyNotice(read, unlisted) {
       '<div class="mem-doc-empty-body">' + escapeHtml(msg) +
         (unlisted ? '' :
           ' The brief below is what every agent read returns. A handoff appears here the first time ' +
-          'a coding agent saves its working state at the end of a session.') +
+          'an agent saves its working state at the end of a session.') +
       '</div>' +
     '</div>'
   );
@@ -1098,7 +1098,7 @@ function renderEmptyProject(unlistedEntries) {
   return (
     '<div class="empty-card">' +
       '<div class="empty-title">Nothing saved for this project yet</div>' +
-      '<div class="empty-body">No agent has written a handoff here. Ask a coding agent connected through ' +
+      '<div class="empty-body">No agent has written a handoff here. Ask an agent connected through ' +
       '<span class="mono">my-curator</span> to save its working state for ' +
       '<span class="mono">' + escapeHtml(state.activeProject) + '</span> at the end of a session, and it will show up here.</div>' +
     '</div>'

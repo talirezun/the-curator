@@ -2261,7 +2261,6 @@ function renderComposerHtml(active) {
           composerPrimaryButtonHtml(state.sending) +
         '</div>' +
       '</div>' +
-      '<div class="chat-foot-hint mono">Answers cite the pages they came from. Click a citation to read the page.</div>' +
     '</div>'
   );
 }

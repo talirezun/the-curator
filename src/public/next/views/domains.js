@@ -1878,8 +1878,7 @@ function renderHealthPanel(domain, readonly) {
       // Saying so is the price of not collapsing the panel — the figures
       // stay useful, and nothing claims they are current.
       '<div class="dm-health-body">' + (revalidating ? 'Re-scanning… showing the previous result. ' : '') +
-        'Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) +
-        '. Structural repairs run locally and free; anything needing judgement stays review-only, and anything that spends tokens asks first.</div>' +
+        'Found ' + total + (total === 1 ? ' issue' : ' issues') + ', last scanned ' + relTime(report.scannedAt) + '.</div>' +
       '<div class="dm-health-meta mono">' + scanMeta + '</div>' +
       '<div class="dm-chip-row">' + chips + '</div>' +
       (state.banner ? renderBanner() : '') +

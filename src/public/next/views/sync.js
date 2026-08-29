@@ -309,8 +309,7 @@ function renderSidebar(token) {
 
   setSidebar(
     '<div class="sidebar-title">Sync</div>' +
-    '<div class="sidebar-hint">Your whole wiki, backed up to a private GitHub repository you own. Pages, chats ' +
-    'and schemas travel; source files and keys stay here.</div>' +
+    '<div class="sidebar-hint">Pages, chats and schemas travel; source files and keys stay here.</div>' +
     '<div class="cur-eyebrow" style="margin-top:2px">DOMAINS BACKED UP</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
     busyNote,
@@ -332,8 +331,7 @@ function renderMain(token) {
   setMain(
     eyebrow('where it all lives') +
     '<h1 class="view-title">Sync</h1>' +
-    '<div class="view-body">Your wiki lives on your disk and backs up to a private repository you own. Every sync ' +
-    'is a git commit, so anything can be reverted.</div>' +
+    '<div class="view-body">Your wiki lives on your disk and backs up to a private GitHub repository you own.</div>' +
     body,
     token
   );

@@ -38,7 +38,7 @@ owner — you.
 | **3. Your agents' brain** — [working state](docs/working-state.md) | Where the work stands: what is settled, what to do next, what was already tried and ruled out | State **supersedes** — each save replaces the previous handoff, because a resolved blocker must not come back |
 
 Layers 1 and 2 are built by *ingesting* sources — that is the means, not the point. Layer 3 is
-written by your coding agent at the end of a session and read at the start of the next one, so
+written by your agent at the end of a session and read at the start of the next one, so
 the work survives a change of session, agent, model, harness *or* machine.
 
 > Your job is to curate sources, ask the right questions, and think about what it all means.
@@ -88,7 +88,7 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 6. (optional) Join a Shared Brain → your opted-in domain contributes to a
    collective wiki; everyone's reading compounds together
          ↓
-7. (optional) Point a coding agent at a domain over MCP → it saves where the
+7. (optional) Point an agent at a domain over MCP → it saves where the
    work stands at the end of a session and reads it back at the start of the next
 ```
 
@@ -316,7 +316,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
-| [Working state](docs/working-state.md) | Carry build context between coding sessions, agents, models and machines; what belongs in state vs. on a wiki page |
+| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; what belongs in state vs. on a wiki page |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |
 | [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup across your own computers (wizard, token permissions, what syncs, troubleshooting) |

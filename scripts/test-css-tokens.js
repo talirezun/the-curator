@@ -1749,6 +1749,213 @@ section('9b. Self-test — the unreachable-stylesheet diff can actually fail');
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// 10. No /next rule freezes a font size in px (the text-scale control)
+// ─────────────────────────────────────────────────────────────────────────
+// THE GAP THIS CLOSES. Settings > General ships a user-adjustable text size.
+// It is implemented as ONE multiplier, `--font-scale`, applied inside the
+// `--text-*` ramp in tokens/typography.css and written only by app.js's
+// applyFontScale(). Everything that reads a ramp token therefore resizes in
+// the same frame; anything that writes `font-size: 14.5px` is frozen at 1x.
+//
+// The failure is SILENT and asymmetric with the rest of this suite: an
+// undefined var() at least makes the declaration invalid, whereas a px
+// literal is perfectly valid CSS that simply ignores the feature. Nothing
+// errors, nothing logs, and the control still visibly "works" — because the
+// rail, the titles and most chrome DO scale. So the app looks responsive to
+// the setting while the specific thing the user enlarged the text to read
+// does not move.
+//
+// An audit found 23 such rules across /next, 14 of them in views/chat.css —
+// including `.chat-answer` and `.chat-bubble`, i.e. the most-read text in
+// the application, and `.chat-input`, what the user types into. All 14 are
+// now on the ramp; this section stops them coming back.
+//
+// SHAPE: a per-file CEILING, not an exact-match baseline. views/chat.css is
+// pinned at zero. The five remaining rules live in files this change does
+// not own, so they are recorded with the count they had and asserted as an
+// upper bound: another agent FIXING one lowers the count and stays green
+// (an exact-match baseline would go red on somebody else's improvement,
+// which trains people to edit the baseline), while any regression raises it
+// and fails. A slack ceiling is reported so it can be tightened.
+//
+// Both `font-size: Npx` AND the `font:` shorthand (`font: 500 9px/15px ...`)
+// are detected — the shorthand is the obvious way a px size would come back
+// past a guard that only knew the longhand, and two live examples of it
+// already exist in the tree.
+section('10. No /next rule freezes a font size in px (defeats the text-scale control)');
+
+/** Every frozen px font size in a stylesheet. Runs on CLEANED css, so a px
+ *  size QUOTED IN A COMMENT — and this tree has several, e.g. chat.css's
+ *  own note about what a rule "was" — is correctly not a finding.
+ *  cleanCss preserves offsets and newlines, so line numbers are the real
+ *  ones in the file on disk. Returns [{ line, prop, value }].
+ */
+function findFrozenFontSizes(rawCss) {
+  const cleaned = cleanCss(rawCss);
+  const lineStarts = computeLineStarts(cleaned);
+  // Anchored at a declaration boundary so `font-family:` and a stray `font`
+  // inside a selector cannot match. `font-size` is listed first so the
+  // alternation prefers it where both could apply.
+  const re = /(?:^|[{};])\s*(font-size|font)\s*:\s*([^;}]*)/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(cleaned)) !== null) {
+    const [, prop, value] = m;
+    if (/(?:^|[^a-zA-Z0-9_.-])\d*\.?\d+px/.test(value)) {
+      // Report the line of the PROPERTY, not of m.index — the match is
+      // anchored on the preceding `{` or `;`, which in a multi-line rule
+      // sits on the line ABOVE the declaration. Caught by the self-test
+      // below, which is the only reason this is right.
+      const propAt = m.index + m[0].indexOf(prop);
+      out.push({ line: lineNumberFor(lineStarts, propAt), prop, value: value.trim() });
+    }
+  }
+  return out;
+}
+
+// ── 10a. Self-tests: the detector fires, and does not over-fire ──────────
+// Section 10's healthy answer for chat.css is "0 findings", which is exactly
+// what a detector that never looked also reports. These synthetic cases are
+// the positive control (this repo's standing rule after v3.0.15 baselined
+// away the two names it was written to catch).
+{
+  const fires = [
+    ['.a{font-size:14.5px}',            'font-size longhand, fractional'],
+    ['.a{font-size: 10px;}',            'font-size longhand, integer'],
+    ['.a{ font: 500 9px/15px mono; }',  'font shorthand (a guard that only knew the longhand would miss this)'],
+    ['.a{color:red;font-size:12px;}',   'second declaration in a rule'],
+    ['.a{font-size:9.5px}',             'a size below the ramp floor is still frozen'],
+  ];
+  for (const [css, why] of fires) {
+    ok(findFrozenFontSizes(css).length === 1, `self-test: DETECTS a frozen px size — ${why}`);
+  }
+
+  const quiet = [
+    ['.a{font-size:var(--text-base)}',        'a ramp token is the fix, not a finding'],
+    ['.a{font-size:0.92em}',                  'em is relative to a scaled parent, so it scales'],
+    ['.a{font:var(--type-body)}',             'the composed role reads the ramp'],
+    ['.a{font-family:var(--font-mono)}',      'font-family is not a size'],
+    ['/* was 14.5px before the ramp */\n.a{font-size:var(--text-base)}',
+                                              'a px size quoted in a COMMENT is not a finding'],
+    ['.a{padding:0 5px;border-radius:2px}',   'px elsewhere in the rule is untouched (only sizes scale)'],
+    ['.a{font-size:100%}',                    'percentage inherits the scaled parent'],
+  ];
+  for (const [css, why] of quiet) {
+    ok(findFrozenFontSizes(css).length === 0, `self-test: does NOT over-fire — ${why}`);
+  }
+
+  // The line number must be the real one, or a failure message sends the
+  // next reader to the wrong rule.
+  const located = findFrozenFontSizes('.a{color:red}\n\n.b{\n  font-size: 13px;\n}');
+  ok(located.length === 1 && located[0].line === 4,
+    `self-test: reports the real line number (got ${located.length === 1 ? located[0].line : 'no finding'}, expected 4)`);
+}
+
+// ── 10b. The real /next tree ────────────────────────────────────────────
+// Ceilings for the files this change does not own. Each needs a reason.
+const FROZEN_PX_CEILING = new Map([
+  ['src/public/next/shell.css', {
+    max: 3,
+    note: 'reader chrome + the sidebar count badge (2 font-size, 1 font shorthand) — ' +
+          'shell.css is not this change\'s file; same fix, separate change.' }],
+  ['src/public/next/views/shared.css', {
+    max: 2,
+    note: 'Shared Brain card repo line + one font shorthand.' }],
+  ['src/public/next/views/sync.css', {
+    max: 2,
+    note: 'Sync repo/status lines at 12.5px.' }],
+]);
+
+const frozenByFile = new Map();
+for (const abs of walkCssFiles(nextRootDir)) {
+  const rel = path.relative(ROOT, abs).split(path.sep).join('/');
+  const found = findFrozenFontSizes(readFileSync(abs, 'utf8'));
+  if (found.length) frozenByFile.set(rel, found);
+}
+
+// The file this change owns: ZERO, no ceiling, no exemption.
+const CHAT_CSS = 'src/public/next/views/chat.css';
+{
+  const found = frozenByFile.get(CHAT_CSS) || [];
+  ok(found.length === 0,
+    found.length === 0
+      ? `views/chat.css has NO frozen px font size — every size there is on the --text-* ramp, ` +
+        `so Settings > General's text-size control reaches the chat answer, the user's own ` +
+        `message bubble and the composer input`
+      : `views/chat.css has ${found.length} frozen px font size(s). Each one IGNORES the ` +
+        `Settings > General text-size control — the rule renders at 1x no matter what the user ` +
+        `picks, silently and with no error. Use the nearest --text-* step from ` +
+        `tokens/typography.css:\n` +
+        found.map(f => `        line ${f.line}: ${f.prop}: ${f.value}`).join('\n'));
+}
+
+// Named regression guards for the two rules that make this feature matter.
+// The zero-count assertion above already covers them; a dedicated message
+// means a regression names the offender instead of landing in a bucket —
+// the treatment sections 3 and 9 give --font-mono and progress-ring.css.
+{
+  const chatCss = readFileSync(path.join(ROOT, CHAT_CSS), 'utf8');
+  const ruleSize = (selector) => {
+    // Read the declared font-size out of one rule, from cleaned CSS so a
+    // commented-out copy of the rule cannot satisfy this.
+    const cleaned = cleanCss(chatCss);
+    const at = cleaned.indexOf(selector + ' {');
+    if (at === -1) return null;
+    const close = cleaned.indexOf('}', at);
+    const m = /font-size\s*:\s*([^;}]+)/.exec(cleaned.slice(at, close));
+    return m ? m[1].trim() : null;
+  };
+  ok(ruleSize('.chat-answer') === 'var(--text-base)',
+    `REGRESSION GUARD: .chat-answer reads var(--text-base), not a px literal — it is the ` +
+    `most-read text in the app and was frozen at 14.5px, so enlarging the text resized the ` +
+    `rail and the titles and left the ANSWER unchanged (got: ${ruleSize('.chat-answer')})`);
+  ok(ruleSize('.chat-bubble') === 'var(--text-base)',
+    `REGRESSION GUARD: .chat-bubble reads var(--text-base), not a px literal — the user's own ` +
+    `message must scale with the answer it sits above (got: ${ruleSize('.chat-bubble')})`);
+}
+
+// Everyone else: an upper bound, plus honesty in the other direction.
+{
+  const overCeiling = [];
+  const slackCeiling = [];
+  for (const [rel, found] of frozenByFile) {
+    if (rel === CHAT_CSS) continue;
+    const entry = FROZEN_PX_CEILING.get(rel);
+    if (!entry) { overCeiling.push(`${rel}: ${found.length} frozen (no ceiling recorded)`); continue; }
+    if (found.length > entry.max) {
+      overCeiling.push(`${rel}: ${found.length} frozen, ceiling ${entry.max} — ` +
+        found.map(f => `line ${f.line}`).join(', '));
+    }
+  }
+  for (const [rel, entry] of FROZEN_PX_CEILING) {
+    const n = (frozenByFile.get(rel) || []).length;
+    if (n < entry.max) slackCeiling.push(`${rel}: ${n} of ${entry.max}`);
+  }
+
+  ok(overCeiling.length === 0,
+    overCeiling.length === 0
+      ? `no /next stylesheet exceeds its frozen-px ceiling ` +
+        `(${FROZEN_PX_CEILING.size} file(s) carry known, pre-existing frozen sizes)`
+      : `${overCeiling.length} /next stylesheet(s) gained a frozen px font size. A px literal ` +
+        `cannot be resized by Settings > General's text-size control. Use a --text-* step, or ` +
+        `raise the ceiling here with a reason:\n` +
+        overCeiling.map(s => `        ${s}`).join('\n'));
+
+  // A ceiling nobody needs any more is a licence for the next regression.
+  // Reported, deliberately NOT a failure: these files are owned by other
+  // changes, and a suite that goes red when a colleague FIXES something
+  // teaches people to edit baselines rather than read them.
+  if (slackCeiling.length) {
+    console.log(`  ⚠ frozen-px ceiling is now slack (tighten it): ${slackCeiling.join('; ')}`);
+  }
+
+  const totalFrozen = [...frozenByFile.values()].reduce((a, f) => a + f.length, 0);
+  console.log(`  → /next frozen px font sizes: ${totalFrozen} across ${frozenByFile.size} file(s)` +
+    `${frozenByFile.size ? ` (${[...frozenByFile.keys()].map(r => r.split('/').pop()).join(', ')})` : ''}; ` +
+    `views/chat.css: ${(frozenByFile.get(CHAT_CSS) || []).length}`);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`Passed: ${passed}   Failed: ${failed}`);
 if (failed > 0) { console.log('❌ FAILURES'); process.exit(1); }

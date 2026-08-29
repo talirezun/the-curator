@@ -20,7 +20,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 11. [Read a wiki page](#11-read-a-wiki-page)
 12. [See your knowledge graph in Obsidian](#12-see-your-knowledge-graph-in-obsidian)
 13. [Three ways to talk to your knowledge (Chat · Obsidian · MCP)](#13-three-ways-to-talk-to-your-knowledge-chat--obsidian--mcp)
-13b. [Working state — carrying context between coding sessions](#13b-working-state--carrying-context-between-coding-sessions)
+13b. [Working state — carrying context between sessions](#13b-working-state--carrying-context-between-sessions)
 14. [Daily workflow](#14-daily-workflow)
 15. [Sync across computers (Personal Sync)](#15-sync-across-computers)
 15b. [Shared Brain](#15b-shared-brain)
@@ -353,7 +353,7 @@ The rail, top to bottom:
 | **Chat** | Ask questions of one domain's wiki. This is where the app opens. |
 | **Domains** | Your knowledge, one domain at a time — page counts, **Wiki health**, and the page list. |
 | **Shared Brain** | Collective wikis you contribute to with a cohort or team. Off by default. |
-| **Agent memory** | Working state your coding agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. Read-only here; agents do the writing. |
+| **Agent memory** | Working state your agents read and write over MCP — the standing brief, the current handoff, and the journal of saves. Read-only here; agents do the writing. |
 | **Ingest** | Drop in PDFs, Markdown or text files. |
 
 Then, at the **bottom of the rail**, separated by a gap:
@@ -406,7 +406,7 @@ The first time you open the app after updating, a one-time bar appears at the to
 
 ### Agent memory — what the screen shows
 
-The **Agent memory** rail item opens a browser for the working state your coding agents leave for
+The **Agent memory** rail item opens a browser for the working state your agents leave for
 each other. Everything on it is **read-only**: agents write this over MCP, and the app shows it.
 
 - **The sidebar lists every domain**, in domain order, each with its work-stream count and how
@@ -426,7 +426,7 @@ each other. Everything on it is **read-only**: agents write this over MCP, and t
   it rarely changes, the journal because it is history rather than state. The brief opens by
   default when there is no handoff yet, since then it is the only content there is.
 
-Your coding agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
+Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
 markdown under `domains/<project>/state/`, so you can also open it in any editor, and it travels
 with GitHub sync like the rest of your wiki.
@@ -868,7 +868,7 @@ Chat is the app's default view — it's what you land on. It has three parts:
 - **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. On the right of that bar you'll see how much is in scope, e.g. *"3,336 pages in scope"* — and, once a conversation has a question in it, the **Compile to Wiki** button.
 - **The thread and the composer** below it.
 
-Under the composer, a line reminds you: *"Answers cite the pages they came from. Click a citation to read the page."*
+An empty thread opens with *"Ask <domain> anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation to open it.
 
 > Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
@@ -1232,7 +1232,7 @@ Use **My Curator** when you want a frontier model — Claude Opus, Sonnet, or an
 
 You install a tiny local MCP bridge (one-time, under 2 minutes from **Settings → MCP bridge**), and from then on Claude Desktop (or VS Code with an MCP-aware coding agent, or LM Studio with a local model) can:
 
-- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **20 tools in total: 15 that read and 5 that write.** (Two of those, `get_working_state` and `save_working_state`, are new in v3.17.0 and touch a project’s working state rather than its wiki — see [§13b](#13b-working-state--carrying-context-between-coding-sessions).)
+- **Research as a graph** — topology overviews, bidirectional link tracing, tag-driven clusters, cross-domain search. There are **20 tools in total: 15 that read and 5 that write.** (Two of those, `get_working_state` and `save_working_state`, are new in v3.17.0 and touch a project’s working state rather than its wiki — see [§13b](#13b-working-state--carrying-context-between-sessions).)
 - **Read the original document, not just the summary** — say *"check the actual source for that figure"* and Claude calls `get_raw_source` to pull the extracted text of the original file a summary was built from (never the raw bytes — PDFs are text-extracted first). If the file isn't on this machine (raw sources aren't synced), Claude is told the filename and when it was ingested instead.
 - **Write to your wiki** (v2.5.2+) — say *"save what we discussed to my second brain"* and Claude calls `compile_to_wiki` to commit the conversation as a summary page plus any new entity/concept pages. Same merge pipeline as the in-app Compile button.
 - **Heal your wiki** (v2.5.2+) — say *"check my wiki for problems"* and Claude scans, auto-fixes the safe ones, asks before destructive merges, and respects your persistent dismissals.
@@ -1276,9 +1276,9 @@ All three read the same `domains/` folder. Nothing to sync between them. The int
 
 ---
 
-## 13b. Working state — carrying context between coding sessions
+## 13b. Working state — carrying context between sessions
 
-*New in v3.17.0. This one is for people who build things with a coding agent. If you use The Curator purely as a reading-and-research tool, you can skip it.*
+*New in v3.17.0. This one is for anyone who works with an AI agent across more than one session — building something, running a long research sweep, or any task that outlives a single conversation.*
 
 ### The problem
 
@@ -1360,7 +1360,7 @@ So the division of labour is:
 
 **Which means: do not collapse your work into a single scope in order to get a shared brief. You already have one.** That instinct is understandable and it is the wrong way round — the brief is *already* shared by every scope, so collapsing buys you nothing, and it costs you the one thing scopes exist for: two workstreams under one scope overwrite each other's handoff. Keep them separate. Three features of one product are three scopes — `checkout-rewrite`, `billing-api`, `mobile-nav` — all reading the same brief. A read that names no scope gets `main`.
 
-**How the brief gets written is different from everything else here.** No MCP tool writes it — `save_working_state` only ever writes a scope's handoff — and the in-app route is read-only. You author it by hand: open `domains/<project>/state/project.md` in Obsidian or any editor, or ask a coding agent with filesystem access to edit the file directly. There is no in-app editor for it, deliberately: the handoff is the part that costs time to write, and the brief is the part you want to have decided.
+**How the brief gets written is different from everything else here.** No MCP tool writes it — `save_working_state` only ever writes a scope's handoff — and the in-app route is read-only. You author it by hand: open `domains/<project>/state/project.md` in Obsidian or any editor, or ask an agent with filesystem access to edit the file directly. There is no in-app editor for it, deliberately: the handoff is the part that costs time to write, and the brief is the part you want to have decided.
 
 > One caution, because the brief is the one file with no machine name in its path: if you hand-edit it on two computers between syncs, one edit can be dropped or spliced silently. See [sync.md](sync.md#working-state-and-why-its-path-has-a-machine-name-in-it). Edit it, then sync.
 
@@ -2160,7 +2160,7 @@ These are measurements, not endorsements. Your documents are not the documents t
 
 **Wiki health lives inside a domain, not in a tab of its own.** Open **Domains** in the rail, click a domain, and the **Wiki health** panel is on that domain's page, between the stat cards and the page list. That's where it belongs: a health problem is always a problem with one specific wiki.
 
-**It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. **Rescan** re-runs it after you've made changes. The panel opens with a plain sentence: *"Found 14 issues, last scanned 2 min ago. Structural repairs run locally and free; anything needing judgement stays review-only, and anything that spends tokens asks first."* Under it is a line of what was scanned, then a row of chips — one per issue type, with its count. Zero counts stay grey.
+**It scans by itself.** You don't have to press anything — selecting a domain runs the free, local scan and the panel fills in. **Rescan** re-runs it after you've made changes. The panel opens with a plain sentence: *"Found 14 issues, last scanned 2 min ago."* Under it is a line of what was scanned, then a row of chips — one per issue type, with its count. Zero counts stay grey.
 
 Use it if your wiki starts to feel messy — broken links, duplicate entities, pages that don't show up in the graph — or as part of your regular maintenance after a batch of ingests.
 
@@ -2569,7 +2569,7 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 📖 [Knowledge Immortality (essay)](../research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, and a section-by-section walkthrough of every part of the app |
 | 🔌 [My Curator MCP Guide](mcp-user-guide.md) | Connect the wiki to Claude Desktop / VS Code / LM Studio for frontier-model research |
 | 🧹 [AI Wiki Health Guide](ai-health.md) | Phase 1 / 2 / 3 details: broken-link rescue, orphan rescue, semantic duplicate detection — what data leaves your machine and what each call costs |
-| 🧠 [Working state](working-state.md) | Carrying build context between coding sessions, agents, models and machines — the full reference behind [§13b](#13b-working-state--carrying-context-between-coding-sessions) |
+| 🧠 [Working state](working-state.md) | Carrying build context between sessions, agents, models and machines — the full reference behind [§13b](#13b-working-state--carrying-context-between-sessions) |
 | 🩺 [System Check](system-check.md) | Settings → General → System check — confirm the app setup is correct + an optional AI connection test |
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |
