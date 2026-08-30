@@ -189,6 +189,20 @@ function freshState() {
     remoteError: null,          // a failed activity fetch; never blanks what is on screen
     remoteResultExpanded: false, // the restored result's unchanged-pages fold
 
+    // Every domain the server says has a single-file ingest RUNNING, sorted.
+    // Kept because `remote` above deliberately holds only the SELECTED
+    // domain's record, and the sidebar has to be able to mark a row that is
+    // not the selected one. See renderSidebar's live-marker block, and
+    // adoptDestination for why one record being invisible was the whole bug.
+    runningDomains: [],
+    // Whether this mount still owes its one-and-only destination adoption.
+    // Lives on `state` — NOT at module scope like `refreshingDomainStats` —
+    // precisely because onEnter replaces `state` wholesale, and "has anyone
+    // chosen a destination in THIS mount" is a per-mount question. It is
+    // cleared by the first activity fetch to land and by selectDomain,
+    // whichever comes first; see adoptDestination.
+    destinationAdoptionPending: true,
+
     // ── Batch queue (Phase 2) ────────────────────────────────────────
     // Pre-job (confirm-gate) state — mirrors src/public/app.js's
     // selectedFiles/queueModeActive/queueEstimate.
@@ -517,14 +531,159 @@ async function fetchActivity() {
  */
 function activitySignature() {
   const r = state.remote;
-  if (!r) return 'none';
+  // The running set is folded in BEFORE the no-record fast path, and that
+  // ordering was a real bug caught by its own assertion rather than by review.
+  // `if (!r) return 'none'` is precisely the branch taken in the reported
+  // scenario — selected domain `articles`, ingest running on `posts` — so a
+  // set appended only to the array below would have been computed on every
+  // poll and never painted. That is the dead-data shape this whole feature
+  // exists to remove, reintroduced one level up inside its own fix.
+  const running = (state.runningDomains || []).join(',');
+  if (!r) return 'none|' + running;
   return JSON.stringify([
     r.id, r.status, r.pct, r.message, r.waiting, r.phaseStartedAt,
     r.filename, r.error,
     r.result ? [r.result.title, r.result.changesTotal, r.result.warningsTotal] : null,
     isActivityAcked(r.id),
     state.remoteResultExpanded,
+    // THE SIDEBAR MARKERS ARE A PANE THIS GUARD MUST BE ABLE TO SEE.
+    // `state.remote` covers only the selected domain, so without this line a
+    // poll that discovered an ingest running on a DIFFERENT domain would
+    // change `state.runningDomains`, compare equal here, and never repaint —
+    // leaving the marker off the row it exists for. That is memory.js's own
+    // recorded failure verbatim: "a no-op guard that cannot see a pane is not
+    // a guard for that pane."
+    running,
   ]);
+}
+
+/**
+ * Which domains the server says are mid-ingest, sorted so the string built
+ * from this in activitySignature() is stable under Map iteration order.
+ *
+ * Not intersected with `state.domains` here: the sidebar can only draw rows
+ * for domains it lists, so the intersection happens for free at render time,
+ * and keeping the raw set means this function answers exactly one question.
+ */
+function runningActivityDomains(activity) {
+  return (activity || [])
+    .filter((a) => a && a.status === 'running' && typeof a.domain === 'string' && a.domain)
+    .map((a) => a.domain)
+    .sort();
+}
+
+/**
+ * The destination a FRESH mount should adopt, or null to leave the selection
+ * alone. Pure: takes the server's list, this mount's own domain list and the
+ * current selection, and returns a slug.
+ *
+ * ── THE DEFECT ──────────────────────────────────────────────────────────
+ * Reported from real use: "I uploaded a document, ingested it, then switched
+ * to the memory layer and returned, and everything was gone. No message, no
+ * nothing." Then, minutes later, "now it works, I don't know why."
+ *
+ * MEASURED on the live server, and it is not intermittent. GET
+ * /api/ingest/activity held TWO records — `posts`, started 94 s earlier, and
+ * `articles`, started 27 s later with the SAME filename. That pair is the
+ * signature of the whole sequence: ingest into `posts` -> return -> see
+ * nothing -> re-ingest, which the second time lands on the default domain and
+ * therefore shows. The feature worked; it was unreachable.
+ *
+ * The cause is two lines that were each correct alone. `loadDomains` does
+ * `state.domain = list[0].slug` unconditionally, and `refreshActivity` looks
+ * the record up with `find((a) => a.domain === state.domain)`. So a returning
+ * mount can only ever find a record for the FIRST domain, and an ingest
+ * running anywhere else is invisible however complete the server's memory is.
+ *
+ * ── THIS IS BATCH-PATH PARITY, NOT A NEW IDEA ───────────────────────────
+ * `applyQueueJobSnapshot` and `checkActiveQueueJob` have always done
+ * `if (job.domain && state.domains.some(d => d.slug === job.domain))
+ *  state.domain = job.domain;` — adopt a live job's domain, guarded on it
+ * being in this mount's own list. The single-file path simply never inherited
+ * it. The `state.domains` guard is kept verbatim rather than reinvented.
+ *
+ * ── WHY THIS RUNS ONCE, AT MOUNT, AND NEVER AGAIN ───────────────────────
+ * v3.23.1's rule, which this must not relax: a poll never swaps the document
+ * under a reader, and a choice the user actually made is never taken away.
+ * A fresh mount has made no choice yet — `list[0]` is the store's own default,
+ * not an intention — so resolving it to the live run is right there and only
+ * there. Fifteen seconds later the user IS reading a screen, and moving their
+ * destination out from under them because a second tab started an ingest would
+ * be the worse bug: the sidebar markers (part two of this fix) tell them
+ * without touching what they selected.
+ *
+ * v3.23.1's own bug was reading the store's auto-resolution back as if it were
+ * the user's choice, which pinned a control to a stale value forever. The
+ * mirror-image mistake here would be treating `list[0]` as a choice and never
+ * adopting at all — which is exactly the shipped defect. The distinction is
+ * carried by `state.destinationAdoptionPending`, which only a real
+ * `selectDomain` click or the one adoption attempt can clear.
+ *
+ * ── CHOOSING AMONG SEVERAL RUNNING RECORDS ──────────────────────────────
+ * The maintainer genuinely had two, so "adopt the running one" is
+ * under-specified and the rule has to be written down.
+ *
+ *  1. If the CURRENT selection already has a running record, return null.
+ *     Nothing is hidden, so there is nothing to fix, and moving would be pure
+ *     harm. This short-circuit means an adoption only ever fires when the
+ *     screen would otherwise show nothing.
+ *  2. Otherwise take the running record with the LATEST `startedAt`. It is the
+ *     run the user most recently caused, which is the best available proxy for
+ *     which one they came back to look at; it is stable, because `startedAt`
+ *     is fixed for the life of a record, so re-evaluating cannot ping-pong;
+ *     and where there is exactly one running record — the common case, and the
+ *     only case in the report above — "latest" and "the one" coincide, so the
+ *     rule adds no behaviour in the case that matters most.
+ *  3. Ties break on slug, ascending, so the order is TOTAL and the answer is
+ *     deterministic rather than dependent on Map insertion order. `startedAt`
+ *     arrives through `wireNum`, which yields null for anything non-finite, so
+ *     a missing stamp sorts LAST rather than poisoning the comparator with
+ *     NaN — a record we cannot date must not outrank one we can.
+ *
+ * Refusing to adopt when ambiguous was considered and rejected: it reinstates
+ * the blank screen in precisely the case the user is most confused by.
+ */
+function pickAdoptableDestination(activity, domains, currentDomain) {
+  const listed = new Set((domains || []).map((d) => d && d.slug));
+  const running = (activity || []).filter(
+    (a) => a && a.status === 'running' && a.domain && listed.has(a.domain)
+  );
+  if (!running.length) return null;
+  // Rule 1 — the selected domain is already showing its own run.
+  if (currentDomain && running.some((a) => a.domain === currentDomain)) return null;
+  const at = (a) => (Number.isFinite(a.startedAt) ? a.startedAt : -Infinity);
+  const best = running.slice().sort((a, b) => {
+    if (at(b) !== at(a)) return at(b) - at(a);           // rule 2 — latest first
+    return a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0;  // rule 3 — total order
+  })[0];
+  return best.domain === currentDomain ? null : best.domain;
+}
+
+/**
+ * Spend this mount's ONE destination adoption, if it is still owed.
+ *
+ * A named writer of `state.domain`, deliberately, rather than four lines
+ * inline in refreshActivity: scripts/test-next-ingest-view.js §2 attributes
+ * every `state.domain =` to its enclosing function and fails on anything not
+ * allow-listed. Inline, the allow-list entry would have to be `refreshActivity`
+ * — which would then wave through ANY future write anywhere in that function,
+ * including a rogue one. Naming the writer keeps the guard as narrow as the
+ * behaviour.
+ *
+ * The pending flag is cleared whether or not anything was adopted. Adoption is
+ * a mount-time RECONCILIATION, not an ongoing behaviour: leaving it armed
+ * would let a poll fifteen seconds later yank the destination out from under a
+ * user who is by then reading the screen, because a second tab started an
+ * ingest. That is the v3.23.1 harm, and the sidebar's live markers are how
+ * that case is served instead. Returns whether the selection moved.
+ */
+function adoptDestination(activity) {
+  if (!state.destinationAdoptionPending) return false;
+  state.destinationAdoptionPending = false;
+  const adopt = pickAdoptableDestination(activity, state.domains, state.domain);
+  if (!adopt) return false;
+  state.domain = adopt;
+  return true;
 }
 
 /**
@@ -553,6 +712,16 @@ async function refreshActivity(token) {
     }
     state.remoteError = null;
 
+    // Called BEFORE the record lookup below, which is keyed on `state.domain`
+    // — that ordering is the point: adopting after it would leave this pass
+    // showing the old domain's (absent) record for one more tick.
+    const adopted = adoptDestination(got.activity);
+
+    // Every running domain, not just the selected one — this is what the
+    // sidebar rows are marked from. Recomputed on every fetch, so a run
+    // finishing clears its marker on the next poll.
+    state.runningDomains = runningActivityDomains(got.activity);
+
     const rec = state.domain
       ? got.activity.find((a) => a && a.domain === state.domain) || null
       : null;
@@ -568,7 +737,21 @@ async function refreshActivity(token) {
         : null;
 
     const after = activitySignature();
-    if (after !== before) {
+    // An adoption repaints UNCONDITIONALLY. The signature describes the
+    // activity panes, not the selection, so it is not the right instrument for
+    // "the destination itself moved" — the sidebar's active row and the form's
+    // picker both changed and neither is in it. Relying on the record content
+    // happening to differ would be true today and silently wrong the day a
+    // field leaves the signature.
+    //
+    // HONESTLY: this arm is DEFENCE IN DEPTH and is not independently
+    // load-bearing on any path reachable today. An adoption implies a running
+    // record, and record ids are UUIDs, so the signature always differs from
+    // the mount's own 'none|…' and the second arm would repaint anyway. Only
+    // the source guard in §14e catches its removal — recorded as such rather
+    // than claimed as tested (the v3.15.1 rule for a guard whose mutation
+    // stays green because a second layer is doing the work).
+    if (adopted || after !== before) {
       renderedActivitySignature = after;
       render(token);
     }
@@ -856,6 +1039,12 @@ function render(token) {
 function selectDomain(slug) {
   if (!slug || slug === state.domain) return;
   state.domain = slug;
+  // A real choice has now been made, so the mount's one adoption is forfeit.
+  // Without this, a user who picks a destination before the first activity
+  // fetch lands would have it moved out from under them by that fetch — the
+  // v3.23.1 rule (a deliberate choice is never taken away) applied to the one
+  // race this feature can actually lose.
+  state.destinationAdoptionPending = false;
   // The activity record is PER DOMAIN, so the one on screen belongs to the
   // domain we just left. Clear it immediately — showing domain A's ingest
   // under domain B's name is a correctness bug, strictly worse than the brief
@@ -863,6 +1052,10 @@ function selectDomain(slug) {
   // its health report in v3.11.0: KEEP on re-entry, CLEAR on a domain switch).
   state.remote = null;
   state.remotePhaseStartedAtLocal = null;
+  // `state.runningDomains` is deliberately NOT cleared alongside it. `remote`
+  // is mis-attributed by a domain switch — it would render under the new
+  // domain's name — whereas each marker in runningDomains names its own row
+  // and stays true. Clearing it would blink every marker off on each click.
   stopRemoteElapsedTimer();
   refreshActivity(myMountToken).catch(() => {});
   if (state.queueModeActive && !state.queueJob) {
@@ -951,8 +1144,32 @@ function renderSidebar(token) {
   // plainly; hiding the list would make the sidebar blink empty at exactly
   // the moment there's most to look at.
   const rowsLocked = state.submitting || !!state.queueJob || !!queueJobId;
+  // ── THE LIVE MARKER, AND WHY IT IS THE HALF THAT ACTUALLY CLOSES THIS ──
+  // `state.remote` holds the record for the SELECTED domain only, so before
+  // this an ingest running anywhere else was invisible no matter how complete
+  // the server's memory was — the reported "everything was gone. No message,
+  // no nothing." Adopting the destination on mount (see
+  // pickAdoptableDestination) rescues the moment you walk back in; this
+  // rescues every other moment, because a row that is not selected can now
+  // still say what it is doing.
+  //
+  // With it, no running ingest can be invisible whatever is selected, which
+  // makes the class structurally gone rather than handled at one entry point.
+  //
+  // Marked on the ACTIVE row too, not just the others. A marker that vanished
+  // the moment you clicked the row would read as the ingest having stopped —
+  // a small false statement, and this list's whole job is telling you the
+  // truth about where material goes.
+  //
+  // It is TEXT, not a colour or a dot: the row is a <button>, so the word ends
+  // up in its accessible name ("Business, 96 pages · last write …, Ingesting")
+  // and reaches a screen reader for free. v3.23.0's own finding — a health
+  // count that lived on an empty span was unreachable by hover, keyboard AND
+  // screen reader — is the reason that is not left to styling.
+  const running = new Set(state.runningDomains || []);
   const rows = state.domains.map((d) => {
     const isActive = d.slug === state.domain;
+    const isRunning = running.has(d.slug);
     return (
       '<button type="button" class="ing-dest-row' + (isActive ? ' active' : '') + '"' +
         ' data-dest-slug="' + escapeHtml(d.slug) + '"' +
@@ -962,6 +1179,7 @@ function renderSidebar(token) {
           '<span class="ing-dest-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
           '<span class="ing-dest-meta mono">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
         '</span>' +
+        (isRunning ? '<span class="ing-dest-live">Ingesting</span>' : '') +
         (isActive ? '<span class="ing-dest-mark" aria-hidden="true">' + icon('check', 13) + '</span>' : '') +
       '</button>'
     );

@@ -250,9 +250,29 @@ ok(writers.length > 0, 'found at least one state.domain assignment to classify')
 //                             destination out from under them right before
 //                             they write to it, which is why refreshing could
 //                             not simply re-call loadDomains.
+//   adoptDestination        — v3.24.1, and the reason is recorded here
+//                             because widening this list is a decision. It
+//                             spends a mount's ONE destination adoption: on a
+//                             fresh mount with no user choice made, if the
+//                             server says an ingest is running on a domain
+//                             other than the one loadDomains snapped to, the
+//                             selection moves to it. That is batch-path
+//                             parity — applyQueueJobSnapshot and
+//                             checkActiveQueueJob already adopt a live job's
+//                             domain, guarded on the same
+//                             `state.domains.some(...)` membership test — and
+//                             without it a single-file ingest into any domain
+//                             but list[0] is invisible on return, which is the
+//                             reported defect.
+//                             It is on this list as a NAMED function rather
+//                             than as `refreshActivity`, which is where its
+//                             call site is: allow-listing the caller would
+//                             wave through any future write anywhere in that
+//                             function. §14 pins that it fires at most once
+//                             per mount and never after a real choice.
 const ALLOWED_WRITERS = new Set([
   'selectDomain', 'freshState', 'loadDomains', 'applyQueueJobSnapshot', 'checkActiveQueueJob',
-  'refreshDomainStats',
+  'refreshDomainStats', 'adoptDestination',
 ]);
 const rogue = writers.filter((w) => !ALLOWED_WRITERS.has(w));
 ok(rogue.length === 0,
@@ -608,7 +628,7 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
         'return (() => {' +
         `const ACTIVITY_ACK_KEY = ${JSON.stringify(ACK_KEY)};` +
         `const ACTIVITY_ACK_MAX = ${ACK_MAX};` +
-        'let state = { submitting:false, progress:null, result:null, errorMessage:null, remote:null, remoteResultExpanded:false, domain:"articles" };' +
+        'let state = { submitting:false, progress:null, result:null, errorMessage:null, remote:null, remoteResultExpanded:false, domain:"articles", runningDomains:[] };' +
         aBodies.loadAckedActivityIds + aBodies.isActivityAcked + aBodies.ackActivityId +
         aBodies.isRemoteIngestRunning + aBodies.pendingRemoteOutcome + aBodies.activitySignature +
         'return { get state(){return state;}, set state(v){state=v;}, loadAckedActivityIds, isActivityAcked, ackActivityId, isRemoteIngestRunning, pendingRemoteOutcome, activitySignature };' +
@@ -801,8 +821,23 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
       ok(sb.activitySignature() !== before, '§13f dismissing changes the signature');
 
       // CONTROL: no record at all is a distinct, cheap signature.
+      //
+      // INVERTED IN v3.24.1, NOT DELETED. This asserted the literal 'none'.
+      // The no-record branch now also carries the running-domain set
+      // ('none|posts'), because that branch is EXACTLY the reported scenario —
+      // selected domain `articles`, ingest running on `posts` — so a set the
+      // fast path could not see would be computed on every poll and never
+      // painted. The assertion's INTENT (the empty case has a cheap signature
+      // of its own, distinct from any record's) is unchanged and still pinned;
+      // only the literal moved, so it is rewritten rather than dropped.
       sb.state.remote = null;
-      ok(sb.activitySignature() === 'none', '§13f CONTROL — no record has its own signature');
+      sb.state.runningDomains = [];
+      const empty = sb.activitySignature();
+      ok(empty !== base && /^none/.test(empty),
+        '§13f CONTROL — no record still has its own cheap signature, distinct from any record\'s');
+      sb.state.runningDomains = ['posts'];
+      ok(sb.activitySignature() !== empty,
+        '§13f …and that fast path can STILL see a run on another domain — the branch the reported defect actually takes');
     }
 
     // ── 13g  Poll hygiene — the timer cannot outlive the mount ─────────
@@ -1001,6 +1036,317 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
         '§13m CONTROL — the live progress panel does NOT carry the remote clock id (the two ids are genuinely distinct)');
       ok(/id="ing-elapsed"/.test(code(extractFunction(js, 'renderProgress'))),
         '§13m CONTROL — …and still carries its own, so the live path is unchanged');
+    }
+  }
+}
+
+// ── §14 — a running ingest is reachable whatever domain is selected ─────
+//
+// THE DEFECT, and it is not the one it was reported as. "I uploaded a
+// document, ingested it, then switched to the memory layer and returned, and
+// everything was gone. No message, no nothing." Then minutes later: "now it
+// works, I don't know why." That reads as intermittent. It is not.
+//
+// MEASURED on the live server: GET /api/ingest/activity held TWO records —
+// `posts` started 94 s earlier, and `articles` started 27 s later with the
+// SAME filename. That pair is the whole sequence written down: ingest into
+// `posts` -> return -> see nothing -> re-ingest, which the second time lands
+// on the default domain and therefore shows. v3.24.0 worked; it was
+// unreachable unless you already happened to be looking at the right domain.
+//
+// Two lines, each correct alone, compose into it: `loadDomains` does
+// `state.domain = list[0].slug` unconditionally, and `refreshActivity` finds
+// the record with `find(a => a.domain === state.domain)`.
+//
+// The fix has two halves and §14 pins both, because they carry different
+// weight. ADOPTION (14a-14b) is batch-path parity and rescues the moment you
+// walk back in. The SIDEBAR MARKERS (14c-14e) are what removes the CLASS: with
+// them no running ingest can be invisible whatever is selected, so adoption
+// becomes a convenience rather than the only thing between the user and a
+// blank screen.
+console.log('\n§14  A running ingest is reachable whatever domain is selected');
+{
+  const code14 = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  const B_NEEDED = [
+    'pickAdoptableDestination', 'adoptDestination', 'runningActivityDomains',
+    'activitySignature', 'loadAckedActivityIds', 'isActivityAcked',
+    'refreshActivity', 'selectDomain', 'renderSidebar',
+  ];
+  const bBodies = {};
+  let bFatal = false;
+  for (const name of B_NEEDED) {
+    const body = extractFunction(js, name);
+    const wellFormed = !!body && /\n\}$/.test(body) && body.split('\n').length > 2;
+    bBodies[name] = wellFormed ? body : null;
+    ok(wellFormed, '§14 POSITIVE CONTROL — extracted a WELL-FORMED body for ' + name + '()');
+    if (!wellFormed) bFatal = true;
+  }
+
+  if (bFatal) {
+    console.log('\n❌ §14 cannot check anything without its targets — failing loudly ' +
+      'rather than reporting a green run over zero comparisons.');
+  } else {
+    function makeSandbox14(initialState) {
+      const src =
+        'return (() => {' +
+        "const ACTIVITY_ACK_KEY = 'k'; const ACTIVITY_ACK_MAX = 20;" +
+        'let state = ' + JSON.stringify(initialState) + ';' +
+        bBodies.loadAckedActivityIds + bBodies.isActivityAcked +
+        bBodies.pickAdoptableDestination + bBodies.adoptDestination +
+        bBodies.runningActivityDomains + bBodies.activitySignature +
+        'return { get state(){return state;}, pickAdoptableDestination, adoptDestination,' +
+        ' runningActivityDomains, activitySignature };' +
+        '})()';
+      return new Function('window', src)({
+        localStorage: { getItem: () => null, setItem: () => {} },
+      });
+    }
+    const baseState = {
+      domains: [{ slug: 'articles' }, { slug: 'posts' }, { slug: 'business' }],
+      domain: 'articles',
+      destinationAdoptionPending: true,
+      runningDomains: [],
+      remote: null,
+      remoteResultExpanded: false,
+      submitting: false, progress: null, result: null, errorMessage: null,
+    };
+    const run = (domain, startedAt) => ({ domain, status: 'running', startedAt, id: 'r-' + domain });
+    const done = (domain, startedAt) => ({ domain, status: 'done', startedAt, id: 'd-' + domain });
+
+    // ── 14a  Which destination a fresh mount adopts ────────────────────
+    {
+      const sb = makeSandbox14(baseState);
+      const D = baseState.domains;
+      const pick = (act, cur) => sb.pickAdoptableDestination(act, D, cur);
+
+      ok(pick([run('posts', 1000)], 'articles') === 'posts',
+        '§14a THE REPORTED CASE — an ingest running on a domain other than the one loadDomains snapped to IS adopted, so returning to the view shows it instead of a blank form');
+      ok(pick([run('articles', 1000)], 'articles') === null,
+        '§14a …but a run on the SELECTED domain adopts NOTHING — nothing is hidden, so moving would be pure harm. This short-circuit means an adoption only ever fires when the screen would otherwise show nothing');
+      ok(pick([], 'articles') === null,
+        '§14a nothing running adopts nothing');
+      ok(pick([done('posts', 1000)], 'articles') === null,
+        '§14a a SETTLED record is not adopted — the ingest is over, and moving the destination for a finished event is a bigger intrusion than the outcome is worth');
+      ok(pick([run('secret-domain', 1000)], 'articles') === null,
+        '§14a a run on a domain NOT in this mount\'s own list is refused — the SAME `state.domains.some(...)` guard applyQueueJobSnapshot has always used, kept rather than reinvented (a read-only mirror, or a domain deleted since load, has no row to select)');
+
+      // The maintainer genuinely had two concurrent records, so the rule has
+      // to be written down rather than left to Map order.
+      const two = [run('posts', 1000), run('business', 5000)];
+      ok(pick(two, 'articles') === 'business',
+        '§14a TWO CONCURRENT RUNS — the LATEST startedAt wins: the run the user most recently caused is the best available proxy for the one they came back to look at');
+      ok(pick(two.slice().reverse(), 'articles') === 'business',
+        '§14a …and the answer does not depend on array order, so it cannot vary with the server Map\'s iteration order');
+      // THIS CASE IS THE ONE THAT BITES, and it was missing until a mutation
+      // said so. Deleting rule 1 outright left the suite GREEN at 257/0,
+      // because every fixture here had the selected domain as the LATEST
+      // runner — so the function's closing `best.domain === currentDomain`
+      // guard returned null anyway and masked the deletion. Rule 1 only earns
+      // its place when the selected domain is running AND is NOT the newest:
+      // without it the user watching their own live ingest on `articles` is
+      // moved to `posts` because another tab started something more recently.
+      ok(pick([run('posts', 1000), run('business', 5000), run('articles', 9000)], 'articles') === null,
+        '§14a rule 1 holds when the selected domain is also the newest runner');
+      ok(pick([run('articles', 1000), run('posts', 9000)], 'articles') === null,
+        '§14a …AND when it is the OLDEST. A user watching their own live ingest is not moved to a newer one somewhere else — the selected domain being busy means nothing is hidden, which is the entire condition an adoption exists for');
+
+      const tie = [run('posts', 7000), run('business', 7000)];
+      ok(pick(tie, 'articles') === 'business' && pick(tie.slice().reverse(), 'articles') === 'business',
+        '§14a an exact startedAt TIE breaks on slug ascending, so the order is TOTAL and the answer deterministic — not "whichever the sort happened to leave first"');
+
+      // wireNum yields null for anything non-finite, so this is a real wire shape.
+      ok(pick([{ domain: 'posts', status: 'running', startedAt: null }, run('business', 10)], 'articles') === 'business',
+        '§14a a record with NO startedAt (wireNum returns null for non-finite) sorts LAST rather than poisoning the comparator with NaN — a record we cannot date must not outrank one we can');
+      ok(pick([{ domain: 'posts', status: 'running', startedAt: null }], 'articles') === 'posts',
+        '§14a …but it is still adoptable when it is the only candidate — undateable is not unusable');
+      ok(pick(null, null) === null && pick(undefined, 'articles') === null,
+        '§14a defensive: a missing activity list is not a crash');
+    }
+
+    // ── 14b  Once per mount, and never over a real choice ──────────────
+    // v3.23.1's rule, which this must not relax: a poll never swaps the
+    // document under a reader, and a choice the user actually made is never
+    // taken away. A fresh mount has made no choice — list[0] is the store's
+    // own default, not an intention — so resolving it to the live run is right
+    // THERE and only there.
+    {
+      const sb = makeSandbox14(baseState);
+      ok(sb.adoptDestination([run('posts', 1000)]) === true && sb.state.domain === 'posts',
+        '§14b a fresh mount spends its adoption and the destination moves');
+      ok(sb.state.destinationAdoptionPending === false,
+        '§14b …and the mount now owes none');
+      ok(sb.adoptDestination([run('business', 9000)]) === false && sb.state.domain === 'posts',
+        '§14b THE v3.23.1 RULE — a LATER fetch cannot adopt again. Fifteen seconds on, the user is reading the screen; moving their destination because a second tab started an ingest would be the worse bug. The sidebar markers serve that case instead');
+    }
+    {
+      const sb = makeSandbox14(baseState);
+      ok(sb.adoptDestination([]) === false && sb.state.destinationAdoptionPending === false,
+        '§14b the flag is spent even when NOTHING was adopted — adoption is a mount-time reconciliation, not an ongoing behaviour. Leaving it armed on an empty first fetch is exactly how a later poll would start yanking the selection');
+      ok(sb.adoptDestination([run('posts', 1000)]) === false && sb.state.domain === 'articles',
+        '§14b …proven by driving the case: a run appearing after that first fetch does NOT move the selection');
+    }
+    {
+      const sb = makeSandbox14({ ...baseState, destinationAdoptionPending: false, domain: 'business' });
+      ok(sb.adoptDestination([run('posts', 1000)]) === false && sb.state.domain === 'business',
+        '§14b a mount where the user has already chosen adopts nothing — the deliberate choice is never taken away');
+    }
+    ok(/state\.destinationAdoptionPending\s*=\s*false/.test(code14(bBodies.selectDomain)),
+      '§14b and selectDomain is what makes that true: a real click forfeits the adoption, so a user who picks a destination before the first fetch lands does not have it moved out from under them');
+
+    // ── 14c  Every running domain, not just the selected one ───────────
+    {
+      const sb = makeSandbox14(baseState);
+      const rd = sb.runningActivityDomains([run('posts', 1), done('business', 2), run('articles', 3)]);
+      ok(JSON.stringify(rd) === JSON.stringify(['articles', 'posts']),
+        '§14c runningActivityDomains reports EVERY running domain — this is the data `state.remote` structurally cannot carry, because it holds the selected domain only');
+      ok(JSON.stringify(sb.runningActivityDomains([run('posts', 1), run('articles', 2)])) ===
+         JSON.stringify(sb.runningActivityDomains([run('articles', 2), run('posts', 1)])),
+        '§14c …sorted, so the signature string built from it is stable under the server Map\'s iteration order rather than repainting on a reorder');
+      ok(sb.runningActivityDomains([done('posts', 1)]).length === 0,
+        '§14c a settled record marks nothing — the marker means "running now"');
+      ok(sb.runningActivityDomains([null, { status: 'running' }, { domain: '', status: 'running' }]).length === 0,
+        '§14c defensive: malformed entries produce no marker rather than an empty-slug row');
+    }
+
+    // ── 14d  The no-op guard can SEE the marker pane ───────────────────
+    // memory.js's own recorded failure, quoted in this file: "a no-op guard
+    // that cannot see a pane is not a guard for that pane." Without
+    // runningDomains in the signature, a poll that discovers an ingest on a
+    // DIFFERENT domain compares equal and never repaints — the marker would be
+    // computed and never drawn, which is this repo's dead-data shape.
+    {
+      const sb = makeSandbox14(baseState);
+      const before = sb.activitySignature();
+      sb.state.runningDomains = ['posts'];
+      ok(sb.activitySignature() !== before,
+        '§14d discovering a run on a domain that is NOT the selected one CHANGES the signature, so the repaint that draws the marker actually happens');
+      const withPosts = sb.activitySignature();
+      sb.state.runningDomains = ['business', 'posts'];
+      ok(sb.activitySignature() !== withPosts,
+        '§14d …and a SECOND domain starting one changes it again');
+      sb.state.runningDomains = ['business', 'posts'];
+      ok(sb.activitySignature() === sb.activitySignature(),
+        '§14d CONTROL — an unchanged set does not, so this has not been turned into an unconditional repaint');
+    }
+
+    // ── 14e  The row actually draws it, and the ordering that matters ──
+    {
+      const sidebar = code14(bBodies.renderSidebar);
+      ok(/state\.runningDomains/.test(sidebar) && /ing-dest-live/.test(sidebar),
+        '§14e the destination rows are marked FROM state.runningDomains — the dead-data guard: a set computed and never rendered is exactly the shape v3.24.0 fixed one level down');
+      ok(/ing-dest-live[^>]*>Ingesting</.test(sidebar),
+        '§14e the marker is TEXT inside the row <button>, so it lands in the accessible name and reaches a screen reader — not a colour or a dot (v3.23.0 found a health count on an empty span unreachable by hover, keyboard AND screen reader)');
+      ok(!/ing-dest-live[^>]*aria-hidden/.test(sidebar),
+        '§14e …and is NOT aria-hidden, unlike the decorative check mark beside it whose meaning is already carried by aria-current');
+      ok(/isRunning\s*\?/.test(sidebar) && !/isActive\s*&&\s*isRunning|isRunning\s*&&\s*!?\s*isActive/.test(sidebar),
+        '§14e it is drawn on the ACTIVE row too, not only the others — a marker that vanished the moment you clicked the row would read as the ingest having stopped');
+
+      const ra = code14(bBodies.refreshActivity);
+      const iAdopt = ra.indexOf('adoptDestination(');
+      const iFind = ra.indexOf('got.activity.find');
+      ok(iAdopt > -1 && iFind > -1 && iAdopt < iFind,
+        `§14e adoption runs BEFORE the record lookup (offsets ${iAdopt} < ${iFind}) — that lookup is keyed on state.domain, so adopting after it would show the old domain's absent record for one more tick, i.e. the blank screen the fix is for, one poll longer`);
+      ok(/adopted\s*\|\|\s*after\s*!==\s*before/.test(ra),
+        '§14e an adoption repaints UNCONDITIONALLY: the signature describes the activity panes, not the selection, so it is the wrong instrument for "the destination itself moved" — the sidebar\'s active row and the form\'s picker both changed and neither is in it');
+      ok(/state\.runningDomains\s*=\s*runningActivityDomains\(/.test(ra),
+        '§14e the running set is recomputed on every fetch, so a run finishing clears its marker rather than leaving a permanent one');
+
+      ok(!/state\.runningDomains\s*=/.test(code14(bBodies.selectDomain)),
+        '§14e selectDomain clears state.remote but NOT state.runningDomains: `remote` would be mis-attributed under the new domain\'s name, whereas each marker names its own row and stays true. Clearing it would blink every marker off on each click');
+
+      // The measured colour rule, not a style preference. v3.20.0: painting
+      // --attention-text AS TEXT on --attention-tint measures 3.21:1 in light
+      // at this size, under the 4.5 AA floor — how .model-badge-flag failed.
+      const liveRule = /\.ing-dest-live\s*\{([^}]*)\}/.exec(css);
+      ok(!!liveRule, '§14e the marker has a real CSS rule (a class with no rule renders as unstyled text)');
+      if (liveRule) {
+        ok(/color:\s*var\(--text\)/.test(liveRule[1]),
+          '§14e its LABEL is --text — v3.20.0 measured --attention-text as text on --attention-tint at 3.21:1 in light, under the 4.5 AA floor');
+        ok(/border:[^;]*var\(--attention-text\)/.test(liveRule[1]) && /background:\s*var\(--attention-tint\)/.test(liveRule[1]),
+          '§14e …with the TONE carried by border and tint, the same pairing .ing-sidebar-busy already uses, so the sidebar speaks with one voice about one fact');
+      }
+      ok(!/\.ing-dest-live\s*\{[^}]*color:\s*var\(--attention-text\)/.test(css),
+        '§14e CONTROL — the failing pairing is asserted ABSENT, so the fix cannot come to look unnecessary and be quietly reverted');
+    }
+
+    // ── 14g  The whole reconciliation, EXECUTED ───────────────────────
+    // Not a source scan. M1 — deleting the adoptDestination CALL from
+    // refreshActivity, i.e. restoring the shipped defect exactly — reddened
+    // only the offset-ordering assertion above, for the incidental reason that
+    // indexOf returned -1. That is v3.20.0's recorded shape: "a function
+    // executed but its CALL SITE never asserted", and a guard that goes red
+    // for the wrong reason is one rename away from going green over a live
+    // bug. So refreshActivity itself is driven here, with its collaborators
+    // stubbed, and the assertions are about what ends up on `state`.
+    {
+      async function drive(activity, initial) {
+        const src =
+          'return (async () => {' +
+          'let state = ' + JSON.stringify(initial) + ';' +
+          'let activityInFlight = false;' +
+          'let renderedActivitySignature = null;' +
+          'let renders = 0;' +
+          "const ACTIVITY_ACK_KEY = 'k'; const ACTIVITY_ACK_MAX = 20;" +
+          'const isCurrentMount = () => true;' +
+          'const render = () => { renders++; };' +
+          'const syncRemoteElapsedTimer = () => {};' +
+          'const fetchActivity = async () => ({ activity: ACTIVITY, serverNow: 10000 });' +
+          bBodies.loadAckedActivityIds + bBodies.isActivityAcked +
+          bBodies.pickAdoptableDestination + bBodies.adoptDestination +
+          bBodies.runningActivityDomains + bBodies.activitySignature +
+          bBodies.refreshActivity +
+          'await refreshActivity(1);' +
+          'return { state, renders };' +
+          '})()';
+        return new Function('window', 'ACTIVITY', src)(
+          { localStorage: { getItem: () => null, setItem: () => {} } },
+          activity
+        );
+      }
+
+      // THE REPORTED SCENARIO, end to end. Two records exactly as the live
+      // server held them: `posts` started 94 s before `articles`.
+      const twoReal = [
+        { domain: 'posts', status: 'running', startedAt: 1000, id: 'p1', pct: 12, message: 'Phase 1: planning wiki structure…', waiting: false, phaseStartedAt: 1000, filename: 'paper.pdf', error: null, result: null },
+        { domain: 'articles', status: 'done', startedAt: 5000, id: 'a1', pct: 100, message: 'Done', waiting: false, phaseStartedAt: 5000, filename: 'paper.pdf', error: null, result: null },
+      ];
+      const fresh = () => ({
+        domains: [{ slug: 'articles' }, { slug: 'posts' }],
+        domain: 'articles', destinationAdoptionPending: true, runningDomains: [],
+        remote: null, remotePhaseStartedAtLocal: null, remoteError: null,
+        remoteResultExpanded: false, submitting: false, progress: null,
+        result: null, errorMessage: null,
+      });
+
+      const r1 = await drive([twoReal[0]], fresh());
+      ok(r1.state.domain === 'posts',
+        '§14g EXECUTED — refreshActivity itself moves the selection to the running domain. This is the assertion M1 (deleting the call) must red for a BEHAVIOURAL reason, not because an indexOf returned -1');
+      ok(r1.state.remote && r1.state.remote.domain === 'posts' && r1.state.remote.status === 'running',
+        '§14g …and the record it then looks up is the ADOPTED domain\'s, so the main column paints the live ingest instead of an empty drop zone');
+      ok(r1.renders >= 1, '§14g …and it repaints, so the change reaches the screen');
+
+      const r2 = await drive(twoReal, fresh());
+      ok(r2.state.domain === 'posts' && r2.state.remote.id === 'p1',
+        '§14g THE REPORTED PAIR — with `articles` holding a SETTLED record and `posts` a running one, the live run wins. Before this, `articles` was selected by loadDomains and the running ingest was unreachable');
+      ok(JSON.stringify(r2.state.runningDomains) === JSON.stringify(['posts']),
+        '§14g …and the sidebar\'s marker set is populated from the same fetch — one request, both halves of the fix');
+
+      const r3 = await drive([{ domain: 'articles', status: 'running', startedAt: 1000, id: 'a9', pct: 5, message: 'Saving…', waiting: false, phaseStartedAt: 1000, filename: 'x.pdf', error: null, result: null }], fresh());
+      ok(r3.state.domain === 'articles',
+        '§14g CONTROL — when the run IS on the selected domain nothing moves, so this is adopting on a real condition rather than reassigning unconditionally');
+
+      const r4 = await drive([], fresh());
+      ok(r4.state.domain === 'articles' && r4.state.destinationAdoptionPending === false,
+        '§14g CONTROL — an empty activity list leaves the selection alone and still spends the adoption');
+    }
+
+    // ── 14f  CONTROLS: these scans can fail ────────────────────────────
+    {
+      ok(!/ing-dest-live/.test(code14(bBodies.refreshActivity)),
+        '§14f CONTROL — the render scans do NOT match an unrelated function');
+      ok(/state\.domain\s*=/.test(code14(bBodies.adoptDestination)),
+        '§14f CONTROL — adoptDestination really is a state.domain writer, so §2\'s allow-list entry for it is describing a live population rather than a name that no longer writes');
     }
   }
 }
