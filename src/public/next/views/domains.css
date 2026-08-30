@@ -89,6 +89,63 @@
   border-radius: 50%;
 }
 
+/* ── The six domain identity colours ──────────────────────────────────────
+   These were SIX RAW HEX VALUES in an inline `style="background:#3FBFD8"`
+   in views/domains.js. An inline style is unreachable by every stylesheet
+   and by every [data-theme] block, so the DARK values were painted in LIGHT
+   too. Measured in a real browser against the backdrop each dot actually
+   sits on (the probe's controls returned 1.00 on an identical pair and
+   21.00 on black-on-white):
+
+     BEFORE, light theme, on the SELECTED row (--surface-active #ECECF2 —
+     the worst backdrop, and the one offline arithmetic against --surface
+     missed):  1.85 · 1.77 · 1.88 · 2.14 · 2.12 · 1.98.
+     All six under WCAG 1.4.11's 3:1 floor for non-text. On the unselected
+     row (--surface #FFFFFF) they are 2.17 · 2.08 · 2.22 · 2.52 · 2.50 ·
+     2.34 — still all six under the floor.
+
+     AFTER, same backdrops:  4.46 · 4.05 · 4.66 · 3.44 · 4.60 · 4.96 on the
+     selected row; 5.24 · 4.77 · 5.48 · 4.05 · 5.41 · 5.84 on --surface.
+     DARK is BYTE-IDENTICAL to before (7.83 · 8.20 · 7.68 · 6.77 · 6.82 ·
+     7.29 on --surface-active) — it always passed, so it does not move.
+
+   THE RULE THAT PICKED THE LIGHT VALUES, so a future colour is derived and
+   not invented:
+     (a) START from the light counterpart the design system ALREADY defines
+         for that colour's role — tokens/color.css's own [data-theme="light"]
+         block moves --type-entity/-concept/-summary to -600, --success to
+         teal-600 and --danger to red-600. For the neutral there is no such
+         alias, so --ink-400: the same dark->light move the system makes for
+         --text-2, which is #A8A8BC in dark and #55556A in light, taken to
+         the nearest ramp entry so the value stays a token.
+     (b) WHERE THAT STILL MISSES 3:1 on the SELECTED row, continue the
+         family's OWN 500->600 channel ratio one further step. Entity,
+         concept and summary measure 2.95 / 2.74 / 3.04 at -600 and the
+         bundle defines nothing darker in those families, so each gets one
+         derived step, written as a literal here because tokens/color.css is
+         byte-identical to the design bundle and must stay that way. Three of
+         the six are therefore system tokens outright. This is a COMPONENT
+         gap, not palette drift, and no token file is touched.
+
+   SEPARABILITY IS THE OTHER HALF OF THE REQUIREMENT: six domains have to
+   stay tellable apart, not merely legible. Minimum pairwise CIEDE2000 over
+   the six is 16.14 before (dark, unchanged) and 14.58 after (light) —
+   both an order of magnitude over the ~2.3 just-noticeable difference, and
+   the hues are untouched, so the set separates exactly as it did.        */
+.dm-row-dot-1 { background: var(--entity-500); }
+.dm-row-dot-2 { background: var(--concept-500); }
+.dm-row-dot-3 { background: var(--summary-500); }
+.dm-row-dot-4 { background: var(--teal-500); }
+.dm-row-dot-5 { background: var(--red-400); }
+.dm-row-dot-6 { background: var(--ink-200); }
+
+[data-theme="light"] .dm-row-dot-1 { background: #16768C; }  /* entity-600 -> one ramp step */
+[data-theme="light"] .dm-row-dot-2 { background: #438126; }  /* concept-600 -> one ramp step */
+[data-theme="light"] .dm-row-dot-3 { background: #925E13; }  /* summary-600 -> one ramp step */
+[data-theme="light"] .dm-row-dot-4 { background: var(--teal-600); }
+[data-theme="light"] .dm-row-dot-5 { background: var(--red-600); }
+[data-theme="light"] .dm-row-dot-6 { background: var(--ink-400); }
+
 .dm-row-main {
   display: flex;
   flex-direction: column;

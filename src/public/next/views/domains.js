@@ -126,9 +126,20 @@ import {
 // "violet means action and nothing else" rule) even though the design
 // bundle's OWN placeholder DOMAINS array uses a violet dot for one entry —
 // treated here as a placeholder-data inconsistency, not a rule to copy.
-const DOMAIN_DOT_PALETTE = ['#3FBFD8', '#79C752', '#E0A33A', '#2FB88A', '#F87F8D', '#A8A8BC'];
-function domainDotColor(index) {
-  return DOMAIN_DOT_PALETTE[index % DOMAIN_DOT_PALETTE.length];
+//
+// THE COLOUR ITSELF LIVES IN domains.css, NOT HERE, AND THAT IS THE FIX.
+// This was `['#3FBFD8', …]` emitted as `style="background:#3FBFD8"`. An
+// inline style is unreachable by every stylesheet and by every
+// `[data-theme]` block, so all six dots kept their DARK-theme values in
+// light and measured 1.85:1 (dot 1 on the selected row) against WCAG
+// 1.4.11's 3:1 floor for non-text. A class per palette slot is what makes
+// the light theme expressible at all; see the `.dm-row-dot-N` block in
+// domains.css for the measured values and the rule that picked them.
+// Guarded by scripts/test-next-domain-dots.js, which enumerates the slots
+// from THIS constant and the rules from that file.
+const DOMAIN_DOT_SLOTS = 6;
+function domainDotClass(index) {
+  return 'dm-row-dot-' + ((index % DOMAIN_DOT_SLOTS) + 1);
 }
 
 // ── Health category definitions ───────────────────────────────────────────
@@ -1381,7 +1392,7 @@ function renderSidebar(token) {
       : '— pages';
     return (
       '<button class="dm-row' + (active ? ' active' : '') + '" data-domain-slug="' + escapeHtml(d.slug) + '">' +
-        '<span class="dm-row-dot" style="background:' + domainDotColor(i) + '"></span>' +
+        '<span class="dm-row-dot ' + domainDotClass(i) + '"></span>' +
         '<span class="dm-row-main">' +
           '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
           '<span class="dm-row-meta mono">' + pagesText + '</span>' +
@@ -2530,7 +2541,11 @@ function renderIssueRow(type, issue, readonly) {
   switch (type) {
     case 'brokenLinks':
       main = escapeHtml(issue.sourceFile) + ' → [[' + escapeHtml(issue.linkText) + ']]';
-      if (issue.suggestedTarget) meta = 'suggests ' + escapeHtml(issue.suggestedTarget);
+      // The SLUG is code-shaped and goes in mono; the word "suggests" is
+      // prose and stays in the sans face. `.dm-issue-main` already carried
+      // `mono` on every row, so this meta column was the last place in the
+      // health table rendering a wiki slug in the body face.
+      if (issue.suggestedTarget) meta = 'suggests <span class="mono">' + escapeHtml(issue.suggestedTarget) + '</span>';
       else { meta = 'no suggestion'; dismissible = true; }
       break;
     case 'orphans':
@@ -2543,7 +2558,7 @@ function renderIssueRow(type, issue, readonly) {
       break;
     case 'hyphenVariants':
       main = escapeHtml((issue.files || []).join(', '));
-      meta = '→ ' + escapeHtml(issue.suggestedSlug || '');
+      meta = '→ <span class="mono">' + escapeHtml(issue.suggestedSlug || '') + '</span>';
       break;
     case 'folderPrefixLinks':
       main = escapeHtml(issue.sourceFile) + ' → [[' + escapeHtml(issue.linkText) + ']]';

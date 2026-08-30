@@ -549,7 +549,12 @@ section('§6  THE OTHER THREE SITES — mirror note, sidebar error, browse error
     const deps = {
       isCurrentMount: () => true, icon: () => '', setSidebar: (html) => { captured = html; },
       gatedLoader: () => '<GATED/>', loadGate: {}, bindNewDomainBtn: () => {},
-      escapeHtml: (x) => String(x), domainDotColor: () => '#000', renderStatus,
+      // `domainDotClass` replaced `domainDotColor` when the identity dots
+      // stopped being inline hex (see scripts/test-next-domain-dots.js). The
+      // name in this list must track the real one: renderSidebar's deps are
+      // supplied POSITIONALLY, so a stale name is a ReferenceError waiting for
+      // the first case here that renders an actual domain row.
+      escapeHtml: (x) => String(x), domainDotClass: () => 'dm-row-dot-1', renderStatus,
     };
     const names = Object.keys(deps);
     const run = (st) => {
