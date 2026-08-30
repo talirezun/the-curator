@@ -209,6 +209,7 @@
   color: var(--text);
   list-style: none;
   border-radius: var(--radius-md);
+  transition: background var(--t-state);
 }
 
 .tx-explainer-summary::-webkit-details-marker { display: none; }
@@ -231,6 +232,13 @@
 }
 
 .tx-explainer-summary:hover { background: var(--surface-hover); }
+/* Press: BACKGROUND ONLY, no transform. This is a `<summary>`, so its own
+   chevron already rotates on activation and the body below it appears — the
+   element has more state change on click than anything else in this file,
+   and adding a nudge on top would be motion for its own sake. The background
+   step is the press acknowledgement, and it needs no reduced-motion escape
+   because it is a colour, not movement. */
+.tx-explainer-summary:active { background: var(--surface-active); }
 
 .tx-explainer-body {
   padding: 0 13px 12px;
@@ -323,13 +331,22 @@
   color: var(--text-2);
   cursor: pointer;
   transition: color var(--dur-fast, 80ms) var(--ease-out, ease),
-              background var(--dur-fast, 80ms) var(--ease-out, ease);
+              background var(--dur-fast, 80ms) var(--ease-out, ease),
+              transform var(--t-press);
 }
 
 .tx-vh-info:hover {
   color: var(--text);
   background: var(--surface-hover);
 }
+
+/* Press — 24x24, so the ICON amplitude. Declared before the
+   `[aria-expanded="true"]` rule below on purpose: that rule is 0,2,0 and
+   sets the OPEN look, which must survive being pressed again to close (an
+   unqualified press background declared after it would repaint the open mark
+   as merely hovered for the length of the hold). The transform is
+   uncontested either way. */
+.tx-vh-info:active { transform: scale(var(--press-scale-icon)); background: var(--surface-active); }
 
 /* Open state is carried by the glyph colour AND by the panel appearing, and
    is announced by aria-expanded — never by colour alone. */
@@ -356,12 +373,42 @@
   color: var(--text-2);
   max-width: 68ch;
   overflow-wrap: anywhere;
+  /* ── PANEL ENTER ───────────────────────────────────────────────────────
+     The one disclosure in the app that had no entrance at all. It is toggled
+     by the `hidden` attribute, i.e. display:none -> displayed, which restarts
+     a CSS animation — so this fires on every open with no JS involvement.
+
+     It names `curator-panel-in`, the same keyframe the MCP and Shared Brain
+     wizard panels use, so the app has ONE way a panel arrives rather than
+     three. That keyframe's 3px travel is deliberately small because this
+     panel is IN FLOW (v3.22.0's decision — a floating popover would have to
+     be positioned against a shell with a fixed rail and a scrolling main),
+     so it pushes everything below it down as it appears. A larger travel
+     would read as the page jolting rather than as a panel arriving.
+
+     `--dur-mid` because this is a thing that ENTERS, per motion.css's own
+     header. The explicit `animation: none` escape is below with the rest of
+     this file's reduced-motion block. */
+  animation: curator-panel-in var(--dur-mid) var(--ease-out);
 }
 
 .tx-vh-panel > * + * { margin-top: 8px; }
 
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   The info mark's press transform is DISABLED — its background step lands
+   instantly and carries the acknowledgement — and the panel's entrance is
+   DISABLED outright, because it is a pure arrival flourish carrying no
+   information the panel's own presence does not already carry. Nothing here
+   substitutes an alternative: substitution is for the one case where motion
+   is the ONLY channel, which is shared/progress-ring.css's orbit, not this.
+
+   The `animation: none` is the second layer over tokens/motion.css's zeroed
+   `--dur-*`, and it is the shape scripts/test-next-reduced-motion.js
+   recognises as coverage. */
 @media (prefers-reduced-motion: reduce) {
   .tx-vh-info { transition: none; }
+  .tx-vh-info:active { transform: none; }
+  .tx-vh-panel { animation: none; }
 }
 
 /* The sidebar density. Same component, same vocabulary — a <div> title

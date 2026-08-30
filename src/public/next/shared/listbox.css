@@ -40,6 +40,26 @@
   transition: border-color var(--t-state), background var(--t-state);
 }
 .lb-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-hover); }
+/* ── PRESS: BACKGROUND ONLY, AND THE REFUSAL IS THE INTERESTING HALF ──────
+   Every other control family in this pass takes a transform. This one does
+   NOT, and the reason is in shared/listbox.js rather than in the design.
+
+   The open menu is `position: fixed` on <body> and is kept aligned by a
+   requestAnimationFrame loop (`tick`) that watches the TRIGGER's
+   `getBoundingClientRect()` and re-runs `position()` whenever the rect
+   changes. A CSS transform IS reflected in that rect. So a press transform
+   here would make the trigger's measured box change on mousedown and change
+   back on mouseup, re-positioning the whole menu each time — a popup that
+   twitches while you hold the control that opened it. Worse, `position()`
+   lifts the menu's max-height to measure it, so each spurious call does real
+   layout work on a list that can hold ~200 rows.
+
+   `:not(:disabled)` matches the hover's 0,3,0 so the press is not swallowed
+   by it, and keeps a disabled trigger silent.
+
+   This is the one place a token-uniform adoption would have been WRONG, so
+   it is written down rather than left looking like an oversight. */
+.lb-btn:active:not(:disabled) { background: var(--surface-active); border-color: var(--border-strong); }
 .lb-btn:focus-visible { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
 /* Open reads as a held state, not merely as hover — the menu it belongs to
    is on <body> and therefore visually detached from it. */
