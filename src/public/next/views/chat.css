@@ -159,6 +159,57 @@
   color: var(--text-3);
   margin-top: 1px;
 }
+/* ── THE ROW-LEVEL DELETE: A BARE BASKET, NOT A BUTTON ───────────────────
+   Reported as "this should be only the delete basket, the icon, nothing else.
+   But now it's a button again with some sort of shadow, which is a really bad
+   design."
+
+   THE "SHADOW" IS NOT A SHADOW, AND IT IS NOT OURS. This rule set background
+   and colour but NEVER DECLARED `border` or `padding`, so the element kept
+   Chromium's UA <button> defaults. Measured on the real element:
+     border  : 2px outset rgb(255,255,255)
+     padding : 1px 6px
+   An `outset` border is a BEVEL — light on the top/left edges, dark on the
+   bottom/right — which is exactly what reads as a button with a shadow. It is
+   also why the glyph looked cramped: with box-sizing: border-box, the 2px
+   bevel ate 4px of the 24px box, leaving a 20px content area, then the UA
+   padding took 12px more of the width.
+
+   YOU CANNOT GREP FOR AN ABSENT DECLARATION — the same class shell.css
+   already records for the frozen-font-size trap. `scripts/test-next-icon-
+   button-chrome.js` therefore asserts the border is PRESENT rather than
+   trying to enumerate what happens when it is missing.
+
+   `border: none` is the fix and it matches the house pattern already in
+   views/ingest.css (`.ing-queue-file-remove`, the ingest queue's row-level
+   remove) rather than inventing a second look for the same job. The design
+   system's IconButton carries `1px solid var(--border-subtle)` at rest, which
+   is a near-invisible hairline (dark #17171F, light #EDEDF2) — either choice
+   satisfies "nothing else", and matching the sibling that already ships wins.
+
+   HOVER/FOCUS IS THE AFFORDANCE, and it now says DESTRUCTIVE. The old hover
+   used --surface-active, a neutral grey that reads the same as any row hover;
+   IconButton's `tone="danger"` and .ing-queue-file-remove both tint with
+   --danger-tint. Aligned.
+
+   KEYBOARD: this is a real <button> with an aria-label, and it was
+   unreachable. `display: none` removes an element from the tab order
+   entirely, so the ONLY way to reach it was a pointer — the exact defect
+   chat.js's own comment names two elements up ("a control that only exists
+   under the pointer cannot be reached by keyboard at all"), where it explains
+   why the sibling checkbox is always rendered. :focus-within on the row fixes
+   it without changing any pixel for pointer users: tab into the row's
+   checkbox or its main button, the row now matches :focus-within, the delete
+   button becomes display:inline-flex and so enters the tab order, and the
+   next Tab lands on it. The focus ring itself comes free from tokens/
+   base.css's global :focus-visible — which is why NO box-shadow is set here;
+   one would fight that ring.
+
+   Hit target stays 24x24 (the design system's IconButton `sm`), and the
+   usable area GROWS, because the 2px bevel and the UA padding no longer eat
+   into it. Reserving the space permanently (opacity instead of display) was
+   considered and rejected: it would narrow every row title at rest, a visual
+   change nobody asked for, to avoid a hover reflow that already ships. */
 .chat-conv-delete {
   flex: none;
   width: 24px;
@@ -166,12 +217,15 @@
   display: none;
   align-items: center;
   justify-content: center;
+  border: none;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--text-3);
   background: transparent;
 }
-.chat-conv-row:hover .chat-conv-delete { display: inline-flex; }
-.chat-conv-delete:hover { background: var(--surface-active); color: var(--danger-text); }
+.chat-conv-row:hover .chat-conv-delete,
+.chat-conv-row:focus-within .chat-conv-delete { display: inline-flex; }
+.chat-conv-delete:hover { background: var(--danger-tint); color: var(--danger-text); }
 
 /* The .chat-drop-* rules that used to live here styled a sidebar drop zone
    with no drag, drop or click handler. Removed with the element (see

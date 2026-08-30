@@ -491,12 +491,31 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-revoke-go { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .sb-revoke-gate-reason { font-size: var(--text-xs); color: var(--text-2); }
 
-/* NIT (audit): scoped to .sb-revoke-go, its only user — .btn/.btn-primary/
-   .btn-secondary/.btn-ghost are the real cross-view button variants and
-   live centrally in shell.css; a bare `.btn-danger` here would leak into
-   every other view sharing the same class name. This genuinely belongs
-   alongside those siblings in shell.css, but that file is outside this
-   view's exclusive scope for this pass — reported rather than moved. */
+/* A GENERIC `.btn-danger` NOW EXISTS IN shell.css, and this scoped rule is
+   deliberately KEPT rather than deleted.
+
+   History worth carrying: an earlier audit noted that .btn-danger "genuinely
+   belongs alongside those siblings in shell.css" and left it here because
+   that file was outside its scope. What that note could not see is that the
+   omission was not cosmetic — `shared/confirm.js` uses `btn-danger`
+   UNSCOPED, so every destructive confirm in the app was rendering as a raw
+   native OS button (grey face, black text, 2px outset bevel). shell.css now
+   carries the generic rule; see the comment there for the measurement.
+
+   THE TWO TREATMENTS DIFFER ON PURPOSE:
+     shell.css   .btn-danger  — the design system's `danger` variant:
+                                transparent, --danger-text, neutral border.
+                                Right for a confirm dialog's affirmative
+                                action, which sits beside a ghost Cancel.
+     here        .btn-danger  — FILLED --danger with white text. The GDPR
+                                Article 17 revoke is irreversible and erases
+                                another person's contributions; it earns a
+                                heavier weight than an ordinary confirm.
+
+   Specificity does the work with no !important and no rename: `.sb-revoke-go
+   .btn-danger` is (0,2,0) against the shell's (0,1,0), and it sets
+   background, border and color — all three properties the generic rule
+   touches — so nothing leaks through. */
 .sb-revoke-go .btn-danger {
   background: var(--danger);
   border: 1px solid var(--danger);
