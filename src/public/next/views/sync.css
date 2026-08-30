@@ -165,6 +165,25 @@
   gap: 9px;
   flex-wrap: wrap;
 }
+/* "Syncing…" changes the button LABEL but the refresh icon beside it sat
+   perfectly still — reported directly. `.sync-now-icon svg { display:
+   block }` gives the rotated element a well-defined box (the ing-warn-icon
+   precedent in views/ingest.css) so it turns in place rather than wobbling
+   against inline-baseline whitespace; `curator-spin` + 1.15s is the SAME
+   keyframe and cadence as shared/progress-ring.css's `.pring-orbit`, so the
+   app has one spin speed rather than a second one that is almost the same.
+   DISABLE, not substitute, under reduced motion: unlike the progress ring
+   (where the spin is the ONLY liveness signal for a multi-minute wait),
+   this icon is reinforcement of a label that already says "Syncing…" and
+   of the button's own `disabled` state — nothing here is lost by stopping
+   it. See scripts/test-next-reduced-motion.js for the enforced contract:
+   a hardcoded-duration animation is invalid unless a same-file reduce rule
+   ALSO sets `animation`/`animation-duration`, which the block below does. */
+.sync-now-icon svg { display: block; }
+.sync-now-icon.is-spinning svg { animation: curator-spin 1.15s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sync-now-icon.is-spinning svg { animation: none; }
+}
 /* Bare amber text with nothing to carry the tone: 3.58:1 on --surface in light,
    under 4.5. Given the same pill construction .sb-pill-readonly already uses in
    views/shared.css — tint + amber border + --text label — so the signal survives

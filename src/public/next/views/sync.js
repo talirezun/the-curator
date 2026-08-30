@@ -474,8 +474,18 @@ function renderConfigured(s) {
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
       crossNote +
       '<div class="sync-status-actions">' +
+        // The icon SPINS only while `acting === 'sync'` (this button's own
+        // in-flight request — never `push`/`pull`, which are their own
+        // buttons with their own labels and no icon to spin). It is wrapped
+        // in its own span rather than animating the <svg> selected off the
+        // button, because a bare `#btn-sync-now.is-syncing svg` would also
+        // catch any icon a future edit adds elsewhere inside this button.
+        // Reuses `curator-spin` (tokens/motion.css) at the SAME 1.15s
+        // cadence as shared/progress-ring.css's `.pring-orbit` — one spin
+        // speed in the app, not two nearly-identical ones.
         '<button type="button" class="btn btn-primary" id="btn-sync-now"' + (disabled ? ' disabled' : '') + '>' +
-          icon('refresh', 14) + ' ' + (acting === 'sync' ? 'Syncing…' : 'Sync now') +
+          '<span class="sync-now-icon' + (acting === 'sync' ? ' is-spinning' : '') + '">' + icon('refresh', 14) + '</span>' +
+          ' ' + (acting === 'sync' ? 'Syncing…' : 'Sync now') +
         '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
         '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
