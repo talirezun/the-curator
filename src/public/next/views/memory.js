@@ -1083,7 +1083,14 @@ function renderStaleNotice() {
     '<div class="mem-stale" role="status">' +
       '<span class="mem-stale-text">An agent has saved to this project since you opened it — ' +
         'what is below may not be the latest.</span>' +
-      '<button type="button" class="btn btn-xs mem-stale-btn" id="mem-reload">Reload</button>' +
+      // btn-secondary is NAMED, not implied. `.btn` alone carries no
+      // background/colour/border of its own, so before shell.css gained its
+      // neutral baseline this button inherited Chromium's native chrome and
+      // rendered as a grey, bevelled OS button (measured: ButtonFace
+      // rgb(107,107,107), 2px outset). The baseline now stops that being
+      // NATIVE; naming the variant is what makes it look deliberate rather
+      // than a ghost, which is what the author plainly intended here.
+      '<button type="button" class="btn btn-secondary btn-xs mem-stale-btn" id="mem-reload">Reload</button>' +
     '</div>'
   );
 }
@@ -1589,7 +1596,11 @@ function renderJournal() {
     (j.totalUnknown || (typeof j.total === 'number' && j.total > j.returned));
   // In the <details> BODY, never in its <summary> — see the header comment.
   const moreBtn = canExpand
-    ? '<button class="btn btn-xs mem-j-more" id="mem-journal-more">Show more</button>'
+    // btn-secondary: same reason as mem-stale-btn above — `.btn` alone used
+    // to resolve to native OS button chrome (2px outset bevel over
+    // ButtonFace). Named rather than left to the baseline so this reads as a
+    // real control.
+    ? '<button class="btn btn-secondary btn-xs mem-j-more" id="mem-journal-more">Show more</button>'
     : '';
 
   return (

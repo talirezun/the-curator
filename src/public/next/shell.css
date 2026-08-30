@@ -761,6 +761,25 @@ body.guide-docked .main {
   border-radius: var(--radius-md);
   cursor: pointer;
   white-space: nowrap;
+  /* ── NO .btn MAY EVER FALL THROUGH TO THE UA'S BUTTON CHROME ───────────
+     `.btn` set layout and type but never background, colour or border, so a
+     `.btn` carrying no variant class inherited Chromium's <button> defaults.
+     Measured on the real cascade, dark theme, for `class="btn btn-xs
+     mem-stale-btn"` — Agent memory's Reload button on the stale-write notice:
+       background rgb(107,107,107) (ButtonFace) · color rgb(255,255,255)
+       border     2px outset rgb(255,255,255)
+     A grey, bevelled OS button in the middle of the app. `.mem-j-more`
+     ("Show more" on the journal) rendered identically.
+
+     This baseline is the ROOT-CAUSE fix for that whole class, not a patch on
+     those two: every future `.btn` written without a variant now renders as a
+     quiet ghost instead of native chrome, and all four variants below still
+     override all three properties, so nothing that already ships moves.
+     The transparent 1px border is what keeps the box geometry identical
+     between a bare `.btn` and any variant. */
+  background: transparent;
+  color: var(--text);
+  border: 1px solid transparent;
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--dur-instant) var(--ease-out);
 }
 .btn:active { transform: translateY(0.5px); }
@@ -780,6 +799,87 @@ body.guide-docked .main {
   box-shadow: var(--inset-hi);
 }
 .btn-primary:hover { background: var(--accent-hover); }
+
+/* ── THE PHANTOM LINE ACROSS THE TOP OF EVERY PRIMARY BUTTON ─────────────
+   Reported as "an additional border on top of the button which I don't know
+   how it got there — in the design system we did not design it", on `+ New
+   domain` and `+ New chat`.
+
+   MEASURED, not guessed. The only declaration that paints it is the
+   `box-shadow` five lines above — confirmed in Chromium by walking the rules
+   that actually match #chat-new-btn: `.btn` (no border/background/shadow of
+   its own beyond layout), `.btn-primary`, and the box-sizing reset. There is
+   no ::before, no ::after (content: none on both), no background-image
+   (none), no outline, and borderTop is `1px solid rgba(0,0,0,0)`.
+
+   IT IS A LIGHT-THEME DEFECT ONLY, and the arithmetic is why:
+
+     --inset-hi, dark  = inset 0 1px 0 rgba(255,255,255,0.05)
+     --inset-hi, light = inset 0 1px 0 rgba(255,255,255,0.90)
+
+   Composited over --accent (rgb(124,90,245)):
+     dark  -> rgb(131, 98,246)   contrast vs the fill  1.05:1  (imperceptible)
+     light -> rgb(242,239,254)   contrast vs the fill  4.00:1  (a white line)
+
+   THE DESIGN SYSTEM IS NOT WRONG AND THE APP IS NOT UNFAITHFUL — the reading
+   is finer than either. `components/core/Button.jsx` genuinely sets
+   `boxShadow: 'var(--inset-hi)'` on the primary variant, so the app copies it
+   correctly. But the system's own guide scopes the device to ONE theme:
+   "Depth comes from 1px borders, not shadows. ON DARK, an --inset-hi top
+   highlight does what a drop shadow would." The light-theme token value
+   (0.90 white) was authored for light-mode RAISED SURFACES — near-white
+   cards, where a 90%-white inset is invisible. Landing it on a saturated
+   accent fill was never the intent, and that is the whole defect.
+
+   WHY THE OVERRIDE IS SCOPED TO .btn-primary RATHER THAN THE TOKEN:
+   tokens/shape.css is copied byte-identical from the design-system bundle
+   and is documented as frozen (index.html), so it is not edited here — the
+   same rule shell.css already applies for --app-sidebar-w and scrollbars.
+   And redefining --inset-hi wholesale would be wrong even if it were
+   allowed: the light value is CORRECT for the surface it was written for.
+   The bug is the pairing, so the fix belongs on the pairing.
+
+   Measured: --inset-hi has exactly ONE consumer in the whole /next tree
+   (the rule above), so no other surface is affected today.
+
+   The shell always stamps data-theme both ways (app.js applyTheme) and dark
+   lives at bare :root, so `[data-theme="light"]` is complete and there must
+   be no prefers-color-scheme query here — four other /next stylesheets carry
+   the same prohibition. */
+[data-theme="light"] .btn-primary { box-shadow: none; }
+
+/* ── .btn-danger — the destructive confirm's button ──────────────────────
+   THIS RULE'S ABSENCE WAS A LIVE DEFECT, not a tidiness gap.
+   `shared/confirm.js` adds `btn-danger` at RUNTIME (classList.add) for every
+   non-default tone, i.e. every destructive confirm in the app — delete a
+   conversation, bulk-delete, delete a domain. Neither `btn`, `cfd-confirm`
+   nor `btn-danger` declared a background, colour or border anywhere, so the
+   button fell through to Chromium's UA `button` styles and rendered as a raw
+   native OS control. Measured on the real element, both themes:
+     background rgb(239,239,239) (ButtonFace) · color rgb(0,0,0) (ButtonText)
+     border     2px outset rgb(0,0,0)
+   In dark theme that is a light-grey, black-text, bevelled OS button sitting
+   in an otherwise on-design dialog — on the one control that deletes data.
+
+   The runtime classList.add is why no scan caught it: the literal markup
+   reads class="btn cfd-confirm", so a source scan over class attributes
+   never sees `btn-danger` on a <button> at all.
+
+   Treatment is the design system's Button `danger` variant verbatim
+   (components/core/Button.jsx): transparent at rest with --danger-text on a
+   neutral border, tinting to --danger-tint with a --danger border on hover.
+   `.chat-bulk-delete` in views/chat.css already implements exactly this by
+   hand, so this makes the two agree rather than inventing a third look.
+
+   `views/shared.css` keeps a deliberately STRONGER, filled treatment scoped
+   to `.sb-revoke-go .btn-danger` (0,2,0 beats this rule's 0,1,0) for the
+   GDPR revoke — that override stays and still wins. */
+.btn-danger {
+  background: transparent;
+  color: var(--danger-text);
+  border: 1px solid var(--border);
+}
+.btn-danger:hover { background: var(--danger-tint); border-color: var(--danger); }
 
 .btn-ghost {
   background: transparent;
