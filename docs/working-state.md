@@ -213,6 +213,37 @@ Nothing is migrated: a machine that already owns two folders keeps both, readabl
 listed and addressable by name, each with its own age in the picker. Only the next save
 is pinned, so the split stops growing rather than being cleaned up underneath you.
 
+**Remembering the name was not enough on its own, and the second half of that is worth
+stating plainly: a long-lived process has to keep NOTICING.** The Curator's two readers of
+this store have wildly different lifetimes — the app restarts in seconds, while an MCP
+server spawned by Claude Desktop can run for days. Both `.curator-install-id` and
+`.curator-machine-id` are minted lazily, on first use, and both answers are held in memory
+so that resolving your identity is not a disk read on every save and every read.
+
+Two things follow, and both were real:
+
+- **A provisional answer must never be cached.** A process that resolved its identity
+  while the user-data directory could not yet hold those files would pin a
+  hostname-derived name in memory *for its whole life* and never see the real file appear
+  beside it — while every sibling process read that file and used the other name. One
+  machine, two folders again, arriving through the cache rather than through the hostname.
+  Only a value actually read from, or successfully written to, disk is remembered now; a
+  failure is left provisional and re-attempted. The same defect made
+  `installIdAvailable` report the collision guard as *off* long after it had been armed.
+- **Two processes may reach the mint at the same moment.** An MCP server's first save
+  landing beside the app's would have both of them write, each clobbering the other and
+  each keeping its own value — and because the install id's candidate is *random*, that is
+  a different folder every time rather than only when the hostname has flapped. Measured
+  with eight processes minting simultaneously against one empty user-data directory, the
+  earlier code produced as many as **eight distinct folder names for one installation**.
+  The files are now created exclusively: exactly one process writes, and every other reads
+  back what it wrote and adopts it. First writer wins, and the file — not any one
+  process's opinion — is the authority. A file that exists but holds something unusable is
+  still repaired, so this cannot deadlock against a hand-edited value.
+
+None of this migrates anything either. It only means the *next* save is stable no matter
+which process makes it.
+
 ### Scopes
 
 A scope is a workstream inside a project — `main`, `auth-refactor`, `v4-migration`.

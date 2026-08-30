@@ -1685,6 +1685,166 @@ section('28. D10 — the machine folder must not FLAP when the hostname does');
   assert(machineId() === restored, 'and stable across calls again', machineId());
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('29. D11 — an identity file that appears LATER must be adopted');
+{
+  // REPORTED as "v3.23.1's bug is back", and the mechanism turned out NOT to
+  // be the one first proposed. Establishing what it actually was is the whole
+  // reason this section exists, so it is written down here rather than lost.
+  //
+  // WHAT WAS OBSERVED on the maintainer's disk: two folders again for one
+  // scope, `mac-17d23c` and `talis-macbook-pro-17d23c`, with a correct
+  // `.curator-machine-id` sitting beside them holding the talis name.
+  //
+  // WHAT IT WAS NOT: a durable NEGATIVE cache in `persistedMachineId`. That
+  // was the proposed diagnosis and it does not reproduce — `machineId()`
+  // mints and persists on the very same call, so a null cache entry is
+  // replaced before any other caller can observe it.
+  //
+  // WHAT IT ACTUALLY IS — two things, both DURABLE and both proven below:
+  //
+  //  1. A name that could not be PERSISTED was cached anyway. A process whose
+  //     write failed (user-data dir not yet writable, a stale path, a
+  //     read-only home) pins a hostname-derived name in memory FOREVER and
+  //     never notices the real file appearing beside it. Its siblings read
+  //     the file and use the other name. Two folders, one machine.
+  //
+  //  2. `installId()` has the durable-negative shape for real: it caches
+  //     `null` and never re-attempts, so `installIdAvailable()` keeps
+  //     reporting the collision guard as OFF long after it was armed.
+  //
+  // (The maintainer's own split ALSO had a simpler cause that no code change
+  // can reach retroactively — the MCP servers serving those saves were
+  // spawned a day before D10 existed, so they had no remembered name at all.
+  // Nothing here migrates, merges or deletes his two existing folders; only
+  // the NEXT save is pinned, exactly as v3.23.1 decided.)
+  const peek29 = (f) => { try { return readFileSync(f, 'utf8').trim(); } catch { return null; } };
+
+  const LATE = path.join(TMP, 'userdata-late');
+  mkdirSync(LATE, { recursive: true });
+  const lateMachineFile = path.join(LATE, WS.MACHINE_ID_FILENAME || '.curator-machine-id');
+  const lateIdFile = path.join(LATE, '.curator-install-id');
+  __setUserDataDirOverride(LATE);
+  WS.__resetInstallIdCache();
+
+  // A DIRECTORY at each path makes both the read (EISDIR) and the write
+  // (EISDIR) fail. That is the shape of a user-data dir that cannot yet hold
+  // these files, reproduced without chmod — which is unreliable when the
+  // suite runs as root, and would then silently stop exercising anything.
+  mkdirSync(lateMachineFile);
+  mkdirSync(lateIdFile);
+  WS.__setHostnameForTest('Mac');                    // the FLAPPED hostname
+  const early = machineId();
+  assert(early === 'mac',
+    'fixture: with nothing persistable the process falls back to the bare hostname', early);
+  assert(WS.installIdAvailable() === false,
+    'fixture: and reports the collision guard as OFF, because no id could be written');
+  assert(statSync(lateMachineFile).isDirectory() && statSync(lateIdFile).isDirectory(),
+    'fixture non-vacuous: NOTHING was persisted — both paths are still the blocking directories');
+
+  // ── The files now APPEAR. Another process minted them, or the user fixed
+  //    the permissions. NO cache reset: this is the SAME long-lived process,
+  //    which is the entire point.
+  rmSync(lateMachineFile, { recursive: true, force: true });
+  rmSync(lateIdFile, { recursive: true, force: true });
+  writeFileSync(lateIdFile, '17d23c\n');
+  writeFileSync(lateMachineFile, 'talis-macbook-pro-17d23c\n');
+  assert(hostSlug() === 'mac',
+    'corpus non-vacuous: the hostname still resolves to something DIFFERENT from the file',
+    hostSlug());
+
+  assert(installId() === '17d23c',
+    'THE SIBLING FIX: a cached-null install id is re-attempted once a file appears',
+    String(installId()));
+  assert(WS.installIdAvailable() === true,
+    'so the guard reports itself ARMED again instead of false for the life of the process');
+
+  const late = machineId();
+  assert(late === 'talis-macbook-pro-17d23c',
+    'THE FIX: a long-lived process ADOPTS the name that appeared, instead of keeping its own',
+    `${early} -> ${late}`);
+  assert(peek29(lateMachineFile) === 'talis-macbook-pro-17d23c',
+    'and does NOT clobber the name another process wrote down first',
+    peek29(lateMachineFile));
+
+  // ── THE OUTCOME THAT MATTERS, end to end through the real store ─────────
+  // One long-lived process (above, cache already warm) and one FRESH process
+  // that reads the file — which is exactly the real pairing: an MCP server
+  // that has been running for a day, beside the app or a newly spawned one.
+  const LSCOPE = 'latescope';
+  const sA = await saveWorkingState(P, { scope: LSCOPE, headline: 'from the long-lived process', nowState: 'a' });
+  WS.__resetInstallIdCache();                        // i.e. a fresh sibling process
+  const sB = await saveWorkingState(P, { scope: LSCOPE, headline: 'from a fresh process', nowState: 'b' });
+  assert(sA.ok && sB.ok, 'both saves succeed', `${sA.message} / ${sB.message}`);
+  assert(sA.machine === sB.machine,
+    'the long-lived process and a fresh one agree on the machine folder',
+    `${sA.machine} vs ${sB.machine}`);
+
+  const lateDirs = readdirSync(path.join(DOMAINS, P, 'state', LSCOPE));
+  assert(lateDirs.length === 1,
+    'ONE folder on disk, not two — the count that was wrong on the real machine',
+    lateDirs.join(', '));
+
+  // The journal is the harm the folder count only hints at: fragmenting it
+  // makes a scope-less read return one half of the history.
+  const lateJl = readFileSync(
+    path.join(DOMAINS, P, 'state', LSCOPE, lateDirs[0], JOURNAL_FILENAME), 'utf8')
+    .split('\n').filter(Boolean);
+  assert(lateJl.length === 2, 'and ONE journal carrying both entries', String(lateJl.length));
+  const lateRd = await readWorkingState(P, { scope: LSCOPE });
+  assert(lateRd.machineCount === 1, 'the read sees a single machine, not two halves', lateRd.machineCount);
+
+  // ── The v3.23.1 invariants must survive D11 ─────────────────────────────
+  // A file holding rubbish is still REPLACED rather than fought with forever
+  // — the exclusive-create must not turn self-repair into a deadlock.
+  writeFileSync(lateMachineFile, 'a/b\n');
+  WS.__resetInstallIdCache();
+  const healed29 = machineId();
+  assert(isSafeSegment(healed29), 'an unusable remembered name still yields a SAFE segment', healed29);
+  assert(peek29(lateMachineFile) === healed29,
+    'and is still REPLACED on disk by a usable one', peek29(lateMachineFile));
+
+  // Restore the suite's own installation.
+  WS.__setHostnameForTest(null);
+  __setUserDataDirOverride(USER_DATA);
+  WS.__resetInstallIdCache();
+  assert(isSafeSegment(machineId()) && machineId().endsWith(installId()),
+    'the suite\'s own installation is intact afterwards', `${machineId()} / ${installId()}`);
+
+  // ── WHAT THIS SECTION DOES **NOT** ENFORCE ─────────────────────────────
+  // Written from the mutation results, not from intent, because two of the
+  // findings were the opposite of what was expected.
+  //
+  //  1. THE CACHE GUARDS ARE A REDUNDANT PAIR AND ONLY THE PAIR IS VISIBLE.
+  //     Each identity has a guard on the READ (`&& …id` / `&& …name`) and one
+  //     on the WRITE (`if (id)` / `if (pinned)`). Removing EITHER ALONE keeps
+  //     this suite fully green — 508/0, measured on all four — because a
+  //     negative that is never stored can never be returned, and a negative
+  //     that is stored can never be hit. Only removing BOTH of one pair reds
+  //     it (2 for the install id, 5 for the machine name). So no single
+  //     assertion here defends a single guard; they defend the PROPERTY. A
+  //     future edit that deletes one half will not go red, and the surviving
+  //     half will still carry the behaviour — which is the intent, but it is
+  //     recorded rather than mistaken for coverage.
+  //
+  //  2. THE CONCURRENT-MINT RACE IS NOT REACHABLE FROM AN OFFLINE SUITE, and
+  //     three real properties therefore have NO assertion here: the exclusive
+  //     `wx` create, the read-back that makes the loser ADOPT the winner's
+  //     value, and `machineId()` returning that adopted name. All three stay
+  //     GREEN under mutation in this file. They are not decorative — measured
+  //     with 8 processes minting simultaneously against one empty user-data
+  //     dir, the shipped code converged in 6 of 6 rounds while each mutation
+  //     split in 6, 2 and 6 rounds respectively, and the PRE-FIX code split
+  //     6 of 6 with as many as EIGHT distinct folder names for one
+  //     installation. That harness is inherently timing-dependent, so it is
+  //     not promoted into `npm test`, where a flaky suite would be worse than
+  //     an honest gap.
+  //
+  //  3. Nothing here tests a process running OLDER code beside a newer one —
+  //     which is what actually produced the maintainer's own split. No code
+  //     change can reach a process that was spawned before the code existed.
+}
+
 // ── The seam is TEST-ONLY, and that is ENFORCED rather than promised ──────
 {
   const offenders = [];
