@@ -42,9 +42,10 @@
   font-family: inherit;
   font-size: var(--text-2xs);
   cursor: pointer;
-  transition: background var(--t-state), color var(--t-state);
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .mem-refresh:hover { background: var(--surface-hover); color: var(--text); }
+.mem-refresh:active { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .mem-refresh:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
 .mem-row-list { display: flex; flex-direction: column; gap: 2px; }
@@ -62,10 +63,21 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-state);
+  transition: background var(--t-state), transform var(--t-press);
 }
 .mem-row:hover { background: var(--surface-hover); }
 .mem-row.active { background: var(--accent-tint); }
+/* Press, SPLIT on `.active` — and this row is why the split exists at all.
+   Unlike every other row family in the tree, a selected `.mem-row` is
+   ACCENT-tinted rather than neutral, so an unqualified `.mem-row:active
+   { background: var(--surface-active) }` — which ties with `.mem-row.active`
+   and, being later, wins — would repaint the currently-open scope in the
+   neutral grey for as long as the pointer is held. Pressing the row you are
+   already reading would read as leaving it. Selected therefore deepens its
+   OWN tint instead. */
+.mem-row:not(.active):active { background: var(--surface-active); }
+.mem-row.active:active { background: var(--accent-tint-strong); }
+.mem-row:active { transform: translateX(var(--press-shift)); }
 .mem-row:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
 /* THE SQUARE MARKER. Domains use a round dot (.dm-row-dot, border-radius
@@ -608,3 +620,15 @@
    system had already made, which is precisely the 81-class fragmentation the
    component exists to end. They were deleted rather than negotiated, and the
    screen was re-checked in a real browser afterwards.                       */
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Press travel off; both background steps stay. Last in the file: a media
+   query adds no specificity, so it must be declared after the rules it
+   overrides. `.mem-row.active`'s accent tint is STATE and is untouched —
+   this view's whole premise is that something else writes while you watch,
+   so the marker saying WHICH scope you are reading must never be reduced
+   away. */
+@media (prefers-reduced-motion: reduce) {
+  .mem-row:active,
+  .mem-refresh:active { transform: none; }
+}

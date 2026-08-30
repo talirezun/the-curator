@@ -646,8 +646,12 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: none;
   color: var(--text-2);
   cursor: pointer;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .sbw-close:hover { background: var(--surface-hover); color: var(--text); }
+/* `:not([disabled])` — this button IS disabled mid-save (see the note below),
+   and a control refusing a click must not acknowledge one. */
+.sbw-close:active:not([disabled]) { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
 /* M3 fix (shared-brain-wizard.js setSaveChromeDisabled): disabled while a
    save is in flight, so it visually matches the Save/Back buttons rather
    than looking clickable while its click handler silently no-ops. */
@@ -706,10 +710,18 @@ a.sb-card-repo:hover { color: var(--text-link); }
    still technically runs one cycle, and stating `none` makes the intent
    unambiguous to the next reader (see views/chat.css .chat-spinner for the
    same two-layer pattern). */
-.sbw-panel { animation: sbwFadeIn var(--dur-mid) var(--ease-out); }
+/* NAMES `curator-panel-in`, and `@keyframes sbwFadeIn` IS DELETED. The
+   private copy that used to sit four lines below read
+       from { opacity: 0; transform: translateY(3px); }
+       to   { opacity: 1; transform: none; }
+   — byte-equivalent to views/mcp-wizard.css's `mcpwFadeIn` and to the shared
+   keyframe, proven by normalising the name away and watching the two lines
+   collapse to one. Two copies of one entrance is the drift shape this repo
+   keeps re-learning (v3.26.0's `--scrim` had five). The animation is
+   unchanged on screen; only the name it reaches for moved. */
+.sbw-panel { animation: curator-panel-in var(--dur-mid) var(--ease-out); }
 .sbw-panel.sbw-hidden { display: none; }
 .sbw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
-@keyframes sbwFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .sbw-panel { animation: none; }
 }
@@ -1041,3 +1053,13 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--text);
 }
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* ── Reduced motion: press ────────────────────────────────────────────────
+   Travel off, colour step kept. The `.sbw-panel` entrance has its own
+   `animation: none` escape higher up (it has to stay beside the animation it
+   neutralises for scripts/test-next-reduced-motion.js to see it as
+   coverage); this block is for the press transform, and it is last in the
+   file because a media query adds no specificity. */
+@media (prefers-reduced-motion: reduce) {
+  .sbw-close:active:not([disabled]) { transform: none; }
+}

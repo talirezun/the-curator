@@ -75,8 +75,18 @@
      the :hover step below is built on. */
   color: var(--text-3);
   cursor: pointer;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .mcpw-close:hover { background: var(--surface-hover); color: var(--text); }
+.mcpw-close:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+
+/* ── Reduced motion: press ────────────────────────────────────────────────
+   Travel off, colour step kept. The panel's own entrance already has its
+   `animation: none` escape above; this is the second element in this file
+   that moves. */
+@media (prefers-reduced-motion: reduce) {
+  .mcpw-close:active { transform: none; }
+}
 
 .mcpw-header { text-align: center; margin-bottom: 18px; }
 .mcpw-header-icon { color: var(--accent-text); margin-bottom: 6px; }
@@ -139,11 +149,14 @@
    still technically runs one cycle, and stating `none` makes the intent
    unambiguous to the next reader (see views/chat.css .chat-spinner for the
    same two-layer pattern). */
-.mcpw-panel { animation: mcpwFadeIn var(--dur-mid) var(--ease-out); }
+/* NAMES `curator-panel-in`, and `@keyframes mcpwFadeIn` IS DELETED — it was
+   byte-equivalent to views/shared.css's `sbwFadeIn` and to the shared
+   keyframe (proven by normalising the name away: the two declarations
+   collapse to one line). Nothing moves on screen; only the name changed. */
+.mcpw-panel { animation: curator-panel-in var(--dur-mid) var(--ease-out); }
 .mcpw-panel.mcpw-hidden { display: none; }
 .mcpw-panel h3 { margin: 0 0 8px; font: var(--type-h3); color: var(--text); }
 .mcpw-panel h3:focus-visible { outline: none; box-shadow: var(--ring-focus); border-radius: var(--radius-sm); }
-@keyframes mcpwFadeIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .mcpw-panel { animation: none; }
 }

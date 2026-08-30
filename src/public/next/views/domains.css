@@ -76,11 +76,22 @@
   text-align: left;
   cursor: pointer;
   font: inherit;
-  transition: background var(--t-state), color var(--t-state);
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .dm-row:hover { background: var(--surface-hover); }
 .dm-row.active { background: var(--surface-active); color: var(--text); }
 .dm-row.active .dm-row-name { font-weight: var(--weight-medium); }
+/* Press. A row in a vertical stack nudges along the axis it does NOT scroll
+   in — a 1px vertical shift inside a 2px-gap list reads as the list breathing
+   rather than as this row being pressed.
+
+   The background step lands on the SAME token the selected state uses, and
+   that is deliberate rather than sloppy: pressing an unselected row is the
+   gesture that is about to select it, so previewing the selected surface for
+   the length of the hold is honest, and pressing an ALREADY-selected row then
+   changes nothing at all — the transform carries it — instead of appearing to
+   deselect. Declared after `.active` because the two tie on specificity. */
+.dm-row:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
 
 .dm-row-dot {
   flex: none;
@@ -436,9 +447,15 @@
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  transition: background var(--t-state);
+  transition: background var(--t-state), transform var(--t-press);
 }
 .dm-quick-btn:hover:not(:disabled) { background: var(--surface-hover); }
+/* `:not(:disabled)` is REQUIRED here, not defensive: the hover above is
+   0,3,0, so a bare `.dm-quick-btn:active` at 0,2,0 would lose the background
+   to it for the whole press and paint nothing. Matching the hover's
+   specificity and declaring later is what makes the press visible — and it
+   also stops a disabled button acknowledging a click it is refusing. */
+.dm-quick-btn:active:not(:disabled) { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .dm-quick-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .dm-quick-btn-ai { color: var(--accent-text); }
 .dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
@@ -968,9 +985,10 @@
   text-align: left;
   cursor: pointer;
   font: inherit;
-  transition: background var(--t-state);
+  transition: background var(--t-state), transform var(--t-press);
 }
 .dm-browse-row:hover { background: var(--surface-hover); }
+.dm-browse-row:active { background: var(--surface-active); transform: translateX(var(--press-shift)); }
 .dm-browse-dot {
   flex: none;
   width: 6px;
@@ -1123,12 +1141,15 @@
   border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--t-press);
 }
 .reader-source-reveal:hover:not(:disabled) {
   background: var(--surface-hover);
   color: var(--text);
 }
+/* `:not(:disabled)` matches the hover's 0,3,0 so the press is not swallowed
+   by it, and keeps a disabled reveal silent. */
+.reader-source-reveal:active:not(:disabled) { background: var(--surface-active); transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 .reader-source-reveal:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .reader-source-reveal:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
@@ -1140,3 +1161,21 @@
 }
 .reader-source-status.is-ok { color: var(--success-text); }
 .reader-source-status.is-error { color: var(--danger-text); }
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Press transforms off; every background step above stays, because a colour
+   change is not motion and it is what actually acknowledges the click. Last
+   in the file because a media query adds no specificity and would otherwise
+   lose to the later of two tied `.class:pseudo` rules.
+
+   NOTHING here substitutes an alternative animation, and that is the right
+   call for a press specifically — the substitute pattern belongs to the one
+   case where motion is the ONLY signal (shared/progress-ring.css's orbit,
+   which keeps running as a slow breath). A press always has a second,
+   instant channel. */
+@media (prefers-reduced-motion: reduce) {
+  .dm-row:active,
+  .dm-quick-btn:active:not(:disabled),
+  .dm-browse-row:active,
+  .reader-source-reveal:active:not(:disabled) { transform: none; }
+}

@@ -128,9 +128,17 @@
      this resting state being the dim one. */
   color: var(--text-3);
   cursor: pointer;
-  transition: background var(--t-state), color var(--t-state);
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .obp-dismiss:hover { background: var(--surface-hover); color: var(--text); }
+.obp-dismiss:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
+/* Reduced motion: travel off, colour step kept. This is the only element in
+   this file that moves, so the block is small; it is still written per
+   element rather than as a sweep, because the right answer differs by
+   element (shared/progress-ring.css keeps its orbit under the same query). */
+@media (prefers-reduced-motion: reduce) {
+  .obp-dismiss:active { transform: none; }
+}
 
 .obp-progress {
   margin: 2px 0 10px;

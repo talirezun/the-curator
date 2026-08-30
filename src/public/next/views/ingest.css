@@ -216,10 +216,15 @@
   text-align: left;
   cursor: pointer;
   font: inherit;
-  transition: background var(--t-state), color var(--t-state);
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .ing-dest-row:hover:not([disabled]) { background: var(--surface-hover); }
 .ing-dest-row.active { background: var(--surface-active); color: var(--text); }
+/* Press. `:not([disabled])` matches the hover's 0,3,0 so the press is not
+   swallowed by it, AND stops a destination that is refusing clicks from
+   acknowledging one — the row is disabled during a live write, which is the
+   worst moment for a control to imply it did something. */
+.ing-dest-row:active:not([disabled]) { background: var(--surface-active); transform: translateX(var(--press-shift)); }
 .ing-dest-row.active .ing-dest-name { font-weight: var(--weight-medium); }
 .ing-dest-row[disabled] { cursor: not-allowed; opacity: var(--opacity-disabled); }
 
@@ -596,8 +601,14 @@
      floor and under the 4.5 text floor that does not apply to it. */
   color: var(--text-3);
   cursor: pointer;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .ing-queue-file-remove:hover { background: var(--danger-tint); color: var(--danger-text); }
+/* 20x20 — the icon amplitude, and NO background step. The hover is already
+   the danger tint, the tree defines nothing stronger in that family, and a
+   destructive control is the last place to invent a colour so a scan can
+   report uniformity. See shell.css `.btn-danger` for the same refusal. */
+.ing-queue-file-remove:active { transform: scale(var(--press-scale-icon)); }
 
 .ing-queue-estimate { max-width: 480px; margin-bottom: 14px; }
 .ing-queue-estimate-row {
@@ -860,4 +871,22 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   Press travel off; the background steps stay.
+
+   THE INGEST PROGRESS RING IS NOT IN THIS BLOCK AND MUST NEVER BE ADDED TO
+   IT. `.pring-orbit` KEEPS animating under reduced motion — see
+   shared/progress-ring.css, which substitutes a 2.6s opacity breath rather
+   than stopping. That is the deliberate opposite of the call made here, and
+   the reason is the same test applied to a different element: a press has a
+   second, instant channel (the colour step), so removing its travel costs
+   nothing; the ring is the ONLY thing on screen saying a multi-minute,
+   money-spending write is still alive, so removing its motion removes the
+   information itself. A future tidy-up that folds every animation in this
+   view into one "motion off" rule would silently break that. */
+@media (prefers-reduced-motion: reduce) {
+  .ing-dest-row:active:not([disabled]),
+  .ing-queue-file-remove:active { transform: none; }
 }

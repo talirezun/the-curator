@@ -537,7 +537,10 @@ textarea {
   color: var(--text-3);
   cursor: pointer;
   flex: none;
-  transition: background var(--t-state), color var(--t-state), border-color var(--t-state);
+  /* `transform` is in the list for the press state defined beside the button
+     variants below; the amplitude and the reduced-motion decision live there
+     so the whole press vocabulary reads in one place. */
+  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .rail-btn:hover { background: var(--surface-hover); color: var(--text-2); }
 .rail-btn.active {
@@ -565,7 +568,7 @@ textarea {
   justify-content: center;
   cursor: pointer;
   margin-bottom: 2px;
-  transition: background var(--t-state), color var(--t-state), border-color var(--t-state);
+  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .rail-theme-toggle:hover { background: var(--surface-hover); color: var(--text-2); border-color: var(--border); }
 .rail-theme-toggle svg { width: 15px; height: 15px; }
@@ -1044,9 +1047,28 @@ body.guide-docked .main {
   background: transparent;
   color: var(--text);
   border: 1px solid transparent;
-  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--dur-instant) var(--ease-out);
+  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
-.btn:active { transform: translateY(0.5px); }
+/* ── PRESS ────────────────────────────────────────────────────────────────
+   Was `translateY(0.5px)` — measured live in the running app at 0.4716px,
+   i.e. sub-pixel at 1x, so on a standard display it either rounded away or
+   painted a half-covered row of pixels. The design system specifies a press
+   as THREE simultaneous changes (a background step, a translate, and an 80ms
+   transform transition) and the app had adopted one of the three at an
+   amplitude below the display's resolution.
+
+   All three are here now. The translate + scale live on `.btn` so every
+   variant inherits them; the BACKGROUND step is per-variant below, because
+   "one step further than hover" resolves to a different token on a filled
+   accent button than on a ghost.
+
+   The per-variant BACKGROUND steps are NOT here: they sit below the variant
+   `:hover` rules, because `:hover` and `:active` are both one class plus one
+   pseudo-class and therefore tie on specificity — a pressed pointer is also
+   hovering, so a press background written ABOVE its own variant's hover rule
+   loses the cascade and paints nothing. Found by reading the order, and the
+   reason the block is split rather than kept together. */
+.btn:active { transform: translateY(var(--press-shift)) scale(var(--press-scale)); }
 /* `pointer-events: none` was here and has been REMOVED. It is not in the
    system's disabled spec, and it CANCELLED the `cursor: not-allowed` beside
    it — an element with no pointer events cannot show a cursor, so one of the
@@ -1167,6 +1189,92 @@ body.guide-docked .main {
 }
 .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
 
+/* ── Press, second half: the per-variant background step ──────────────────
+   Below every variant's `:hover` on purpose — see the note on `.btn:active`.
+   "One step further than hover" resolves to a different token per variant,
+   which is why this cannot be a single rule on `.btn`.
+
+   `--accent-active` had ZERO consumers tree-wide before this line. It has
+   been defined in tokens/color.css for BOTH themes since the palette landed
+   (violet-600 dark / violet-700 light) and nothing had ever read it; this is
+   the pairing it was authored for.
+
+   `.btn-danger` deliberately gets NO background step. Its hover already
+   moves TWO properties (a --danger-tint fill plus a --danger border), the
+   tree defines nothing stronger in that family, and minting a
+   --danger-tint-strong for one `:active` would be a token added to serve a
+   press rather than a press adopting the system. For a pointer `:active` is
+   a subset of `:hover`, so the hover treatment is already on screen and the
+   transform lands on top of it. Stated so this reads as a decision rather
+   than an omission. */
+.btn-primary:active { background: var(--accent-active); }
+.btn-secondary:active { background: var(--surface-active); }
+.btn-ghost:active { background: var(--surface-active); color: var(--text); }
+
+/* ── Rail: pressing a section acknowledges it ─────────────────────────────
+   The rail is what "clicking through the sections" means, and it did nothing
+   at all: measured on a real mousedown through Chrome's input pipeline, a
+   rail button returned `transform: none` with an unchanged background.
+
+   ICON AMPLITUDE, NOT THE BUTTON ONE. At 40x40 the wide-control scale
+   (0.985) moves each edge 0.30px — invisible, and identical in kind to the
+   0.4716px defect being fixed. `--press-scale-icon` is the token for square
+   targets at this size; see tokens/motion.css for why one factor could not
+   serve both.
+
+   NO translate. A rail button sits in a fixed 60px column with 4px gaps; a
+   1px nudge inside a bordered rail reads as the whole column shifting. The
+   scale contracts toward the icon's own centre, which is the honest gesture
+   for a square target and matches what a platform icon press does.
+
+   THE ACTIVE SECTION KEEPS ITS ACCENT WHEN PRESSED. `.rail-btn.active` and
+   `.rail-btn:active` tie on specificity, so an unqualified press background
+   declared later would repaint the CURRENT section with the neutral hover
+   grey for as long as the button is held — i.e. pressing the section you are
+   already in would read as leaving it. The two cases are therefore separate
+   selectors: unselected steps to --surface-active, selected deepens its own
+   tint.
+
+   The `transform var(--t-press)` these three need is added to each base rule
+   where that rule already lives, NOT restated here — a second `transition`
+   declaration for the same class in the same file is two copies of one value
+   waiting to disagree. */
+.rail-btn:active { transform: scale(var(--press-scale-icon)); }
+.rail-btn:not(.active):active { background: var(--surface-active); }
+.rail-btn.active:active { background: var(--accent-tint-strong); }
+
+.rail-theme-toggle:active { transform: scale(var(--press-scale-icon)); background: var(--surface-active); }
+
+/* `.reader-backlink-row`'s press is NOT here — it sits beside that row's own
+   `:hover` further down, for the same cascade reason the button variants are
+   split from `.btn:active`. Two `.class:pseudo` rules tie on specificity and
+   the later one wins, and that row is declared ~200 lines below this block.
+
+── Reduced motion: press transforms are DISABLED, not merely instant ────
+   tokens/motion.css's reduce block zeroes `--dur-*`, which makes `--t-press`
+   0ms — and a 0ms transition still MOVES the element, it just does not tween
+   there. For a press that is the wrong outcome: what a reduced-motion user
+   asked to be rid of is travel, not feedback. The background steps above are
+   not motion at all and land instantly either way, so the acknowledgement
+   survives intact once the transform is removed — which is exactly why
+   disabling is safe HERE and would not be for a spinner that carries the
+   only liveness signal.
+
+   This is the same per-element judgement v3.24.1 made for the sync spinner
+   (DISABLED — the label and the disabled state already say it) and the
+   OPPOSITE of the one shared/progress-ring.css makes for `.pring-orbit`
+   (KEPT, substituted with a slow breath, because a multi-minute ingest has
+   no other cue that anything is still happening). The rail's `.active` tint
+   and the row backgrounds are STATE, not motion, and are untouched here —
+   removing them would remove information.
+
+   THE BLOCK ITSELF IS AT THE BOTTOM OF THIS FILE, not here. It has to be:
+   a media query adds NO specificity, so `@media (reduce) { .x:active }`
+   ties with a plain `.x:active` and loses to any copy declared later —
+   which `.reader-backlink-row:active` is. A reduced-motion escape that the
+   cascade silently discards is worse than none, because it reads as
+   coverage. */
+
 /* .settings-section-grid / .settings-section-item moved to
    views/settings.css. */
 
@@ -1276,8 +1384,10 @@ body.guide-docked .main {
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
+  transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--t-press);
 }
 .reader-close:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border); }
+.reader-close:active { background: var(--surface-active); transform: scale(var(--press-scale-icon)); }
 .reader-close svg { width: 15px; height: 15px; }
 
 .reader-body {
@@ -1370,8 +1480,13 @@ body.guide-docked .main {
   text-align: left;
   cursor: pointer;
   font: inherit;
+  transition: background var(--t-state), color var(--t-state), transform var(--t-press);
 }
 .reader-backlink-row:hover { background: var(--surface-hover); color: var(--text); }
+/* Press — a row in a stack, so it nudges along the axis it does NOT travel
+   in, and steps one background further than hover. Declared after the hover
+   deliberately: the two tie on specificity. */
+.reader-backlink-row:active { transform: translateX(var(--press-shift)); background: var(--surface-active); }
 .reader-backlink-slug { font-size: 12px; }
 
 /* ── Utility ─────────────────────────────────────────────────────────── */
@@ -1383,4 +1498,32 @@ body.guide-docked .main {
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* ── Reduced motion: the shell's press transforms ─────────────────────────
+   LAST IN THE FILE, and that placement is load-bearing rather than tidy. A
+   media query contributes NOTHING to specificity, so `@media (reduce) {
+   .x:active { transform: none } }` ties with a plain `.x:active` and loses
+   to any copy of it declared later in the same sheet. Two of the press rules
+   above (`.btn-*:active`, `.reader-backlink-row:active`) are deliberately
+   declared low in this file so they beat their own `:hover`, so an escape
+   written beside the press vocabulary would have been silently discarded for
+   them — coverage that reads as coverage and is not.
+
+   WHY DISABLE RATHER THAN SUBSTITUTE: the per-variant background steps are
+   not motion and land identically here, so the press is still acknowledged;
+   only the travel goes. That is the whole test, applied per element. The
+   OPPOSITE call is shared/progress-ring.css's `.pring-orbit`, which KEEPS
+   animating (substituted for a slow breath) because it is the sole liveness
+   cue in a wait that can run for minutes — the ingest ring must never be
+   folded into a blanket "turn motion off" rule. STATE is likewise untouched:
+   `.rail-btn.active`'s accent tint and every row's selected background stay
+   exactly as they are, because they ARE the state and removing them removes
+   information. */
+@media (prefers-reduced-motion: reduce) {
+  .btn:active,
+  .rail-btn:active,
+  .rail-theme-toggle:active,
+  .reader-close:active,
+  .reader-backlink-row:active { transform: none; }
 }
