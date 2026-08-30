@@ -1217,17 +1217,80 @@ Run the **free, local** self-diagnostics behind the Settings → System Check pa
 ```json
 {
   "checks": [
-    { "id": "version",     "label": "Installed version",            "status": "info", "detail": "The Curator v3.0.1-beta.23" },
-    { "id": "provider",    "label": "AI provider key",              "status": "ok",   "detail": "Configured: gemini · gemini-2.5-flash-lite" },
-    { "id": "domains",     "label": "Knowledge folder",             "status": "ok",   "detail": "Readable and writable: /…/domains" },
-    { "id": "credentials", "label": "Credential file permissions",  "status": "ok",   "detail": "All 4 credential file(s) are owner-only (0600)." },
-    { "id": "sync",        "label": "GitHub sync",                  "status": "ok",   "detail": "Configured: github.com/you/your-brain" }
+    { "id": "version",      "label": "Installed version",            "status": "info", "detail": "The Curator v3.25.0" },
+    { "id": "install-mode", "label": "Install mode",                 "status": "info", "detail": "Source install (git checkout) (repo). Updates in place from GitHub." },
+    { "id": "provider",     "label": "AI provider key",              "status": "ok",   "detail": "Configured: gemini · gemini-2.5-flash-lite" },
+    { "id": "domains",      "label": "Knowledge folder",             "status": "ok",   "detail": "Readable and writable: /…/domains" },
+    { "id": "credentials",  "label": "Credential file permissions",  "status": "ok",   "detail": "All 4 credential file(s) are owner-only (0600)." },
+    { "id": "git",          "label": "Git",                          "status": "ok",   "detail": "git version 2.48.1" },
+    { "id": "sync",         "label": "GitHub sync",                  "status": "ok",   "detail": "Configured: github.com/you/your-brain" }
   ],
-  "summary": { "ok": 4, "warn": 0, "fail": 0, "info": 1 }
+  "summary": { "ok": 5, "warn": 0, "fail": 0, "info": 2 }
 }
 ```
 
-`status` is one of `ok` | `warn` | `fail` | `info`.
+`status` is one of `ok` | `warn` | `fail` | `info`. Both frontends iterate the array, so a new row needs no frontend change.
+
+The `install-mode` row is always `info` — neither mode is an error, and the row exists so a support conversation starts from the right mental model. The `git` row runs a local `git --version` (free, no network); it reports `fail` when git is absent, because **both** Personal Sync and the updater need it, and it is skipped entirely on a build whose capabilities need neither.
+
+---
+
+## GET /api/version
+
+Which version is running, which is on disk, and what this install is allowed to do to itself.
+
+**Success response** `200 OK`
+
+```json
+{
+  "version": "3.25.0",
+  "onDiskVersion": "3.25.0",
+  "restartRequired": false,
+  "installMode": "repo",
+  "installModeLabel": "Source install (git checkout)",
+  "capabilities": {
+    "canSelfUpdateViaGit": true,
+    "canRunNpmInstall": true,
+    "canRebuildAppleScriptApp": true,
+    "canWriteBesideCode": true,
+    "mcpLaunchStyle": "node-script",
+    "restartStyle": "respawn-node"
+  }
+}
+```
+
+`restartRequired` is true when `package.json` on disk is newer than the version the running process booted with — files updated, process not restarted. The `installMode` / `capabilities` fields are **additive**; the three original fields are unchanged. See [architecture § Install modes](architecture.md#install-modes-srcbraininstall-modejs).
+
+---
+
+## GET /api/write-status
+
+Is it safe to quit right now? Reads the in-memory write registry that has guarded conflicting routes since v3.0.1-beta.8, which until now could only be *consulted by a refusal* and never asked directly.
+
+Deliberately a **read** route, and deliberately **not** behind `guardConcurrent`: a 409 would fire precisely when a write is in progress, which is exactly when someone is asking whether a write is in progress. It also registers no write of its own, which would make it report itself.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "safeToQuit": false,
+  "activeWrites": true,
+  "updateInProgress": false,
+  "operations": [
+    { "domain": "articles", "count": 1, "ops": ["ingest"] }
+  ],
+  "operationsTotal": 1
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `safeToQuit` | `!activeWrites && !updateInProgress`. An update in flight is mid `git reset --hard` + `npm install`, which is at least as bad to interrupt as an ingest. |
+| `operations` | Capped at 50 entries, each an explicit `{domain, count, ops}` allow-list — never a spread of registry internals. |
+| `operationsTotal` | The **true** total, reported alongside the capped array so a cap is never mistaken for a measurement. |
+
+If the registry itself throws, the endpoint answers `200` with `{ "ok": false, "safeToQuit": null, "error": "…" }` rather than a 500 — a quit handler that cannot get an answer should be told so explicitly, not handed an exception it will read as "busy".
 
 ---
 
@@ -2690,6 +2753,112 @@ refused **by name**, pointing at that surface, rather than silently doing nothin
   it would be actively harmful, since a `409` would fire precisely when a long ingest is running,
   i.e. exactly when a user is asking *is my key the problem?* `POST` (not `GET`) is still
   load-bearing: the server's cross-origin guard only inspects mutating verbs.
+
+---
+
+## GET /api/config/update-check
+
+Compare the local version and commit against `main` on GitHub. Network read only; changes nothing.
+
+**Forked on `canSelfUpdateViaGit`** — see [architecture § Install modes](architecture.md#install-modes-srcbraininstall-modejs).
+
+**Success response** `200 OK` (a build that can self-update)
+
+```json
+{
+  "current": "3.25.0",
+  "latest": "3.26.0",
+  "localCommit": "a1b2c3d",
+  "remoteCommit": "e4f5a6b",
+  "updateAvailable": true,
+  "localAhead": false
+}
+```
+
+`updateAvailable` is **not** a plain version inequality. It used to be — `latest !== current`, which is
+true in *both* directions, so a checkout whose local version was **ahead** of the published one (a
+release committed but not yet pushed) reported an update whose button runs `git reset --hard
+origin/main`: a downgrade, offered as an update. The verdict is now:
+
+| Local vs remote version | `commitsDiffer` | `updateAvailable` |
+|---|---|---|
+| remote newer | any | `true` |
+| identical strings | yes | `true` — the legitimate "new commits on main" case, unchanged |
+| identical strings | no | `false` |
+| not comparable (e.g. one side unparseable, or cores equal but strings differ) | any | falls back to the **original string inequality**, i.e. `true` — unchanged |
+| **local ahead** | any | **`false`**, and `localAhead: true` |
+
+The commit comparison is subordinated rather than dropped: a local-ahead checkout has differing
+commits *by construction*, so leaving `|| commitsDiffer` unconditional would have left the defect
+fully intact in the exact state that triggers it.
+
+The uncomparable row is not a detail. A first draft treated *equal* and *uncomparable* alike (both
+are `0` from the comparator), and a 24-cell A/B against the pre-change expression showed **12** cells
+moving instead of the intended 6: `nightly` vs `3.25.0`, and `3.0.1-beta.27` vs `3.0.1`, with
+matching or unknown commits, went from *update offered* to *no update* — hiding a real update behind
+a version string the comparator could not parse. With the string fallback in place the A/B changes
+**exactly the six local-ahead cells and nothing else**, and `scripts/test-install-mode.js` §7b runs
+that comparison every time rather than leaving it as a claim.
+
+**Effect on the two frontends.** `/next` computes its own local-ahead guard in `classifyUpdate()`
+*before* it reads `updateAvailable`, so its rendering is unchanged in every case. `/old`
+(`src/public/app.js`) reads `data.updateAvailable` with no guard at all — so in the local-ahead state
+it previously showed "Update available" with a button that would downgrade the checkout, and now
+correctly shows nothing. That is the one user-visible difference in this endpoint, and it is the fix.
+
+`localAhead` is returned because `updateAvailable: false` now covers two different situations —
+*you are current* and *you are ahead of what is published* — and a client that cannot tell them
+apart would report the second as the first.
+
+**Refusal response** `501 Not Implemented` (a build that cannot self-update via git)
+
+```json
+{
+  "error": "Cannot check for updates in this build of The Curator (Packaged app). This install does not have the \"canSelfUpdateViaGit\" capability.",
+  "refused": "capability_unavailable",
+  "capability": "canSelfUpdateViaGit",
+  "installMode": "bundle",
+  "updateAvailable": false,
+  "hint": "Packaged builds update through the app's own updater, not this checkout-only git flow."
+}
+```
+
+---
+
+## POST /api/config/update
+
+Fetch the latest code, hard-sync to `origin/main`, install dependencies, rebuild the `.app`. The
+frontend follows a success with `POST /api/restart`.
+
+Refused with `409` (via the shared `conflictResponse`) while any wiki write is in flight — the
+update ends in a process restart, which can truncate an in-flight write.
+
+**Forked on `canSelfUpdateViaGit`.** The repo arm runs, in order:
+
+1. `git --version` — a preflight added so a machine with no git gets a message naming
+   `xcode-select --install` rather than the shell's own `git: command not found`. (The same class was
+   worse in Personal Sync, where `friendlyError`'s bare `not found` substring rendered it as
+   *"Repository not found. Check the URL"* — a confidently wrong diagnosis, fixed at source.)
+2. `git fetch origin main`
+3. `git rev-parse HEAD`
+4. `git reset --hard origin/main`
+5. `git rev-parse HEAD`
+6. `npm install --silent --no-audit --no-fund`
+7. `bash scripts/build-app.sh` (non-fatal)
+
+Steps 2–7 are unchanged from every prior version; step 1 is the one addition.
+`scripts/test-install-mode.js` §6 pins all seven as literals transcribed into the suite.
+
+```json
+{ "ok": true, "restarting": true, "from": "a1b2c3d", "to": "e4f5a6b" }
+```
+
+`partial: true` plus a `warning` means git succeeded and `npm install` did not — restart anyway.
+
+**Refusal response** `501 Not Implemented` (a build that cannot self-update via git). **Zero
+subprocesses run**: every step above is impossible or actively destructive in a signed bundle, and
+`scripts/build-app.sh` ends in an ad-hoc `codesign --force --deep --sign -` that would destroy a
+Developer ID signature.
 
 ---
 

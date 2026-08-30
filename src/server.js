@@ -18,9 +18,11 @@ import sharedbrainRouter from './routes/sharedbrain.js';
 import diagnosticsRouter from './routes/diagnostics.js';
 import ingestQueueRouter from './routes/ingest-queue.js';
 import memoryRouter from './routes/memory.js';
+import writeStatusRouter from './routes/write-status.js';
 import { getProviderInfo } from './brain/llm.js';
 import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
+import { describeInstall } from './brain/install-mode.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -166,6 +168,9 @@ app.use('/api/sharedbrain', sharedbrainRouter);
 app.use('/api/diagnostics', diagnosticsRouter);
 app.use('/api/ingest-queue', ingestQueueRouter);
 app.use('/api/memory', memoryRouter);
+// READ route. Deliberately not registered as a write and not behind
+// guardConcurrent — see the docblock in src/routes/write-status.js.
+app.use('/api/write-status', writeStatusRouter);
 
 // Version endpoint — used by the UI to display the current app version.
 // Also reports on-disk version (from package.json) so the UI can detect
@@ -177,7 +182,10 @@ app.get('/api/version', (req, res) => {
     onDiskVersion = pkg.version;
   } catch { /* fall back to startup version */ }
   const restartRequired = onDiskVersion !== version;
-  res.json({ version, onDiskVersion, restartRequired });
+  // installMode / capabilities ride along so the install form is OBSERVABLE
+  // rather than inferred. Purely ADDITIVE: every existing consumer reads
+  // `version`, `onDiskVersion` and `restartRequired`, and those are unchanged.
+  res.json({ version, onDiskVersion, restartRequired, ...describeInstall() });
 });
 
 // ── Restart endpoint — used after updates ────────────────────────────────────

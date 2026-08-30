@@ -23,6 +23,7 @@ import {
   endUpdate,
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
+import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
@@ -36,6 +37,37 @@ import {
 } from '../brain/openrouter-qualify.js';
 
 const execAsync = promisify(exec);
+
+// ── Test seams for the two capability-forked update handlers ────────────────
+//
+// These two aliases exist so the forked handlers can resolve `execAsync` and
+// `fetch` from an INJECTED deps object while every call site inside their
+// bodies stays byte-identical to the pre-fork source. The handlers declare
+// function-scoped `const execAsync` / `const fetch` that shadow the module
+// binding and the global; those consts need a default that is NOT the name
+// they shadow (that would be a TDZ reference), hence the aliases.
+//
+// This is the same shape as compile.js's `opts.generateText` and
+// ingestMultiPhase's trailing `llm`: null in production, and the ONLY way an
+// offline suite can drive `POST /api/config/update` without running
+// `git reset --hard` against the real checkout.
+const defaultExec = execAsync;
+const defaultFetch = (...args) => globalThis.fetch(...args);
+
+/**
+ * What to say when `git` is not on the subprocess PATH.
+ *
+ * Deliberately duplicated rather than shared with the sibling message in
+ * `src/brain/sync.js`: the two name DIFFERENT actions ("update" vs "sync"), and
+ * the only part that must not drift is the remedy. `scripts/test-install-mode.js`
+ * asserts BOTH carry `xcode-select --install` and that NEITHER can be answered
+ * with sync.js's "Repository not found" catch-all.
+ */
+const GIT_MISSING_MESSAGE =
+  'Git is not available to The Curator, so it cannot update itself. ' +
+  'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
+  'If git is installed somewhere unusual, launching The Curator from a terminal ' +
+  '(`npm start`) will pick up your shell PATH.';
 
 // ── BOOT: re-admit the persisted OpenRouter catalogue ───────────────────────
 //
@@ -1987,8 +2019,132 @@ router.post('/api-keys/validate', async (req, res) => {
 
 // ── Update ──────────────────────────────────────────────────────────────────
 
-/** GET /api/config/update-check — compare local vs remote version AND git commit */
-router.get('/update-check', async (_req, res) => {
+/**
+ * Compare two dotted version strings. >0 if `a` is newer, <0 if older, 0 if
+ * equal OR UNCOMPARABLE.
+ *
+ * This is a deliberate, byte-for-byte port of `compareSemver` in
+ * `src/public/next/views/settings.js`. The two MUST agree, because /next
+ * applies its own local-ahead guard on top of this route's verdict and a
+ * disagreement would produce a UI that contradicts itself — so the algorithm
+ * is copied rather than re-derived. (It is not imported: that file is browser
+ * ESM served to the client and this is a server route; the ~20 lines are
+ * cheaper than a shared browser/server module for one function. The guard
+ * suite asserts the two implementations agree on a shared table.)
+ *
+ * "Uncomparable collapses to 0" is the fail-safe direction: a positive result
+ * SUPPRESSES the update offer, so guessing "local is newer" from a string we
+ * could not parse would hide a real, wanted update. Falling to 0 leaves the
+ * pre-existing commit comparison in charge — i.e. the old behaviour.
+ *
+ * Only the numeric core is compared, so a pre-release suffix (the retired
+ * `3.0.1-beta.27` line) makes the cores equal and returns 0.
+ */
+export function compareSemver(a, b) {
+  const parse = (v) => {
+    if (typeof v !== 'string') return null;
+    const core = v.trim().split('-')[0].split('+')[0];
+    const parts = core.split('.');
+    if (parts.length === 0 || parts.length > 4) return null;
+    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+    return nums.some(Number.isNaN) ? null : nums;
+  };
+  const av = parse(a), bv = parse(b);
+  if (!av || !bv) return 0;
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const x = av[i] || 0, y = bv[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * The update verdict, as a pure function — DOM-free, fetch-free, exported so
+ * the guard suite executes it directly instead of asserting on the shape of
+ * the source that calls it (v3.0.17's rule).
+ *
+ * ── The bug this fixes ───────────────────────────────────────────────────
+ *
+ * This route used to compute `const versionDiffers = latest !== current` — a
+ * PLAIN INEQUALITY, which is true in BOTH directions. A checkout whose local
+ * version is AHEAD of the published one (a release committed but not yet
+ * pushed — the maintainer's own routine state) therefore reported
+ * `updateAvailable: true`, and the button behind that verdict runs
+ * `git reset --hard origin/main`: a DOWNGRADE, offered as an update.
+ *
+ * `/next` added a client-side guard for exactly this (`classifyUpdate`'s
+ * 'local-ahead' arm). `/old` has NO guard at all — `src/public/app.js` reads
+ * `data.updateAvailable` and offers the button. So the verdict is wrong at
+ * source and only one of the two frontends papered over it.
+ *
+ * ── Why the commit comparison is subordinated rather than kept ───────────
+ *
+ * `commitsDiffer` alone is the LEGITIMATE case that must keep working: same
+ * version, new commits on main, so pull them. But when the local version is
+ * strictly newer, the commits differ BY CONSTRUCTION (that is what being
+ * ahead means), so leaving `|| commitsDiffer` in place would have left the
+ * defect fully intact in the exact state that triggers it. `localAhead`
+ * therefore vetoes, and only there.
+ *
+ * ── Why `versionDiffers` is not simply `cmp < 0` ────────────────────────
+ *
+ * `compareSemver` returns 0 for EQUAL **and** for UNCOMPARABLE, and those are
+ * different facts. A first draft used `cmp < 0` alone; a 24-cell A/B against
+ * the pre-change expression then showed **12** cells changing rather than the
+ * 6 that were intended. The extra six were `nightly` vs `3.25.0`, and
+ * `3.0.1-beta.27` vs `3.0.1`, with matching or unknown commits: the old code
+ * offered an update (the strings differ) and the draft SUPPRESSED it. That is
+ * the harmful direction — hiding a real, wanted update behind a version string
+ * the comparator could not parse.
+ *
+ * So an uncomparable-or-equal pair falls back to the ORIGINAL string
+ * inequality. With that, the A/B changes exactly the six local-ahead cells and
+ * nothing else. (Both of those inputs are near-unreachable in production —
+ * `current` and `latest` both come from a `package.json` — but "unreachable"
+ * is not a reason to ship the wrong fallback direction.)
+ *
+ * `localAhead` is returned rather than folded away because `updateAvailable:
+ * false` now covers two different situations — "you are current" and "you are
+ * ahead of what is published" — and a client that cannot tell them apart
+ * would report the second as the first.
+ */
+export function decideUpdateAvailable({ current, latest, localCommit, remoteCommit }) {
+  const cmp = compareSemver(current, latest);
+  const localAhead = cmp > 0;
+  const versionDiffers = cmp < 0 || (cmp === 0 && latest !== current);
+  const commitsDiffer = Boolean(localCommit && remoteCommit && localCommit !== remoteCommit);
+  return {
+    updateAvailable: !localAhead && (versionDiffers || commitsDiffer),
+    localAhead,
+    versionDiffers,
+    commitsDiffer,
+  };
+}
+
+/** GET /api/config/update-check — compare local vs remote version AND git commit
+ *
+ * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). The repo arm
+ * below is the pre-fork body, unchanged — the capability check is an EARLY
+ * RETURN above it, so `git diff -w` on this hunk is pure insertion rather than
+ * a reindent. A build that cannot self-update must not report an update as
+ * available: the button that would follow cannot work, and the honest answer is
+ * "this build updates a different way", not "up to date".
+ *
+ * `deps` is the test-only seam (see defaultExec/defaultFetch above): null in
+ * production, so both `execAsync` and `fetch` resolve exactly as before.
+ */
+export async function updateCheckHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  if (!caps.canSelfUpdateViaGit) {
+    const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'check for updates', {
+      updateAvailable: false,
+      hint: 'Packaged builds update through the app’s own updater, not this checkout-only git flow.',
+    });
+    return res.status(status).json(body);
+  }
+  const execAsync = (deps && deps.execAsync) || defaultExec;
+  const fetch = (deps && deps.fetch) || defaultFetch;
   try {
     const pkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
     const current = pkg.version;
@@ -2021,22 +2177,22 @@ router.get('/update-check', async (_req, res) => {
       }
     } catch { /* GitHub API unavailable — fall back to version comparison only */ }
 
-    // Update is available if version differs OR if commits differ
-    const versionDiffers = latest !== current;
-    const commitsDiffer = localCommit && remoteCommit && localCommit !== remoteCommit;
-    const updateAvailable = versionDiffers || commitsDiffer;
+    const verdict = decideUpdateAvailable({ current, latest, localCommit, remoteCommit });
 
     res.json({
       current,
       latest,
       localCommit,
       remoteCommit,
-      updateAvailable,
+      updateAvailable: verdict.updateAvailable,
+      localAhead: verdict.localAhead,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+
+router.get('/update-check', (req, res) => updateCheckHandler(req, res));
 
 /** POST /api/config/update — fetch latest code, hard-sync to origin/main, install deps, rebuild .app
  *
@@ -2045,8 +2201,33 @@ router.get('/update-check', async (_req, res) => {
  * `git pull` abort with "local changes would be overwritten". The app directory
  * is meant to track `main` verbatim — user data (domains/, .curator-config.json,
  * .sync-config.json) is all gitignored, so hard-reset is safe.
+ *
+ * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). Every step
+ * below — `git fetch`, `git reset --hard`, `npm install`, and re-running
+ * `scripts/build-app.sh` (which ends in an ad-hoc `codesign --force --deep
+ * --sign -`) — is impossible or actively destructive in a signed bundle. The
+ * capability check is an EARLY RETURN above the pre-fork body, which is
+ * otherwise unchanged: `git diff -w` on this hunk is pure insertion.
+ *
+ * The refusal is checked BEFORE the write-registry 409. In repo mode
+ * `canSelfUpdateViaGit` is true, so control falls straight through to the same
+ * `hasActiveWrites()` check as before and behaviour is unchanged; in bundle
+ * mode "this build cannot do that at all" is the more useful answer than "not
+ * right now".
+ *
+ * `deps` is the test-only seam: null in production. It is the ONLY reason an
+ * offline suite can drive this handler — calling it for real runs
+ * `git reset --hard origin/main` against the developer's own checkout.
  */
-router.post('/update', async (_req, res) => {
+export async function updateHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  if (!caps.canSelfUpdateViaGit) {
+    const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'update the app', {
+      hint: 'Packaged builds are replaced by the installer, not by pulling this checkout.',
+    });
+    return res.status(status).json(body);
+  }
+  const execAsync = (deps && deps.execAsync) || defaultExec;
   // v3.0.1-beta.8: refuse to update while any wiki write is in flight.
   // The update flow does `git reset --hard origin/main` (safe — only touches
   // tracked app files, domains/ is gitignored) followed by `/api/restart`
@@ -2069,6 +2250,23 @@ router.post('/update', async (_req, res) => {
   // matching check in src/routes/ingest.js). Cleared in `finally`.
   beginUpdate();
   try {
+    // 0. PREFLIGHT: is git reachable at all? The six commands below all assume
+    //    it. Without this, a machine with no git (Xcode CLT never installed, or
+    //    removed) fails at step 1 with the shell's own text —
+    //    "/bin/sh: git: command not found" — which names no remedy. The same
+    //    class is worse in Personal Sync, where `friendlyError`'s
+    //    `msg.includes('not found')` catch-all renders it as "Repository not
+    //    found. Check the URL — it must be a private repo you own." (a
+    //    confidently wrong diagnosis; fixed at source in src/brain/sync.js).
+    //
+    //    This ADDS one command to the sequence and changes none of the six.
+    //    ~5 ms against a flow that already takes minutes.
+    try {
+      await execAsync('git --version', execOpts({ timeout: 5000 }));
+    } catch {
+      throw new Error(GIT_MISSING_MESSAGE);
+    }
+
     // 1. Fetch before resetting so we never hard-reset to a stale ref if the remote is unreachable.
     await execAsync('git fetch origin main', execOpts({ timeout: 30000 }));
 
@@ -2155,6 +2353,8 @@ router.post('/update', async (_req, res) => {
     // npm-PATH case.
     endUpdate();
   }
-});
+}
+
+router.post('/update', (req, res) => updateHandler(req, res));
 
 export default router;

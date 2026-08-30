@@ -192,6 +192,30 @@ function friendlyError(err) {
     return 'Another sync check was running at the same time, so this one stopped early. ' +
            'Nothing was changed — wait a moment and try again.';
   }
+  // GIT ITSELF IS MISSING. This MUST stay above the repository-not-found
+  // branch below, which tests the bare substring `not found` — so
+  // "/bin/sh: git: command not found" currently resolves to "Repository not
+  // found. Check the URL — it must be a private repo you own." That is not a
+  // vague message, it is a CONFIDENTLY WRONG diagnosis: it sends a user whose
+  // URL is perfectly fine to go and check their URL, and nothing in the flow
+  // ever mentions git.
+  //
+  // Position relative to the auth branch is arbitrary (a git-missing message
+  // carries no 401/403 and an auth message carries no "command not found"), so
+  // it sits here purely to be unambiguously above the branch it fixes.
+  //
+  // The Windows form is included because `install.sh` is macOS-only but the
+  // repo is cloneable anywhere and Personal Sync has already been debugged on
+  // Windows once (v3.0.1-beta.19).
+  if (msg.includes('command not found') ||
+      msg.includes('git: not found') ||
+      msg.includes('spawn git enoent') ||
+      msg.includes('is not recognized as an internal or external command')) {
+    return 'Git is not available to The Curator, so syncing cannot run. ' +
+           'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
+           'If git is installed somewhere unusual, launching The Curator from a terminal ' +
+           '(`npm start`) will pick up your shell PATH.';
+  }
   if (msg.includes('authentication failed') || /\b(?:401|403)\b/.test(msg) ||
       msg.includes('could not read username')) {
     return 'GitHub rejected the token. For a fine-grained token, make sure it has ' +

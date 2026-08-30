@@ -399,7 +399,10 @@ try {
 
   const res = await runQuickDiagnostics();
   assert(res && Array.isArray(res.checks), 'returns { checks: [] }');
-  assert(res.checks.length === 5, `5 checks returned (got ${res.checks?.length})`);
+  // 7 since the install-mode release: `install-mode` and `git` joined the five
+  // originals. The count is pinned deliberately rather than relaxed to `>= 5` —
+  // a row silently disappearing is exactly what this assertion is for.
+  assert(res.checks.length === 7, `7 checks returned (got ${res.checks?.length})`);
   assert(res.checks.every(c => c.id && c.label && VALID.has(c.status) && typeof c.detail === 'string'),
     'every check has id/label/valid-status/detail');
 
@@ -407,7 +410,7 @@ try {
   assert(summed === res.checks.length, `summary counts sum to checks.length (${summed} === ${res.checks.length})`);
 
   const ids = res.checks.map(c => c.id);
-  for (const id of ['version', 'provider', 'domains', 'credentials', 'sync']) {
+  for (const id of ['version', 'install-mode', 'provider', 'domains', 'credentials', 'git', 'sync']) {
     assert(ids.includes(id), `includes "${id}" check`);
   }
 

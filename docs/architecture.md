@@ -387,6 +387,53 @@ As of v3.1.0, `mcp/storage/local.js` imports `getCuratorConfigFile()` and `getDe
 
 `getUserDataDirState()` returns one of `'ready' | 'empty' | 'missing' | 'blocked'` rather than a boolean, because "does the folder exist" isn't the question a future bundle install needs answered. A fresh bundle install finds an *empty* `~/Library/Application Support/The Curator` while the user's real wiki still sits in their old checkout — a bundle has no way to infer where that checkout is. `'empty'` (the directory exists but holds neither a config file nor a `domains/` folder) is the intended trigger for a future one-time "import your existing wiki" prompt, to be shown *before* onboarding rather than letting the user believe their second brain is gone. `'blocked'` distinguishes a genuinely broken path (a regular file where a directory should be, a broken symlink, an unreadable directory, a failed `mkdir`) from `'missing'`, because every subsequent write would fail and the caller needs to know that rather than proceed as if empty. **Nothing in v3.1.0 calls this yet** — it ships now, unwired, so the seam is settled before the packaging work that will need it.
 
+## Install modes (`src/brain/install-mode.js`)
+
+`paths.js` answers **where does user data live**. `install-mode.js` answers a different question — **what may this copy of The Curator do to its own code** — and the two are deliberately separate modules.
+
+### Why a capability, not an install form
+
+The auto-updater does not actually want to know whether it is running from a checkout. It wants to know whether it can run `git reset --hard` against its own source. Those coincide today (every install is a repo install and every repo install has a `.git`) and will not coincide forever: a Homebrew cask is a **git-less non-bundle**, and so is a `.pkg` that lands in a read-only prefix. Branching on the install *form* puts both of those on the repo arm, which then runs `git fetch` against a directory with no `.git` and fails with git's own text instead of a refusal that says why.
+
+There is a sharper reason too. `isRepoInstall()` is literally `!isBundleInstall()`, so branching on it at several call sites means branching on a negation-of-a-negation in several places — and the day a third mode exists, every one of those sites silently inherits the repo arm, the arm that runs destructive commands. A named capability makes that a decision someone has to write into one table.
+
+| Capability | Question it answers | `repo` | `bundle` |
+|---|---|---|---|
+| `canSelfUpdateViaGit` | Can I run git against my own source tree? | ✅ | ❌ |
+| `canRunNpmInstall` | Can I write into my own `node_modules`? | ✅ | ❌ |
+| `canRebuildAppleScriptApp` | Can I re-run `scripts/build-app.sh`? (it ends in an ad-hoc `codesign --force --deep --sign -`, which would destroy a Developer ID signature) | ✅ | ❌ |
+| `canWriteBesideCode` | Can I drop a file next to my code and expect it to persist? | ✅ | ❌ |
+| `mcpLaunchStyle` | How Claude Desktop should launch the MCP child | `node-script` | `launcher-script` |
+| `restartStyle` | What "restart" means here | `respawn-node` | `app-relaunch` |
+
+**Stated honestly:** today all four booleans are perfectly correlated with `mode === 'repo'`. They are not four independent measurements — they are four distinct *questions* that happen to share an answer in the only two modes that exist. The value is the naming and the single table. `scripts/test-install-mode.js` enforces the half that is not aspirational: **no route may branch on the mode**, only on a capability.
+
+`mcpLaunchStyle` and `restartStyle` have **no branch behind them in this release**. They are surfaced and otherwise descriptive — the same posture `getUserDataDirState()` shipped with in v3.1.0, and argued rather than assumed, because this repo has a standing allergy to unwired fields.
+
+### The asymmetry is inherited verbatim
+
+`getInstallMode()` is `isBundleInstall() ? 'bundle' : 'repo'`, so **anything unrecognised is `repo`** — which means an unrecognised layout gets the *permissive* arm. That is correct here for the same reason it is correct in `paths.js`: a checkout wrongly refused an update is an annoyance the user routes around with `git pull`, while a bundle wrongly permitted one fails on the first write with an OS error naming the read-only path. The catastrophic-and-silent direction is the other one.
+
+Capability records are **exhaustive by construction**: `defineCapabilities()` throws at module load if a record is missing a key or carries an unknown one. A missing key would read as `undefined`, which is falsy, which would route a repo install onto the refusing arm — "your app can no longer update itself", with no error anywhere. The throw is deterministic (it reads a literal in the same file, no I/O), so it is a red test on the first `npm test`, never a field surprise.
+
+### What forks on it today
+
+Exactly two routes, both in `src/routes/config.js`, both on `canSelfUpdateViaGit`:
+
+- **`GET /api/config/update-check`** — the bundle arm returns 501 with `updateAvailable: false`. A build that cannot self-update must not report an update as available; the button behind that verdict cannot work.
+- **`POST /api/config/update`** — the bundle arm returns 501 and runs **zero** subprocesses. Every step of the repo arm (`git fetch`, `git reset --hard`, `npm install`, `bash scripts/build-app.sh`) is impossible or actively destructive in a signed bundle.
+
+In both, the capability check is an **early return above the pre-fork body**, which is otherwise unchanged — `git diff -w` on the forking commit shows five deleted lines, all of them route-registration wrappers, and zero lines of either body. The bodies were additionally sha256-compared before and after.
+
+Both handlers are exported as `updateCheckHandler(req, res, deps)` / `updateHandler(req, res, deps)`. `deps` is a **test-only seam, null in production** — the same shape as `compile.js`'s `opts.generateText` and `ingestMultiPhase`'s trailing `llm`. Inside each handler, function-scoped `const execAsync` / `const fetch` shadow the module binding and the global, so every call site in the moved body is byte-identical while an offline suite can still drive `POST /update` without running `git reset --hard` against the developer's own checkout.
+
+**`scripts/build-app.sh` is still untouched.** Today's `.app` is an AppleScript wrapper that launches the checkout, so it genuinely *is* a repo install. Writing `BUNDLE_MARKER_FILE` from it would flip every existing user into bundle mode on their next update.
+
+### Observing the mode
+
+- `GET /api/version` returns `installMode`, `installModeLabel` and the full `capabilities` record alongside the existing `version` / `onDiskVersion` / `restartRequired` (purely additive).
+- System Check gains an `install-mode` row (always `info` — neither mode is an error) and a `git` row.
+
 ### Test seams
 
 Two independent overrides, both checked before any real detection logic runs, both `null`/unset in production:
@@ -1392,6 +1439,19 @@ Single source of truth for where user data lives. See [Where user data lives](#w
 | `userDataDirExists()` | True only if the path exists **and** is a real directory (a regular file there is not "exists"). |
 | `getUserDataDirState()` | `'ready' \| 'empty' \| 'missing' \| 'blocked'` — the seam a future first-launch migration will key off. Not yet called anywhere in v3.1.0. |
 | `__setUserDataDirOverride(dir)` | Test-only, in-process. Pass `null` to clear. |
+
+### `src/brain/install-mode.js`
+
+What this copy of The Curator may do to its **own code**, as named capabilities rather than as an install form. See [Install modes](#install-modes-srcbraininstall-modejs) above for the full rationale. Performs no filesystem writes and never writes to stdout.
+
+| Export | Description |
+|--------|-------------|
+| `getInstallMode()` | `'repo' \| 'bundle'`. Derived from `paths.js`'s `isBundleInstall()`, so the two modules cannot disagree. Anything unrecognised is `'repo'` — the asymmetry is inherited verbatim. Not memoised: the detection is a couple of `existsSync` calls, and memoising would defeat the guard suite's child-process probes. |
+| `getCapabilities(mode?)` | The frozen capability record (default: this install's). **Throws** on an unknown mode string — that is a caller bug, not an environment condition; the environment-driven unknown is handled one level up in `getInstallMode()`. |
+| `CAPABILITY_KEYS` / `INSTALL_MODES` | The authoritative key and mode lists. Adding a key without adding it to **both** records is a module-load throw. |
+| `describeInstall(mode?)` | Wire-safe `{ installMode, installModeLabel, capabilities }`. Explicit allow-list, never a spread of internal state. |
+| `capabilityRefusal(capability, action, extra?)` | `{ status: 501, body }` for a forbidden arm. **501, not 403** — the server understood the request and this build genuinely cannot perform it; "forbidden" would send the user looking for a setting to flip. |
+| `INSTALL_MODE_LABELS` | Human-readable labels, for System Check and error text. Never for logic. |
 
 ### `src/brain/config.js`
 
