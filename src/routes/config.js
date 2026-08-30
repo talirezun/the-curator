@@ -23,6 +23,7 @@ import {
   endUpdate,
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
+import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
@@ -36,6 +37,22 @@ import {
 } from '../brain/openrouter-qualify.js';
 
 const execAsync = promisify(exec);
+
+// ── Test seams for the two capability-forked update handlers ────────────────
+//
+// These two aliases exist so the forked handlers can resolve `execAsync` and
+// `fetch` from an INJECTED deps object while every call site inside their
+// bodies stays byte-identical to the pre-fork source. The handlers declare
+// function-scoped `const execAsync` / `const fetch` that shadow the module
+// binding and the global; those consts need a default that is NOT the name
+// they shadow (that would be a TDZ reference), hence the aliases.
+//
+// This is the same shape as compile.js's `opts.generateText` and
+// ingestMultiPhase's trailing `llm`: null in production, and the ONLY way an
+// offline suite can drive `POST /api/config/update` without running
+// `git reset --hard` against the real checkout.
+const defaultExec = execAsync;
+const defaultFetch = (...args) => globalThis.fetch(...args);
 
 // ── BOOT: re-admit the persisted OpenRouter catalogue ───────────────────────
 //
@@ -1987,8 +2004,29 @@ router.post('/api-keys/validate', async (req, res) => {
 
 // ── Update ──────────────────────────────────────────────────────────────────
 
-/** GET /api/config/update-check — compare local vs remote version AND git commit */
-router.get('/update-check', async (_req, res) => {
+/** GET /api/config/update-check — compare local vs remote version AND git commit
+ *
+ * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). The repo arm
+ * below is the pre-fork body, unchanged — the capability check is an EARLY
+ * RETURN above it, so `git diff -w` on this hunk is pure insertion rather than
+ * a reindent. A build that cannot self-update must not report an update as
+ * available: the button that would follow cannot work, and the honest answer is
+ * "this build updates a different way", not "up to date".
+ *
+ * `deps` is the test-only seam (see defaultExec/defaultFetch above): null in
+ * production, so both `execAsync` and `fetch` resolve exactly as before.
+ */
+export async function updateCheckHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  if (!caps.canSelfUpdateViaGit) {
+    const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'check for updates', {
+      updateAvailable: false,
+      hint: 'Packaged builds update through the app’s own updater, not this checkout-only git flow.',
+    });
+    return res.status(status).json(body);
+  }
+  const execAsync = (deps && deps.execAsync) || defaultExec;
+  const fetch = (deps && deps.fetch) || defaultFetch;
   try {
     const pkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
     const current = pkg.version;
@@ -2036,7 +2074,9 @@ router.get('/update-check', async (_req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+}
+
+router.get('/update-check', (req, res) => updateCheckHandler(req, res));
 
 /** POST /api/config/update — fetch latest code, hard-sync to origin/main, install deps, rebuild .app
  *
@@ -2045,8 +2085,33 @@ router.get('/update-check', async (_req, res) => {
  * `git pull` abort with "local changes would be overwritten". The app directory
  * is meant to track `main` verbatim — user data (domains/, .curator-config.json,
  * .sync-config.json) is all gitignored, so hard-reset is safe.
+ *
+ * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). Every step
+ * below — `git fetch`, `git reset --hard`, `npm install`, and re-running
+ * `scripts/build-app.sh` (which ends in an ad-hoc `codesign --force --deep
+ * --sign -`) — is impossible or actively destructive in a signed bundle. The
+ * capability check is an EARLY RETURN above the pre-fork body, which is
+ * otherwise unchanged: `git diff -w` on this hunk is pure insertion.
+ *
+ * The refusal is checked BEFORE the write-registry 409. In repo mode
+ * `canSelfUpdateViaGit` is true, so control falls straight through to the same
+ * `hasActiveWrites()` check as before and behaviour is unchanged; in bundle
+ * mode "this build cannot do that at all" is the more useful answer than "not
+ * right now".
+ *
+ * `deps` is the test-only seam: null in production. It is the ONLY reason an
+ * offline suite can drive this handler — calling it for real runs
+ * `git reset --hard origin/main` against the developer's own checkout.
  */
-router.post('/update', async (_req, res) => {
+export async function updateHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  if (!caps.canSelfUpdateViaGit) {
+    const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'update the app', {
+      hint: 'Packaged builds are replaced by the installer, not by pulling this checkout.',
+    });
+    return res.status(status).json(body);
+  }
+  const execAsync = (deps && deps.execAsync) || defaultExec;
   // v3.0.1-beta.8: refuse to update while any wiki write is in flight.
   // The update flow does `git reset --hard origin/main` (safe — only touches
   // tracked app files, domains/ is gitignored) followed by `/api/restart`
@@ -2155,6 +2220,8 @@ router.post('/update', async (_req, res) => {
     // npm-PATH case.
     endUpdate();
   }
-});
+}
+
+router.post('/update', (req, res) => updateHandler(req, res));
 
 export default router;
