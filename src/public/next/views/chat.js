@@ -1662,6 +1662,215 @@ function compileStillTargetsActive(activeConversationId, compileConvId, activeDo
   return activeConversationId === compileConvId && activeDomain === compileDomain;
 }
 
+// The push-into-thread half of the outcome render, hoisted to module scope so
+// the COST GATE below can render a refusal through exactly the same path the
+// finished compile does. It was a closure inside runCompile(); the closure is
+// still there and now delegates here, so there is one implementation of "put a
+// compile card in the thread" rather than two that can drift. Returns false
+// when the user has navigated away, so the caller can log the miss.
+function pushCompileCard(html, compileConvId, compileDomain) {
+  if (!compileStillTargetsActive(state.activeConversationId, compileConvId, state.activeDomain, compileDomain)) {
+    return false;
+  }
+  state.thread.push({ role: 'compile', html });
+  const liveToken = myMountToken;
+  renderThreadOnly(liveToken);
+  // `querySelectorAll(...)`'s last match, NOT `:last-child` — if
+  // state.sending happens to be true at this exact moment (a message send
+  // racing a compile in the same conversation), renderThreadOnly appends
+  // a trailing "thinking…" bubble AFTER every state.thread item, which
+  // would otherwise BE the last child and defeat a `:last-child` selector.
+  const threadEl = document.getElementById('chat-thread');
+  const cards = threadEl ? threadEl.querySelectorAll('.chat-compile-card') : null;
+  const card = cards && cards.length ? cards[cards.length - 1] : null;
+  if (card) scrollCompileCardIntoView(card);
+  return true;
+}
+
+// ── THE COST GATE ────────────────────────────────────────────────────────
+// v3.27.0. Compile to Wiki was the last paid action in the app that spent
+// money with no estimate and no confirm. Everything from here to
+// startCompile() is that gate; runCompile() below it is unchanged and is now
+// only ever reached through a confirmed dialog.
+//
+// FOUR DECISIONS, EACH OF WHICH COULD REASONABLY HAVE GONE THE OTHER WAY:
+//
+//   1. A FAILED ESTIMATE STILL SHOWS THE CONFIRM. The estimate is a service;
+//      the confirm is the promise. If the estimate 500s, blocking the compile
+//      would let a broken read route disable a working feature, and skipping
+//      the dialog would spend money silently. So the dialog opens and SAYS the
+//      cost is unknown — which is both true and the fail-safe direction.
+//
+//   2. A REFUSAL NEVER BECOMES A DIALOG. A conversation that is too short, or
+//      already compiled, costs nothing to refuse. Asking the user to authorise
+//      a spend that cannot happen teaches them the dialog is noise. The
+//      refusal is rendered as the same `.chat-compile-refused` card the SSE
+//      path renders — the round trip that used to be needed to see it is gone.
+//
+//   3. THE DIALOG IS `tone: 'default'`, NOT `'danger'`. Danger is the design
+//      system's DESTRUCTIVE variant (red fill, focus parked on Cancel) and
+//      compile deletes nothing — it writes and merges. Dressing a paid,
+//      additive action in the same red as "Delete this conversation" devalues
+//      the signal on the controls that really are destructive. The cost is
+//      carried by the words, and Enter confirming a dialog the user opened
+//      by pressing a button is the platform behaviour.
+//
+//   4. THE PREP FLAG IS SEPARATE FROM `state.compileBusy`. compileBusy is a
+//      lock on a RUNNING, PAID write and its label reads "Compiling… N%".
+//      Claiming it while a dialog is open would put that label on screen for a
+//      compile that has not started and may never start — the app lying about
+//      what it is doing. `compilePrepping` is its own flag with its own label.
+let compilePrepping = false;
+
+// The two elements updateCompileButtonBusy touches, null-checked the same way
+// and for the same reason: a domain switch may already have replaced this DOM.
+function setCompilePrepUi(on) {
+  const btn = document.getElementById('chat-compile-btn');
+  const labelEl = document.getElementById('chat-compile-btn-label');
+  if (btn) btn.disabled = on;
+  if (labelEl) labelEl.textContent = on ? 'Checking cost…' : 'Compile to Wiki';
+}
+
+function providerDisplayLabel(provider) {
+  if (provider === 'gemini') return 'Gemini';
+  if (provider === 'anthropic') return 'Claude';
+  if (provider === 'openrouter') return 'OpenRouter';
+  return 'your AI provider';
+}
+
+/**
+ * PURE — the confirm dialog's words, built from an estimate payload. No DOM,
+ * no state, no fetch, so the offline suite can drive every branch directly
+ * (see scripts/test-next-compile-estimate.js).
+ *
+ * THE FOUR COST BRANCHES ARE FOUR DIFFERENT FACTS AND NEVER COLLAPSE:
+ * a real price, a FREE model, a model with NO PUBLISHED PRICE, and NO PROVIDER
+ * AT ALL. v3.15.0's recorded defect is a fact and its absence sharing one
+ * value; rendering any of the last three as "$0.00" would be exactly that, on
+ * the surface whose only job is to say what something costs.
+ *
+ * @param {object|null} est          the `/api/compile/estimate` body, or null
+ * @param {string} domain            destination wiki
+ * @param {string} convTitle         user content — the caller passes it to
+ *                                   confirmThen's `message`, which sets it with
+ *                                   textContent, never innerHTML
+ * @param {string|null} estimateError why there is no estimate, if there isn't
+ */
+function buildCompileConfirmCopy(est, domain, convTitle, estimateError) {
+  const title = 'Compile this conversation to your wiki?';
+  const message = convTitle || 'Untitled conversation';
+  const where = `Pages are written into the "${domain}" wiki, merging into pages that already exist.`;
+
+  if (!est || !est.estimate) {
+    return {
+      title,
+      message,
+      confirmLabel: 'Compile',
+      detail:
+        `The cost could not be estimated (${estimateError || 'no estimate was returned'}), so this compile will ` +
+        `spend an unknown amount at your provider's rate. ${where}`,
+    };
+  }
+
+  const e = est.estimate;
+  const model = est.model ? `${providerDisplayLabel(est.provider)} "${est.model}"` : 'your AI provider';
+  const lo = formatUsdHonest(e.usdLow);
+  const hi = formatUsdHonest(e.usdHigh);
+
+  let cost;
+  let ranged = false;
+  if (e.priceKnown && lo && hi) {
+    ranged = lo !== hi;
+    cost = ranged
+      ? `Estimated cost ${lo} – ${hi} on ${model}.`
+      : `Estimated cost about ${lo} on ${model}.`;
+  } else if (e.costUnknown === 'free-model') {
+    cost = `${model} is free to use, so this compile will not cost anything.`;
+  } else if (e.costUnknown === 'no-provider') {
+    cost = 'No AI provider is configured, so there is no cost to estimate — and nothing to compile with. Add an API key in Settings first.';
+  } else {
+    cost = `No published price is on file for ${model}, so the cost cannot be shown in dollars. Your provider will still bill this compile at their rate.`;
+  }
+
+  // The honesty clause is attached to the RANGE, not to every branch: it
+  // explains why two numbers are shown instead of one, and saying it where
+  // there are no numbers would be noise.
+  const uncertainty = ranged
+    ? ' That is a range rather than a price — how many wiki pages the AI decides to write cannot be known before the call, and if the first attempt overruns its output limit The Curator retries, which costs more.'
+    : '';
+
+  return { title, message, confirmLabel: 'Compile', detail: `${cost}${uncertainty} ${where}` };
+}
+
+/**
+ * The Compile button's click handler. Estimates, then asks, then — and only
+ * then — calls runCompile(), which is the function that spends money.
+ */
+async function startCompile() {
+  // Same shape as runCompile's own guard: read and claim with no `await` in
+  // between, so a second click cannot pass. `compilePrepping` is checked
+  // alongside the run lock so a click during the estimate is a no-op rather
+  // than a second dialog.
+  if (compilePrepping || state.compileBusy || state.compileOwner !== null) return;
+  if (!state.activeConversationId || !state.activeDomain) return;
+
+  const convId = state.activeConversationId;
+  const domain = state.activeDomain;
+  const row = state.conversations.find((c) => c.id === convId);
+  const convTitle = (row && typeof row.title === 'string') ? row.title : '';
+
+  compilePrepping = true;
+  setCompilePrepUi(true);
+
+  let est = null;
+  let estimateError = null;
+  try {
+    const res = await fetch(
+      '/api/compile/estimate?domain=' + encodeURIComponent(domain) +
+      '&conversationId=' + encodeURIComponent(convId));
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON body */ }
+    if (!res.ok) estimateError = (body && body.error) || ('HTTP ' + res.status);
+    else if (!body) estimateError = 'the server sent an unreadable response';
+    else est = body;
+  } catch (err) {
+    estimateError = err && err.message ? err.message : 'the request failed';
+  } finally {
+    // Released BEFORE the dialog opens: the dialog is its own modal gate, and
+    // leaving the button disabled behind a dismissed dialog would strand it.
+    compilePrepping = false;
+    setCompilePrepUi(false);
+  }
+
+  if (est && est.compilable === false) {
+    const shown = pushCompileCard(
+      '<div class="chat-compile-refused">' + icon('alertCircle', 14) + ' ' +
+      escapeHtml(est.refusal || 'This conversation cannot be compiled.') + '</div>',
+      convId, domain);
+    if (!shown) console.warn('[next/chat] compile refusal arrived after the user navigated away — card not shown');
+    return;
+  }
+
+  const copy = buildCompileConfirmCopy(est, domain, convTitle, estimateError);
+  await confirmThen({
+    title: copy.title,
+    message: copy.message,
+    detail: copy.detail,
+    confirmLabel: copy.confirmLabel,
+    cancelLabel: 'Cancel',
+    tone: 'default',
+    onConfirm: () => {
+      // The user authorised a spend for the conversation they were LOOKING AT.
+      // If the target moved while the dialog was open, that authorisation does
+      // not transfer — refuse rather than compile something else. Reachable
+      // only through the keyboard (the scrim covers the page), which is
+      // exactly why it is checked rather than assumed.
+      if (!compileStillTargetsActive(state.activeConversationId, convId, state.activeDomain, domain)) return;
+      return runCompile();
+    },
+  });
+}
+
 async function runCompile() {
   // Two independent expressions of the same single-flight invariant, both
   // read and both claimed SYNCHRONOUSLY (no `await` anywhere between this
@@ -1725,23 +1934,9 @@ async function runCompile() {
   // replaced by the server's copy on the next boot — the same outcome as
   // before, minus the false negative above).
   const renderCompileOutcome = (html) => {
-    if (!compileStillTargetsActive(state.activeConversationId, compileConvId, state.activeDomain, compileDomain)) {
-      console.warn('[next/chat] compile finished after the user navigated away — card not shown');
-      return false;
-    }
-    state.thread.push({ role: 'compile', html });
-    const liveToken = myMountToken;
-    renderThreadOnly(liveToken);
-    // `querySelectorAll(...)`'s last match, NOT `:last-child` — if
-    // state.sending happens to be true at this exact moment (a message send
-    // racing a compile in the same conversation), renderThreadOnly appends
-    // a trailing "thinking…" bubble AFTER every state.thread item, which
-    // would otherwise BE the last child and defeat a `:last-child` selector.
-    const threadEl = document.getElementById('chat-thread');
-    const cards = threadEl ? threadEl.querySelectorAll('.chat-compile-card') : null;
-    const card = cards && cards.length ? cards[cards.length - 1] : null;
-    if (card) scrollCompileCardIntoView(card);
-    return true;
+    const shown = pushCompileCard(html, compileConvId, compileDomain);
+    if (!shown) console.warn('[next/chat] compile finished after the user navigated away — card not shown');
+    return shown;
   };
 
   try {
@@ -2328,7 +2523,9 @@ function renderMain(token) {
   document.querySelectorAll('[data-scope-domain]').forEach(btn => {
     btn.addEventListener('click', () => switchDomain(btn.dataset.scopeDomain));
   });
-  document.getElementById('chat-compile-btn')?.addEventListener('click', () => runCompile().catch(reportAsyncActionFailure));
+  // startCompile, NOT runCompile: the estimate-then-confirm gate is the entry
+  // point and runCompile is unreachable from the UI without passing it.
+  document.getElementById('chat-compile-btn')?.addEventListener('click', () => startCompile().catch(reportAsyncActionFailure));
 
   wireComposer();
   renderThreadOnly(token);

@@ -30,7 +30,13 @@ import {
 
 // A single rich question→answer exchange is worth compiling (v3.0.1-beta.15).
 // Lowered from 2 so the "Compile to Wiki" button appears after the first answer.
-const MIN_USER_MESSAGES = 1;
+//
+// EXPORTED since v3.27.0 so the cost estimator can quote the same floor rather
+// than keeping a second copy of it. The estimator's refusals are produced by
+// `precheckCompile` below — the SAME function compileConversation itself calls —
+// so an estimate can never say "this will cost $x" about a conversation the
+// compile is about to refuse for free.
+export const MIN_USER_MESSAGES = 1;
 
 /**
  * Lowercase, alphanumeric, hyphenated slug. Max length capped to keep
@@ -58,11 +64,68 @@ function shortHash(content) {
   return crypto.createHash('sha256').update(content).digest('hex').slice(0, 4);
 }
 
-function computeSummarySlug(conversation, today) {
+function computeSummarySlug(conversation, messages, today) {
   const titleSlug = slugifyTitle(conversation.title);
-  const corpus = conversation.messages.map(m => `${m.role}:${m.content}`).join('\n');
+  const corpus = messages.map(m => `${m.role}:${m.content}`).join('\n');
   const hash = shortHash(corpus);
   return `${titleSlug}-${today}-${hash}`;
+}
+
+/**
+ * Everything `compileConversation` decides BEFORE it spends a cent, factored
+ * out so the cost estimator can reach the identical decision.
+ *
+ * ── WHY THIS IS ONE FUNCTION AND NOT TWO AGREEING COPIES ────────────────────
+ * The estimator's whole job is to be believed. An estimate that quotes a price
+ * for a conversation the compile is about to refuse — too short, or already
+ * compiled — is worse than no estimate: the user pre-authorises a spend that
+ * never happens and learns the app's numbers do not describe the app. So the
+ * refusal is PRODUCED HERE and consumed by both callers, in the same order and
+ * with the same wording. There is no second copy to drift.
+ *
+ * Returns either `{ refusal: string }` — the exact `result.reason` the compile
+ * would have returned — or the full context both callers need:
+ *   `{ conversation, messages, userTurns, summaryPath, summarySlug, today }`
+ *
+ * `messages` is normalised to an array here. Before this refactor a malformed
+ * conversation JSON (no `messages` key) threw a raw TypeError out of
+ * `.filter`; it now falls to the "too short" refusal, which is the same
+ * outcome a user would want and strictly safer. That is the ONLY behavioural
+ * change: for every well-formed conversation the refusals, their wording and
+ * their order are byte-identical to what compileConversation did before.
+ *
+ * @param {string} domain
+ * @param {string} conversationId
+ * @param {string} [today]  ISO date; defaults to today. Passed explicitly by
+ *   compileConversation so the slug the estimate quoted and the slug the
+ *   compile writes cannot disagree across a midnight boundary within one call.
+ */
+export async function precheckCompile(domain, conversationId, today = new Date().toISOString().slice(0, 10)) {
+  const conversation = await readConversation(domain, conversationId);
+  if (!conversation) return { refusal: 'Conversation not found' };
+
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const userTurns = messages.filter(m => m && m.role === 'user').length;
+  if (userTurns < MIN_USER_MESSAGES) {
+    return {
+      refusal: `Conversation too short to compile (need at least ${MIN_USER_MESSAGES} user messages, got ${userTurns})`,
+    };
+  }
+
+  // The slug is a function of (title, date, content-hash), so if the summary
+  // file already exists at this exact path, the conversation has not gained any
+  // new turns since the last compile. Re-running the LLM would still produce
+  // slightly different output and the bullet-merge pipeline would silently
+  // inflate every related page's Related/Key Facts sections.
+  const summarySlug = computeSummarySlug(conversation, messages, today);
+  const summaryPath = `summaries/${summarySlug}.md`;
+  if (existsSync(path.join(wikiPath(domain), summaryPath))) {
+    return {
+      refusal: `Already compiled to ${summaryPath}. Send another message in this conversation to extend it, or delete that file in your wiki to start over.`,
+    };
+  }
+
+  return { conversation, messages, userTurns, summarySlug, summaryPath, today };
 }
 
 /**
@@ -320,27 +383,22 @@ export async function compileConversation(domain, conversationId, onProgress = (
   // fallback ladder deterministically offline. Defaults to the real generateText.
   const llm = opts.generateText || generateText;
 
-  // 1. Load conversation
+  // 1-4a. Load the conversation and take every pre-spend decision — not
+  //        found, too short, already compiled — through the SAME function the
+  //        cost estimator calls, so an estimate and a compile can never
+  //        disagree about whether this conversation is compilable.
+  //        (If the user adds a new message the corpus hash changes → new slug →
+  //        no collision → compile proceeds normally. Cross-day compiles also
+  //        proceed, because the date is part of the slug.)
   progress(5, 'Loading conversation…');
-  const conversation = await readConversation(domain, conversationId);
-  if (!conversation) {
-    return { ok: false, reason: 'Conversation not found' };
-  }
-
-  // 2. Refuse short conversations — nothing to compile
-  const userTurns = conversation.messages.filter(m => m.role === 'user');
-  if (userTurns.length < MIN_USER_MESSAGES) {
-    return {
-      ok: false,
-      reason: `Conversation too short to compile (need at least ${MIN_USER_MESSAGES} user messages, got ${userTurns.length})`,
-    };
-  }
+  const pre = await precheckCompile(domain, conversationId);
+  if (pre.refusal) return { ok: false, reason: pre.refusal };
+  const { conversation, summaryPath, today } = pre;
 
   // 3. Load domain context
   progress(10, 'Loading domain context…');
   const schema = await readSchema(domain);
   const index = await readIndex(domain);
-  const today = new Date().toISOString().slice(0, 10);
 
   const wikiDir = wikiPath(domain);
   const existingFiles = {
@@ -351,30 +409,6 @@ export async function compileConversation(domain, conversationId, onProgress = (
       .then(f => f.filter(x => x.endsWith('.md')))
       .catch(() => []),
   };
-
-  // 4. Compute the deterministic summary slug — idempotent on re-compile
-  const summarySlug = computeSummarySlug(conversation, today);
-  const summaryPath = `summaries/${summarySlug}.md`;
-
-  // 4a. Refuse re-compile of an unchanged conversation.
-  //
-  //     The slug is a function of (title, date, content-hash), so if the
-  //     summary file already exists at this exact path, the conversation has
-  //     not gained any new turns since the last compile. Re-running the LLM
-  //     would still produce slightly different output and the bullet-merge
-  //     pipeline would silently inflate every related page's Related/Key Facts
-  //     sections. Better to stop here and tell the user clearly.
-  //
-  //     If the user adds a new message, the corpus hash changes → new slug →
-  //     no collision → compile proceeds normally. Cross-day compiles also
-  //     proceed (date is part of the slug).
-  const summaryFullPath = path.join(wikiDir, summaryPath);
-  if (existsSync(summaryFullPath)) {
-    return {
-      ok: false,
-      reason: `Already compiled to ${summaryPath}. Send another message in this conversation to extend it, or delete that file in your wiki to start over.`,
-    };
-  }
 
   // 5. Extract knowledge into wiki pages via the LLM, with a graceful fallback
   //    ladder on output-token overflow (Fix #2, v3.0.1-beta.27). Mirrors ingest's

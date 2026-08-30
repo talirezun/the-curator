@@ -973,18 +973,33 @@ section('6d. The outcome card is gated on CONTEXT, not on mount identity');
 // glanced at another view and came back to the SAME domain and SAME
 // conversation. compileStillTargetsActive already covers both documented
 // harms (§3); an isCurrentMount check in front of it additionally suppressed
-// the card on any remount, leaving a console.warn as the only trace. Source-
-// level: the closure is a nested arrow function, not a named function, so it
-// cannot be extracted and driven the way §6b/§6c drive theirs — stated as a
-// source guard, not implied as behavioural coverage. The live-browser proof
-// is in this release's own report.
+// the card on any remount, leaving a console.warn as the only trace.
+//
+// ── RE-BASED IN v3.27.0, AND THE SECTION GOT STRONGER RATHER THAN WEAKER ──
+// This section used to open by conceding its own limitation: "the closure is
+// a nested arrow function, not a named function, so it cannot be extracted
+// and driven the way §6b/§6c drive theirs — stated as a source guard, not
+// implied as behavioural coverage." The cost gate (v3.27.0) needed to render
+// a refusal card through the identical path, so the gate was HOISTED to a
+// named module function, `pushCompileCard`, and runCompile's closure now
+// delegates to it. That removes the concession: the gate is extracted and
+// EXECUTED below, and the source assertions moved with it rather than being
+// dropped. The one thing still asserted at source level is that runCompile's
+// closure genuinely delegates — a second, divergent copy of the gate inside
+// runCompile is the failure this pins.
 {
   const runCompileSrc = extractFunction(chatCode, 'runCompile');
-  const gateStart = runCompileSrc.indexOf('const renderCompileOutcome = (html) => {');
-  ok(gateStart > -1, 'renderCompileOutcome is present as a closure inside runCompile');
-  const gateEnd = runCompileSrc.indexOf('state.thread.push(', gateStart);
-  ok(gateEnd > gateStart, 'and pushes the card into state.thread');
-  const gateBody = runCompileSrc.slice(gateStart, gateEnd);
+  const gateSrc = extractFunction(chatCode, 'pushCompileCard');
+
+  ok(/const renderCompileOutcome = \(html\) => \{/.test(runCompileSrc),
+    'renderCompileOutcome is present as a closure inside runCompile');
+  ok(/pushCompileCard\(html, compileConvId, compileDomain\)/.test(runCompileSrc),
+    'and it DELEGATES to the one hoisted gate rather than carrying its own copy');
+  ok(!/state\.thread\.push\(/.test(runCompileSrc),
+    'runCompile itself no longer pushes into state.thread — exactly one function does');
+  const gateEnd = gateSrc.indexOf('state.thread.push(');
+  ok(gateEnd > -1, 'and pushes the card into state.thread');
+  const gateBody = gateSrc.slice(0, gateEnd);
 
   ok(!/isCurrentMount/.test(gateBody),
     'the outcome gate contains NO isCurrentMount check — a remount to the same conversation must not swallow a successful compile\'s card');
@@ -994,8 +1009,54 @@ section('6d. The outcome card is gated on CONTEXT, not on mount identity');
   // The render must target the mount that is on screen NOW, not the token
   // captured at click time — otherwise renderThreadOnly's own isCurrentMount
   // check drops the paint and the card sits in state.thread unpainted.
-  ok(/renderThreadOnly\(liveToken\)/.test(runCompileSrc) && /const liveToken = myMountToken;/.test(runCompileSrc),
+  ok(/renderThreadOnly\(liveToken\)/.test(gateSrc) && /const liveToken = myMountToken;/.test(gateSrc),
     'the card is painted with the LIVE mount token, so it appears on the mount the user is actually looking at');
+
+  // ── BEHAVIOURAL, now that the gate is a named function ─────────────────
+  // The concession quoted above is retired here: the real gate runs against
+  // a controlled `state`, and its two documented harms are reproduced.
+  {
+    function buildGateSandbox(src) {
+      return new Function(`
+        const state = { activeConversationId: 'conv-1', activeDomain: 'articles', thread: [] };
+        let myMountToken = 7;
+        const painted = [];
+        function renderThreadOnly(t) { painted.push(t); }
+        function scrollCompileCardIntoView() {}
+        const document = { getElementById: () => null };
+        ${extractFunction(chatCode, 'compileStillTargetsActive')}
+        ${src}
+        return { state, pushCompileCard, painted };
+      `)();
+    }
+    const g = buildGateSandbox(gateSrc);
+    eq(g.pushCompileCard('<card>', 'conv-1', 'articles'), true,
+      'the gate accepts a card for the conversation and domain the user is looking at');
+    eq(g.state.thread.length, 1, 'and it lands in state.thread');
+    eq(g.painted[0], 7, 'painted with the LIVE mount token (7), not a captured one');
+
+    eq(g.pushCompileCard('<card>', 'conv-2', 'articles'), false,
+      'HARM 1 REPRODUCED: a card for another CONVERSATION is refused, not misfiled into this transcript');
+    eq(g.pushCompileCard('<card>', 'conv-1', 'projects'), false,
+      'HARM 2 REPRODUCED: a card for another DOMAIN is refused');
+    eq(g.state.thread.length, 1, 'neither refusal added anything to the thread');
+
+    // Mutation: drop the gate entirely. Both harms return.
+    const openGate = gateSrc.replace(
+      /if \(!compileStillTargetsActive\([\s\S]*?\n  \}\n/,
+      '');
+    ok(openGate !== gateSrc, 'the mutation actually removed the gate');
+    const bad = buildGateSandbox(openGate);
+    // It reports SUCCESS — `true`, the same value a legitimate card gets —
+    // which is the worse half of the failure: the caller's `if (!shown)`
+    // console.warn never fires, so the misfiling leaves no trace at all.
+    eq(bad.pushCompileCard('<card>', 'conv-2', 'articles'), true,
+      'CONFIRMED RED: without the gate a foreign conversation is accepted and reported as shown');
+    eq(bad.state.thread.length, 1,
+      'CONFIRMED RED: and its card is misfiled into the transcript the user IS looking at');
+    eq(gateSrc, extractFunction(chatCode, 'pushCompileCard'),
+      'the source on disk was never touched by this mutation test (re-extraction is byte-identical)');
+  }
 
   // ...while the state.domains refresh KEEPS its click-time isCurrentMount
   // check: that one writes module state, which a dead mount must not do.
@@ -1207,6 +1268,12 @@ section('10. Behavioural mutation proof — runCompile()\'s guard+claim (the unt
       function buildCompileOutcomeHtml() { return '<ok>'; }
       ${extractFunction(chatSrc, 'compileStillTargetsActive')}
       ${extractFunction(chatSrc, 'updateCompileButtonBusy')}
+      // v3.27.0: the outcome gate moved out of runCompile into a named
+      // module function (see §6d), and runCompile's closure now delegates to
+      // it. Pulled in FOR REAL rather than stubbed, for the same reason the
+      // two above are: runCompile calls it for real, and a stub here would
+      // let this section pass over a gate that had stopped working.
+      ${extractFunction(chatSrc, 'pushCompileCard')}
 
       // A controllable network stand-in: every call is recorded with its
       // own resolve/reject, so the test decides exactly when (and whether)

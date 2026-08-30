@@ -16,6 +16,7 @@
 
 import { Router } from 'express';
 import { compileConversation } from '../brain/compile.js';
+import { estimateCompileCost } from '../brain/compile-estimate.js';
 import { listDomains, domainPath, isDomainReadonly } from '../brain/files.js';
 import {
   registerWrite,
@@ -30,6 +31,81 @@ const router = Router();
 // anything that doesn't match the canonical 8-4-4-4-12 hex shape — defends
 // against path-traversal via crafted IDs reaching readConversation().
 const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * GET /api/compile/estimate?domain=<slug>&conversationId=<uuid>
+ *
+ * What one Compile to Wiki would cost, before spending anything. v3.27.0.
+ *
+ * ── A READ ROUTE, AND EVERY WORD OF THAT IS LOAD-BEARING ────────────────────
+ * It writes nothing, so it is NOT registered with the write-registry, does NOT
+ * take the domain's file lock, and is NOT refused while an update is in flight.
+ * A user who is being told "an update is running" is exactly the user who wants
+ * to know what the button below will cost, and a 409 here would buy nothing:
+ * the POST still refuses, so no spend can slip through.
+ *
+ * It also makes NO LLM call. `estimateCompileCost` reads the conversation, the
+ * schema and two directory listings and does arithmetic; there is no code path
+ * from here to a provider. An offline suite asserts that behaviourally by
+ * poisoning the LLM module's exports and requiring this to still answer.
+ *
+ * VALIDATION MIRRORS THE POST BELOW, in the same order and with the same
+ * wording, so the estimate and the compile cannot disagree about what is even
+ * addressable. The three refusals the COMPILE ITSELF owns — not found, too
+ * short, already compiled — are not duplicated here at all: they come back as
+ * `{compilable: false, refusal}` from the one `precheckCompile` both sides run.
+ *
+ * 200 body:
+ *   { ok, compilable, refusal, provider, model,
+ *     conversation: { title, userTurns, messageCount, transcriptChars, summaryPath },
+ *     domainContext: { entityPages, conceptPages, promptChars },
+ *     estimate: { inputTokensLow/High, outputTokensLow/High, usdLow, usdHigh,
+ *                 priceKnown, costUnknown, tokenizerFactor, basis },
+ *     warnings: [] }
+ *
+ * `usdLow`/`usdHigh` are NULL — never 0 — whenever `priceKnown` is false, and
+ * `costUnknown` names WHICH of the three reasons applies
+ * ('no-provider' | 'free-model' | 'no-price').
+ */
+router.get('/estimate', async (req, res) => {
+  const domain = typeof req.query.domain === 'string' ? req.query.domain : '';
+  const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId : '';
+
+  if (!domain) return res.status(400).json({ error: 'domain is required' });
+  if (!conversationId) return res.status(400).json({ error: 'conversationId is required' });
+  if (!CONVERSATION_ID_RE.test(conversationId)) {
+    return res.status(400).json({ error: 'Invalid conversationId' });
+  }
+
+  const domains = await listDomains();
+  if (!domains.includes(domain)) {
+    return res.status(400).json({ error: `Unknown domain: ${domain}` });
+  }
+
+  // The mirror refusal is reported as a REFUSAL rather than an HTTP error, so
+  // the caller renders the same "this cannot be compiled" surface it renders
+  // for a too-short conversation instead of an exception. The POST still
+  // answers 400 for the same case; that asymmetry is deliberate — one is a
+  // question, the other is an attempt.
+  if (await isDomainReadonly(domain)) {
+    return res.json({
+      ok: true,
+      compilable: false,
+      refusal:
+        `Domain "${domain}" is a read-only Shared Brain mirror. ` +
+        `Compile into your personal opted-in domain instead, then push contributions from the Sync tab.`,
+      provider: null, model: null, conversation: null, domainContext: null,
+      estimate: null, warnings: [],
+    });
+  }
+
+  try {
+    res.json(await estimateCompileCost(domain, conversationId));
+  } catch (err) {
+    console.error('[compile] estimate error:', err);
+    res.status(500).json({ error: 'Failed to estimate compile cost.' });
+  }
+});
 
 router.post('/conversation', async (req, res) => {
   const { domain, conversationId } = req.body || {};

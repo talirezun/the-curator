@@ -715,8 +715,16 @@ export async function assertDomainUsable(domain) {
 // #3: the same 30-page PDF is ~188k input tokens on a fresh domain and ~416k
 // on the real `articles` domain).
 
-/** docs/ingestion-pipeline.md Stage 1c: "the single best estimate" of ~3.53 chars/token. */
-const CHARS_PER_TOKEN = 3.53;
+/**
+ * docs/ingestion-pipeline.md Stage 1c: "the single best estimate" of ~3.53 chars/token.
+ *
+ * EXPORTED since v3.27.0 for `src/brain/compile-estimate.js`, which prices the
+ * SAME prompts against the SAME table. It is exported rather than copied on the
+ * v3.24.0 `wire-safe.js` precedent: two hand-maintained copies of a constant on
+ * the money path is the v3.2.0 CRITICAL's shape, and a divergence here would
+ * make two cost surfaces in one app quote different numbers for the same text.
+ */
+export const CHARS_PER_TOKEN = 3.53;
 
 /**
  * Average OUTPUT tokens per LLM call, blended across an ingest. Derived (not

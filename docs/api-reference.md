@@ -600,6 +600,156 @@ Deletes a job's on-disk record and any remaining staged files entirely. Works by
 
 ---
 
+## Compile to Wiki (`/api/compile`)
+
+Turns a saved chat conversation into wiki pages, through the same
+`writePage → syncSummaryEntities → appendLog` pipeline ingest uses.
+
+Two endpoints, and the split is deliberate: **`GET /estimate` is free and
+answers "what would this cost"; `POST /conversation` is the one that spends.**
+
+---
+
+### GET /api/compile/estimate
+
+**Free. Makes no LLM call and no network request of any kind.** Added in
+v3.27.0, when Compile to Wiki was the last paid action in the app that spent
+money with no estimate and no confirm.
+
+It builds the **real** prompt the compile would send — the same
+`buildCompilePrompt` over the same conversation, the same domain schema and the
+same entity/concept filename inventory — and measures it, so the estimate
+reflects how big this wiki already is rather than a flat per-conversation rate.
+The only I/O is reading the conversation, the schema and two directory
+listings.
+
+It is a **read** route: it registers no write, takes no file lock, and is not
+refused while an app update is in flight. A `409` here would fire exactly when
+a user is asking what the next compile costs.
+
+**Query parameters**
+
+| Name | Required | Description |
+|---|---|---|
+| `domain` | yes | Destination domain slug. Must be on the real domain list. |
+| `conversationId` | yes | Server-generated UUID; regex-validated before it reaches the filesystem. |
+
+**Response** `200 OK` — compilable
+
+```json
+{
+  "ok": true,
+  "compilable": true,
+  "refusal": null,
+  "provider": "gemini",
+  "model": "gemini-2.5-flash-lite",
+  "conversation": {
+    "title": "RAG vs fine-tuning",
+    "userTurns": 4, "messageCount": 8, "transcriptChars": 3219,
+    "summaryPath": "summaries/rag-vs-fine-tuning-2026-08-30-e2ce.md"
+  },
+  "domainContext": { "entityPages": 120, "conceptPages": 60, "promptChars": 12431 },
+  "estimate": {
+    "inputTokensLow": 2993, "inputTokensHigh": 4050,
+    "outputTokensLow": 361, "outputTokensHigh": 6125,
+    "usdLow": 0.000444, "usdHigh": 0.002855,
+    "priceKnown": true,
+    "costUnknown": null,
+    "tokenizerFactor": 1,
+    "basis": "Estimated for Gemini \"gemini-2.5-flash-lite\" compiling a 4-turn conversation … THE OUTPUT HALF CANNOT BE KNOWN IN ADVANCE …"
+  },
+  "warnings": []
+}
+```
+
+**Response** `200 OK` — not compilable
+
+A conversation the compile would refuse comes back `compilable: false` with the
+**exact** `refusal` string `POST /conversation` would have emitted, and **no
+cost fields at all** (`estimate`, `conversation` and `domainContext` are
+`null`). Both sides run one shared `precheckCompile`, so the estimate can never
+quote a price for something that is about to be refused for free. The three
+refusals are: conversation not found; fewer than `MIN_USER_MESSAGES` (1) user
+turns; and already compiled at the deterministic summary slug. A **read-only
+Shared Brain mirror** is reported the same way — as a `refusal`, not an HTTP
+error, because this endpoint is a question rather than an attempt (the POST
+still answers `400` for that case).
+
+**The range is a range, not a price.**
+
+`inputTokens*` is the real prompt measured character by character, divided by
+the shared `CHARS_PER_TOKEN` (3.53, the same constant the batch-ingest
+estimator uses) and widened by a band measured across seven real compiles.
+`outputTokens*` **cannot be known before the call**: the low end is the
+measured `summary-only` rung of the compile's `full → concise → summary-only`
+ladder, the high end scales with transcript length and saturates. Three
+byte-identical replicate compiles produced 2,456 / 2,145 / 1,977 output tokens
+— about ±11% around their own mean — which is why a single figure is not
+offered. If the ladder escalates, each retry re-sends the input, so a compile
+that escalates can cost roughly two to three times the input half of the
+quoted range. **Both ends are estimates rather than limits.**
+
+**When the cost is unknown, `usdLow`/`usdHigh` are `null` — never `0`.**
+`costUnknown` names which of three distinct facts applies:
+
+| `costUnknown` | Meaning |
+|---|---|
+| `null` | A price is on file; `usdLow`/`usdHigh` are real numbers and `priceKnown` is `true`. |
+| `"no-provider"` | No API key is configured. Token counts are still returned — the work is describable even when the price is not. |
+| `"free-model"` | The resolved model is free. The compile will cost nothing; that is a different statement from "we cannot tell you". |
+| `"no-price"` | The resolved model has no published price in `MODEL_PRICES_USD_PER_MTOK`. Your provider will still bill it. |
+
+`tokenizerFactor` is the model's published input-token premium (1 for every
+model except the Opus tier, which measures 1.329x on real Curator prose). It is
+already applied to `inputTokensLow`/`High`.
+
+**Errors**
+
+| Status | Condition |
+|---|---|
+| `400` | Missing `domain`; missing `conversationId`; `conversationId` is not a UUID; unknown domain. |
+| `500` | The estimate could not be produced. The frontend still shows its confirm dialog in this case, saying the cost is unknown — a broken read route must neither silently spend nor disable a working feature. |
+
+---
+
+### POST /api/compile/conversation
+
+**Spends money.** Streams Server-Sent Events (same primitive as
+`POST /api/ingest`). The `/next` frontend reaches this only after
+`GET /estimate` and a confirm dialog naming the cost.
+
+**Request body**
+
+```json
+{ "domain": "ai-tech", "conversationId": "8f14e45f-ceea-467a-9d64-1f7f1b06a3e7" }
+```
+
+**Stream events**
+
+| `type` | Payload |
+|---|---|
+| `progress` | `{ pct, message }` |
+| `wait` | `{ pct, message }` — emitted during slow LLM waits |
+| `done` | `{ title, pagesWritten, changes, warnings }` |
+| `refused` | `{ reason }` — a **normal** outcome (too short, already compiled), not an error |
+| `error` | `{ message }` |
+
+`warnings` is non-empty when the `full → concise → summary-only` ladder had to
+degrade — the compile succeeded, but with fewer pages than a full extraction
+would have written.
+
+**Errors** (plain JSON, before the SSE headers are sent)
+
+| Status | Condition |
+|---|---|
+| `400` | Missing `domain`/`conversationId`; non-UUID `conversationId`; unknown domain; the domain is a read-only Shared Brain mirror. |
+| `409` | An app update is in progress. |
+
+A file-lock failure arrives as an in-stream `error` event rather than an HTTP
+status, because the SSE headers have already been flushed by that point.
+
+---
+
 ## Chat (`/api/chat`)
 
 Multi-turn conversation against a domain's wiki. Distinct from `POST /api/query`
