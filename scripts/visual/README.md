@@ -216,6 +216,7 @@ Named, not implied away. A green run does **not** mean any of the following.
 | `png.js` | dependency-free PNG decode over `node:zlib`, for real painted pixels |
 | `baseline.js` | normalise, record, diff |
 | `baselines/` | recorded baselines |
+| `nontext-probe.mjs` | **a one-off probe, deliberately not a suite and not in `run-tests.js`.** The sweep above grades TEXT only, so it is blind to the NON-TEXT uses of the text-ramp tokens — the scrollbar thumb, two 6px dots, an svg chevron, and a 1.5px inset ring — which sit under WCAG 1.4.11's 3:1 floor rather than 4.5. Written for the text-ramp change, where a text fix that degraded a non-text use would not have been a win, and kept because nothing else in the repo can see that class. It carries the same controls (identical pair 1.00, black-on-white 21.00) and refuses to report if they fail. Run it by hand: `node scripts/visual/nontext-probe.mjs` |
 
 ## If you change a probe
 

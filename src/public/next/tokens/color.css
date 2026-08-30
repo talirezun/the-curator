@@ -85,11 +85,64 @@
   --border-focus:  var(--violet-500);
   --hairline:      rgba(255,255,255,0.06);
 
-  /* Text */
+  /* ── Text ────────────────────────────────────────────────────────────
+     THE THREE DIM RUNGS BELOW INTENTIONALLY DIFFER FROM THE SHIPPED DESIGN-
+     SYSTEM BUNDLE. Do not "fix" them back to match it. The bundle's values
+     were --text-2 #A8A8BC, --text-3 #74748A, --text-faint #4A4A5E; the
+     maintainer approved lightening them (dark) and darkening them (light) on
+     2026-08-30, and the same diff is published for the bundle at
+     docs/design-system-text-ramp-patch.md so the two re-converge on his next
+     sync. Everything else in this file is still byte-identical to the bundle.
+
+     WHY. The ramp had collapsed to two usable levels. Measured against
+     --surface with a helper validated by controls (identical pair 1.00,
+     black-on-white 21.00), the OLD values were:
+
+       --text-2     8.34 dark / 7.26 light   passes 4.5 AA
+       --text-3     4.27 dark / 4.14 light   FAILS 4.5 AA
+       --text-faint 2.26 dark / 2.34 light   FAILS even the 3:1 non-text floor
+
+     So two of the four rungs were unusable for text, and the app had spent
+     releases routing AROUND them — shell.css overrode `.cur-eyebrow` from
+     --text-3 to --text-2 "rather than at source" precisely because this file's
+     sibling tokens/base.css is byte-frozen. Every such rescue flattened the
+     ramp by one more role. Fixing the rung is what lets the rescues retire.
+
+     NEW, same measurement:
+
+       --text-2    10.54 dark / 9.33 light
+       --text-3     6.16 dark / 5.60 light   now clears 4.5 AA in BOTH themes
+       --text-faint 3.47 dark / 3.61 light   clears the 3:1 NON-TEXT floor;
+                                             still under 4.5, deliberately —
+                                             it is the rung that is not for
+                                             running text, and one genuinely
+                                             failing token is what keeps the
+                                             contrast ratchet's positive
+                                             control able to fire.
+
+     --text IS DELIBERATELY UNTOUCHED IN BOTH THEMES. #EDEDF4 is L* 93.9 —
+     already "more white but not full white", which is what was asked for. The
+     complaint was about the rungs beneath it, not the top of the ramp.
+
+     Dark L* steps are 16.8 / 17.1 / 16.2 — even. Light steps are 23.3 / 13.8 /
+     12.3: NOT even, and not made even here, because --text (#14141F, L* 6.8)
+     is frozen and evening the light ramp would mean moving it. Stated rather
+     than implied away.
+
+     STALE FIGURES ELSEWHERE, DELIBERATELY NOT MASS-REWRITTEN. Roughly seventy
+     comments across the /next tree quote the OLD numbers (4.27/4.14, 2.26/2.34,
+     4.38/4.00, 4.15-4.46, 3.74-3.87 and friends). Almost all are PAST-TENSE
+     records of a fix — "was --text-3, measured 4.38, moved to --text-2" — and
+     those were true when written, so they are left alone, the same call this
+     project made for CLAUDE.md's v3.21.0 row. THIS BLOCK IS THE CURRENT
+     MEASUREMENT and wins over any of them. Multiply an old figure by roughly
+     1.44 (dark --text-3), 1.35 (light --text-3) or 1.54 (--text-faint) to get
+     the new one, or re-derive: every number here is plain WCAG arithmetic over
+     the hexes above and reproduces from the token values alone. */
   --text:        #EDEDF4;
-  --text-2:      #A8A8BC;
-  --text-3:      #74748A;
-  --text-faint:  #4A4A5E;
+  --text-2:      #BDBDD1;
+  --text-3:      #8F8FA5;
+  --text-faint:  #66667A;
   --text-on-accent: #FFFFFF;
   --text-link:      var(--violet-300);
   --text-link-hover:var(--violet-200);
@@ -147,10 +200,14 @@
   --border-strong: #C9C9D8;
   --hairline:      rgba(16,16,26,0.07);
 
+  /* Text — see the long note in the :root block above. These three rungs
+     INTENTIONALLY differ from the shipped bundle (was --text-2 #55556A,
+     --text-3 #7B7B90, --text-faint #A8A8BC); the patch for the bundle is at
+     docs/design-system-text-ramp-patch.md. --text is untouched. */
   --text:       #14141F;
-  --text-2:     #55556A;
-  --text-3:     #7B7B90;
-  --text-faint: #A8A8BC;
+  --text-2:     #45455A;
+  --text-3:     #66667B;
+  --text-faint: #858599;
   --text-on-accent: #FFFFFF;
   --text-link:      var(--violet-600);
   --text-link-hover:var(--violet-700);

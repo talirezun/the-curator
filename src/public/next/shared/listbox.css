@@ -139,8 +139,11 @@
   white-space: nowrap;
 }
 /* --text-2, not --text-3. The detail column carries a machine's age and a
-   model's id — body text a user reads, so it takes the AA 4.5:1 floor, and
-   --text-3 measures under it on this surface. */
+   model's id — body text a user reads, so it takes the AA 4.5:1 floor, which
+   --text-3 measured under on this surface when this was written (4.27 / 4.14).
+   Since the ramp was fixed at source it measures 6.16 / 5.60 and would clear;
+   this stays --text-2 because the detail column sits beside a full --text
+   label in the same row and a third rung there would read as disabled. */
 .lb-opt-detail {
   flex: none;
   font-size: var(--text-xs);

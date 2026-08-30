@@ -266,7 +266,9 @@ section('§2  RETIRED CLASSES — gone, and the survivors are deliberate');
   const RETIRED = [
     ['class="view-body"', 'the static-copy class that also carried a generated scan sentence'],
     ['dm-scope-desc', 'a live figure rendered through the static-description class'],
-    ['dm-health-meta', 'the scan counts at --text-3, measured 4.27/4.14 against a 4.5 floor'],
+    ['dm-health-meta', 'the scan counts at --text-3, measured 4.27/4.14 against a 4.5 floor AT THE TIME ' +
+                       '(the token has since been fixed at source to 6.16/5.60; this class stays retired on ' +
+                       'STRUCTURAL grounds — the text system owns the role)'],
     ['dm-error-text', 'a colour modifier bolted onto whichever class was nearby'],
     ['dm-mirror-note', 'a hand-built status box predating the shared one'],
     ['dm-quick-note"', 'the cost promise, sharing a class with a runtime warning'],
@@ -703,9 +705,20 @@ section('§8  CONTRAST — computed from tokens/color.css, both themes');
   // WHY THE MOVE WAS NECESSARY. These are the treatments this view left, and
   // the assertion is that they really did fail — a fix justified by a claim
   // nobody measured is the shape this repo keeps recording.
-  ok(both('--text-3', '--surface') < 4.5,
-     `--text-3 as body text FAILS AA (${both('--text-3', '--surface').toFixed(2)}:1 worst theme) — ` +
-     'this is what `.dm-health-meta` and `.sidebar-hint` painted measurements and errors in');
+  // ── INVERTED. This asserted `< 4.5` with the label "--text-3 as body text
+  // FAILS AA (4.14:1 worst theme)", as the measured justification for moving
+  // `.dm-health-meta` off it. That justification was TRUE WHEN THE MOVE WAS
+  // MADE and is no longer true of the token: tokens/color.css lightened the
+  // dark rungs and darkened the light ones at source with the maintainer's
+  // approval, and --text-3 now clears the floor. Inverted rather than deleted,
+  // because deleting it would leave the move looking arbitrary and would lose
+  // the record that the ramp was repaired. THE MOVE STILL STANDS: `.dm-health-
+  // meta` was a class this view invented for a role the text system now owns —
+  // §2 above retires it on STRUCTURAL grounds — so nothing is moved back.
+  ok(both('--text-3', '--surface') >= 4.5,
+     `--text-3 as body text now CLEARS AA (${both('--text-3', '--surface').toFixed(2)}:1 worst theme, from ` +
+     '4.14). It measured 4.27 dark / 4.14 light when `.dm-health-meta` and `.sidebar-hint` were moved off it, ' +
+     'and that move was correct on the numbers of the day. If the ramp ever regresses this goes red.');
   ok(both('--attention-text', '--surface', '--accent-tint') < 4.5,
      `--attention-text as TEXT over --accent-tint FAILS AA (${both('--attention-text', '--surface', '--accent-tint').toFixed(2)}:1 ` +
      'worst theme) — this is what the in-flight-write warning above the page-deleting buttons was painted in');
@@ -782,10 +795,21 @@ section('§8  CONTRAST — computed from tokens/color.css, both themes');
 
   // (d) AND THE SHARPER INVARIANT, which the count alone never carried: the
   //     ceiling is satisfied by 30 sub-floor TEXT colours just as happily as by
-  //     2 correct graphics. --text-3 measures 4.15-4.38 in both themes, which
-  //     FAILS the 4.5:1 text floor and PASSES the 3:1 floor for a non-text
-  //     graphic — so the token is legitimate on a chevron or a dot and never on
-  //     words. Every surviving `color: var(--text-3)` must therefore name an
+  //     2 correct graphics.
+  //
+  //     WHEN THIS WAS WRITTEN the reason was a floor: --text-3 measured
+  //     4.15-4.38 across this view's surfaces, FAILING the 4.5:1 text floor
+  //     while passing the 3:1 graphic floor, so the token was legitimate on a
+  //     chevron or a dot and never on words. THAT REASON HAS EXPIRED —
+  //     tokens/color.css fixed the rung at source and --text-3 now measures
+  //     5.06-6.43, over the text floor in both themes. The invariant is KEPT
+  //     rather than relaxed, and it is now a SCOPE rule rather than a floor
+  //     rule: no role in the text system this view adopted reads --text-3, so
+  //     a `color: var(--text-3)` appearing on words here means a role was
+  //     hand-rolled around the system rather than adopted from it. Re-admitting
+  //     the token as body text in this view would be a deliberate design
+  //     decision with its own proof, not a side effect of the ramp fix.
+  //     Every surviving `color: var(--text-3)` must therefore name an
   //     element that is not text. Today that is exactly one rule,
   //     `.dm-group-summary svg`; the other use is a `background` on a 6px dot,
   //     which is not a text colour at all and is correctly not matched here.
@@ -794,7 +818,9 @@ section('§8  CONTRAST — computed from tokens/color.css, both themes');
     .map(([, sel]) => sel.trim().replace(/\s+/g, ' '));
   ok(colorText3Selectors.every((s) => /\bsvg\b|::(?:before|after)\b/.test(s)),
      '--text-3 is never a TEXT colour in views/domains.css — every rule that paints it as `color` ' +
-     'targets a graphic (svg / pseudo-element), where the 3:1 floor applies and 4.15-4.38 clears it. ' +
+     'targets a graphic (svg / pseudo-element). This was a FLOOR rule when --text-3 measured 4.15-4.38; ' +
+     'since the token was fixed at source (5.06-6.43) it is a SCOPE rule — no adopted text role reads it, ' +
+     'so words in it mean a hand-rolled role. ' +
      `Rules found: ${colorText3Selectors.join(' | ') || 'none'}`);
 
   // (e) CONTROL for (d): the selector filter really does reject a words rule.

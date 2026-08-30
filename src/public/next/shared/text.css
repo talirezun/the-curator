@@ -30,10 +30,15 @@
    CONTRAST, MEASURED (var() chains resolved, rgba tints composited over
    their surface, both themes):
      --text    on --surface       16.71 / 18.27   AA
-     --text-2  on --surface        8.34 /  7.26   AA
-     --text-3  on --surface        4.27 /  4.14   FAILS AA (floor 4.5)
-   No role here uses --text-3. Hierarchy is made with size, weight and
-   family instead — see the module header, FINDING 1.
+     --text-2  on --surface       10.54 /  9.33   AA   (was 8.34 / 7.26)
+     --text-3  on --surface        6.16 /  5.60   AA   (was 4.27 / 4.14,
+                                                        which FAILED)
+   No role here uses --text-3, and that is now a SCOPE decision rather than a
+   floor one: tokens/color.css fixed the rung at source with the maintainer's
+   approval, so the token clears AA — but hierarchy in this file is made with
+   size, weight and family (module header, FINDING 1), and admitting a third
+   colour rung here would be a design change with its own proof, not a side
+   effect of the ramp fix.
 
    Status colours as TEXT fail AA in the light theme (--attention-text on
    --attention-tint measures 3.21). They are used here only as BORDER and
@@ -73,8 +78,10 @@
 }
 
 /* Provenance: the quietest part of the instrument, and still --text-2.
-   --text-3 would be the natural choice and it measures 4.27 / 4.14 against
-   a 4.5 floor, so the quiet step is made with size and family. */
+   --text-3 would be the natural choice; it measured 4.27 / 4.14 against a
+   4.5 floor when this was written, and since the ramp was fixed at source it
+   measures 6.16 / 5.60 and would clear. The quiet step is STILL made with
+   size and family, because no role in this file uses a third colour rung. */
 .tx-readout-prov {
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -254,8 +261,9 @@
    CONTRAST, and the icon is the only new colour decision here: the glyph
    strokes --text-2, an ICON and therefore non-text (WCAG 1.4.11 floor 3:1),
    measured 8.34 dark / 7.26 light against --surface. --text-3 would have
-   been the natural "quiet control" choice and measures 4.27 / 4.14; it is
-   not used, for the same reason no other role in this file uses it.
+   been the natural "quiet control" choice; it measured 4.27 / 4.14 when this
+   was written and measures 6.16 / 5.60 since the ramp was fixed at source. It
+   is still not used, for the same reason no other role in this file uses it.
 
    SIZE: the glyph's width/height are px because they size a BOX, not text.
    Every font-size below is a --text-* ramp token, so Settings > General's
