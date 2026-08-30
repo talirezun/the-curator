@@ -93,18 +93,26 @@
   white-space: nowrap;
 }
 .mem-row.active .mem-row-name { color: var(--text); }
-/* --text-2, not --text-faint. MEASURED, in both themes, composited against
-   the real surface behind it (.sidebar is --surface):
+/* --text-2, not --text-faint. MEASURED in both themes, composited against
+   the real surface behind it (.sidebar is --surface).
 
-     --text-faint  2.26 dark / 2.34 light   — half the 4.5:1 AA floor
-     --text-3      4.27 dark / 4.14 light   — still under it
-     --text-2      8.34 dark / 7.26 light   — clears it
+   RE-MEASURED after v3.25.0 re-based the text ramp. The figures this comment
+   carried — --text-faint 2.26/2.34, --text-3 4.27/4.14, --text-2 8.34/7.26,
+   and "--text-3 does NOT reach the floor anywhere in this file" — were TRUE
+   WHEN WRITTEN and are now false, and they were phrased in the PRESENT
+   TENSE, so they were left asserting something the tokens no longer do.
+   Current, on --surface:
 
-   --text-3 does NOT reach the floor anywhere in this file (3.87–4.38 across
-   the five surfaces measured), so --text-2 is the only existing token that
-   does. Hierarchy is carried by SIZE and position instead: this stays at
-   --text-2xs under a --text-sm name, which is what makes it read as
-   secondary. Sub-threshold contrast is not a hierarchy device. */
+     --text-faint  3.47 dark / 3.61 light   — still under the 4.5 AA floor
+     --text-3      6.16 dark / 5.60 light   — now CLEARS it
+     --text-2     10.54 dark / 9.33 light   — clears it
+
+   So the ORIGINAL REASON for this choice has expired: --text-3 is now a
+   legitimate option here. --text-2 is kept anyway, and on its own merits —
+   this is the only line of context under a row's name, and v3.25.0's ramp
+   work made exactly this distinction, keeping the second rung for the one
+   sentence a reader has and reserving the third for LABELS. Hierarchy is
+   still carried by SIZE: this stays at --text-2xs under a --text-sm name. */
 .mem-row-meta {
   font-size: var(--text-2xs);
   color: var(--text-2);

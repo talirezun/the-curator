@@ -94,7 +94,7 @@
   color: var(--text);
   font: var(--type-body-sm);
 }
-.ing-select[disabled] { opacity: 0.55; cursor: not-allowed; }
+.ing-select[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 
 /* ── Drop zone ────────────────────────────────────────────────────────── */
@@ -221,7 +221,7 @@
 .ing-dest-row:hover:not([disabled]) { background: var(--surface-hover); }
 .ing-dest-row.active { background: var(--surface-active); color: var(--text); }
 .ing-dest-row.active .ing-dest-name { font-weight: var(--weight-medium); }
-.ing-dest-row[disabled] { cursor: not-allowed; opacity: 0.5; }
+.ing-dest-row[disabled] { cursor: not-allowed; opacity: var(--opacity-disabled); }
 
 .ing-dest-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .ing-dest-name {

@@ -96,6 +96,63 @@
   --prov-openrouter: var(--violet-600);
 }
 
+/* ── THE ONE DISABLED VALUE ───────────────────────────────────────────────
+   The design system specifies disabled EXACTLY ONCE, in its readme's
+   "Interaction states" list: `opacity: 0.45`, `cursor: not-allowed`, NO
+   COLOUR CHANGE. All four of the bundle's own implementations agree with
+   that literally — components/core/Button.jsx, components/core/IconButton.jsx,
+   components/forms/Checkbox.jsx and ui_kits/app/primitives.jsx each write
+   `opacity: off ? 0.45 : 1` beside `cursor: off ? 'not-allowed' : 'pointer'`.
+   So the mechanism is not in question and this token does not invent one; it
+   only gives the number a NAME, which is the thing the bundle could not do
+   for us. The bundle has no opacity token at all (its tokens/ directory
+   contains the string "opacity" only inside a keyframe), because its
+   components are JSX and could simply write the literal inline. This app is
+   CSS, spread over eleven stylesheets, and every one of them wrote the
+   literal separately — which is exactly how the value drifted to five
+   different numbers across seventeen rules. Hence DERIVED, and hence here
+   rather than in tokens/: base.css and shape.css are byte-frozen, and
+   color.css is for colour.
+
+   ── WHY AN OPACITY AND NOT A COLOUR TOKEN ────────────────────────────────
+   Worth stating, because the ramp's --text-faint rung is captioned
+   "disabled" in the bundle's own guidelines/colors-text.card.html and that
+   caption invites exactly the wrong conclusion. It is a caption on a SWATCH
+   describing the rung's tone, and NO component in the bundle implements
+   disabled that way; the components that do use --text-faint use it for
+   "optional" field markers and empty-state icons. Following the caption
+   instead of the components would also be actively wrong here for two
+   reasons the system states itself:
+
+     1. "No colour change" is the point. A disabled danger button must still
+        read as danger, a disabled primary must still read as primary. One
+        colour token flattens every disabled control to a single grey and
+        destroys the variant it was disabled from.
+     2. Text colour cannot dim a BORDER, a background fill, or an icon — and
+        a disabled button is all three. A colour token would need a parallel
+        token per painted property.
+
+   The real objection to opacity is that it COMPOUNDS: nested opacities
+   multiply, over whatever is underneath, unpredictably. That objection is
+   correct, it was live in this app, and it is answered by scope rather than
+   by mechanism — see the container rule below. */
+:root {
+  --opacity-disabled: 0.45;
+}
+
+/* ── OPACITY IS FOR CONTROLS; CONTAINERS DE-EMPHASISE WITH COLOUR ─────────
+   The system specifies 0.45 as a CONTROL state. Putting an opacity on a
+   CONTAINER is a different thing wearing the same syntax, and it is where
+   the compounding objection above stops being theoretical. Measured in a
+   real browser before this pass: views/settings.css's
+   `.provider-row-unavailable { opacity: 0.55 }` wrapped a
+   `<button class="btn btn-secondary btn-xs" disabled>` carrying 0.45, and
+   the two multiplied to an EFFECTIVE 0.2475 — a contrast of 2.05 dark /
+   1.73 light on a credentials screen. Neither value was wrong on its own;
+   the nesting was. So: a control gets --opacity-disabled, a container that
+   wants to read as unavailable moves its TEXT down the ramp instead, where
+   nothing multiplies. */
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -927,7 +984,22 @@ body.guide-docked .main {
   transition: background var(--t-state), color var(--t-state), border-color var(--t-state), transform var(--dur-instant) var(--ease-out);
 }
 .btn:active { transform: translateY(0.5px); }
-.btn[disabled] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+/* `pointer-events: none` was here and has been REMOVED. It is not in the
+   system's disabled spec, and it CANCELLED the `cursor: not-allowed` beside
+   it — an element with no pointer events cannot show a cursor, so one of the
+   two declarations was always dead. Measured in the browser before removal:
+   `elementFromPoint` at a disabled .btn's own centre returned a DIFFERENT
+   element in both themes, which is what "unreachable" means concretely.
+   It also bought nothing: every element this rule reaches is a real
+   <button disabled>, which the UA already refuses to click and already
+   removes from the tab order. `.btn` IS used on three <a> elements in
+   views/shared-brain-wizard.js, where the attribute would be inert and this
+   declaration would be the only guard — but none of the three ever receives
+   it (setSaveChromeDisabled touches only #sbw-close and step 5's Back, both
+   <button>), so that case is latent rather than live, and it is pinned by
+   scripts/test-next-disabled-state.js rather than defended by a rule that
+   breaks the cursor for everyone else. */
+.btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 .btn-secondary {
   background: var(--surface-raised);
