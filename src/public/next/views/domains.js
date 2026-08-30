@@ -66,6 +66,7 @@ import { formatUsdHonest } from '../shared/format-usd.js';
 // the server has reported nothing.
 import { progressRingHtml, ringValueFromCounts } from '../shared/progress-ring.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+import { loadUiState, durableStorage } from '../shared/ui-state.js';
 
 // The shared TEXT system — the five roles in shared/text.js. This view is the
 // first adopter, because it is where the defect that motivated the module was
@@ -2795,9 +2796,30 @@ const AI_DISCLOSURE_COPY =
 // reach a third party with no disclosure ever having been shown. So this
 // returns false (not seen) on any error, which shows the modal again rather
 // than silently skipping it.
+// ── DURABLE, NOT MERELY LOCAL (v3.28.0) ────────────────────────────────────
+// The consent is now recorded server-side as well as in localStorage, through
+// shared/ui-state.js. localStorage is per-PARTITION, and a native shell
+// (Electron) gets its own — so without this, the first launch of the packaged
+// app re-asks for a privacy consent the user already gave. Of everything in
+// this shell's storage, that is the one whose loss is not an inconvenience:
+// the app would be stating, falsely, that it has no record of the user's
+// decision about sending their wiki content to a third party.
+//
+// THE FAIL-CLOSED DIRECTION IS UNCHANGED, and it is what the try/catch is
+// still for. durableStorage().getItem returns the merged durable value when
+// one is recorded, and otherwise falls through to real localStorage AND ITS
+// THROW — so "can't tell" still lands on `false` (ask again), never on an
+// assumed yes. The merge itself cannot downgrade a consent: either side
+// holding 'yes' answers 'yes' (shared/ui-state.js mergeField), and the server
+// refuses to overwrite a recorded one (src/brain/config.js, monotonic).
+//
+// The one behavioural difference, stated: on a page load where the shared GET
+// has not landed yet AND localStorage is empty, this reads false and the
+// modal is shown. That is the same direction the old code took on a storage
+// error, and it is the correct one for a consent.
 function aiDisclosureSeen() {
   try {
-    return localStorage.getItem(AI_DISCLOSURE_KEY) === 'yes';
+    return durableStorage().getItem(AI_DISCLOSURE_KEY) === 'yes';
   } catch {
     return false;
   }
@@ -2806,7 +2828,7 @@ function aiDisclosureSeen() {
 function markAiDisclosureSeen() {
   // A write failure here just means the modal shows again next time (the
   // fail-closed direction) — never a reason to treat consent as recorded.
-  try { localStorage.setItem(AI_DISCLOSURE_KEY, 'yes'); } catch { /* ignore */ }
+  try { durableStorage().setItem(AI_DISCLOSURE_KEY, 'yes'); } catch { /* ignore */ }
 }
 
 // Single chokepoint for all three LLM-backed Quick maintenance actions.
@@ -3690,6 +3712,19 @@ registerView('domains', {
     });
     loadGate.begin();
     loadDomainsList(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+
+    // Prime the durable UI-state record (shared/ui-state.js) so
+    // aiDisclosureSeen(), which is SYNCHRONOUS and runs from a click, has the
+    // server's answer in hand by the time a ✨ button can be pressed.
+    //
+    // This costs ZERO extra requests: loadUiState() memoises one GET per page
+    // load, and app.js's boot() already calls it through
+    // maybeShowCutoverNotice(). Whichever runs first creates the promise; this
+    // call exists so the consent does not silently depend on that boot chain
+    // having reached its second link. Unawaited and cannot reject — a mount
+    // must never be gated on it, and the fail-closed direction (ask again)
+    // already covers the case where it has not landed.
+    loadUiState();
 
     // M2 fix (re-audit finding): this view's `state` is DELIBERATELY
     // module-scoped and NOT reset on every onEnter (see the comment above

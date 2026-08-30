@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -434,6 +434,59 @@ router.post('/default-domain', async (req, res) => {
     }
     setDefaultDomain(requested || null);
     res.json({ ok: true, defaultDomain: getDefaultDomain() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Durable UI state (v3.28.0) ──────────────────────────────────────────────
+//
+// The four pieces of /next state whose loss is a correctness or trust failure
+// rather than a per-device inconvenience. See src/brain/config.js's UI_STATE
+// section for the triage and for why they live in .curator-config.json.
+//
+// DELIBERATELY NOT BEHIND guardConcurrent. Every other POST in this file
+// guards, and the reason those do is that they change something an in-flight
+// ingest, sync or update could be reading. These four fields are read by
+// nothing on any write path — they exist only so a browser can remember what
+// the user has already been told. A 409 here would fire precisely when the
+// user is mid-ingest and the app is trying to record that they dismissed a
+// panel, which re-creates the very "the app forgot me" symptom the endpoint
+// exists to prevent. The same reasoning src/routes/ingest.js records for
+// GET /api/ingest/activity, applied to the write side and stated rather than
+// inherited.
+//
+// It is also NOT registered as a write with the write-registry, for the same
+// reason: registering makes a Settings save or a Sync refuse while a dismissal
+// is being recorded, which is a much worse trade than the one it buys.
+//
+// Mutating requests already pass through server.js's cross-origin guard, and
+// setUiState()'s allow-list is what stops anything reaching the credential
+// file that is not one of five literal strings.
+
+/** GET /api/config/ui-state — the durable UI state, every field always present. */
+router.get('/ui-state', (_req, res) => {
+  try {
+    res.json({ ok: true, ui: getUiState() });
+  } catch (err) {
+    // Never 500 on a read the client uses to decide whether to re-ask for a
+    // consent: an error body with no `ui` makes every consumer fall back to
+    // its own documented fail-safe direction, which is the point.
+    res.status(200).json({ ok: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/config/ui-state — record durable UI state.
+ * Body: a partial map of { field: <literal> }. Unknown fields and values
+ * outside the allow-list are refused and NAMED in the response; a recorded
+ * consent or provenance verdict is never overwritten.
+ */
+router.post('/ui-state', (req, res) => {
+  try {
+    const patch = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+    const { state, refused } = setUiState(patch);
+    res.json({ ok: true, ui: state, refused });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

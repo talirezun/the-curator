@@ -699,6 +699,192 @@ export function setSharedBrainEnabled(enabled) {
   return getSharedBrainEnabled();
 }
 
+// ── Durable UI state (v3.28.0) ───────────────────────────────────────────────
+//
+// ── WHY THIS EXISTS: THE PARTITION, NOT THE NAME ────────────────────────────
+// Every /next preference lives in localStorage. A native shell (Electron
+// BrowserWindow) has its OWN storage partition, so nothing in the user's
+// browser carries across — and the trick that solved the /old -> /next cutover
+// ("just read the same key names", NEXT-PHASE-PLAN R6) cannot help, because
+// the problem is not what the key is CALLED, it is which partition it is IN.
+//
+// Only the state whose loss is a CORRECTNESS or TRUST failure moves here.
+// The test applied, and the reason the list is four items and not fourteen:
+//
+//     Does losing it make the app state something FALSE about the user?
+//
+//   • aiHealthDisclosureSeen — a privacy CONSENT the user already gave. The
+//     app re-asking is the single most visible "the update forgot me" symptom,
+//     and it is the one where the thing forgotten is a consent.
+//   • onboardingDismissed    — the app claims a fully set-up user has not set
+//     up.
+//   • installOrigin          — the app claims a native-app user came from the
+//     pre-cutover browser interface and offers them /old. See below; this one
+//     is not hypothetical, it is REPRODUCED.
+//   • cutoverNoticeDismissed — the app re-shows a one-time notice that was
+//     dismissed.
+//
+// Everything else in /next's localStorage is a per-device convenience whose
+// loss is VISIBLE on the first frame and one click to restore (theme, font
+// scale, last view, chat model/style/starred/recents), or — in the case of
+// curator-ingest-activity-ack-v1 — is not lost in any observable sense at all,
+// because src/brain/ingest-activity.js's records live in a module-level Map
+// that dies with the process. A migration is by definition a new process, so
+// there is nothing left for a carried-over ack list to acknowledge.
+// scripts/test-ui-state.js enumerates the keys FROM DISK and fails on any new
+// one that is in neither list, so this split cannot silently rot.
+//
+// ── WHY IT LIVES IN .curator-config.json AND NOT BESIDE IT ──────────────────
+// That file is 0600 and holds API keys, so putting anything else in it is a
+// real decision. Three reasons it is the right home:
+//
+//   1. The file is ALREADY a mixed config file, not a credential store:
+//      sharedBrainEnabled, defaultDomain, aiHealth.costCeilingTokens and
+//      selectedModels are all preferences with no secret in them. A `ui`
+//      object is consistent with what is there, not a new category.
+//   2. Every field here is WRITE-ONCE or MONOTONIC. The whole set is written
+//      at most four times in an install's life, so the argument against
+//      churning a credential file — more atomic-write windows, more chances
+//      for a corrupt parse to take the API keys with it (readRaw() returns {}
+//      on a bad parse) — barely applies. A high-frequency preference, e.g.
+//      the theme, genuinely would not belong here, which is part of why it
+//      stays local.
+//   3. A second file means a SECOND writer of user config. config.js is the
+//      sole owner of this path; two owners with two atomic writes is a class
+//      of interleaving bug this repo has paid for elsewhere.
+//
+// It is NOT synced. getCuratorConfigFile() resolves under getUserDataDir();
+// Personal Sync's git work-tree is getDomainsDir(). So "server-side" here
+// means per-INSTALL, never cross-machine — which is why moving a preference
+// here could not make two of the user's machines agree even if that were
+// wanted.
+//
+// ── THE SHAPE IS AN ALLOW-LIST, AND THAT IS THE SECURITY PROPERTY ──────────
+// These values arrive over an HTTP POST and land in the file that holds the
+// user's API keys. setUiState() therefore accepts ONLY the literals named
+// below — a value outside `values` is refused, not stored — so no attacker-
+// chosen string ever reaches that file. On top of that:
+//
+//   • monotonic: true  — once recorded, it can never be cleared. A consent
+//     cannot be silently downgraded to "not yet given" by a bug, a race, or a
+//     hostile POST.
+//   • clearable: true  — a null patch CLEARS it. Exactly one field has this,
+//     and it is not a relaxation: views/onboarding.js's clearDismissed() is
+//     reached from Settings' "Show setup guide", a deliberate UN-dismiss the
+//     product offers on the principle that "a tour you can never get back is
+//     worse than none". Making that field monotonic would have made a
+//     shipping button silently stop persisting. The distinction is real and
+//     narrow — an un-DISMISS is a thing the UI offers; an un-CONSENT is not,
+//     and views/cutover-notice.js's own header says it has "no explicit
+//     re-open path".
+//   • writeOnce: true  — recorded once and never re-decided, which is exactly
+//     what views/cutover-notice.js's provenance record already promises in
+//     its own header. Enforcing it here means the promise survives a client
+//     that forgets it.
+//
+// STATED RATHER THAN GLOSSED: for the fields whose `values` holds a SINGLE
+// literal, the monotonic branch in setUiState is REDUNDANT with the
+// allow-list for a value-shaped downgrade — a clear would have to be some
+// other string, and no other string is accepted. What makes it load-bearing
+// rather than decorative is the explicit null-clear path below, which
+// `clearable` gates and which monotonic refuses; and the same branch is
+// additionally exercised through installOrigin (two values, writeOnce).
+//
+// Values are stored as the SAME STRINGS the browser held ('yes', '1', 'pre'),
+// not as booleans. That makes the client adapter an identity map — there is
+// no encoding to get wrong — and makes "this is a no-op for existing users" a
+// byte comparison rather than an argument.
+const UI_STATE_SPEC = Object.freeze({
+  aiHealthDisclosureSeen: Object.freeze({ values: Object.freeze(['yes']), monotonic: true }),
+  onboardingDismissed:    Object.freeze({ values: Object.freeze(['1']),   clearable: true }),
+  cutoverNoticeDismissed: Object.freeze({ values: Object.freeze(['1']),   monotonic: true }),
+  installOrigin:          Object.freeze({ values: Object.freeze(['pre', 'post']), writeOnce: true }),
+});
+
+/** The field table, for the route and for scripts/test-ui-state.js. */
+export function uiStateSpec() {
+  return UI_STATE_SPEC;
+}
+
+/**
+ * Reads durable UI state.
+ *
+ * Returns an object with EVERY field name present, valued either with the
+ * stored string or with `null` for "not recorded". A field and its ABSENCE are
+ * different facts and must not collapse into one value (v3.15.0's recorded
+ * defect): `null` means "nobody has decided yet, decide now", which for
+ * installOrigin is a completely different instruction from 'post'.
+ *
+ * Anything unrecognised on disk — a value from a future version, a half-written
+ * string, a key some other tool squatted on — reads as null rather than being
+ * trusted, matching readOrigin()'s rule in views/cutover-notice.js.
+ */
+export function getUiState() {
+  const cfg = readRaw();
+  const stored = (cfg && typeof cfg.ui === 'object' && cfg.ui) ? cfg.ui : {};
+  const out = {};
+  for (const field of Object.keys(UI_STATE_SPEC)) {
+    const v = Object.hasOwn(stored, field) ? stored[field] : null;
+    out[field] = UI_STATE_SPEC[field].values.includes(v) ? v : null;
+  }
+  return out;
+}
+
+/**
+ * Records durable UI state. `patch` is partial; unknown fields are ignored and
+ * invalid values are refused.
+ *
+ * Returns `{ state, refused }` where `refused` names every field that was
+ * asked for and NOT written, with the reason. A refusal that is merely
+ * un-written is invisible to the caller, and this repo has a specific record
+ * of that shape (setApiKeys' activation refusal, v3.16.x) — so it is reported.
+ */
+export function setUiState(patch) {
+  const refused = [];
+  const asked = (patch && typeof patch === 'object') ? patch : {};
+  const cfg = readRaw();
+  const before = getUiState();
+  const next = (cfg && typeof cfg.ui === 'object' && cfg.ui) ? { ...cfg.ui } : {};
+  let changed = false;
+
+  for (const field of Object.keys(asked)) {
+    if (!Object.hasOwn(UI_STATE_SPEC, field)) { refused.push({ field, reason: 'unknown_field' }); continue; }
+    const spec = UI_STATE_SPEC[field];
+    const value = asked[field];
+    const current = before[field];
+
+    // An explicit CLEAR. `null` is the only shape that expresses it, and only
+    // a `clearable` field accepts it — everything else is refused by name, so
+    // a clear aimed at the consent is an observable refusal rather than a
+    // no-op somebody later reads as success.
+    if (value === null) {
+      if (!spec.clearable) { refused.push({ field, reason: 'not_clearable' }); continue; }
+      if (current === null) continue;              // already clear — not a refusal
+      delete next[field];
+      changed = true;
+      continue;
+    }
+
+    if (!spec.values.includes(value)) { refused.push({ field, reason: 'invalid_value' }); continue; }
+    if (current === value) continue;               // already recorded — not a refusal
+    // MONOTONIC / WRITE-ONCE. `current !== null` is the whole guard: a
+    // recorded value is never replaced, so a consent cannot be downgraded and
+    // a provenance verdict cannot be re-decided.
+    if (current !== null && (spec.monotonic || spec.writeOnce)) {
+      refused.push({ field, reason: spec.writeOnce ? 'already_recorded' : 'monotonic' });
+      continue;
+    }
+    next[field] = value;
+    changed = true;
+  }
+
+  if (changed) {
+    cfg.ui = next;
+    writeRaw(cfg);
+  }
+  return { state: getUiState(), refused };
+}
+
 /**
  * Returns the effective API key for a provider.
  * Priority: .curator-config.json → process.env → null

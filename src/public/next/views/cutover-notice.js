@@ -143,6 +143,8 @@
 //
 // Owns views/cutover-notice.css (the `cvn-` prefix, used nowhere else).
 
+import { loadUiState, durableStorage } from '../shared/ui-state.js';
+
 // Namespaced and versioned like every other /next key
 // (curator-next-theme, curator-next-view, curator-next-onboarding-dismissed-v1).
 // The -v1 suffix is the convention that lets a future, genuinely different
@@ -334,16 +336,34 @@ function shouldShowNotice(facts, dismissed, origin) {
 
 let root = null;
 
-// Wrapped rather than referenced directly: some privacy modes throw on the
-// `window.localStorage` property access itself, not only on getItem. The
-// stand-in throws from every method, which readDismissed() turns into HIDE.
+// ── DURABLE, NOT MERELY LOCAL (v3.28.0) ────────────────────────────────
+// The dismissal and — far more importantly — the ORIGIN are now recorded
+// server-side as well as in localStorage, through shared/ui-state.js.
+//
+// This closes a defect the header's own soundness argument does not cover,
+// and it is REPRODUCED rather than predicted. That argument is an ORDERING
+// one: "a NEW user can only acquire those three facts BY USING THIS SHELL,
+// so by the time they are true, this module has already run at least once
+// and recorded origin 'post'." It holds within ONE storage partition. A
+// native shell (Electron) has its OWN partition, so on its first launch the
+// three facts — all read from the SERVER — are already true while the origin
+// key is EMPTY. classifyOrigin then returns 'pre' and a long-time user, or
+// a user who has never once seen the old interface, is shown "The Curator
+// has a new look" with a link into a deprecated app.
+//
+// Driving the real functions above over an empty partition with the three
+// server facts true: dismissed=false, storedOrigin=null, origin='pre',
+// shouldShowNotice=true. Two controls in the same run (a warm partition
+// holding 'post', and a warm partition holding 'pre' plus a dismissal) both
+// return false, so the reading is not vacuous.
+//
+// NOTHING ABOVE THIS LINE CHANGED. durableStorage() is a drop-in for the old
+// wrapper: same getItem/setItem shape, same keys, and an UNRECORDED field
+// still falls through to real localStorage AND ITS THROW — which is what
+// keeps this file's deliberate fail-safe direction (HIDE, the opposite of
+// views/onboarding.js's) exactly as it was.
 function storage() {
-  try {
-    return window.localStorage;
-  } catch {
-    return { getItem() { throw new Error('no storage'); },
-             setItem() { throw new Error('no storage'); } };
-  }
+  return durableStorage();
 }
 
 // Never throws: this runs on the boot path, and boot() must reach
@@ -412,6 +432,12 @@ async function loadFacts() {
 // screen" and the caller can safely fall through to onboarding.
 export async function maybeShowCutoverNotice() {
   try {
+    // ONE shared GET for the whole page load (see shared/ui-state.js). It is
+    // awaited BEFORE the first storage read so the durable record, not an
+    // empty native partition, is what readDismissed/readOrigin see. It never
+    // throws and never rejects, which is what keeps the markBooted() safety
+    // property above intact.
+    await loadUiState();
     const dismissed = readDismissed(storage());
     // Short-circuit before the two GETs: a dismissed notice cannot show
     // whatever the facts say, and this runs on every page load for the rest
