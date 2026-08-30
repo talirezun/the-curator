@@ -8,7 +8,6 @@
  * Request body: { domain, conversationId }
  * Stream events:
  *   { type: 'progress', pct, message }
- *   { type: 'wait', pct, message }     — emitted during slow LLM waits
  *   { type: 'done', title, pagesWritten, changes }
  *   { type: 'error', message }
  *   { type: 'refused', reason }        — short conversation, missing data, etc.

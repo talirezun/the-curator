@@ -47,7 +47,9 @@
    carries no information. Here it carries all of it. So the unchecked border
    is --text-3, the nearest token in the same neutral ramp that clears the
    floor in BOTH themes, and it is redefined per theme the way the system's
-   own discipline requires. Measured: **4.27 dark / 4.14 light**.
+   own discipline requires. Measured: **6.24 dark / 5.24 light** against `--surface-inset`.
+   (This read 4.27/4.14 until v3.27.0 — the PRE-ramp values, already stale when
+   written, because v3.25.0 moved `--text-3` in the very same release.)
 
    THE CHECKED BORDER IS UNCHANGED at --accent, and the white check against
    that fill measures 4.53 dark / 6.57 light. The rest of the tree's

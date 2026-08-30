@@ -186,7 +186,12 @@ function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
  * The published per-model input-token premium, or 1 when we ship no measured
  * figure for this id.
  *
- * `claude-opus-5`, `claude-opus-4-8` and `claude-opus-4-5` carry 1.329 — a
+ * `claude-sonnet-5`, `claude-opus-5` and `claude-opus-4-8` carry 1.329 — a
+ * MEASURED 32.9% more input tokens for the same Curator prose. Four OpenRouter
+ * models carry smaller premiums (1.015-1.041); `claude-opus-4-5` carries NONE.
+ * Derive the list from OFFERABLE_MODELS, never from this comment: an earlier
+ * version of it omitted sonnet-5 and named a model that has no premium at all.
+ * The 32.9% figure is a
  * MEASURED 32.9% more input tokens for the same Curator prose, recorded on the
  * OFFERABLE_MODELS entry rather than folded into the price table (which must
  * keep agreeing with the provider's invoice). Every band in this file was
