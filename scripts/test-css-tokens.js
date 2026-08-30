@@ -79,11 +79,13 @@
  * names found at scan time — see its comment for why a hardcoded name
  * would be the wrong kind of assertion here.
  *
- * One pre-existing, already-in-production `/next` finding, verified before
- * baselining it (per this suite's own rule — see NEXT_KNOWN_ISSUES in
- * section 7): `--scrim` (shell.css:337) has a working rgba(...) fallback
- * and is real dead/orphaned naming, the same shape as the three shipping-
- * app names above — not a silent no-fallback failure.
+ * The `/next` baseline (NEXT_KNOWN_ISSUES in section 7) is now EMPTY. It
+ * held one entry, `--scrim`, and that entry turned out to be actively
+ * harmful: the paired "exactly ONE reference" assertion was cited by four
+ * separate stylesheets as their reason to inline an rgba literal rather
+ * than share a value, producing five drifting copies of one scrim. See
+ * section 7 for the full account. `--modal-scrim` (shell.css) replaced it
+ * as a real definition.
  */
 
 import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -1485,22 +1487,40 @@ ok(!globalDefs.has('font-mono'),
 // ─────────────────────────────────────────────────────────────────────────
 section('7. Every var() reference in /next CSS resolves to a /next-defined custom property');
 
-// One pre-existing, already-in-production /next finding, verified BEFORE
-// baselining it (per CLAUDE.md: "never add a variable to the CSS-token
-// baseline to make the suite pass" without checking whether it should
-// simply be defined instead). `--scrim` (shell.css:337) carries a working
-// rgba(5,5,10,0.68) fallback, and the light-theme override three lines
-// below (shell.css:343) replaces the WHOLE `background` declaration
-// directly rather than going through the var — so the fallback is the
-// only value ever actually used, in either theme. This suite does not own
-// shell.css (it is out of scope for this task), so it is baselined by name
-// exactly like section 3's three shipping-app entries, rather than "fixed"
-// here. Any NEW undefined name in /next CSS is still a hard failure.
-const NEXT_KNOWN_ISSUES = new Set([
-  'scrim', // rgba(...) fallback; shell.css:337; light theme bypasses it entirely (shell.css:343)
-]);
-ok(NEXT_KNOWN_ISSUES.size === 1,
-  'baseline contains exactly the one known /next fallback-carrying name (--scrim)');
+// ── THE BASELINE IS NOW EMPTY, AND THAT IS THE POINT ─────────────────────
+// It used to read:
+//
+//   const NEXT_KNOWN_ISSUES = new Set([
+//     'scrim', // rgba(...) fallback; shell.css:337; light theme bypasses it
+//   ]);
+//   ok(NEXT_KNOWN_ISSUES.size === 1, 'baseline contains exactly the one
+//     known /next fallback-carrying name (--scrim)');
+//
+// with a header explaining that `--scrim` carried a working
+// rgba(5,5,10,0.68) fallback, that the light theme replaced the whole
+// `background` declaration rather than going through the var, and that
+// this suite did not own shell.css so the name was baselined rather than
+// fixed.
+//
+// THE BASELINE THEN CAUSED A REAL DEFECT, WHICH IS WHY IT IS GONE RATHER
+// THAN MERELY SATISFIED. The paired count assertion below ("exactly ONE
+// reference, at the known location") was read by every later overlay as an
+// instruction: views/shared.css (.sbw-scrim, .cfd-scrim), views/mcp-
+// wizard.css (.mcpw-scrim) and views/chat.css (.chat-browse-scrim) each
+// carry — or carried — a comment saying, in their own words, that a second
+// `var(--scrim)` reference would fail this suite, so they inlined the rgba
+// literal instead. FIVE private copies of one value. They drifted: dark
+// agreed at rgba(5,5,10,0.68) everywhere, LIGHT split rgba(20,20,31,0.42)
+// against rgba(20,20,31,0.5), three to two.
+//
+// A guard against an UNDEFINED name had become the reason a DEFINED value
+// could not be shared. The fix is the one CLAUDE.md's own rule points at —
+// "check whether it should simply be defined instead": `--modal-scrim` is
+// a real definition in shell.css (both themes), all five overlays read it,
+// and `--scrim` is referenced nowhere. Baseline zero.
+const NEXT_KNOWN_ISSUES = new Set([]);
+ok(NEXT_KNOWN_ISSUES.size === 0,
+  'the /next baseline is EMPTY — every var() in /next resolves to a real definition (was: one entry, --scrim)');
 
 const nextRealOffenders = [];
 const nextKnownOffenders = [];
@@ -1523,13 +1543,33 @@ if (nextKnownOffenders.length > 0) {
   }
 }
 
-// Named positive assertion the baseline pattern requires: confirms the
-// baselined --scrim really is the ONLY undefined /next CSS reference today,
-// so a second, DIFFERENT undefined name can't silently hide behind this one
-// baseline entry (the same discipline section 3's header describes being
-// added after that suite was audited for exactly this gap).
-ok(nextKnownOffenders.length === 1 && nextKnownOffenders[0].name === 'scrim',
-  'the only baselined /next reference is --scrim, and it is at the known location (shell.css)');
+// INVERTED, not deleted. It read:
+//
+//   ok(nextKnownOffenders.length === 1 && nextKnownOffenders[0].name === 'scrim',
+//     'the only baselined /next reference is --scrim, and it is at the known
+//      location (shell.css)');
+//
+// That was the assertion four separate stylesheets cited by name as their
+// reason to inline an rgba literal instead of sharing one. With the
+// baseline empty the honest statement is that NOTHING is baselined; a new
+// undefined name now lands in nextRealOffenders and hard-fails below,
+// which is strictly stronger than hiding behind a permitted entry.
+ok(nextKnownOffenders.length === 0,
+  'nothing in /next is baselined any more (was: exactly one, --scrim, at shell.css)');
+
+// Anti-vacuity for the pair above: an empty baseline plus a scanner that
+// has silently stopped finding references would also report "0 baselined,
+// 0 offenders" forever. Prove the scan is alive and that the replacement
+// name is genuinely DEFINED rather than merely unreferenced.
+ok(nextGlobalDefs.has('modal-scrim'),
+  'anti-vacuity: --modal-scrim is DEFINED in the /next universe — the five overlay scrims resolve to a real value, not to a fallback');
+ok(!nextGlobalDefs.has('scrim'),
+  'and --scrim is still not defined anywhere — it is retired by removing its references, not by defining it late');
+{
+  const totalRefs = nextPerFileData.reduce((n, f) => n + f.refs.length, 0);
+  ok(totalRefs > 200,
+    `anti-vacuity: ${totalRefs} var() references scanned across /next — a scanner that had stopped matching would report 0 offenders too`);
+}
 
 ok(nextRealOffenders.length === 0,
   nextRealOffenders.length === 0

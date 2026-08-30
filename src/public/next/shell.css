@@ -96,6 +96,70 @@
   --prov-openrouter: var(--violet-600);
 }
 
+/* ── THE ONE SCRIM ───────────────────────────────────────────────────────
+   Every dialog and the reader drawer read this. It replaces FIVE inline
+   copies of the same rgba pair, which existed for a reason worth writing
+   down rather than repeating: `--scrim` was referenced exactly once (here,
+   with a hex fallback and no definition anywhere), and
+   scripts/test-css-tokens.js asserted that count was 1. So every surface
+   after the first was told, in its own comment, to inline the literal
+   instead — and the guard against an UNDEFINED name became the reason
+   five files each held their own copy. Predictably they drifted: dark
+   agreed at 0.68 everywhere, LIGHT split 0.42 / 0.5 three-to-two.
+
+   This is a real definition, so the baseline shrinks to zero rather than
+   growing. `--scrim` itself now has no reference at all; do not
+   resurrect the name.
+
+   ── DARK IS THE DESIGN SYSTEM'S APP PROTOTYPE, NOT Modal.jsx ────────────
+   The bundle carries TWO scrims and they disagree. `components/feedback/
+   Modal.jsx` (and `ui_kits/app/primitives.jsx`, and the readme's frosted-
+   glass section) say `rgba(5,5,10,0.72)` with `blur(6px)` and offer NO
+   light value at all — it is the generic component-library scrim. The
+   bundle's own applied artifact for THIS app carries a scrim per theme:
+   dark `rgba(5,5,10,0.68)`, light `rgba(20,20,31,0.42)`.
+
+   Dark takes the prototype's 0.68, which is also what all five surfaces
+   already used: it is the applied design for this app, it is the only
+   artifact specifying a light value at all, and 0.68 -> 0.72 is a 4%
+   alpha step that composites to the same rgb(6,6,11) either way. The
+   conflict is reported to the maintainer rather than silently resolved.
+
+   ── LIGHT IS 0.5, AND THAT IS A DELIBERATE DEVIATION WITH A NUMBER ──────
+   MEASURED IN A REAL BROWSER, composited after cascade, probe controlled
+   at identical-pair = 1.00 and black-on-white = 21.00 before any figure
+   counted. A white modal card (`--surface-overlay` = #FFFFFF in light)
+   against this scrim over `--canvas`:
+
+     light 0.42 -> scrim rgb(154,154,160), card vs scrim 2.80,  border 2.17
+     light 0.50 -> scrim rgb(136,136,142), card vs scrim 3.55,  border 2.75
+
+   WCAG 1.4.11's non-text floor is 3:1, and the card's own FILL is the only
+   thing that clears it at either value — the 1px `--border` misses in both,
+   the systemic gap this repo has recorded since v3.19.0. So the prototype's
+   own 0.42 puts a light modal's boundary UNDER the floor. That is a finding
+   about the system, the same shape as v3.25.0's checkbox, where the
+   specified `--border-strong` measured 1.59/1.64 on the one boundary
+   carrying the whole control and was deviated from with the measurement
+   written down.
+
+   0.5 was already the value on THREE of the five surfaces (both wizards and
+   the confirm dialog); the reader and chat-browse were the two at 0.42. So
+   unifying here moves two surfaces UP from 2.80 to 3.55 rather than moving
+   three DOWN, and every modal in the app now clears the floor in light
+   where three of five did before. Nothing else changes: text contrast
+   inside the cards is unaffected in both themes (measured: 0 of 66 text
+   nodes under 4.5 across all five modals, both themes, worst 4.53 dark /
+   5.41 light), because the card fill is opaque.
+
+   DARK REMAINS UNDER THE FLOOR AND NO SCRIM VALUE FIXES IT: card vs scrim
+   is 1.07 and the border 1.29, and a DARKER scrim moves neither (the card
+   is the light thing there). Separation in dark is carried by `--shadow-lg`
+   and the blur, which is what the system's own elevation guidance says.
+   Recorded, not papered over. */
+:root         { --modal-scrim: rgba(5,5,10,0.68); }
+[data-theme="light"] { --modal-scrim: rgba(20,20,31,0.5); }
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -1065,15 +1129,23 @@ body.guide-docked .main {
   left: calc(60px + var(--app-sidebar-w));
   right: 0;
   z-index: 40;
-  background: var(--scrim, rgba(5,5,10,0.68));
+  background: var(--modal-scrim);
   backdrop-filter: blur(6px);
   opacity: 0;
   transition: opacity var(--t-enter);
   pointer-events: none;
 }
-[data-theme="light"] .reader-scrim { background: rgba(20,20,31,0.42); }
 .reader-scrim.open { opacity: 1; pointer-events: auto; }
 
+/* DELIBERATELY NOT --radius-xl, and deliberately keeping its directional
+   shadow literal. This is a DRAWER, not a centered dialog: it is flush to
+   the top, right and bottom of the main column, so a corner radius would
+   round edges that touch nothing. Both facts are transcribed verbatim from
+   the design system's own app prototype, which gives this surface no
+   radius, a `border-left`, and exactly this box-shadow — the system ships
+   no directional shadow token, so this literal is the specification rather
+   than drift. Of the five `role="dialog"` surfaces in /next this is the one
+   that was already conforming. */
 .reader-panel {
   position: absolute;
   top: 0;

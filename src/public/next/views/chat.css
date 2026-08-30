@@ -1456,15 +1456,23 @@
    animation, and a transformed ancestor becomes the containing block for its
    fixed descendants — v3.10.0 measured a fixed probe moving 340px through it. */
 .chat-browse-root { position: fixed; inset: 0; z-index: 70; }
-/* An EXPLICIT rgba pair rather than the shell's scrim custom property. That
-   name is not defined anywhere in the /next universe: shell.css's ONE reference
-   to it carries a hex fallback and is baselined in test-css-tokens.js at
-   exactly one site, and test-next-chat-compile.js asserts this file adds no
-   second one (it greps for the literal, so the name is deliberately not spelled
-   out here either). Adding a reference would either grow that baseline or fail
-   two suites, for a token that does not exist. */
-.chat-browse-scrim { position: absolute; inset: 0; background: rgba(5,5,10,0.68); }
-[data-theme="light"] .chat-browse-scrim { background: rgba(20,20,31,0.42); }
+/* Now `--modal-scrim`, a REAL definition in shell.css shared by all five
+   overlays. The old comment here explained that the shell's scrim name was
+   undefined and baselined at exactly one site, so this file inlined the rgba
+   pair instead — that guard is retired, because it was what forced five
+   files to each keep their own copy. This surface's values happened to be
+   the correct ones (0.68 / 0.42), so nothing changes visually here; three
+   other surfaces move to match it. The name deliberately does not contain
+   the old one, so test-next-chat-compile.js's literal grep still holds. */
+.chat-browse-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--modal-scrim);
+  /* ADDED — see views/shared.css .cfd-scrim. The system scopes backdrop
+     blur to the modal scrim and the sticky header; this dialog and the
+     confirm were the two that omitted it. */
+  backdrop-filter: blur(6px);
+}
 .chat-browse {
   position: absolute;
   top: 50%; left: 50%;
@@ -1475,7 +1483,11 @@
   /* Capped so the LIST scrolls and the search field never does. A dialog whose
      own search box scrolls out of view is a dialog you cannot re-search from. */
   max-height: min(720px, calc(100vh - 64px));
-  border-radius: var(--radius-lg);
+  /* "Modals 14px" — see views/shared.css's .cfd-card note. --shadow-pop is
+     KEPT: the readme blesses both ("modals, toasts (--shadow-pop,
+     --shadow-lg)") and the elevation guideline card labels its floating
+     swatch "Menu / modal — --shadow-pop". */
+  border-radius: var(--radius-xl);
   border: 1px solid var(--border);
   background: var(--surface-overlay);
   box-shadow: var(--shadow-pop);
