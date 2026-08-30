@@ -105,7 +105,22 @@ function fingerprint() {
 const fpBefore = fingerprint();
 ok(typeof fpBefore === 'string' && fpBefore.length > 0, 'real credential files fingerprinted before the run');
 
-const installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
+// install-mode.js THROWS AT MODULE LOAD if a capability record is not
+// exhaustive — that throw is the designed loud failure. But an unhandled
+// module-load throw kills the run with a raw stack, naming no expectation and
+// leaving the tally wrong (the v3.24.1 "crash instead of a named assertion"
+// shape). Caught here so the exhaustiveness failure is REPORTED as one, then
+// exited, because nothing below can run without the module.
+let installMode;
+try {
+  installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
+  ok(true, 'src/brain/install-mode.js loads (its exhaustiveness check passed at module load)');
+} catch (err) {
+  ok(false, `src/brain/install-mode.js FAILED to load: ${err && err.message}`);
+  console.log(`\nPassed: ${passed}   Failed: ${failed}`);
+  fs.rmSync(TMP, { recursive: true, force: true });
+  process.exit(1);
+}
 const configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
 const writeStatus = await import(path.join(ROOT, 'src/routes/write-status.js'));
 const writeRegistry = await import(path.join(ROOT, 'src/brain/write-registry.js'));
@@ -378,6 +393,36 @@ function recordingExec(responses = {}) {
     'update-check repo arm still issues `git rev-parse --short HEAD`');
   ok(fetched >= 1, 'update-check repo arm still reaches the network layer');
 }
+{
+  // THE CALL SITE, not just the function. §7 proves decideUpdateAvailable() is
+  // right; this proves the ROUTE uses it. Mutation M6 — restoring the original
+  // `latest !== current || commitsDiffer` inline in the handler — first ran
+  // GREEN at 157/0 with only §7 in place, because every route-level fixture
+  // happened to be a remote-newer case where the buggy and correct verdicts
+  // agree. That is this repo's "function executed but its call site never
+  // asserted" shape, and it is the exact defect the release fixes.
+  //
+  // `latest: '0.0.1'` is unambiguously older than any real package.json
+  // version, and the commits DIFFER — so the pre-fix code answers
+  // updateAvailable:true and offers a button that runs `git reset --hard
+  // origin/main`: a downgrade.
+  const rec = recordingExec({ 'git rev-parse --short HEAD': { stdout: 'aaaaaaa\n' } });
+  const res = fakeRes();
+  await configRoute.updateCheckHandler({}, res, {
+    caps: REPO_CAPS,
+    execAsync: rec.exec,
+    fetch: async (url) => (String(url).includes('raw.githubusercontent.com')
+      ? { ok: true, json: async () => ({ version: '0.0.1' }) }
+      : { ok: true, text: async () => 'bbbbbbbccccccc' }),
+  });
+  eq(res.body.updateAvailable, false,
+    'ON THE WIRE: a local build AHEAD of the published one is NOT offered an update (the live bug)');
+  eq(res.body.localAhead, true,
+    'ON THE WIRE: local-ahead is reported, so "current" and "ahead" stay distinguishable');
+  eq(res.body.latest, '0.0.1', 'CONTROL: the fixture really did serve an older remote version');
+  eq(res.body.remoteCommit, 'bbbbbbb',
+    'CONTROL: the commits really do differ, so the old code would have said updateAvailable:true');
+}
 
 // ── POST /update ───────────────────────────────────────────────────────────
 {
@@ -503,6 +548,50 @@ eq(agree, PAIRS.length, `route and /next compareSemver agree on all ${PAIRS.leng
 ok(new Set(PAIRS.map(([a, b]) => Math.sign(configRoute.compareSemver(a, b)))).size >= 3,
   'CONTROL: the comparison table exercises all three outcomes (-1, 0, +1)');
 
+// ── §7b  The A/B that bounds the blast radius ──────────────────────────────
+//
+// The semver fix is a DELIBERATE behaviour change, so "nothing changed" is the
+// wrong claim. The right one is that the change is CONFINED to local-ahead.
+// This runs the pre-change expression — transcribed verbatim from
+// `git show 53189e3:src/routes/config.js` — beside the shipped one over the
+// whole matrix and requires the changed set to be exactly the local-ahead rows.
+//
+// THIS SECTION EARNED ITS KEEP BEFORE IT WAS COMMITTED. The first draft of
+// decideUpdateAvailable used `versionDiffers = cmp < 0` alone, and this A/B
+// reported 12 changed cells rather than 6: `compareSemver` returns 0 for
+// UNCOMPARABLE as well as EQUAL, so `nightly` vs `3.25.0` (and
+// `3.0.1-beta.27` vs `3.0.1`) with matching or unknown commits went from
+// "update offered" to "no update" — the harmful direction, hiding a real
+// update behind a string the comparator could not parse.
+function preChangeVerdict({ current, latest, localCommit, remoteCommit }) {
+  const versionDiffers = latest !== current;
+  const commitsDiffer = localCommit && remoteCommit && localCommit !== remoteCommit;
+  return Boolean(versionDiffers || commitsDiffer);
+}
+const AB_VERSIONS = [
+  ['3.25.0', '3.26.0', false], ['3.25.0', '3.25.0', false], ['3.26.0', '3.25.0', true],
+  ['3.25.0', '4.0.0', false],  ['4.0.0', '3.25.0', true],   ['nightly', '3.25.0', false],
+  ['3.25.0', 'nightly', false], ['3.0.1-beta.27', '3.0.1', false],
+];
+const AB_COMMITS = [['aaaaaaa', 'bbbbbbb'], ['aaaaaaa', 'aaaaaaa'], [null, null]];
+let abSame = 0, abChanged = 0, abUnexpected = 0, abAheadCells = 0;
+for (const [current, latest, isAhead] of AB_VERSIONS) {
+  for (const [localCommit, remoteCommit] of AB_COMMITS) {
+    const args = { current, latest, localCommit, remoteCommit };
+    const before = preChangeVerdict(args);
+    const after = D(args).updateAvailable;
+    if (isAhead) abAheadCells++;
+    if (before === after) { abSame++; if (isAhead) abUnexpected++; }
+    else { abChanged++; if (!isAhead) { abUnexpected++; ok(false, `UNEXPECTED CHANGE: ${current} vs ${latest}, commits ${localCommit}/${remoteCommit}: ${before} -> ${after}`); } }
+  }
+}
+eq(abSame + abChanged, AB_VERSIONS.length * AB_COMMITS.length, `A/B covered all ${AB_VERSIONS.length * AB_COMMITS.length} cells`);
+eq(abChanged, abAheadCells, `EXACTLY the ${abAheadCells} local-ahead cells changed verdict — every other cell is byte-identical to the pre-change expression`);
+eq(abUnexpected, 0, 'no cell outside local-ahead changed, and no local-ahead cell failed to change');
+// Anti-vacuity: the A/B must actually contain both a changed and an unchanged
+// cell, or "the changed set is exactly X" is satisfiable by an empty X.
+ok(abChanged > 0 && abSame > 0, 'CONTROL: the A/B matrix contains both changed and unchanged cells');
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§8  GET /api/write-status — "is it safe to quit?"');
 // ═══════════════════════════════════════════════════════════════════════════
@@ -618,7 +707,10 @@ section('§10  Surfacing, anti-vacuity, and what is NOT enforced');
   const ids = checks.map(c => c.id);
   ok(ids.includes('install-mode'), 'System Check reports the install mode');
   ok(ids.includes('git'), 'System Check reports git availability');
-  const im = checks.find(c => c.id === 'install-mode');
+  // Guarded: a missing row must produce NAMED failures, not a TypeError that
+  // aborts the run and leaves the tally wrong. M14 (dropping both rows) hit
+  // exactly that and printed two reds with no `Failed:` line at all.
+  const im = checks.find(c => c.id === 'install-mode') || { status: '(absent)', detail: '' };
   eq(im.status, 'info', 'the install-mode row is INFO — neither mode is an error');
   ok(/repo/.test(im.detail), 'the install-mode row names the resolved mode');
   // Every check still has the four-field shape the frontends iterate over.

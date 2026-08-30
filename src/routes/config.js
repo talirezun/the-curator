@@ -2087,9 +2087,22 @@ export function compareSemver(a, b) {
  * defect fully intact in the exact state that triggers it. `localAhead`
  * therefore vetoes, and only there.
  *
- * Equal-or-uncomparable versions are UNCHANGED: `cmp === 0` gives
- * `versionDiffers === false` and the verdict is `commitsDiffer`, exactly as
- * before. Genuinely-newer remote is UNCHANGED: `cmp < 0` gives true.
+ * ── Why `versionDiffers` is not simply `cmp < 0` ────────────────────────
+ *
+ * `compareSemver` returns 0 for EQUAL **and** for UNCOMPARABLE, and those are
+ * different facts. A first draft used `cmp < 0` alone; a 24-cell A/B against
+ * the pre-change expression then showed **12** cells changing rather than the
+ * 6 that were intended. The extra six were `nightly` vs `3.25.0`, and
+ * `3.0.1-beta.27` vs `3.0.1`, with matching or unknown commits: the old code
+ * offered an update (the strings differ) and the draft SUPPRESSED it. That is
+ * the harmful direction — hiding a real, wanted update behind a version string
+ * the comparator could not parse.
+ *
+ * So an uncomparable-or-equal pair falls back to the ORIGINAL string
+ * inequality. With that, the A/B changes exactly the six local-ahead cells and
+ * nothing else. (Both of those inputs are near-unreachable in production —
+ * `current` and `latest` both come from a `package.json` — but "unreachable"
+ * is not a reason to ship the wrong fallback direction.)
  *
  * `localAhead` is returned rather than folded away because `updateAvailable:
  * false` now covers two different situations — "you are current" and "you are
@@ -2099,7 +2112,7 @@ export function compareSemver(a, b) {
 export function decideUpdateAvailable({ current, latest, localCommit, remoteCommit }) {
   const cmp = compareSemver(current, latest);
   const localAhead = cmp > 0;
-  const versionDiffers = cmp < 0;
+  const versionDiffers = cmp < 0 || (cmp === 0 && latest !== current);
   const commitsDiffer = Boolean(localCommit && remoteCommit && localCommit !== remoteCommit);
   return {
     updateAvailable: !localAhead && (versionDiffers || commitsDiffer),
