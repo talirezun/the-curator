@@ -128,7 +128,7 @@ first group applies to all three.
 | [api-reference.md](api-reference.md) | REST API reference — the endpoints an integrator is most likely to need. Not exhaustive: some shipped routes (notably the `/api/sync/*` family) have no entry yet, so treat the routers under [`src/routes/`](../src/routes/) as the authoritative list |
 | [model-lifecycle.md](model-lifecycle.md) | Provider/model fallback policy and what happens when a model is retired |
 | [design-system-text-ramp-patch.md](design-system-text-ramp-patch.md) | **The one place `tokens/color.css` intentionally differs from the shipped design-system bundle**, and the diff to apply to the bundle so the two re-converge. Six values: the three dim text rungs, per theme. Carries the before/after contrast measurements and the reason `--text-faint` is deliberately left under the text floor. Read it before "fixing" those tokens back to match the bundle |
-- [design-system-source.md](design-system-source.md) — where the design system master lives, the read-only mirror, and the deliberate divergences.
+| [design-system-source.md](design-system-source.md) | Where the design-system MASTER lives (outside this repo), what the gitignored `the_curator_design_system/` mirror is for, and the deliberate divergences — the v3.25.0 text ramp, and the checkbox border that fails 3:1 as the bundle specifies it |
 | [audits/](audits/) | Historical audit reports per release (snapshots of the codebase quality at each version) |
 
 ---
