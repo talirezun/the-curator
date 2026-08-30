@@ -70,6 +70,11 @@
   border-radius: var(--radius-md);
   border: none;
   background: none;
+  /* STAYS --text-3, deliberately. This button's only content is icon('x'); the
+     meaning is carried by aria-label, so it is a non-text graphic held to WCAG
+     1.4.11's 3:1, not the 4.5 text floor. MEASURED on --surface-overlay: 4.15
+     dark / 4.14 light — clears 3:1 with room, and the dim resting state is what
+     the :hover step below is built on. */
   color: var(--text-3);
   cursor: pointer;
 }
@@ -78,7 +83,10 @@
 .mcpw-header { text-align: center; margin-bottom: 18px; }
 .mcpw-header-icon { color: var(--accent-text); margin-bottom: 6px; }
 .mcpw-title { margin: 0 0 4px; font: var(--type-h2); color: var(--text); }
-.mcpw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+/* --text-3 measured 4.15 dark / 4.14 light on --surface-overlay, under the 4.5
+   AA text floor; --text-2 is 8.09 / 7.26. Every --text-3-on-text change in this
+   file is that same measurement — the surface varies, the verdict does not. */
+.mcpw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 
 /* ── Progress pips ────────────────────────────────────────────────────── */
 
@@ -90,7 +98,8 @@
   flex-wrap: wrap;
 }
 .mcpw-progress.mcpw-hidden { display: none; }
-.mcpw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-3); }
+/* Colours .mcpw-pip-label, which is words. 4.15/4.14 -> 8.09/7.26. */
+.mcpw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
 .mcpw-pip-num {
   width: 22px;
   height: 22px;
@@ -102,13 +111,23 @@
   border: 1px solid var(--border-strong);
   background: var(--surface-inset);
   font-size: var(--text-xs);
-  color: var(--text-3);
+  /* The step NUMBER — text, not a graphic. On --surface-inset --text-3 is
+     4.33 dark / 3.87 light; --text-2 is 8.45 / 6.79. */
+  color: var(--text-2);
 }
 .mcpw-pip-label { font-size: var(--text-xs); white-space: nowrap; }
 .mcpw-pip.active { color: var(--accent-text); }
 .mcpw-pip.active .mcpw-pip-num { border-color: var(--accent); background: var(--accent-tint); color: var(--accent-text); }
-.mcpw-pip.done { color: var(--success-text); }
-.mcpw-pip.done .mcpw-pip-num { border-color: var(--success-text); background: var(--success-tint); color: var(--success-text); }
+/* DONE PIP — the house pattern: tone in the border and the tint, the words at a
+   legible token. --success-text painted the LABEL at 10.07 dark but 4.05 light,
+   and the NUMBER on --success-tint at 8.37 / 3.59 — the light theme is where
+   every status colour in this system falls under 4.5.
+   The label takes --text-2 rather than --text on purpose: a completed step
+   should read as receded next to .mcpw-pip.active, and --text would have made
+   the done pips the BRIGHTEST thing in the row. The number takes --text because
+   it sits inside a tinted circle and is the only glyph there. */
+.mcpw-pip.done { color: var(--text-2); }
+.mcpw-pip.done .mcpw-pip-num { border-color: var(--success-text); background: var(--success-tint); color: var(--text); }
 .mcpw-pip-line { width: 18px; height: 1px; background: var(--border-strong); margin: 0 6px; flex: none; }
 
 /* ── Panels ───────────────────────────────────────────────────────────── */
@@ -131,7 +150,7 @@
   .mcpw-panel { animation: none; }
 }
 
-.mcpw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.mcpw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
 .mcpw-hint-tight { margin-top: -4px; font-size: var(--text-xs); }
 .mcpw-hint strong { color: var(--text-2); }
 .mcpw-hint code,
@@ -151,7 +170,10 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* --attention-text as the BODY TEXT of its own tinted box measured 8.72 dark
+     but 3.21 light — the worst reading in this file. Tone stays in the border
+     and the tint; the sentence is --text (13.22 / 16.39). */
+  color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
 }
@@ -189,7 +211,7 @@
 .mcpw-choice input[type="radio"] { margin-top: 3px; flex: none; }
 .mcpw-choice-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .mcpw-choice-text strong { font-size: var(--text-sm); color: var(--text); }
-.mcpw-choice-text span { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-normal); }
+.mcpw-choice-text span { font-size: var(--text-xs); color: var(--text-2); line-height: var(--leading-normal); }
 
 /* ── Payload preview ──────────────────────────────────────────────────── */
 
@@ -199,7 +221,7 @@
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: var(--track-eyebrow);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .mcpw-pre {
   margin: 0;
@@ -233,7 +255,8 @@
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: var(--track-eyebrow);
-  color: var(--text-3);
+  /* On --surface-inset: 4.33 dark / 3.87 light at --text-3. */
+  color: var(--text-2);
 }
 .mcpw-path { font-size: var(--text-xs); color: var(--text-2); overflow-wrap: anywhere; }
 
@@ -246,16 +269,19 @@
   border-radius: var(--radius-full);
   border: 1px solid var(--success-text);
   background: var(--success-tint);
-  color: var(--success-text);
+  /* Same house pattern as .mcpw-note: the chip's WORDS are --text, the tone is
+     the border and the tint. --success-text here was 8.37 dark / 3.59 light. */
+  color: var(--text);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
 }
 /* The whole-file payload OVERWRITES the user's file — it reads as a
    caution, not a success, even when the copy itself worked. */
+/* Only the TONE changes for the whole-file variant; the label stays --text,
+   inherited from .mcpw-clipchip above. */
 .mcpw-clipchip-whole {
   border-color: var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
 }
 
 /* ── Checklists ───────────────────────────────────────────────────────── */
@@ -283,9 +309,15 @@
 }
 .mcpw-status.mcpw-hidden { display: none; }
 .mcpw-status-error { color: var(--danger-text); background: var(--danger-tint); border: 1px solid var(--danger-text); }
-.mcpw-status-ok { color: var(--success-text); background: var(--success-tint); border: 1px solid var(--success-text); }
-.mcpw-status-warn { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
-.mcpw-status-checking { color: var(--text-3); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
+/* --danger-text is the ONE status colour that clears 4.5 as text in both
+   themes — MEASURED 6.86 dark / 4.73 light on its own tint — so .mcpw-status-error
+   keeps it and is not swept up with its siblings. The other two do not:
+   --success-text 8.37/3.59 and --attention-text 8.72/3.21 on their tints. Their
+   tone moves to the border and the tint, exactly as .mcpw-result-* above already
+   does with its glyph. */
+.mcpw-status-ok { color: var(--text); background: var(--success-tint); border: 1px solid var(--success-text); }
+.mcpw-status-warn { color: var(--text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.mcpw-status-checking { color: var(--text-2); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
 
 /* ── Self-test result (defect 5) ──────────────────────────────────────── */
 
@@ -300,6 +332,13 @@
 .mcpw-result-warn { border-color: var(--attention-text); background: var(--attention-tint); }
 .mcpw-result-error { border-color: var(--danger-text); background: var(--danger-tint); }
 .mcpw-result-head { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text); }
+/* The three GLYPH rules below keep their status colour and are now the only
+   place in this file that does. They are aria-hidden icons, not words, so the
+   floor is WCAG 1.4.11's 3:1 rather than 4.5, and all three clear it on their
+   own tints: --success-text 8.37 dark / 3.59 light, --attention-text 8.72 /
+   3.21, --danger-text 6.86 / 4.73. Recorded honestly: attention's 3.21 clears
+   3:1 by 0.21, so this is the thinnest margin in the file — if --summary-600
+   is ever darkened for the light theme it must be re-measured here, not assumed. */
 .mcpw-result-glyph { display: inline-flex; flex: none; }
 .mcpw-result-ok .mcpw-result-glyph { color: var(--success-text); }
 .mcpw-result-warn .mcpw-result-glyph { color: var(--attention-text); }
@@ -309,7 +348,7 @@
 .mcpw-result-steps li { margin-bottom: 4px; }
 
 .mcpw-stderr { margin-top: 10px; font-size: var(--text-xs); }
-.mcpw-stderr summary { cursor: pointer; color: var(--text-3); }
+.mcpw-stderr summary { cursor: pointer; color: var(--text-2); }
 .mcpw-stderr pre {
   margin: 8px 0 0;
   max-height: 160px;
@@ -318,7 +357,10 @@
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
   border: 1px solid var(--border);
-  color: var(--text-3);
+  /* Captured stderr — the text a user is asked to read when the bridge fails.
+     On --surface-sunken --text-3 is 4.46 dark / 3.74 light; --text-2 is
+     8.71 / 6.56. */
+  color: var(--text-2);
   font-size: var(--text-2xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -344,7 +386,7 @@
 .mcpw-capabilities p { margin: 0 0 8px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
 .mcpw-capabilities ul { margin: 0; padding-left: 18px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-relaxed); }
 .mcpw-capabilities li { margin-bottom: 4px; }
-.mcpw-capabilities-note { margin: 8px 0 0; font-size: var(--text-xs); color: var(--text-3); }
+.mcpw-capabilities-note { margin: 8px 0 0; font-size: var(--text-xs); color: var(--text-2); }
 
 /* ── Actions ──────────────────────────────────────────────────────────── */
 

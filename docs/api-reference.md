@@ -515,6 +515,177 @@ Deletes a job's on-disk record and any remaining staged files entirely. Works by
 
 ---
 
+## Chat (`/api/chat`)
+
+Multi-turn conversation against a domain's wiki. Distinct from `POST /api/query`
+below, which is single-shot and stateless.
+
+Every route in this group validates `:domain` against the real domain list
+(`assertKnownDomain`, imported from `src/brain/files.js` — the same function
+`routes/health.js` uses, so the two cannot drift) **before** anything derived
+from it is built. An unknown domain is a `404`. Conversation ids are
+server-generated UUIDs and are regex-validated before reaching the filesystem.
+
+---
+
+### POST /api/chat/:domain
+
+Send a message. Creates the conversation when `conversationId` is omitted.
+
+**This route is content-negotiated.** Without `stream: true` in the body it
+answers with a single JSON object exactly as it always has. With it, it answers
+with a Server-Sent-Event stream. See [chat-streaming.md](chat-streaming.md) for
+the full contract.
+
+**Request body** `Content-Type: application/json`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | string | Yes | The user's message. Missing/empty → `400`. |
+| `conversationId` | string (UUID) | No | Omit to start a new conversation. |
+| `responseStyle` | `concise` \| `balanced` \| `comprehensive` | No | Answer length/detail. Anything unrecognised normalises to `balanced`. Also selects the output-token budget — see `RESPONSE_STYLES` in `src/brain/chat.js`. |
+| `provider` | `gemini` \| `anthropic` \| `openrouter` | No | Per-chat provider override. Honoured **only** if that provider has a key saved in Settings; otherwise the global active provider answers. |
+| `model` | string | No | Per-chat model override. Allow-listed inside `getProviderInfo()`; anything not offerable on the resolved provider falls back to that provider's default rather than erroring. |
+| `stream` | boolean | No | **`=== true` and nothing looser.** A string `"true"`, a `1`, or a truthy object takes the JSON path. |
+
+None of `responseStyle` / `provider` / `model` is validated at the route,
+deliberately: the model allow-list is applied at `getProviderInfo()`, the single
+producer of the string every SDK receives. A second check here would leave the
+other `generateText` entry points open and create a second hand-maintained copy
+of the guard.
+
+**Success response (JSON path)** `200 OK`
+
+```json
+{
+  "conversationId": "…uuid…",
+  "isNew": false,
+  "title": "First message truncated to 60 chars…",
+  "answer": "…markdown with [source: concepts/rag.md] citation tags…",
+  "citations": ["concepts/rag.md", "summaries/rag-survey.md"],
+  "responseStyle": "balanced",
+  "provider": null,
+  "model": "claude-haiku-4-5",
+  "usage": {
+    "inputTokens": 998,
+    "outputTokens": 247,
+    "cachedReadTokens": 0,
+    "cacheWriteTokens": 0
+  }
+}
+```
+
+- `provider` is what was **asked for** — `null` means "the global active
+  provider was used".
+- `model` is the model that **answered**, read out of the provider's own usage
+  payload, not an echo of the request. It differs from `model` in the request
+  whenever the allow-list refused it or a fallback rung served the call. `null`
+  means "we could not tell", never "it was the default".
+- `usage` carries the served model's four token counts, or `null`. A **partial**
+  usage payload is refused rather than part-filled — three of four numbers
+  priced as if they were four is a confident wrong answer about money. These are
+  deliberately tokens, not a dollar figure: price is a property of the catalogue
+  and of the date, so the arithmetic belongs where the catalogue is.
+
+**Success response (streaming path)** `200 OK`, `Content-Type:
+text/event-stream`
+
+Bare `data:` frames, **no `event:` lines**, discriminated by a `type` key:
+
+```
+data: {"type":"reasoning","text":"…"}
+
+data: {"type":"content","text":"…"}
+
+data: {"type":"done","conversationId":"…","isNew":false,"title":"…","answer":"…","citations":[…],"responseStyle":"balanced","provider":null,"model":"…","usage":{…}}
+
+data: {"type":"error","message":"…"}
+```
+
+The `done` frame carries the **entire** JSON-path result object, spread
+alongside `type` — so the two surfaces cannot disagree about what a turn
+produced.
+
+> **`done.answer` is authoritative and complete. The `content` deltas are a
+> preview of it.** A consumer **replaces** its rendered draft with `done.answer`
+> and never appends. Appending doubles every answer and loses the truncation
+> note, which exists only in the final result. See
+> [chat-streaming.md](chat-streaming.md#5-the-authoritative-return-rule).
+
+`reasoning` frames carry the model's scratchpad and are **never** part of the
+answer. In practice only OpenRouter emits them today; see
+[chat-streaming.md](chat-streaming.md#8-reasoning-is-never-spliced-into-the-answer).
+
+An unknown `type` must be **ignored**, not treated as an error, so an additive
+server change does not become an outage.
+
+**Errors**
+
+Every refusal happens **before** the response headers are flushed, so a `400` or
+`404` reaches the client as a real status code with a JSON body on **both**
+paths. There is no in-band way to report a validation refusal.
+
+| Status | Condition |
+|--------|-----------|
+| `400` | `message` missing or empty; invalid `conversationId` shape. |
+| `404` | Unknown domain. |
+| `500` | LLM provider error, or a filesystem failure. Messages are path-scrubbed. |
+
+On the streaming path an error that occurs **after** the headers flush — a
+provider failure mid-answer, or a user cancel — is delivered as an in-band
+`{"type":"error","message":"…"}` frame with the status already fixed at `200`.
+Its message is scrubbed with the same `scrubPaths` the JSON path uses.
+
+**Cancellation.** Aborting the request from the client is what stops the turn. A
+cancel is honoured before the retry ladder, before the 429/503 backoff (the
+sleep is itself abortable) and before the fallback-chain walk, so it stops
+spending immediately. A *cancelled* turn persists nothing; a turn whose client
+merely stopped watching still runs to completion and **is** persisted.
+
+---
+
+### GET /api/chat/:domain
+
+List a domain's conversations, newest first.
+
+| Query param | Type | Description |
+|---|---|---|
+| `q` | string | Optional case-insensitive filter, matched against each conversation's title **and every message body**. Server-side because titles are just the first user message truncated, so a title-only search cannot find a phrase from a later turn. Length-bounded inside `listConversations`. Repeated `?q=a&q=b` (which Express delivers as an array) is ignored rather than erroring. |
+
+**Response** `200 OK`
+
+```json
+{
+  "conversations": [
+    { "id": "…uuid…", "title": "…", "createdAt": "2026-08-30T10:00:00.000Z", "messageCount": 6 }
+  ]
+}
+```
+
+`messageCount` is read before any filtering decision, so the number shown is the
+conversation's real length rather than the count of matching messages.
+
+---
+
+### GET /api/chat/:domain/:id
+
+The full conversation, including every message.
+
+**Response** `200 OK` — the conversation JSON (see
+[architecture.md → Conversation persistence](architecture.md#conversation-persistence)).
+
+**Errors** — `400` invalid id shape · `404` unknown domain or conversation not found.
+
+---
+
+### DELETE /api/chat/:domain/:id
+
+**Response** `200 OK` — `{ "success": true }`
+
+**Errors** — `400` invalid id shape · `404` unknown domain.
+
+---
+
 ## POST /api/query
 
 Ask a question against a domain's wiki.

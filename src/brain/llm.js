@@ -3769,10 +3769,43 @@ function sleep(ms, signal = null) {
  * @param {number} maxTokens
  * @param {'text'|'json'} responseFormat  - 'json' enables native JSON mode (Gemini only)
  * @param {function|null} onWait          - optional callback(message) called before each retry wait
- * @param {object} opts                   - {provider, onUsage, cachePrefixChars} — all optional
+ * @param {object} opts                   - {provider, model, onUsage, onDelta, cachePrefixChars, signal} — all optional
  * @returns {Promise<string>}  the model's text. The RETURN TYPE IS A BARE STRING
  *   and must stay that way: ~18 call sites across src/ and mcp/ depend on it.
- *   Token usage is delivered out-of-band via opts.onUsage instead.
+ *   Token usage is delivered out-of-band via opts.onUsage instead, and live
+ *   deltas via opts.onDelta.
+ *
+ * ── opts.onDelta — STREAMING, AND THE CONTRACT THAT MAKES IT SAFE ───────────
+ *
+ * `({type: 'content'|'reasoning', text: string}) => void`, called as the model
+ * produces output. Four rules, each load-bearing:
+ *
+ *   • ABSENT ⇒ NOTHING CHANGES. Not "roughly the same" — the same transport,
+ *     the same request object, the same usage reporting, the same truncation
+ *     ladder, the same error classification. Every branch below is a two-arm
+ *     `if (emit)`, matching the shape this file already uses for `signal`.
+ *
+ *   • THE RETURN VALUE IS AUTHORITATIVE AND COMPLETE; DELTAS ARE A PREVIEW OF
+ *     IT. A caller renders deltas as they arrive and then REPLACES that draft
+ *     with the returned string — it must never append the return value to the
+ *     accumulated deltas, which would double every answer. This is not a
+ *     stylistic preference: it is what lets a truncated answer work. On
+ *     MAX_TOKENS in text mode the partial has already been streamed, and
+ *     `handleOutputTokenLimit` returns that same partial PLUS the "this was cut
+ *     off" note — so the note reaches the user through the ordinary return
+ *     value, with no second channel to wire and nothing for a caller to forget.
+ *     JSON mode still throws, so nothing streamed is ever presented as a
+ *     complete structured result.
+ *
+ *   • REASONING IS NEVER IN THE RETURN VALUE. It is the model's scratchpad, and
+ *     it is surfaced live precisely because it is the part that would otherwise
+ *     be dead air (measured on z-ai/glm-5.3-flash: reasoning deltas start at
+ *     ~1.1 s while content deltas do not start until 38-58 s of a 45-63 s
+ *     call). Splicing it into the answer would write a model's private
+ *     deliberation into a wiki page.
+ *
+ *   • ONCE A DELTA IS EMITTED, THE ATTEMPT IS COMMITTED. See `streamCommit`
+ *     below.
  */
 export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {}) {
   // Attempt count lives at module scope (MAX_RETRIES) so the ladder and the
@@ -3794,8 +3827,39 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
   //                      prompt caching. The caller owns the "is this prefix
   //                      reused enough to beat the 1.25x write premium?"
   //                      decision; llm.js only enforces the size floor.
+  // ── COMMIT-AT-FIRST-DELTA ────────────────────────────────────────────────
+  // The retry ladder below (up to MAX_RETRIES attempts, sleeping up to
+  // MAX_RETRY_SLEEP_MS between them) and the fallback walk inside callLLM (up to
+  // every rung of FALLBACK_CHAINS[provider]) both WRAP the provider call. That
+  // is exactly right while nothing has been shown to the user: an attempt that
+  // failed produced no output, so replacing it costs nothing.
+  //
+  // Streaming breaks that premise. The moment one delta has left this module,
+  // text is on the user's screen. Retrying then means a SECOND model's tokens
+  // are appended to a FIRST model's half-sentence — two voices in one answer,
+  // silently, with a green result and a cost line naming only one of them.
+  //
+  // So: once any delta has been emitted for this logical call, that attempt is
+  // committed and a subsequent error is rethrown untouched. A failure BEFORE the
+  // first delta keeps today's ladder behaviour exactly, which is the common case
+  // (auth, 404, an immediate 429) and the case the ladders were built for.
+  //
+  // WHY A MUTABLE OBJECT RATHER THAN A BOOLEAN: the flag is written deep inside
+  // callProvider (through the emitter) and read in TWO places at two different
+  // levels — the catch in this function's retry loop, and the catch in callLLM's
+  // fallback walk. A local boolean could be seen by neither. This object is
+  // created once per generateText call and shared by reference down the whole
+  // stack, so both readers observe the same fact. It is null when not streaming,
+  // which makes both reads inert.
+  const onDelta = typeof opts?.onDelta === 'function' ? opts.onDelta : null;
+  const streamCommit = onDelta ? { emitted: false } : null;
+
   const callOpts = {
     onUsage: typeof opts?.onUsage === 'function' ? opts.onUsage : null,
+    // Both null unless the caller asked to stream; every provider branch tests
+    // for that and falls back to its pre-existing non-streaming transport.
+    onDelta,
+    streamCommit,
     cachePrefixChars: Number.isInteger(opts?.cachePrefixChars) ? opts.cachePrefixChars : 0,
     // v3.3.x: optional AbortSignal. null when absent, so every branch below
     // behaves exactly as it did before for callers that pass no signal.
@@ -3834,6 +3898,20 @@ export async function generateText(systemPrompt, userPrompt, maxTokens = 8192, r
       // classify as retryable, and retrying is precisely what a cancel must
       // not do. Normalised to our tagged error so callers get one shape.
       if (isAbortError(err) || (signal && signal.aborted)) throw makeAbortError();
+      // COMMIT-AT-FIRST-DELTA — checked after abort and before EVERY classifier.
+      // Position matters in both directions. It must come after abort so a
+      // cancel mid-stream still normalises to the tagged abort error every
+      // caller keys on; and before the classifiers so that a 429 or a 503
+      // arriving mid-stream cannot buy a retry whose output would be appended to
+      // text the user is already reading.
+      //
+      // The error is rethrown RAW rather than re-messaged. The friendly
+      // rate-limit / service-unavailable wording below describes a ladder that
+      // has RUN ("we retried and it kept failing") and carries the
+      // `curatorTransient` tag the batch-ingest queue uses to pause a whole
+      // batch — neither of which is true or wanted here, where we deliberately
+      // declined to retry a single streamed answer.
+      if (streamCommit && streamCommit.emitted) throw err;
       // A DETERMINISTIC failure is neither retried NOR re-messaged. Both halves
       // matter: gating only `retryable` would still let the `is503(err)` branch
       // below overwrite an accurate, actionable message with a generic outage
@@ -4086,6 +4164,56 @@ function reportUsage(onUsage, payload) {
 }
 
 /**
+ * Build the single funnel every streamed delta passes through, or null when the
+ * caller asked for no streaming. NULL IS THE WHOLE POINT: every provider branch
+ * tests `emit` and takes its pre-existing non-streaming code when it is null, so
+ * ingest, compile, health-ai, query, diagnostics and sharedbrain — none of which
+ * stream — reach byte-identical transports, bodies and error handling.
+ *
+ * Three contracts live here rather than in three provider branches, because a
+ * guard applied to one call site and not its siblings is this repo's most
+ * repeated defect shape:
+ *
+ *   1. A THROWING CALLBACK MUST NEVER BREAK THE CALL. Same rule and same reason
+ *      as reportUsage above: a delta is a live preview, not the answer. The
+ *      answer is the return value, which is unaffected by a broken renderer.
+ *
+ *   2. `type` IS NORMALISED TO EXACTLY TWO VALUES. Callers switch on it to
+ *      decide what is the answer and what is scratchpad; a third value invented
+ *      by a provider (or by the OpenRouter adapter, which is a separate module
+ *      on a separate agent's clock) would land in whichever branch the caller
+ *      wrote as its `else`. Anything that is not literally 'reasoning' is
+ *      content — the fail-safe direction, since mislabelling content as
+ *      reasoning could HIDE part of the answer, while the reverse only shows
+ *      the user something they were going to see anyway.
+ *
+ *   3. THE COMMIT MARKER IS SET BEFORE THE CALLBACK RUNS, NOT AFTER. See the
+ *      commit-at-first-delta rule in generateText. Setting it after would mean a
+ *      callback that throws leaves `emitted` false, so the retry ladder would
+ *      run a SECOND model and concatenate its text onto whatever the first one
+ *      had already put on screen. Committing first costs, at worst, one retry we
+ *      could have taken; committing last costs two models in one answer.
+ *
+ * An empty delta is dropped before any of that: it commits nothing and wakes
+ * nobody, because it carries no text for the user to have seen.
+ *
+ * @param {function|null} onDelta  the caller's `({type, text}) => void`
+ * @param {{emitted: boolean}|null} commit  shared marker, see generateText
+ * @returns {function|null} `(delta) => void`, or null when not streaming
+ */
+function makeDeltaEmitter(onDelta, commit) {
+  if (typeof onDelta !== 'function') return null;
+  return (delta) => {
+    const text = (delta && typeof delta.text === 'string') ? delta.text : '';
+    if (text.length === 0) return;
+    const type = (delta.type === 'reasoning') ? 'reasoning' : 'content';
+    if (commit) commit.emitted = true;
+    try { onDelta({ type, text }); }
+    catch (err) { console.error(`[llm] onDelta callback threw (ignored): ${err && err.message}`); }
+  };
+}
+
+/**
  * Handle an output-token-limit (MAX_TOKENS) truncation, uniformly across
  * providers and response formats. Exported for offline unit testing.
  *
@@ -4320,6 +4448,10 @@ function undispatchableProviderMessage(provider) {
 async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens, responseFormat, opts = {}) {
   // v3.3.x: null unless the caller threaded one through generateText.
   const signal = opts.signal || null;
+  // Null unless the caller asked to stream. Built once here rather than per
+  // branch so all three providers share one funnel — see makeDeltaEmitter for
+  // the three contracts it enforces.
+  const emit = makeDeltaEmitter(opts.onDelta, opts.streamCommit);
   // Cheapest possible cancellation point — before the client is even built.
   throwIfAborted(signal);
 
@@ -4343,9 +4475,57 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig,
     };
-    const result = signal
-      ? await geminiModel.generateContent(geminiRequest, { signal })
-      : await geminiModel.generateContent(geminiRequest);
+    // ── TRANSPORT SPLIT, AND WHY EVERYTHING BELOW IT IS UNTOUCHED ──────────
+    // `generateContentStream` returns `{stream, response}` where `response` is a
+    // PROMISE for the SDK's own aggregation of the chunks — same shape
+    // `generateContent` resolves to, with `usageMetadata` carried through
+    // (last chunk wins, which is right: Gemini's final chunk holds the
+    // cumulative totals), `candidates[0].finishReason` carried through, and
+    // `.text()` installed by the same `addHelpers`. So the streaming arm
+    // rebuilds a `{response}` object of exactly the shape the non-streaming arm
+    // produces, and the truncation check, the usage report and the return below
+    // read it identically. Nothing downstream of this branch knows which arm ran.
+    //
+    // DELIBERATELY NOT MIGRATING SDKs. @google/genai is the successor and is
+    // where Gemini's thought parts are addressable; swapping it in is its own
+    // release with its own verification, not a rider on this one.
+    let result;
+    if (emit) {
+      const streamed = signal
+        ? await geminiModel.generateContentStream(geminiRequest, { signal })
+        : await geminiModel.generateContentStream(geminiRequest);
+      // Park a no-op rejection handler on the aggregate promise BEFORE
+      // iterating. Both it and the iterator settle from the same underlying
+      // stream, so a mid-stream failure rejects both — and if the `for await`
+      // throws first we abandon this promise, which Node would report as an
+      // unhandled rejection. Attaching a handler marks it handled without
+      // swallowing anything: the real rejection still surfaces, because the
+      // line after the loop awaits this same promise.
+      const aggregated = streamed.response;
+      aggregated.catch(() => {});
+      for await (const chunk of streamed.stream) {
+        let piece = '';
+        // Same guarded read as the truncation path below: a chunk can carry a
+        // blocked or partless candidate, on which the SDK's `.text()` throws.
+        // Swallowing here loses nothing — the aggregate `.text()` after the loop
+        // raises the identical error, so a genuine block still fails the call.
+        try { piece = chunk.text(); } catch { /* no text part in this chunk */ }
+        if (piece) emit({ type: 'content', text: piece });
+      }
+      result = { response: await aggregated };
+    } else {
+      result = signal
+        ? await geminiModel.generateContent(geminiRequest, { signal })
+        : await geminiModel.generateContent(geminiRequest);
+    }
+    // NO REASONING DELTAS ON THIS PROVIDER, STATED RATHER THAN IMPLIED AWAY.
+    // @google/generative-ai 0.24.1 has no notion of a thought part — the string
+    // "thought" appears ZERO times in its dist bundle and its `getText()`
+    // concatenates every part carrying `.text` with no discriminator. There is
+    // therefore nothing to label as reasoning, and the app never requests
+    // thoughts, so none arrive to be mislabelled as content. Gemini streams
+    // content only; the reasoning half of this feature is Anthropic and
+    // OpenRouter today.
     // v3.0.1-beta.8: detect output-budget truncation. Gemini returns
     // `finishReason: "MAX_TOKENS"` on the first candidate when its response
     // exceeded `maxOutputTokens`. Pre-fix this surfaced as the
@@ -4372,12 +4552,12 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
 
   // ── OpenRouter (OpenAI-compatible) ───────────────────────────────────────
   if (provider === 'openrouter') {
-    return await callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal);
+    return await callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal, emit);
   }
 
   // ── Anthropic Claude ─────────────────────────────────────────────────────
   if (provider === 'anthropic') {
-    return await callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal);
+    return await callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal, emit);
   }
 
   // ── Unknown provider — THE `else` THAT IS THE POINT OF THIS STRUCTURE ─────
@@ -4417,8 +4597,14 @@ async function callProvider(provider, model, systemPrompt, userPrompt, maxTokens
  * Everything wire-shaped lives in openrouter-adapter.js; this function owns only
  * the three things that are llm.js's business: usage normalisation, the
  * truncation ladder, and refusing an empty answer.
+ *
+ * `emit` is the streaming delta funnel, threaded down from callProvider the same
+ * way `signal` is rather than rebuilt here — one emitter per logical call is
+ * what makes the commit marker inside it mean "this call has shown the user
+ * something", not "this branch has". Null means the caller did not ask to
+ * stream, and every use of it below is a two-arm branch on exactly that.
  */
-async function callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal) {
+async function callOpenRouter(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal, emit = null) {
   const apiKey = getEffectiveKey('openrouter');
   if (!apiKey) {
     throw new Error(
@@ -4429,9 +4615,30 @@ async function callOpenRouter(model, systemPrompt, userPrompt, maxTokens, respon
     ? _openrouterAdapterFactory({ apiKey })
     : new OpenRouterAdapter({ apiKey });
 
-  const res = await adapter.createChatCompletion({
-    model, systemPrompt, userPrompt, maxTokens, responseFormat, signal,
-  });
+  // ── STREAMING IS THE ADAPTER'S JOB; THIS IS PURE PASS-THROUGH ────────────
+  // openrouter-adapter.js owns everything wire-shaped, SSE parsing included. Its
+  // agreed contract: with `stream` truthy it parses the event stream itself,
+  // calls `onDelta` per delta, and returns THE SAME normalised object it returns
+  // today — `{text, finishReason, model, usage}` — reconstructed from the
+  // stream. That is what lets every line below this call stay untouched: usage
+  // normalisation, the truncation ladder and the empty-response refusal do not
+  // know or care whether the bytes arrived in one piece or many.
+  //
+  // The keys are ADDED rather than always-present-and-falsy so the non-streaming
+  // call is byte-identical to before — the adapter receives the exact object it
+  // has always received, which also keeps every existing suite's adapter double
+  // valid without touching it. Same two-arm shape this file uses for `signal`.
+  const params = { model, systemPrompt, userPrompt, maxTokens, responseFormat, signal };
+  if (emit) {
+    params.stream = true;
+    // `emit` already normalises `type` to exactly 'content' | 'reasoning' and
+    // drops empties, so a delta shape the adapter gets wrong cannot reach the
+    // caller as a third variant. Reasoning matters most on this provider: it is
+    // where the dead air was measured (z-ai/glm-5.3-flash, reasoning at ~1.1 s
+    // against first content at 38-58 s).
+    params.onDelta = emit;
+  }
+  const res = await adapter.createChatCompletion(params);
 
   // Fired BEFORE the truncation check, matching both other providers: a
   // truncated response is a call that ran and was billed.
@@ -4502,8 +4709,14 @@ export function __setOpenRouterAdapterFactory(factory) {
  * Anthropic dispatch. Body moved verbatim out of `callProvider` when dispatch
  * was made total; the logic, the clamp, the cache breakpoint, the streaming
  * transport and every comment below are unchanged.
+ *
+ * `emit` is the streaming delta funnel, threaded down from callProvider the same
+ * way `signal` is. Null means the caller did not ask to stream, in which case
+ * the listeners below are never attached and this function is byte-identical to
+ * its pre-streaming self — including for the several suites whose Anthropic
+ * double returns a bare `{finalMessage}` with no `.on`.
  */
-async function callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal) {
+async function callAnthropic(model, systemPrompt, userPrompt, maxTokens, responseFormat, opts, signal, emit = null) {
   // Note: Anthropic's API has no native JSON mode equivalent. Prompts that ask
   // for JSON rely on the "Return ONLY valid JSON" directive in the system prompt
   // plus the jsonrepair fallback in parseJSON (see src/brain/ingest.js).
@@ -4540,10 +4753,67 @@ async function callAnthropic(model, systemPrompt, userPrompt, maxTokens, respons
   // Same two-branch shape as the Gemini call above, and for the same reason:
   // with no signal the SDK is invoked exactly as before. `RequestOptions.signal`
   // is honoured by messages.stream() (SDK 0.39) and aborts the HTTP request.
-  const message = await (signal
+  //
+  // v3.23: streaming is now ALSO the delta source, which is why this call is
+  // hoisted into a local instead of being awaited inline — the listeners have to
+  // be attached before `.finalMessage()` starts draining. `.finalMessage()`
+  // itself is UNCHANGED and still the only thing awaited, so `stop_reason`,
+  // `extractAnthropicText`, `normalizeAnthropicUsage` and
+  // `handleOutputTokenLimit` all read exactly the object they read before.
+  const stream = signal
     ? client.messages.stream(anthropicBody, { signal })
-    : client.messages.stream(anthropicBody)
-  ).finalMessage();
+    : client.messages.stream(anthropicBody);
+  if (emit) {
+    // The SDK's MessageStream surfaces the two block types separately, which is
+    // the whole reason Anthropic can distinguish scratchpad from answer without
+    // us parsing SSE: `text` fires for text_delta, `thinking` for
+    // thinking_delta. Attached only when streaming to the caller — an untouched
+    // stream is byte-identical to the pre-change call, and a test double that
+    // returns a bare `{finalMessage}` (as several suites in this repo do) stays
+    // valid because `.on` is never reached.
+    //
+    // These are additive listeners, not a transport change: the message is still
+    // assembled by, and read from, `.finalMessage()`. In particular the RETURN
+    // value still comes from `extractAnthropicText`, which matches on
+    // `type === 'text'` and so cannot admit a thinking block — the "reasoning is
+    // never in the answer" rule is structural here rather than enforced.
+    //
+    // MEASURED, AND IT CONTRADICTS THE OBVIOUS EXPECTATION — do not "fix" the
+    // empty-delta drop in makeDeltaEmitter to make reasoning appear here.
+    // Live against `claude-sonnet-5` with an ingest-shaped prompt (the shape
+    // CLAUDE.md warns a toy probe will not reproduce), 4 runs, every one
+    // returning content blocks ["thinking", "text"]:
+    //
+    //   start:thinking 1 · delta:thinking_delta 1 · delta:signature_delta 1
+    //   · start:text 1 · delta:text_delta 17
+    //
+    // So the thinking block is real and the SDK does fire `thinking` — but
+    // `event.delta.thinking` is the EMPTY STRING, and the assembled block ends
+    // up `thinking.length === 0` carrying only a `signature`. Anthropic returns
+    // the deliberation ENCRYPTED, not as plaintext, for the body we send. The
+    // reasoning listener is therefore correctly wired and currently delivers
+    // nothing: 0 reasoning deltas across all 4 runs, with the ground-truth
+    // block types confirming a thinking block existed each time.
+    //
+    // That makes the emitter's empty-drop LOAD-BEARING rather than defensive.
+    // Without it every Anthropic call carrying a thinking block would emit a
+    // `{type:'reasoning', text:''}` delta — which shows the user nothing and,
+    // far worse, COMMITS the call, disabling the retry ladder and the fallback
+    // walk for zero benefit. Anthropic's contribution to removing dead air is
+    // its CONTENT stream (measured first content delta 3.1-4.8 s against a
+    // ~10 s total on that prompt); the reasoning half of this feature is
+    // OpenRouter's in practice today, which is also where it was measured to
+    // matter most.
+    //
+    // The listener stays because it costs nothing and starts working the day
+    // Anthropic surfaces summarised thinking text. Emitting a synthetic "the
+    // model is thinking" signal in its place was considered and REJECTED: this
+    // repo's v3.21.0 doctrine is that an indicator must never be advanced to
+    // look busy, and inventing a delta the provider did not send is that.
+    stream.on('text', (delta) => emit({ type: 'content', text: delta }));
+    stream.on('thinking', (delta) => emit({ type: 'reasoning', text: delta }));
+  }
+  const message = await stream.finalMessage();
   // `.finalMessage()` assembles the streamed events into the same Message object
   // a non-streaming call returns, including the accumulated `usage` block.
   reportUsage(opts.onUsage, {
@@ -4656,6 +4926,18 @@ async function callLLM(systemPrompt, userPrompt, maxTokens, responseFormat, prov
       // would issue MORE provider calls (up to 5 more rungs) after the user
       // asked us to stop — the single worst thing this code could do here.
       if (isAbortError(err) || (opts.signal && opts.signal.aborted)) throw makeAbortError();
+      // ── COMMIT-AT-FIRST-DELTA, THE SECOND OF ITS TWO READERS ──────────────
+      // Same marker object generateText created, same rule, and it has to be
+      // here for the same reason the deterministic gate below had to be: this
+      // loop is INSIDE the retry ladder, so by the time the ladder's copy of the
+      // check runs, the chain has already been walked and a second model has
+      // already streamed its tokens on top of the first one's.
+      //
+      // This is strictly the worse of the two sites to be missing, because a
+      // chain walk switches MODEL as well as attempt — the answer would change
+      // voice mid-sentence, and `_activeFallback` would then report the wrong
+      // model as the one that served.
+      if (opts.streamCommit && opts.streamCommit.emitted) throw err;
       // ── DETERMINISTIC BEATS NOT-FOUND, AND IT MUST BE CHECKED FIRST ────────
       // `generateText`'s retry ladder already gates on this tag — but the ladder
       // wraps THIS loop, so by the time it runs the chain has already been
@@ -4710,6 +4992,12 @@ export const __testing = {
   // and `isDeterministicProviderError` is what stops a 39-second retry of a
   // failure that cannot succeed.
   looksLikeMovingAlias, isDeterministicProviderError,
+  // The streaming delta funnel. Exposed so a suite can drive its truth table
+  // directly — empty-drop, type normalisation, commit-before-callback, and the
+  // throwing-callback rule are four separate contracts, and reaching each of
+  // them through a provider call would need four provider doubles to prove one
+  // function. The real path is exercised too; this is the unit half.
+  makeDeltaEmitter,
   // Transient-failure messaging. Exposed so a suite can EXECUTE the builders
   // for every provider — Gemini's SDK has no injectable client, so the
   // end-to-end path can only reach two of the three — and can drive

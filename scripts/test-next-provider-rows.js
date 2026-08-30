@@ -283,8 +283,14 @@ const stubState = { replacing: null, keysBusy: null };
 // body)(...args)` binds POSITIONALLY and a hand-aligned name list beside a
 // hand-aligned argument list produces NO ERROR when it slips, just every name
 // bound to the wrong value.
-const ROW_CONSTS = ['PROVIDER_ROWS'];
-const ROW_FN_NAMES = ['renderProviderRow'];
+// TX_INFO_GLYPH + infoMark: the "no models yet — cannot be active" reason used
+// to be a `title=` on a NON-FOCUSABLE <span>, i.e. unreachable by keyboard and
+// absent entirely on touch. It is now behind a real button, and that button is
+// built by infoMark — so the row path calls it and it must be extracted, not
+// stubbed: a stub would prove something about the stub, and this is the one
+// place the reason is written anywhere on that row.
+const ROW_CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH'];
+const ROW_FN_NAMES = ['infoMark', 'renderProviderRow'];
 const ROW_INJECTED = {
   escapeHtml: escapeHtmlStub,
   crossWriteTitle: (msg) => 'cross-write: ' + msg,

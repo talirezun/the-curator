@@ -764,8 +764,25 @@ ok(!/preview shell/.test(settingsCode) && !/shipping app’s Settings tab/.test(
 }
 
 // The install button is gated on the cross-view write gate.
-ok(/id="btn-apply-update"[\s\S]{0,200}crossWriteBusy\(\)/.test(settingsCode),
+//
+// The gate now resolves into a NAMED local (`updBusy`) instead of being called
+// inline in the attribute, because the same predicate also decides whether the
+// REASON renders. It used to be `disabled title="Wait for the running ingest
+// or sync to finish"` — and a disabled button is out of the tab order, so that
+// sentence was reachable only by hovering with a mouse. It is now box()'s
+// warningText, i.e. visible text, for everyone.
+//
+// So this is asserted as a CHAIN rather than one regex: the button is gated on
+// `updBusy`, `updBusy` IS `crossWriteBusy()`, and the reason is no longer a
+// tooltip. Breaking any link fails.
+ok(/const updBusy = crossWriteBusy\(\);/.test(settingsCode),
+  'the update box resolves the cross-view write gate once, into a named local');
+ok(/id="btn-apply-update"[\s\S]{0,200}updBusy \? ' disabled'/.test(settingsCode),
   'the Install button is disabled while an ingest or sync holds the write gate (the route 409s in that state anyway)');
+ok(/box\('upd-attention'[\s\S]{0,300}updBusy \? 'Wait for the running ingest or sync to finish/.test(settingsCode),
+  'and the REASON is box()s visible warning text, not a tooltip on a button no keyboard user can reach');
+ok(!/disabled title="Wait for the running ingest/.test(settingsCode),
+  'the hover-only form of that reason is gone and cannot come back unnoticed');
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§7  runUpdate: partial success and failure, with a stubbed fetch');

@@ -10,7 +10,7 @@
 .settings-hint-text {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
   max-width: 66ch;
 }
@@ -56,8 +56,18 @@
   background: var(--success-text);
 }
 .sb-conn-dot-readonly { background: var(--attention-text); }
-.sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sb-conn-state { font-size: var(--text-2xs); color: var(--text-faint); }
+/* The state span carries REAL status — `read-only`, `up to date`, or `N pending`,
+   the only signal on this row that a connection has unpushed work. It painted
+   --text-faint, MEASURED 2.19 dark / 2.34 light: under the 4.5 AA text floor and
+   under even the 3:1 non-text floor, i.e. roughly half of either. It is --text-2
+   now (8.09 / 7.26).
+   The NAME moves to --text rather than staying at --text-2, because --text-2 on
+   both would paint the row's two spans the identical colour and the dim step
+   this pair is built on would be gone. Same reasoning as the v3.17.1 handoff
+   headings: when the dim end of a pair has to move up, move the bright end too.
+   Size (--text-sm vs --text-2xs) still separates them. */
+.sb-conn-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-conn-state { font-size: var(--text-2xs); color: var(--text-2); }
 
 /* ── Disabled (feature-flag off) state ───────────────────────────────── */
 
@@ -97,7 +107,7 @@
   gap: 7px;
 }
 .sb-cta-title svg { flex: none; color: var(--accent-text); }
-.sb-cta-desc { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+.sb-cta-desc { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 
 .sb-add-more { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 
@@ -138,7 +148,7 @@
   margin-left: 6px;
   padding: 2px 8px;
   font: var(--weight-medium) var(--text-2xs)/1.6 var(--font-mono);
-  color: var(--attention-text);
+  color: var(--text);
   background: var(--attention-tint);
   border: 1px solid var(--attention-text);
   border-radius: var(--radius-full);
@@ -155,7 +165,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   margin-bottom: 12px;
 }
 .sb-card-stats > span { display: flex; flex-direction: column; gap: 2px; font-size: var(--text-sm); color: var(--text); }
-.sb-card-stat-label { font-size: var(--text-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: var(--track-eyebrow); }
+.sb-card-stat-label { font-size: var(--text-2xs); color: var(--text-2); text-transform: uppercase; letter-spacing: var(--track-eyebrow); }
 
 /* ── Pending / busy notices ───────────────────────────────────────────── */
 
@@ -170,9 +180,9 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-size: var(--text-sm);
   margin-bottom: 12px;
 }
-.sb-card-pending { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.sb-card-pending { color: var(--text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
 .sb-card-pending > svg, .sb-card-busy-note > svg { flex: none; }
-.sb-card-pending-note { font-size: var(--text-2xs); color: var(--text-3); }
+.sb-card-pending-note { font-size: var(--text-2xs); color: var(--text-2); }
 .sb-card-busy-note { color: var(--text-2); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
 
 /* ── Actions ──────────────────────────────────────────────────────────── */
@@ -246,7 +256,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 }
 .sb-card-cohort-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .sb-card-cohort-row { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--text); }
-.sb-card-cohort-note { color: var(--text-3); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.sb-card-cohort-note { color: var(--text-2); font-size: var(--text-xs); line-height: var(--leading-normal); }
 
 /* ── Status line ──────────────────────────────────────────────────────── */
 
@@ -260,7 +270,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-card-note {
   margin: 0 0 12px;
   font-size: var(--text-2xs);
-  color: var(--text-faint);
+  color: var(--text-2);
 }
 
 /* ── Footer: fellow id + Leave ───────────────────────────────────────── */
@@ -275,7 +285,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 }
 .sb-fellow-pill {
   font-size: var(--text-2xs);
-  color: var(--text-faint);
+  color: var(--text-2);
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--surface-inset);
@@ -286,7 +296,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: none;
   border: none;
   padding: 0;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-xs);
   cursor: pointer;
   text-decoration: underline;
@@ -344,7 +354,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-admin-hint {
   margin: 4px 0 0;
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
 }
 .sb-admin-note {
@@ -352,7 +362,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   align-items: flex-start;
   gap: 8px;
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
 }
 .sb-admin-note > svg { flex: none; margin-top: 1px; }
@@ -389,10 +399,15 @@ a.sb-card-repo:hover { color: var(--text-link); }
   align-items: flex-start;
   gap: 8px;
   font-size: var(--text-xs);
-  color: var(--attention-text);
+  color: var(--text);
   line-height: var(--leading-normal);
 }
-.sb-token-warn > svg { flex: none; margin-top: 1px; }
+/* The warning icon keeps the amber: an icon is a non-text UI component, so its
+   floor is 3:1 (WCAG 1.4.11), which --attention-text clears in both themes
+   (9.11 dark / 3.21 light over this box's tint). The WORDS cannot, at 3.21 in
+   light against a 4.5 floor — so the tone lives in the icon and the enclosing
+   .sb-token-box border, and the sentence is --text. */
+.sb-token-warn > svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 .sb-token-value {
   display: block;
   padding: 8px 10px;
@@ -415,7 +430,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: var(--track-eyebrow);
-  color: var(--text-3);
+  color: var(--text-2);
   font-weight: var(--weight-semibold);
 }
 
@@ -458,7 +473,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   padding: 1px 7px;
   letter-spacing: var(--track-eyebrow);
 }
-.sb-member-meta { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+.sb-member-meta { font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
 
 .sb-revoke-input {
   width: 100%;
@@ -474,7 +489,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sb-revoke-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
 
 .sb-revoke-go { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.sb-revoke-gate-reason { font-size: var(--text-xs); color: var(--text-3); }
+.sb-revoke-gate-reason { font-size: var(--text-xs); color: var(--text-2); }
 
 /* NIT (audit): scoped to .sb-revoke-go, its only user — .btn/.btn-primary/
    .btn-secondary/.btn-ghost are the real cross-view button variants and
@@ -520,7 +535,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 }
 .sb-outcome-headline > svg { flex: none; margin-top: 1px; }
 .sb-outcome-ok .sb-outcome-headline { color: var(--success-text); }
-.sb-outcome-warn .sb-outcome-headline { color: var(--attention-text); }
+.sb-outcome-warn .sb-outcome-headline { color: var(--text); }
 .sb-outcome-danger .sb-outcome-headline { color: var(--danger-text); }
 
 .sb-outcome-erasure { font-size: var(--text-xs); color: var(--text); line-height: var(--leading-normal); }
@@ -541,10 +556,10 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--text-2);
 }
 .sb-outcome-notice-danger { border-color: var(--danger-text); color: var(--danger-text); }
-.sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--attention-text); }
-.sb-outcome-notice-ok { color: var(--text-3); }
+.sb-outcome-notice-warning { border-color: var(--attention-text); color: var(--text); }
+.sb-outcome-notice-ok { color: var(--text-2); }
 
-.sb-outcome-raw summary { cursor: pointer; font-size: var(--text-2xs); color: var(--text-3); }
+.sb-outcome-raw summary { cursor: pointer; font-size: var(--text-2xs); color: var(--text-2); }
 .sb-outcome-summary {
   margin: 7px 0 0;
   font-size: var(--text-xs);
@@ -607,7 +622,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border-radius: var(--radius-md);
   border: none;
   background: none;
-  color: var(--text-3);
+  color: var(--text-2);
   cursor: pointer;
 }
 .sbw-close:hover { background: var(--surface-hover); color: var(--text); }
@@ -619,7 +634,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-header { text-align: center; margin-bottom: 18px; }
 .sbw-header-icon { color: var(--accent-text); margin-bottom: 6px; }
 .sbw-title { margin: 0 0 4px; font: var(--type-h2); color: var(--text); }
-.sbw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+.sbw-subtitle { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 
 /* ── Progress pips ────────────────────────────────────────────────────── */
 
@@ -631,7 +646,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   margin-bottom: 22px;
   flex-wrap: wrap;
 }
-.sbw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-3); }
+.sbw-pip { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
 .sbw-pip-num {
   width: 22px;
   height: 22px;
@@ -643,7 +658,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border: 1px solid var(--border-strong);
   background: var(--surface-inset);
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .sbw-pip-label { font-size: var(--text-xs); white-space: nowrap; }
 .sbw-pip.active { color: var(--accent-text); }
@@ -671,7 +686,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   .sbw-panel { animation: none; }
 }
 
-.sbw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-3); line-height: var(--leading-normal); }
+.sbw-hint { margin: 0 0 14px; font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
 .sbw-note-block {
   margin-top: 12px;
   padding: 9px 11px;
@@ -690,8 +705,8 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-field-row { display: flex; gap: 14px; flex-wrap: wrap; }
 .sbw-field-row .sbw-field { flex: 1; min-width: 180px; }
 .sbw-label { font-size: var(--text-xs); font-weight: var(--weight-medium); color: var(--text-2); }
-.sbw-label-note { font-weight: var(--weight-regular); color: var(--text-faint); }
-.sbw-help { font-size: var(--text-2xs); color: var(--text-3); line-height: var(--leading-normal); }
+.sbw-label-note { font-weight: var(--weight-regular); color: var(--text-2); }
+.sbw-help { font-size: var(--text-2xs); color: var(--text-2); line-height: var(--leading-normal); }
 .sbw-help code, .sbw-hint code, .sbw-steps code { font-family: var(--font-mono); background: var(--surface-inset); padding: 1px 4px; border-radius: 4px; }
 
 .sbw-input {
@@ -717,8 +732,8 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-status.sbw-hidden { display: none; }
 .sbw-status-error { color: var(--danger-text); background: var(--danger-tint); border: 1px solid var(--danger-text); }
 .sbw-status-ok { color: var(--success-text); background: var(--success-tint); border: 1px solid var(--success-text); }
-.sbw-status-warn { color: var(--attention-text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
-.sbw-status-checking { color: var(--text-3); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
+.sbw-status-warn { color: var(--text); background: var(--attention-tint); border: 1px solid var(--attention-text); }
+.sbw-status-checking { color: var(--text-2); background: var(--surface-inset); border: 1px dashed var(--border-strong); }
 
 /* ── Actions row ──────────────────────────────────────────────────────── */
 
@@ -741,7 +756,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-preview.sbw-hidden { display: none; }
 .sbw-preview h4 { margin: 0 0 8px; font-size: var(--text-sm); color: var(--success-text); display: flex; align-items: center; gap: 6px; }
 .sbw-preview dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; }
-.sbw-preview dt { font-size: var(--text-2xs); color: var(--text-3); }
+.sbw-preview dt { font-size: var(--text-2xs); color: var(--text-2); }
 .sbw-preview dd { margin: 0; font-size: var(--text-sm); color: var(--text); }
 
 /* ── Step 2: access confirmation ─────────────────────────────────────── */
@@ -787,7 +802,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
 }
-.sbw-admin-token-block h4 { margin: 0 0 6px; font-size: var(--text-sm); color: var(--attention-text); display: flex; align-items: center; gap: 6px; }
+.sbw-admin-token-block h4 { margin: 0 0 6px; font-size: var(--text-sm); color: var(--text); display: flex; align-items: center; gap: 6px; }
 .sbw-admin-token-block .sbw-hint { margin-bottom: 10px; }
 .sbw-admin-token-block .sbw-token-box { background: var(--surface); }
 
@@ -814,7 +829,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-dht-card input[type="radio"] { margin-top: 3px; flex: none; }
 .sbw-dht-text { display: flex; flex-direction: column; gap: 2px; }
 .sbw-dht-text strong { font-size: var(--text-sm); color: var(--text); }
-.sbw-dht-text span { font-size: var(--text-xs); color: var(--text-3); line-height: var(--leading-normal); }
+.sbw-dht-text span { font-size: var(--text-xs); color: var(--text-2); line-height: var(--leading-normal); }
 
 /* ── Step 4: domain checkboxes ───────────────────────────────────────── */
 
@@ -842,7 +857,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   background: var(--surface-inset);
 }
 .sbw-review dl { margin: 0; display: grid; grid-template-columns: 1fr 1.4fr; gap: 7px 12px; }
-.sbw-review dt { font-size: var(--text-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: var(--track-eyebrow); align-self: center; }
+.sbw-review dt { font-size: var(--text-2xs); color: var(--text-2); text-transform: uppercase; letter-spacing: var(--track-eyebrow); align-self: center; }
 .sbw-review dd { margin: 0; font-size: var(--text-sm); color: var(--text); overflow-wrap: anywhere; }
 
 .sbw-consent { padding: 12px 14px; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--surface-inset); font-size: var(--text-sm); color: var(--text-2); }
@@ -948,7 +963,11 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-weight: var(--weight-semibold);
   color: var(--text);
 }
-.upd-status.upd-attention .upd-headline { color: var(--attention-text); }
+/* Deliberately --text, not --attention-text: the amber headline measured 3.11:1
+   over this status box's own tint in the light theme. The tone is carried by
+   .upd-status.upd-attention's tint. Kept as an explicit declaration rather than
+   deleted so the three status variants still read as one set. */
+.upd-status.upd-attention .upd-headline { color: var(--text); }
 .upd-status.upd-bad .upd-headline { color: var(--danger-text); }
 .upd-status.upd-good .upd-headline { color: var(--success-text); }
 
@@ -957,14 +976,17 @@ a.sb-card-repo:hover { color: var(--text-link); }
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   letter-spacing: var(--track-mono);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .upd-warning {
   display: block;
   margin-top: 7px;
   padding-top: 7px;
-  border-top: 1px solid var(--border-subtle);
+  /* The rule already had a top border, so the amber moves ONTO it — a rail is a
+     non-text component (3:1 floor, 11.03 dark / 3.58 light) where the same colour
+     as TEXT is 3.58 light against a 4.5 floor. No layout change, tone preserved. */
+  border-top: 1px solid var(--attention-text);
   font-size: var(--text-xs);
-  color: var(--attention-text);
+  color: var(--text);
 }
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }

@@ -1,3 +1,17 @@
+/* CONTRAST NOTE FOR THIS FILE — measured in a real browser in both themes,
+   cross-checked offline with a helper validated on controls (identical pair
+   1.00, black-on-white 21.00). TEXT floor 4.5:1, non-text graphic floor 3:1.
+     --text-3         3.87-4.46   fails as TEXT, passes as a graphic
+     --text-faint     2.18-2.34   fails BOTH
+     --success-text   3.79 light  fails as TEXT (10+ dark)
+     --attention-text 3.21 light  fails as TEXT (8.7+ dark)
+     --danger-text    4.73-8.00   passes — deliberately NOT swept up
+     --accent-text    8.08-9.55   passes
+     --text-2         6.56-8.71   passes
+   .ing-duplicate below was already the house pattern and is the template for
+   the rest: `color: var(--text)` on the box, the amber kept on its svg.
+   ────────────────────────────────────────────────────────────────────────── */
+
 /* View: Ingest — owned by views/ingest.js.
    Phase 1: single-file ingest only (form + drop zone + progress + result).
    The batch-queue row/status styling (Phase 2, 2+ files) will be added
@@ -31,11 +45,11 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  color: var(--text);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.ing-sidebar-busy svg { flex: none; margin-top: 1px; }
+.ing-sidebar-busy svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 /* ── Form ─────────────────────────────────────────────────────────────── */
 
@@ -107,15 +121,17 @@
   border-radius: var(--radius-lg);
   padding: 28px 24px;
   text-align: center;
-  color: var(--text-3);
+  color: var(--text-2);
   font: var(--type-body-sm);
   cursor: pointer;
   transition: border-color var(--t-state), background var(--t-state), color var(--t-state);
 }
+/* Hover steps to --text now that the resting state is --text-2 — otherwise the
+   hover would be a no-op. */
 .ing-drop-zone:hover {
   border-color: var(--accent-border);
   background: var(--surface-hover);
-  color: var(--text-2);
+  color: var(--text);
 }
 /* The drag-over state is deliberately LOUDER than hover: hover means "you
    could drop here", drag-over means "let go and this happens". A solid
@@ -242,11 +258,11 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  color: var(--text);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.ing-multi-note svg { flex: none; margin-top: 1px; }
+.ing-multi-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 /* ── Progress bar (ported from src/public/styles.css's .ingest-progress
    family — same v3.0.17 elapsed-clock behaviour, restyled onto this
@@ -270,7 +286,7 @@
 .ing-progress-ring { align-self: flex-start; }
 .ing-progress-note {
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
 }
 
@@ -309,12 +325,12 @@
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   margin: 0 0 12px;
-  color: var(--text-3);
+  color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: var(--track-eyebrow);
 }
 .ing-change-list-flat { padding-left: 18px; margin: 0; }
-.ing-change-list-flat li { margin-bottom: 4px; color: var(--text-3); font-family: var(--font-mono); font-size: var(--text-sm); }
+.ing-change-list-flat li { margin-bottom: 4px; color: var(--text-2); font-family: var(--font-mono); font-size: var(--text-sm); }
 
 /* ── Change records (ported from src/public/styles.css's .change-* family) */
 
@@ -330,7 +346,7 @@
 .ing-change-header {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
-  color: var(--text-3);
+  color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 6px;
@@ -338,7 +354,14 @@
   align-items: center;
   gap: 6px;
 }
-.ing-change-created .ing-change-header { color: var(--success-text); }
+/* These headers are icon + count + words. --success-text painted the WORDS at
+   4.05 light, so the green moves to the icon (a graphic at 4.05, over 3:1) and
+   the header takes --text. --accent-text is NOT moved: it measures 9.03-9.55
+   dark / 8.54-9.13 light, comfortably over the floor. The three header states
+   therefore stay separable — --text, violet, --text-2 — and all three are
+   readable, which the green one was not. */
+.ing-change-created .ing-change-header { color: var(--text); }
+.ing-change-created .ing-change-header svg { color: var(--success-text); }
 .ing-change-updated .ing-change-header { color: var(--accent-text); }
 .ing-change-list { list-style: none; padding: 0; margin: 0; }
 .ing-change-list li {
@@ -361,11 +384,11 @@
   min-width: 4ch;
   color: var(--accent-text);
 }
-.ing-change-detail { color: var(--text-3); font-size: var(--text-xs); white-space: nowrap; flex-shrink: 0; }
+.ing-change-detail { color: var(--text-2); font-size: var(--text-xs); white-space: nowrap; flex-shrink: 0; }
 .ing-change-toggle {
   background: transparent;
   border: none;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-xs);
   cursor: pointer;
   padding: 4px 0;
@@ -373,8 +396,8 @@
   text-decoration-style: dotted;
   text-underline-offset: 3px;
 }
-.ing-change-toggle:hover { color: var(--text-2); }
-.ing-change-empty { color: var(--text-3); font-size: var(--text-sm); font-style: italic; }
+.ing-change-toggle:hover { color: var(--text); }
+.ing-change-empty { color: var(--text-2); font-size: var(--text-sm); font-style: italic; }
 
 /* ── Ingest-report warnings banner (v3.0.1-beta.12+ classifier — see
    classifyIngestEntry's comment in ingest.js for why colors are
@@ -416,7 +439,7 @@
   align-items: baseline;
   gap: 5px 14px;
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .ing-token-model { color: var(--text-2); font-weight: var(--weight-semibold); }
 .ing-token-cache { color: var(--accent-text); }
@@ -434,13 +457,13 @@
   color: var(--text);
   margin: 0 0 4px;
 }
-.ing-queue-confirm-sub { font-size: var(--text-xs); color: var(--text-3); }
+.ing-queue-confirm-sub { font-size: var(--text-xs); color: var(--text-2); }
 
 .ing-queue-section { margin-bottom: 16px; max-width: 480px; }
 .ing-queue-section-label {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
-  color: var(--text-3);
+  color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.6px;
   margin-bottom: 6px;
@@ -471,9 +494,9 @@
   overflow-wrap: anywhere;
   color: var(--text-2);
 }
-.ing-queue-file-size { color: var(--text-3); font-size: var(--text-xs); flex-shrink: 0; }
+.ing-queue-file-size { color: var(--text-2); font-size: var(--text-xs); flex-shrink: 0; }
 .ing-queue-file-rejected .ing-queue-file-name { color: var(--danger-text); }
-.ing-queue-file-reason { color: var(--text-3); font-size: var(--text-xs); flex-shrink: 0; text-align: right; }
+.ing-queue-file-reason { color: var(--text-2); font-size: var(--text-xs); flex-shrink: 0; text-align: right; }
 .ing-queue-file-remove {
   flex: none;
   width: 20px;
@@ -484,6 +507,9 @@
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
+  /* KEEPS --text-3. This button's only content is icon('x'); the meaning is in
+     its aria-label, so it is a graphic at 4.33 dark / 3.87 light, over the 3:1
+     floor and under the 4.5 text floor that does not apply to it. */
   color: var(--text-3);
   cursor: pointer;
 }
@@ -499,7 +525,7 @@
   color: var(--text-2);
 }
 .ing-queue-estimate-row strong { color: var(--text); }
-.ing-queue-estimate-basis { font-size: var(--text-xs); color: var(--text-3); margin-top: 4px; line-height: var(--leading-normal); }
+.ing-queue-estimate-basis { font-size: var(--text-xs); color: var(--text-2); margin-top: 4px; line-height: var(--leading-normal); }
 
 .ing-queue-warnings {
   max-width: 480px;
@@ -508,7 +534,7 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  color: var(--text);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
@@ -537,7 +563,7 @@
 }
 .ing-queue-panel-headtext { min-width: 0; }
 .ing-queue-panel-title { font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--text); }
-.ing-queue-panel-sub { font-size: var(--text-xs); color: var(--text-3); margin-top: 2px; }
+.ing-queue-panel-sub { font-size: var(--text-xs); color: var(--text-2); margin-top: 2px; }
 
 .ing-queue-paused-banner {
   max-width: 640px;
@@ -547,9 +573,11 @@
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
 }
-.ing-queue-paused-title { font-weight: var(--weight-semibold); color: var(--attention-text); margin-bottom: 3px; }
+/* Inside a banner that already carries an amber BORDER and an amber TINT, so
+   the title does not need to spend legibility on the hue as well. */
+.ing-queue-paused-title { font-weight: var(--weight-semibold); color: var(--text); margin-bottom: 3px; }
 .ing-queue-paused-body { font-size: var(--text-sm); color: var(--text-2); line-height: var(--leading-normal); }
-.ing-queue-paused-detail { font-size: var(--text-xs); color: var(--text-3); margin-top: 6px; }
+.ing-queue-paused-detail { font-size: var(--text-xs); color: var(--text-2); margin-top: 6px; }
 
 /* Defect #2 fix: an immediate, unambiguous "this is happening now" line —
    never silent between clicking Cancel/Pause and the next snapshot. */
@@ -557,7 +585,10 @@
   max-width: 640px;
   margin-bottom: 12px;
   font-size: var(--text-sm);
-  color: var(--attention-text);
+  /* No border and no tint here for the amber to retreat into, and it measured
+     3.58 light. --text at --weight-medium against the --text-2 lines around it
+     is the same "look here" signal on a channel both themes can render. */
+  color: var(--text);
   font-weight: var(--weight-medium);
 }
 
@@ -581,8 +612,10 @@
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-.ing-queue-done-unaccounted { color: var(--attention-text); font-weight: var(--weight-medium); }
-.ing-queue-done-health { margin-top: 8px; font-size: var(--text-xs); color: var(--text-3); }
+/* Sits in a row of --text-2 totals, so --text + medium already reads as the odd
+   one out; --attention-text was 3.58 light on this panel's surface. */
+.ing-queue-done-unaccounted { color: var(--text); font-weight: var(--weight-medium); }
+.ing-queue-done-health { margin-top: 8px; font-size: var(--text-xs); color: var(--text-2); }
 
 .ing-queue-panel-controls {
   display: flex;
@@ -618,7 +651,7 @@
   gap: 10px;
 }
 .ing-queue-item-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); color: var(--text); }
-.ing-queue-item-size { font-size: var(--text-xs); color: var(--text-3); flex-shrink: 0; }
+.ing-queue-item-size { font-size: var(--text-xs); color: var(--text-2); flex-shrink: 0; }
 
 .ing-queue-item-pill {
   flex: none;
@@ -627,19 +660,29 @@
   padding: 2px 8px;
   border-radius: var(--radius-full);
   border: 1px solid var(--border);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 /* Class NAMES here come verbatim from the imported statusPillMeta() (see
    ../shared/ingest-queue-logic.js) — never renamed, since that function's
    source text is byte-identical to src/public/app.js's copy and a drift
    tripwire test compares it. */
-.queue-pill-pending    { border-color: var(--border); color: var(--text-3); }
+/* THE PILLS. Class names are fixed by statusPillMeta(); only the colours move.
+   Each pill's TONE is now its border and its tint, and every LABEL is legible:
+     running   --accent-text  8.23 dark / 8.08 light on its tint  — KEPT
+     failed    --danger-text  6.86 / 4.73 on its tint             — KEPT
+     done      --success-text was 8.37 / 3.59                     -> --text
+     cancelled --attention-text was 8.72 / 3.21                   -> --text
+     pending / skipped  --text-3 4.15-4.33 / 3.87-4.14            -> --text-2
+     notstarted --text-faint 2.19 / 2.34, under even 3:1          -> --text-2
+   pending, skipped and notstarted have no tint at all, so they stay the quiet
+   end of the set by having no hue rather than by being hard to read. */
+.queue-pill-pending    { border-color: var(--border); color: var(--text-2); }
 .queue-pill-running    { border-color: var(--accent-border); color: var(--accent-text); background: var(--accent-tint); }
-.queue-pill-done       { border-color: var(--success-text); color: var(--success-text); background: var(--success-tint); }
+.queue-pill-done       { border-color: var(--success-text); color: var(--text); background: var(--success-tint); }
 .queue-pill-failed     { border-color: var(--danger-text); color: var(--danger-text); background: var(--danger-tint); }
-.queue-pill-skipped    { border-color: var(--border); color: var(--text-3); }
-.queue-pill-cancelled  { border-color: var(--attention-text); color: var(--attention-text); background: var(--attention-tint); }
-.queue-pill-notstarted { border-color: var(--border); color: var(--text-faint); }
+.queue-pill-skipped    { border-color: var(--border); color: var(--text-2); }
+.queue-pill-cancelled  { border-color: var(--attention-text); color: var(--text); background: var(--attention-tint); }
+.queue-pill-notstarted { border-color: var(--border); color: var(--text-2); }
 
 /* Per-item: a 20px ring in the row, replacing the 3px bar + separate
    message line. The message is now the ring's own label, so the two can
@@ -656,7 +699,9 @@
   font-size: var(--text-xs);
   color: var(--danger-text);
 }
-.ing-queue-item-stopped-msg { color: var(--attention-text); }
+/* The row's cancelled pill carries the amber; this sentence needs to be read,
+   and --attention-text put it at 3.58 in the light theme. */
+.ing-queue-item-stopped-msg { color: var(--text); }
 .ing-queue-item-result {
   margin-top: 6px;
   font-size: var(--text-xs);

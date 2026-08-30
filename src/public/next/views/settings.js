@@ -936,6 +936,72 @@ function renderCrossWriteBanner(consequence) {
     : '';
 }
 
+// ── THE INFO MARK, USED OUTSIDE A VIEW HEADER ───────────────────────────
+//
+// THE DEFECT THIS REMOVES. This app carries explanatory strings that exist
+// ONLY in a `title=` on a NON-FOCUSABLE <span>. That is hover-only: a
+// keyboard user never reaches it, and on touch there is no hover at all, so
+// the information does not exist. v3.20.0 counted 11 such strings and left
+// them; v3.22.0 built the fix for view headers and recorded the rest as
+// still open. This is that fix, applied to two of them.
+//
+// IT IS THE SHARED COMPONENT'S CONTRACT, NOT A SECOND PATTERN. shared/
+// text.js installs ONE delegated document listener at module scope, and that
+// listener is keyed on `[data-tx-info]` + getElementById — it is not coupled
+// to renderViewHeader in any way. So emitting the same two elements here
+// inherits, for free and with nothing to bind per view: toggle on click,
+// Escape closes AND returns focus to the button, outside-click dismisses,
+// click-inside does not, one panel open at a time. `.tx-vh-info` and
+// `.tx-vh-panel` are likewise unscoped in text.css, so no stylesheet changes.
+// settings.js already imports renderViewHeader from that module, so the
+// listener is guaranteed installed before any of this renders.
+//
+// WHY NOT ADD THIS TO shared/text.js. It belongs there and should move there.
+// It is local today because that file is being edited concurrently by another
+// workstream converting the header sites in the other views, and a shared
+// module is the worst place to take a merge conflict. The duplication is ONE
+// glyph constant, and the suite pins it byte-identical to text.js's INFO_GLYPH
+// so the two cannot drift while they are apart.
+//
+// THE BUTTON KEEPS ITS OWN `title=`. That is not the defect: it is a real
+// <button>, so it is focusable, and its accessible name comes from aria-label.
+// The tooltip is a mouse-only convenience ON TOP OF a keyboard-reachable
+// control, which is the opposite of a tooltip that IS the only carrier.
+//
+// WHAT MUST NEVER GO IN `info`: warnings, costs, spend figures,
+// irreversibility. v3.16.1's rule — a warning behind a click is not a warning.
+// Everything routed through here is neutral explanation of a visible label.
+const TX_INFO_GLYPH =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>';
+
+/**
+ * @param {string} id     stable DOM id for the panel (the button gets id + '-btn')
+ * @param {string} label  accessible name, e.g. 'About the build lane'
+ * @param {string} info   the prose that used to live in a title=
+ * @returns {{btn: string, panel: string}} two fragments; the caller places each
+ *   where its own layout wants them, because a panel is a block and the mark
+ *   is inline. They are only ever emitted together.
+ */
+function infoMark(id, label, info) {
+  const text = typeof info === 'string' ? info.trim() : '';
+  if (!id || !text) return { btn: '', panel: '' };
+  const name = label || 'More information';
+  return {
+    btn:
+      '<button type="button" class="tx-vh-info" id="' + escapeHtml(id) + '-btn"' +
+        ' data-tx-info="' + escapeHtml(id) + '"' +
+        ' aria-expanded="false" aria-controls="' + escapeHtml(id) + '"' +
+        ' aria-label="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '">' +
+        TX_INFO_GLYPH +
+      '</button>',
+    panel:
+      '<div class="tx-vh-panel" id="' + escapeHtml(id) + '" role="group"' +
+        ' aria-label="' + escapeHtml(name) + '" hidden>' + escapeHtml(text) + '</div>',
+  };
+}
+
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
 async function ensureSectionData(section, token) {
@@ -1340,9 +1406,17 @@ function renderUpdateStatus() {
       (v.localCommit && v.remoteCommit
         ? ' <span class="upd-sha">' + escapeHtml(v.localCommit) + ' → ' + escapeHtml(v.remoteCommit) + '</span>'
         : ' (newer commits published)');
-  return box('upd-attention', 'Update available', label, null,
+  // WHY THE REASON IS VISIBLE AND NOT A TOOLTIP. It used to be
+  // `title="Wait for the running ingest or sync to finish"` on the button —
+  // and the button is `disabled` at exactly the moment that string exists, so
+  // it was removed from the tab order and the only way to read it was to hover
+  // it with a mouse. box()'s `warningText` slot renders it as text, in the same
+  // card, for everyone. Same rule as renderCrossWriteBanner directly above.
+  const updBusy = crossWriteBusy();
+  return box('upd-attention', 'Update available', label,
+    updBusy ? 'Wait for the running ingest or sync to finish before installing.' : null,
     'Installing replaces the app’s program files and restarts it. Your knowledge base, keys and sync settings are untouched.',
-    '<button type="button" class="btn btn-primary btn-xs" id="btn-apply-update"' + (crossWriteBusy() ? ' disabled title="Wait for the running ingest or sync to finish"' : '') + '>Install update</button>');
+    '<button type="button" class="btn btn-primary btn-xs" id="btn-apply-update"' + (updBusy ? ' disabled' : '') + '>Install update</button>');
 }
 
 // Small local builder — everything interpolated is either escaped at the
@@ -1985,14 +2059,35 @@ function renderBuildCurrent(k, pickDisabled) {
 
   const warn = (b.source === 'selected' && !b.honoured) ? ' build-current-warn' : '';
 
+  // ── THE CHIP'S MEANING IS NO LONGER HOVER-ONLY ────────────────────────
+  // The chip's explanation (`chip.title`) was a `title=` on a <span>. A span
+  // is not focusable, so that string was unreachable by keyboard and did not
+  // exist at all on touch — and it is the only place the badge's meaning is
+  // stated on this block. It now sits behind a real focusable button.
+  //
+  // ONE instance, so ONE control: this is the single build-lane readout at the
+  // top of the section. renderMeasurementChip renders the same chip once per
+  // model row (up to ~192 of them on a synced OpenRouter catalogue) and is
+  // deliberately NOT converted — 192 extra tab stops would be a worse defect
+  // than the one being fixed, and there the lane note states the vocabulary
+  // once, visibly, for the whole group.
+  //
+  // The panel is a sibling of `.build-current-head`, not a child: `.build-
+  // current` is a flex COLUMN, so a block panel there is full width with no
+  // stylesheet change. Inside the head (a wrapping row) it would be a flex
+  // item and shrink-wrap.
+  const chipInfo = infoMark('settings-build-chip-info', 'About the ' + chip.label + ' badge', chip.title);
+
   return (
     '<div class="build-current' + warn + '" role="status">' +
       '<span class="build-current-head">' +
         '<span class="build-current-provider">' + escapeHtml(name) + '</span>' +
         '<code class="mono build-current-model">' + escapeHtml(b.model) + '</code>' +
-        '<span class="model-badge model-measured ' + escapeHtml(chip.cls) + '" title="' +
-          escapeHtml(chip.title) + '">' + escapeHtml(chip.label) + '</span>' +
+        '<span class="model-badge model-measured ' + escapeHtml(chip.cls) + '">' +
+          escapeHtml(chip.label) + '</span>' +
+        chipInfo.btn +
       '</span>' +
+      chipInfo.panel +
       (why ? '<span class="build-current-why">' + why + clear + '</span>'
            : (clear ? '<span class="build-current-why">' + clear + '</span>' : '')) +
       inert +
@@ -2191,7 +2286,10 @@ function renderProviderRow(p, k, crossBusy) {
         '</span>' +
         '<code class="provider-key-field mono provider-key-empty">not available</code>' +
         '<span class="mono provider-state provider-state-muted">not available in this build</span>' +
-        '<button type="button" class="btn btn-secondary btn-xs" disabled title="Not available in this build">Replace</button>' +
+        // No `title=` on this button: it is `disabled` (so not focusable, so
+        // the tooltip was mouse-only) and it said "Not available in this
+        // build", which is the visible <span> on the line above, verbatim.
+        '<button type="button" class="btn btn-secondary btn-xs" disabled>Replace</button>' +
       '</div>'
     );
   }
@@ -2316,10 +2414,18 @@ function renderProviderRow(p, k, crossBusy) {
   // stated reason reads as a missing feature, not as a safeguard. So say it where
   // the button would have been. Derived from `canBuild`, never from a provider id.
   if (hasKey && !isActive && !canBuild) {
+    // The long form used to be a `title=` on this <span> — non-focusable, so
+    // keyboard-invisible and absent entirely on touch, and it is the ONLY
+    // place the reason is written. It is now behind a real button. The short
+    // form stays visible, because the fact that the control is missing has to
+    // be legible without any interaction at all.
+    const noModels = infoMark(
+      'settings-nomodels-info-' + p.id,
+      'Why ' + p.name + ' cannot be active',
+      p.name + ' has no models available in this build yet, so it cannot run ingest, Health scans or Compile. Your key is saved and this will change on its own once models are available.');
     extraActions.push(
-      '<span class="mono provider-state provider-state-muted" title="' +
-      escapeHtml(p.name + ' has no models available in this build yet, so it cannot run ingest, Health scans or Compile. Your key is saved and this will change on its own once models are available.') +
-      '">no models yet — cannot be active</span>'
+      '<span class="mono provider-state provider-state-muted">no models yet — cannot be active</span>' +
+      noModels.btn + noModels.panel
     );
   }
   if (hasKey && !isActive && canBuild) {

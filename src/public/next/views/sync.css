@@ -27,7 +27,7 @@
   font-size: 12.5px;
   font-weight: var(--weight-medium);
   background: transparent;
-  color: var(--text-3);
+  color: var(--text-2);
   transition: background var(--t-state), color var(--t-state);
 }
 .theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
@@ -47,7 +47,7 @@
 .settings-hint-text {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
   max-width: 66ch;
 }
@@ -80,7 +80,10 @@
   height: 8px;
   border-radius: 50%;
   flex: none;
-  background: var(--text-faint);
+  /* --text-3, not --text-faint: this dot is a non-text UI component, so its floor
+     is 3:1 (WCAG 1.4.11). --text-faint measured 2.26 dark / 2.34 light — under it.
+     --text-3 is 4.27 / 4.14, which clears 3:1 comfortably; it fails only as TEXT. */
+  background: var(--text-3);
 }
 .sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* .sync-domain-state and .sync-domain-footnote styled a per-domain state
@@ -101,11 +104,15 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* Amber is the RAIL and the ICON, never the sentence: --attention-text as text
+     measures 3.11:1 over this box's own tint in the light theme, under the 4.5 AA
+     floor. As a border and a glyph it is a non-text component (3:1 floor) and
+     clears it in both themes. */
+  color: var(--text);
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
 }
-.sync-sidebar-busy svg { flex: none; margin-top: 1px; }
+.sync-sidebar-busy svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 /* ── Setup (unconfigured) card ───────────────────────────────────────── */
 
@@ -150,7 +157,7 @@
   flex-wrap: wrap;
 }
 .sync-repo { flex: 1; min-width: 220px; font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
-.sync-last { font-size: var(--text-2xs); color: var(--text-3); flex: none; }
+.sync-last { font-size: var(--text-2xs); color: var(--text-2); flex: none; }
 
 .sync-status-actions {
   display: flex;
@@ -158,7 +165,19 @@
   gap: 9px;
   flex-wrap: wrap;
 }
-.sync-pending-note { margin-left: auto; font-size: var(--text-xs); color: var(--attention-text); }
+/* Bare amber text with nothing to carry the tone: 3.58:1 on --surface in light,
+   under 4.5. Given the same pill construction .sb-pill-readonly already uses in
+   views/shared.css — tint + amber border + --text label — so the signal survives
+   without a new colour value. */
+.sync-pending-note {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: var(--attention-tint);
+  border: 1px solid var(--attention-text);
+}
 .sync-action-note {
   margin-top: 12px;
   font-size: var(--text-sm);
@@ -181,7 +200,7 @@
 .sync-sb-row > svg { flex: none; color: var(--accent-text); }
 .sync-sb-text { flex: 1; min-width: 240px; font-size: var(--text-sm); color: var(--text-2); }
 .sync-sb-text strong { color: var(--text); font-weight: var(--weight-medium); }
-.sync-sb-meta { font-size: var(--text-2xs); color: var(--text-3); }
+.sync-sb-meta { font-size: var(--text-2xs); color: var(--text-2); }
 
 /* ── History — honest empty state ───────────────────────────────────── */
 
@@ -197,7 +216,7 @@
   margin-bottom: 22px;
 }
 .sync-history-empty .empty-title { font: var(--type-h3); color: var(--text); }
-.sync-history-empty .empty-body { font: var(--type-body-sm); color: var(--text-3); max-width: 62ch; }
+.sync-history-empty .empty-body { font: var(--type-body-sm); color: var(--text-2); max-width: 62ch; }
 
 /* ── Disconnect ──────────────────────────────────────────────────────── */
 
@@ -205,7 +224,7 @@
   background: none;
   border: none;
   padding: 0;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-xs);
   cursor: pointer;
   text-decoration: underline;
@@ -215,7 +234,7 @@
 /* Doesn't carry the shared `.btn` class, so the global `.btn[disabled]`
    rule (shell.css) never applies to it — needs its own disabled treatment. */
 .sync-disconnect-link[disabled] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
-.sync-disconnect-link[disabled]:hover { color: var(--text-3); }
+.sync-disconnect-link[disabled]:hover { color: var(--text-2); }
 
 .sync-disconnect-confirm {
   display: flex;

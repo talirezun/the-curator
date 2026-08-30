@@ -360,7 +360,7 @@ Then, at the **bottom of the rail**, separated by a gap:
 
 | Rail footer | What it's for |
 |---|---|
-| **☀/☾ theme toggle** | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type; control heights and icons deliberately stay put, so buttons don't grow into each other. |
+| **☀/☾ theme toggle** | Switch between the dark and light themes. Also in **Settings → General → Appearance**, alongside a **text size** control — four steps from compact to largest, applied across the whole app and remembered in this browser. It scales the type, button and text-box labels included; control heights and icons deliberately stay put, so buttons don't grow into each other. |
 | **Sync** | Back your wiki up to a private GitHub repository. |
 | **Settings** | Keys, MCP bridge, scan limits, knowledge base folder, version. |
 
@@ -879,13 +879,112 @@ An empty thread opens with *"Ask <domain> anything"*, that domain's page count, 
 3. Click **New chat** (or just start typing — a new conversation is created automatically)
 4. Type your question in the box at the bottom
 5. Press **Send** or use `Cmd + Enter` (Mac) / `Ctrl + Enter` (Windows)
-6. Wait for the reply — usually 10–30 seconds
+6. Watch the answer arrive — it is written out in front of you rather than appearing all at once
 
-> **While it's thinking, a ticking clock next to the spinner counts up the seconds.** Past about 20 seconds, if the model you picked has a measured typical call time on record, the app says so once (e.g. *"…measured at about 6m 22s per call in our testing."*) so a genuinely slow model doesn't read as a hang. For a model with no such measurement, the clock still keeps ticking — it's timing the real call — but no claim is made about how long it should take.
+> **You are not left staring at a spinner.** The answer streams in as the model writes it, and on some models you also see the model *thinking* first. What each stage on screen means — and the one thing streaming honestly does **not** do — is [just below](#watching-the-answer-arrive--streaming-and-the-thinking-region).
 
 > **No domains yet?** Chat says so and offers a **Go to Domains** button. Chat has no create-domain form of its own — there is exactly one place domains are created, and it's [§10](#10-manage-your-domains).
 >
 > **A shortcut worth knowing:** in **Domains**, the **Ask this domain** button on a domain's page drops you into Chat already scoped to it.
+
+### Watching the answer arrive — streaming and the thinking region
+
+Chat used to show one spinner for the entire wait. On a fast model that was fine. On a slow one it was several minutes of a turning circle and a clock, with no way to tell the difference between *working* and *hung* — and the honest answer was that you couldn't tell, because there was nothing on screen that changed.
+
+Now the answer is written out in front of you as the model produces it. On some models you also see the model **thinking** before it starts answering.
+
+#### Why the thinking part matters more than it sounds
+
+It is tempting to treat "see the model think" as a novelty. On a reasoning model it is the whole fix.
+
+Measured on `z-ai/glm-5.3-flash`, a model The Curator offers: the model spends roughly the first **86–91% of the turn** reasoning, and produces no visible answer text at all during it. On a 45–99 second turn, the first *thinking* word lands at about **half a second**; the first *answer* word does not land until **38–58 seconds** in.
+
+Streaming only the answer would therefore have left almost the whole wait exactly as dead as it was before. Streaming the thinking too collapses the time before *anything at all* appears from roughly **38–58 seconds to under a second**.
+
+The numbers above are one model on one kind of question, not a promise. A fast model answers in a few seconds and none of this is noticeable; the point is that the slow case stopped being a blank screen.
+
+```mermaid
+flowchart TB
+    subgraph BEFORE["BEFORE · one spinner for the whole wait"]
+        direction LR
+        B1["0s<br/>you press Send"]
+        B2["0s — 58s<br/>DEAD AIR<br/>a spinner and a clock<br/>nothing else on screen"]
+        B3["58s — 63s<br/>the finished answer<br/>appears all at once"]
+        B1 --> B2 --> B3
+    end
+
+    subgraph AFTER["AFTER · the same 63 seconds, made legible"]
+        direction LR
+        A1["0s<br/>you press Send"]
+        A2["0s — 1s<br/>WAITING<br/>ring, and a clock<br/>counting up"]
+        A3["1s — 58s<br/>THINKING<br/>the model's own notes<br/>scroll past, live"]
+        A4["58s — 63s<br/>ANSWERING<br/>the answer types<br/>itself out"]
+        A1 --> A2 --> A3 --> A4
+    end
+```
+
+**Read the two rows as the same turn, twice.** The turn is not shorter. Nothing about the model changed. What changed is how much of it you can see.
+
+#### What you see, stage by stage
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Waiting: you press Send
+    Waiting --> Thinking: first thinking word arrives
+    Waiting --> Answering: first answer word arrives
+    Thinking --> Answering: the answer starts
+    Answering --> Done: the model finishes
+    Done --> [*]
+
+    Waiting: Waiting
+    Waiting: turning ring + a clock counting up
+    Thinking: Thinking...
+    Thinking: last few lines of the model's notes
+    Thinking: a "Show all" button for the rest
+    Answering: Answering
+    Answering: heading becomes "Thought for 57s"
+    Answering: notes fold away, answer streams in
+    Done: Done
+    Done: formatted answer + citation chips
+    Done: model name and what it cost
+```
+
+| Stage | Heading on screen | What is shown |
+|---|---|---|
+| **Waiting** | — | The two-layer ring, with a clock counting up beside it. This lasts only until the first word of *anything* arrives. |
+| **Thinking** | *Thinking…* | The last few lines of the model's notes, updating in place. **Show all** opens the full text; **Show less** returns to the tail. |
+| **Answering** | *Thought for 57s* | The notes fold themselves away and the answer streams in underneath. **Show reasoning** brings the notes back; **Hide reasoning** puts them away again. |
+| **Done** | *Thought for 57s* | The finished answer, now with headings, bold, lists and `[source: …]` citation chips, plus the model that produced it and what it cost. |
+
+Three details worth knowing:
+
+- **The notes collapse on their own the moment the answer begins.** They have done their job by then, and leaving them open would push the thing you actually asked for below a wall of the model's scratch work. Nothing is deleted — the full text is one click away and is never trimmed on the way in.
+- **Only the last few lines are shown while it streams.** On the model measured above, a single turn produces 6,700–8,400 characters of notes at 31–38 chunks a second. Rendering all of it live is a firehose that scrolls faster than anyone reads. A few lines, updating in place, says the same thing legibly.
+- **The buttons are real buttons.** **Show all** / **Show reasoning** are focusable and reachable by keyboard and screen reader, not hover-only affordances.
+
+#### Three honest limits
+
+**1. Seeing the model think is, in practice, an OpenRouter feature.** This is not a preference and it is not something the app can choose:
+
+| Provider | Answer streams? | Thinking region? | Why |
+|---|---|---|---|
+| **OpenRouter** | Yes | **Yes**, on models that reason | The provider sends the reasoning as readable text alongside the answer. |
+| **Anthropic** | Yes | **No** | Measured live: Claude *does* reason, and the app *does* receive the thinking blocks — but Anthropic returns the deliberation **encrypted**, so what arrives carries no readable text. The listener is wired and will start working the day Anthropic sends plain text; today it correctly shows nothing. |
+| **Gemini** | Yes | **No** | The Gemini SDK the app is pinned to has no notion of a thought part at all, so there is nothing to show. |
+
+On Anthropic and Gemini you still get a streaming **answer** — the wait before the first word is short and the text appears as it is written. You simply do not get a thinking region above it. **The app never invents one.** A "the model is thinking" animation with nothing behind it was considered and rejected: an indicator that moves to look busy is exactly the kind of thing that teaches you to stop believing indicators.
+
+**2. Streaming does not make the answer arrive any sooner.** A 63-second turn is still 63 seconds. The model is not faster, the total is not lower, and the cost is identical. What streaming changes is that the wait is **legible** instead of blank. That is worth a great deal when you are deciding whether to keep waiting or press Stop — and it is worth nothing at all if what you wanted was a quicker answer. If you want that, pick a faster model in the composer's **Model** picker; [§16b](#16b-choosing-your-ai-model) lists the measured call times.
+
+**3. The thinking text is the model's scratchpad, not part of the answer.** It is never spliced into the reply, never written into your wiki, and never stored in the conversation record — so it will not be there when you reopen the thread, and **Compile to Wiki** cannot pick it up. Treat it the way you would treat someone's margin notes: useful for watching them work, not a statement they are standing behind.
+
+#### Other things that stayed true, and one that changed
+
+- **Stop still works throughout.** The **Send** button becomes **Stop** for the whole turn, including while text is streaming. Pressing it stops the wait and stops the spending at the next call boundary, hands your draft question back to the composer, and leaves nothing behind in the thread.
+- **If a streaming turn fails partway through, nothing is saved.** A half-written answer is not an answer, so the app will not persist one and will not seed your next question with it. You will see the error, and the conversation is exactly as it was before you asked.
+- **There is still no progress bar and no percentage.** There is no honest one to draw: a token count is not progress, because there is no total to divide it by. The ring stays in its "running, amount unknown" mode and the clock reports real elapsed time.
+- **The "this model was measured at about N per call" note no longer appears on a streaming turn**, and that is deliberate. That figure is a *total call time*. On a streaming turn the clock before the first word is measuring *time to first word* — a different quantity, for which this project has measured nothing. Putting a total beside it would invite arithmetic it cannot support ("186s measured, 25s elapsed, so I'm 13% through"). Silence beats a number that means something other than what you would take it to mean — and the streamed text is itself the proof that nothing is stuck. On a turn that does *not* stream, the note is unchanged.
 
 ### What a good reply looks like
 
@@ -1690,10 +1789,15 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 ### Appearance and the setup guide
 
-**Settings → General** holds three things:
+**Settings → General** holds four things:
 
 - **Appearance** — a **Dark** / **Light** pair. The same switch is the ☀/☾ button in the rail footer; either one works and they stay in step.
+- **Text size** — four steps from compact to largest, sitting directly under Appearance because it is the same kind of choice. It applies across the whole app and is remembered in this browser.
 - **System check** — below.
+
+> **Text size now reaches the controls too.** Buttons, text boxes and dropdowns are the one place a browser does *not* pass your font settings down on its own — left alone, they fall back to the browser's built-in face at a fixed size. Until now a handful of them did exactly that, so a few labels sat in a different typeface from every word around them and ignored this setting entirely. They now take the app's own typeface and follow the scale like everything else. Control heights and icons still deliberately stay put, so nothing grows into anything else.
+
+> **Faint labels got darker.** A large number of small secondary labels across the app — Domains, Ingest, Sync, Shared Brain, Agent memory, Settings, the setup guide and the MCP wizard — were painted in a grey that measured *below* the recognised contrast floor for readable text, in both themes. They now use the next step up. Nothing moved and nothing was restyled; the same words are simply legible now, which matters most on the small print you read least often and can least afford to misread.
 - **Setup guide** — **Show setup guide** re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). Dismissing that panel is never permanent; this is the one place it can be found again.
 
 ### System check
@@ -1876,7 +1980,7 @@ Five things were measured, and each row in the list shows what came back:
 |---|---|
 | **Price** | US dollars per million tokens, in and out, **as billed today**. This is the number on the row. |
 | **Maximum output tokens** | The hard ceiling on how much the model can write in one call. A bigger ceiling means a long document is less likely to be cut off mid-write. Anthropic ranges from 64,000 to 128,000 depending on the model; every Gemini model on offer is 65,536. |
-| **Thinking tokens** | Some models reason invisibly before answering. **Those hidden tokens are billed as output, and they come out of the same budget as the answer** — so a thinking model both costs more than the visible answer suggests and has less room left for the answer itself. Rows that do this are marked **thinks**. |
+| **Thinking tokens** | Some models reason before answering. **Those tokens are billed as output, and they come out of the same budget as the answer** — so a thinking model both costs more than the visible answer suggests and has less room left for the answer itself. Rows that do this are marked **thinks**. In *chat* on OpenRouter you can now watch that reasoning happen ([§9](#watching-the-answer-arrive--streaming-and-the-thinking-region)); everywhere else — ingest, Health, Compile, and chat on Anthropic or Gemini — it stays invisible. Being able to see it does not make it cheaper. |
 | **JSON reliability** | Ingest asks the model for structured data. Some return clean data; some wrap it in formatting that has to be repaired first (harmless — the repair is routine); one returns data that *cannot* be repaired some of the time. |
 | **Outline coverage** | How many wiki pages the model plans from the same source document. More pages means a finer-grained, better-connected wiki. This is the axis where the price and the result diverge most sharply. |
 
@@ -2326,7 +2430,9 @@ The server stopped or crashed. Go back to your terminal and run `node src/server
 
 **The app animates when I switch sections, and I don't want motion**
 
-The Curator honours your operating system's **Reduce motion** setting. Turn it on (macOS: System Settings -> Accessibility -> Display -> Reduce motion) and every animation in the app stops: the section-change transition, the wizard panels, and the spinner in chat. The progress ring is the one deliberate exception -- it stops rotating, but keeps a slow fade so you can still tell that a long job is running rather than stuck.
+The Curator honours your operating system's **Reduce motion** setting. Turn it on (macOS: System Settings -> Accessibility -> Display -> Reduce motion) and every animation in the app stops: the section-change transition and the wizard panels. The progress ring is the one deliberate exception -- it stops rotating, but keeps a slow fade so you can still tell that a long job is running rather than stuck.
+
+Chat's streamed text was never an animation and is unaffected: words appear as the model writes them, and there is no blinking cursor or typing effect to switch off.
 
 You do not need to restart the app; the change applies as soon as you switch the setting.
 

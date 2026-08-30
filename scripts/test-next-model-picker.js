@@ -480,6 +480,11 @@ const APP_FN_NAMES = ['escapeHtml'];
 // already opened with the REASON. `MEASUREMENT_CHIPS` replaces the three
 // separate measurement badges with one vocabulary.
 const RENDER_CONSTS = ['PROVIDER_ROWS', 'MEASUREMENT_CHIPS', 'ACTIVATION_SKIP_REASONS',
+  // The info mark's glyph. renderBuildCurrent and renderProviderRow both build
+  // one, because the measurement chip's meaning and the "no models yet" reason
+  // were `title=` on non-focusable <span>s — hover-only, so invisible to
+  // keyboard and non-existent on touch.
+  'TX_INFO_GLYPH',
   // v3.16.0 — the four lane states. Extracted, never re-declared here: §39
   // drives the real predicate against the real rows, and a local copy of the
   // string values would keep passing after the module renamed one.
@@ -524,6 +529,10 @@ const RENDER_FN_NAMES = [
   // so omitting them is a ReferenceError at extraction rather than a failing
   // assertion — which is exactly what §0's unresolved-callee detector exists
   // to convert into a named failure.
+  // The info-mark builder. EXTRACTED, not injected: renderBuildCurrent's chip
+  // and renderProviderRow's refusal both route their only written explanation
+  // through it, so a stub would assert nothing about what the user can reach.
+  'infoMark',
   'qualificationFor', 'modelLaneOf', 'laneBuildsWiki',
   'splitSentences', 'withoutLaneClaim',
   'renderModelPickerScope', 'renderModelOption',

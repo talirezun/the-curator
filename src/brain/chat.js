@@ -462,12 +462,99 @@ export function selectRelevantPages(pages, queryText, opts = {}) {
 // (decision / enumerate / synthesis); the response style picks the DETAIL and
 // LENGTH. The style directive is appended AFTER the intent instructions, and it
 // NEVER relaxes the anti-catalogue-dump guardrails — "comprehensive" means
-// deeper reasoning, not a longer list of every page. Each style also carries an
-// output-token cap; on overflow the v3.0.7 text-mode path returns a partial
-// answer with a note rather than failing, so a larger cap is always safe.
+// deeper reasoning, not a longer list of every page.
+//
+// ── `maxTokens` IS A SAFETY CEILING AND A SPEND CEILING. IT IS NOT THE ──────
+// ── LENGTH CONTROL. THE DIRECTIVE IS THE LENGTH CONTROL. ───────────────────
+//
+// That distinction was invisible while every offerable model answered in one
+// pass, and it became a live user-facing defect the moment REASONING models
+// entered the chat catalogue — where they are now the MAJORITY: 101 of the 198
+// entries in the synced OpenRouter catalogue carry `thinks: true`.
+//
+// `max_tokens` bounds the model's HIDDEN DELIBERATION AND ITS ANSWER TOGETHER.
+// Proven, not assumed: on `z-ai/glm-5.3-flash` at max_tokens 2048 the provider
+// returned `finish_reason: "length"` with `completion_tokens` exactly 2048, of
+// which `completion_tokens_details.reasoning_tokens` was 1873 — 91% of the whole
+// budget spent before a word of the answer was written. So the model deliberates
+// first and answers with whatever is left, and on a small budget there is
+// nothing left. A user who picked "Concise" was handed a TRUNCATED answer, which
+// is the opposite of what the label promises.
+//
+// The pre-v3.23 caps (4096 / 8192 / 12288) were not merely tight, they were
+// running at the edge. Measured live on the same model and the same real
+// question, at the OLD caps:
+//     concise      @ 4096  → 1995–2228 completion (49–54% of budget)
+//     balanced     @ 8192  → 7384      completion (90% of budget)
+//     comprehensive@12288  → 10424     completion (85% of budget)
+// 85–90% consumption is one slightly harder question away from truncation, and
+// truncation at 4096 was independently reproduced (`finish_reason: "length"`,
+// ~3400–3600 reasoning tokens) before this change. At the caps below, the same
+// three calls consumed 26% / 33% / 38%.
+//
+// ── RAISING THE CEILING DOES NOT MAKE A MODEL WRITE MORE ───────────────────
+// Measured on the non-reasoning `moonshotai/kimi-k2-0905`, same question, only
+// the ceiling changed: balanced answered 1384 completion tokens at 8192 and 1390
+// at 16384 — a 0.4% difference across a DOUBLED ceiling. The tiers stayed
+// ordered by their DIRECTIVES at the new caps (1366 / 1390 / 3095 tokens), and
+// none came within 6× of its ceiling. Honest qualifier, because it slightly
+// weakens the rule: concise did drift up ~30% (803→1094, 1048→1366 across two
+// paired runs) — the same magnitude as the run-to-run variance at a FIXED cap,
+// so there is a weak target effect on some models, not a clean zero. It does not
+// change the design: concise stayed unambiguously the shortest tier.
+//
+// ── WHY THE CEILING MAY NOT SIMPLY BE MADE HUGE ────────────────────────────
+// Every value here must clear the SMALLEST output ceiling any reachable chat
+// model can have, because an over-large `max_tokens` is not always clamped:
+//   • OpenRouter is sent `provider: {allow_fallbacks:false, require_parameters:
+//     true}`, so an unsatisfiable `max_tokens` can be REFUSED rather than
+//     clamped. Measured: `moonshotai/kimi-k2-0905` accepts 65536 and returns
+//     HTTP 400 at 100352 — which is that model's OWN published `maxOutput`. A
+//     model's catalogue ceiling is therefore optimistic; the serving endpoint's
+//     is the real one, and we cannot read it.
+//   • A refusal on that path is classified DETERMINISTIC (v3.15.1), so it does
+//     NOT walk the fallback chain — the user gets an error, not an answer.
+//   • The binding policy number is `APP_OUTPUT_FLOOR_TOKENS` = 24576 in
+//     openrouter-eligibility.js: the admission floor for the synced catalogue,
+//     so a future sync may legitimately admit a chat model publishing exactly
+//     that. (The live catalogue's current minimum is 32000, which is luck, not a
+//     guarantee.) Gemini clamps server-side at 65536 and Anthropic is clamped
+//     client-side by `anthropicMaxOutputTokens` (64000 for haiku-4-5), so
+//     neither of those is the binding constraint — OpenRouter is.
+// 20480 is the largest value here and leaves 4096 tokens of headroom under
+// 24576. Do not raise these past that floor without re-deriving it.
+//
+// ── DO NOT "FIX" THIS WITH OpenRouter's `reasoning` PARAMETER ──────────────
+// It looks like the obvious lever and all three variants were measured:
+//   • `reasoning.max_tokens: 1024`  → drives reasoning to ZERO. It DISABLES
+//     reasoning, it does not cap it.
+//   • `reasoning.effort: 'low'`     → same: zero reasoning tokens.
+//     Either would silently delete the live thinking-region the chat view now
+//     renders, which is a feature, not overhead.
+//   • `reasoning.exclude: true`     → A TRAP. It still burns the full reasoning
+//     budget and still truncates the answer; it merely HIDES the stream. It
+//     changes what you can see, not what you are billed for or what gets cut.
+// The budget is the correct lever. The directive is the length control.
+//
+// On overflow the v3.0.7 text-mode path still returns a partial answer with a
+// note rather than failing, so these remain ceilings that degrade gracefully.
+//
+// ── THE ORDERING INVARIANT NOW MEANS SPEND, NOT LENGTH ─────────────────────
+// `concise < balanced < comprehensive` is KEPT and is still load-bearing, but
+// read it correctly: it is no longer a claim about how long each answer will be
+// (the directives make that claim, and they are what the live tests check). It
+// is a WORST-CASE SPEND ordering — a user who picks Concise is guaranteed a
+// strictly lower ceiling on what one turn can cost than a user who picks
+// Comprehensive. That guarantee is why the ordering must not be flattened to one
+// shared constant, even though every value is now large enough that no style
+// truncates in normal use.
 export const RESPONSE_STYLES = {
   concise: {
-    maxTokens: 4096,
+    // 3× the old 4096. Absorbs a heavy deliberation (measured 1500–3600 tokens
+    // on a real question, and v3.16.0 recorded this model spending 79–86% of its
+    // output on reasoning) and still leaves thousands of tokens for the short
+    // answer the directive asks for.
+    maxTokens: 12288,
     directive:
       'RESPONSE STYLE — CONCISE: Keep the answer short and direct — 1–3 tight ' +
       'paragraphs (or a short list). Lead with the answer in the first sentence. ' +
@@ -479,7 +566,12 @@ export const RESPONSE_STYLES = {
     // running LONGER than comprehensive on content-rich questions): a soft
     // moderate-length directive keeps balanced in the middle so the tiers are
     // reliably ordered concise < balanced < comprehensive.
-    maxTokens: 8192,
+    //
+    // 2× the old 8192. Measured at 8192 on a reasoning model this style used
+    // 7384 of its 8192 tokens — 90% — on an ordinary question; at 16384 the same
+    // call used 5457, i.e. 33%. The directive is unchanged, so what moved is the
+    // headroom, not the intended length.
+    maxTokens: 16384,
     directive:
       'RESPONSE STYLE — BALANCED: A well-rounded answer that covers the main ' +
       'points and their important nuances in a few short paragraphs. Aim for the ' +
@@ -487,7 +579,13 @@ export const RESPONSE_STYLES = {
       'takeaways, skip the exhaustive enumeration of every detail.',
   },
   comprehensive: {
-    maxTokens: 12288,
+    // 1.67× the old 12288 — the smallest multiplier of the three, because this
+    // tier already had the most room. It still needed raising: it asks for the
+    // LONGEST answer out of a budget that hidden reasoning eats FIRST, so it is
+    // the tier most exposed to truncation, not the least. Measured at 12288 it
+    // used 10424 tokens (85%) with 8874 of them reasoning; at 20480 it used 7848
+    // (38%) and the answer itself grew from 1550 to 2804 tokens.
+    maxTokens: 20480,
     directive:
       'RESPONSE STYLE — COMPREHENSIVE: Be thorough and complete — this should be ' +
       'your LONGEST, most detailed answer. Cover every relevant angle, sub-point, ' +
@@ -1023,6 +1121,35 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
     // no-signal caller is on a byte-identical path to the pre-cancellation
     // code, with no branch here to get the two cases wrong.
     signal: opts.signal,
+    // ── STREAMING: A PREVIEW CHANNEL, NOT A SECOND RESULT (v3.23) ──────────
+    //
+    // `({type:'content'|'reasoning', text}) => void`, forwarded verbatim from
+    // the caller. PASSED UNCONDITIONALLY, for exactly the reason `signal` is
+    // one line above: generateText does `typeof opts?.onDelta === 'function'
+    // ? opts.onDelta : null`, so `onDelta: undefined` and an omitted key are
+    // the same path, and a non-streaming caller is byte-identical to the
+    // pre-streaming code with no branch here to get the two cases wrong.
+    //
+    // NOTHING BELOW THIS CALL MOVES, AND THAT IS THE DESIGN. `rawAnswer` is
+    // still the authoritative, complete text; deltas are a preview of it.
+    // stripCatalogueEcho and the [source:] extraction still run ONCE, on the
+    // whole answer, after the call returns — and they cannot be made
+    // incremental, which is precisely why generateText's contract requires the
+    // consumer to REPLACE its rendered draft with the return value rather than
+    // append to it. A consumer that appends both doubles the answer and keeps
+    // the un-stripped, un-cited draft.
+    //
+    // Two consequences worth naming, because neither is obvious from here:
+    //   • The deltas the user sees are PRE-stripCatalogueEcho. A catalogue-echo
+    //     blob can therefore flash on screen and then vanish when the return
+    //     value replaces the draft. That is the correct direction: the safety
+    //     net still governs everything persisted and everything finally shown.
+    //   • A MAX_TOKENS truncation in text mode does NOT throw — llm.js's
+    //     handleOutputTokenLimit RETURNS the partial plus its "this was cut
+    //     off" note. So the note arrives through this ordinary return value,
+    //     is stripped and cited like any other answer, and is persisted. There
+    //     is no second channel for it and nothing here to remember to wire.
+    onDelta: opts.onDelta,
     onUsage: (u) => {
       if (!u) return;
       if (typeof u.model === 'string' && u.model) usedModel = u.model;
@@ -1070,6 +1197,39 @@ export async function sendMessage(domain, conversationId, userMessage, opts = {}
   // The consequence is that CANCELLATION IS NOT A GUARANTEE OF NON-PERSISTENCE,
   // and that is intended. What a cancel guarantees is that we stop WAITING and
   // stop SPENDING at the next call boundary — see llm.js's own honest-scope note.
+  //
+  // ── STREAMING DOES NOT CHANGE THIS RULE, AND HERE IS WHY (v3.23) ─────────
+  //
+  // Streaming introduces a case the rule above never faced: bytes ALREADY
+  // RENDERED to the user, and then a throw. The decision is that the rule
+  // stands unchanged — threw ⇒ nothing persisted — and it is a decision, so it
+  // is argued rather than asserted. FOUR reasons, in order of weight:
+  //
+  //   1. The accumulated deltas have not been through this function's OWN
+  //      pipeline. stripCatalogueEcho has not run on them and no [source:]
+  //      citation has been extracted from them. Persisting them would write a
+  //      message shaped unlike every other message in the file — including,
+  //      specifically, the catalogue-echo blob that safety net exists to
+  //      remove — into the history that seeds the NEXT prompt.
+  //   2. It is the "save what we have" improvement the paragraphs above already
+  //      forbid, arriving through a new door. A user turn with a half-answer
+  //      under it is exactly the half-written turn this file refuses to create.
+  //   3. The one case where a partial IS worth keeping never reaches here as a
+  //      throw. A text-mode MAX_TOKENS truncation RETURNS (partial + note) via
+  //      handleOutputTokenLimit, so it takes the ordinary return path, is
+  //      stripped and cited, and persists. What remains on the throw path is a
+  //      user Stop or a genuine mid-stream failure — neither is an answer.
+  //   4. The return half's own justification does not extend to it. That half
+  //      persists a post-cancel turn because "the money is already spent AND
+  //      the answer already exists". After a mid-stream throw the money is
+  //      spent but the answer does not exist. Completeness, not spend, is what
+  //      that argument turns on.
+  //
+  // NOT a reason, though it is the tempting one: "the client's draft is
+  // provisional and gets replaced by the authoritative return value". On the
+  // throw path there IS no return value, so nothing replaces the draft — what
+  // the user is left looking at is whatever the consumer does with the error.
+  // That is a consumer concern and it is not an argument about this write.
   conversation.messages.push({ role: 'user', content: userMessage });
   conversation.messages.push(buildAssistantMessage(answer, uniqueCitations, usedProvider, usedModel, usedUsage));
   await writeConversation(domain, conversation);

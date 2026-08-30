@@ -52,7 +52,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 ### What you can do with it
 
 - **Ingest** any PDF, article, or note — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
-- **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Conversations are saved and survive server restarts
+- **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Answers stream in as the model writes them rather than landing all at once, and on OpenRouter you can watch a reasoning model think first. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
 - **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines
 - **Sync** your entire wiki, chat history and working state across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with Push only / Pull only alongside it) for daily use
@@ -121,6 +121,7 @@ first group applies to all three.
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |
 | [architecture.md](architecture.md) | System design, data flow, module reference |
+| [chat-streaming.md](chat-streaming.md) | How a chat turn streams from the provider to the screen — the frame format, how reasoning is kept out of the answer, and why a streamed attempt is never retried or handed to a fallback model |
 | [api-reference.md](api-reference.md) | REST API reference — the endpoints an integrator is most likely to need. Not exhaustive: some shipped routes (notably the `/api/sync/*` family) have no entry yet, so treat the routers under [`src/routes/`](../src/routes/) as the authoritative list |
 | [model-lifecycle.md](model-lifecycle.md) | Provider/model fallback policy and what happens when a model is retired |
 | [audits/](audits/) | Historical audit reports per release (snapshots of the codebase quality at each version) |

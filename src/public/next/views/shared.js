@@ -164,7 +164,7 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // The ONE text system in /next (shared/text.js). The view header owns the
 // eyebrow, the title and the info mark; it has NO parameter that renders a
 // paragraph under the title, which is what this view used to do.
-import { renderViewHeader } from '../shared/text.js';
+import { renderViewHeader, renderStatus } from '../shared/text.js';
 
 function freshState() {
   return {
@@ -418,8 +418,12 @@ function renderSidebar(token) {
   // directly beneath it, which either names the cohorts or says "Not enabled
   // on this install." — so the label restated what the list already showed.
   // Hiding 30 characters behind a click would be worse than either keeping
-  // or deleting them. It also sat in `.sidebar-hint`, which paints --text-3
-  // (4.27 dark / 4.14 light, under the 4.5 AA floor).
+  // or deleting them. It also sat in `.sidebar-hint`, which AT THE TIME
+  // painted --text-3 (4.27 dark / 4.14 light, under the 4.5 AA floor). That
+  // half is now historical: shell.css paints both sidebar empty-state roles
+  // --text-2, so the cut rests on the duplication reason alone. The three
+  // `.sidebar-note` lines below are the functional empty states that fix
+  // covers — measured 8.45 dark / 6.79 light against --surface-inset.
   setSidebar(
     '<div class="sidebar-title">Shared Brain<span class="sb-beta-pill">beta</span></div>' +
     body,
@@ -643,28 +647,58 @@ function renderCard(conn) {
 function renderActions(conn, card, busy, readOnly, pushBusyDomain, mirrorBusy) {
   const pushDisabled = busy || !!pushBusyDomain;
   const pullSynthDisabled = busy || mirrorBusy;
-  let html = '<div class="sb-card-actions">';
+
+  // ── WHY A CONTROL IS GREYED OUT IS NOW VISIBLE TEXT, NOT A TOOLTIP ─────
+  // All three buttons below carried a `title=` explaining that another write
+  // holds the domain — and each was set on exactly the condition that also
+  // set `disabled`. A disabled button is removed from the tab order, so that
+  // sentence could not be reached by keyboard at all, and on touch, where
+  // there is no hover, it did not exist. It was also the ONLY place the
+  // reason was written anywhere in this view: unlike settings.js, this card
+  // has no equivalent of renderCrossWriteBanner.
+  //
+  // So it renders as a status box ABOVE the row, unfolded, for everyone.
+  // That is the house rule this repo already applies to the same class of
+  // message (settings.js's renderCrossWriteBanner) and the same rule
+  // v3.22.0 used to keep a data-loss warning out from behind an info mark:
+  // nothing that warns, costs money or is irreversible sits behind a
+  // gesture. Push, Pull and Synthesize all spend tokens and write pages.
+  //
+  // ONE box, not three: the two conditions name different domains (a
+  // contributing domain vs the shared-<slug> mirror — see domainsForAction),
+  // so both are stated when both are true, but a card is one place and one
+  // note there is easier to read than a note per button.
+  const blocked = [];
+  if (pushBusyDomain && !readOnly) blocked.push('a contributing domain');
+  if (mirrorBusy) blocked.push('this Shared Brain’s mirror domain');
+  const busyNote = blocked.length
+    ? renderStatus({
+        state: 'attention',
+        title: 'Some actions are paused while another write finishes',
+        detail: 'Another write is already running for ' + blocked.join(' and ') +
+          '. The buttons below come back on their own when it finishes.',
+      })
+    : '';
+
+  let html = busyNote + '<div class="sb-card-actions">';
 
   if (!readOnly) {
     if (card.pushConfirmOpen) {
       html += renderPushConfirm(conn, pushDisabled);
     } else {
-      html += '<button type="button" class="btn btn-primary" data-sb-action="push-open"' + (pushDisabled ? ' disabled' : '') +
-        (pushBusyDomain ? ' title="Another write is already running for a contributing domain."' : '') + '>' +
+      html += '<button type="button" class="btn btn-primary" data-sb-action="push-open"' + (pushDisabled ? ' disabled' : '') + '>' +
         icon('sparkles', 14) + ' ' + (card.acting === 'push' ? 'Pushing…' : 'Push contributions') + '</button>';
     }
   }
 
-  html += '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + (pullSynthDisabled ? ' disabled' : '') +
-    (mirrorBusy ? ' title="Another write is already running for this mirror domain."' : '') + '>' +
+  html += '<button type="button" class="btn btn-secondary" data-sb-action="pull"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
     icon('refresh', 14) + ' ' + (card.acting === 'pull' ? 'Pulling…' : 'Pull updates') + '</button>';
 
   if (!readOnly) {
     if (card.synthesizeConfirmOpen) {
       html += renderSynthesizeConfirm(pullSynthDisabled);
     } else {
-      html += '<button type="button" class="btn btn-ghost" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') +
-        (mirrorBusy ? ' title="Another write is already running for this mirror domain."' : '') + '>' +
+      html += '<button type="button" class="btn btn-ghost" data-sb-action="synthesize-open"' + (pullSynthDisabled ? ' disabled' : '') + '>' +
         icon('sparkles', 14) + ' ' + (card.acting === 'synthesize' ? 'Synthesizing…' : 'Run synthesis (admin)') + '</button>';
     }
   }

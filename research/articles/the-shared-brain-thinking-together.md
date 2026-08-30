@@ -149,7 +149,7 @@ For example:
 - A researcher may contribute notes from a specific literature stream.
 - A founder may contribute strategic lessons from a market-building project.
 
-The contributed knowledge is pushed to a shared Git repository. The Curator then synthesises contributions into a [collective wiki](../../docs/shared-brain.md#how-it-works).
+The contributed knowledge is pushed to a shared Git repository. The Curator then synthesises contributions into a [collective wiki](../../docs/shared-brain.md#3--architecture).
 
 This is not just file merging.
 

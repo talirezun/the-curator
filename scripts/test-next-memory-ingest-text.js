@@ -449,25 +449,94 @@ for (const [name, css] of [['memory.css', memCss], ['ingest.css', ingCss]]) {
 // THE SUB-FLOOR TOKEN, retired for body prose BY CONSTRUCTION rather than by
 // a colour sweep. memory.css's own comments measure --text-3 at 3.87–4.38
 // across every surface in the file, against a 4.5:1 AA floor.
-{
-  const stripped = stripComments(memCss);
-  const hits = [...stripped.matchAll(/^([^{}]+)\{([^}]*)\}/gm)]
-    .filter(([, , decls]) => /color:\s*var\(--text-3\)/.test(decls))
+//
+// ── THIS GUARD HAD GONE VACUOUS, AND THAT IS WORTH RECORDING ─────────────
+// It read every rule in memory.css carrying `color: var(--text-3)` and asserted
+//     hits.every((sel) => /mem-row-quiet|mem-j-rej/.test(sel))
+// Both of those selectors have since been removed from memory.css, and so has
+// every other --text-3 declaration in it. `hits` is therefore EMPTY, and
+// `[].every(...)` is TRUE — so the assertion passed while checking nothing, and
+// the allow-list was a stale exemption matching no selector at all. A guard that
+// cannot fail is this repo's single most recurring defect, and it had BOTH of
+// its known shapes at once: the vacuous-`.every()` shape and the
+// exemption-matching-nothing shape.
+//
+// Rewritten with a real corpus and an assertion that bites:
+//  1. It scans ingest.css TOO. That file was never scanned, and it holds the
+//     ONE legitimate --text-3 declaration in this pass's two files — so
+//     extending the sweep both gives the detector something to find and makes
+//     the exemption below a measured judgement rather than a leftover.
+//  2. memory.css is held to a COUNT of zero, not to `.every()`. A count cannot
+//     go vacuously true.
+//  3. The exemption is NAMED, carries its measured value, and is asserted
+//     PRESENT — a survivor that silently disappears is as much a regression as
+//     a new failure, and asserting it proves this is a FLOOR rule rather than a
+//     blanket ban on the token.
+//  4. The rule-splitting regex drops the `^`/`m` anchoring the old one used,
+//     and anchors the property so `color:` cannot match the tail of another
+//     property name. Both parsers were run over both real files and agree
+//     today (90 and 134 rules), so nothing was being missed on disk — but on
+//     synthetic inputs the old form was wrong in three measured ways, each
+//     covered by a control in §8: a rule that is not first on its line
+//     returned NOTHING; a rule inside @media reported its selector as
+//     `@media (…)`, so an exemption match against it was meaningless; and
+//     `border-color: var(--text-3)` FALSELY matched, which would flag a
+//     non-text component that clears its own 3:1 floor at 4.15-4.38.
+/** Every rule declaring `color: var(--text-3)`, as its selector text. Hoisted to
+ *  module scope so §8's positive controls can drive THIS function rather than a
+ *  look-alike regex — a control over a copy proves the copy works, not the guard. */
+function text3AsColor(css) {
+  return [...stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, , decls]) => /(?:^|;)\s*color\s*:\s*var\(--text-3\)/.test(decls))
     .map(([, sel]) => sel.trim().replace(/\s+/g, ' '));
-  ok('memory.css: --text-3 is no longer a BODY-PROSE colour anywhere. The adopted ' +
-     'description role is --text-2 (8.34 dark / 7.26 light), so the retirement is a ' +
-     'consequence of adoption, not a separate re-colouring. Remaining uses: ' +
-     (hits.join(' | ') || 'none'),
-     hits.every((sel) => /mem-row-quiet|mem-j-rej/.test(sel)), hits.join(' | '));
+}
+// Exempt ONLY where the element's content is a graphic, so WCAG 1.4.11's 3:1
+// floor governs instead of 4.5:1. Hand-maintained judgement, stated as such.
+const NON_TEXT_EXEMPT = { 'ingest.css': ['.ing-queue-file-remove'] };
+
+{
+  const CSS_FILES = [['memory.css', memCss], ['ingest.css', ingCss]];
+  const offenders = [];
+  for (const [name, css] of CSS_FILES) {
+    const allowed = NON_TEXT_EXEMPT[name] || [];
+    for (const sel of text3AsColor(css)) if (!allowed.includes(sel)) offenders.push(`${name} { ${sel} }`);
+  }
+  ok('memory.css AND ingest.css: --text-3 is not a TEXT colour anywhere. The adopted description role is ' +
+     '--text-2 (8.34 dark / 7.26 light), so the retirement is a consequence of adoption, not a separate ' +
+     're-colouring. Non-exempt uses found: ' + (offenders.join(' | ') || 'none'),
+     offenders.length === 0, offenders.join(' | '));
+
+  const memHits = text3AsColor(memCss);
+  ok('memory.css specifically carries ZERO --text-3 colour declarations — asserted as a COUNT (' +
+     memHits.length + '), not as `hits.every(...)`, which was TRUE on the empty list this file now produces ' +
+     'and is how this guard came to pass while checking nothing. Found: ' + (memHits.join(' | ') || 'none'),
+     memHits.length === 0, memHits.join(' | '));
+
+  const ingHits = text3AsColor(ingCss);
+  ok('ingest.css KEEPS exactly its one exempt use, .ing-queue-file-remove — a button whose only content is ' +
+     'icon(\'x\'), so its meaning lives in aria-label and it is a GRAPHIC at 4.33 dark / 3.87 light, over the ' +
+     '3:1 non-text floor and under a 4.5 text floor that does not apply to it. Asserted PRESENT, not merely ' +
+     'tolerated: this is a floor rule, not a ban on the token, and a survivor that silently disappears is as ' +
+     'much a regression as a new failure. Found: ' + (ingHits.join(' | ') || 'none'),
+     ingHits.length === 1 && ingHits[0] === '.ing-queue-file-remove', ingHits.join(' | '));
+
+  // The exemption is only honest while that button really carries no words. If
+  // it ever gains a text label, 4.5:1 starts applying and the exemption must go.
+  ok('...and that exemption is still justified: the .ing-queue-file-remove button in ingest.js renders ONLY ' +
+     'an icon() call, with its meaning in aria-label — so no sentence is being painted at 3.87:1. If it ever ' +
+     'gains a text label the 4.5 floor applies and this exemption must be removed, not widened.',
+     /class="ing-queue-file-remove"[^>]*aria-label="Remove /.test(ingCode)
+       && /class="ing-queue-file-remove"[\s\S]{0,220}?'\s*\+\s*icon\('x'/.test(ingCode));
 
   // FINDING 2, adopted where the component's MARKUP could not be: three
   // assertions in test-next-memory-view.js pin the class name `mem-badge-attn`,
   // so the badges stay bespoke and take the component's measured reasoning
   // instead — tone in the tint and the border, label at a legible token.
+  const strippedMem = stripComments(memCss);
   ok('memory.css: no badge paints a status colour as its TEXT ' +
      '(--attention-text on --attention-tint measures 3.21:1 in the light theme)',
-     !/\.mem-badge-[a-z]+\s*\{[^}]*color:\s*var\(--(attention|success|danger)-text\)/.test(stripped),
-     (stripped.match(/\.mem-badge-[a-z]+\s*\{[^}]*\}/g) || []).join('\n'));
+     !/\.mem-badge-[a-z]+\s*\{[^}]*color:\s*var\(--(attention|success|danger)-text\)/.test(strippedMem),
+     (strippedMem.match(/\.mem-badge-[a-z]+\s*\{[^}]*\}/g) || []).join('\n'));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -504,9 +573,42 @@ ok('CONTROL: the px-font-size detector fires on a planted literal',
   [...'.a { font-size: 13px; }'.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].length === 1);
 ok('CONTROL: the tx-selector detector fires on a planted override',
   /\.tx-[a-z]/.test('.mem-doc .tx-readout-value { font-size: var(--text-sm); }'));
-ok('CONTROL: the --text-3 body-prose detector fires on a planted rule',
-  [...stripComments('.mem-planted { color: var(--text-3); }').matchAll(/^([^{}]+)\{([^}]*)\}/gm)]
-    .filter(([, , d]) => /color:\s*var\(--text-3\)/.test(d)).length === 1);
+// ── The --text-3 detector, driven through the REAL text3AsColor() ────────
+// The control this replaces re-implemented the regex inline, so it proved a
+// COPY worked and could not have caught the actual defect: the assertion above
+// it was `hits.every(...)` over an EMPTY list, which is true whatever the
+// detector does. These drive the shipped function and the shipped exemption.
+ok('CONTROL: the --text-3 detector FIRES on a planted rule (real text3AsColor)',
+  text3AsColor('.mem-planted { color: var(--text-3); }').length === 1);
+ok('CONTROL: ...and returns the SELECTOR, so an exemption can be matched against it',
+  text3AsColor('.mem-planted { color: var(--text-3); }')[0] === '.mem-planted');
+ok('CONTROL: ...and does NOT fire on a passing token, so it is not simply always-true',
+  text3AsColor('.mem-planted { color: var(--text-2); }').length === 0);
+ok('CONTROL: ...nor on --text-3 used as a BACKGROUND, which is a non-text component at a 3:1 floor',
+  text3AsColor('.mem-dot { background: var(--text-3); }').length === 0);
+ok('CONTROL: ...nor on a rule that exists only inside a comment — memory.css\'s own notes QUOTE the ' +
+   'retired token while explaining why it went, so a raw scan reads a comment and reports the opposite',
+  text3AsColor('/* .mem-planted { color: var(--text-3); } */').length === 0);
+ok('CONTROL: ...and DOES fire on a rule nested in an @media block, reporting the RULE\'s selector. The ' +
+   'previous `^`-anchored regex also fired here, but reported the selector as `@media (min-width: 900px)` — ' +
+   'so any exemption match against it was meaningless',
+  text3AsColor('@media (min-width: 900px) { .mem-planted { color: var(--text-3); } }')[0] === '.mem-planted');
+ok('CONTROL: ...and DOES fire on a rule that is not first on its line, which the previous `^`-anchored, ' +
+   'line-scoped regex returned NOTHING for — measured, not assumed',
+  text3AsColor('.other { color: red; } .mem-planted { color: var(--text-3); }').length === 1);
+ok('CONTROL: ...and does NOT fire on `border-color` or `text-decoration-color`, which the previous regex ' +
+   'FALSELY matched (its `color:` had no start anchor, so it hit the tail of `border-color:`). Those are ' +
+   'non-text components at a 3:1 floor, which --text-3 clears at 4.15-4.38.',
+  text3AsColor('.a { border-color: var(--text-3); }').length === 0
+    && text3AsColor('.b { text-decoration-color: var(--text-3); }').length === 0);
+ok('CONTROL: the EXEMPTION is real — .ing-queue-file-remove is allowed and an unlisted selector is not, ' +
+   'so the sweep above cannot pass by exempting everything',
+  (NON_TEXT_EXEMPT['ingest.css'] || []).includes('.ing-queue-file-remove')
+    && !(NON_TEXT_EXEMPT['ingest.css'] || []).includes('.ing-queue-file-name')
+    && !NON_TEXT_EXEMPT['memory.css']);
+ok('CONTROL: THE VACUITY SHAPE ITSELF — `[].every(fn)` is TRUE, which is exactly why the old assertion ' +
+   'passed while memory.css contained no --text-3 at all; the replacement is a === 0 count, which cannot',
+  [].every(() => false) === true && text3AsColor('.a { color: var(--text-2); }').length === 0);
 ok('CONTROL: the status-colour-as-badge-text detector fires on the shape it forbids',
   /\.mem-badge-[a-z]+\s*\{[^}]*color:\s*var\(--(attention|success|danger)-text\)/
     .test('.mem-badge-attn { background: var(--attention-tint); color: var(--attention-text); }'));
@@ -566,10 +668,20 @@ ok('CONTROL: the "no <details> on the estimate" detector fires when one is plant
     && !/class="sidebar-hint">' \+ hint/.test(stripComments(ingSrc)));
 
   // The exact site the mutation reverted, named so a count cannot mask it.
-  ok('the Agent-memory sidebar description goes through renderDescription, not a raw div',
-    /renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));
-  ok('and it has NOT reverted to the raw .sidebar-hint div pattern',
-    !/class="sidebar-hint">The working brief/.test(stripComments(memSrc)));
+  //
+  // INVERTED, NOT DELETED. This pair used to require that memory's sidebar
+  // sentence go through renderDescription — which was right while a paragraph
+  // under the title was the best available shape, and became the thing to
+  // prevent the moment renderViewHeader existed. v3.20.0's whole lesson is that
+  // renderDescription under an <h1> preserves the defect and changes only the
+  // wording, so an assertion pinning that arrangement now pins the defect.
+  // Deleting it would lose the mutation's lesson; inverting keeps it pointed at
+  // the same site, in the same file, one step further on.
+  ok('the Agent-memory sidebar is the header COMPONENT, not a title plus a paragraph',
+    /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Agent memory',/.test(stripComments(memSrc)));
+  ok('and the sentence has NOT returned as a paragraph under that title, in EITHER shape',
+    !/class="sidebar-hint">The working brief/.test(stripComments(memSrc))
+    && !/renderDescription\(\s*'The working brief your agents leave/.test(stripComments(memSrc)));
 }
 
 console.log(`\n  Passed: ${passed}   Failed: ${failed}\n`);

@@ -1015,6 +1015,15 @@ export function buildOpenRouterCatalogue(records, opts = {}) {
 
 // ── Adapter ──────────────────────────────────────────────────────────────────
 
+/**
+ * How much of a NON-SSE 200 body we are willing to hold in order to report it.
+ * Only ever filled while zero SSE frames have been seen, i.e. while the response
+ * is not a stream at all — an error body served on a 200. A cap exists so a
+ * misbehaving upstream that answers a streaming request with a large document
+ * cannot be turned into unbounded memory by our own error reporting.
+ */
+const MAX_NON_SSE_CAPTURE_BYTES = 64_000;
+
 export class OpenRouterAdapter {
   /**
    * @param {object} config
@@ -1121,7 +1130,7 @@ export class OpenRouterAdapter {
    * on a `:free` id is not automatically a retired model, and a future
    * catalogue-pruning job must not treat it as one.
    */
-  _buildBody({ model, systemPrompt, userPrompt, maxTokens, responseFormat }) {
+  _buildBody({ model, systemPrompt, userPrompt, maxTokens, responseFormat, stream = false }) {
     const messages = [];
     if (typeof systemPrompt === 'string' && systemPrompt.length > 0) {
       messages.push({ role: 'system', content: systemPrompt });
@@ -1135,11 +1144,32 @@ export class OpenRouterAdapter {
     };
     if (Number.isFinite(maxTokens) && maxTokens > 0) body.max_tokens = maxTokens;
     if (responseFormat === 'json') body.response_format = { type: 'json_object' };
+    // The key is added ONLY when streaming is asked for, so a non-streaming body
+    // is byte-identical to the one this method has always produced. Every other
+    // caller in the app — ingest, Health, compile, Shared Brain — is
+    // non-streaming, and an offline assertion compares the two serialisations
+    // rather than trusting this comment.
+    //
+    // `stream_options: { include_usage: true }` is DELIBERATELY NOT SENT. It is
+    // deprecated and a no-op (see the note above about `usage: {include:true}`),
+    // and MEASURED 2026-08-30 on the streaming endpoint: usage arrives anyway,
+    // on the same final chunk that carries `finish_reason`, with `cost` and
+    // `completion_tokens_details.reasoning_tokens` intact — on both
+    // `z-ai/glm-5.3-flash` and `moonshotai/kimi-k2-0905`, with nothing extra
+    // requested.
+    if (stream === true) body.stream = true;
     return body;
   }
 
   /**
-   * One non-streaming chat completion.
+   * One chat completion, streaming or not.
+   *
+   * @param {object}   p
+   * @param {boolean}  [p.stream=false]  send `stream: true` and parse SSE.
+   * @param {Function} [p.onDelta]       `({type:'content'|'reasoning', text}) => void`,
+   *                                     called for every NON-EMPTY delta as it
+   *                                     arrives. Optional; a throwing callback
+   *                                     can never break the call.
    *
    * @returns {Promise<{
    *   text: string, model: string|null, finishReason: string|null,
@@ -1149,8 +1179,35 @@ export class OpenRouterAdapter {
    *   actually answered, not the one we asked for. That distinction is the
    *   v3.13.2 lesson: reporting the request rather than the outcome passes every
    *   refusal test and fails only the fallback walk.
+   *
+   * ── THE RETURN SHAPE IS IDENTICAL IN BOTH MODES, BY CONSTRUCTION ──────────
+   * The streaming path does NOT build its own result. It reassembles the frames
+   * into a body of the shape the non-streaming endpoint returns and hands that
+   * to the SAME `parseChatCompletion`. There is therefore exactly one function
+   * that produces this shape, so the two modes cannot drift: a future field
+   * added to `parseChatCompletion` appears in both, and the in-band error
+   * handling (top-level `error`, `finish_reason: "error"`, a `choices[0].error`
+   * riding a benign "stop") is inherited rather than re-implemented. Two
+   * hand-maintained copies of a provider contract is this repo's named cause of
+   * the v3.2.0 CRITICAL, and a second copy of THIS one would be worse: the
+   * divergence would show up as a chat answer disagreeing with an ingest.
+   *
+   * ── REASONING IS SURFACED BUT NEVER CONCATENATED ──────────────────────────
+   * `delta.reasoning` is the model's scratchpad, not its answer. It is emitted
+   * live through `onDelta` — that is the entire point, because on a reasoning
+   * model it is the only thing that exists for the first several seconds — and
+   * it is NEVER added to the returned text. Writing it into a wiki page or
+   * quoting it back as an answer would be a silent correctness failure that no
+   * test of the transport would notice.
+   *
+   * MEASURED ON THE WIRE 2026-08-30, and this is why the "non-empty" rule is
+   * load-bearing rather than tidiness: on `z-ai/glm-5.3-flash`, 110 of 130
+   * frames carried the key set `content,reasoning,reasoning_details,role` — i.e.
+   * `content` was PRESENT AND EMPTY throughout the whole reasoning phase. A
+   * parser keyed on the key existing rather than on the string being non-empty
+   * would emit ~110 empty content deltas before the answer began.
    */
-  async createChatCompletion({ model, systemPrompt, userPrompt, maxTokens, responseFormat = 'text', signal = null }) {
+  async createChatCompletion({ model, systemPrompt, userPrompt, maxTokens, responseFormat = 'text', signal = null, stream = false, onDelta = null }) {
     if (typeof model !== 'string' || model.length === 0) {
       throw new OpenRouterError('OPENROUTER_CONFIG', 'OpenRouter: a non-empty model id is required');
     }
@@ -1173,6 +1230,14 @@ export class OpenRouterAdapter {
     // Nothing else moves — the redaction ordering in `_detail`, the
     // `curatorDeterministic` 503 handling, and the rule that our message never
     // contains the literal "HTTP 503" are all untouched.
+    //
+    // ── STREAMING MAKES THAT FIX MORE LOAD-BEARING, NOT LESS ────────────────
+    // Under SSE the body IS the call: headers arrive in well under a second and
+    // every token after that is body. If `dispose()` were ever moved back onto
+    // the fetch, cancel would stop working entirely on the one path where a user
+    // is most likely to press Stop — a minutes-long chat turn — while looking
+    // exactly as correct as it did before v3.15.0 measured it.
+    const streaming = stream === true;
     const link = linkSignals(signal, this._timeoutMs);
     try {
       let res;
@@ -1180,7 +1245,7 @@ export class OpenRouterAdapter {
         res = await this._fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: this._headers(),
-          body: JSON.stringify(this._buildBody({ model, systemPrompt, userPrompt, maxTokens, responseFormat })),
+          body: JSON.stringify(this._buildBody({ model, systemPrompt, userPrompt, maxTokens, responseFormat, stream: streaming })),
           signal: link.signal,
         });
       } catch (err) {
@@ -1203,6 +1268,35 @@ export class OpenRouterAdapter {
       // the user's next action is "pick a different model". `validateKey`'s call
       // site below passes none, and that path degrades to "this model".
       if (!res.ok) await this._throwForStatus(res, 'chat/completions', model);
+
+      if (streaming) {
+        // An HTTP error was already handled above and still arrives as an
+        // ordinary JSON body, so `_throwForStatus` is untouched by streaming.
+        // What is NEW is a failure reported on a 200: either as an SSE frame
+        // carrying `error`, or as a whole non-SSE JSON body. `_consumeStream`
+        // normalises both into the body shape `parseChatCompletion` already
+        // throws on, so neither needs a second error path here.
+        let assembled;
+        try {
+          assembled = await this._consumeStream(res, onDelta);
+        } catch (err) {
+          // ABORT IS CLASSIFIED FIRST, before anything else — including before
+          // our own OpenRouterError is re-thrown. A cancel that reached us as
+          // some other shape must still become an AbortError, because the one
+          // thing a cancel must never do is get retried.
+          const kind = classifyTransportFailure(err, signal, link.signal);
+          if (kind === 'cancelled') throw makeAdapterAbortError();
+          if (err instanceof OpenRouterError) throw err;
+          if (kind === 'timeout') {
+            throw new OpenRouterError('OPENROUTER_NETWORK',
+              `OpenRouter sent response headers but did not finish the body within ${this._timeoutMs} ms.`);
+          }
+          throw new OpenRouterError('OPENROUTER_BAD_RESPONSE', 'OpenRouter returned an unreadable streaming response body.');
+        }
+        // Same function, same headers argument, same everything as below.
+        return this.parseChatCompletion(assembled, res.headers);
+      }
+
       let body;
       try {
         body = await res.json();
@@ -1224,6 +1318,179 @@ export class OpenRouterAdapter {
     } finally {
       link.dispose();
     }
+  }
+
+  /**
+   * Read an SSE body and reassemble it into the shape the NON-streaming
+   * endpoint returns. Emits deltas through `onDelta` as they arrive.
+   *
+   * It deliberately returns a body rather than a result: the caller hands what
+   * comes back to `parseChatCompletion`, so this function owns the WIRE and
+   * owns nothing about our result shape. That split is what makes "the two
+   * modes cannot drift" a structural property rather than a promise.
+   *
+   * ── WHAT IS ACTUALLY ON THE WIRE, MEASURED 2026-08-30 ─────────────────────
+   * Two live models, both through this adapter's own request shape:
+   *
+   *   • Keepalives arrive as SSE COMMENT lines — literally `: OPENROUTER
+   *     PROCESSING` — 6 of them on one glm-5.3-flash call. A parser that treats
+   *     every line as a frame reports six malformed frames per call.
+   *   • The reasoning field is `delta.reasoning`, a plain string.
+   *     `delta.reasoning_content` was NOT observed on either model; it is read
+   *     as a second alternative because it is the OpenAI-compatible spelling
+   *     several upstreams use and this adapter's `baseUrl` is documented as
+   *     repointable at LM Studio / Ollama / llama.cpp. There is also a
+   *     `delta.reasoning_details` ARRAY alongside it, which is structured data,
+   *     not text, and is deliberately ignored.
+   *   • `usage` rides the FINAL CHUNK, the same chunk that carries
+   *     `finish_reason` — it is not a separate usage-only frame. So usage is
+   *     captured from any chunk that has it rather than from a known position.
+   *   • Every chunk carries a top-level `provider` string (e.g. "Relace",
+   *     "Novita"). It is NOT read here. `parseChatCompletion` sources
+   *     `providerName` from the `x-provider-name` HEADER, which is absent in
+   *     practice — so reading the chunk field would make streaming report a
+   *     provider that the non-streaming path reports as `null` for the very
+   *     same model. That asymmetry is exactly what this design exists to
+   *     prevent, so the better source is left unused and recorded instead.
+   *
+   * ── A MALFORMED FRAME IS SKIPPED, NEVER FATAL ────────────────────────────
+   * A stream is a partial result by nature. Killing a 60-second answer because
+   * one frame was truncated would throw away everything already received, so an
+   * unparseable frame is counted, warned about once, and stepped over.
+   *
+   * @param {Response} res
+   * @param {Function|null} onDelta
+   * @returns {Promise<object>} a non-streaming-shaped body
+   */
+  async _consumeStream(res, onDelta) {
+    const stream = res && res.body;
+    if (!stream) {
+      throw new OpenRouterError('OPENROUTER_BAD_RESPONSE', 'OpenRouter returned a streaming response with no body.');
+    }
+
+    const decoder = new TextDecoder();
+    const emit = (type, text) => {
+      if (typeof onDelta !== 'function') return;
+      if (typeof text !== 'string' || text.length === 0) return;
+      // Same contract as `_warn` and as llm.js's `reportUsage`: a caller's
+      // callback is not allowed to fail the call it is observing.
+      try { onDelta({ type, text }); } catch { /* a delta callback must never break the call */ }
+    };
+
+    let buf = '';
+    let content = '';
+    let finishReason = null;
+    let choiceError = null;
+    let topError = null;
+    let usage = null;
+    let id = null;
+    let resolvedModel = null;
+    let frames = 0;
+    let malformed = 0;
+    let sawDone = false;
+    let nonSse = '';
+
+    const handleFrame = (o) => {
+      if (typeof o.id === 'string' && o.id.length > 0) id = o.id;
+      if (typeof o.model === 'string' && o.model.length > 0) resolvedModel = o.model;
+      if (o.usage && typeof o.usage === 'object') usage = o.usage;
+      // A top-level error frame is the streaming spelling of a 200-with-error.
+      // Recorded and allowed to be superseded by nothing — parseChatCompletion
+      // checks it before anything else, exactly as on the non-streaming path.
+      if (o.error && typeof o.error === 'object') topError = o.error;
+
+      const ch = Array.isArray(o.choices) ? o.choices[0] : null;
+      if (!ch || typeof ch !== 'object') return;
+      if (typeof ch.finish_reason === 'string') finishReason = ch.finish_reason;
+      if (ch.error && typeof ch.error === 'object') choiceError = ch.error;
+
+      const d = ch.delta;
+      if (!d || typeof d !== 'object') return;
+      const reasoning = typeof d.reasoning === 'string' ? d.reasoning
+        : (typeof d.reasoning_content === 'string' ? d.reasoning_content : '');
+      if (reasoning.length > 0) emit('reasoning', reasoning);
+      // CONTENT ONLY. Reasoning is never accumulated — see the class docblock.
+      if (typeof d.content === 'string' && d.content.length > 0) {
+        content += d.content;
+        emit('content', d.content);
+      }
+    };
+
+    const handleLine = (line) => {
+      if (line.length === 0) return;                       // event separator
+      if (line.charCodeAt(0) === 58 /* ':' */) return;     // SSE comment / keepalive
+      if (!line.startsWith('data:')) {
+        // Not SSE at all. Only worth keeping while nothing stream-shaped has
+        // arrived — that is the "JSON error body served on a 200" case.
+        if (frames === 0 && nonSse.length < MAX_NON_SSE_CAPTURE_BYTES) nonSse += line + '\n';
+        return;
+      }
+      const payload = line.slice(5).trim();
+      if (payload.length === 0) return;
+      if (payload === '[DONE]') { sawDone = true; return; }
+      if (sawDone) return;
+      frames++;
+      let o;
+      try { o = JSON.parse(payload); } catch { malformed++; return; }
+      if (o && typeof o === 'object') handleFrame(o);
+    };
+
+    const feed = (chunk) => {
+      buf += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+      let i;
+      // \r\n and \n both; a lone \r is not produced by any SSE server we have seen.
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).replace(/\r$/, '');
+        buf = buf.slice(i + 1);
+        handleLine(line);
+      }
+    };
+
+    // Node's undici body is async-iterable; a web ReadableStream from a test
+    // double or a polyfill may only expose getReader(). Both are supported so a
+    // suite can drive this without pulling in a stream implementation.
+    if (typeof stream[Symbol.asyncIterator] === 'function') {
+      for await (const chunk of stream) feed(chunk);
+    } else if (typeof stream.getReader === 'function') {
+      const reader = stream.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value !== undefined && value !== null) feed(value);
+      }
+    } else {
+      throw new OpenRouterError('OPENROUTER_BAD_RESPONSE', 'OpenRouter returned a streaming body that cannot be read.');
+    }
+
+    // Flush any multi-byte character held by the decoder, then the last line if
+    // the server closed without a trailing newline.
+    buf += decoder.decode();
+    if (buf.length > 0) { handleLine(buf.replace(/\r$/, '')); buf = ''; }
+
+    if (malformed > 0) {
+      this._warn(`OpenRouter stream: skipped ${malformed} unparseable frame${malformed === 1 ? '' : 's'}. The answer may be incomplete.`);
+    }
+
+    // NOT A STREAM AT ALL. An error reported as a whole JSON document on a 200.
+    // Handing it to parseChatCompletion unchanged means it throws through the
+    // same in-band path as every other 200-with-error, with the same redaction.
+    if (frames === 0 && nonSse.trim().length > 0) {
+      let parsed = null;
+      try { parsed = JSON.parse(nonSse); } catch { parsed = null; }
+      if (parsed && typeof parsed === 'object') return parsed;
+      throw new OpenRouterError('OPENROUTER_BAD_RESPONSE', 'OpenRouter returned a non-JSON response body.');
+    }
+
+    const choice = {
+      index: 0,
+      message: { role: 'assistant', content },
+      finish_reason: finishReason,
+    };
+    if (choiceError) choice.error = choiceError;
+
+    const body = { id, model: resolvedModel, choices: [choice], usage };
+    if (topError) body.error = topError;
+    return body;
   }
 
   /**

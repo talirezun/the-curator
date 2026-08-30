@@ -676,7 +676,7 @@ The output-token-limit guard lives in `callProvider` in [`src/brain/llm.js`](../
 flowchart TD
     MSG[User message<br/>possibly long / pasted] --> ASK[extractAsk:<br/>abbreviation-protect Dr./e.g.,<br/>split into sentences,<br/>take the LAST qualifying clause<br/>question OR command-opener]
     ASK --> AN{analytical?<br/>disagree/conflict/contradict<br/>+ whole-word 'differ'}
-    ASK --> T1{strong enumerate anchor?<br/>list / how many / count /<br/>what|which &lt;plural-noun&gt; /<br/>all|every &lt;noun&gt;<br/>at a clause boundary}
+    ASK --> T1{strong enumerate anchor?<br/>list / how many / count /<br/>what&#124;which &lt;plural-noun&gt; /<br/>all&#124;every &lt;noun&gt;<br/>at a clause boundary}
     T1 -- yes --> AN
     T1 -- no --> T3{decision cue?<br/>recommend / should I /<br/>which of these / evaluate /<br/>which…best}
     T3 -- yes --> DEC[decision]

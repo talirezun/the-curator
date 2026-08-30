@@ -79,7 +79,8 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
 2. The Curator reads it and writes 5–15 interlinked wiki pages
    (one summary + entity pages + concept pages, with YAML frontmatter)
          ↓
-3. Chat with your knowledge — multi-turn, cited answers, saved threads
+3. Chat with your knowledge — multi-turn, cited answers, streamed as they
+   are written, saved threads
          ↓
 4. Open Obsidian → explore the auto-colored visual knowledge graph
          ↓
@@ -242,7 +243,7 @@ model-by-model measurements: [§ 16b](docs/user-guide.md#16b-choosing-your-ai-mo
 
 | Mode | Tool | Best for |
 |------|------|----------|
-| **Chat** | Built into the app | "How does X relate to Y?", synthesising across sources, multi-turn conversation |
+| **Chat** | Built into the app | "How does X relate to Y?", synthesising across sources, multi-turn conversation — answers stream in as they are written, and on OpenRouter you can watch the model reason first ([§9](docs/user-guide.md#watching-the-answer-arrive--streaming-and-the-thinking-region)) |
 | **Visual** | [Obsidian](https://obsidian.md) graph view | Seeing the whole map, spotting clusters, browsing pages |
 | **Frontier model** | Any local MCP client — Claude Desktop, Claude Code, Cursor | Deep research over the full graph, plus reading and writing working state |
 
@@ -335,6 +336,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Contributing](CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [Ingestion Pipeline](docs/ingestion-pipeline.md) | **The deep dive on the most important code path in The Curator** — every safeguard, every failure mode, the quality contract |
 | [Architecture](docs/architecture.md) | System design — directory structure, the model router, where user data lives |
+| [Chat Streaming](docs/chat-streaming.md) | How a chat turn streams end to end — the wire format, reasoning vs. answer, and why a streamed attempt is never retried |
 | [API Reference](docs/api-reference.md) | REST API documentation |
 | [Model Lifecycle](docs/model-lifecycle.md) | Provider/model fallback policy, retiring deprecated models |
 | [Shared Brain — Architecture](docs/shared-brain.md) | What it is, how it works internally, the engineering decisions, the roadmap |

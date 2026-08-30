@@ -309,14 +309,98 @@
   margin-bottom: 6px;
 }
 /* What THIS answer cost, appended to the eyebrow beside the model that
-   produced it. Inherits the eyebrow's mono font, size and muted tone
-   deliberately: it is a fact about the message, not a callout, and the
+   produced it. It is a fact about the message, not a callout, and the
    composer already carries the one qualitative spend hint this column
    should have. Rendered only when every input is known — token counts, a
    served model, and a live price for it — so an absent figure means
-   "unknown", never "free". No colour, no weight change, no animation,
-   therefore nothing for prefers-reduced-motion to neutralise. */
-.chat-msg-cost { color: var(--text-3); }
+   "unknown", never "free".
+
+   IT IS NOW A <button>, and that changes what this rule has to do.
+
+   `font: inherit` IS LOAD-BEARING, NOT TIDINESS. Form controls do not inherit
+   font from their parent: an unstyled <button> takes the browser's ~13.33px
+   UA default in the UA's own family, and — the half that matters — is then
+   FROZEN against Settings > General's text-size setting, because --font-scale
+   multiplies the --text-* ramp and a UA default never reads it. That is the
+   class v3.20.0 found and could not grep for (you cannot grep for an ABSENT
+   declaration); the visual harness measures it instead, at scale 1 and 1.18.
+   `letter-spacing` is inherited in CSS but Chromium's UA sheet sets `normal`
+   on form controls, so it is restated for the same reason.
+
+   COLOUR: --text-2, one step brighter than the eyebrow's --text-3, measured
+   8.55 dark / 7.02 light against --canvas — against the 4.5 AA floor that now
+   genuinely applies, since this is a control a user has to find. It also
+   distinguishes the clickable part from the eyebrow text around it without
+   using colour ALONE to do so: the dotted underline is the non-colour signal,
+   and it goes solid on hover and focus.
+
+   The global :focus-visible ring in tokens/base.css is deliberately NOT
+   suppressed — no `outline: none` anywhere here.
+
+   NO ANIMATION on any state, so there is nothing for prefers-reduced-motion
+   to neutralise; the transition below is colour only and reduced-motion does
+   not cover colour transitions, but it is a --dur token either way. */
+.chat-msg-cost {
+  font: inherit;
+  letter-spacing: inherit;
+  vertical-align: baseline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  transition: color var(--dur-fast, 80ms) var(--ease-out, ease);
+}
+.chat-msg-cost:hover,
+.chat-msg-cost[aria-expanded="true"] {
+  color: var(--text);
+  text-decoration: underline solid;
+}
+
+/* The token breakdown behind that figure, revealed by the button above.
+
+   IT OWNS ITS OWN BOX RATHER THAN BORROWING THE VIEW HEADER'S. Reusing
+   `.tx-vh-panel` was tried first and rejected: shared/text.css owns the `tx-`
+   prefix and a suite enforces that no other stylesheet touches it, so a view
+   hand-writing that class in its own markup couples chat to another
+   component's internals. views/sync.js states the same rule for the same
+   situation — "own class, own copy". The two are also genuinely different
+   sizes: that panel hangs off a page heading, this one off one line of an
+   eyebrow inside a message.
+
+   `[hidden]` FIRST, and it is not decoration. A rule setting `display` on
+   this selector would override the UA's `[hidden] { display: none }` and the
+   panel would be permanently open — the always-visible-fallback defect
+   shared/text.css records for the native `popover` attribute, arriving
+   through a different door. It is declared before the main rule so it cannot
+   be lost to source order.
+
+   CONTRAST: --text-2 on --surface-raised, measured 8.09 dark / 7.26 light
+   against the 4.5 AA floor. The 1px --border is NOT above the 3:1 non-text
+   floor (1.27 / 1.25) — a known, systemic, app-wide gap this rule inherits
+   rather than introduces, and the information here is carried by text that
+   clears its floor twice over. The border is nonetheless required, not
+   optional: --surface-raised is BYTE-IDENTICAL to --surface in the light
+   theme, so elevation alone renders nothing at all there.
+
+   The font-size reads a --text-* ramp token via the shorthand, so Settings >
+   General's text-size setting reaches it. */
+.chat-cost-panel[hidden] { display: none; }
+.chat-cost-panel {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  font: var(--type-body-sm);
+  letter-spacing: var(--track-body);
+  color: var(--text-2);
+  max-width: 44ch;
+  overflow-wrap: anywhere;
+}
 
 /* Shown only when the model that answered differs from the one requested.
    Deliberately NOT a warning colour: a silent fallback is correct behaviour
@@ -586,6 +670,101 @@
   font-size: var(--text-2xs);
   line-height: var(--leading-snug);
   color: var(--text-2);
+}
+
+/* ── THE STREAMING TURN ───────────────────────────────────────────────────
+   What replaces the ring once the first delta arrives. The ring is now a
+   PRE-ROLL covering time-to-first-byte; from the first token onward the text
+   itself is the liveness signal, so nothing here animates. That is also why
+   there is no blinking caret: `test-next-reduced-motion.js` pins this file at
+   exactly ONE hardcoded-duration animation (`.chat-spinner`, below, kept for
+   that suite's own reasons), and a decorative pulse would both break that
+   invariant and add motion a reader has to look past to read.
+
+   ── SIZE AND COLOUR ARE THE ONLY THINGS SEPARATING THE THREE VOICES ──────
+   The scratchpad, the draft answer, and the finished answer are three
+   different kinds of statement sitting in one bubble, and this repo has
+   already paid for rendering two kinds of statement in one voice (v3.20.0).
+   They are separated by TYPE SCALE, not by dropping the recessed one below
+   the AA floor: every string here is `--text-2`, which measured 8.09:1 dark /
+   7.26:1 light on this view's own sibling notes. `--text-3` measured 4.38 /
+   4.00 on `.chat-stopped-note` — under the 4.5:1 body-text floor — and is
+   deliberately not used, exactly as `.chat-error-detail` above records.       */
+.chat-stream {
+  max-width: 62ch;
+}
+.chat-stream-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+/* Mono, eyebrow-ish, so the status line reads as instrumentation rather than
+   as part of the answer. Size from the ramp — no px literal can appear here or
+   it would freeze at 1x under `--font-scale` (v3.20.0's measured defect, where
+   `.chat-answer` ignored the text-size setting entirely). */
+.chat-stream-title {
+  font: var(--weight-medium) var(--text-2xs)/1.4 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+/* A REAL FOCUSABLE BUTTON, not a hover affordance. The reasoning behind the
+   fold is the only record of how the model got there; putting it behind
+   something a keyboard or a touch device cannot reach would make it
+   unreachable for the people least able to route around it. */
+.chat-stream-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: var(--weight-medium) var(--text-2xs)/1.4 var(--font-mono);
+  letter-spacing: var(--track-eyebrow);
+  color: var(--text-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.chat-stream-toggle:hover { color: var(--text); }
+/* The model's scratchpad. `pre-wrap` because it is verbatim text, not prose we
+   have reflowed — the model's own line breaks are part of what makes a tail
+   readable. `--text-xs` puts it a clear step below the answer without going
+   under AA on colour.
+
+   THE LEFT RULE IS THE WHOLE VISUAL SEPARATION: one hairline saying "this is
+   not the answer", in the neutral border token rather than a status colour,
+   because nothing here is a warning or a success. */
+.chat-stream-reasoning {
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin-bottom: 10px;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Expanded: the full scratchpad, which on a measured turn is 6,687-8,385
+   characters. Capped and scrolled INSIDE ITS OWN BLOCK rather than by putting
+   overflow on an ancestor — v3.0.14's finding: a flex item whose overflow is
+   not `visible` has its automatic `min-height` resolve to 0, which is how the
+   compile card came to be squeezed to nothing. `.chat-msg` is not a flex item,
+   and containing the scroll here keeps it that way regardless. */
+.chat-stream-reasoning-full {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+/* The answer as it arrives — a PREVIEW, and deliberately plain text (chat.js
+   never sends a partial through renderMarkdown; see streamSlotHtml for the
+   two hazards that rules out). It carries `.chat-answer`'s size and rhythm so
+   the settle from draft to rendered markdown is a change of FORMATTING, not a
+   jump in scale — but not `.chat-answer` itself, because that class also
+   carries the block rules for elements a plain-text draft cannot contain. */
+.chat-stream-draft {
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── RETAINED, AND NO LONGER EMITTED BY chat.js ───────────────────────────

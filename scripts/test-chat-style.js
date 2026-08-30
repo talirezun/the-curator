@@ -19,6 +19,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { detectQueryIntent, __testing } from '../src/brain/chat.js';
+// IMPORTED, never re-typed: the OpenRouter catalogue's admission floor is the
+// real ceiling every chat cap must clear (see section 2a). openrouter-eligibility.js
+// is a deliberately PURE, import-free module, so pulling it in keeps this suite
+// offline and free.
+import { APP_OUTPUT_FLOOR_TOKENS } from '../src/brain/openrouter-eligibility.js';
 
 const { buildPrompt, RESPONSE_STYLES, normalizeResponseStyle } = __testing;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -67,19 +72,89 @@ for (const bad of ['__proto__', 'constructor', 'garbage', null, undefined, 42]) 
     `normalized(${JSON.stringify(bad)}) → string directive`);
 }
 
-// ── 2. RESPONSE_STYLES — sane caps + directives ─────────────────────────────
-section('2. RESPONSE_STYLES — caps + directive presence');
-ok(RESPONSE_STYLES.concise.maxTokens === 4096, 'concise caps at 4096');
-ok(RESPONSE_STYLES.balanced.maxTokens === 8192, 'balanced caps at 8192');
-ok(RESPONSE_STYLES.comprehensive.maxTokens === 12288, 'comprehensive caps at 12288');
+// ── 2. RESPONSE_STYLES — caps, ceiling, ordering, directives ────────────────
+//
+// WHAT THESE CAPS MEAN CHANGED IN v3.23 AND THE ASSERTIONS FOLLOW IT.
+// `maxTokens` bounds the model's hidden REASONING and its ANSWER together, so on
+// a reasoning model it was never a length control — it was a truncation risk.
+// Measured on `z-ai/glm-5.3-flash`: at max_tokens 2048 the provider returned
+// `finish_reason: "length"` with completion_tokens exactly 2048, of which 1873
+// (91%) were reasoning. At the OLD caps, balanced and comprehensive were running
+// at 90% and 85% of budget on an ordinary question — one harder question from
+// being cut off. Length is governed by the DIRECTIVE, which is unchanged; these
+// numbers are a SAFETY ceiling and a SPEND ceiling.
+section('2. RESPONSE_STYLES — caps + ceiling + ordering + directives');
+ok(RESPONSE_STYLES.concise.maxTokens === 12288, 'concise caps at 12288');
+ok(RESPONSE_STYLES.balanced.maxTokens === 16384, 'balanced caps at 16384');
+ok(RESPONSE_STYLES.comprehensive.maxTokens === 20480, 'comprehensive caps at 20480');
 ok(/balanced|middle ground/i.test(RESPONSE_STYLES.balanced.directive), 'balanced directive is present (soft moderate length)');
 ok(/not exhaustive/i.test(RESPONSE_STYLES.balanced.directive), 'balanced directive caps verbosity (not exhaustive)');
 ok(/longest|thorough/i.test(RESPONSE_STYLES.comprehensive.directive), 'comprehensive directive aims to be the longest');
 ok(/concise/i.test(RESPONSE_STYLES.concise.directive), 'concise directive is present');
 ok(/comprehensive/i.test(RESPONSE_STYLES.comprehensive.directive), 'comprehensive directive is present');
-// caps are within both providers' output limits (Gemini 65536, Anthropic Haiku 64000)
+
+// ── 2a. THE CEILING IS DERIVED, NOT TYPED ──────────────────────────────────
+// The binding constraint is NOT Gemini (clamps server-side at 65536) and NOT
+// Anthropic (clamped client-side by anthropicMaxOutputTokens, 64000 for
+// haiku-4-5). It is OPENROUTER, where `provider: {allow_fallbacks:false,
+// require_parameters:true}` means an unsatisfiable max_tokens can be REFUSED
+// rather than clamped — measured: moonshotai/kimi-k2-0905 accepts 65536 and
+// returns HTTP 400 at 100352, which is that model's own published ceiling. And a
+// routing-constraint refusal is classified DETERMINISTIC (v3.15.1), so it does
+// not walk the fallback chain: the user gets an error, not an answer.
+//
+// So the floor to clear is the catalogue's ADMISSION floor — the smallest output
+// ceiling a synced chat model is allowed to publish. It is IMPORTED from the
+// module that owns it rather than re-typed here, because a hardcoded 24576 would
+// silently stop tracking the real rule the day that constant moves. (The old
+// assertion's `<= 64000` was ~2.6x too loose and could not have caught this.)
 for (const [k, v] of Object.entries(RESPONSE_STYLES)) {
-  ok(v.maxTokens >= 2048 && v.maxTokens <= 64000, `${k} cap within provider limits`);
+  ok(v.maxTokens < APP_OUTPUT_FLOOR_TOKENS,
+    `${k} cap (${v.maxTokens}) is below the OpenRouter admission floor ${APP_OUTPUT_FLOOR_TOKENS}`);
+}
+
+// ── 2b. EVERY CAP MUST ABSORB A REAL DELIBERATION ──────────────────────────
+// The largest reasoning burn measured live on a real chat prompt was 8874 tokens
+// (comprehensive, glm-5.3-flash). A cap at or below that is a cap where a
+// reasoning model can consume the ENTIRE budget before writing a word — which is
+// precisely the defect this release fixed, and it is what the pre-v3.23 concise
+// cap of 4096 was. Reinstating any of the old values reds this.
+const MEASURED_MAX_REASONING_TOKENS = 8874;
+for (const [k, v] of Object.entries(RESPONSE_STYLES)) {
+  ok(v.maxTokens > MEASURED_MAX_REASONING_TOKENS,
+    `${k} cap (${v.maxTokens}) exceeds the largest measured reasoning burn (${MEASURED_MAX_REASONING_TOKENS})`);
+}
+
+// ── 2c. THE ORDERING INVARIANT — NOW A SPEND ORDERING ──────────────────────
+// KEPT, and deliberately not deleted, but read it correctly: it is no longer a
+// claim about how long each answer will be (the DIRECTIVES make that claim, and
+// the live suite is what checks it — measured on a non-reasoning model at the new
+// caps: 1366 / 1390 / 3095 completion tokens, correctly ordered while none came
+// within 6x of its ceiling). It is a WORST-CASE SPEND ordering: a user who picks
+// Concise is guaranteed a strictly lower ceiling on what one turn can cost than a
+// user who picks Comprehensive. Flattening the three to one shared constant would
+// still satisfy "no style truncates" and would silently destroy that guarantee.
+ok(RESPONSE_STYLES.concise.maxTokens < RESPONSE_STYLES.balanced.maxTokens,
+  'spend ceiling: concise < balanced');
+ok(RESPONSE_STYLES.balanced.maxTokens < RESPONSE_STYLES.comprehensive.maxTokens,
+  'spend ceiling: balanced < comprehensive');
+
+// ── 2d. THE `reasoning` PARAMETER IS A TRAP AND THE FILE MUST SAY SO ───────
+// All three variants were measured. `reasoning.max_tokens` and `reasoning.effort`
+// DISABLE reasoning (zero reasoning tokens) rather than capping it, which would
+// silently delete the live thinking-region the chat view renders.
+// `reasoning.exclude: true` is worse: it still burns the full budget and still
+// truncates, it merely HIDES the stream. This is pinned as a source guard because
+// it is the obvious-looking fix a future maintainer will otherwise reach for, and
+// the comment is the only thing that stops them.
+{
+  const chatSrcTrap = readFileSync(path.join(ROOT, 'src/brain/chat.js'), 'utf8');
+  ok(/reasoning\.exclude/.test(chatSrcTrap),
+    'chat.js records the reasoning.exclude trap by name');
+  ok(/reasoning\.effort/.test(chatSrcTrap) && /reasoning\.max_tokens/.test(chatSrcTrap),
+    'chat.js records that reasoning.effort / reasoning.max_tokens DISABLE rather than cap');
+  ok(/hidden deliberation|reasoning[\s\S]{0,80}answer together|DELIBERATION AND ITS ANSWER TOGETHER/i.test(chatSrcTrap),
+    'chat.js states that max_tokens bounds reasoning AND answer together');
 }
 
 // ── 3. buildPrompt — style directive appended; 4-arg defaults to balanced ───

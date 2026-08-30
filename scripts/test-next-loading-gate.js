@@ -96,8 +96,17 @@ import {
 // takes no imports so that it stays executable in Node, and passing the true
 // renderers means §7's assertions keep observing what the panel actually
 // paints instead of a marker chosen by this file.
+//
+// `renderViewHeader` joined them for the SAME reason and by the same route:
+// views/chat.js adopted it for both of renderMain's zero-domain branches (the
+// branches §6 below executes), retiring the hand-rolled
+// `eyebrow(...) + '<h1 class="view-title">Chat</h1>'` those branches used to
+// paint. Without it here, §6 dies with `ReferenceError: renderViewHeader is
+// not defined` instead of asserting anything — the second occurrence of the
+// blind spot the paragraph above records, which is the argument for reading
+// that paragraph as a standing hazard rather than a historical note.
 import {
-  renderReadoutGroup, renderDescription, renderStatus,
+  renderReadoutGroup, renderDescription, renderStatus, renderViewHeader,
 } from '../src/public/next/shared/text.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -512,9 +521,16 @@ const domainsSrc = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
 {
   // The REAL renderMain, executed. Only the two zero-domain branches are
   // reached by these fixtures, so the rest of the view needs no fixture.
+  // `renderViewHeader` is handed in REAL (shared/text.js imports nothing, so it
+  // runs in Node) — the assertions below read what the header actually paints.
+  // `emptyCard` is a STUB and cannot be otherwise: it lives in app.js, which
+  // touches `document` at module scope and therefore cannot be imported here at
+  // all. The stub reproduces the three slots faithfully enough for (c)'s
+  // assertions, which care that the copy and the route to Domains are present,
+  // not how the card is boxed.
   const fn = new Function(
-    'state', 'bootGate', 'isCurrentMount', 'setMain', 'eyebrow', 'gatedLoader',
-    'icon', 'navigate', 'document',
+    'state', 'bootGate', 'isCurrentMount', 'setMain', 'renderViewHeader', 'emptyCard',
+    'gatedLoader', 'icon', 'navigate', 'document',
     extractFunction(chatSrc, 'renderMain', 'chat.js') + '\nreturn renderMain;'
   );
   const run = (state, gate) => {
@@ -523,7 +539,10 @@ const domainsSrc = readFileSync(join(NEXT, 'views/domains.js'), 'utf8');
       state, gate,
       () => true,
       (h) => { html = h; },
-      (t) => `<eyebrow>${t}</eyebrow>`,
+      renderViewHeader,                              // the REAL header component
+      ({ title, body, actionHtml }) =>
+        `<div class="empty-card"><div class="empty-title">${title}</div>` +
+        `<div class="empty-body">${body}</div>${actionHtml || ''}</div>`,
       gatedLoader,                                   // the REAL gate helper
       () => '<icon/>',
       () => {},

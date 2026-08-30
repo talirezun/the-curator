@@ -668,8 +668,44 @@ section('5b. The dead first-run panel is actually GONE, not just unreferenced');
   ok(!/renderFirstRunPanel/.test(chatCode), 'renderFirstRunPanel no longer exists');
   ok(!/submitFirstRunDomain/.test(chatCode), 'submitFirstRunDomain no longer exists');
   ok(!/chat-firstrun/.test(chatCode), 'no chat-firstrun-* class is referenced in chat.js');
-  ok(!/emptyCard/.test(chatCode), 'chat.js no longer imports emptyCard (its only caller was the removed panel)');
   ok(!/chat-firstrun/.test(chatCss), 'no .chat-firstrun-* rule remains in chat.css');
+
+  // ── RETIRED: the `emptyCard` ban. Recorded, not quietly deleted. ─────────
+  //
+  // This line used to read `ok(!/emptyCard/.test(chatCode), …)` — a permanent
+  // ban on chat.js importing the SHARED empty state, used as a PROXY for "the
+  // deleted first-run panel has not come back", on the grounds that the panel
+  // was emptyCard's only caller here.
+  //
+  // The proxy outlived the thing it proxied for. `emptyCard` is app.js's one
+  // empty state; Ingest, Domains, Shared Brain and the memory view all render
+  // it, and chat.js now renders it too — for its zero-domain branch, as part of
+  // moving that branch's sentence out of a `<div class="view-body">` floating
+  // under the <h1>. A blanket ban on a general-purpose shared component, on one
+  // file, forever, because a since-deleted feature once used it, would force
+  // the next author to hand-roll a second empty state instead. That is the
+  // duplication this repo keeps paying for, bought with a guard.
+  //
+  // NOTHING IS LOST, and that is checked rather than claimed. Every real
+  // invariant the ban stood in for is pinned INDEPENDENTLY in this same block:
+  // `state.firstRun`, `renderFirstRunPanel`, `submitFirstRunDomain` and
+  // `.chat-firstrun-*` are each named above, and the load-bearing one — exactly
+  // one POST /api/domains call site in /next, and NOT in chat.js — is
+  // mechanical and enumerates the tree from disk. What replaces the ban is its
+  // POSITIVE form, which the ban could never state: the zero-domain state must
+  // go through the shared component, so a chat-local copy of an empty state is
+  // a regression this section still sees.
+  // Scoped to renderMain's ZERO-DOMAIN branch rather than to the file, and
+  // that scoping is a correction the guard made to itself on its first run. A
+  // file-wide ban on `chat-empty-*` classes went RED against `.chat-empty` /
+  // `.chat-empty-title` / `.chat-empty-body`, which already exist and are a
+  // DIFFERENT surface: the empty THREAD ("Ask <domain> anything", rendered
+  // inside #chat-thread for a conversation with no messages yet). "This
+  // conversation is new" and "this install has no domains at all" are not the
+  // same empty state and must not be collapsed into one assertion.
+  const renderMainForEmpty = extractFunction(chatCode, 'renderMain');
+  ok(/state\.domains\.length === 0[\s\S]{0,400}?emptyCard\(\{/.test(renderMainForEmpty),
+    "renderMain's zero-domain branch renders the SHARED empty state (app.js emptyCard), not a chat-local copy");
 
   // Exactly one POST /api/domains call site in the whole /next tree, and it
   // is NOT in chat.js — Domains' openLifecycle('create') is the only
@@ -717,7 +753,12 @@ section('5b. The dead first-run panel is actually GONE, not just unreferenced');
   ok(/renderFirstRunPanel/.test(mutatedChatCode), 'CONFIRMED RED (renderFirstRunPanel): same');
   ok(/submitFirstRunDomain/.test(mutatedChatCode), 'CONFIRMED RED (submitFirstRunDomain): same');
   ok(/chat-firstrun/.test(mutatedChatCode), 'CONFIRMED RED (chat-firstrun class): same');
-  ok(/emptyCard/.test(mutatedChatCode), 'CONFIRMED RED (emptyCard): same');
+  // The two assertions that REPLACED the retired emptyCard ban get controls of
+  // their own, in both directions — a positive assertion is just as capable of
+  // never being able to fail as a negative one.
+  ok(!/state\.domains\.length === 0[\s\S]{0,400}?emptyCard\(\{/
+    .test(renderMainForEmpty.replace(/emptyCard\(\{/g, "'<div class=\"chat-zero-domain\">' + ({")),
+    'CONFIRMED RED (shared empty state): a copy whose zero-domain branch hand-rolls its own card trips the positive assertion');
 
   const mutatedChatCss = chatCss + '\n.chat-firstrun-form { color: red; }\n';
   ok(/chat-firstrun/.test(mutatedChatCss), 'CONFIRMED RED (chat.css): the mutated copy trips the CSS assertion the real stylesheet passes');
@@ -731,7 +772,8 @@ section('5b. The dead first-run panel is actually GONE, not just unreferenced');
   // earlier in this section, since a copy-paste error in the mutation
   // block above could otherwise silently validate nothing.
   ok(!/state\.firstRun/.test(chatCode) && !/renderFirstRunPanel/.test(chatCode) &&
-     !/submitFirstRunDomain/.test(chatCode) && !/chat-firstrun/.test(chatCode) && !/emptyCard/.test(chatCode),
+     !/submitFirstRunDomain/.test(chatCode) && !/chat-firstrun/.test(chatCode) &&
+     /emptyCard\(\{/.test(chatCode),
     'RESTORED (conceptually — the real source was never touched by the mutations above): the real chat.js still passes every one of these checks');
   ok(!/chat-firstrun/.test(chatCss), 'and the real chat.css still passes its check');
 }

@@ -680,14 +680,16 @@ The Anthropic default is **`claude-haiku-4-5`** — Anthropic's low-cost tier, c
 
    Which call sites sit where, relative to the ~21,333-token streaming threshold:
 
-   | Call site | Requested output budget | Above the streaming threshold? |
+   | Call site | Requested output budget | Above the SDK's **forced**-streaming threshold? |
    |---|---|---|
-   | Chat / query | 4,096 · 8,192 · 12,288 (`RESPONSE_STYLES` in `chat.js`) | No |
+   | Chat / query | the per-style budgets in `RESPONSE_STYLES` (`src/brain/chat.js`) — **read them there, they move on their own cycle** | No, at every style shipped so far. Re-check this cell if any style is ever raised above ~21,333. |
    | Multi-phase ingest — Phase 2 batch (`MULTI_PHASE_BATCH_TOKENS`) | 16,384 | No |
    | Multi-phase ingest — **Phase 1 outline** (`MULTI_PHASE_OUTLINE_TOKENS`) | **24,576** | **Yes** — this call depends on the streaming transport |
    | Single-pass ingest · Compile-to-Wiki | 65,536 (clamped per model) | Yes |
 
    Note the Phase 1 outline call: at 24,576 it is **above** the guard, so it is not exempt — an earlier version of this note wrongly grouped all of multi-phase ingest as "always under both thresholds". It works because the Anthropic branch streams unconditionally, not because its budget is small.
+
+   ⚠ **That column is about the SDK forcing a transport, not about whether a turn streams to the user.** Read as the latter it now says the wrong thing: a chat turn *does* stream, on **all three** providers, and it does so because the caller passed `opts.onDelta` — not because of any budget. The two mechanisms are unrelated and both are live on the Anthropic path at once. See the next note, and [chat-streaming.md](chat-streaming.md).
 
 4. **A reply can arrive in several content blocks, and the first one is not always the answer (v3.9.1).** An Anthropic response body is an array of typed blocks, not a single string. Until v3.9.1 both extraction points in `callProvider` read `content[0].text`. A `thinking` block carries a `.thinking` field and **no** `.text` field, so the moment a model put one first, `content[0].text` was `undefined` and the call threw:
 
@@ -716,6 +718,10 @@ LLM_MODEL=claude-sonnet-4-5
 Any model ID Anthropic accepts works there. The fallback chain still applies on top of the override.
 
 ---
+
+5. **The thinking listener is wired and delivers nothing — measured, not assumed.** Since chat gained streaming, the Anthropic branch attaches `.on('text')` and `.on('thinking')` listeners to the stream it was already using (only when the caller passed `opts.onDelta`; otherwise the call is byte-identical to before). The `text` listener works. The `thinking` one, in practice, does not deliver: measured live against `claude-sonnet-5` with an ingest-shaped prompt over 4 runs, every one returning content blocks `["thinking", "text"]`, **`delta.thinking` is the empty string** and the assembled block carries only a `signature`. **Anthropic returns the deliberation encrypted, not as plaintext**, for the body this app sends — so **zero** reasoning deltas arrived across all 4 runs, with the ground-truth block types confirming a thinking block existed each time.
+
+   Two consequences worth carrying forward. First, `makeDeltaEmitter`'s empty-delta drop is **load-bearing, not defensive**: without it every Anthropic call carrying a thinking block would emit a zero-length reasoning delta that shows nothing *and* commits the call, disabling the retry ladder and the fallback walk on this provider's main path. **Do not "fix" that drop to make reasoning appear.** Second, the listener stays because it costs nothing and starts working the day Anthropic surfaces summarised thinking text. Emitting a synthetic "the model is thinking" delta in its place was considered and rejected — an indicator must never be advanced to look busy. Note this is orthogonal to note 3: Anthropic has streamed its *transport* since v3.0.1-beta.14 for a timeout reason, and streams to the *user* only when `opts.onDelta` is present. See [chat-streaming.md](chat-streaming.md).
 
 ## Verifying the safety net locally
 
@@ -782,3 +788,34 @@ An unknown id resolves to the **conservative** value on purpose: guessing high p
 `gemini-2.5-flash` — currently the last Gemini rung — spends hidden reasoning tokens from the **same** budget as visible output. A probed request with a 30-token budget returned `finishReason: MAX_TOKENS` after **zero visible tokens**, with 26 consumed by `thoughtsTokenCount`. The flash-lite models showed 0–2.
 
 Nothing in the code compensates for this, deliberately. It is recorded so that a truncated answer on that rung is recognised for what it is rather than investigated as a bug.
+
+Gemini's reasoning is also **hidden in a second sense**: it can never be streamed to the user. `@google/generative-ai` 0.24.1 has no notion of a thought part — the string `thought` appears **zero times** in its distributed bundle, and its text accessor concatenates every part carrying `.text` with no discriminator. So Gemini streams **content only**, and the tokens described above are paid for and never seen.
+
+## Reasoning models spend the output budget before the answer starts
+
+The same effect, on the models where it decides whether an answer completes at all. On a reasoning model, `max_tokens` is a **ceiling on reasoning plus answer** — not an answer-length control. Reasoning tokens are billed as output and drawn from the same budget.
+
+Measured on `z-ai/glm-5.3-flash`, same prompt, budget varied:
+
+| Output budget | Reasoning tokens | Outcome |
+|---|---|---|
+| 4,096 | ~3,400–3,600 (**~87% of the budget**) | Answer **truncated** — `finish_reason: length` |
+| 8,192 | ~3,400–3,600 | Completed naturally at ~4,790 tokens |
+
+Reasoning is roughly **constant** across budgets on that model — it does not scale down to leave room for the answer. So a budget sized against a non-reasoning model is spent before the answer begins. A non-reasoning model, by contrast, stops on its own and leaves the ceiling unused: `moonshotai/kimi-k2-0905` used **913 of 4,096** on the same shape of prompt.
+
+**Read the shipping budgets from `RESPONSE_STYLES` in `src/brain/chat.js`, not from this table.** The figures above are a measurement of the mechanism, not a record of the current configuration, and the per-style budgets move on their own release cycle.
+
+A truncation here is not a hard failure on the chat path: in text mode `handleOutputTokenLimit` returns the partial answer **plus** a "this was cut off" note. That note exists only in the return value and is never emitted as a delta, which is why a streaming consumer must *replace* its draft with the returned answer rather than append to it — see [chat-streaming.md](chat-streaming.md#5-the-authoritative-return-rule).
+
+### Rejected: capping reasoning through OpenRouter's own knobs
+
+Recorded so nobody reaches for these. **The adapter sends no `reasoning` key at all** (`_buildBody` in `src/brain/openrouter-adapter.js`), and these are the reasons to keep it that way. Measured against `z-ai/glm-5.3-flash`:
+
+| Knob | What it actually did |
+|---|---|
+| `reasoning.max_tokens` | Did **not** cap reasoning — **disabled it entirely** (0 reasoning tokens). |
+| `reasoning.effort: 'low'` | Same: disabled entirely, not reduced. |
+| `reasoning.exclude: true` | **Strictly worse than doing nothing.** Still burns the full reasoning budget, still truncates the answer — and merely hides the stream, so the dead air returns with the cost unchanged. |
+
+The behaviour of these parameters is upstream and per-model. Treat the table as a measurement of one model on one date, not as a general law: if any of them is ever adopted, it needs its own measurement, and the free/paid and model-family distinctions matter.

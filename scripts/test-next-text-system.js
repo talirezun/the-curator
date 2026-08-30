@@ -418,10 +418,23 @@ console.log('\n§7  CONTRAST - MEASURED from tokens/color.css, both themes');
        ' dark / ' + l.toFixed(2) + ' light)');
   }
   const attnAsText = C(lite, '--attention-text', '--surface-raised', '--attention-tint');
+  // MESSAGE CORRECTED (the assertion is unchanged token maths and still holds).
+  // This used to end "...unlike .model-badge-flag", naming that badge as the
+  // live counter-example still painting the status colour as its label. It no
+  // longer is: views/settings.css now renders it `color: var(--text)` with
+  // `border: 1px solid var(--attention-text)` — the same tone-on-the-rail
+  // pattern this component uses — so the sentence had become false. The finding
+  // it justifies is unaffected, and is asserted here rather than assumed, so
+  // that the fix cannot come to look unnecessary now that its motivating site
+  // has been repaired.
   ok(attnAsText < 4.5,
      'FINDING 2 HOLDS: --attention-text as TEXT on its own tint measures ' +
      attnAsText.toFixed(2) + ':1 in the light theme - under AA. This is why the badge label ' +
-     'here is --text and not the status colour, unlike .model-badge-flag');
+     'here is --text and not the status colour. The site that used to be the live counter-example, ' +
+     '.model-badge-flag, has since ADOPTED this same pattern (--text on the tint at ' +
+     C(lite, '--text', '--surface-raised', '--attention-tint').toFixed(2) + ' light, with the tone moved to a ' +
+     '1px --attention-text border at ' + C(lite, '--attention-text', '--surface-raised').toFixed(2) +
+     ' against a 3:1 non-text floor) - so the reasoning spread rather than the finding expiring');
   const labelOnTint = Math.min(
     C(lite, '--text', '--surface', '--attention-tint'), C(dark, '--text', '--surface', '--attention-tint'),
     C(lite, '--text', '--surface', '--success-tint'), C(dark, '--text', '--surface', '--success-tint'),
@@ -474,12 +487,30 @@ console.log('\n§8  text.css hygiene and REACHABILITY');
   const selectors = [...textCss.matchAll(/^\.([a-z][a-z0-9-]*)/gm)].map((m) => m[1]);
   ok(selectors.length > 0 && selectors.every((s) => s === 'tx' || s.startsWith('tx-')),
      'every top-level selector in text.css is on the `tx-` prefix (' + selectors.length + ' rules)');
+  // COMMENTS ARE STRIPPED BEFORE THIS SCAN, and that is a correction rather
+  // than a loosening. The assertion's own words are that no other stylesheet
+  // DEFINES a `tx-` rule; a raw scan cannot tell a rule from a sentence, so a
+  // comment that merely NAMES `.tx-vh-panel` — for instance to record why a
+  // view deliberately did NOT borrow it — was reported as a leak. That is the
+  // comment-satisfies-a-scan hazard this repo keeps recording, inverted: a
+  // guard firing on prose teaches people to reword comments instead of fixing
+  // code, and the next person deletes the explanation rather than the defect.
+  // Stripping can only remove FALSE positives here: a real rule is never
+  // inside a comment. The control below proves the detector still fires.
+  const stripCssComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '');
   const otherCss = walk(NEXT, '.css').filter((p) => !p.endsWith('shared/text.css'));
-  const leaks = otherCss.filter((p) => /\.tx-[a-z]/.test(readFileSync(p, 'utf8')));
+  const leaksIn = (src) => /\.tx-[a-z]/.test(stripCssComments(src));
+  const leaks = otherCss.filter((p) => leaksIn(readFileSync(p, 'utf8')));
   ok(leaks.length === 0,
      'no OTHER /next stylesheet defines a `tx-` rule, so this component owns its prefix (' +
      otherCss.length + ' files scanned; leaks: ' +
      (leaks.map((p) => p.split('/').pop()).join(', ') || 'none') + ')');
+  ok(leaksIn('.chat-x { color: red; }\n.tx-vh-panel { margin-top: 6px; }'),
+     'CONTROL: a real `.tx-` RULE in another sheet is still detected as a leak');
+  ok(!leaksIn('/* `.tx-vh-panel` was tried first and rejected. */\n.chat-x { color: red; }'),
+     'CONTROL: ...and a comment that merely NAMES one is not, which is the false positive removed');
+  ok(!leaksIn('/* a\n .tx-vh-panel\n b */\n.chat-x { color: red; }'),
+     'CONTROL: ...including across a multi-line comment');
 
   // REACHABILITY. v3.9.1: progress-ring.css shipped styled but UNLINKED for a
   // whole release, and both existing guards were blind - one read stylesheets

@@ -97,3 +97,12 @@ docs/apple-developer-enrolment.md
 # excluded it. If you add another runtime artefact, add it here in the same
 # change, not in the release that discovers it.
 .curator-install-id
+
+# Browser-driven test screenshots land in the repo ROOT, so a bare `git add -A`
+# stages them into a PUBLIC repo. .playwright-mcp/ was already covered; the root
+# was not. This project has shipped that class four times (.write-lock,
+# .DS_Store, the ingest queue, the OpenRouter sidecars) — each time because a new
+# runtime file appeared beside tracked source and nothing excluded it.
+/chat-streaming-*.png
+/*.screenshot.png
+

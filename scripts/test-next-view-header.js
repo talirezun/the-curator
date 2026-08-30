@@ -1,6 +1,6 @@
 /**
  * test-next-view-header.js — OFFLINE suite for renderViewHeader in
- * src/public/next/shared/text.js, plus the four views that adopt it.
+ * src/public/next/shared/text.js, plus the views that adopt it.
  *
  * No network, no API key, no server, no browser, no spend.
  *
@@ -42,6 +42,15 @@
  *      call site to a raw div left that release's suite green at 98/0.
  *  §9  NO PROSE BETWEEN THE HEADER AND THE BODY in any adopted view: the
  *      retired classes do not reappear where the paragraph used to be.
+ *  §9b THE CLASS GUARD, over EVERY view file on disk WITH NO ADOPTER FILTER.
+ *      It used to open `if (!src.includes('renderViewHeader(')) continue;`,
+ *      which made it police adopters only — and §8's list of who must adopt
+ *      was four hardcoded names. views/chat.js, the DEFAULT view, floated a
+ *      paragraph under its <h1> straight through that pair with this suite
+ *      green. The `continue` was only the symptom: both patterns were anchored
+ *      on the token `renderViewHeader(`, so they were inert on a file that had
+ *      never adopted it. What a header MEANS is widened instead, to include a
+ *      hand-rolled `view-title` / `sidebar-title` element.
  *  §10 A WARNING IS NEVER BEHIND THE MARK. Domains' read-only-mirror notice
  *      names data loss ("overwritten on the next Pull"), so it must be a
  *      renderStatus box in the body and must NOT appear in the header's info.
@@ -320,11 +329,22 @@ section('§8  ADOPTION — per view, at a NAMED site');
 // A COUNT alone stays green while any single site regresses. That is not a
 // hypothetical: v3.20.0 reverted one memory.js call site to a raw div and its
 // suite stayed green at 98/0.
+//
+// THIS OBJECT IS A LIST, AND A LIST IS EXACTLY WHAT WENT BLIND. It is kept
+// anyway, because the per-site assertions below are the thing §9b's class scan
+// cannot do (a class scan proves nothing is wrong; only a named site proves a
+// particular thing is right). What has changed is that it is no longer the ONLY
+// layer: §9b now walks every file on disk with no adopter filter, so a view
+// missing from here is caught there, and scripts/test-next-header-adoption.js
+// asks the third question — which views render a header WITHOUT the component.
 const VIEWS = {
   'domains.js': stripComments(read('views/domains.js')),
   'ingest.js': stripComments(read('views/ingest.js')),
   'shared.js': stripComments(read('views/shared.js')),
   'settings.js': stripComments(read('views/settings.js')),
+  // Added when chat.js adopted the component. It was the view this suite's two
+  // layers could not see between them, so it is named here explicitly.
+  'chat.js': stripComments(read('views/chat.js')),
 };
 for (const [name, src] of Object.entries(VIEWS)) {
   ok(`${name} imports renderViewHeader from the ONE shared module`,
@@ -352,6 +372,15 @@ ok('ingest.js: BOTH blocks the report named — centre and sidebar',
   && /renderViewHeader\(\{ variant: 'sidebar', title: 'Ingest', info: hint/.test(VIEWS['ingest.js']));
 ok('settings.js: renderMain builds the header, per-section, from SECTION_INFO',
   /const info = SECTION_INFO\[state\.section\];[\s\S]{0,300}renderViewHeader\(\{/.test(VIEWS['settings.js']));
+// chat.js — the app's DEFAULT view, and the one both layers of this suite
+// missed. THREE headers: two in the centre column (pre-boot and zero-domain,
+// the identical two-field literal at both) and one in the sidebar.
+ok('chat.js: both centre branches build the header from the component, identically',
+  (VIEWS['chat.js'].match(/renderViewHeader\(\{ eyebrow: 'the default view', title: 'Chat' \}\)/g) || []).length === 2);
+ok('chat.js: the sidebar uses the sidebar DENSITY, so the screen keeps one <h1>',
+  /renderViewHeader\(\{ variant: 'sidebar', title: 'Chat' \}\)/.test(VIEWS['chat.js']));
+ok('chat.js: neither centre call passes `info` — there was no prose to fold, only prose to MOVE',
+  !/renderViewHeader\(\{ eyebrow: 'the default view', title: 'Chat', info:/.test(VIEWS['chat.js']));
 ok('settings.js: `general` has NO entry, so that section renders no mark',
   /const SECTION_INFO = \{[\s\S]*?\n\};/.test(VIEWS['settings.js'])
   && !/^\s{2}general:/m.test(VIEWS['settings.js'].match(/const SECTION_INFO = \{[\s\S]*?\n\};/)[0]));
@@ -377,6 +406,17 @@ ok('domains.js: the hand-rolled title row is GONE, not kept beside the component
   !/dm-title-row/.test(VIEWS['domains.js']));
 ok('domains.css: its layout rule went with it, so there is no second copy to drift',
   !/^\.dm-title-row/m.test(stripComments(read('views/domains.css'))));
+// chat.js — the position the maintainer's complaint actually pointed at.
+ok('chat.js emits no .view-body anywhere (the paragraph under the <h1> is gone)',
+  !/class="view-body"/.test(VIEWS['chat.js']));
+ok('chat.js hand-rolls no title element at all, in either density',
+  !/class="view-title"/.test(VIEWS['chat.js']) && !/class="sidebar-title"/.test(VIEWS['chat.js']));
+ok('chat.js: the sentence was RELOCATED into the shared empty card, not deleted and not hidden',
+  /emptyCard\(\{[\s\S]{0,300}?Chat needs at least one domain to talk to/.test(VIEWS['chat.js']));
+ok('chat.js: ...and it is NOT behind the info mark — a blocked screen must say why, unfolded',
+  !/info:[^\n]{0,120}Chat needs at least one domain/.test(VIEWS['chat.js']));
+ok('chat.js: `eyebrow()` is no longer imported — both of its call sites were hand-rolled headers',
+  !/\beyebrow\b/.test(VIEWS['chat.js'].slice(0, VIEWS['chat.js'].indexOf("} from '../app.js';"))));
 
 // ── §9b  THE CLASS GUARD, not one named string ────────────────────────────
 // M1 in the mutation table put `renderDescription(DOMAIN_BLURB)` back above the
@@ -387,29 +427,82 @@ ok('domains.css: its layout rule went with it, so there is no second copy to dri
 // adopted here: nothing that renders prose may sit adjacent to a header call.
 // A fifth view adopting renderViewHeader later inherits the guard without
 // anyone remembering to extend a list — which is how the last one went blind.
+//
+// ── AND IT WENT BLIND ANYWAY. THE SECOND FIX, AND WHAT IT COST TO FIND ─────
+//
+// The paragraph above was true and insufficient. This loop opened with
+//
+//     if (!src.includes('renderViewHeader(')) continue;
+//
+// so a view that never adopted the component was skipped — by the guard whose
+// entire job is to forbid the shape a NON-adopter is most likely to have. §8's
+// list of who must adopt was hardcoded to four views. Together the two layers
+// proved "every ADOPTER behaves" and "these four are ADOPTERS", and said
+// nothing whatsoever about a fifth view. views/chat.js — the app's DEFAULT
+// view — was that fifth view, and it floated
+// `<div class="view-body">Chat needs at least one domain to talk to…</div>`
+// directly under `<h1 class="view-title">Chat</h1>` through the whole of the
+// release built to make that inexpressible, with this suite green at 130/0.
+//
+// THE `continue` WAS ONLY THE SYMPTOM. Deleting it alone changes nothing,
+// which is the part worth recording: BOTH patterns were anchored on the token
+// `renderViewHeader(`, so on a file that has never heard of the component they
+// match nothing no matter how many paragraphs it paints. The loop would have
+// walked chat.js and cheerfully passed it.
+//
+// So what a "view header" MEANS is widened here instead: the component call OR
+// a hand-rolled title element — `<h1 class="view-title">` / `<div
+// class="sidebar-title">`, which are the component's own output classes and
+// therefore, appearing as raw string literals, are a header built by hand. The
+// adjacency question is then asked of every view file on disk, unconditionally.
 {
   // BOTH DIRECTIONS. The first draft only looked AFTER the header call, and M1
   // in the mutation table walks straight past it — inserting the paragraph
   // ABOVE the header is where it fits syntactically, and prose above a title is
   // the same defect as prose below one. Caught by running the mutation, not by
   // re-reading the regex.
-  const PROSE_AFTER_HEADER =
-    /renderViewHeader\(([\s\S]{0,600}?)\)\s*\+\s*(?:renderDescription\(|'<p|'<div class="(?:tx-desc|view-body|sidebar-hint)")/;
-  const PROSE_BEFORE_HEADER =
-    /(?:renderDescription\([^;]{0,200}?\)|'<p[^']{0,200}?'|'<div class="(?:tx-desc|view-body|sidebar-hint)[^']{0,200}?')\s*\+\s*(?:\n\s*)?renderViewHeader\(/;
+  //
+  // Assembled from source fragments rather than written as four literals: the
+  // "after" and "before" forms have to agree about what a header is and what
+  // prose is, and two hand-maintained copies of that answer drift. That is this
+  // repo's most reliable defect shape and it is not worth re-earning here.
+  const HEADER_END =
+    '(?:renderViewHeader\\([\\s\\S]{0,600}?\\)' +          // the component
+    '|class="view-title">[^<]{0,200}</h1>\'' +             // hand-rolled, centre
+    '|class="sidebar-title">[^<]{0,200}</div>\')';         // hand-rolled, sidebar
+  const HEADER_START =
+    '(?:renderViewHeader\\(' +
+    '|\'<h1 class="view-title">' +
+    '|\'<div class="sidebar-title">)';
+  const PROSE_START =
+    '(?:renderDescription\\(|\'<p|\'<div class="(?:tx-desc|view-body|sidebar-hint)")';
+  const PROSE_END =
+    '(?:renderDescription\\([^;]{0,200}?\\)' +
+    '|\'<p[^\']{0,200}?\'' +
+    '|\'<div class="(?:tx-desc|view-body|sidebar-hint)[^\']{0,200}?\')';
+
+  const PROSE_AFTER_HEADER = new RegExp(HEADER_END + '\\s*\\+\\s*' + PROSE_START);
+  const PROSE_BEFORE_HEADER = new RegExp(PROSE_END + '\\s*\\+\\s*(?:\\n\\s*)?' + HEADER_START);
   const PROSE_NEXT_TO_HEADER = {
     test: (t) => PROSE_AFTER_HEADER.test(t) || PROSE_BEFORE_HEADER.test(t),
   };
+
   const viewFiles = readdirSync(join(NEXT, 'views')).filter((f) => f.endsWith('.js'));
   ok('every view file was enumerated FROM DISK, not from a hardcoded list',
     viewFiles.length >= 8, `${viewFiles.length} files`);
+  // NO `continue`. Every view is asked the question, adopter or not — see the
+  // block comment above for the release this cost.
+  let scanned = 0;
   for (const f of viewFiles) {
     const src = stripComments(readFileSync(join(NEXT, 'views', f), 'utf8'));
-    if (!src.includes('renderViewHeader(')) continue;
+    scanned++;
     const hit = src.match(PROSE_AFTER_HEADER) || src.match(PROSE_BEFORE_HEADER);
-    ok(`${f}: no prose is concatenated onto the view header, above it or below it`,
+    ok(`${f}: no prose is concatenated onto a view header, above it or below it`,
       !hit, hit && hit[0].slice(-160));
   }
+  ok('...and EVERY view file was scanned, not just the ones that adopted the component',
+    scanned === viewFiles.length, `scanned ${scanned} of ${viewFiles.length}`);
+
   // CONTROL: the detector fires on the exact shape it forbids, in both forms.
   ok('CONTROL: the adjacency detector FIRES on a renderDescription after a header',
     PROSE_NEXT_TO_HEADER.test("renderViewHeader({ title: 'X' }) +\n renderDescription(BLURB) +"));
@@ -421,6 +514,32 @@ ok('domains.css: its layout rule went with it, so there is no second copy to dri
     !PROSE_NEXT_TO_HEADER.test("renderViewHeader({ title: 'X' }) +\n renderStatus({ title: 'y' }) +"));
   ok('CONTROL: ...nor on a status box placed above the header',
     !PROSE_NEXT_TO_HEADER.test("renderStatus({ title: 'y' }) +\n renderViewHeader({ title: 'X' })"));
+
+  // ── THE CONTROLS THAT MATTER: the NON-adopter shapes the old form missed ──
+  // Byte-for-byte the two lines views/chat.js actually shipped. If this suite
+  // is ever rewritten and these stop firing, the hole is open again.
+  ok('CONTROL: FIRES on a HAND-ROLLED <h1> followed by a paragraph — chat.js’s real, shipped shape',
+    PROSE_NEXT_TO_HEADER.test(
+      "      '<h1 class=\"view-title\">Chat</h1>' +\n" +
+      "      '<div class=\"view-body\">Chat needs at least one domain to talk to.</div>' +"));
+  ok('CONTROL: ...and on a hand-rolled SIDEBAR title followed by a .sidebar-hint',
+    PROSE_NEXT_TO_HEADER.test(
+      "    '<div class=\"sidebar-title\">Chat</div>' +\n" +
+      "    '<div class=\"sidebar-hint\">No domains exist yet.</div>' +"));
+  ok('CONTROL: ...and on a paragraph placed ABOVE a hand-rolled <h1>',
+    PROSE_NEXT_TO_HEADER.test(
+      "      '<div class=\"view-body\">prose</div>' +\n      '<h1 class=\"view-title\">Chat</h1>'"));
+  ok('CONTROL: ...and does NOT fire on a hand-rolled title followed by a BUTTON',
+    !PROSE_NEXT_TO_HEADER.test(
+      "    '<div class=\"sidebar-title\">Chat</div>' +\n    '<button class=\"btn\">New chat</button>' +"));
+  // AND THE PROOF THAT IT IS THE WIDENING, NOT THE `continue`, THAT CLOSED IT:
+  // the OLD pattern — anchored on the component token — is inert on that same
+  // shipped shape. Deleting the `continue` alone would have left this suite
+  // green over the defect it was written to catch.
+  ok('CONTROL: the OLD component-anchored pattern is INERT on that shape — the `continue` was not the bug',
+    !/renderViewHeader\(([\s\S]{0,600}?)\)\s*\+\s*(?:renderDescription\(|'<p|'<div class="(?:tx-desc|view-body|sidebar-hint)")/
+      .test("      '<h1 class=\"view-title\">Chat</h1>' +\n" +
+            "      '<div class=\"view-body\">Chat needs at least one domain to talk to.</div>' +"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -740,18 +740,70 @@ section('§8  CONTRAST — computed from tokens/color.css, both themes');
      'Both measure under the 4.5 floor in the light theme; one is byte-asserted by ' +
      'test-next-domain-lifecycle.js, so neither is this wave\'s to move.');
 
-  // And --text-3 is not gone from this view, only from the roles that were
-  // converted. Pinning the count stops a future reader believing it is solved.
-  // A RATCHET, not a target. 32 before this wave, 30 after (the two that went
-  // were `.dm-health-meta` and `.dm-mirror-note svg`). It may fall; it may not
-  // rise. Every one of the 30 is under the AA floor as body text, so a new one
-  // is a new defect, and the count is here so nobody reads "the roles no
-  // longer use --text-3" as "this view no longer does".
-  const text3 = (domainsCssCode.match(/var\(--text-3\)/g) || []).length;
-  ok(text3 > 0 && text3 <= 30,
-     `KNOWN GAP, RATCHETED: views/domains.css uses --text-3 in ${text3} declarations; it was 32 before ` +
-     'this wave and must not exceed 30. It is retired for the roles adopted here BY CONSTRUCTION — no ' +
-     'role in the text system reads that token — and mass-changing the rest is its own change with its own proof.');
+  // ── THE RATCHET, RECONCILED WITH ITS OWN COMMENT ──────────────────────
+  // This block used to read `text3 > 0 && text3 <= 30` under a comment saying
+  // "It may fall; it may not rise." Those two statements disagreed: the lower
+  // bound made the stated goal — driving the count to zero — FAIL the suite,
+  // so the guard punished the fix it existed to encourage. A later wave worked
+  // around it by leaving sites in place rather than by fixing the guard.
+  //
+  // The `> 0` was doing one real job, though, and it is not the one the comment
+  // described: it kept `<= 30` from passing VACUOUSLY if the corpus failed to
+  // load or the regex stopped matching, in which case the count is 0 and the
+  // ceiling is trivially satisfied. That job is now done explicitly, by a
+  // corpus check and a positive control that do not require the DEFECT to exist
+  // in order to prove the DETECTOR works. The ratchet itself is now a pure
+  // ceiling and the count is free to reach zero.
+  //
+  // History: 32 before the text-system wave, 30 after it (`.dm-health-meta`
+  // and `.dm-mirror-note svg`), 2 today.
+  const TEXT3_RE = /var\(--text-3\)/g;
+
+  // (a) The corpus is real. Without this, an unreadable or renamed file reads
+  //     as "zero uses" and every assertion below passes over nothing.
+  ok(domainsCssCode.length > 500 && /\.dm-/.test(domainsCssCode),
+     'SANITY: views/domains.css was actually read and stripped (length ' +
+     `${domainsCssCode.length}, contains .dm- selectors) — a ceiling assertion over an ` +
+     'empty corpus is the vacuous shape this suite exists to avoid');
+
+  // (b) The detector fires. Proven on a planted string, so it stays honest even
+  //     on the day domains.css legitimately contains none.
+  ok(('.x { color: var(--text-3); } .y { background: var(--text-3); }'.match(TEXT3_RE) || []).length === 2,
+     'CONTROL: the --text-3 counter finds 2 in a planted corpus, so a count of 0 ' +
+     'below means the token is absent and NOT that the counter broke');
+
+  // (c) THE RATCHET. A ceiling only: it may fall, to zero, and it may not rise.
+  const text3 = (domainsCssCode.match(TEXT3_RE) || []).length;
+  ok(text3 <= 30,
+     `KNOWN GAP, RATCHETED: views/domains.css uses --text-3 in ${text3} declarations; it was 32 ` +
+     'before the text-system wave and must never exceed 30. It is retired for the roles adopted ' +
+     'here BY CONSTRUCTION — no role in the text system reads that token — and mass-changing the ' +
+     'rest is its own change with its own proof.');
+
+  // (d) AND THE SHARPER INVARIANT, which the count alone never carried: the
+  //     ceiling is satisfied by 30 sub-floor TEXT colours just as happily as by
+  //     2 correct graphics. --text-3 measures 4.15-4.38 in both themes, which
+  //     FAILS the 4.5:1 text floor and PASSES the 3:1 floor for a non-text
+  //     graphic — so the token is legitimate on a chevron or a dot and never on
+  //     words. Every surviving `color: var(--text-3)` must therefore name an
+  //     element that is not text. Today that is exactly one rule,
+  //     `.dm-group-summary svg`; the other use is a `background` on a 6px dot,
+  //     which is not a text colour at all and is correctly not matched here.
+  const colorText3Selectors = [...domainsCssCode.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, , decls]) => /(?:^|[;{\s])color:\s*var\(--text-3\)/.test(decls))
+    .map(([, sel]) => sel.trim().replace(/\s+/g, ' '));
+  ok(colorText3Selectors.every((s) => /\bsvg\b|::(?:before|after)\b/.test(s)),
+     '--text-3 is never a TEXT colour in views/domains.css — every rule that paints it as `color` ' +
+     'targets a graphic (svg / pseudo-element), where the 3:1 floor applies and 4.15-4.38 clears it. ' +
+     `Rules found: ${colorText3Selectors.join(' | ') || 'none'}`);
+
+  // (e) CONTROL for (d): the selector filter really does reject a words rule.
+  const plantedProse = [...'.dm-planted-note { color: var(--text-3); }'.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, , d]) => /(?:^|[;{\s])color:\s*var\(--text-3\)/.test(d))
+    .map(([, s]) => s.trim());
+  ok(plantedProse.length === 1 && !plantedProse.every((s) => /\bsvg\b|::(?:before|after)\b/.test(s)),
+     'CONTROL: a planted prose rule painting --text-3 as `color` is caught by (d) — the filter is ' +
+     'not passing everything');
 }
 
 console.log('\n' + '='.repeat(60));

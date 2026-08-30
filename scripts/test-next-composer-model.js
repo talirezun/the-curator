@@ -305,6 +305,8 @@ const FN_NAMES = [
   'assistantEyebrowHtml',
   // §11 — the ANSWER cost (what that message cost, from its own tokens).
   'messageUsageTokens', 'cacheMultipliers', 'messageCostUsd', 'assistantCostHtml',
+  // The cost DISCLOSURE the tooltip became: button + panel, ARIA and all.
+  'costMarkHtml',
   // §15 — the RE-ASK caveat: whether the answer being re-asked is still inside
   // the window the next prompt will carry.
   'answerIsInPromptWindow',
@@ -392,7 +394,7 @@ const {
   measuredLatencyRange, slowTurnNoticeText,
   modelDisplayLabel, neutralProviderLabel, describeAnswerModel,
   assistantEyebrowHtml,
-  messageUsageTokens, cacheMultipliers, messageCostUsd, assistantCostHtml,
+  messageUsageTokens, cacheMultipliers, messageCostUsd, assistantCostHtml, costMarkHtml,
   PROMPT_HISTORY_MESSAGES, MODEL_VALUE_SEP, BROWSE_MODEL_VALUE, __setThread,
   answerIsInPromptWindow, modelOptionValue, parseModelOptionValue,
 } = sandbox;
@@ -2574,6 +2576,93 @@ section('§11 PER-ANSWER COST — measured, mirrored, and silent when unknown');
     ok(messageUsageTokens(null) === null && messageUsageTokens({}) === null,
       '§11.9 a missing message or missing usage is null');
   }
+
+  // ── §11.10  THE COST IS A DISCLOSURE, NOT A TOOLTIP ────────────────────
+  //
+  // The token counts behind the figure used to live in a `title=` on a
+  // <span>. A `title=` on a non-focusable element is HOVER-ONLY: a keyboard
+  // user never reaches it and on touch it does not exist at all. v3.20.0
+  // counted 11 such strings in this tree and named this one the worst,
+  // because it is the only one that justifies a dollar figure.
+  //
+  // This drives the REAL `costMarkHtml` — the button and its panel — rather
+  // than reading the source for it. What it cannot do is press a key: no
+  // offline suite in this repo renders anything, so Escape, outside-click and
+  // focus return are a browser check. What IS proven here is that the markup
+  // hands those behaviours to shared/text.js's ONE delegated listener, whose
+  // contract test-next-title-affordances.js §3 pins separately.
+  {
+    const PANEL = 'chat-cost-7';
+    const TITLE = '998 in / 247 out tokens';
+    const out = costMarkHtml(PANEL, TITLE, '$0.01');
+    const tag = out.slice(out.indexOf('<button'), out.indexOf('>', out.indexOf('<button')) + 1);
+
+    ok(/^<button type="button"/.test(tag),
+      '§11.10 the cost is a real <button type="button">');
+    ok(!/\bdisabled\b/.test(tag),
+      '§11.10 …never disabled — a disabled control is out of the tab order, which IS the defect');
+    ok(tag.includes('data-tx-info="' + PANEL + '"'),
+      '§11.10 it carries data-tx-info, the attribute the shared delegated listener keys on');
+    ok(tag.includes('aria-expanded="false"'),
+      '§11.10 aria-expanded starts false');
+    ok(tag.includes('aria-controls="' + PANEL + '"'),
+      '§11.10 aria-controls names the panel');
+    ok(out.includes('id="' + PANEL + '" role="group"') && / hidden>/.test(out),
+      '§11.10 the panel is HIDDEN on first paint — otherwise it is the always-visible line it replaces');
+    ok(out.includes('>' + TITLE + '</div>'),
+      '§11.10 …and the panel actually carries the breakdown, so the disclosure is not empty');
+    ok(tag.includes('title="' + TITLE + '"'),
+      '§11.10 title= is KEPT, but now on a FOCUSABLE element — mouse users lose nothing');
+
+    // WCAG 2.5.3 Label in Name: the accessible name must CONTAIN the visible
+    // label. That is why the mid-dot separator stays OUTSIDE the button — it
+    // is the eyebrow's punctuation, and including it would make the visible
+    // text "· $0.01" while the name says "$0.01 …".
+    const visible = out.slice(out.indexOf('>', out.indexOf('<button')) + 1, out.indexOf('</button>'));
+    ok(visible === '$0.01',
+      '§11.10 the button\'s visible text is exactly the figure (got ' + JSON.stringify(visible) + ')');
+    ok(/aria-label="\$0\.01 — token breakdown"/.test(tag),
+      '§11.10 …and the accessible name CONTAINS that visible label (WCAG 2.5.3)');
+    ok(out.startsWith(' · ') && !visible.includes('·'),
+      '§11.10 the mid-dot separator is outside the control, which is what makes that containment exact');
+
+    // Ids must differ per message or every button opens the FIRST panel.
+    const priced = msg(everyEntry[0].e.id, USAGES[0]);
+    const a0 = assistantCostHtml(priced, ctx, 0);
+    const a3 = assistantCostHtml(priced, ctx, 3);
+    ok(a0.includes('id="chat-cost-0"') && a3.includes('id="chat-cost-3"'),
+      '§11.10 the panel id is derived from the message index');
+    ok(a0 !== a3,
+      '§11.10 …so two answers in one thread do not share a panel id');
+    ok(assistantCostHtml(priced, ctx).includes('id="chat-cost-0"'),
+      '§11.10 a two-argument call still yields a well-formed pair (index defaults to 0)');
+    ok(assistantCostHtml(priced, ctx, -1).includes('id="chat-cost-0"') &&
+       assistantCostHtml(priced, ctx, 1.5).includes('id="chat-cost-0"'),
+      '§11.10 …and a nonsense index degrades to 0 rather than emitting a broken id');
+
+    // Escaping. Every input is app-derived today; that is exactly when an
+    // injection point is introduced without anyone noticing.
+    const nasty = costMarkHtml('p"><img src=x onerror=1>', '<img src=x onerror=1>', '"><b>x</b>');
+    ok(!/<img/.test(nasty) && !nasty.includes('<b>'),
+      '§11.10 every interpolated value is escaped — id, title and figure alike');
+    for (const t of scanTags(nasty)) {
+      ok(!t.attrs.some((at) => /^on[a-z]+$/i.test(at)),
+        '§11.10 no tag in the escaped output carries an event-handler attribute (<' + t.name + '>)');
+    }
+
+    // The free case is the same control, not a bare span that quietly kept the
+    // tooltip — the shape a partial conversion leaves behind.
+    const freeEntry = everyEntry.map((x) => x.e).find((e) => e.free === true);
+    if (freeEntry) {
+      const f = assistantCostHtml(msg(freeEntry.id, USAGES[0]), ctx, 2);
+      ok(/<button type="button" class="chat-msg-cost"/.test(f) && !/<span class="chat-msg-cost"/.test(f),
+        '§11.10 the FREE case is the same disclosure, not a leftover span');
+      ok(f.includes('>free</button>'),
+        '§11.10 …and still renders the word "free", never a dollar figure');
+    } else {
+      ok(false, '§11.10 CONTROL: the fixture catalogue must contain a free entry for this to mean anything');
+    }
+  }
 }
 
 
@@ -2641,6 +2730,21 @@ section('§12  The thinking clock — a wait you can see, and never a wait we in
     // once-a-second tick). Extracted rather than stubbed, so what is asserted
     // below is the wording that actually ships.
     extractFunction(chatSrc, 'slowTurnNoticeText') + '\n' +
+    // Joined the bindings when chat turns began STREAMING. `thinkingBodyHtml`
+    // now delegates its contents to `streamSlotHtml`, which is either the
+    // pre-roll ring (this suite's case — `sendStream` stays null, so the markup
+    // asserted below is unchanged) or the streamed text. Extracted rather than
+    // stubbed for the same reason as everything else here: what is asserted has
+    // to be the markup that actually ships. The streaming half has its own
+    // contract in scripts/test-next-chat-streaming.js.
+    'let sendStream = null;\n' +
+    extractConst(chatSrc, 'STREAM_TAIL_LINES') + '\n' +
+    extractConst(chatSrc, 'STREAM_TAIL_CHARS') + '\n' +
+    extractFunction(chatSrc, 'slowNoticeSuppressed') + '\n' +
+    extractFunction(chatSrc, 'streamShapeKey') + '\n' +
+    extractFunction(chatSrc, 'reasoningTailText') + '\n' +
+    extractFunction(chatSrc, 'preRollRingHtml') + '\n' +
+    extractFunction(chatSrc, 'streamSlotHtml') + '\n' +
     extractFunction(chatSrc, 'thinkingBodyHtml') + '\n' +
     'const _origNow = Date.now;\n' +
     'Date.now = () => nowRef.t;\n' +

@@ -71,12 +71,16 @@
 // no path forward but a page reload".
 
 import {
-  registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, navigate, isCurrentMount,
+  registerView, setSidebar, setMain, escapeHtml, icon, navigate, isCurrentMount,
   reportAsyncMountFailure, reportAsyncActionFailure,
   isAnyWriteBusy, getDomainWriteLabel, onWriteGateChange,
   refreshSyncBadge, refreshSyncRemoteBadge,
 } from '../app.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
+// The ONE text system in /next. renderViewHeader owns the top of this view so a
+// paragraph cannot float under the title; renderStatus carries the cross-write
+// refusal that used to live in a `title=` on a DISABLED button (see below).
+import { renderViewHeader, renderStatus } from '../shared/text.js';
 
 function freshState() {
   return {
@@ -308,8 +312,16 @@ function renderSidebar(token) {
     : '';
 
   setSidebar(
-    '<div class="sidebar-title">Sync</div>' +
-    '<div class="sidebar-hint">Pages, chats and schemas travel; source files and keys stay here.</div>' +
+    // No paragraph under the title. The sentence explains a MECHANISM — what
+    // the backup covers — and nothing in it warns, costs or is irreversible:
+    // source files staying local is the design (raw/ is gitignored, so a
+    // private repo never carries them), not a loss of anything the user has.
+    // The DOMAINS BACKED UP list immediately below is the readout it qualifies.
+    renderViewHeader({
+      variant: 'sidebar',
+      title: 'Sync',
+      info: 'Pages, chats and schemas travel; source files and keys stay here.',
+    }) +
     '<div class="cur-eyebrow" style="margin-top:2px">DOMAINS BACKED UP</div>' +
     '<div class="sync-domain-list">' + domainRows + '</div>' +
     busyNote,
@@ -328,10 +340,15 @@ function renderMain(token) {
     body = renderConfigured(s);
   }
 
+  // THE SENTENCE IS CUT, NOT RELOCATED. In the CONFIGURED state the status card
+  // directly below says "Connected", prints the repo URL and the last sync time
+  // — the sentence restated all three in the abstract. In the UNCONFIGURED state
+  // the setup card's own title is "Connect a GitHub repository" and its hint
+  // names the private repo and the token. Either way it taught nothing to
+  // someone already looking at the screen, which is the test v3.22.0 cut
+  // ingest's drop-zone sentence against.
   setMain(
-    eyebrow('where it all lives') +
-    '<h1 class="view-title">Sync</h1>' +
-    '<div class="view-body">Your wiki lives on your disk and backs up to a private GitHub repository you own.</div>' +
+    renderViewHeader({ eyebrow: 'where it all lives', title: 'Sync' }) +
     body,
     token
   );
@@ -386,7 +403,22 @@ function renderConfigured(s) {
   // something ELSE is busy and this view is idle.
   const crossBusy = !acting && crossWriteBusy();
   const disabled = acting || crossBusy;
-  const crossTitle = crossBusy ? ' title="' + escapeHtml(crossWriteTitle()) + '"' : '';
+  // NOT a `title=`, and the reason is measured rather than stylistic: these
+  // buttons are `disabled` in exactly the state this string describes, and a
+  // disabled control receives no pointer events, so the tooltip frequently
+  // never fires at all — and it is out of the tab order, so a keyboard user
+  // could never reach it either. A refusal reason explaining why every primary
+  // action is dead has to be VISIBLE. This is the v3.18.0 class: a refusal the
+  // user cannot see reads as "my click did not register", and they click again.
+  //
+  // renderStatus, not the info mark: a warning behind a click is not a warning.
+  const crossNote = crossBusy
+    ? renderStatus({
+        state: 'attention',
+        title: 'Waiting on another write',
+        detail: crossWriteTitle(),
+      })
+    : '';
 
   return (
     '<div class="sync-status-card">' +
@@ -396,12 +428,13 @@ function renderConfigured(s) {
         '<span class="mono sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
       '</div>' +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
+      crossNote +
       '<div class="sync-status-actions">' +
-        '<button type="button" class="btn btn-primary" id="btn-sync-now"' + (disabled ? ' disabled' : '') + crossTitle + '>' +
+        '<button type="button" class="btn btn-primary" id="btn-sync-now"' + (disabled ? ' disabled' : '') + '>' +
           icon('refresh', 14) + ' ' + (acting === 'sync' ? 'Syncing…' : 'Sync now') +
         '</button>' +
-        '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
-        '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + crossTitle + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
+        '<button type="button" class="btn btn-secondary" id="btn-sync-push"' + (disabled ? ' disabled' : '') + '>' + (acting === 'push' ? 'Pushing…' : 'Push only') + '</button>' +
+        '<button type="button" class="btn btn-secondary" id="btn-sync-pull"' + (disabled ? ' disabled' : '') + '>' + (acting === 'pull' ? 'Pulling…' : 'Pull only') + '</button>' +
         '<span class="sync-pending-note mono">' + escapeHtml(String(pendingCount)) + ' local change' + (pendingCount === 1 ? '' : 's') + ' not pushed</span>' +
       '</div>' +
       (state.actionMessage ? '<div class="sync-action-note">' + escapeHtml(state.actionMessage) + '</div>' : '') +
@@ -447,7 +480,9 @@ function renderDisconnect() {
   const acting = state.acting;
   const crossBusy = !acting && crossWriteBusy();
   const disabled = acting || crossBusy;
-  const crossTitle = crossBusy ? ' title="' + escapeHtml(crossWriteTitle()) + '"' : '';
+  // No second copy of the cross-write note: renderDisconnect() is rendered
+  // from inside renderConfigured()'s own return, so the one visible status box
+  // above is already on screen explaining why this button is disabled too.
 
   if (state.disconnectConfirmOpen) {
     return (
@@ -455,7 +490,7 @@ function renderDisconnect() {
         '<span>Disconnect this repository? Your local wiki files stay exactly as they are — only the sync ' +
         'connection is removed. You can reconnect any time.</span>' +
         '<div class="sync-disconnect-actions">' +
-          '<button type="button" class="btn btn-secondary btn-xs" id="btn-disconnect-confirm"' + (disabled ? ' disabled' : '') + crossTitle + '>' +
+          '<button type="button" class="btn btn-secondary btn-xs" id="btn-disconnect-confirm"' + (disabled ? ' disabled' : '') + '>' +
             (acting === 'disconnect' ? 'Disconnecting…' : 'Disconnect') +
           '</button>' +
           // Cancel never hits the network — always enabled, even mid cross-write, so there is always a way out of the confirm panel.
@@ -464,7 +499,7 @@ function renderDisconnect() {
       '</div>'
     );
   }
-  return '<button type="button" class="sync-disconnect-link" id="btn-disconnect-open"' + (disabled ? ' disabled' : '') + crossTitle + '>Disconnect this repository</button>';
+  return '<button type="button" class="sync-disconnect-link" id="btn-disconnect-open"' + (disabled ? ' disabled' : '') + '>Disconnect this repository</button>';
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────

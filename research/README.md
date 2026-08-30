@@ -62,6 +62,10 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
   By Dr. Tali Režun  
   *The complete case, from the foundations up — why a compounding personal knowledge graph beats retrieval, how My Curator MCP turns it into a research partner, and what happened when Shared Brain came through five structured hardening phases (and two production-grade bugs) on the road to a real cohort pilot.*
 
+- **[The Handoff Writes Itself](./articles/the-handoff-writes-itself.md)**  
+  By Dr. Tali Režun  
+  *Your brain → your team's brain → your agents' brain. The third layer has shipped, and it automates the one part of my build process I had never managed to stop doing by hand.*
+
 ### Case Studies
 
 *(Coming soon)*
@@ -121,6 +125,14 @@ If you're referencing articles from this research series, please cite them as fo
   year = {2026},
   month = {July},
   url = {https://github.com/talirezun/the-curator/blob/main/research/articles/neural-network-of-your-own-knowledge.md}
+}
+
+@article{rezun2026handoff-writes-itself,
+  author = {Režun, Tali},
+  title = {The Handoff Writes Itself},
+  year = {2026},
+  month = {August},
+  url = {https://github.com/talirezun/the-curator/blob/main/research/articles/the-handoff-writes-itself.md}
 }
 ```
 

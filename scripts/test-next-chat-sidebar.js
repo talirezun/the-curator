@@ -667,6 +667,51 @@ section('§10 — SOURCE GUARD: the scope bar\u2019s scrollbar');
   ok(!/overflow-x:\s*hidden/.test(bar), 'scrolling is preserved, not removed');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+section('§11 — SOURCE GUARD: the zero-domain state states its case ONCE');
+// ═════════════════════════════════════════════════════════════════════════
+//
+// With no domains, the sidebar said "No domains exist yet — nothing to chat
+// with." while the centre pane's empty card said the same thing — BOTH ON
+// SCREEN AT ONCE. That is the duplicated-copy class v3.20.0 deleted 712
+// characters of, whose sharpest instance was Shared Brain's sidebar and
+// centre sharing 160 characters verbatim while both were visible.
+//
+// THE CENTRE COPY IS THE ONE THAT SURVIVES, and this section pins the
+// direction rather than merely the deletion — a guard that only checks the
+// sidebar string is gone stays green if someone later deletes the centre one
+// too and leaves the user with an unexplained disabled button.
+{
+  const src = stripComments(chatView);
+
+  ok(!/class="sidebar-hint">No domains exist yet/.test(src),
+    'the sidebar no longer restates what the centre pane already says');
+  // NOT `/nothing to chat with/i` — that phrase is also the CENTRE card's
+  // title ("Nothing to chat with yet"), which is the copy that survives. The
+  // first draft of this assertion used it and went red on the legitimate
+  // half, which is the guard doing its job on its own author.
+  ok(!/No domains exist yet/.test(src),
+    '…and the sentence is gone, not merely re-dressed in a different class');
+
+  // The surviving half, asserted as PRESENT. It says the same fact AND what
+  // to do about it, next to the button that does it.
+  ok(/Chat needs at least one domain to talk to\. Create one in Domains\./.test(src),
+    'the centre empty card still states the fact — the half that also acts');
+  ok(/id="chat-goto-domains"/.test(src),
+    '…and still carries the control that resolves it');
+  ok(/Nothing to chat with yet/.test(src),
+    '…under a title, so the empty state is not a bare button');
+
+  // The sidebar is left with a header and a disabled New chat. That is not an
+  // unexplained dead control — its reason is in the dominant region beside the
+  // fix — and it is what views/ingest.js already renders in the same state.
+  const ingest = readFileSync(path.join(ROOT, 'src/public/next/views/ingest.js'), 'utf8');
+  ok(/const listBlock = state\.domains\.length\s*\?/.test(stripComments(ingest)),
+    'CONTROL: ingest.js renders an EMPTY sidebar block in the same zero-domain state, so this is the house shape');
+  ok(/newChatBtn\.disabled = true/.test(src),
+    'the New chat button is still disabled with no domains — the cut removed copy, not the guard');
+}
+
 // ── Cleanup ─────────────────────────────────────────────────────────────
 rmSync(TMP, { recursive: true, force: true });
 

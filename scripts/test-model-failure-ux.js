@@ -349,10 +349,25 @@ section('§7  THE FAILURE RENDERS RECESSED, WITH A WAY FORWARD (real markup)');
 // exercises `failedModelNoteHtml` alone would stay green if the error branch
 // never called it, which is exactly how the re-ask control came to be absent.
 function makeThreadRenderer(state) {
-  const el = { innerHTML: '', querySelectorAll: () => [], querySelector: () => null };
+  const el = { innerHTML: '', querySelectorAll: () => [], querySelector: () => null, getAttribute: () => null, setAttribute: () => {} };
   const doc = { getElementById: (id) => (id === 'chat-thread' ? el : null) };
   const src =
     'const state = stateRef;\n' +
+    // Joined the bindings when chat turns began STREAMING. renderThreadOnly now
+    // decides its scroll from the reader's position rather than jumping
+    // unconditionally, and gates the in-flight bubble on an identity match
+    // instead of a bare `state.sending`. The real helpers are extracted rather
+    // than stubbed — with no `#main` element in this fake document the scroll
+    // resolves to a no-op, which is the correct behaviour here and keeps this
+    // suite's subject (the FAILURE markup) unchanged.
+    'let sendAbort = null, sendStream = null, lastRenderedConvId;\n' +
+    'const THREAD_FOLLOW_SLACK_PX = ' +
+      (/const THREAD_FOLLOW_SLACK_PX = (\d+);/.exec(chatSrc) || [])[1] + ';\n' +
+    extractFunction(chatSrc, 'sendIsOnScreen', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'threadScrollHost', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'isThreadAtBottom', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'stickThreadToBottom', 'chat.js') + '\n' +
+    extractFunction(chatSrc, 'wireStreamToggle', 'chat.js') + '\n' +
     extractFunction(chatSrc, 'offerableEntries', 'chat.js') + '\n' +
     extractFunction(chatSrc, 'resolveChatModel', 'chat.js') + '\n' +
     extractFunction(chatSrc, 'slowTurnNoticeText', 'chat.js') + '\n' +

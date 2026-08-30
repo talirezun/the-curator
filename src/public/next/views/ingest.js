@@ -608,8 +608,12 @@ function renderSidebar(token) {
   // else on screen, so it is kept rather than cut. It is no longer a
   // paragraph floating under the sidebar title: renderViewHeader puts it
   // behind the info mark, in a panel that is hidden on first paint. It also
-  // leaves `.sidebar-hint`, which paints --text-3 — measured 4.27 dark /
-  // 4.14 light, under the 4.5 AA floor — for the panel's --text-2.
+  // left `.sidebar-hint`, which AT THE TIME painted --text-3 — measured 4.27
+  // dark / 4.14 light, under the 4.5 AA floor — for the panel's --text-2.
+  // (That contrast argument has since been retired at the source: shell.css
+  // now paints `.sidebar-hint` --text-2 too, so the relocation stands on the
+  // "no prose floating under a title" reason alone. Recorded rather than
+  // deleted — the number was true when the move was made.)
   setSidebar(
     renderViewHeader({ variant: 'sidebar', title: 'Ingest', info: hint, infoId: 'tx-vh-info-ingest-sidebar' }) +
     pickBtn +
@@ -720,11 +724,30 @@ function domainListboxCfg({ disabled = false } = {}) {
 function renderIngestForm() {
   const crossBusy = state.domain && !state.submitting && isDomainWriteBusy(state.domain);
   const btnDisabled = !state.file || !!state.fileError || state.submitting || crossBusy || !state.domain;
-  let btnTitle = '';
-  if (crossBusy) {
-    btnTitle = 'A write (' + (getDomainWriteLabel(state.domain) || 'write') + ') is already running for domain "' +
-      state.domain + '" — wait for it to finish, or switch to a different domain.';
-  }
+
+  // ── WHY INGEST IS GREYED OUT IS VISIBLE TEXT, NOT A TOOLTIP ────────────
+  // This was a `title=` on the Ingest button, set on exactly the condition
+  // (`crossBusy`) that also sets `disabled`. A disabled button is not in the
+  // tab order, so the sentence was unreachable by keyboard and, with no hover
+  // on touch, did not exist there at all — and nothing else in this view says
+  // it. Ingest is the app's most expensive action; "why can I not press this"
+  // is not a detail to put behind a mouse.
+  //
+  // renderStatus, unfolded, directly above the button — the same treatment
+  // settings.js gives the identical message (renderCrossWriteBanner) and the
+  // same rule v3.22.0 applied when it refused to fold a data-loss warning
+  // behind the header's info mark.
+  const crossBusyNote = crossBusy
+    ? '<div class="ing-status-block">' +
+        renderStatus({
+          state: 'attention',
+          title: 'Waiting on another write in this domain',
+          detail: 'A write (' + (getDomainWriteLabel(state.domain) || 'write') +
+            ') is already running for domain "' + state.domain +
+            '" — wait for it to finish, or switch to a different domain.',
+        }) +
+      '</div>'
+    : '';
 
   return (
     '<div class="ing-field">' +
@@ -743,8 +766,9 @@ function renderIngestForm() {
     // gate calls POST /api/ingest-queue/estimate), so the mark is present
     // here without one — a known, deliberate gap, not an oversight, while
     // whether to add a single-file estimate is decided separately.
+    crossBusyNote +
     '<button type="button" class="btn btn-primary" id="ing-submit-btn"' +
-      (btnDisabled ? ' disabled' : '') + (btnTitle ? ' title="' + escapeHtml(btnTitle) + '"' : '') + '>' +
+      (btnDisabled ? ' disabled' : '') + '>' +
       icon('sparkles', 14) + ' ' + (state.submitting ? 'Ingesting…' : 'Ingest') +
     '</button>' +
     renderProgress() +

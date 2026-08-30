@@ -18,10 +18,18 @@
 // icon() below — there is no view-local icon table.
 
 import {
-  registerView, setSidebar, setMain, eyebrow, escapeHtml, icon, openReader, navigate, isCurrentMount,
+  registerView, setSidebar, setMain, emptyCard, escapeHtml, icon, openReader, navigate, isCurrentMount,
   reportAsyncMountFailure, isCurrentReader, reportAsyncActionFailure,
   consumeChatScopeRequest,
 } from '../app.js';
+// The ONE view header in /next. `eyebrow()` is no longer imported: both of its
+// call sites here built a header by hand — an eyebrow, then a raw
+// `<h1 class="view-title">`, then, on the zero-domain branch, a paragraph. The
+// component owns all three and has NO parameter that renders prose in the
+// header body, so that shape is no longer expressible on this view. See
+// shared/text.js's own header for why `info` is the only prose field and why it
+// is emitted only inside a panel that is `hidden` on first paint.
+import { renderViewHeader } from '../shared/text.js';
 import { renderMarkdown } from '../shared/markdown.js';
 // The ONE honest USD renderer for /next. Imported, never re-implemented: a
 // local `'$' + n.toFixed(4)` renders any charge below $0.00005 as the string
@@ -39,13 +47,30 @@ import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-ga
 // The design system's two-layer ring, adopted here for the waiting state. It is
 // the RIGHT component for this case and not merely a nicer spinner: its whole
 // reason for existing (v3.9.0) is a single LLM call with no sub-progress, where
-// the honest outer ring is EMPTY and an orbit carries the liveness. A chat turn
-// is exactly that shape — one non-streaming POST, so time-to-first-byte equals
-// total (measured 186s on `z-ai/glm-5.3-flash`) and there is no fraction to
-// report at any point. Called with no `stages` and `value: null`, which is the
-// component's activity-only mode: track + orbit, `role="progressbar"` with NO
-// `aria-valuenow`, i.e. the standard "running, amount unknown".
+// the honest outer ring is EMPTY and an orbit carries the liveness.
+//
+// ── ITS ROLE NARROWED WHEN STREAMING LANDED, AND THE HONESTY RULE DID NOT ──
+// This used to be the whole waiting state, on the premise that a chat turn is
+// one non-streaming POST so time-to-first-byte EQUALS total. That premise is
+// now false for a streaming response: deltas arrive long before the answer is
+// finished (measured on `z-ai/glm-5.3-flash`: reasoning deltas from ~460ms,
+// first CONTENT delta only at 86-91% of the way through a 45-99s turn). So the
+// ring is now a PRE-ROLL — it covers the gap before the first delta of any
+// kind, after which the streamed text itself carries the liveness.
+//
+// What did NOT change is the rule: still no `stages`, still `value: null`,
+// still the component's activity-only mode (track + orbit, `role="progressbar"`
+// with NO `aria-valuenow` — the standard "running, amount unknown"). Streaming
+// gives us a token COUNT, which is not progress: `max_tokens` is a cap, not a
+// forecast, and there is no denominator anywhere. An arc derived from tokens
+// seen would be the same dishonesty as one derived from the clock, wearing a
+// more convincing costume.
 import { progressRingHtml } from '../shared/progress-ring.js';
+
+// The ONE SSE frame reader for this frontend. Chat-turn streaming is its first
+// adopter; see that module's header for why a sixth hand-rolled `reader.read()`
+// loop was not written here.
+import { readSseFrames } from '../shared/sse.js';
 
 // ── Markdown rendering ──────────────────────────────────────────────────
 // The renderer now lives in next/shared/markdown.js so the wiki-browse
@@ -427,6 +452,19 @@ registerView('chat', {
     //     isCurrentMount-gated. Clearing it here loses nothing: that send's
     //     reply is dropped by its own stillRelevant check regardless.
     //
+    //     ── THAT ARGUMENT EXPIRED WHEN THE BUBBLE STOPPED BEING AN ARTIFACT.
+    //     It is kept above because it is still WHY this reset exists, and
+    //     deleting it would lose the history. But "a VISUAL ARTIFACT" was only
+    //     ever a fair description of a spinner. A streaming bubble carries the
+    //     model's reasoning and a draft of the answer — CONTENT — and painting
+    //     another conversation's content into the thread you are reading is a
+    //     trust bug in a knowledge app, not a cosmetic one. So the reset is no
+    //     longer the only defence: `sendIsOnScreen()` gates every paint of that
+    //     bubble on an IDENTITY MATCH (mount + domain + conversation) against
+    //     the in-flight turn's own record, rather than on this bare boolean.
+    //     The reset stays because it is still correct and still cheap; it is
+    //     simply no longer load-bearing on its own. See sendIsOnScreen.
+    //
     //   - state.compileBusy is a LOCK on a paid, destructive write. Clearing
     //     it here unlocked a live compile: the button re-enabled, a second
     //     click started a second compile, and the route answered it with
@@ -461,6 +499,14 @@ registerView('chat', {
     // aborting here would destroy a paid answer rather than save one.
     state.sending = false;
     state.cancelNotice = null;
+    // Same category and the same reason: a stream buffer is the material the
+    // thinking bubble paints from, so leaving it set would let a fresh mount
+    // reconstruct the previous turn's reasoning under a conversation that never
+    // asked for it. `sendIsOnScreen` would refuse to paint it anyway (the mount
+    // token has moved), so this is the second of two layers, not the only one.
+    // The in-flight turn keeps writing into its own detached record and its
+    // paints are dropped by that same gate.
+    sendStream = null;
     // The abandon path. The clock is module-level precisely so it can be
     // stopped from a DIFFERENT mount than the one that started it: the previous
     // mount's send is still in flight (this view never aborts the fetch), and
@@ -1137,6 +1183,13 @@ async function sendCurrentMessage() {
   const controller = new AbortController();
   sendAbort = { controller, mountToken, domain: domainAtSend, conversationId: conversationIdAtSend, text };
 
+  // THE STREAM BUFFERS FOR THIS TURN. Held in a local as well as the module
+  // slot so this turn can only ever clear ITS OWN record (same discipline, and
+  // the same reason, as `sendAbort` above), and so an abandoned turn keeps
+  // writing into a detached object that nothing paints from.
+  const streamRec = { sse: false, seen: false, reasoning: '', content: '', reasoningView: 'tail' };
+  sendStream = streamRec;
+
   state.sending = true;
   // Started BEFORE the first render, so the bubble's very first paint already
   // carries "0s" rather than blank-then-jump.
@@ -1144,7 +1197,13 @@ async function sendCurrentMessage() {
   state.thread.push({ role: 'user', content: text });
   ta.value = '';
   autosize(ta);
-  renderThreadOnly(mountToken);
+  // THE ONE RENDER THAT FORCES A SCROLL. Every other paint follows the reader
+  // (see isThreadAtBottom): text arriving on its own must never drag someone
+  // out of the history they are reading. Pressing Send is the opposite — a
+  // deliberate act whose result the user is waiting to see — so this render
+  // says so explicitly rather than relying on where the scrollbar happened to
+  // be.
+  renderThreadOnly(mountToken, { stick: true });
   renderComposerBusy(true, mountToken);
 
   try {
@@ -1163,9 +1222,32 @@ async function sendCurrentMessage() {
         // byte-identical to v3.0.11's. Sending an id the server drops would
         // make the picker's price quote a falsehood; see MODEL_PICKER_ENABLED.
         ...(state.chatModel ? { model: state.chatModel } : {}),
+        // ASK for a stream. A route that does not know the field ignores it and
+        // answers with JSON exactly as before, which is what makes the branch
+        // below a real fallback rather than a version check.
+        stream: true,
       }),
     });
-    const data = await res.json();
+
+    // ── STREAM, OR THE ORIGINAL JSON PATH — DECIDED BY THE RESPONSE ────────
+    // Not by what we asked for. `res.ok` is in the conjunction so a 4xx/5xx
+    // (which is always JSON) takes the error path below with its message
+    // intact, and the `getReader` check means an environment with no streaming
+    // body degrades rather than throwing.
+    const ctype = (res.headers && typeof res.headers.get === 'function')
+      ? String(res.headers.get('content-type') || '') : '';
+    const isEventStream = !!res.ok && /text\/event-stream/i.test(ctype) &&
+      !!res.body && typeof res.body.getReader === 'function';
+
+    // `data` is the SAME shape on both paths — the streaming route's `done`
+    // frame carries the full result — so everything below this point is
+    // untouched by streaming, and a bug fixed in one path cannot be missing
+    // from the other because there is only one path from here.
+    const data = isEventStream
+      ? await consumeChatStream(res.body, streamRec, mountToken)
+      : await res.json();
+    // Left byte-identical, including the unguarded `data.error`: on the JSON
+    // path a null body must still fail exactly the way it did before.
     if (!res.ok) throw new Error(data.error || 'The request failed.');
 
     // Must flip BEFORE the relevance check below, regardless of outcome —
@@ -1183,6 +1265,20 @@ async function sendCurrentMessage() {
     if (data.conversationId) state.activeConversationId = data.conversationId;
     state.thread.push({
       role: 'assistant',
+      // ══ REPLACE. NEVER APPEND. ═════════════════════════════════════════
+      // `data.answer` is the complete, authoritative answer on BOTH paths.
+      // The content deltas the user watched arrive were a preview of this
+      // string, not a part of it, and `streamRec.content` is deliberately not
+      // referenced here or anywhere after this point. Appending it would
+      // double every streamed answer, and — worse — the truncation note
+      // src/brain/llm.js appends to a cut-off reply exists ONLY in this field
+      // and never as a delta, so a buffer-first reader would lose the one
+      // sentence explaining why the answer stops mid-thought.
+      //
+      // No fallback to the buffer when `answer` is absent, deliberately: the
+      // JSON path has always rendered an empty bubble in that case, and giving
+      // the streaming path its own recovery is how two paths start behaving
+      // differently for the same server bug.
       content: data.answer,
       citations: data.citations || [],
       // `data.model` is the model that ANSWERED, measured by the server from
@@ -1313,6 +1409,9 @@ async function sendCurrentMessage() {
     // cleared by the wrong turn would leave a live turn unstoppable — a silent
     // failure with no symptom until someone needs the button.
     if (sendAbort && sendAbort.controller === controller) sendAbort = null;
+    // Same identity rule, same reason: a turn may only clear the buffers it
+    // owns. Clearing another turn's would blank a live streaming bubble.
+    if (sendStream === streamRec) sendStream = null;
     state.sending = false;
     // EVERY exit path — resolved, thrown, or returned early as irrelevant —
     // passes through here, which is the only placement that cannot be skipped by
@@ -2042,8 +2141,23 @@ function renderSidebar(token) {
   // drag-to-ingest is ever wired, it belongs in views/ingest.js's queue path,
   // not as a second entry point that has to stay in sync with it.
 
+  // ADOPTED, with NO `info`. There is no prose to fold here — the sidebar
+  // title carried nothing but the word "Chat" — so this is the structural half
+  // of the fix rather than a copy change: a raw `<div class="sidebar-title">`
+  // will accept a paragraph underneath it the moment someone adds one, and a
+  // `<header class="tx-vh tx-vh-sidebar">` will not.
+  //
+  // "New chat" stays a SIBLING and does not move into `actionsHtml`. That slot
+  // lays its members out in the title ROW (`.tx-vh-row` is a flex row), and
+  // this button is deliberately `width: 100%` full-bleed — it is the sidebar's
+  // primary action, not a control that belongs beside a title. Domains' Rename
+  // / Delete / Ask are title-row controls and correctly use the slot; this is
+  // the other case. The sidebar column is `display: flex; gap: 12px`
+  // (shell.css) and `.tx-vh-sidebar` sets `margin: 0`, so the header is just
+  // another flex item and the spacing is unchanged — the same arrangement
+  // views/ingest.js already ships.
   setSidebar(
-    '<div class="sidebar-title">Chat</div>' +
+    renderViewHeader({ variant: 'sidebar', title: 'Chat' }) +
     '<button class="btn btn-primary chat-new-btn" id="chat-new-btn">' + icon('plus', 14) + ' New chat</button>' +
     (state.domains.length > 0
       ? '<div class="chat-search-wrap">' +
@@ -2051,7 +2165,28 @@ function renderSidebar(token) {
           '<input type="text" class="chat-search-input" id="chat-search-input" placeholder="Search conversations…" value="' + escapeHtml(state.searchQuery) + '">' +
         '</div>' +
         '<div class="chat-conv-pane">' + conversationPaneHtml() + '</div>'
-      : '<div class="sidebar-hint">No domains exist yet — nothing to chat with.</div>'),
+      // ── CUT: "No domains exist yet — nothing to chat with." ──────────────
+      // It stated the same fact as the centre pane, WITH BOTH ON SCREEN AT
+      // ONCE — the duplicated-copy class v3.20.0 deleted 712 characters of,
+      // whose sharpest instance was Shared Brain's sidebar and centre sharing
+      // 160 characters verbatim while both were visible.
+      //
+      // THE CENTRE COPY IS THE ONE THAT EARNS ITS PLACE, and it is not a
+      // coin toss: `renderMain`'s zero-domain branch says the same thing and
+      // then says what to do about it ("Create one in Domains") NEXT TO the
+      // button that does it. The sidebar sentence carried the diagnosis with
+      // no remedy, in the narrower column, below the very control it was
+      // explaining. Cutting the half that only restates leaves the half that
+      // also acts.
+      //
+      // WHAT THE SIDEBAR IS LEFT WITH — header, then a disabled New chat —
+      // is not an unexplained dead control. Its reason is on screen, in the
+      // dominant region, beside the fix. This is also EXACTLY what
+      // views/ingest.js already renders in the same state: its `listBlock` is
+      // `''` when there are no domains, so the shell's zero-domain sidebar
+      // already has a precedent in this build and this is now consistent with
+      // it rather than a new shape.
+      : ''),
     token
   );
 
@@ -2104,22 +2239,61 @@ function renderMain(token) {
   // if the gate fires. `loadError` is excluded because that frame is a
   // real conclusion with its own rendering elsewhere; waiting on it here
   // would replace an error with a spinner.
+  // WRITTEN OUT AT BOTH SITES rather than hoisted into a `chatHeader()`
+  // builder, deliberately. The argument is a two-field literal with no
+  // branching — there is no `info`, no readonly variant, nothing that could
+  // drift the way views/domains.js's header can (which is why THAT one is a
+  // builder). And an indirection would hide the call from the adjacency arm of
+  // scripts/test-next-view-header.js §9b, which reads what sits next to a
+  // `renderViewHeader(` call: a helper name is not that call.
   if (!state.booted && !state.loadError && state.domains.length === 0) {
     setMain(
-      eyebrow('the default view') +
-      '<h1 class="view-title">Chat</h1>' +
+      renderViewHeader({ eyebrow: 'the default view', title: 'Chat' }) +
       gatedLoader(bootGate, 'Loading…'),
       token
     );
     return;
   }
 
+  // ── THE EMPTY STATE IS A CARD, NOT A PARAGRAPH UNDER THE TITLE ──────────
+  //
+  // This was the live instance of the defect v3.22.0 exists to remove, on the
+  // app's DEFAULT view: `<h1 class="view-title">Chat</h1>` followed IMMEDIATELY
+  // by `<div class="view-body">Chat needs at least one domain to talk to…</div>`.
+  //
+  // IT IS NOT FOLDED BEHIND THE INFO MARK, and that is the judgement rather
+  // than an oversight. `info` is for prose that EXPLAINS a view someone can
+  // already use — a reader who never opens the panel loses nothing. This
+  // sentence states why the view CANNOT be used at all, next to the one button
+  // that unblocks it. Hiding the reason a screen is empty behind a click is the
+  // same failure shape as hiding a warning behind one: the reader most in need
+  // of it is the one least likely to go looking.
+  //
+  // So it RELOCATES into the shared empty state, which is the house answer for
+  // exactly this (`emptyCard` in app.js — Ingest, Domains, Shared Brain and
+  // memory all use it, and views/domains.js's own zero-domain branch is this
+  // same title + body + primary-button shape). The message and the action it
+  // names now sit in ONE block instead of two loose siblings.
+  //
+  // CUT, and ONLY this: ", then come back here". The rail is on screen the
+  // whole time and Chat is its default item, so the way back was never in
+  // question. "Create one in Domains" is NOT cut, and that is a deliberate
+  // reversal of the first draft of this change: scripts/test-next-chat-compile.js
+  // §5 pins that clause with a reason — Chat has no domain-creation surface of
+  // its own (v3.7.0 deleted one) and the copy has to say where creation really
+  // happens. The button label says WHERE TO GO; it does not say what to do on
+  // arrival. Cutting a clause an existing suite documents as load-bearing, on
+  // the strength of a button label that does not carry it, would have been the
+  // wrong half of "prefer cutting".
   if (state.domains.length === 0) {
     setMain(
-      eyebrow('the default view') +
-      '<h1 class="view-title">Chat</h1>' +
-      '<div class="view-body">Chat needs at least one domain to talk to. Create one in Domains, then come back here.</div>' +
-      '<button class="btn btn-primary" id="chat-goto-domains">' + icon('plus', 13) + ' Go to Domains</button>',
+      renderViewHeader({ eyebrow: 'the default view', title: 'Chat' }) +
+      emptyCard({
+        title: 'Nothing to chat with yet',
+        body: 'Chat needs at least one domain to talk to. Create one in Domains.',
+        actionHtml: '<button class="btn btn-primary" id="chat-goto-domains">' +
+          icon('plus', 13) + ' Go to Domains</button>',
+      }),
       token
     );
     const btn = document.getElementById('chat-goto-domains');
@@ -2381,6 +2555,115 @@ let sendLatencyHint = null;
 // teardown mid-flight and asserts the request was NOT aborted.
 let sendAbort = null;
 
+/**
+ * MAY THE TURN IN FLIGHT PAINT INTO THE THREAD THAT IS ON SCREEN RIGHT NOW?
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT `state.sending` ────────────────────────
+ * `state.sending` is a bare global boolean with no conversation and no domain
+ * attached to it, and the trailing bubble used to render from `state.sending ?
+ * … : ''` with no identity check of any kind. Consequence, reproducible before
+ * this change: send in conversation A, click conversation B, and B shows a
+ * spinner for a turn that has nothing to do with it.
+ *
+ * That was survivable while the bubble was a spinner. It is not survivable now
+ * that the bubble carries the model's REASONING and a DRAFT OF THE ANSWER:
+ * another conversation's content painted into the thread you are reading is
+ * the kind of defect that makes a person stop trusting what is on screen.
+ *
+ * ── IT READS `sendAbort` RATHER THAN A SECOND RECORD OF ITS OWN ───────────
+ * `sendAbort` already carries exactly the three identity fields this needs —
+ * `{ mountToken, domain, conversationId }` — captured at send time by the same
+ * code that captures them for the `stillRelevant` check. Minting a parallel
+ * `sendScope` object with the same three fields and a slightly different
+ * lifetime is precisely the two-hand-maintained-copies shape this repo has
+ * paid for repeatedly; one record, read by both, cannot drift from itself.
+ *
+ * `state.sending` is still in the conjunction, so it keeps every one of its
+ * jobs: the send-lock, the disabled composer, the Send↔Stop dispatch, and the
+ * `onEnter` abandon reset. This narrows WHERE the bubble may appear; it does
+ * not replace the flag.
+ *
+ * @param {number} token the mount token of the render asking to paint.
+ */
+function sendIsOnScreen(token) {
+  return !!state.sending && !!sendAbort &&
+    sendAbort.mountToken === token &&
+    sendAbort.domain === state.activeDomain &&
+    sendAbort.conversationId === state.activeConversationId;
+}
+
+// ── THE LIVE STREAM FOR THE TURN IN FLIGHT ────────────────────────────────
+//
+// `{ sse, seen, reasoning, content, reasoningView }` for the turn in flight, or
+// null. Same lifetime and the same placement rule as `sendAbort` and the clock:
+// one per turn, created in `sendCurrentMessage` before the fetch, cleared in its
+// `finally` and on `onEnter`'s abandon path.
+//
+// ══ THIS IS TRANSIENT DOM MATERIAL. IT IS NEVER A `state.thread` ENTRY. ═══
+// Not "for tidiness" — an assistant placeholder in the thread would BREAK
+// STOP. `sendCurrentMessage`'s abort unwind removes the optimistic user bubble
+// only when the LAST thread entry is `{role:'user'}` with matching content; a
+// placeholder pushed after it fails that identity guard, so a stopped turn
+// would leave a phantom user message on screen that is not in the conversation
+// on disk. scripts/test-next-chat-cancel.js §4 asserts `thread.length === 1`
+// after a Stop, and that assertion is the whole reason this lives out here.
+// `state.cancelNotice` above is the precedent: transient, rendered, never a
+// thread entry.
+//
+//   sse            — the response really was `text/event-stream`. Set only on
+//                    CONFIRMED headers, never optimistically at request time:
+//                    a non-streaming route resolves its headers at the END of
+//                    the turn, so an optimistic flag would suppress the slow-
+//                    turn notice for the entire wait it exists to explain.
+//   seen           — the first delta of ANY kind has arrived. This is what ends
+//                    the ring's pre-roll.
+//   reasoning      — the model's scratchpad, accumulated verbatim.
+//   content        — a PREVIEW of the answer, and nothing more. The thread
+//                    entry is built from `done.answer` alone (see the send
+//                    path); this buffer is discarded.
+//   reasoningView  — 'tail' | 'full' | 'hidden'.
+let sendStream = null;
+
+// How much of the reasoning tail is shown while it streams.
+//
+// MEASURED, NOT PICKED: a turn on `z-ai/glm-5.3-flash` emits 6,687-8,385
+// characters of reasoning at 31-38 chunks/second. Rendering all of it live is a
+// firehose — the text scrolls faster than anyone reads and the useful signal
+// (that the model is working, and roughly on what) is lost in it. A few lines,
+// updated in place, is the readable form of the same fact. The full text stays
+// one click away and is never truncated on the way in.
+const STREAM_TAIL_LINES = 4;
+const STREAM_TAIL_CHARS = 320;
+
+/**
+ * Is the slow-turn notice suppressed for this turn?
+ *
+ * ── IT MUST NOT FIRE ON A STREAMING RESPONSE, AND THAT IS NOT A PREFERENCE ──
+ * `slowTurnNoticeText` quotes `medianLatencyMs`, which is a TOTAL CALL TIME. On
+ * a non-streaming turn total is the only number there is, so quoting it beside
+ * an elapsed clock compares like with like. On a streaming turn the clock
+ * before the first delta measures TIME TO FIRST BYTE — a different quantity,
+ * for which this project has no corpus at all. Putting a total-call figure
+ * beside it would invite exactly the arithmetic it cannot support ("186s
+ * measured, 25s elapsed, so I am 13% through"), which is the invented-
+ * denominator this file refuses everywhere else.
+ *
+ * There is no honest replacement, so there is no replacement: silence beats a
+ * number that means something other than what the reader will take it to mean.
+ * The live clock and the streamed text still run, so silence is never mistaken
+ * for a hang.
+ *
+ * KNOWN, AND STATED RATHER THAN IMPLIED AWAY: this can only be true once the
+ * response headers have been read, so a server that withheld its SSE headers
+ * for more than 20 seconds would show the notice briefly before the first
+ * delta cleared it. Every producer in this codebase flushes SSE headers before
+ * any work, so that window is milliseconds — but it is a property of the
+ * server, not something this function can guarantee.
+ */
+function slowNoticeSuppressed() {
+  return !!(sendStream && sendStream.sse);
+}
+
 // After this long, a turn stops looking slow and starts looking broken — so if
 // we have a measurement for the model in flight, we state it. Once, as a fact.
 //
@@ -2542,7 +2825,8 @@ function slowTurnNoticeText(hint) {
  */
 function thinkingBodyHtml() {
   const elapsedMs = sendStartedAt == null ? 0 : Math.max(0, Date.now() - sendStartedAt);
-  const slowText = elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS ? slowTurnNoticeText(sendLatencyHint) : '';
+  const slowText = (!slowNoticeSuppressed() && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS)
+    ? slowTurnNoticeText(sendLatencyHint) : '';
   // NOT an error, an apology or an animation — a fact, stated once, in the
   // recessed colour the composer already uses for measured detail. It names what
   // WE measured, on what, and does not promise this turn will match it.
@@ -2554,7 +2838,151 @@ function thinkingBodyHtml() {
   // filling toward an invented total is not.
   const slow = slowText ? '<div class="chat-thinking-slow">' + escapeHtml(slowText) + '</div>' : '';
   return (
-    '<div class="chat-thinking">' +
+    // ONE SLOT, TWO OCCUPANTS, ONE PRODUCER. The slot holds either the ring
+    // (pre-roll) or the streamed text, and `streamSlotHtml` is the only thing
+    // that builds either. The live paint path re-renders THIS ELEMENT and
+    // nothing else, so a full `renderThreadOnly` and a per-delta patch can
+    // never disagree about what the waiting state looks like.
+    //
+    // `data-shape` is how the fast path knows whether a STRUCTURAL change has
+    // happened (ring -> text, reasoning collapsing on the first content delta,
+    // the user expanding the fold) as opposed to more of the same text. It is
+    // emitted here so a full render leaves the slot in a state the fast path
+    // reads correctly without a second bookkeeping variable.
+    '<div id="chat-stream-slot" data-shape="' + escapeHtml(streamShapeKey()) + '">' +
+      streamSlotHtml(elapsedMs) +
+    '</div>' +
+    '<div id="chat-think-slow">' + slow + '</div>'
+  );
+}
+
+/**
+ * A key that changes only when the waiting state's STRUCTURE changes — never
+ * when more text arrives.
+ *
+ * This is what keeps the cost of a delta at "write two strings into two
+ * existing text nodes". A key that moved with the text would re-render the slot
+ * 31-38 times a second, which is the `renderThreadOnly`-per-token defect one
+ * level down: it would drop and re-bind the fold's listener on every chunk and
+ * destroy any text selection inside the reasoning box every frame.
+ */
+function streamShapeKey() {
+  const s = sendStream;
+  if (!s || !s.seen) return 'ring';
+  return [
+    'text',
+    s.reasoningView,
+    s.reasoning ? 'r' : '-',
+    s.content ? 'c' : '-',
+  ].join('|');
+}
+
+/**
+ * The last few lines of the reasoning, for the live tail.
+ *
+ * Deliberately cuts from the END: the newest text is the informative part, and
+ * the final line is usually a PARTIAL sentence mid-generation, which is exactly
+ * the signal that something is happening right now. Nothing is lost — the tail
+ * is a view of `sendStream.reasoning`, which is never truncated on the way in.
+ */
+function reasoningTailText(full) {
+  const text = typeof full === 'string' ? full : '';
+  const lines = text.split('\n');
+  let tail = lines.slice(Math.max(0, lines.length - STREAM_TAIL_LINES)).join('\n');
+  if (tail.length > STREAM_TAIL_CHARS) tail = tail.slice(tail.length - STREAM_TAIL_CHARS);
+  return tail;
+}
+
+/**
+ * The waiting state's contents: the pre-roll ring, or the streamed text.
+ *
+ * ── EVERY STREAMED CHARACTER IS ESCAPED PLAIN TEXT. NOTHING GOES THROUGH
+ *    `renderMarkdown`, INCLUDING THE ANSWER DRAFT. ────────────────────────
+ * Two concrete hazards, and one rule that removes both rather than managing
+ * them:
+ *
+ *   1. `renderMarkdown`'s citation pass matches `\[source:([^\]]{1,512})\]`.
+ *      Mid-stream, `[source: entities/foo` has no closing bracket yet, so the
+ *      match runs on to the NEXT `]` in the buffer and produces a CLICKABLE
+ *      CHIP POINTING AT THE WRONG PAGE. A citation that opens the wrong page
+ *      is worse than no citation at all, and it would appear and disappear as
+ *      the buffer grew.
+ *   2. Partial markdown flickers structurally, not just visually: a half-typed
+ *      ``` fence swallows the rest of the answer into a code block, a lone `**`
+ *      reflows a paragraph, a half-written `[[` becomes a wikilink and then
+ *      stops being one.
+ *
+ * So the draft is a PREVIEW rendered as text, and `done.answer` — replacing it
+ * wholesale — is the first and only thing rendered as markdown. The visible
+ * settle from plain to formatted at the end is the honest report of exactly
+ * that: what you were reading was provisional. (Citations are wired for the
+ * same reason on the terminal frame only, in `renderThreadOnly`, never here.)
+ *
+ * Reasoning additionally has its own reason to stay plain: it is the model's
+ * scratchpad, not an answer, and rendering it in the answer's voice is the
+ * measurement-and-explanation collapse this app has already been through once.
+ */
+function streamSlotHtml(elapsedMs) {
+  const s = sendStream;
+  const clock = '<span id="chat-think-elapsed" aria-hidden="true">' +
+    escapeHtml(formatDurationMs(Math.max(0, elapsedMs || 0))) + '</span>';
+
+  if (!s || !s.seen) {
+    return '<div class="chat-thinking">' + preRollRingHtml(elapsedMs) + '</div>';
+  }
+
+  const hasReasoning = !!s.reasoning;
+  const started = !!s.content;
+  const view = hasReasoning ? s.reasoningView : 'hidden';
+
+  // "Thinking…" while the scratchpad is the only thing happening; "Thought
+  // for" the moment the answer starts, because by then the thinking is over
+  // and a present tense would be a false statement about the current state.
+  const title = started ? 'Thought for' : (hasReasoning ? 'Thinking…' : 'Answering…');
+
+  let toggle = '';
+  if (hasReasoning) {
+    const next = view === 'full' ? (started ? 'hidden' : 'tail') : 'full';
+    const label = view === 'full'
+      ? (started ? 'Hide reasoning' : 'Show less')
+      : (view === 'hidden' ? 'Show reasoning' : 'Show all');
+    // A real focusable <button>, not a hover affordance: this repo already
+    // carries 11 strings that exist only in `title=`, invisible to keyboard and
+    // touch, and a twelfth is not being added.
+    toggle =
+      '<button type="button" class="chat-stream-toggle" data-stream-view="' + escapeHtml(next) + '"' +
+        ' aria-expanded="' + (view === 'hidden' ? 'false' : 'true') + '"' +
+        ' aria-controls="chat-stream-reasoning">' + escapeHtml(label) + '</button>';
+  }
+
+  const reasoningBlock = (hasReasoning && view !== 'hidden')
+    ? '<div class="chat-stream-reasoning' + (view === 'full' ? ' chat-stream-reasoning-full' : '') + '"' +
+        ' id="chat-stream-reasoning">' +
+        escapeHtml(view === 'full' ? s.reasoning : reasoningTailText(s.reasoning)) +
+      '</div>'
+    : '';
+
+  const draft = started
+    ? '<div class="chat-stream-draft" id="chat-stream-answer">' + escapeHtml(s.content) + '</div>'
+    : '';
+
+  return (
+    '<div class="chat-stream">' +
+      '<div class="chat-stream-head">' +
+        '<span class="chat-stream-title">' + escapeHtml(title) + '</span>' +
+        clock +
+        toggle +
+      '</div>' +
+      reasoningBlock +
+      draft +
+    '</div>'
+  );
+}
+
+/** The pre-roll ring — today's waiting state, unchanged, now time-boxed to the
+ *  gap before the first delta. */
+function preRollRingHtml(elapsedMs) {
+  return (
       progressRingHtml({
         // ── THE TWO ARGUMENTS THAT CARRY THE HONESTY RULE ──────────────────
         // No `stages`, and `value: null`. Together these put the component in
@@ -2564,16 +2992,26 @@ function thinkingBodyHtml() {
         // is the only thing in motion, at its fixed 1.15s period.
         //
         // THAT IS NOT A LIMITATION BEING WORKED AROUND. It is the correct
-        // report: a chat turn is one non-streaming POST with no sub-progress
-        // frames of any kind, so any advancing arc would be derived from a
-        // clock rather than from work done — the precise inversion
-        // shared/progress-ring.js was built to refuse, and the one this repo
-        // has already paid for once (v3.0.17, a user reporting the app as hung
-        // because ingest's Planning phase genuinely could not move a bar).
+        // report: this ring covers the gap BEFORE the first byte, which is one
+        // call with no sub-progress frames of any kind, so any advancing arc
+        // would be derived from a clock rather than from work done — the
+        // precise inversion shared/progress-ring.js was built to refuse, and
+        // the one this repo has already paid for once (v3.0.17, a user
+        // reporting the app as hung because ingest's Planning phase genuinely
+        // could not move a bar).
         //
-        // So: never pass `value` here, never pass `stages`, and never derive
-        // either from `elapsedMs`. There is no total to divide by. The elapsed
-        // clock below is a real measurement and is the only number on screen.
+        // (This comment previously said "a chat turn is one non-streaming
+        // POST". That was true when it was written and is now false; the
+        // CONCLUSION is unchanged, which is why only the premise is corrected
+        // rather than the rule being revisited.)
+        //
+        // AND THE RULE SURVIVES INTO THE STREAM, where it is under MORE
+        // pressure, not less: a stream hands us a token count, which is the
+        // most convincing wrong denominator available — `max_tokens` is a cap,
+        // not a forecast. So: never pass `value` here, never pass `stages`,
+        // and never derive either from `elapsedMs` or from a token count.
+        // There is no total to divide by. The elapsed clock is a real
+        // measurement and is the only number on screen.
         stages: null,
         value: null,
         size: 32,
@@ -2591,11 +3029,9 @@ function thinkingBodyHtml() {
         // the same reason, as ingest's `#ing-elapsed`. The component marks
         // every sublabel aria-hidden, so a screen reader is not read a new
         // number every second.
-        sublabelHtml: '<span id="chat-think-elapsed">' + escapeHtml(formatDurationMs(elapsedMs)) + '</span>',
+        sublabelHtml: '<span id="chat-think-elapsed">' + escapeHtml(formatDurationMs(Math.max(0, elapsedMs || 0))) + '</span>',
         className: 'chat-think-ring',
-      }) +
-    '</div>' +
-    '<div id="chat-think-slow">' + slow + '</div>'
+      })
   );
 }
 
@@ -2620,7 +3056,17 @@ function startSendClock(token) {
     // may have replaced the node since, and re-deriving from elapsed is
     // idempotent. `sendLatencyHint` null => this stays empty forever, which is
     // the absence rule — an unmeasured model gets a live clock and no claim.
-    if (slotEl && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS && !slotEl.firstChild) {
+    //
+    // AND IT IS SUPPRESSED ENTIRELY ON A STREAMING RESPONSE — see
+    // slowNoticeSuppressed for why quoting a TOTAL call time beside a clock
+    // that is measuring time-to-first-byte is a category error rather than a
+    // rough guide. The retraction below covers the narrow case where the
+    // notice was already painted before the SSE headers were read: it is
+    // removed rather than left standing, because a claim we have decided we
+    // cannot make must not survive on screen just because it got there first.
+    if (slotEl && slowNoticeSuppressed()) {
+      if (slotEl.firstChild) slotEl.innerHTML = '';
+    } else if (slotEl && elapsedMs >= SLOW_TURN_NOTICE_AFTER_MS && !slotEl.firstChild) {
       // The SAME sentence builder the initial paint uses. It returns '' for a
       // null hint, which is the absence rule intact: a turn we can say nothing
       // honest about gets a live clock and no claim.
@@ -2648,6 +3094,228 @@ function stopSendClock() {
   if (sendTimerId != null) { clearInterval(sendTimerId); sendTimerId = null; }
   sendStartedAt = null;
   sendLatencyHint = null;
+}
+
+// ── THE LIVE PAINT ────────────────────────────────────────────────────────
+//
+// ══ `renderThreadOnly` IS NEVER CALLED PER TOKEN, AND THAT IS THE RULE. ═══
+// It does a full `el.innerHTML = …` over EVERY message in the thread, re-binds
+// every re-ask, citation-chip and citation-tag listener, and scrolls. At the
+// measured 31-38 chunks/second that would: rebuild every historical message
+// dozens of times a second, orphan and re-bind every listener with it, destroy
+// any text selection the user has made every frame, and — because the rebuild
+// ends in a scroll — pin them to the bottom so they cannot read back through
+// the conversation while the answer arrives. The fast path below writes into
+// the streaming bubble's own nodes and touches nothing else.
+let streamPaintQueued = false;
+
+/**
+ * Coalesce paints to at most one per animation frame.
+ *
+ * ── THIS IS A THROTTLE, NOT AN ANIMATION LOOP, AND THE DIFFERENCE IS
+ *    STRUCTURAL: THE CALLBACK NEVER RE-SCHEDULES ITSELF. ─────────────────
+ * A frame is only ever requested by an arriving delta, and the flag is cleared
+ * inside the callback, so a stream that goes quiet schedules nothing and a
+ * finished turn leaves nothing running. A self-perpetuating rAF loop on an
+ * element that can legitimately be on screen for minutes is the thing this
+ * view's stylesheet and its waiting suite have refused all along; coalescing
+ * bursts into frames is the opposite — it does strictly LESS work than
+ * painting on every chunk.
+ *
+ * At 31-38 chunks/second and a 60Hz frame budget this usually coalesces
+ * nothing, which is the point: it costs nothing in the normal case and bounds
+ * the pathological one (a provider that flushes hundreds of tiny deltas).
+ */
+function schedulePaintStream(token) {
+  if (streamPaintQueued) return;
+  streamPaintQueued = true;
+  const raf = (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function')
+    ? window.requestAnimationFrame.bind(window)
+    : (fn) => setTimeout(fn, 16);
+  raf(() => {
+    streamPaintQueued = false;
+    paintStream(token);
+  });
+}
+
+/**
+ * Write the current stream buffers into the streaming bubble, and nothing else.
+ *
+ * Structural transitions (the ring giving way to text, reasoning collapsing on
+ * the first content delta, the user opening or closing the fold) re-render the
+ * SLOT — one element, a handful of times per turn. Everything else is two
+ * `textContent` writes, which is the whole per-delta cost.
+ */
+function paintStream(token) {
+  if (!isCurrentMount(token)) return;
+  // The identity gate, applied to the fast path as well as to the full render.
+  // Without it a turn belonging to conversation A would keep writing its
+  // reasoning into whatever bubble happened to be in the DOM.
+  if (!sendIsOnScreen(token)) return;
+  const s = sendStream;
+  if (!s) return;
+  const slot = document.getElementById('chat-stream-slot');
+  if (!slot) return;
+
+  const host = threadScrollHost();
+  const following = isThreadAtBottom(host);
+
+  const shape = streamShapeKey();
+  if (slot.getAttribute && slot.getAttribute('data-shape') !== shape) {
+    if (slot.setAttribute) slot.setAttribute('data-shape', shape);
+    const elapsedMs = sendStartedAt == null ? 0 : Math.max(0, Date.now() - sendStartedAt);
+    slot.innerHTML = streamSlotHtml(elapsedMs);
+    wireStreamToggle(slot, token);
+  } else {
+    const r = document.getElementById('chat-stream-reasoning');
+    if (r) r.textContent = s.reasoningView === 'full' ? s.reasoning : reasoningTailText(s.reasoning);
+    const a = document.getElementById('chat-stream-answer');
+    if (a) a.textContent = s.content;
+  }
+
+  if (following) stickThreadToBottom(host);
+}
+
+/**
+ * Bind the reasoning fold's toggle inside `root`.
+ *
+ * Called from both producers of the markup — the fast path's slot re-render and
+ * `renderThreadOnly`'s full rebuild — because an `outerHTML`/`innerHTML`
+ * replacement drops the listener with the element. An unbound-looking control
+ * is the inert-control defect this repo has recorded more than once.
+ */
+function wireStreamToggle(root, token) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  root.querySelectorAll('[data-stream-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!sendStream) return;
+      const next = btn.getAttribute ? btn.getAttribute('data-stream-view') : null;
+      if (next !== 'tail' && next !== 'full' && next !== 'hidden') return;
+      sendStream.reasoningView = next;
+      // Painted SYNCHRONOUSLY, not through the frame throttle: this is a direct
+      // response to a click, and deferring it by a frame is how a control comes
+      // to feel unresponsive.
+      paintStream(token);
+    });
+  });
+}
+
+// ── FOLLOW-IF-FOLLOWING, RATHER THAN AN UNCONDITIONAL JUMP ────────────────
+//
+// `#chat-thread` has no scroll of its own — the composer and scope bar are
+// sticky WITHIN `.main`, which is the one true scrolling ancestor.
+//
+// The old behaviour was `scrollTop = scrollHeight` on every render, which was
+// survivable when a render happened once or twice a turn. With text arriving
+// continuously it becomes a pin: a user scrolling back through the conversation
+// while an answer streams would be dragged to the bottom on every frame, unable
+// to read anything they had already received.
+const THREAD_FOLLOW_SLACK_PX = 48;
+
+function threadScrollHost() {
+  return document.getElementById('main');
+}
+
+/**
+ * Is the reader following the bottom of the thread?
+ *
+ * The slack exists because "at the bottom" is not an equality: browsers report
+ * fractional scroll metrics, and a reader one line up is plainly still
+ * following. 48px is roughly two lines of body copy at this view's line-height
+ * — inside that, you are reading the newest text; outside it, you have
+ * deliberately scrolled away and being yanked back is the defect.
+ *
+ * An environment that reports no metrics at all (a detached node, a test DOM)
+ * yields NaN and is treated as following — the fail-safe direction, because the
+ * failure it produces is "the newest message is visible", not "your place was
+ * silently lost".
+ */
+function isThreadAtBottom(host) {
+  if (!host) return true;
+  const gap = host.scrollHeight - host.scrollTop - host.clientHeight;
+  if (!Number.isFinite(gap)) return true;
+  return gap <= THREAD_FOLLOW_SLACK_PX;
+}
+
+function stickThreadToBottom(host) {
+  if (host) host.scrollTop = host.scrollHeight;
+}
+
+/**
+ * Consume a streamed chat turn and return its terminal `done` frame.
+ *
+ * ══ THE AUTHORITATIVE-RETURN RULE ════════════════════════════════════════
+ * `done` carries the FULL result — the same object the non-streaming route
+ * returns — and `done.answer` is the complete, authoritative answer. The
+ * deltas are a PREVIEW of it, not a part of it.
+ *
+ * So this function returns the frame and NOTHING derived from `rec.content`,
+ * and the caller builds the thread entry from `done.answer` alone. Appending
+ * the buffer to it would double every answer AND lose the truncation note,
+ * which `src/brain/llm.js` appends to the finished string and which therefore
+ * only ever exists in `done.answer` — never as a delta. Nothing in this file
+ * concatenates the two, which is what makes the mistake inexpressible rather
+ * than merely discouraged.
+ *
+ * ── READS TO THE END OF THE STREAM RATHER THAN BREAKING ON `done` ─────────
+ * The discipline `runCompile` and `shared.js`'s `runRevoke` already document
+ * as "THE SSE TRAP": a later chunk can carry the real terminal frame after an
+ * earlier one that looked terminal. Reading to the end costs nothing here (the
+ * server closes immediately after `done`) and removes a whole class of
+ * ordering assumption.
+ *
+ * ── AND A STREAM THAT SIMPLY STOPS IS A FAILURE, NOT AN EMPTY ANSWER ──────
+ * No `done` and no `error` means the connection died mid-answer. Returning
+ * something falsy here would push a blank assistant bubble and persist the
+ * silence as if it were a reply.
+ */
+async function consumeChatStream(body, rec, token) {
+  // CONFIRMED headers, not an assumption: the caller only reaches this once it
+  // has read `content-type: text/event-stream` off the response.
+  rec.sse = true;
+  let final = null;
+  let errored = null;
+
+  for await (const ev of readSseFrames(body)) {
+    if (!ev || typeof ev !== 'object') continue;
+    if (ev.type === 'reasoning') {
+      if (typeof ev.text === 'string' && ev.text) {
+        rec.reasoning += ev.text;
+        rec.seen = true;
+        schedulePaintStream(token);
+      }
+    } else if (ev.type === 'content') {
+      if (typeof ev.text === 'string' && ev.text) {
+        // AUTO-COLLAPSE ON THE FIRST CONTENT DELTA. The scratchpad has done its
+        // job — it filled the 86-91% of the turn during which nothing else
+        // could be shown — and leaving it open would push the answer the user
+        // actually asked for below a wall of the model's own notes. It becomes
+        // a summary line with a button, not a deletion: `rec.reasoning` is
+        // intact and one click away.
+        if (!rec.content) rec.reasoningView = 'hidden';
+        rec.content += ev.text;
+        rec.seen = true;
+        schedulePaintStream(token);
+      }
+    } else if (ev.type === 'done') {
+      final = ev;
+    } else if (ev.type === 'error') {
+      errored = ev;
+    }
+    // An unknown frame type is ignored rather than treated as an error: the
+    // producer may add one, and a client that refuses what it does not
+    // recognise turns an additive server change into an outage.
+  }
+
+  if (errored) {
+    throw new Error(
+      typeof errored.message === 'string' && errored.message ? errored.message : 'The request failed.'
+    );
+  }
+  if (!final) {
+    throw new Error('The connection closed before the answer was finished. Nothing was saved — ask again.');
+  }
+  return final;
 }
 
 /**
@@ -3238,6 +3906,59 @@ function messageCostUsd(m, ctx) {
 }
 
 /**
+ * The cost figure as a DISCLOSURE: the button, then its panel.
+ *
+ * Top-level rather than a closure inside `assistantCostHtml` for two reasons.
+ * It is the piece worth asserting on its own — the ARIA wiring, the escaping
+ * and the accessible name are the whole point of the conversion — and
+ * test-next-composer-model.js's §0 extraction resolves every call an extracted
+ * helper makes, so a nested helper is a name it cannot bind and the suite
+ * would go red (correctly) rather than silently exercise a different shape.
+ *
+ * ── THE MID-DOT IS OUTSIDE THE BUTTON, ON PURPOSE ────────────────────────
+ * It is the eyebrow's own punctuation, not part of the control, and keeping it
+ * out is what makes the accessible name CONTAIN the visible label exactly
+ * ("$0.01" inside "$0.01 — token breakdown"), which WCAG 2.5.3 asks for.
+ *
+ * ── NO BEHAVIOUR IS IMPLEMENTED HERE ─────────────────────────────────────
+ * `data-tx-info` is the attribute shared/text.js's ONE delegated listener keys
+ * on — the same listener the view headers use, installed at module scope. It
+ * gives Escape-closes-and-returns-focus, outside-click dismiss, and
+ * click-inside-is-left-alone for free. Writing a second listener here is how
+ * the two surfaces would drift into two answers about the same interaction.
+ *
+ * Everything interpolated is escaped: `title` is built from integers, `text`
+ * from the shared money formatter, and `panelId` from an array index — but
+ * they pass through `escapeHtml` regardless, because a formatter that becomes
+ * caller-supplied later must not silently become an injection point.
+ *
+ * @param {string} panelId unique within one paint of one thread
+ * @param {string} title   the token breakdown, e.g. "998 in / 247 out tokens"
+ * @param {string} text    the visible figure, e.g. "$0.01" or "free"
+ */
+function costMarkHtml(panelId, title, text) {
+  return (
+    ' · ' +
+    '<button type="button" class="chat-msg-cost" id="' + escapeHtml(panelId) + '-btn"' +
+      ' data-tx-info="' + escapeHtml(panelId) + '"' +
+      ' aria-expanded="false" aria-controls="' + escapeHtml(panelId) + '"' +
+      ' aria-label="' + escapeHtml(text + ' — token breakdown') + '"' +
+      ' title="' + escapeHtml(title) + '">' +
+      escapeHtml(text) +
+    '</button>' +
+    // chat.css owns this panel's box outright rather than borrowing the view
+    // header's. The header component owns the tx- prefix (a suite enforces
+    // it), so a VIEW hand-writing one of its class names couples chat.js to
+    // another component's internals; this repo's own rule for the same
+    // situation in views/sync.js is "own class, own copy". The two panels are
+    // also genuinely different sizes: that one hangs off a page heading, this
+    // one off one line of an eyebrow.
+    '<div class="chat-cost-panel" id="' + escapeHtml(panelId) + '" role="group"' +
+      ' aria-label="Token breakdown" hidden>' + escapeHtml(title) + '</div>'
+  );
+}
+
+/**
  * The cost fragment appended to one message's eyebrow, or '' when there is
  * nothing we can honestly say.
  *
@@ -3275,12 +3996,65 @@ function messageCostUsd(m, ctx) {
  * and two spend readouts arguing for attention in one column would make the
  * factual one look like an alarm.
  *
- * The `title` carries the token counts behind the figure, so a user who wants
- * to check the arithmetic against their provider's own dashboard can, without
- * the thread growing a table. The free case still carries a title when usage
- * is on hand — "free" is a price, not an absence of tokens.
+ * ── THE TOKEN BREAKDOWN IS A CONTROL, NOT A TOOLTIP ──────────────────────
+ *
+ * The counts behind the figure — "998 in / 247 out tokens" — used to live in
+ * a `title=` on a <span>. A `title=` on a non-focusable element is HOVER-ONLY:
+ * a keyboard user never reaches it, and on touch there is no hover at all, so
+ * the string does not exist. v3.20.0 counted 11 such strings in this tree and
+ * named THIS ONE the worst of them, because it is the only one that justifies
+ * a dollar figure — the arithmetic behind a spend claim, unreachable to
+ * anyone not holding a mouse.
+ *
+ * It is now the v3.22.0 affordance: a real focusable <button> revealing a
+ * panel that is `hidden` on first paint, Escape closes it and RETURNS FOCUS to
+ * the button, an outside click dismisses it and a click inside does not. None
+ * of that behaviour is reimplemented here — the button carries `data-tx-info`
+ * and shared/text.js's ONE delegated listener (installed at module scope, and
+ * already imported by this file for renderViewHeader) does the work. A second
+ * copy of that listener is how the two surfaces would drift into two answers.
+ *
+ * ── WHY A PER-MESSAGE CONTROL IS RIGHT HERE AND WAS WRONG ELSEWHERE ──────
+ *
+ * A previous pass correctly DECLINED to convert a tooltip rendered ~192 times
+ * in the model picker, and left the fact stated once for the group instead.
+ * That reasoning does not transfer, and the difference is what decides it:
+ * there the string was IDENTICAL on every row, so stating it once was strictly
+ * better. Here it is per-message DATA — this answer's own token counts — so
+ * "state it once" does not exist as an option. The choice is a control, or the
+ * information stays unreachable.
+ *
+ * THE TAB-STOP COST WAS MEASURED, NOT WAVED AWAY. Every assistant message in
+ * this thread ALREADY contributes tab stops: one per citation chip plus the
+ * re-ask button. This adds ONE more to an existing group of up to eight, at
+ * the START of the message where a reader arrives at it before the answer
+ * rather than after it. It is also emitted only where there is something to
+ * disclose — `assistantCostHtml` returns '' for every message with no usage,
+ * no served model or no live price, so a thread of unpriced answers gains no
+ * stops at all.
+ *
+ * ALWAYS-VISIBLE COUNTS WERE THE OTHER CANDIDATE AND WERE REJECTED. Rendering
+ * "998 in / 247 out" as text costs zero tab stops and reaches everyone — but
+ * it doubles the length of a line whose stated design is to be quiet, and
+ * turns the most detailed thing in the column into the always-on one. A
+ * disclosure is the shape for "available on demand"; that is what this is.
+ *
+ * `title=` IS KEPT ON THE BUTTON, deliberately. It is now on a FOCUSABLE
+ * element, so it is no longer the hover-only defect, and dropping it would
+ * take instant-hover away from mouse users to fix a problem they never had.
+ * Both strings come from the same `title` variable, so they cannot disagree.
+ *
+ * `aria-label` restates the visible figure before naming the disclosure
+ * ("$0.01 — token breakdown") so the accessible name CONTAINS the visible
+ * label (WCAG 2.5.3). The mid-dot separator stays OUTSIDE the button: it
+ * belongs to the eyebrow's punctuation, not to the control, and keeping it out
+ * is what makes that containment exact.
+ *
+ * @param {number} [index] the message's index in the thread, which is what
+ *   makes the panel id unique. Defaults to 0 so a two-argument call — which
+ *   every offline suite makes — still produces a well-formed pair.
  */
-function assistantCostHtml(m, ctx) {
+function assistantCostHtml(m, ctx, index) {
   const usd = messageCostUsd(m, ctx);
   const u = messageUsageTokens(m);
   const title = u
@@ -3289,6 +4063,12 @@ function assistantCostHtml(m, ctx) {
       (u.cacheWriteTokens ? ' / ' + u.cacheWriteTokens + ' cache write' : '') +
       ' tokens'
     : '';
+  // `renderThreadOnly` rebuilds the whole thread with one innerHTML write, so
+  // an id only has to be unique WITHIN one paint of one conversation — the
+  // message's own index is exactly that. It is not persisted anywhere and no
+  // open state survives a rebuild, which is correct: the thread it described
+  // has just been replaced.
+  const panelId = 'chat-cost-' + (Number.isInteger(index) && index >= 0 ? index : 0);
   if (usd === null) {
     // `messageCostUsd` returned null for one of several reasons (see its own
     // docblock) — free is only ONE of them, and must be checked with the
@@ -3301,8 +4081,7 @@ function assistantCostHtml(m, ctx) {
     const c = ctx || {};
     const row = resolveChatModel(modelId, c.offerable, c.availableProviders);
     if (!row || !row.entry || row.entry.free !== true) return '';
-    return '<span class="chat-msg-cost" title="' + escapeHtml(title) + '">' +
-      ' · free</span>';
+    return costMarkHtml(panelId, title, 'free');
   }
   const text = formatUsdHonest(usd);
   // formatUsdHonest returns null for anything that is not a finite number. It
@@ -3310,8 +4089,7 @@ function assistantCostHtml(m, ctx) {
   // that CAN say "no figure" must never have that answer interpolated as the
   // string "null" on a spend line.
   if (text === null) return '';
-  return '<span class="chat-msg-cost" title="' + escapeHtml(title) + '">' +
-    ' · ' + escapeHtml(text) + '</span>';
+  return costMarkHtml(panelId, title, text);
 }
 
 /**
@@ -3326,8 +4104,12 @@ function assistantCostHtml(m, ctx) {
  *
  * Every interpolated value is server- or catalogue-supplied and passes
  * through `escapeHtml`.
+ *
+ * `index` is threaded through for one reason only: it is what makes the cost
+ * disclosure's panel id unique within a paint. It is optional and defaults to
+ * 0, so a two-argument call still yields a well-formed button/panel pair.
  */
-function assistantEyebrowHtml(m, ctx) {
+function assistantEyebrowHtml(m, ctx, index) {
   const d = describeAnswerModel(m, ctx);
   // The cost rides INSIDE the eyebrow, computed from THIS message — same
   // reasoning as the model label directly beside it: `renderThreadOnly` rebuilds
@@ -3336,7 +4118,7 @@ function assistantEyebrowHtml(m, ctx) {
   // was the v3.13.2 bug; a re-priced history would be the same bug about money.
   const eyebrow =
     '<div class="chat-msg-eyebrow mono">THE CURATOR · ' + escapeHtml(d.label) +
-      assistantCostHtml(m, ctx) +
+      assistantCostHtml(m, ctx, index) +
     '</div>';
   if (!d.diverged) return eyebrow;
   return eyebrow +
@@ -4485,10 +5267,27 @@ function renderComposerBusy(busy, token) {
 // H1 fix: reaches into #chat-thread directly, bypassing setMain()'s guard —
 // needs its own. This is the exact function the reported bug painted a
 // stale answer through (see sendCurrentMessage's H1 comment).
-function renderThreadOnly(token) {
+function renderThreadOnly(token, opts) {
   if (!isCurrentMount(token)) return;
   const el = document.getElementById('chat-thread');
   if (!el) return;
+
+  // ── WHERE THE SCROLL ENDS UP, DECIDED BEFORE THE CONTENT CHANGES ────────
+  // Measured first, applied last: once `innerHTML` is replaced, "was the
+  // reader at the bottom?" is unanswerable.
+  //
+  // Three cases, and each is a different fact:
+  //   - `opts.stick` — a deliberate act (pressing Send) whose result the user
+  //     is waiting for. Always jump.
+  //   - a DIFFERENT conversation than the last paint — opening or switching a
+  //     thread must land on the newest message, and the reader's scroll
+  //     position in the previous conversation says nothing about this one.
+  //   - otherwise — follow only if they were already following. This is what
+  //     lets someone read back through history while an answer streams in.
+  const scrollHost = threadScrollHost();
+  const conversationChanged = lastRenderedConvId !== state.activeConversationId;
+  lastRenderedConvId = state.activeConversationId;
+  const stickAfter = !!(opts && opts.stick) || conversationChanged || isThreadAtBottom(scrollHost);
 
   const active = state.domains.find(d => d.slug === state.activeDomain);
 
@@ -4598,13 +5397,25 @@ function renderThreadOnly(token) {
     }).join('');
     return (
       '<div class="chat-msg chat-msg-assistant">' +
-        assistantEyebrowHtml(m, eyebrowCtx) +
+        assistantEyebrowHtml(m, eyebrowCtx, i) +
         '<div class="chat-answer">' + renderMarkdown(m.content || '') + '</div>' +
         (chips ? '<div class="chat-cite-row">' + chips + '</div>' : '') +
         reaskButtonHtml(i) +
       '</div>'
     );
-  }).join('') + (state.sending ? (
+  }).join('') + (sendIsOnScreen(token) ? (
+    // ── THE STREAMING BUBBLE, AND WHY IT IS NOT A THREAD ENTRY ───────────
+    // Painted here, from `sendStream`, and never pushed into `state.thread`.
+    // See sendStream's declaration: an assistant placeholder in the thread
+    // breaks the Stop unwind's identity guard, which pops the optimistic user
+    // bubble only when it is the LAST entry.
+    //
+    // `sendIsOnScreen(token)`, not `state.sending`. That bare boolean carried
+    // no conversation and no domain, so a turn started in one thread painted
+    // its bubble into whichever thread you happened to be looking at. With a
+    // spinner that was a cosmetic oddity; with the model's reasoning and a
+    // draft answer inside it, it is another conversation's content appearing
+    // in the one you are reading.
     '<div class="chat-msg chat-msg-assistant chat-msg-thinking">' +
       '<div class="chat-msg-eyebrow mono">THE CURATOR</div>' +
       thinkingBodyHtml() +
@@ -4653,10 +5464,26 @@ function renderThreadOnly(token) {
     elm.addEventListener('click', () => openWikiReader(path, null));
   });
 
+  // The reasoning fold's toggle. Same reason as every other listener in this
+  // block: the `innerHTML` replacement above dropped the previous one with the
+  // element it was bound to.
+  wireStreamToggle(el, token);
+
   // #chat-thread has no scroll of its own (see chat.css: the composer and
   // scope bar are sticky WITHIN .main, which is the one true scrolling
   // ancestor) — so the element to scroll to reveal the latest message is
   // .main itself, the shared main-column element from index.html/app.js.
-  const scrollHost = document.getElementById('main');
-  if (scrollHost) scrollHost.scrollTop = scrollHost.scrollHeight;
+  //
+  // CONDITIONAL now, on the decision taken at the top of this function before
+  // the content moved. It used to be unconditional, which was survivable at one
+  // or two renders per turn and is not once text arrives continuously.
+  if (stickAfter) stickThreadToBottom(scrollHost);
 }
+
+// The conversation the thread element was last painted for. Purely a scroll
+// decision: opening or switching a conversation must land on its newest
+// message, and the reader's scroll position in the PREVIOUS conversation is not
+// evidence about this one. `undefined` initially so the very first paint of a
+// session counts as a change (a fresh mount must land at the bottom); `null` is
+// a real value here — it is what an empty "new chat" thread carries.
+let lastRenderedConvId;

@@ -48,11 +48,20 @@
  *   §7  A stop that is no longer on screen renders nothing.
  *   §8  A cancelled FIRST message leaves no phantom conversation.
  *   §9  The notice is a fact, not an error — and is escaped.
+ *   §10 STOPPING A STREAMED TURN. With `stream: true` the abort no longer
+ *       lands in `res.json()` — it surfaces out of a `reader.read()` inside
+ *       shared/sse.js's generator, a different call stack with a different
+ *       rejection. Everything §4-§8 guarantee is re-proven there rather than
+ *       assumed to carry over, plus: the JSON fallback is still real, a
+ *       truncated stream is a failure rather than a blank answer, and the
+ *       `.abort(` count is still one now that a second async teardown path
+ *       exists.
  */
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readSseFrames } from '../src/public/next/shared/sse.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CHAT_PATH = path.join(ROOT, 'src/public/next/views/chat.js');
@@ -141,25 +150,72 @@ function makeDoc(ids) {
 /**
  * A fetch spy that honours an AbortSignal the way the platform does.
  *
+ * ── THE FIXTURE HAD TO GROW A REAL BODY WHEN STREAMING LANDED ────────────
+ * It used to return `{ ok, json }` and nothing else — no `headers`, no `body`.
+ * That was fine while the send path only ever called `res.json()`. The moment
+ * it reads `res.headers.get('content-type')` and `res.body.getReader()`, a
+ * fixture without them does not test a fallback, it throws a TypeError — and
+ * most of the ~40 assertions that would have died are about CANCELLATION, not
+ * about streaming. So every response now carries real headers, and the SSE
+ * modes carry a real `ReadableStream`.
+ *
+ * The JSON modes are KEPT, and are not legacy: a route that does not stream
+ * answers with `application/json`, and the client degrading to the original
+ * path is a shipping behaviour with its own assertions (§10a).
+ *
  * `mode`:
  *   'hang'       — never settles on its own; only an abort ends it.
  *   'bodyHang'   — RESOLVES headers immediately, then `res.json()` hangs. This
  *                  is where a slow turn's time actually goes (fetch resolves on
  *                  HEADERS), and it is the case v3.15.0 measured going wrong.
- *   'ok'         — resolves with `payload`.
+ *   'ok'         — resolves with `payload` as JSON.
+ *   'sse'        — a real event-stream. `payload` is an array of frame objects,
+ *                  enqueued in order, then the stream closes.
+ *   'sseHang'    — emits `payload`'s frames and then STAYS OPEN. This is the
+ *                  shape a real slow turn has while it is still generating,
+ *                  and it is where a Stop actually lands.
  */
+function makeHeaders(contentType) {
+  return { get: (name) => (String(name).toLowerCase() === 'content-type' ? contentType : null) };
+}
+
 function makeFetch(mode, payload) {
   const calls = [];
   const fetchImpl = (url, opts) => {
     const signal = opts && opts.signal;
     calls.push({ url, opts, signal, method: opts && opts.method, body: opts && opts.body });
     const abortErr = () => { const e = new Error('The operation was aborted.'); e.name = 'AbortError'; return e; };
+
+    if (mode === 'sse' || mode === 'sseHang') {
+      const frames = Array.isArray(payload) ? payload : [];
+      const enc = new TextEncoder();
+      let cancelled = 0;
+      const stream = new ReadableStream({
+        start(controller) {
+          for (const f of frames) controller.enqueue(enc.encode('data: ' + JSON.stringify(f) + '\n\n'));
+          if (mode === 'sse') { controller.close(); return; }
+          // 'sseHang': still generating. An abort must be what ends it — the
+          // same discipline as 'hang', but landing inside the READ rather than
+          // inside `res.json()`.
+          if (signal) signal.addEventListener('abort', () => { try { controller.error(abortErr()); } catch { /* already closed */ } });
+        },
+        cancel() { cancelled++; },
+      });
+      return Promise.resolve({
+        ok: true,
+        headers: makeHeaders('text/event-stream; charset=utf-8'),
+        body: stream,
+        json: async () => { throw new Error('json() must not be called on a streamed response'); },
+        _cancelled: () => cancelled,
+      });
+    }
     if (mode === 'ok') {
-      return Promise.resolve({ ok: true, json: async () => payload });
+      return Promise.resolve({ ok: true, headers: makeHeaders('application/json'), json: async () => payload });
     }
     if (mode === 'bodyHang') {
       return Promise.resolve({
         ok: true,
+        headers: makeHeaders('application/json'),
         json: () => new Promise((_res, rej) => {
           // DELIBERATELY NOT an AbortError. v3.15.0 measured an abort landing
           // in a JSON handler and being TRANSLATED into a different error,
@@ -185,7 +241,7 @@ function makeFetch(mode, payload) {
 function makeSandbox(opts = {}) {
   const doc = makeDoc(['chat-input', 'chat-send-btn']);
   const { calls, fetchImpl } = makeFetch(opts.mode || 'hang', opts.payload);
-  const rendered = { thread: 0, composerBusy: [], shell: 0, sidebar: 0 };
+  const rendered = { thread: 0, threadOpts: [], composerBusy: [], shell: 0, sidebar: 0 };
   const state = {
     sending: false,
     activeDomain: opts.domain || 'articles',
@@ -202,10 +258,16 @@ function makeSandbox(opts = {}) {
   const clock = { started: 0, stopped: 0 };
   const loadCalls = [];
 
+  const paints = [];
   const src =
     'let myMountToken = 1;\n' +
     'let sendAbort = null;\n' +
+    'let sendStream = null;\n' +
     extractFunction(chatSrc, 'sendCurrentMessage') + '\n' +
+    // The REAL stream consumer, driving the REAL shared/sse.js reader (imported
+    // above, not stubbed) — so what is asserted below is the frame parsing that
+    // actually ships, including how an abort lands inside it.
+    extractFunction(chatSrc, 'consumeChatStream') + '\n' +
     extractFunction(chatSrc, 'cancelCurrentSend') + '\n' +
     extractFunction(chatSrc, 'restoreDraft') + '\n' +
     extractFunction(chatSrc, 'cancelNoticeHtml') + '\n' +
@@ -222,6 +284,7 @@ function makeSandbox(opts = {}) {
     '  composerPrimaryButtonHtml, renderComposerBusy, wireComposerPrimaryButton,\n' +
     '  peekAbort: () => sendAbort,\n' +
     '  setAbort: (v) => { sendAbort = v; },\n' +
+    '  peekStream: () => sendStream,\n' +
     // The real teardown closure, lifted verbatim out of onEnter and returned
     // so §6 can EXECUTE it rather than read it.
     '  teardown: ' + extractBlockAt(chatSrc, 'return () => {', 'onEnter teardown').replace(/^return /, '') + ',\n' +
@@ -233,18 +296,24 @@ function makeSandbox(opts = {}) {
     'loadDomainConversations', 'bumpMessageCountForTurn', 'renderSidebarConversationsOnly',
     'escapeHtml', 'icon', 'AbortController', 'bootGate', 'cancelSearchTimer', 'escHandler',
     'closeAllListboxes', 'closeBrowseDialog', 'closeConfirmIfOpen',
+    'readSseFrames', 'schedulePaintStream',
     src
   )(
     doc, state, fetchImpl,
     (t) => (opts.isCurrentMount === undefined ? true : opts.isCurrentMount(t)),
     () => { clock.started++; }, () => { clock.stopped++; },
-    () => {}, () => { rendered.thread++; }, () => { rendered.shell++; },
+    () => {}, (t, o) => { rendered.thread++; rendered.threadOpts.push(o || null); },
+    () => { rendered.shell++; },
     async (...a) => { loadCalls.push(a); }, () => {}, () => { rendered.sidebar++; },
     escapeHtmlStub, iconStub, AbortController,
     null, () => {}, null, () => {}, () => {}, () => {},
+    // The REAL reader, so an abort landing inside frame parsing is exercised
+    // rather than modelled. The paint is a spy: this suite owns cancellation,
+    // not rendering — test-next-chat-streaming.js drives the real painter.
+    readSseFrames, (t) => { paints.push(t); },
   );
 
-  return { api, doc, state, calls, clock, rendered, loadCalls };
+  return { api, doc, state, calls, clock, rendered, loadCalls, paints };
 }
 
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -781,6 +850,138 @@ section('§9  THE NOTICE IS A FACT, NOT AN ERROR');
   ok(/\.chat-stop-glyph\s*\{/.test(cssSrc), 'the CSS square the button relies on really exists');
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§10  STOPPING A STREAMED TURN  ★ the abort now lands somewhere else');
+// ═════════════════════════════════════════════════════════════════════════
+// Every section above drives the JSON path, where an abort surfaces out of
+// `res.json()`. On a streamed turn it surfaces out of a `reader.read()` inside
+// shared/sse.js's generator instead — a different call stack, a different
+// rejection, and a `finally` that cancels the reader on the way out. The
+// guarantee has to be re-proven there, not assumed to carry over.
+{
+  // §10a — the fallback is real, not theoretical. A route that answers with
+  // JSON is still served by the original path, byte-for-byte.
+  const s = makeSandbox({
+    mode: 'ok',
+    payload: { answer: 'from the json path', conversationId: 'conv-1', citations: [] },
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  await s.api.sendCurrentMessage();
+  ok(JSON.parse(s.calls[0].body).stream === true, 'the request ASKS for a stream');
+  ok(s.state.thread.some(m => m.content === 'from the json path'),
+    '§10a but a JSON response is still answered by the original path — the ask is not a version check');
+  ok(s.paints.length === 0, 'and nothing was painted as a stream');
+}
+{
+  // §10b — a complete streamed turn lands in the thread from `done`, and the
+  // deltas that preceded it leave no trace in `state.thread`.
+  const s = makeSandbox({
+    mode: 'sse',
+    payload: [
+      { type: 'reasoning', text: 'weighing sources' },
+      { type: 'content', text: 'The answer is ' },
+      { type: 'content', text: 'forty-two.' },
+      { type: 'done', answer: 'The answer is forty-two.', conversationId: 'conv-1', citations: ['entities/x.md'] },
+    ],
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  await s.api.sendCurrentMessage();
+  const answers = s.state.thread.filter(m => m.role === 'assistant');
+  ok(answers.length === 1, '§10b exactly ONE assistant entry — the deltas were never thread entries');
+  ok(answers[0].content === 'The answer is forty-two.', 'and it is `done.answer`, verbatim');
+  ok(s.paints.length > 0, 'control: the deltas really did drive paints');
+  ok(s.state.sending === false && s.api.peekAbort() === null && s.api.peekStream() === null,
+    'and the turn unwound cleanly — no dangling abort handle, no dangling buffers');
+}
+{
+  // §10c ★ — STOP, MID-STREAM, AFTER TEXT HAS ALREADY ARRIVED ON SCREEN.
+  // This is the case with the most to go wrong: there is visible content, and
+  // none of it was persisted. The thread must come back byte-identical to
+  // before the send.
+  const s = makeSandbox({
+    mode: 'sseHang',
+    thread: [{ role: 'assistant', content: 'earlier answer' }],
+    payload: [
+      { type: 'reasoning', text: 'I should check the wiki first' },
+      { type: 'content', text: 'Partial ans' },
+    ],
+  });
+  const ta = s.doc.getElementById('chat-input');
+  ta.value = 'what does my wiki say?';
+  const p = s.api.sendCurrentMessage();
+  await tick(); await tick();
+
+  const rec = s.api.peekStream();
+  ok(!!rec && rec.seen === true, 'control: deltas really did arrive before the Stop');
+  ok(rec.reasoning === 'I should check the wiki first', 'control: the reasoning buffer filled');
+  ok(rec.content === 'Partial ans', 'control: a partial answer was on screen');
+  const ctrl = s.api.peekAbort().controller;
+
+  s.api.cancelCurrentSend();
+  await p;
+
+  ok(ctrl.signal.aborted === true, '★ Stop aborts a streamed turn — the abort lands inside the READ');
+  ok(!s.state.thread.some(m => m.error),
+    '★ an abort surfacing out of the SSE reader is a STOP, not an error');
+  ok(s.state.thread.length === 1 && s.state.thread[0].content === 'earlier answer',
+    '★ the thread is byte-identical to before the send — no user bubble, no partial answer');
+  ok(!JSON.stringify(s.state.thread).includes('Partial ans'),
+    '★ and the partial text that WAS on screen is nowhere in the persisted thread');
+  ok(ta.value === 'what does my wiki say?', 'the draft is handed back');
+  ok(s.state.cancelNotice !== null, 'and the ordinary Stop notice is recorded');
+  ok(s.api.peekStream() === null, 'the stream buffers are released');
+  ok(s.state.sending === false, 'and the send-lock is released');
+}
+{
+  // §10d — a stream that simply STOPS (no `done`, no `error`) is a failure.
+  // Returning something falsy here would push a blank assistant bubble and
+  // persist the silence as if it were a reply.
+  const s = makeSandbox({
+    mode: 'sse',
+    payload: [{ type: 'content', text: 'half an ans' }],
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  await s.api.sendCurrentMessage();
+  const errs = s.state.thread.filter(m => m.error);
+  ok(errs.length === 1, '§10d a truncated stream is reported as a failure');
+  ok(/closed before the answer/.test(errs[0].error), 'and the message says what happened');
+  ok(!s.state.thread.some(m => m.role === 'assistant' && m.content === 'half an ans'),
+    'and the half-answer is NOT persisted as if it were the reply');
+}
+{
+  // §10e — an `error` frame carries the server's own message through.
+  const s = makeSandbox({
+    mode: 'sse',
+    payload: [{ type: 'error', message: 'Rate limited. Please wait 5 seconds.' }],
+  });
+  s.doc.getElementById('chat-input').value = 'q';
+  await s.api.sendCurrentMessage();
+  ok(s.state.thread.some(m => m.error === 'Rate limited. Please wait 5 seconds.'),
+    '§10e an error frame becomes the rendered failure, with the server\'s wording intact');
+}
+{
+  // §10f — the SEND render is the one that forces a scroll. Everything else
+  // follows the reader; pressing Send is a deliberate act whose result the
+  // user is waiting for.
+  const s = makeSandbox({ mode: 'hang' });
+  s.doc.getElementById('chat-input').value = 'q';
+  s.api.sendCurrentMessage();
+  await tick();
+  ok(s.rendered.threadOpts[0] && s.rendered.threadOpts[0].stick === true,
+    '§10f the send\'s own render forces a scroll to the bottom');
+  s.api.cancelCurrentSend();
+}
+{
+  // §10g — CLASS SCAN, labelled as one. `reader.cancel()` inside shared/sse.js
+  // is NOT an abort, and adding a real one anywhere would break the guarantee
+  // §6 exists for. The count must stay at one even now that a second async
+  // teardown path (the stream reader) exists.
+  const sites = [...chatSrc.matchAll(/\.abort\s*\(/g)];
+  ok(sites.length === 1, `§10g still exactly one .abort( call site with streaming landed (found ${sites.length})`);
+  const consume = extractFunction(chatSrc, 'consumeChatStream');
+  ok(!/abort/i.test(consume), 'the stream consumer mentions abort nowhere — it only ever propagates one');
+}
 
 // ═════════════════════════════════════════════════════════════════════════
 console.log(`\n${'─'.repeat(60)}`);

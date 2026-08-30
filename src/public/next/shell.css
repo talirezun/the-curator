@@ -29,6 +29,134 @@ body {
   background: var(--canvas);
 }
 
+/* ── Form controls join the type ramp ───────────────────────────────────
+   Settings > General ships a TEXT SIZE control. It works by writing one
+   custom property, --font-scale, which multiplies the whole --text-* ramp
+   (tokens/typography.css). Every rule in the app that reads a ramp token
+   moves with it for free.
+
+   Form controls did not, and could not, because font-size on a button /
+   input / select / textarea is NOT an inherited value: the UA stylesheet
+   sets it explicitly. Chromium's rule is, in effect,
+   `button { font: 400 13.3333px Arial }` — an author declaration is
+   required to displace it, so a control with no font rule of its own is
+   FROZEN at ~13.33px, IN ARIAL, whatever the user chooses.
+
+   YOU CANNOT GREP FOR AN ABSENT DECLARATION, which is why this survived a
+   px-literal audit (v3.20.0 finding 7 recorded the class and did not close
+   it) and why the guard for it, scripts/test-next-form-control-scaling.js,
+   asserts THIS RULE EXISTS rather than trying to enumerate the controls
+   that would otherwise be frozen.
+
+   ── MEASURED, in Chromium/macOS at 1280x860, over all 92 (tag, class)
+      control shapes the /next JS actually builds ─────────────────────────
+     frozen at 13.3333px .................... 23 of 92
+     ... of those, also rendering in ARIAL ... 21
+     further controls already sized correctly
+     but still rendering in Arial ............ 6
+
+   ── WHAT IS ACTUALLY ON SCREEN TODAY, AND IT IS NOT WHAT THE MECHANISM
+      SUGGESTS. Measured with each control's REAL inner markup, not a bare
+      text node — because that distinction turns out to be the whole story:
+
+     Domains > quick-maintenance label ...... 12px ARIAL   -> 12px system
+     Chat > model-picker row title .......... 13px ARIAL   -> 13px system
+     Ingest > change-list toggle ............ 11px ARIAL   -> 11px system
+     Sync > disconnect link ................. 11px ARIAL   -> 11px system
+     Settings > nav row label ............... 13px system  -> unchanged
+     Agent memory > project row name ........ 12px system  -> unchanged
+
+   Every one of those already SCALED correctly (13 -> 15.34 at Largest, and
+   so on). NOT ONE currently-shipping control renders text at the frozen
+   SIZE, and that is not luck: of the 23 frozen controls, 13 contain only an
+   icon() SVG, 4 put their text in child spans that carry their own ramp
+   token, 1 is a checkbox, and `select` matches nothing at all. The visible
+   defect is the TYPEFACE — four surfaces, one of them the model picker,
+   which is where a user reads a price before spending money.
+
+   So this rule is half corrective and half preventative, and the halves
+   should not be confused. Corrective: font-family, on the four surfaces
+   above. Preventative: font-size, which today changes nothing anyone can
+   see and closes a trap that is invisible to every scan — the moment
+   somebody writes a control that puts its label DIRECTLY in the button
+   (`.ing-change-toggle` and `.sync-disconnect-link` already do; both happen
+   to set their own font-size) and forgets a font rule, that label silently
+   stops responding to the text-size setting and nothing says so.
+
+   Both halves come from ONE UA declaration, which is why they are fixed in
+   one rule rather than split. The six already-sized-but-Arial controls
+   (.chat-bulk-link, .chat-bulk-delete, .ing-change-toggle, .sbw-input,
+   .sb-leave-link, .sync-disconnect-link) each set `font-size: var(--text-*)`
+   and no family — each was plainly written to look like the text around it.
+
+   ── WHY NOT `font: inherit`, AND WHY NOT THE FULL LONGHAND SET ──────────
+   Both were built and MEASURED against the same 92 controls, at scale 1:
+
+     font: inherit ................................. 42 controls changed
+     font-family/size/weight/style/line-height ..... 42 controls changed
+                                                     (byte-identical diffs)
+     font-family + font-size (this rule) ........... 29 controls changed
+
+   The two 42-control variants are identical here because nothing in this
+   tree sets font-variant / font-stretch / font-feature-settings on an
+   ancestor of a control — so the shorthand's extra resets are unobservable
+   TODAY. They are not equally safe tomorrow: `font` resets those to their
+   INITIAL value rather than the inherited one, and this codebase already
+   reaches for that family of properties deliberately (font-variant-numeric:
+   tabular-nums, chat.css and settings.css, so a ticking clock does not
+   shift its glyphs). Longhands cannot silently destroy a property they do
+   not name.
+
+   The 13 extra controls the two big variants touch are `line-height`, and
+   that is the reason it is EXCLUDED. Inheriting body's 1.45 in place of the
+   UA's `normal` grew 11 controls' box height by 3-4px — .settings-nav-row
+   34->38, .mem-row 32->36, .chat-browse-clear 26->29, .chat-reask-btn
+   21->24, .ing-change-toggle 21->24, .mem-refresh 16->19, .sb-leave-link
+   13->16, .sync-disconnect-link 13->16, .chat-bulk-link 12->15,
+   .settings-number-input 17->21 — and SEVEN of the affected controls are
+   not frozen at all (.chat-browse-clear, .chat-reask-btn, .chat-cite-chip,
+   .theme-seg-btn, .chat-browse-q, .sync-setup-input, .sbw-input.mono).
+   Changing the geometry of controls that already work, to fix controls that
+   do not, is not a trade this rule needs to make.
+
+   `font-weight: inherit` and `font-style: inherit` were measured as
+   NO-OPS — zero controls changed — because body is 400/normal and so is the
+   UA default. They are left out rather than shipped as declarations no test
+   can prove do anything.
+
+   ── WHY A TYPE SELECTOR IS SAFE ────────────────────────────────────────
+   Specificity 0,0,1. Every control that carries a deliberate font on its
+   own class (.btn, .chat-input, .theme-seg-btn, .sync-setup-input, ...) is
+   0,1,0 or higher and still wins, in every stylesheet, regardless of link
+   order. Verified: no bare `button`/`input`/`select`/`textarea` font rule
+   exists anywhere else under /next, so there is nothing here to tie-break
+   against. The one control that must NOT follow the app's type system —
+   the boot-recovery button in index.html, which has to render when app.js
+   has failed to evaluate — sets `font-size:14px` INLINE, which outranks
+   this rule and is unaffected.
+
+   `select` currently matches NOTHING: v3.18.0 replaced every native select
+   in /next with shared/listbox.js, and the only `<select>` left in the tree
+   is inside that file's own comments. It is named anyway, because the whole
+   point of this defect is that the next `<select>` anyone adds would be
+   frozen and no scan would say so.
+
+   NOT COVERED, deliberately: this changes what a control INHERITS; it does
+   not touch a control that hardcodes its own px font-size. Those are a
+   separate list and a separate owner (see the --font-scale note in app.js).
+
+   WHY HERE AND NOT tokens/base.css: index.html documents the tokens/ files
+   as copied byte-identical from the design-system bundle, and this file
+   already carries the same "keep the token file untouched" rule for
+   --app-sidebar-w above and for the scrollbar block below. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
 /* ── Scrollbars ──────────────────────────────────────────────────────────
    Reported as "a divider you can hold with the mouse and drive up and down
    — too thick, not within our design concept". It is NOT a divider and not
@@ -275,9 +403,41 @@ body {
   color: var(--text);
 }
 
+/* ── The two sidebar empty-state roles, and why they are --text-2 ─────────
+   BOTH PAINTED --text-3 AND BOTH FAILED THE 4.5 AA TEXT FLOOR. Measured in a
+   real browser (headless Chromium, 1280x860, both themes, helper validated by
+   controls returning 1.00 on an identical pair and 21.0 on black-on-white):
+
+     .sidebar-hint on --surface        4.27 dark / 4.14 light  ->  8.34 / 7.26
+     .sidebar-note on --surface-inset  4.33 dark / 3.87 light  ->  8.45 / 6.79
+
+   Note the note's backdrop: it sets its OWN --surface-inset background, so it
+   must be graded against that and not against --surface. In the light theme
+   that is the worse of the two at 3.87, not the better — reading it off the
+   hint's number would have understated it.
+
+   THIS IS NOT A REVERSAL OF THE RELOCATION STRATEGY, and the distinction is
+   the whole reason these stayed --text-3 through the v3.22.0 wave. That
+   strategy moves MARKETING PROSE out of `.sidebar-hint` — a sentence that
+   teaches nothing to someone already looking at the screen belongs behind the
+   header's info mark or nowhere, and moving it is a better fix than
+   recolouring it. What is left in these two classes after that wave is a
+   different thing: FUNCTIONAL EMPTY-STATE SENTENCES — "No conversations yet
+   in this domain.", "No domains to back up yet.", "Not enabled on this
+   install." — which say what the empty list in front of you means. Those have
+   to live somewhere and have to be readable, so they are recoloured rather
+   than relocated.
+
+   THE LOADING PLACEHOLDER COMES WITH THEM, deliberately. gatedLoader renders
+   "Loading…" through these same classes (domains.js, memory.js, shared.js),
+   and WCAG exempts nothing for being transient — the loading gate holds a
+   shown placeholder for a 400ms minimum precisely so it cannot strobe, which
+   is long enough to read and therefore long enough to have to be legible.
+   Hierarchy is unaffected: `.sidebar-title` is --text at --type-h3, so a
+   smaller, dimmer --text-2 body-sm line is still visibly subordinate. */
 .sidebar-hint {
   font: var(--type-body-sm);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .sidebar-note {
@@ -286,7 +446,7 @@ body {
   border: 1px dashed var(--border-strong);
   background: var(--surface-inset);
   font: var(--type-body-sm);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* .sidebar-section-list / .sidebar-section-row moved to
@@ -471,6 +631,34 @@ body.guide-docked .main {
   padding-right: var(--guide-dock-w);
 }
 
+/* ── THE APP-WIDE EYEBROW COLOUR, OVERRIDDEN HERE RATHER THAN AT SOURCE ──
+   `.cur-eyebrow` is declared in tokens/base.css, which is copied BYTE-FOR-BYTE
+   from the design-system bundle and must not be edited. Its `color: var(--text-3)`
+   measured 4.38 dark / 4.00 light in the live document — under the 4.5:1 AA
+   floor for text, and this is the class behind EVERY eyebrow in the app
+   ("CONFIGURATION", "PROJECTS", "KNOWLEDGE", the four Domains stat-card
+   labels, the Sync History label), at 11px with no large-text exemption.
+   So it was not one view's failure; it was the same failure ~20 times.
+
+   --text-2 measures 8.55 dark / 7.02 light on --canvas and 8.34 / 7.26 on
+   --surface (real browser, getComputedStyle, both themes, helper validated by
+   controls returning 1.00 on an identical pair and 21.0 on black-on-white).
+
+   WHY THIS BEATS base.css, AND WHY IT DELIBERATELY DOES NOT BEAT A VIEW.
+   Identical specificity (0,1,0); index.html links tokens/base.css at line 27
+   and shell.css at line 39, so the later declaration wins — verified in the
+   LIVE cascade by enumerating every matching `color` rule across every linked
+   sheet in order, not by reading this file. A previous fix of this exact class
+   was INERT because another sheet declared the same selector later at the same
+   specificity, so the file-level edit changed nothing a user could see.
+   No selector is added here to raise specificity: `.dm-quick-eyebrow`
+   (views/domains.css, linked after this file) re-tones its eyebrow to
+   --accent-text on purpose, and out-specifying it would silently overrule a
+   view's own decision from a shared sheet. Equal-and-later is the whole fix. */
+.cur-eyebrow {
+  color: var(--text-2);
+}
+
 .view-eyebrow {
   margin-bottom: 8px;
 }
@@ -503,9 +691,19 @@ body.guide-docked .main {
   font: var(--type-h3);
   color: var(--text);
 }
+/* --text-2, not --text-3. This is the SHARED empty state — app.js's
+   emptyCard() renders it for Ingest, Domains, Shared Brain and the memory
+   view — so on a fresh install it is the first sentence a new user reads, and
+   it is the one that says what to do next. It measured 4.27 dark / 4.14 light
+   at --text-3 (live, both themes), under the 4.5:1 AA floor at 13px.
+   The step below `.empty-title` survives: the title is --text (16.71 / 18.27)
+   and the body is --text-2 (8.34 / 7.26), so the pair still reads as a
+   heading over supporting prose without either half being sub-threshold.
+   `.sync-history-empty .empty-body` (views/sync.css) is a separate selector on
+   a different container and already carries --text-2; it is unaffected. */
 .empty-card .empty-body {
   font: var(--type-body-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   max-width: 60ch;
 }
 .empty-card .empty-action { margin-top: 6px; }

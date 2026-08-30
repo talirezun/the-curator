@@ -122,6 +122,10 @@
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
+  /* KEEPS --text-3. Its only content is icon('x') and the meaning is in the
+     aria-label, so it is a non-text graphic: 4.15 dark / 4.14 light clears the
+     3:1 floor that governs it, and the :hover step to --text below depends on
+     this resting state being the dim one. */
   color: var(--text-3);
   cursor: pointer;
   transition: background var(--t-state), color var(--t-state);
@@ -133,7 +137,9 @@
   font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: var(--text-3);
+  /* MEASURED on --surface-overlay: --text-3 is 4.15 dark / 4.14 light, under the
+     4.5 AA floor for text. --text-2 is 8.09 / 7.26. */
+  color: var(--text-2);
 }
 
 .obp-steps {
@@ -162,9 +168,19 @@
   border-radius: var(--radius-full);
   border: 1px solid var(--border-strong);
   background: var(--surface-sunken);
-  color: var(--text-3);
+  /* This span renders the step NUMBER as text when the step is not done, so it
+     is held to the 4.5 text floor, not the 3:1 graphic floor. MEASURED on
+     --surface-sunken: --text-3 is 4.46 dark / 3.74 light; --text-2 is 8.71 /
+     6.56. (.obp-mark-done below replaces the number with an aria-hidden check
+     icon and keeps the success tone — see its own note.) */
+  color: var(--text-2);
   font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono);
 }
+/* --success-text SURVIVES here, deliberately: the done state replaces the
+   number with an aria-hidden check ICON, so this is a non-text graphic held to
+   WCAG 1.4.11's 3:1, not 4.5. MEASURED on --success-tint over --surface-overlay:
+   8.37 dark / 3.59 light — passes 3:1, fails 4.5. Keeping it is what leaves the
+   panel any success tone at all once .obp-step-done-tag's WORDS move off it. */
 .obp-mark-done {
   border-color: transparent;
   background: var(--success-tint);
@@ -188,7 +204,10 @@
 .obp-step-body {
   font-size: var(--text-xs);
   line-height: var(--leading-normal);
-  color: var(--text-3);
+  /* --text-3 measured 4.15 dark / 4.14 light on --surface-overlay, under 4.5.
+     The step still reads as title-over-body: .obp-step-title is --text and
+     carries --type-label's weight. */
+  color: var(--text-2);
 }
 
 /* The panel's own button size. Deliberately NOT `.btn-xs` — that rule is
@@ -203,11 +222,16 @@
   font-size: var(--text-xs);
 }
 
+/* The WORD "Done". --success-text painted it at 10.07 dark but 4.05 light,
+   under the 4.5 text floor — the light theme is where every status colour in
+   this system fails. There is no border and no tint on this element for the
+   tone to retreat into, so it retreats to the check icon in .obp-mark-done
+   directly to its left, which still reads green and still clears 3:1. */
 .obp-step-done-tag {
   flex: none;
   margin-top: 4px;
   font-size: var(--text-2xs);
-  color: var(--success-text);
+  color: var(--text-2);
 }
 
 .obp-foot {
@@ -216,7 +240,9 @@
   border-top: 1px solid var(--border-subtle);
   font-size: var(--text-2xs);
   line-height: var(--leading-normal);
-  color: var(--text-faint);
+  /* --text-faint measured 2.19 dark / 2.34 light here — under HALF the 4.5 AA
+     text floor, and under even the 3:1 graphic floor. --text-2 is 8.09 / 7.26. */
+  color: var(--text-2);
 }
 
 /* There is deliberately NO narrow-window media query here any more. The

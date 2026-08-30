@@ -43,13 +43,24 @@ const CONVERSATION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 //
 // It runs FIRST in every handler, before the id regex, so nothing derived from
 // an unvalidated domain is ever built — not even a path we then throw away.
+//
+// `errorText` exists so the JSON body and the SSE `error` frame cannot drift
+// into two different disclosure policies. Two hand-maintained copies of a
+// scrubber is the shape that produced the v3.2.0 CRITICAL, and the SSE siblings
+// this route otherwise copies (ingest, compile) both emit RAW `err.message` —
+// which is exactly what must NOT be copied here, because a chat turn's errors
+// reach the same fs layer the JSON path was scrubbed for.
+function errorText(err) {
+  return scrubPaths(String((err && err.message) || 'Unexpected error'));
+}
+
 function sendError(res, err) {
   // Raw `fs` errors embed absolute paths, which on a real install is the user's
   // home directory and their cloud-storage layout. `scrubPaths` is the v3.3.0
   // scrubber, imported from its single home; it keeps the basename, which is
   // the half that helps.
   res.status(err && Number.isInteger(err.status) ? err.status : 500)
-     .json({ error: scrubPaths(String((err && err.message) || 'Unexpected error')) });
+     .json({ error: errorText(err) });
 }
 
 // List conversations for a domain.
@@ -162,6 +173,31 @@ router.post('/:domain', async (req, res) => {
   //     invariant explicit; it is not claimed as tested behaviour.
   //   • both `if (clientGone) return` lines are green when deleted too. See
   //     each one's own note for why it is kept and what makes it redundant.
+  //
+  // ── ADDENDUM: THE SSE PATH, AND THE ONE MEASURED LINE THAT MOVES ────────
+  //
+  // The measurement above was taken against a handler that writes ONCE, at the
+  // end. Under `stream: true` this handler flushes headers immediately and then
+  // writes frames for the whole turn, so one observation in it is no longer
+  // true and must not be relied on:
+  //
+  //   headersSent — `false` in 25/25 aborted requests as measured, because
+  //                 nothing had been written yet. Under SSE it is TRUE from
+  //                 flushHeaders() onward, for the entire turn, on a healthy
+  //                 request and on an aborted one alike.
+  //
+  // SO `headersSent` IS NOT A DISCRIMINATOR AND THIS CHECK MUST NOT BE
+  // "SIMPLIFIED" TO IT. It would read as "we have answered" from the first
+  // millisecond of every streaming turn, so close would never be treated as a
+  // disconnect and a streaming turn could never be cancelled at all.
+  //
+  // `writableEnded` still discriminates, unchanged, and for the same reason it
+  // did before: ONLY `res.end()` sets it, and neither setHeader nor
+  // flushHeaders nor res.write does. On the SSE path res.end() runs in the
+  // handler's `finally`, i.e. strictly after every frame, so at the moment a
+  // genuine disconnect fires close it is still false — exactly as measured.
+  // The whole streaming change therefore rides on the discriminator that was
+  // measured, and touches nothing about how it is derived.
   const controller = new AbortController();
   let clientGone = false;
   res.on('close', () => {
@@ -170,9 +206,42 @@ router.post('/:domain', async (req, res) => {
     controller.abort();
   });
 
+  // ── CONTENT-NEGOTIATED: STREAMING IS STRICTLY ADDITIVE (v3.23) ───────────
+  //
+  // Without `stream: true` in the body this route answers with `res.json(result)`
+  // exactly as it always has — same object, same status, same everything. That
+  // is not politeness, it is a hard requirement with two named consumers:
+  // `/old` (src/public/app.js) POSTs here and reads `await res.json()`, and
+  // scripts/test-chat-cancel.js does the same across ~40 assertions. A route
+  // that only spoke SSE would break the escape-hatch shell and blind the suite
+  // that guards cancellation.
+  //
+  // `=== true` and nothing looser. A string `"true"`, a `1`, or a truthy object
+  // does NOT stream. The strictness is the point: the JSON path is the safe
+  // default, so anything ambiguous must land on it rather than on the branch
+  // that changes the content type out from under a caller who did not ask.
+  //
+  // `streaming` (as opposed to `wantsStream`) means "SSE HEADERS ARE ALREADY
+  // OUT". Everything downstream branches on THAT, never on the request flag,
+  // because the only question that matters after a failure is whether we have
+  // already committed to a 200 + text/event-stream. It flips at exactly one
+  // place, immediately after flushHeaders().
+  let streaming = false;
+  const emit = (data) => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
   try {
     const { domain } = req.params;
     const { message, conversationId, responseStyle, provider, model } = req.body;
+    // READ SEPARATELY, NOT ADDED TO THE DESTRUCTURE ABOVE, and that is not a
+    // style choice: test-chat-model.js:2206 pins that exact destructuring line
+    // with a source regex (`/responseStyle, provider, model \} = req\.body/`),
+    // so appending `, stream` to it reds a suite this change has no business
+    // touching. Recorded rather than worked around silently — a source regex
+    // that proves a line EXISTS proves nothing about what it renders (v3.0.17),
+    // and this is what that coupling costs the next person to widen this body.
+    const wantsStream = req.body.stream === true;
 
     if (!message) return res.status(400).json({ error: 'message is required' });
 
@@ -194,8 +263,44 @@ router.post('/:domain', async (req, res) => {
     // check at this route would leave the other seven generateText entry points
     // open and create a second hand-maintained copy of the guard — the shape
     // that produced the v3.2.0 CRITICAL.
+    // ── EVERY REFUSAL HAPPENS ABOVE THIS LINE ─────────────────────────────
+    //
+    // flushHeaders() commits us to `200 text/event-stream` irrevocably: after
+    // it, `res.status(400)` is a no-op and the client is parsing frames. So the
+    // missing-message 400 and assertKnownDomain's 404 both run FIRST and reach
+    // the client as real status codes with a JSON body, identically on both
+    // paths. The ordering is the guarantee; there is no second in-band way to
+    // say "your domain does not exist".
+    //
+    // Deliberately NO `event:` lines. This app carries two SSE dialects —
+    // routes/health.js and routes/config.js write `event: <type>` before the
+    // data line; routes/ingest.js, routes/compile.js, the ingest queue and
+    // sharedbrain write a bare `data:` with a `type` KEY inside the payload.
+    // Chat's sibling is compile (one long LLM call, progress then a terminal
+    // frame), so it follows compile. Mixing the two would make an `onmessage`
+    // handler silently receive nothing.
+    if (wantsStream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+      streaming = true;
+    }
+
     const result = await sendMessage(domain, conversationId || null, message, {
       responseStyle, provider, model, signal: controller.signal,
+      // undefined on the JSON path, which generateText normalises to null — so
+      // a non-streaming request takes a byte-identical path to before.
+      //
+      // The frame is CONSTRUCTED here rather than forwarded as `emit(d)`,
+      // because the wire contract belongs to this file. llm.js's
+      // makeDeltaEmitter already guarantees a non-empty `text` and a `type` of
+      // exactly 'content' or 'reasoning' (an empty delta is dropped there, and
+      // that drop is load-bearing upstream: an empty delta would COMMIT the
+      // attempt and disable the retry ladder for no visible benefit). Naming
+      // the two fields explicitly means a future field added to llm.js's
+      // internal delta shape cannot leak onto the wire unreviewed.
+      onDelta: wantsStream ? (d) => emit({ type: d.type, text: d.text }) : undefined,
     });
     // The client hung up while we were working. The turn still ran to
     // completion and sendMessage has already persisted it — see the
@@ -210,6 +315,15 @@ router.post('/:domain', async (req, res) => {
     // a destroyed socket is inert, so skipping it saves work and changes no
     // observable behaviour. Hygiene, not a guarantee — recorded as such.
     if (clientGone) return;
+    // The terminal frame carries the FULL sendMessage result, unchanged and
+    // un-enumerated — the same object `res.json` sends on the other path, so
+    // the two surfaces cannot disagree about what a turn produced. Enumerating
+    // fields here is how `usage` would have become the app's next dead-data
+    // field (v3.9.0 finding 7); the suite instead pins the frame's exact key
+    // set, so a NEW field is a green change and a field named `type` — which
+    // would clobber the frame's own discriminator and hang the consumer — is a
+    // red one.
+    if (streaming) return emit({ type: 'done', ...result });
     res.json(result);
   } catch (err) {
     // Same reason as above, one branch earlier: nothing can reach a closed
@@ -226,6 +340,27 @@ router.post('/:domain', async (req, res) => {
     // a failure raised OUTSIDE generateText — a writeConversation EACCES after
     // the user left — which no offline fixture currently reaches.
     if (clientGone) return;
+    // Headers are already out and the status is already 200, so there is no
+    // status code left to send: on this path EVERY failure is an in-band frame.
+    // That includes an abort with the connection still open (the SDK raising
+    // its own AbortError) — the client is still parsing and would otherwise
+    // wait forever for a `done` that never comes. llm.js's ABORT_MESSAGE is
+    // already a finished, user-readable sentence, so it needs no dressing.
+    //
+    // SCRUBBED, and this is the one place this route deliberately DIVERGES
+    // from the ingest/compile idiom it otherwise copies: both of those emit a
+    // raw `err.message`. A chat turn reaches the same conversation-file fs
+    // layer whose absolute paths the JSON branch has always scrubbed, so the
+    // frame goes through the same `errorText` the JSON branch uses.
+    //
+    // A refusal we produced ourselves cannot reach here — every one of them is
+    // above flushHeaders — so a streaming error is always genuinely
+    // unexpected, EXCEPT an abort, which is a user action and must not be
+    // stack-traced (logging every Stop is how a log stops being read).
+    if (streaming) {
+      if (!isAbortError(err)) console.error('Chat stream error:', err);
+      return emit({ type: 'error', message: errorText(err) });
+    }
     // An abort with the connection still OPEN is not something this route can
     // cause — `controller` is per-request and only the close handler above ever
     // fires it. It would mean an SDK raised its own AbortError (e.g. an
@@ -240,6 +375,15 @@ router.post('/:domain', async (req, res) => {
     // unexpected and still gets logged.
     if (!(err && Number.isInteger(err.status))) console.error('Chat error:', err);
     sendError(res, err);
+  } finally {
+    // GUARDED, not unconditional. On the JSON path res.json() has already
+    // ended the response and an extra res.end() would be a no-op — but "a
+    // no-op" is a claim about express internals, and the requirement here is
+    // that the non-streaming path is UNCHANGED, not that a change happens to
+    // be harmless. On the SSE path this is the only thing that ends the
+    // response, and it must run on every exit including a disconnect, which is
+    // why it is a finally rather than a line after each frame.
+    if (streaming) res.end();
   }
 });
 

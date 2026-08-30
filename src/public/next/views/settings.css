@@ -2,6 +2,38 @@
    Five sections, each a landable destination — sidebar sub-nav on the
    left, one section's real content in the main column. */
 
+/* ── CONTRAST, MEASURED FOR THIS FILE ─────────────────────────────────────
+   Every colour change below comes from the same measurement, taken in a real
+   browser via getComputedStyle in BOTH themes and cross-checked offline with a
+   helper validated on controls (identical pair 1.00, black-on-white 21.00):
+
+     TEXT — floor 4.5:1 (WCAG 1.4.3)
+       --text          16.22-18.27   pass
+       --text-2         6.79-8.55    pass
+       --text-3         3.87-4.38    FAIL everywhere, both themes
+       --text-faint     2.18-2.34    FAIL, roughly half the floor
+       --danger-text    4.73-8.00    pass  <- the ONE status colour that does
+       --success-text   3.79 light   FAIL light  (10.07-10.64 dark)
+       --attention-text 3.21 light   FAIL light  (8.72-11.31 dark)
+       --accent-text    8.08-9.55    pass
+
+     NON-TEXT graphics (icons, dots, borders) — floor 3:1 (WCAG 1.4.11)
+       --text-3 4.15+, --success-text 3.59+, --attention-text 3.21+  all pass
+       --text-faint 2.18-2.34                                       FAILS
+
+   So: a status colour may paint an ICON or a BORDER but never the WORDS, and
+   --text-faint may paint neither. Where a status colour leaves a label, the
+   tone retreats to the rail, the tint and the icon — the pattern this file
+   already established at .model-row-derived-warn, and which views/mcp-wizard.css
+   independently reached for its self-test result glyphs.
+   (That sibling's class names are deliberately NOT written out here. An
+   ownership guard in test-next-mcp-wizard.js greps every other /next stylesheet
+   for that file's dot-prefixed class prefix and does NOT strip comments first,
+   so merely MENTIONING one of its selectors in prose reds the guard — the
+   comment-satisfies-a-scan hazard, inverted. Verified by hitting it.)
+   --danger-text is deliberately NOT swept up: it measures over the floor.
+   ────────────────────────────────────────────────────────────────────────── */
+
 /* ── Sidebar sub-navigation ─────────────────────────────────────────── */
 
 .settings-sidebar-shell {
@@ -52,7 +84,7 @@
 .settings-nav-row .row-hint {
   font: var(--type-mono);
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .settings-sidebar-footer {
@@ -67,14 +99,16 @@
   flex: 1;
   min-width: 0;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .settings-restart-flag {
   display: inline-block;
   padding: 1px 5px;
   border-radius: var(--radius-full);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* The WORD "restart", on its own tint: --attention-text measured 3.21 light.
+     Tone stays in the tint; the label is --text (16.39 light / 13.81 dark). */
+  color: var(--text);
   border: 1px solid var(--accent-border);
   /* Was 9px. Converted to the ramp so the whole Settings screen follows the
      Text size setting — a screen where the control scales and the badge beside
@@ -96,10 +130,19 @@
   font: var(--type-label);
   color: var(--text-2);
 }
+/* ── THE INERT-COPY DEFECT ────────────────────────────────────────────────
+   `.settings-hint-text` is declared THREE times — views/shared.css, views/sync.css
+   and here — at IDENTICAL specificity, and index.html links settings.css AFTER
+   both of the others. So THIS declaration is the one that renders, and fixing the
+   other two (which a previous pass did) changed nothing a user could see: the
+   live document still measured 4.38 dark / 4.00 light.
+   A fix in a duplicated selector is only real in the copy the cascade lands on.
+   Verified after this change by reading getComputedStyle on the rendered element,
+   not by reading this file. */
 .settings-hint-text {
   margin: 0;
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
   max-width: 66ch;
 }
@@ -132,12 +175,15 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* Tone in the border and the tint; the sentence is --text. --attention-text as
+     body text on its own tint measured 3.21 light. The icon below keeps the amber
+     — it is a graphic at 3.21, over the 3:1 floor. */
+  color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   margin-bottom: 14px;
 }
-.settings-write-busy-note svg { flex: none; margin-top: 1px; }
+.settings-write-busy-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 
 /* "Key saved, but it did not become active" — see renderActivationNotice.
    Same attention-tinted pattern as .settings-write-busy-note above, declared
@@ -154,12 +200,13 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* Same as .settings-write-busy-note above: border + tint carry the tone. */
+  color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   margin-bottom: 14px;
 }
-.settings-activation-note svg { flex: none; margin-top: 1px; }
+.settings-activation-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 /* Column, so a save that skipped more than one provider reads as one line per
    provider instead of a single run-on paragraph. */
 .settings-activation-note-body { display: flex; flex-direction: column; gap: 5px; }
@@ -177,6 +224,10 @@
   line-height: var(--leading-relaxed);
   margin-top: 22px;
 }
+/* SVG only. --text-3 is 4.15-4.38, under the 4.5 TEXT floor but over the 3:1
+   graphic floor, so the chevrons and note icons in this file KEEP it — the same
+   judgement at .model-picker-summary svg, .model-row-summary svg,
+   .model-lane-fold-summary svg and .settings-shelf-summary svg. */
 .settings-note-row svg { flex: none; color: var(--text-3); }
 
 .settings-saving-note, .settings-saved-note {
@@ -184,9 +235,15 @@
   align-items: center;
   gap: 4px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
-.settings-saved-note { color: var(--success-text); }
+/* "saved" is icon + word. The WORD was --success-text at 4.05 light; it takes
+   --text (the affirmative end of the pair, against --text-2 for "saving…"),
+   and the green retreats to the check icon, which is a graphic at 4.05 and
+   clears 3:1. So the two states stay distinguishable by colour AND by the icon,
+   not by a colour nobody can read. */
+.settings-saved-note { color: var(--text); }
+.settings-saved-note svg { color: var(--success-text); }
 
 /* ── Buttons — small variant used throughout Settings rows ─────────── */
 .btn-xs { height: 26px; padding: 0 9px; font-size: var(--text-xs); }
@@ -232,7 +289,13 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   background: transparent;
-  color: var(--text-3);
+  /* SECOND HALF OF THE INERT-COPY DEFECT (see .settings-hint-text above).
+     `.theme-seg-btn` is declared in views/sync.css AND here at identical
+     specificity; settings.css is linked later, so this copy wins and the
+     sync.css fix was inert. These are the INACTIVE segment labels — real words
+     on --surface-inset — measured 4.33 dark / 3.87 light at --text-3.
+     The active/inactive step survives: active is --text on --surface-raised. */
+  color: var(--text-2);
   transition: background var(--t-state), color var(--t-state);
 }
 .theme-seg-btn.active { background: var(--surface-raised); color: var(--text); }
@@ -258,7 +321,7 @@
   gap: 2px;
   margin-top: 4px;
 }
-.check-summary-line { color: var(--text-3); font-size: var(--text-xs); margin-bottom: 4px; }
+.check-summary-line { color: var(--text-2); font-size: var(--text-xs); margin-bottom: 4px; }
 .check-row {
   display: flex;
   align-items: center;
@@ -269,11 +332,18 @@
 }
 .check-glyph { flex: none; display: flex; }
 .check-label { flex: none; width: 160px; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text); }
-.check-detail { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--text-3); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.check-detail { flex: 1; min-width: 0; font-size: var(--text-xs); color: var(--text-2); font-family: var(--font-mono); overflow-wrap: anywhere; }
+/* The three status GLYPHS keep their colour: they are aria-hidden icons beside
+   a --text label, so 3:1 governs and all three clear it (success 4.05, attention
+   3.58, danger 5.41 in the light theme; 10+ in dark).
+   .check-info did NOT — --text-faint measured 2.26 dark / 2.34 light, under even
+   the graphic floor, so the one row that means "nothing to report" was the one
+   row whose marker could not be seen. It is --text-2 (8.34 / 7.26); it stays the
+   quietest of the four because it is the only one with no hue at all. */
 .check-ok .check-glyph { color: var(--success-text); }
 .check-warn .check-glyph { color: var(--attention-text); }
 .check-fail .check-glyph { color: var(--danger-text); }
-.check-info .check-glyph { color: var(--text-faint); }
+.check-info .check-glyph { color: var(--text-2); }
 
 /* ── Cost confirmation panel (the hard rule: cost before action) ────── */
 
@@ -308,12 +378,14 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* Border + tint + icon carry the amber; the sentence is --text. As BODY TEXT
+     on its own tint --attention-text measured 3.21 light. */
+  color: var(--text);
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
   margin-bottom: 12px;
 }
-.provider-fallback-banner svg { flex: none; margin-top: 1px; }
+.provider-fallback-banner svg { flex: none; margin-top: 1px; color: var(--attention-text); }
 .provider-fallback-body {
   display: flex;
   flex-direction: column;
@@ -335,9 +407,16 @@
    reassuring absence of a warning (see classifyFallback's docblock).
    A 'similar' verdict renders no cost line at all — that is the only
    confirmed-safe state. */
+/* THE LADDER SURVIVES, but one rung had to change carrier. Measured INSIDE this
+   banner, i.e. on --attention-tint: --danger-text 6.45 dark / 4.86 light (over
+   the floor, kept), --attention-text 9.11 / 3.21 (under it, moved).
+   `unknown` therefore reads as --text at --weight-medium against a --text
+   REGULAR body, so it is still heavier than the surrounding sentence and still
+   plainly not "the reassuring absence of a warning" — it just no longer buys
+   that separation with a colour half the readers cannot resolve. */
 .provider-fallback-cost { font-weight: var(--weight-medium); }
 .provider-fallback-cost-danger { color: var(--danger-text); }
-.provider-fallback-cost-attention { color: var(--attention-text); }
+.provider-fallback-cost-attention { color: var(--text); }
 .provider-fallback-action { color: var(--text-2); font-size: var(--text-xs); }
 
 /* Active provider + the model actually resolved for this process. */
@@ -348,7 +427,7 @@
   margin-bottom: 10px;
   font-size: var(--text-xs);
 }
-.provider-active-label { color: var(--text-3); }
+.provider-active-label { color: var(--text-2); }
 .provider-active-value { color: var(--text-2); overflow-wrap: anywhere; }
 
 .provider-row-list {
@@ -377,7 +456,7 @@
   gap: 2px;
 }
 .provider-name { font-size: var(--text-md);   /* was 13.5px */ font-weight: var(--weight-medium); color: var(--text); }
-.provider-model { font-size: var(--text-2xs); color: var(--text-3); }
+.provider-model { font-size: var(--text-2xs); color: var(--text-2); }
 .provider-key-field {
   flex: 1;
   min-width: 150px;
@@ -391,10 +470,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.provider-key-empty { color: var(--text-faint); }
+/* "not set" — words, and --text-faint measured 2.29 dark / 2.18 light on
+   --surface-inset, under half the floor. */
+.provider-key-empty { color: var(--text-2); }
 .provider-state { width: 92px; text-align: right; flex: none; font-size: var(--text-xs); }
-.provider-state-active { color: var(--success-text); }
-.provider-state-muted { color: var(--text-3); }
+/* "Active" / "Idle". No tint and no border here for a status colour to retreat
+   into, so the pair is carried by the neutral ramp instead: --success-text was
+   4.05 light on the row, and the bright/dim step it was buying is exactly what
+   --text over --text-2 gives, legibly, in both themes. The provider DOT beside
+   them still carries hue. */
+.provider-state-active { color: var(--text); }
+.provider-state-muted { color: var(--text-2); }
 .provider-row-actions { display: flex; gap: 6px; flex: none; }
 
 /* ── "Test this key" verdict (v3.15.0) ────────────────────────────────────
@@ -430,19 +516,24 @@
   border-color: var(--success);
   background: var(--success-tint);
 }
-.provider-keytest-ok .provider-keytest-head { color: var(--success-text); }
+.provider-keytest-ok .provider-keytest-head { color: var(--text); }
 .provider-keytest-warn {
   border-color: var(--attention-text);
   background: var(--attention-tint);
 }
-.provider-keytest-warn .provider-keytest-head { color: var(--attention-text); }
+.provider-keytest-warn .provider-keytest-head { color: var(--text); }
 .provider-keytest-fail {
   border-color: var(--danger);
   background: var(--danger-tint);
 }
 .provider-keytest-fail .provider-keytest-head { color: var(--danger-text); }
 /* No tint and no border colour — "we could not ask" is not a status worth
-   colouring, and giving it one would make it compete with the two that are. */
+   colouring, and giving it one would make it compete with the two that are.
+   NOTE the ok/warn heads above are now --text as well (they were --success-text
+   4.05 light and --attention-text 3.58 light, both under the floor). That does
+   NOT collapse them into this one: ok/warn/fail each carry a tinted background
+   AND a coloured border, and this state deliberately carries neither — which was
+   always the real distinction, as the sentence above already says. */
 .provider-keytest-unknown .provider-keytest-head { color: var(--text); }
 
 .provider-replace-row {
@@ -486,10 +577,15 @@
   font: var(--type-mono);
   font-size: var(--text-2xs);
 }
+/* The dot is `background: currentColor`, so moving the pill's TEXT off the
+   status colour would have silently taken the dot's hue with it — the dot is the
+   pill's only non-text carrier and the whole point of the pattern. It is given
+   the colour explicitly instead. */
 .status-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--success-text); }
-.status-pill-muted { background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-3); }
-.mcp-path-line { font-size: var(--text-sm); color: var(--text-3); overflow-wrap: anywhere; }
+.status-pill-ok { background: var(--success-tint); border: 1px solid var(--success-text); color: var(--text); }
+.status-pill-ok .status-pill-dot { background: var(--success-text); }
+.status-pill-muted { background: var(--surface-inset); border: 1px solid var(--border); color: var(--text-2); }
+.mcp-path-line { font-size: var(--text-sm); color: var(--text-2); overflow-wrap: anywhere; }
 .mcp-config-snippet {
   margin-top: 12px;
   padding: 12px 14px;
@@ -565,7 +661,7 @@
   font-size: var(--text-md);
   font-family: var(--font-mono);
 }
-.settings-input-suffix .suffix { color: var(--text-3); font-size: var(--text-xs); }
+.settings-input-suffix .suffix { color: var(--text-2); font-size: var(--text-xs); }
 
 /* ── Knowledge base ──────────────────────────────────────────────────── */
 
@@ -625,6 +721,8 @@
   transition: color var(--t-state);
 }
 .model-picker-summary::-webkit-details-marker { display: none; }
+/* Chevron — a graphic, 4.15-4.38, over the 3:1 floor. Keeps --text-3.
+   See the note at .settings-note-row svg. */
 .model-picker-summary svg {
   flex: none;
   color: var(--text-3);
@@ -646,7 +744,7 @@
   font-weight: var(--weight-medium);
   white-space: nowrap;
 }
-.model-picker-count { color: var(--text-3); font-size: var(--text-2xs); margin-left: auto; }
+.model-picker-count { color: var(--text-2); font-size: var(--text-2xs); margin-left: auto; }
 
 /* ── THE LANE MARKER ───────────────────────────────────────────────────────
    Only the ACTIVE provider's model reaches ingest, Health scans and Compile.
@@ -670,7 +768,7 @@
   border-color: var(--accent-border);
 }
 .model-picker-lane-idle {
-  color: var(--text-3);
+  color: var(--text-2);
   border-color: var(--border-subtle);
 }
 
@@ -702,13 +800,15 @@
    Tinting BOTH would give the inactive provider the same visual weight and
    re-create the ambiguity this copy exists to remove; tinting NEITHER would
    bury the one sentence that answers "what will my next ingest cost?". */
+/* Amber lives in the border and the tint. The paragraph itself and its <strong>
+   are --text — the sentence that answers "what will my next ingest cost?" is
+   exactly the wrong place to spend legibility on hue (3.21 light). */
 .model-picker-scope-live {
   border-color: var(--attention-text);
   background: var(--attention-tint);
-  color: var(--attention-text);
+  color: var(--text);
 }
 .model-picker-scope strong { color: var(--text); font-weight: var(--weight-semibold); }
-.model-picker-scope-live strong { color: var(--attention-text); }
 .model-picker-scope code {
   padding: 1px 5px;
   border-radius: 5px;
@@ -816,6 +916,7 @@
   outline-offset: -2px;
   border-radius: 8px;
 }
+/* Chevron — graphic, keeps --text-3. */
 .model-row-summary svg {
   flex: none;
   color: var(--text-3);
@@ -882,7 +983,7 @@
 .model-filter-count {
   flex: 0 0 auto;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 /* An empty result SAYS SO and offers the way back. An unexplained empty list
@@ -918,7 +1019,7 @@
 }
 
 .model-name { font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--text); }
-.model-id { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+.model-id { font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
 
 .model-badge {
   padding: 0 6px;
@@ -927,7 +1028,10 @@
   font-weight: var(--weight-medium);
   white-space: nowrap;
 }
-.model-badge-default { background: var(--success-tint); color: var(--success-text); border: 1px solid var(--success-text); }
+/* Tone in the tint and the border, label at --text — the same treatment
+   shared/text.js applies to its own badge role, and for the same measured
+   reason: a status colour as a badge LABEL is 3.21-3.59 in the light theme. */
+.model-badge-default { background: var(--success-tint); color: var(--text); border: 1px solid var(--success-text); }
 .model-badge-cheapest { background: var(--surface-inset); color: var(--text-2); border: 1px solid var(--border); }
 /* Accent, matching .model-option-chosen — the pinned-choice colour is one
    decision used in three places (badge, row border, collapsed header). */
@@ -936,13 +1040,23 @@
    `out-performed` are different findings but the same instruction to the
    reader — read the note before you pick this — and three colours would
    invite ranking them against each other. */
-.model-badge-flag { background: var(--attention-tint); color: var(--attention-text); border: 1px solid var(--attention-text); }
+/* THE 3.21:1 BADGE. shared/text.js's own suite measures this exact pair and
+   names `.model-badge-flag` as the site that still had it; this is that site.
+   The one-colour reasoning above is UNCHANGED and is why there is still exactly
+   one flag treatment — only the carrier moved from the label to the tint and the
+   border, so a flag can now be read as well as spotted. */
+.model-badge-flag { background: var(--attention-tint); color: var(--text); border: 1px solid var(--attention-text); }
 
 .model-price { font-size: var(--text-sm); color: var(--text); font-weight: var(--weight-medium); }
-.model-price-unit { color: var(--text-3); font-weight: var(--weight-regular); font-size: var(--text-2xs); }
-/* A price that is going to change reads in the warning colour, not the calm
-   one — the whole point is that today's figure is temporary. */
-.model-promo { font-size: var(--text-2xs); color: var(--attention-text); overflow-wrap: anywhere; }
+.model-price-unit { color: var(--text-2); font-weight: var(--weight-regular); font-size: var(--text-2xs); }
+/* A price that is going to change must not read as calm — the whole point is
+   that today's figure is temporary. It bought that with --attention-text, which
+   measures 3.58 light on the row: the one line on a SPENDING surface that
+   announces a future bill was the least readable thing near it. It is --text
+   now — the BRIGHTEST small text in the row rather than the dimmest, which is a
+   truer rendering of "read this" than amber was, and the only line at this size
+   that is not --text-2. */
+.model-promo { font-size: var(--text-2xs); color: var(--text); overflow-wrap: anywhere; }
 
 .model-row-body {
   padding: 2px 10px 10px 28px;
@@ -951,7 +1065,7 @@
   gap: 5px;
   min-width: 0;
 }
-.model-facts { font-size: var(--text-2xs); color: var(--text-3); overflow-wrap: anywhere; }
+.model-facts { font-size: var(--text-2xs); color: var(--text-2); overflow-wrap: anywhere; }
 /* The note is the single most important content on this surface — it is the
    measured evidence behind a badge, and the only thing that makes an honest
    choice possible. Measured at --text-xs (11px) it read as a footnote next
@@ -1003,7 +1117,7 @@
 .catalogue-sync-btn { flex: none; white-space: nowrap; }
 .catalogue-sync-counts {
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
 /* The lane claim. Recessed but not faint — it is the sentence that stops a
@@ -1015,18 +1129,22 @@
   color: var(--text-2);
   overflow-wrap: anywhere;
 }
-.catalogue-sync-note strong { color: var(--attention-text); font-weight: var(--weight-semibold); }
+/* --text + semibold, not amber: the emphasis is carried by weight, which is the
+   channel that survives both themes. --attention-text was 3.58 light. */
+.catalogue-sync-note strong { color: var(--text); font-weight: var(--weight-semibold); }
 .catalogue-sync-error { margin: 0; }
 
 .catalogue-funnel { font-size: var(--text-2xs); }
 .catalogue-funnel-summary {
   cursor: pointer;
-  color: var(--text-3);
+  color: var(--text-2);
   list-style: none;
   padding: 2px 0;
 }
 .catalogue-funnel-summary::-webkit-details-marker { display: none; }
-.catalogue-funnel-summary:hover { color: var(--text-2); }
+/* Hover steps to --text now that the resting state IS --text-2; leaving it
+   would have made the hover a no-op. */
+.catalogue-funnel-summary:hover { color: var(--text); }
 .catalogue-funnel-summary:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: 2px;
@@ -1047,7 +1165,7 @@
   flex-wrap: wrap;
 }
 .catalogue-funnel-rule { color: var(--text-2); }
-.catalogue-funnel-count { color: var(--text-3); white-space: nowrap; }
+.catalogue-funnel-count { color: var(--text-2); white-space: nowrap; }
 
 /* ── The two lanes inside one model list (v3.15.2) ──────────────────────────
    A fetched catalogue can list ~190 models of which a handful build the wiki.
@@ -1065,9 +1183,18 @@
   font-weight: var(--weight-semibold);
   color: var(--text);
 }
-.model-lane-head-build .model-lane-title { color: var(--success-text); }
-.model-lane-head-chat .model-lane-title { color: var(--attention-text); }
-.model-lane-count { font-size: var(--text-2xs); color: var(--text-3); margin-left: auto; }
+/* THE LANE MARKERS LOSE THEIR HUE, and the lane distinction is not lost with it.
+   These are bare headings on the row surface — there is no tint, border or icon
+   for a status colour to retreat into — and they measured --success-text 4.05
+   light and --attention-text 3.58 light. Colour was in any case never the only
+   channel here: the two headings carry DIFFERENT WORDS (the build lane's title
+   against the literal string "Chat only"), the build lane is never folded, and
+   the chat lane sits behind a disclosure. So the build lane keeps full --text and
+   the chat lane recedes to --text-2 — a legible two-level step that says the same
+   thing the two hues did, and satisfies 1.4.1 rather than leaning on colour. */
+.model-lane-head-build .model-lane-title { color: var(--text); }
+.model-lane-head-chat .model-lane-title { color: var(--text-2); }
+.model-lane-count { font-size: var(--text-2xs); color: var(--text-2); margin-left: auto; }
 .model-lane-note {
   margin: 3px 3px 0;
   font-size: var(--text-sm);
@@ -1096,6 +1223,7 @@
   outline-offset: -2px;
   border-radius: 8px;
 }
+/* Chevron — graphic, keeps --text-3. */
 .model-lane-fold-summary svg {
   flex: none;
   color: var(--text-3);
@@ -1125,7 +1253,11 @@
 /* "Loaded for this session only" — the refresh worked but could not be saved,
    so the models vanish on restart. Amber: this IS a finding about a thing that
    went wrong, unlike .catalogue-sync-note beside it, which states a rule. */
-.catalogue-sync-warn { color: var(--attention-text); }
+/* "Loaded for this session only" — a finding the user must read, so it is
+   --text rather than the 3.58-light amber it was, and it is distinguished from
+   the neutral .catalogue-sync-note beside it by being FULL --text against that
+   note's --text-2. */
+.catalogue-sync-warn { color: var(--text); }
 
 /* ── ON-WIKI MODEL QUALIFICATION ─────────────────────────────────────────────
    The user's own measurement of a model against their own wiki.
@@ -1153,10 +1285,10 @@
 .model-qual-facts { margin: 0 0 5px; font-size: var(--text-sm); color: var(--text-2); }
 /* WHICH wiki and WHEN. Quiet, but never hidden: a measurement without its scope
    is a claim about the model, which it is not. */
-.model-qual-stamp { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+.model-qual-stamp { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 /* The rule-of-three caveat and the stale-catalogue note. Same recessed weight —
    they qualify the number rather than warn about it. */
-.model-qual-caveat { margin: 6px 0 0; font-size: var(--text-sm); color: var(--text-3); }
+.model-qual-caveat { margin: 6px 0 0; font-size: var(--text-sm); color: var(--text-2); }
 
 /* A LEFT RULE, NOT A FILL. The outcome is a fact about what happened, and a
    filled panel would read as a status banner about the app. */
@@ -1277,7 +1409,11 @@
 }
 .build-current-why strong { color: var(--text); font-weight: var(--weight-semibold); }
 .build-current-why code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--text); }
-.build-current-warn .build-current-why strong { color: var(--attention-text); }
+/* The amber for this state lives on the LEFT RULE (.build-current-warn's
+   border-left-color, a graphic at 3.58 light, over the 3:1 floor). It used to be
+   duplicated onto this <strong> as well, where it was TEXT at 3.58 and under the
+   floor; the strong keeps the --text + semibold it inherits from the rule above. */
+.build-current-warn .build-current-why strong { color: var(--text); }
 /* A pin under a provider that is not active — it governs nothing. Stated, not
    warned about: it is inert rather than broken, and the sentence says how to
    make it take effect. */
@@ -1395,6 +1531,7 @@
   padding-bottom: 10px;
 }
 .settings-shelf-summary::-webkit-details-marker { display: none; }
+/* Chevron — graphic, keeps --text-3. */
 .settings-shelf-summary svg {
   flex: none;
   color: var(--text-3);

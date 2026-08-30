@@ -12,11 +12,24 @@
  *
  * ── WHY THIS SURFACE EXISTS ──────────────────────────────────────────────
  * The maintainer has reported the same thing five times: he asks a question on
- * a slow model and cannot tell what is happening. Chat is a SINGLE
- * NON-STREAMING POST, so time-to-first-byte EQUALS total — measured at 186s on
- * `z-ai/glm-5.3-flash` — and nothing can appear on screen until the whole
- * answer is done. Streaming is a separate release; the wait itself is what this
- * surface handles.
+ * a slow model and cannot tell what is happening.
+ *
+ * ── A PREMISE THIS FILE USED TO ASSERT, AND WHICH IS NOW FALSE ───────────
+ * The version of this header written before streaming stated flatly that chat
+ * is "a SINGLE NON-STREAMING POST, so time-to-first-byte EQUALS total". That
+ * was true when it was written and is not true now: with `stream: true` the
+ * route emits deltas long before the answer is finished (measured on
+ * `z-ai/glm-5.3-flash`: reasoning deltas from ~460ms, first CONTENT delta only
+ * at 86-91% of the way through a 45-99s turn). The claim is corrected here
+ * rather than quietly left standing, because a test header asserting something
+ * false about the system is how the next reader reasons from the wrong model —
+ * the two-comments-disagreeing shape this repo keeps re-finding.
+ *
+ * What survives that correction is the SHAPE of the pre-first-byte wait, which
+ * is still a single call with no sub-progress. The ring now covers exactly
+ * that gap, as a PRE-ROLL, and hands over to the streamed text at the first
+ * delta. §8 covers the handover; §1's rule is unchanged and is now enforced
+ * across BOTH occupants of the slot.
  *
  * ── THE ONE RULE THIS SUITE EXISTS TO ENFORCE ────────────────────────────
  * THE OUTER RING MUST NEVER ADVANCE. A chat turn reports no sub-progress at any
@@ -27,6 +40,12 @@
  * reporting the app as hung because ingest's Planning phase genuinely could not
  * move a bar). Liveness is the ORBIT's job; the number on screen is the elapsed
  * clock, which is a real measurement.
+ *
+ * STREAMING DOES NOT WEAKEN THAT RULE, IT STRENGTHENS THE ARGUMENT FOR IT.
+ * A stream gives us a token COUNT, which is the most convincing wrong
+ * denominator available: `max_tokens` is a cap, not a forecast, so an arc
+ * drawn from "tokens seen / max_tokens" would be an invented fraction wearing
+ * a real measurement's clothes.
  *
  * §1 is that rule, and it is proven the hard way: the ring's geometry is
  * asserted BYTE-IDENTICAL at 0s, 30s and 5 minutes of elapsed time, with a
@@ -55,6 +74,10 @@
  *   §7  CSS: reduced motion is INHERITED from the component (not
  *       re-implemented), no px font-size, no `pring-` selector, every
  *       custom property referenced is defined.
+ *   §8  THE PRE-ROLL HANDOVER: the ring covers the gap before the first
+ *       delta and is REPLACED by the streamed text, the slow-turn notice is
+ *       suppressed on a streaming response (and retracted if it was already
+ *       painted), and the outer-ring rule survives into the stream.
  */
 
 import { readFileSync } from 'node:fs';
@@ -121,8 +144,14 @@ const formatDurationMs = new Function(
 // ── A fake DOM, only as deep as this surface actually reaches ─────────────
 function makeEl(id) {
   return {
-    id, textContent: '', innerHTML: '', className: '',
-    _children: [],
+    id, textContent: '', className: '',
+    _children: [], _html: '',
+    // `innerHTML = ''` really does drop every child in a browser, and the
+    // suppression retraction in startSendClock's tick depends on exactly that.
+    // Modelled rather than stubbed, so the assertion is about the code and not
+    // about a fixture that happens to agree with it.
+    get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = String(v); if (this._html === '') this._children = []; },
     get firstChild() { return this._children[0] || null; },
     appendChild(c) { this._children.push(c); return c; },
   };
@@ -147,18 +176,35 @@ function sandboxWith(opts) {
   const intervals = [];
   const cleared = [];
   const api = (function build() {
+    // The stream constants are read OUT OF THE SOURCE rather than re-typed, so
+    // a change to either is a change the assertions below see. Re-typing them
+    // would be the "expected value read from the same constant the code reads"
+    // hazard's mirror image — a fixture that agrees with a stale value forever.
+    const tailLines = (/const STREAM_TAIL_LINES = (\d+);/.exec(chatSrc) || [])[1];
+    const tailChars = (/const STREAM_TAIL_CHARS = (\d+);/.exec(chatSrc) || [])[1];
     const src = `
       let sendStartedAt = null, sendTimerId = null, sendLatencyHint = null;
+      let sendStream = null;
       const SLOW_TURN_NOTICE_AFTER_MS = ${(/const SLOW_TURN_NOTICE_AFTER_MS = (\d+);/.exec(chatSrc) || [])[1]};
+      const STREAM_TAIL_LINES = ${tailLines};
+      const STREAM_TAIL_CHARS = ${tailChars};
       const Date = { now: () => clock.now };
       ${extractFunction(chatSrc, 'slowTurnNoticeText')}
+      ${extractFunction(chatSrc, 'slowNoticeSuppressed')}
+      ${extractFunction(chatSrc, 'streamShapeKey')}
+      ${extractFunction(chatSrc, 'reasoningTailText')}
+      ${extractFunction(chatSrc, 'streamSlotHtml')}
+      ${extractFunction(chatSrc, 'preRollRingHtml')}
       ${extractFunction(chatSrc, 'thinkingBodyHtml')}
       ${extractFunction(chatSrc, 'startSendClock')}
       ${extractFunction(chatSrc, 'stopSendClock')}
       return {
         thinkingBodyHtml, startSendClock, stopSendClock, slowTurnNoticeText,
+        streamSlotHtml, streamShapeKey, reasoningTailText, slowNoticeSuppressed,
         setStarted: (v) => { sendStartedAt = v; },
         setHint: (v) => { sendLatencyHint = v; },
+        setStream: (v) => { sendStream = v; },
+        getStream: () => sendStream,
         getStarted: () => sendStartedAt,
         getHint: () => sendLatencyHint,
         getTimerId: () => sendTimerId,
@@ -180,12 +226,21 @@ function sandboxWith(opts) {
 }
 
 /** Render the waiting body at a given elapsed time. */
-function bodyAt(elapsedMs, hint) {
+function bodyAt(elapsedMs, hint, stream) {
   const { api, clock } = sandboxWith({ now: 1_000_000 });
   clock.now = 1_000_000;
   api.setStarted(1_000_000 - elapsedMs);
   api.setHint(hint === undefined ? null : hint);
+  if (stream) api.setStream(stream);
   return api.thinkingBodyHtml();
+}
+
+/** A stream record in the shape sendCurrentMessage actually creates. */
+function streamRec(over) {
+  return Object.assign(
+    { sse: true, seen: true, reasoning: '', content: '', reasoningView: 'tail' },
+    over || {}
+  );
 }
 
 /** Strip everything that legitimately varies between two renders: the orbit's
@@ -302,8 +357,40 @@ section('§2  The orbit is the only thing moving, and CSS owns its period');
   // the emitted markup. (Class scan over the shipped stylesheet.)
   ok(/\.pring-orbit\s*\{[^}]*animation:\s*curator-spin\s+1\.15s/.test(ringCssSrc),
     'shared/progress-ring.css fixes the orbit at 1.15s — the view cannot make it "look busier"');
-  ok(!/requestAnimationFrame/.test(chatSrc),
-    'chat.js runs no requestAnimationFrame loop (this element can be on screen for minutes)');
+  // ── THIS ASSERTION WAS `!/requestAnimationFrame/.test(chatSrc)` AND IS NOW
+  //    NARROWER, BECAUSE THE BLANKET FORM BECAME FALSE FOR THE RIGHT REASON.
+  // Streaming coalesces its paints with a single rAF, which is strictly LESS
+  // work than painting on every one of 31-38 chunks per second. What the
+  // original assertion was actually protecting is the thing that would be bad
+  // on an element that can be on screen for minutes: a SELF-PERPETUATING loop,
+  // i.e. a rAF callback that requests the next frame. So that is what is
+  // asserted now — by extracting the scheduler and checking its callback body,
+  // not by a blanket ban on the identifier.
+  //
+  // ── THIS ASSERTION WAS ITSELF DECORATIVE ON ITS FIRST DRAFT, AND WAS
+  //    CAUGHT BY MUTATION RATHER THAN BY REVIEW. ─────────────────────────
+  // It looked for `requestAnimationFrame` or `raf(` inside the callback body.
+  // The mutation that actually creates the loop calls `schedulePaintStream`,
+  // which matches neither — so the guard stayed GREEN with a self-perpetuating
+  // rAF loop fully present, and the only signal was the streaming suite hanging
+  // until its harness killed it. A hang is a red, but it is a red with no name
+  // on it. Named now: the callback body may reference NEITHER the raw API NOR
+  // the scheduler that wraps it.
+  const sched = extractFunction(chatSrc, 'schedulePaintStream');
+  const rafCallbackBody = /raf\(\(\) => \{([\s\S]*?)\n  \}\);/.exec(sched);
+  ok(!!rafCallbackBody, 'the rAF callback body is locatable in schedulePaintStream');
+  ok(rafCallbackBody && !/requestAnimationFrame|raf\(|schedulePaintStream/.test(rafCallbackBody[1]),
+    'the rAF callback NEVER schedules another frame — it is a throttle, not an animation loop');
+  ok(rafCallbackBody && /paintStream\(token\)/.test(rafCallbackBody[1]),
+    'CONTROL: the callback really does contain the paint, so the check above is reading the right body');
+  ok(/streamPaintQueued = false/.test(sched) && /if \(streamPaintQueued\) return;/.test(sched),
+    'and it is guarded by a queued flag cleared inside the callback, so a quiet stream schedules nothing');
+  // The blanket rule still holds everywhere else in the file: the ONLY rAF in
+  // chat.js is that scheduler's own feature check and call.
+  const rafSites = (chatSrc.match(/requestAnimationFrame/g) || []).length;
+  const rafInSched = (sched.match(/requestAnimationFrame/g) || []).length;
+  ok(rafSites === rafInSched && rafSites > 0,
+    `every requestAnimationFrame in chat.js is inside schedulePaintStream (${rafInSched} of ${rafSites})`);
 }
 
 // ── §3 The elapsed clock ─────────────────────────────────────────────────
@@ -466,6 +553,168 @@ section('§7  The stylesheet: inherited motion, tokenised type, no reach-in');
   // The retained-but-unemitted spinner is documented, not orphaned.
   ok(/RETAINED, AND NO LONGER EMITTED/.test(cssSrc),
     '.chat-spinner\'s retention (pinned by test-next-reduced-motion.js) is recorded where the next reader will look');
+}
+
+// ── §8 The pre-roll handover ─────────────────────────────────────────────
+section('§8  The ring is a PRE-ROLL, and hands over to the streamed text');
+{
+  // §8a — with no stream record at all (the non-streaming route, still a real
+  // shipping path), the waiting state is byte-for-byte what it was.
+  const plain = bodyAt(5_000);
+  ok(/class="pring-track"/.test(plain), 'no stream: the ring is still the waiting state');
+  ok(!/chat-stream-head/.test(plain), 'no stream: no stream region is emitted');
+
+  // §8b — a stream that has been ACCEPTED but has produced nothing yet is
+  // still the ring. `seen` is what ends the pre-roll, not `sse`.
+  const accepted = bodyAt(5_000, null, streamRec({ seen: false }));
+  ok(/class="pring-track"/.test(accepted),
+    'headers accepted but no delta yet: the ring still covers the gap');
+
+  // §8c — the first delta REPLACES the ring. Not "adds text beside it": a ring
+  // left spinning under live text is two liveness signals for one fact.
+  const streaming = bodyAt(5_000, null, streamRec({ reasoning: 'weighing the sources' }));
+  ok(!/class="pring-track"/.test(streaming), 'first delta: the ring is GONE, not left spinning under the text');
+  ok(/class="chat-stream-reasoning/.test(streaming), 'first delta: the reasoning region is painted');
+  ok(/weighing the sources/.test(streaming), 'and it carries the model\'s actual text');
+  ok(/id="chat-think-elapsed"/.test(streaming),
+    'the elapsed clock SURVIVES the handover — the same id, so the tick keeps patching in place');
+
+  // §8d — THE OUTER-RING RULE, ENFORCED INTO THE STREAM. There is no arc, no
+  // aria-valuenow and no percentage anywhere once text is arriving either —
+  // a token count is the most convincing wrong denominator available.
+  const long = bodyAt(120_000, null, streamRec({ reasoning: 'x'.repeat(4000), content: 'partial answer' }));
+  ok(!/aria-valuenow/.test(long), 'streaming: still no aria-valuenow');
+  ok(!/pring-arc/.test(long), 'streaming: still no value arc');
+  ok(!/\d+\s*%/.test(long), 'streaming: no percentage derived from tokens seen');
+
+  // §8e — reasoning is ESCAPED PLAIN TEXT. Two hazards this closes, both real:
+  // renderMarkdown's citation pass consuming to the NEXT `]` on a truncated
+  // `[source: …` (a clickable chip pointing at the WRONG page), and partial
+  // markdown restructuring the text as it grows.
+  const hostile = bodyAt(5_000, null, streamRec({
+    reasoning: '<img src=x onerror=alert(1)> [source: entities/wrong-page and more',
+  }));
+  ok(!/<img src=x/.test(hostile), 'reasoning is escaped before it reaches the markup');
+  ok(/&lt;img src=x/.test(hostile), 'POSITIVE CONTROL: the payload really did reach the markup, escaped');
+  ok(!/chat-citation-tag/.test(hostile),
+    'a truncated `[source: …` in the reasoning produces NO citation chip — nothing is markdown-rendered here');
+  ok(!/chat-wikilink/.test(hostile), 'and no wikilink either');
+
+  // §8f — the DRAFT ANSWER is held to the same rule, for the same reasons.
+  const draft = bodyAt(5_000, null, streamRec({
+    content: '**bold** [source: entities/half',
+  }));
+  ok(/chat-stream-draft/.test(draft), 'the draft answer is painted');
+  ok(!/chat-citation-tag/.test(draft), 'the draft produces no citation chip mid-stream');
+  ok(!/<strong>/.test(draft), 'and no partial markdown is applied — the draft is a preview, rendered as text');
+  ok(/\*\*bold\*\*/.test(draft), 'POSITIVE CONTROL: the markdown source really is present, just not rendered');
+
+  // §8g — AUTO-COLLAPSE on the first content delta is what the renderer paints
+  // when `reasoningView` is 'hidden': the summary line and a way back in, not
+  // a deletion.
+  const collapsed = bodyAt(38_000, null, streamRec({
+    reasoning: 'a'.repeat(500), content: 'the answer so far', reasoningView: 'hidden',
+  }));
+  // The CLASS, not the bare string: the toggle's `aria-controls` names the same
+  // id, so a substring match here would be satisfied by the very button that
+  // proves the box is folded.
+  ok(!/class="chat-stream-reasoning/.test(collapsed), 'collapsed: the reasoning box is not painted');
+  ok(/Thought for/.test(collapsed), 'collapsed: the head becomes a past-tense summary');
+  ok(/id="chat-think-elapsed"[^>]*>38s</.test(collapsed), 'and it carries how long the model thought for');
+  ok(/data-stream-view="full"/.test(collapsed) && /Show reasoning/.test(collapsed),
+    'collapsed: a real <button> reopens it — the scratchpad is folded, never discarded');
+  ok(/<button type="button" class="chat-stream-toggle"/.test(collapsed),
+    'and it is a focusable button, not a hover affordance');
+  ok(/aria-expanded="false"/.test(collapsed), 'with the fold state announced to assistive tech');
+
+  // §8h — the TAIL, not the firehose. A measured turn emits 6,687-8,385 chars
+  // of reasoning at 31-38 chunks/sec; all of it live is unreadable.
+  const lines = Array.from({ length: 40 }, (_, i) => 'line ' + i).join('\n');
+  const tailed = bodyAt(5_000, null, streamRec({ reasoning: lines }));
+  ok(/line 39/.test(tailed), 'the tail shows the NEWEST text');
+  ok(!/line 0\b/.test(tailed), 'and not the whole scratchpad');
+  const full = bodyAt(5_000, null, streamRec({ reasoning: lines, reasoningView: 'full' }));
+  ok(/line 0\b/.test(full) && /line 39/.test(full),
+    'expanded: the WHOLE scratchpad is there — the tail is a view, nothing is truncated on the way in');
+  ok(/chat-stream-reasoning-full/.test(full), 'and it takes the scrollable variant');
+
+  // §8i — THE SLOW-TURN NOTICE IS SUPPRESSED ON A STREAMING RESPONSE.
+  // It quotes a TOTAL call time; the clock before the first delta measures
+  // time-to-first-byte, for which no corpus exists. Silence beats a number
+  // that means something other than what the reader will take it to mean.
+  const measured = { kind: 'measured', label: 'GLM 5.3 Flash', ms: 186_000, free: false };
+  ok(/chat-thinking-slow/.test(bodyAt(60_000, measured)),
+    'CONTROL: without a stream the notice still fires at 60s, exactly as before');
+  ok(!/chat-thinking-slow/.test(bodyAt(60_000, measured, streamRec({ seen: false }))),
+    'on a CONFIRMED streaming response the notice is suppressed, even before any delta');
+  ok(!/chat-thinking-slow/.test(bodyAt(60_000, measured, streamRec({ reasoning: 'x' }))),
+    'and once text is arriving');
+
+  // §8j — RETRACTION. A notice already painted before the SSE headers were
+  // read must be REMOVED, not left standing: a claim we have decided we
+  // cannot make must not survive on screen because it got there first.
+  const doc = makeDoc(['chat-think-elapsed', 'chat-think-slow']);
+  const s = sandboxWith({ now: 1_000_000, document: doc, hintOnStart: measured });
+  s.api.startSendClock('tok');
+  s.clock.now = 1_000_000 + 25_000;
+  s.intervals[0].fn();
+  ok(doc.els.get('chat-think-slow').firstChild !== null,
+    'CONTROL: at 25s with no stream the tick really does paint the notice');
+  s.api.setStream(streamRec({ seen: false }));
+  s.clock.now = 1_000_000 + 26_000;
+  s.intervals[0].fn();
+  ok(doc.els.get('chat-think-slow').firstChild === null,
+    'once the response is known to be a stream, the already-painted notice is RETRACTED');
+  ok(doc.els.get('chat-think-elapsed').textContent === '26s',
+    'and the clock keeps ticking through the retraction — silence is never a hang');
+
+  // §8k — the shape key is what keeps the fast path off `renderThreadOnly`.
+  // It must NOT move when only the text grows, or the slot would be re-rendered
+  // 31-38 times a second, dropping the fold's listener and any text selection
+  // inside it on every frame.
+  const box = sandboxWith({ now: 0 });
+  box.api.setStream(streamRec({ reasoning: 'abc' }));
+  const k1 = box.api.streamShapeKey();
+  box.api.getStream().reasoning += ' and much more text arriving';
+  ok(box.api.streamShapeKey() === k1,
+    '★ the shape key does NOT move when only text grows — a delta costs two textContent writes');
+  box.api.getStream().content = 'answer';
+  ok(box.api.streamShapeKey() !== k1, 'but it DOES move on a structural change (the answer starting)');
+  box.api.setStream(null);
+  ok(box.api.streamShapeKey() === 'ring', 'and with no stream it names the pre-roll');
+}
+
+// ── §9 The stream stylesheet ─────────────────────────────────────────────
+section('§9  The streaming rules: on the ramp, over the AA floor, no motion');
+{
+  for (const sel of ['.chat-stream-head', '.chat-stream-reasoning', '.chat-stream-draft', '.chat-stream-toggle']) {
+    ok(new RegExp(sel.replace('.', '\\.') + '\\s*\\{').test(cssSrc), `${sel} carries a rule`);
+  }
+  // Every string in the streaming bubble is --text-2. --text-3 measured
+  // 4.38:1 dark / 4.00:1 light on this view's own sibling note — under the
+  // 4.5:1 AA body floor — so the three voices are separated by SIZE, not by
+  // dropping the recessed one below what can be read.
+  for (const sel of ['.chat-stream-title', '.chat-stream-reasoning', '.chat-stream-draft', '.chat-stream-toggle']) {
+    const rule = new RegExp(sel.replace('.', '\\.') + '\\s*\\{([^}]*)\\}').exec(cssSrc);
+    ok(!!rule && /var\(--text-2\)/.test(rule[1]), `${sel} takes --text-2`);
+    ok(!!rule && !/var\(--text-3\)|--text-faint/.test(rule[1]), `${sel} does NOT drop below the AA floor`);
+  }
+  // NOTHING ANIMATES. test-next-reduced-motion.js pins this file at exactly one
+  // hardcoded-duration animation (.chat-spinner); a blinking caret would break
+  // that suite AND add motion a reader has to look past to read live text.
+  const streamBlock = cssSrc.slice(cssSrc.indexOf('.chat-stream {'), cssSrc.indexOf('/* ── RETAINED'));
+  ok(streamBlock.length > 200, 'control: the streaming block was actually located in the stylesheet');
+  ok(!/animation/.test(streamBlock), 'no animation anywhere in the streaming rules — no caret, no pulse');
+  ok(!/font-size:\s*[^;]*\d+px/.test(streamBlock), 'no px font-size (it would freeze at 1x under --font-scale)');
+  // The expanded scratchpad scrolls INSIDE ITS OWN BLOCK. v3.0.14: a flex item
+  // whose overflow is not `visible` resolves its automatic min-height to 0,
+  // which is how the compile card came to be squeezed to nothing.
+  const fullRule = /\.chat-stream-reasoning-full\s*\{([^}]*)\}/.exec(cssSrc);
+  ok(!!fullRule && /overflow-y:\s*auto/.test(fullRule[1]) && /max-height/.test(fullRule[1]),
+    'the expanded scratchpad caps and scrolls itself rather than an ancestor');
+  const threadRule = /\.chat-thread\s*\{([^}]*)\}/.exec(cssSrc);
+  ok(!!threadRule && !/overflow/.test(threadRule[1]),
+    '.chat-thread — which IS a flex item — still sets no overflow of its own');
 }
 
 console.log(`\n────────────────────────────────────────`);

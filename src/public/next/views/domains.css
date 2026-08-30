@@ -104,14 +104,14 @@
 }
 .dm-row-meta {
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .dm-row-mirror {
   flex: none;
   font: var(--type-eyebrow);
   letter-spacing: var(--track-eyebrow);
-  color: var(--text-3);
+  color: var(--text-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
   padding: 1px 4px;
@@ -131,7 +131,7 @@
   font: var(--type-eyebrow);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-bottom: 6px;
 }
 
@@ -201,7 +201,7 @@
 .dm-stat-entity  { color: var(--type-entity); }
 .dm-stat-concept { color: var(--type-concept); }
 .dm-stat-summary { color: var(--type-summary); }
-.dm-stat-other   { color: var(--text-3); }
+.dm-stat-other   { color: var(--text-2); }
 
 /* ── Health card ──────────────────────────────────────────────────────── */
 
@@ -264,7 +264,15 @@
    the 4.5 AA floor. They are readout value/label now (16.71/18.27 and
    8.34/7.26). This is the 181-rule --text-3-as-body-text mistake that
    shared/text.js's FINDING 1 records; it is retired here by CONSTRUCTION, not
-   by a colour edit, because no role in the text system reads that token. */
+   by a colour edit, because no role in the text system reads that token.
+
+   AND THE REST OF THE FILE FOLLOWED. --text-3 is no longer a TEXT colour
+   anywhere in views/domains.css: 28 declarations moved to --text-2 (8.34 dark /
+   7.26 light). What survives is --text-3 on things that are NOT text — the
+   `.dm-browse-dot` background and the `.dm-group-summary svg` chevron — where
+   the floor is WCAG 1.4.11's 3:1 for a non-text UI component and 4.27/4.14
+   clears it with room. The token is not banned; it is simply wrong for text in
+   this palette, at every backdrop, in both themes. */
 
 /* ── Category chips ───────────────────────────────────────────────────── */
 
@@ -289,11 +297,17 @@
 .dm-chip-zero {
   background: transparent;
   border-color: var(--border);
-  color: var(--text-3);
+  color: var(--text-2);
 }
+/* .dm-chip inherits `border: 1px solid transparent`, so colouring the border here
+   costs no layout. That matters: --attention-text as the chip's TEXT measures
+   3.21:1 over its own tint in the light theme, under the 4.5 AA floor, while the
+   same colour as a 1px border is a non-text component at a 3:1 floor and clears
+   it. Tone on the rail, label in --text (16.39 light / 13.81 dark over the tint). */
 .dm-chip-amber {
   background: var(--attention-tint);
-  color: var(--attention-text);
+  border-color: var(--attention-text);
+  color: var(--text);
 }
 .dm-chip-violet {
   background: var(--accent-tint);
@@ -371,7 +385,7 @@
 .dm-quick-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .dm-quick-btn-ai { color: var(--accent-text); }
 .dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
-.dm-quick-cost { font-size: var(--text-2xs); color: var(--text-3); }
+.dm-quick-cost { font-size: var(--text-2xs); color: var(--text-2); }
 /* `.dm-quick-note` (the base rule) is GONE — zero users. It carried the
    cost-and-recovery promise, which is now the description role; its 10px top margin
    moved to `.dm-quick-footnote` at the top of this file.
@@ -379,14 +393,13 @@
    `.dm-quick-note-busy` SURVIVES, and the honest reason is that two OTHER
    sites still use it standalone — the browse-listing truncation warning and
    the pending-plan in-flight line — neither of which is part of this wave.
-   MEASURED, and recorded rather than implied away: --attention-text as TEXT
-   is 3.16:1 over --accent-tint in the light theme and 3.58:1 over
-   --surface-raised, both under the 4.5 floor for normal text. The Quick
-   maintenance use of it is fixed (it is the status role now, where the amber is
-   the rail and the words are --text); the other two are a known remaining
-   gap, and scripts/test-next-domains-text.js pins their COUNT so it cannot
-   grow quietly. One of them is byte-asserted by
-   scripts/test-next-domain-lifecycle.js, so it is not this file's to move. */
+   MEASURED: --attention-text as TEXT is 3.16:1 over --accent-tint in the light
+   theme and 3.58:1 over --surface-raised, both under the 4.5 floor for normal
+   text. That gap is now CLOSED here rather than ratcheted: the rule below paints
+   --text and hands the amber to its icon. The two call sites in domains.js are
+   untouched — the fix is a colour, not a relocation, so
+   scripts/test-next-domain-lifecycle.js's byte assertion on the markup and
+   test-next-domains-text.js's count of 2 both still hold. */
 /* MEDIUM-5 fix: distinguishes "an earlier fix on this domain is still
    running" (a real backend write in flight, buttons genuinely disabled)
    from the routine cost-disclosure note above — same amber token the
@@ -395,8 +408,18 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--attention-text);
+  /* Was --attention-text, MEASURED 3.16:1 over --accent-tint and 3.58:1 over
+     --surface-raised in light — the gap the file's comment above records as
+     ratcheted-but-unfixed. The colour moves to the icon (a non-text component,
+     3:1 floor) and the sentence takes --text. The one call site that renders
+     this class WITHOUT an icon (domains.js's cross-mount .dm-plan-detail line)
+     therefore loses the amber entirely and states the condition in words only;
+     that is the honest trade, because there is no amber in this palette that
+     passes 4.5 as text in the light theme — --attention-text IS --summary-600,
+     the darkest amber the token set defines. */
+  color: var(--text);
 }
+.dm-quick-note-busy svg { color: var(--attention-text); }
 .dm-quick-settings-btn { flex: none; }
 
 /* ── Confirm card (inline, generic) ──────────────────────────────────── */
@@ -434,7 +457,7 @@
 }
 .dm-plan-detail {
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   margin: 8px 0 6px;
 }
 .dm-plan-actions { margin-top: 10px; }
@@ -470,7 +493,7 @@
   font-size: var(--text-sm);
   color: var(--text);
 }
-.dm-group-dismissed .dm-dismissed-label { color: var(--text-3); }
+.dm-group-dismissed .dm-dismissed-label { color: var(--text-2); }
 
 .dm-group-pill {
   font-size: var(--text-2xs);
@@ -511,11 +534,11 @@
 .dm-issue-meta {
   flex: none;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .dm-issue-more {
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   padding-top: 4px;
 }
 .dm-dismiss-btn,
@@ -531,7 +554,7 @@
 .dm-recent-eyebrow { margin-top: 4px; margin-bottom: 8px; }
 .dm-recent-note {
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   max-width: 66ch;
   line-height: var(--leading-relaxed);
 }
@@ -579,7 +602,7 @@
   font-size: var(--text-2xs);
   letter-spacing: var(--track-eyebrow);
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .dm-lc-optional { text-transform: none; letter-spacing: 0; }
 .dm-lc-input {
@@ -629,7 +652,7 @@
 }
 .dm-lc-template[disabled] { opacity: 0.55; cursor: default; }
 .dm-lc-template-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
-.dm-lc-template-hint { font-size: var(--text-2xs); color: var(--text-3); }
+.dm-lc-template-hint { font-size: var(--text-2xs); color: var(--text-2); }
 
 .dm-lc-actions {
   display: flex;
@@ -661,7 +684,8 @@
 .dm-lc-refusal,
 .dm-sem-refusal {
   background: var(--attention-tint);
-  color: var(--attention-text);
+  /* Rail + tint carry the tone; the words are --text. See .dm-chip-amber. */
+  color: var(--text);
   border: 1px solid var(--attention);
 }
 .dm-lc-error,
@@ -687,7 +711,7 @@
 .dm-sem-batch-note {
   flex: 1 1 260px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
 }
 
@@ -708,17 +732,21 @@
 }
 .dm-sem-remove { color: var(--danger-text); overflow-wrap: anywhere; }
 .dm-sem-keep { color: var(--success-text); overflow-wrap: anywhere; }
-.dm-sem-arrow { color: var(--text-3); }
+.dm-sem-arrow { color: var(--text-2); }
 .dm-sem-conf {
   margin-left: auto;
   padding: 1px 7px;
   border-radius: var(--radius-full);
+  /* Reserved so the -high variant can colour a border to carry its amber
+     without standing 2px taller than -med and -low down a list of cards.
+     Same device as .dm-chip. */
+  border: 1px solid transparent;
   font-size: var(--text-2xs);
   white-space: nowrap;
 }
-.dm-sem-conf-high { background: var(--attention-tint); color: var(--attention-text); }
+.dm-sem-conf-high { background: var(--attention-tint); border-color: var(--attention-text); color: var(--text); }
 .dm-sem-conf-med { background: var(--surface-active); color: var(--text-2); }
-.dm-sem-conf-low { background: var(--surface-inset); color: var(--text-3); }
+.dm-sem-conf-low { background: var(--surface-inset); color: var(--text-2); }
 
 .dm-sem-sub {
   margin-top: 5px;
@@ -728,7 +756,7 @@
 .dm-sem-rationale {
   margin-top: 4px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
   max-width: 76ch;
 }
@@ -747,7 +775,7 @@
 }
 .dm-sem-gate {
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .dm-sem-gate-ok {
   display: inline-flex;
@@ -782,7 +810,7 @@
   margin: 8px 0;
   padding-left: 18px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .dm-sem-preview-more { list-style: none; margin-left: -18px; }
 .dm-sem-preview-body {
@@ -811,7 +839,7 @@
 }
 .dm-browse-empty {
   font-size: var(--text-sm);
-  color: var(--text-3);
+  color: var(--text-2);
   margin-bottom: 10px;
   max-width: 66ch;
   line-height: var(--leading-relaxed);
@@ -847,7 +875,7 @@
   border: 1px solid transparent;
   border-radius: var(--radius-full);
   background: var(--surface-inset);
-  color: var(--text-3);
+  color: var(--text-2);
   cursor: pointer;
   font: inherit;
   font-size: var(--text-2xs);
@@ -859,7 +887,7 @@
   border-color: var(--accent-border);
   color: var(--text);
 }
-.dm-browse-tab-count { color: var(--text-3); }
+.dm-browse-tab-count { color: var(--text-2); }
 
 .dm-browse-list {
   display: flex;
@@ -905,7 +933,7 @@
   flex: none;
   max-width: 44%;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -913,7 +941,7 @@
 .dm-browse-note {
   margin-top: 8px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* The reader body for a page opened from the browse list carries NO rule
@@ -990,7 +1018,7 @@
   font-size: var(--text-2xs);
   letter-spacing: var(--track-eyebrow);
   font-weight: var(--weight-semibold);
-  color: var(--text-3);
+  color: var(--text-2);
   background: var(--surface-raised);
   border-radius: var(--radius-xs);
   padding: 2px 6px;
@@ -1005,7 +1033,7 @@
 
 .reader-source-size {
   flex: none;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-2xs);
 }
 
@@ -1016,7 +1044,7 @@
    value is an untrusted, LLM-authored string that arrives over sync, and
    the UI should not invite a click it will not honour. */
 .reader-source-url {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
   min-width: 4ch;
@@ -1048,7 +1076,7 @@
 .reader-source-status {
   flex: none;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .reader-source-status.is-ok { color: var(--success-text); }
 .reader-source-status.is-error { color: var(--danger-text); }

@@ -169,11 +169,23 @@ The cardinal rule is the same one `src/public/markdown.js` has carried since v3.
 
 `scripts/test-next-markdown.js` (**OFFLINE**) is the guard. It was written and made green *before* the lift, against the renderer in its original home, and re-run unchanged after — which is what proves the move was behaviour-preserving rather than merely asserting it. Its §0 walks the whole `src/public/next` tree and fails if a second declaration named `renderMarkdown` reappears anywhere; that guard is deliberately **name-scoped, not algorithm-scoped**, and its own header says so — a copy pasted under a different name, a class method, or an aliased re-export all evade it. Its wikilink and citation passes carry measured `{1,512}` length bounds rather than `+`, pinned by §4b as a ReDoS bound.
 
+### The shared SSE frame reader
+
+`src/public/next/shared/sse.js` exports `readSseFrames(stream)` — an **async generator** yielding one parsed JSON payload per `data: ` line off a `fetch` response body. It is this frontend's single SSE frame reader; chat-turn streaming is its first adopter.
+
+It exists for the same reason `shared/ingest-queue-logic.js` and `shared/markdown.js` do. The `reader.read()` loop it replaces was copy-pasted at **five** call sites (`views/ingest.js` ×2, `views/chat.js`'s `runCompile`, `views/domains.js`'s `streamSSE`, and `src/public/app.js`'s `submitIngest`), and chat streaming would have been a sixth. Two hand-maintained copies of a parsing loop is this project's named cause of the v3.2.0 CRITICAL; five copies of a network-framing loop is the same risk at a larger multiple.
+
+**An async generator rather than an `onEvent` callback**, because the five real call sites split into two different termination disciplines and a generator serves both with no extra plumbing: ingest `break`s (or throws) on a terminal frame, while `runCompile` deliberately reads to the *actual end of the stream* and only decides afterwards — the "a later chunk can carry the REAL terminal frame after an earlier progress-shaped one" trap `views/shared.js`'s `runRevoke` documents at length. A `for await` loop supports both, and `reader.cancel()` runs in the generator's `finally` on every exit path (stream end, an early `break`, an uncaught throw).
+
+It takes **no imports** and touches no `document`/`window`, so — like `shared/text.js` and `shared/format-usd.js` — it can be `import()`ed directly under plain Node and driven for real by `scripts/test-next-sse.js`, rather than falling back to source-text scanning the way `app.js` and `shared/listbox.js` must.
+
+It deliberately does **not** call `fetch`, inspect `res.status`/`res.headers`, or fall back to `res.json()` for a non-SSE error response — every real caller does something structurally different with that case, so the decision stays at the call site. Its header carries an explicit NOT-ENFORCED list: no multi-line `data:` continuation, no `event:`/`id:`/`retry:` support, an unparseable `data:` payload silently skipped, and no trailing no-argument `decoder.decode()` flush. Each is safe **only** because every producer in this codebase writes `data: ${JSON.stringify(x)}\n\n`, whose payload can never contain a raw newline. See [chat-streaming.md](chat-streaming.md#36-reading-frames).
+
 ### Status: what's real, what's a stub
 
 This shell **is** the user-facing app as of v3.9.0. The pieces below are at different levels of completeness and this should not be overstated in either direction:
 
-- **Chat, Ingest, Settings, Sync** — real, wired to pre-existing backend endpoints (no new server-side capability was added for any of them; each view's own top comment names the exact routes it calls). Ingest includes the full batch-ingest queue, not just the single-file path. Chat's composer model/length pickers, the reader-overlay content, and — newly — **Compile to Wiki** (streams `POST /api/compile/conversation`, rendered as an inline thread card exactly like the `/old` chat tab has since v3.0.14) are real, not placeholder.
+- **Chat, Ingest, Settings, Sync** — real, wired to backend endpoints that (with one later exception, below) already existed; each view's own top comment names the exact routes it calls. **The exception is chat-turn streaming**, which added a content-negotiated SSE branch to `POST /api/chat/:domain` — additively, so the same route still answers with the same JSON object when a caller does not ask for a stream (see [chat-streaming.md](chat-streaming.md)). Ingest includes the full batch-ingest queue, not just the single-file path. Chat's composer model/length pickers, the reader-overlay content, and — newly — **Compile to Wiki** (streams `POST /api/compile/conversation`, rendered as an inline thread card exactly like the `/old` chat tab has since v3.0.14) are real, not placeholder.
 - **Domains** (`views/domains.js`) — the Health panel described in its own top comment is real, and this release adds three more pieces. **Domain lifecycle** (create/rename/delete) is wired to the pre-existing `POST`/`PUT`/`DELETE /api/domains[/:domain]` routes — see [api-reference.md](api-reference.md) for the exact contract, including the display-name-only rename case where the slug does not change. **A wiki browse list** is the one place this release adds real server-side surface: `GET /api/wiki/:domain/list` (`src/brain/wiki-read.js` + `src/routes/wiki.js`, new) is a readdir-only inventory built on health.js's `listMd` rather than a fresh readdir — see [api-reference.md](api-reference.md) for the full contract and its deliberate title-from-slug trade-off. **The browse reader renders rich markdown**, through the same single renderer chat answers use (`shared/markdown.js` — see above). Until v3.8.0 it showed the page's escaped markdown SOURCE in a `<pre>` block instead, because the renderer lived inside `views/chat.js` and copying a security-sensitive escape-first renderer into a second file is exactly the "two hand-maintained copies of a guard" shape that produced the v3.2.0 CRITICAL; lifting it into a module both views import removed the dilemma rather than picking a side of it. Finally, the semantic-duplicate scan gained **per-pair Preview / Flip / Skip** actions alongside the pre-existing batch "merge all high-confidence pairs" bar, which was previously the only semantic-dupe action this shell offered — parity with the `/old` Health tab.
 - **Shared Brain** (`views/shared.js`) — the connected state and the enabled/disabled flag states are real, and the five-step setup wizard now exists too, in its own module (`views/shared-brain-wizard.js`): a port of the shipping app's `#sharedbrain-wizard` (both the admin "start a new brain" and contributor "join with an invite token" paths, including the GitHub PAT and Shared Brain admin-token steps — the highest-risk credential surface in this shell), restyled to the `/next` design system under the rule "port the FLOW verbatim, restyle the CHROME only." This release adds the admin-only GDPR Article 17 **revoke-a-contributor** flow and **admin-token generate/rotate** to the connected card — both ported from the shipping app (CLAUDE.md's v3.0.5 entry) and previously entirely absent from this shell. Its own header cross-references the specific `/old`-frontend bugs each behavioural rule exists to keep from regressing. It has no test coverage of its own yet — the offline suite that exercises this behaviour (`test-sharedbrain-hardening.js`) still asserts only against the `/old` frontend's `app.js`. One real gap remains, and it's about an *existing* connection rather than initial setup: `views/shared.js`'s own copy says changing which domains an already-connected brain contributes from needs the access token re-entered, which this shell doesn't handle outside the setup wizard yet.
 - **First-run guidance** (`views/onboarding.js`, v3.8.0) — real, and deliberately **not** a port of the `/old` frontend's blocking 4-step modal. It is a non-blocking, dismissible panel: no scrim, no `role="dialog"`, no focus trap, and it never steals focus on the automatic path. `app.js`'s `boot()` calls `maybeShowOnboarding()` (not awaited, and wrapped in `try/catch`, because `boot()` returning is what sets the `window.__curatorBooted` sentinel the `<head>` guard treats as proof of a healthy load). Every step **points** at the surface that already owns the job — API key → first domain → first ingest, in that order — and embeds no input and `POST`s nothing; step 2 navigates to Domains rather than adding a second `POST /api/domains` call site, which `test-next-chat-compile.js` pins at exactly one for the whole tree. Dismissal is `localStorage` (`curator-next-onboarding-dismissed-v1`) and **fails safe by showing** — a storage throw re-shows the guidance rather than silently hiding first-run setup — which is the opposite direction from the AI-disclosure consent gate, on purpose. It is re-findable from Settings ("Show setup guide"). It is **not** a registered view: like `views/mcp-wizard.js` and `views/shared-brain-wizard.js`, it calls no `registerView()` and owns no rail slot.
@@ -204,7 +216,7 @@ the-curator/
 │   │   ├── domains.js          GET/POST/PUT/DELETE /api/domains[/:domain]
 │   │   ├── ingest.js           POST /api/ingest (single file)
 │   │   ├── ingest-queue.js     /api/ingest-queue — batch ingest job (create/list/start/pause/cancel/delete) (v3.3.0+)
-│   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]
+│   │   ├── chat.js             GET/POST/DELETE /api/chat/:domain[/:id]; POST streams SSE on `stream: true`
 │   │   ├── wiki.js             GET /api/wiki/:domain, GET .../page (v3.2.0+), GET .../source + POST .../source/reveal (v3.5.0)
 │   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
@@ -427,13 +439,14 @@ Chat additionally supports a **per-chat provider override** (v3.0.11+) — `getP
 
 The optional `LLM_MODEL` env var overrides the default model for whichever provider is active. It sits between the per-call override and the user's stored Settings choice in the precedence chain — see below.
 
-`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. `opts` carries five additive, optional fields:
+`generateText(systemPrompt, userPrompt, maxTokens = 8192, responseFormat = 'text', onWait = null, opts = {})` is the single function every LLM caller in the app goes through — `ingest.js`, `query.js`, `chat.js`, `compile.js`, `health-ai.js`, the Shared Brain modules. It handles the provider-specific API differences internally, plus retry/backoff (429/503) and the model-not-found fallback chain (see [model-lifecycle.md](model-lifecycle.md)). `onWait(message)` is an optional callback fired before each retry wait, used to stream a "Service busy — retrying in 9s…" message to the UI. **The return type is a bare string and must stay that way** — every `generateText` call site across `src/` and `mcp/` depends on it (enumerate them rather than trusting a count in prose; the function's own docblock puts the figure at ~18), which is why token usage and live deltas are both delivered out-of-band through `opts` instead. `opts` carries six additive, optional fields:
 
 - `onUsage(payload)` (v3.0.16) — fired once per completed provider call with normalised `{provider, model, inputTokens, outputTokens, cachedReadTokens, cacheWriteTokens}`, so a caller can track real spend without changing the function's bare-string return type.
 - `cachePrefixChars` (v3.0.16) — Anthropic-only, the length of a stable leading portion of `userPrompt` to mark with a `cache_control` breakpoint (ignored by the Gemini branch, which caches implicitly; see [ingestion-pipeline.md §7.2](ingestion-pipeline.md#72--anthropic-claude)).
 - `provider` (v3.0.11) — a per-call provider override for the chat model selector, honoured only when that provider has a key **saved in Settings**.
 - `model` (v3.13.0) — a per-call model override (the chat composer's model dropdown). Narrowed to a non-empty string here and then allow-listed inside `getProviderInfo()`; anything not in `OFFERABLE_MODELS` for the resolved provider falls back to that provider's default rather than throwing. See [Model selection](#model-selection-the-router-v3120--v3130).
 - `signal` (v3.4.0) — **an `AbortSignal`, and the entire mechanism behind "Cancel" on a batch ingest.** It is threaded queue → `ingestFile` → `generateText` → every provider client (both SDKs and the OpenRouter adapter, which additionally links it to its own request timeout); abort is checked *before* the retry ladder, the 429/503 backoff (`sleep()` is itself abortable) and the model-not-found fallback chain, so a cancel stops spending immediately rather than walking up to five more calls. Measured: 334 s → 63 ms. Omitting it leaves every code path byte-identical to the pre-v3.4.0 behaviour.
+- `onDelta({type, text})` — **live output as the model produces it**, `type` being exactly `'content'` or `'reasoning'`. Chat is its only production consumer. Two rules make it safe, and both are documented rather than enforced: **the return value is authoritative and complete, and deltas are a preview of it** (a consumer *replaces* its draft with the return value and never appends — appending doubles the answer and loses the truncation note, which exists only in the return value), and **once one delta has been emitted the attempt is committed** — no retry, no fallback walk, because a second model's tokens appended to a first model's half-sentence is two voices in one answer. Every provider branch is a two-arm `if (emit)`, so a caller that passes no `onDelta` reaches byte-identical transports, request bodies and error handling. Full contract: [chat-streaming.md](chat-streaming.md).
 
 For ingest calls, `responseFormat: 'json'` is passed, which enables Gemini's native `responseMimeType: 'application/json'` — this forces the model to produce structurally valid JSON even when the content contains markdown characters (backticks, quotes, backslashes) that would otherwise break parsing.
 
@@ -451,6 +464,18 @@ The OpenRouter branch is an adapter over the provider's OpenAI-compatible endpoi
 The request never carries a model-substitution list, which would be the same class of silent swap one rung up. Error classification is **structural** — on the numeric status, which the provider also mirrors into its error body — never a substring match, because this repo's own `/\b429\b/` once matched its own prose about "429 characters". Note that a `503` under these preferences means *no upstream met the required parameters*, an expected outcome of our own strictness rather than necessarily an outage, and it is named as such so a user is not sent to a status page for a request that will never succeed as written.
 
 **Usage normalisation differs by provider and getting it wrong double-counts silently.** OpenRouter's prompt-token count **includes** cached tokens — the Gemini convention, not Anthropic's — so its normaliser subtracts, exactly as the Gemini one does. This is the same trap documented for Gemini in v3.0.16; it is restated here because the two providers it resembles disagree with each other.
+
+### Per-provider transports, and the one emitter above them
+
+`callProvider` opens by building **one** `emit = makeDeltaEmitter(opts.onDelta, opts.streamCommit)` and threading it into all three branches, rather than letting each branch build its own. That is what makes the commit marker inside it mean *"this logical call has shown the user something"* rather than *"this branch has"* — and it is where `type` is normalised to exactly `content`/`reasoning` and where empty deltas are dropped. `emit` is `null` when the caller passed no `onDelta`, and every branch is a two-arm test on exactly that.
+
+| Provider | Non-streaming transport | Streaming transport | Content deltas | Reasoning deltas |
+|---|---|---|---|---|
+| **Gemini** | `generateContent` | `generateContentStream`, whose `{stream, response}` aggregate promise is rebuilt into the same `{response}` shape the non-streaming arm produces — so the truncation check, the usage report and the return below all read it identically | Yes | **No — impossible.** `@google/generative-ai` 0.24.1 has no notion of a thought part (the string `thought` appears **zero** times in its bundle) and the app never requests thoughts, so none arrive to be mislabelled as content. `@google/genai` is the successor and is where they are addressable; swapping it is its own release. |
+| **Anthropic** | `client.messages.stream(...).finalMessage()` — **already streaming, unconditionally, since v3.0.1-beta.14** for an unrelated reason (see [model-lifecycle.md](model-lifecycle.md#anthropic-specific-notes)) | The same call, with additive `.on('text')` / `.on('thinking')` listeners attached *before* `.finalMessage()` starts draining. The transport does not change; `.finalMessage()` is still the only thing awaited | Yes | **Wired, but zero in practice.** Measured over 4 runs on `claude-sonnet-5`: a thinking block is genuinely returned, but `delta.thinking` is the **empty string** and the assembled block carries only a signature — Anthropic returns the deliberation *encrypted*. |
+| **OpenRouter** | `createChatCompletion` | `createChatCompletion` with `stream: true` + `onDelta`; the adapter parses the SSE body itself and reassembles it into a non-streaming-shaped body for the same `parseChatCompletion` | Yes | **Yes — the only provider that delivers them today** |
+
+The Anthropic row is why `makeDeltaEmitter`'s empty-delta drop is **load-bearing rather than defensive**: without it, every Anthropic call carrying a thinking block would emit a zero-length reasoning delta that shows the user nothing and **commits the call**, silently disabling the retry ladder and the fallback walk on the app's main Anthropic path. Full treatment in [chat-streaming.md](chat-streaming.md).
 
 ---
 
@@ -758,7 +783,9 @@ The two call sites differ by one flag: Settings calls it plain (adds the outline
 
 `filterModels`/`orderModels` in `views/settings.js` add a per-provider, session-only (never persisted) search box, a `<select>` sort, and a "measured" checkbox, rendered only once a provider's list passes `MODEL_FILTER_MIN_ROWS` (12) — below that a filter bar is furniture. `MODEL_SORTS` is exactly `['cheapest', 'dearest', 'newest', 'largest-context']`; cheapest/dearest reuse the server's own price-sorted delivery order (reversed for dearest) rather than re-deriving a price comparison client-side, and newest/largest-context rank `createdUnixSec`/`contextLength` where present. There is deliberately no capability or "most capable" sort: `isCuratorMeasured` (reads `jsonRaw === boolean`, the marker for "we ran this against the real ingest prompt") covers roughly 19 of the catalogue's ~190+ entries, and a second qualification session on 2026-08-28 measured price, speed, recency and vendor each predicting the *opposite* of the real outcome on at least one model — a capability ranking over the unmeasured remainder would be a machine-written verdict dressed as data. A row missing a sort's key is never assigned one (0 and a fabricated date are both explicitly refused by `defineOfferableModel`); it keeps its delivered position and trails the ranked block, and the bar states how many.
 
-### The chat wait clock
+### The chat wait clock (now a pre-roll)
+
+**Its role narrowed when streaming landed, and the honesty rule did not.** This used to be the whole waiting state, on the premise that a chat turn is one non-streaming POST so time-to-first-byte *equals* total. That premise is now false: deltas arrive long before the answer is finished. The ring is now a **pre-roll** covering the gap before the first delta of any kind, after which the streamed text itself carries the liveness. What did not change is the rule — still no `stages`, still `value: null`, still activity-only with `role="progressbar"` and **no `aria-valuenow`**. Streaming gives a token *count*, which is not progress: `max_tokens` is a cap, not a forecast, and there is no denominator anywhere. The slow-turn notice below is additionally **suppressed on a streaming turn**, because `medianLatencyMs` is a total call time while the pre-first-delta clock measures time-to-first-byte — a different quantity, for which this project has no corpus. See [chat-streaming.md](chat-streaming.md).
 
 `views/chat.js`'s "thinking…" bubble ticks up an elapsed-time counter (`thinkingBodyHtml`, one-second interval, module-level timer so it survives a re-mount and is provably clearable) — the same pattern `docs/ingestion-pipeline.md` records for ingest's v3.0.17 progress clock, after a maintainer picked the slowest model this app has ever measured (382s for one outline call), watched a bare spinner, and reported the app as hung. Past `SLOW_TURN_NOTICE_AFTER_MS` (20000), if `latencyHintForTurn()` resolves a `medianLatencyMs` for the model serving this turn, the bubble states it once as a measured fact ("measured at about Xm Ys per call in our testing"), never as a promise. For the roughly 176 catalogue entries with no latency figure it says nothing at all — the clock still ticks, because it is timing the real call, but no expectation is invented from price, size or another model's number.
 
@@ -980,12 +1007,16 @@ Properties that are correctness requirements, not conveniences:
 
 ## Data flow: Chat
 
+The transport half of this — SSE frames, the authoritative-return rule and commit-at-first-delta — has its own document: [chat-streaming.md](chat-streaming.md). Retrieval, prompting and persistence are below and are unchanged by it.
+
 ```
 User sends message
       │
       ▼
-POST /api/chat/:domain  { message, conversationId? }
-      │
+POST /api/chat/:domain  { message, conversationId?, responseStyle?,
+                          provider?, model?, stream? }
+      │   stream === true  → 200 text/event-stream (frames)
+      │   otherwise        → 200 application/json  (one object, as always)
       ▼
 src/brain/chat.js
       ├─ 1. Load or create conversation from domains/<domain>/conversations/
@@ -998,11 +1029,18 @@ src/brain/chat.js
       │     60 KB budget + a 12 KB enriched catalogue (NOT the whole wiki)
       ├─ 6. Build prompt: selected pages + catalogue + the intent's answer-shape
       │     instruction block, with last 20 messages as conversation history
-      ├─ 7. Call LLM via llm.js  (text mode, 8 192 max output tokens; on
-      │     truncation, returns the partial answer + a note — never hard-fails)
+      ├─ 7. Call LLM via llm.js  (text mode; the output-token budget comes
+      │     from the chosen response style — see RESPONSE_STYLES in
+      │     src/brain/chat.js, which is the source of truth for the numbers.
+      │     On truncation it returns the partial answer + a note — never
+      │     hard-fails)
       │     opts.onUsage captures {provider, model, four token counts} for
       │     the provider call that actually answered — see "Per-answer cost"
-      │     above. Returns: markdown answer with [source: path] citation tags
+      │     above.
+      │     opts.onDelta (streaming only) receives {type, text} as the model
+      │     produces output — a PREVIEW channel. The return value is still
+      │     the complete, authoritative answer.
+      │     Returns: markdown answer with [source: path] citation tags
       ├─ 8. stripCatalogueEcho() — remove any residual bare-file-path blob
       ├─ 9. Parse [source: ...] tags → deduplicated citation list
       ├─ 10. Append user + assistant messages to conversation (the assistant
@@ -1015,6 +1053,10 @@ HTTP response → { conversationId, isNew, title, answer, citations: [...],
   // `model` and `usage` describe the model that ANSWERED, not the one
   // requested; both are null when nothing valid was reported. See
   // "Per-answer cost" under Model selection, above.
+  //
+  // On the streaming path this SAME object is the payload of the terminal
+  // `{type:'done', ...result}` frame, spread un-enumerated — so the two
+  // surfaces cannot disagree about what a turn produced.
 
 Other chat endpoints:
   GET    /api/chat/:domain        → list conversations (id, title, messageCount)
@@ -1385,7 +1427,8 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 | `anthropicMaxOutputTokens(modelId)` | Per-model output ceiling; unknown ids resolve to the conservative `ANTHROPIC_MAX_OUTPUT_TOKENS` (64,000) |
 | `normalizeOpenRouterUsage(usage)` | Normalises the aggregator's usage block. **Subtracts cached tokens from the prompt count** (its convention includes them) and clamps at 0, so a running spend total can never be double-counted or driven negative |
 | `getFallbackStatus()` | `null`, or the active fallback event plus a derived `costTier` (`costlier`/`similar`/`unknown`) |
-| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles the per-provider API differences, retry/fallback, and `opts.onUsage`/`opts.cachePrefixChars` (v3.0.16), `opts.provider` (v3.0.11), `opts.model` (v3.13.0), `opts.signal` (v3.4.0) |
+| `generateText(system, user, maxTokens, responseFormat, onWait, opts)` | Single LLM call; handles the per-provider API differences, retry/fallback, and `opts.onUsage`/`opts.cachePrefixChars` (v3.0.16), `opts.provider` (v3.0.11), `opts.model` (v3.13.0), `opts.signal` (v3.4.0), `opts.onDelta` (streaming). Returns a **bare string** — every other channel is out-of-band |
+| `makeDeltaEmitter(onDelta, commit)` | The single funnel every provider's deltas pass through. Normalises `type` to exactly `content`/`reasoning`, **drops empty deltas**, sets the commit marker *before* invoking the callback, and swallows a throwing callback. `null` when not streaming, which is what makes every provider branch fall back to its non-streaming transport |
 
 ### `src/brain/openrouter-adapter.js`
 
@@ -1393,7 +1436,7 @@ The OpenAI-compatible adapter behind the third provider, plus the pure helpers t
 
 | Export | Description |
 |--------|-------------|
-| `OpenRouterAdapter` | One non-streaming chat completion. Sends the no-substitution routing preferences on every call, and reports the **resolved** model from the response body — the model that actually answered, not the one requested |
+| `OpenRouterAdapter` | One chat completion, streaming or not. Sends the no-substitution routing preferences on every call, and reports the **resolved** model from the response body — the model that actually answered, not the one requested. With `stream: true` it parses the SSE body in `_consumeStream` and **reassembles it into a non-streaming-shaped body**, handed to the same `parseChatCompletion` — so there is exactly one function producing the result shape and the two modes cannot drift. `stream` is added to the request body only when asked for, so a non-streaming request is byte-identical to before |
 | `fetchOpenRouterCatalogue(...)` | Reads the provider's public model catalogue (no auth required) |
 | `classifyOpenRouterStatus(status)` | **Structural** error classification on the numeric status, never a substring match on a message |
 | `usdPerMtokFromPerTokenString(s)` | Converts the provider's per-token decimal strings into the per-million figures the app quotes |
@@ -1579,7 +1622,7 @@ Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:dom
 
 ```js
 sendMessage(domain, conversationId, userMessage, opts = {})
-  // opts: { responseStyle, provider, model }
+  // opts: { responseStyle, provider, model, signal, onDelta }
   → Promise<{ conversationId, isNew, title, answer, citations[],
               responseStyle, provider, model, usage }>
   // `model` is the model that ANSWERED (taken from the last onUsage payload),

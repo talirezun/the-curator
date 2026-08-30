@@ -64,7 +64,7 @@
 // previous placeholder promised that distinction; it is honoured here.
 
 import {
-  registerView, setSidebar, setMain, eyebrow, escapeHtml, icon,
+  registerView, setSidebar, setMain, escapeHtml, icon,
   isCurrentMount, reportAsyncMountFailure,
 } from '../app.js';
 import { renderMarkdown } from '../shared/markdown.js';
@@ -76,7 +76,7 @@ import { renderMarkdown } from '../shared/markdown.js';
 // asserts these imports are present AND reached, because a component that ships
 // unused is the shape this repo keeps re-learning.
 import {
-  renderDescription, renderStatus, renderReadout, renderExplainer,
+  renderDescription, renderStatus, renderReadout, renderExplainer, renderViewHeader,
 } from '../shared/text.js';
 import { createLoadingGate, gatedLoader, settleGate } from '../shared/loading-gate.js';
 import { renderListboxHtml, mountListbox, closeAllListboxes } from '../shared/listbox.js';
@@ -828,13 +828,24 @@ function restoreFocus() {
 }
 
 function renderSidebar(token) {
-  // STATIC PROSE, in the one role for static prose. It was `.sidebar-hint` —
-  // the same class the error branch below used to render a RUNTIME FAILURE in,
-  // separated only by a colour modifier. Two things that are not alike must not
-  // share an element.
-  const head =
-    '<div class="sidebar-title">Agent memory</div>' +
-    renderDescription('The working brief your agents leave for each other — read here, written by them.');
+  // NO PARAGRAPH UNDER THE TITLE. v3.20.0 moved this sentence from
+  // `.sidebar-hint` into renderDescription, which changed its CLASS and left it
+  // in the same position — still prose floating under a title. renderViewHeader
+  // has no field that can put it back there.
+  //
+  // The clause that was cut is `read here, written by them`: the sidebar FOOT
+  // already states it unfolded, permanently, beside a lock glyph. Two copies of
+  // one fact, on screen at once, is what this pass exists to remove.
+  //
+  // The Refresh button's tooltip is folded in here rather than deleted. It was
+  // the only place that said the screen re-checks by itself, and a `title=` is
+  // invisible to keyboard and to touch — the class v3.20.0 counted 11 of.
+  const head = renderViewHeader({
+    variant: 'sidebar',
+    title: 'Agent memory',
+    info: 'The working brief your agents leave for each other. This screen re-checks by itself '
+      + 'when you come back to it, so Refresh is rarely needed.',
+  });
 
   if (state.loading) {
     setSidebar(head + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
@@ -894,9 +905,10 @@ function renderSidebar(token) {
   const projectsHead =
     '<div class="mem-projects-head">' +
       '<span class="cur-eyebrow">PROJECTS</span>' +
-      '<button type="button" class="mem-refresh" id="mem-refresh"' +
-        ' title="Re-read what agents have saved. This screen also re-checks by itself when you come back to it.">' +
-        'Refresh</button>' +
+      // No `title=`. The sentence it carried is in the header's info panel,
+      // where a keyboard or touch user can actually reach it; the word
+      // "Refresh" is its own accessible name.
+      '<button type="button" class="mem-refresh" id="mem-refresh">Refresh</button>' +
     '</div>';
 
   setSidebar(
@@ -922,9 +934,12 @@ function renderMain(token) {
     body = renderProject();
   }
 
+  // DELIBERATELY NO `info`. renderAbout() below already owns the mechanism
+  // explanation ("How this works"), and a second copy behind the mark would be
+  // two hand-maintained descriptions of one thing — free to drift, which is the
+  // shape this repo keeps re-learning. The header is eyebrow + title, nothing else.
   setMain(
-    eyebrow('your agents’ brain') +
-    '<h1 class="view-title">Agent memory</h1>' +
+    renderViewHeader({ eyebrow: 'your agents’ brain', title: 'Agent memory' }) +
     body,
     token
   );
@@ -952,9 +967,19 @@ function renderProject() {
       '<span class="mem-project-mark"></span>' +
       '<span class="mem-project-name">' + escapeHtml(state.activeProject) + '</span>' +
       (d && d.readonly
-        ? '<span class="mem-badge mem-badge-quiet" title="A read-only Shared Brain mirror — this state can have been written by someone else on your cohort.">shared mirror</span>'
+        ? '<span class="mem-badge mem-badge-quiet">shared mirror</span>'
         : '') +
-    '</div>';
+    '</div>' +
+    // PROMOTED OUT OF A TOOLTIP, not folded behind a mark. This qualifies who
+    // WROTE what you are about to read — it can be someone else on your cohort
+    // — so it belongs with the unlisted and stale notes that also sit here to
+    // qualify the claims below them, not behind a click. It was a `title=` on a
+    // non-focusable <span>: unreachable by keyboard, unreachable by touch.
+    (d && d.readonly
+      ? '<div class="mem-note">' + icon('lockAlt', 13) +
+        '<span>A read-only Shared Brain mirror — this state can have been written by ' +
+        'someone else on your cohort.</span></div>'
+      : '');
 
   if (state.detailError) {
     return header + renderStatus({
@@ -1251,9 +1276,15 @@ function renderScopeControls(scopes) {
   // processes and local checkouts may not match what is in front of you.
   // Rendered ONLY on positive evidence (an explicit `false`) — an older
   // response that omits the field must not be reported as either.
+  //
+  // The REASON is rendered, not hovered. It was a `title=` on a non-focusable
+  // <span>, so the one sentence explaining why the steps below may not apply
+  // here reached neither keyboard nor touch users. `.mem-ctl-note` is the
+  // existing visible-note role in this same row (the truncation note uses it).
   const elsewhere = d && d.machineIsThisMachine === false
-    ? '<span class="mem-badge mem-badge-attn" title="Saved on a different machine and synced here — local paths and processes may differ.">' +
-      'from ' + escapeHtml(d.machine || 'another machine') + '</span>'
+    ? '<span class="mem-badge mem-badge-attn">' +
+      'from ' + escapeHtml(d.machine || 'another machine') + '</span>' +
+      '<span class="mem-ctl-note">synced here — local paths and processes may differ</span>'
     : '';
 
   // The index cap applies to (scope, machine) PAIRS, so the note compares

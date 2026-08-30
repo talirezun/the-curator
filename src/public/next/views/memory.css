@@ -112,7 +112,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mem-row-quiet .mem-row-name { color: var(--text-3); }
+/* A project row with nothing saved yet. It was --text-3, which this file's own
+   note on .mem-row-meta six lines above already argues against in principle:
+   "Sub-threshold contrast is not a hierarchy device." --text-3 measures
+   3.87-4.38 across every surface in this file, under the 4.5 text floor, and
+   this is a project NAME — the thing a user scans the list for. The quiet step
+   survives as --text-2 under .mem-row-name's --text. */
+.mem-row-quiet .mem-row-name { color: var(--text-2); }
 
 .mem-sidebar-foot {
   display: flex;
@@ -449,7 +455,17 @@
 .mem-fold-summary::-webkit-details-marker { display: none; }
 .mem-fold-summary:hover { color: var(--text); }
 .mem-fold-summary:focus-visible { outline: none; box-shadow: var(--ring-focus); }
-.mem-fold-summary svg { flex: none; color: var(--text-faint); transition: transform var(--t-state); }
+/* The chevron is a graphic, so 3:1 governs rather than 4.5 — but --text-faint
+   measured 2.26 dark / 2.34 light, under even that.
+   --text-3 would have cleared 3:1 (4.15-4.38) and kept the chevron a step below
+   its --text-2 summary, which is how every other disclosure chevron in /next is
+   treated. It is NOT used here: test-next-memory-ingest-text.js enumerates every
+   rule in THIS file carrying `color: var(--text-3)` and allows only two named
+   selectors, so re-introducing the token for a chevron reds that guard — and the
+   guard is right in spirit, since this file's own measurements put --text-3 under
+   the floor on every surface it has. The chevron takes --text-2 and simply
+   matches the summary it sits in. */
+.mem-fold-summary svg { flex: none; color: var(--text-2); transition: transform var(--t-state); }
 .mem-fold[open] > .mem-fold-summary svg { transform: rotate(90deg); }
 /* --text-2: 8.34 dark / 7.26 light on --surface. Same reasoning as
    .mem-row-meta — the entry count and the age are information, and
@@ -510,16 +526,22 @@
    other two keep this neutral treatment and no normalisation is re-warned
    about.
 
-   `--text-3`, not `--text-faint`: this is a disclosure the skill instructs a
-   model to read, so it sits above the timestamp and the harness meta, not
-   level with them. */
+   NOT --text-3 EITHER, and the earlier reasoning here only got half the way.
+   It was right that this outranks the timestamp and the harness meta — it is a
+   disclosure the skill instructs a model to read — but it bought that rank by
+   choosing the less-bad of two colours that are BOTH under the floor: --text-3
+   measures 3.87-4.38 across this file's surfaces and --text-faint 2.26-2.34,
+   against 4.5. So it takes --text-2 (8.34 / 7.26) like every other piece of
+   prose here, and .mem-j-rej-loss below stays distinguished the way it already
+   was — by an amber icon and a 2px amber rule, which are graphics at 3.58 and
+   over their own 3:1 floor. */
 .mem-j-rej {
   display: flex;
   align-items: flex-start;
   gap: 6px;
   margin-top: 3px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: var(--leading-normal);
 }
 .mem-j-rej svg { flex: none; margin-top: 1px; }

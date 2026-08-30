@@ -1335,9 +1335,13 @@ function renderSidebar(token) {
       // above the 3:1 non-text floor) rather than a hint wearing red, and
       // that the server's own message is the DETAIL, so the headline stays
       // constant and the cause is not glued onto the end of our sentence.
-      // `.sidebar-hint`'s own --text-3 (4.27 / 4.14, under AA) is untouched
-      // and still carries the LOADING placeholder above, which is
-      // loading-gate.js's role and deliberately not converted.
+      // `.sidebar-hint` still carries the LOADING placeholder above, which is
+      // loading-gate.js's role and deliberately not converted to a status.
+      // (Its COLOUR is no longer --text-3: this comment used to record 4.27 /
+      // 4.14, under AA, as an accepted gap. shell.css now paints both sidebar
+      // empty-state roles --text-2 — 8.34 / 7.26 measured — for the reason
+      // written at that rule. The semantic point above is unchanged; only the
+      // colour claim was corrected, because it had stopped being true.)
       // Wrapped only to carry this view's spacing: text.css owns the type,
       // domains.css owns where it sits. The wrapper sets no type of its own.
       '<div class="sidebar-title">Domains</div>' + newBtn +
@@ -1378,8 +1382,35 @@ function renderSidebar(token) {
           '<span class="dm-row-name">' + escapeHtml(d.displayName || d.slug) + '</span>' +
           '<span class="dm-row-meta mono">' + pagesText + '</span>' +
         '</span>' +
-        (readonly ? '<span class="dm-row-mirror" title="Read-only Shared Brain mirror">RO</span>' : '') +
-        (attention ? '<span class="dm-row-attn" title="' + issueCount + ' open health issue' + (issueCount === 1 ? '' : 's') + '"></span>' : '') +
+        // ── TWO BADGES WHOSE MEANING WAS HOVER-ONLY ───────────────────
+        // `RO` was a <span title="Read-only Shared Brain mirror">, and the
+        // attention badge was an EMPTY <span> whose entire content was its
+        // tooltip — the purest form of the defect: a keyboard user reached
+        // nothing, and on touch, where there is no hover, the issue count did
+        // not exist.
+        //
+        // WHY NOT THE INFO-MARK BUTTON USED IN settings.js: both spans are
+        // INSIDE `<button class="dm-row">`, and a <button> inside a <button>
+        // is invalid HTML — the browser closes the outer one and the row
+        // stops being a single control. So the meaning goes into the row
+        // button's own ACCESSIBLE NAME instead, which is reachable precisely
+        // because that row IS focusable. `.visually-hidden` is shell.css's
+        // existing clip-rect utility; no stylesheet change.
+        //
+        // STATED RATHER THAN IMPLIED AWAY: this fixes keyboard and screen
+        // reader, not sighted-touch, which still sees a glyph. For a sighted
+        // user both facts are one tap away on the domain's own detail view —
+        // the read-only mirror status box and the `Open issues N` readout —
+        // so neither is information that exists nowhere else for them.
+        (readonly
+          ? '<span class="dm-row-mirror">RO</span>' +
+            '<span class="visually-hidden">Read-only Shared Brain mirror</span>'
+          : '') +
+        (attention
+          ? '<span class="dm-row-attn"></span>' +
+            '<span class="visually-hidden">' + issueCount + ' open health issue' +
+              (issueCount === 1 ? '' : 's') + '</span>'
+          : '') +
       '</button>'
     );
   }).join('');
@@ -2394,7 +2425,13 @@ function renderSemanticPairCard(pair, readonly, busy) {
           '<button class="btn btn-secondary dm-sem-btn" data-sem-action="flip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') +
             ' title="Swap which side is kept">↔ Flip</button>' +
           '<button class="btn btn-primary dm-sem-btn" data-sem-action="merge" data-sem-key="' + escapeHtml(key) + '"' +
-            ((rowBusy || !gate.allowed) ? ' disabled' : '') + ' title="' + escapeHtml(gate.allowed ? 'Merge this pair' : gate.reason) + '">' +
+            // No `title=`. It carried `gate.reason` — but only while the
+            // button was `disabled`, i.e. exactly when it is NOT focusable,
+            // so the refusal was mouse-only. The same refusal already renders
+            // as visible text five lines below ("Preview required before
+            // Merge"), and when the gate IS open the tooltip only said
+            // "Merge this pair", which is the button's own label.
+            ((rowBusy || !gate.allowed) ? ' disabled' : '') + '>' +
             (state.busyKey === 'semanticMergeOne:' + key ? 'Merging…' : 'Merge') + '</button>' +
           '<button class="btn btn-ghost dm-sem-btn" data-sem-action="skip" data-sem-key="' + escapeHtml(key) + '"' + (rowBusy ? ' disabled' : '') + '>' +
             (state.busyKey === 'semanticSkip:' + key ? 'Skipping…' : 'Skip') + '</button>' +
