@@ -742,8 +742,13 @@ a.sb-card-repo:hover { color: var(--text-link); }
 .sbw-input-row .sbw-input { flex: 1; }
 .sbw-toggle-vis { width: 34px; height: 34px; flex: none; display: flex; align-items: center; justify-content: center; padding: 0; }
 
+/* The box inside these labels is shared/checkbox.css's `.cur-check`; this
+   rule owns the label row only. `flex: none` left with it (the component
+   carries it); `margin-top` stays, because a 16px box top-aligned against a
+   --text-sm line needs the optical nudge onto the cap height, and the
+   component deliberately does not guess a line-height it cannot see. */
 .sbw-checkbox-label { display: flex; align-items: flex-start; gap: 9px; font-size: var(--text-sm); color: var(--text); cursor: pointer; }
-.sbw-checkbox-label input[type="checkbox"] { margin-top: 2px; flex: none; }
+.sbw-checkbox-label .cur-check { margin-top: 2px; }
 
 /* ── Status / validation line ─────────────────────────────────────────── */
 

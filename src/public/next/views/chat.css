@@ -118,15 +118,20 @@
    is not reachable by keyboard, and multi-select with no visible way in is
    not a feature. Muted until it is checked or hovered so a sidebar of
    unticked rows stays quiet. */
+/* The box itself is shared/checkbox.css's `.cur-check .cur-check-sm` — this
+   rule owns PLACEMENT and the quiet-until-relevant reveal only. What left
+   here when the component landed: `width`/`height` (13px, now the component's
+   `--cur-check-size` on the `-sm` variant, and scaling with --font-scale
+   instead of frozen at 1x) and `accent-color`, which only ever TINTED the
+   OS control — the rounded macOS box, its border and its shape stayed UA
+   chrome in both themes, which is the defect the component removes.
+   `transition` is re-declared because the component transitions
+   background-color and border-color, and shorthand-overwriting it here
+   would drop those. */
 .chat-conv-check {
-  flex: none;
-  width: 13px;
-  height: 13px;
   margin-left: 6px;
-  cursor: pointer;
-  accent-color: var(--accent);
   opacity: 0.45;
-  transition: opacity var(--t-state);
+  transition: opacity var(--t-state), background-color var(--t-state), border-color var(--t-state);
 }
 .chat-conv-check:checked,
 .chat-conv-check:focus-visible,

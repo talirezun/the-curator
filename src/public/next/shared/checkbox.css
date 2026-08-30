@@ -1,0 +1,206 @@
+/* ── The checkbox ─────────────────────────────────────────────────────────
+   The ONE checkbox surface in /next, replacing the OS-native
+   `<input type="checkbox">` chrome at every call site.
+
+   WHY THIS FILE EXISTS. A bare `<input type="checkbox">` renders as
+   platform chrome: on macOS a rounded blue-tinted UA control, on Windows a
+   square grey one, in neither case anything this design system specifies.
+   It does not theme — the light and dark builds of the app got the same
+   control — and it ignores the radius, the border and the accent the rest
+   of the tree is built from. This is the same class of defect v3.18.0
+   purged every native `<select>` for, and it survived that pass only
+   because a checkbox is small enough to look intentional.
+
+   The sharpest instance was `.sbw-consent-check`: the control by which a
+   user agrees to contribute their own knowledge to a Shared Brain, rendered
+   as unstyled OS chrome inside an otherwise-designed dialog.
+
+   SPECIFIED, NOT INVENTED. Every value below is transcribed from the design
+   system's own `components/forms/Checkbox.jsx`: a 16x16 box at
+   --radius-xs, --surface-inset behind a 1px hairline when unchecked, filled
+   and bordered --accent when checked, a white check drawn as a 24-viewBox
+   polyline at stroke-width 3.2 with round caps and joins, sized 10/16 of the
+   box, transitioning background and border-colour on --t-state, and 0.45
+   opacity plus not-allowed when disabled. The system's `Checkbox.prompt.md`
+   calls it "the pattern used for every consent gate", which is exactly the
+   site that drove this work.
+
+   FOUR THINGS ARE DERIVED, NOT FOLLOWED, and are marked DERIVED below:
+   the hover treatment, the indeterminate state, the --font-scale sizing
+   and the compact variant. The system specifies none of the four.
+
+   ONE THING IS A DELIBERATE DEVIATION, AND IT IS MEASURED. The system's
+   Checkbox draws its unchecked border with --border-strong. Measured in
+   Chrome against the composited backdrop after cascade, that border sits at
+   **1.59:1 in dark and 1.64:1 in light** against --surface — WCAG 1.4.11
+   asks 3:1 for the visual boundary of a user-interface component, and this
+   is the one boundary that has to carry the whole control: an UNCHECKED box
+   has no glyph, and its --surface-inset fill measures 1.01:1 against the
+   surface behind it in dark and 1.07:1 in light, so the fill contributes
+   essentially nothing and the border is the control's entire visible
+   presence. (That fill figure is ASSERTED by the visual suite too, not just
+   quoted here — it is the premise the deviation rests on.) An unticked consent gate at
+   1.59 is a control the user has to hunt for.
+
+   This is the app-wide sub-3:1 border-token gap this repo has recorded since
+   v3.19.0, and everywhere else it is acceptable because a card border
+   carries no information. Here it carries all of it. So the unchecked border
+   is --text-3, the nearest token in the same neutral ramp that clears the
+   floor in BOTH themes, and it is redefined per theme the way the system's
+   own discipline requires. Measured: **4.27 dark / 4.14 light**.
+
+   THE CHECKED BORDER IS UNCHANGED at --accent, and the white check against
+   that fill measures 4.53 dark / 6.57 light. The rest of the tree's
+   --border / --border-strong usage is NOT touched — that is a systemic
+   decision, not this component's to make.
+
+   THE INPUT IS THE BOX. The system's JSX paints a `<span>` and hides the
+   real input at `position:absolute; opacity:0; width:0; height:0`. That is
+   correct for React and wrong here, for the reason v3.24.2 recorded when it
+   found `display:none` had removed a delete button from the tab order
+   entirely: a control the keyboard cannot reach is not a control. An
+   opacity-0 0x0 input *is* still focusable, so Tab and Space would still
+   work — but tokens/base.css's global `:focus-visible` ring would then be
+   painted around a zero-by-zero rectangle, i.e. invisible, and the visible
+   box would have no focus state at all. So instead of hiding the native
+   input and painting a substitute, this file replaces the native
+   APPEARANCE of the real input and leaves everything else alone:
+
+     - `appearance: none` strips the UA chrome and nothing else.
+     - The element in the DOM is still `<input type="checkbox">`, so Space
+       toggles it, Tab reaches it, `:checked` / `:disabled` / `:indeterminate`
+       are the real states, a wrapping or `for=`-associated <label> is
+       clickable, and every assistive technology already knows what it is.
+       No `role="checkbox"` reimplementation, and no key handlers to get
+       wrong.
+     - The focus ring is base.css's global `:focus-visible`, inherited for
+       free because the focusable element and the painted element are now
+       the same element. NO `box-shadow` IS DECLARED ANYWHERE IN THIS FILE
+       — v3.24.2's explicit rule, because a local box-shadow fights that
+       ring. (`border-radius` IS re-declared under :focus-visible, only to
+       stop that same global rule rounding the box to --radius-sm on focus;
+       a control that changes shape when focused reads as a different
+       control.)
+
+   THE CHECK IS A BACKGROUND-IMAGE, NOT A PSEUDO-ELEMENT. `::before` and
+   `::after` on a form control are honoured inconsistently across engines
+   even with `appearance: none`; `background-image` is honoured on every
+   element everywhere. The cost is that a data: URI cannot resolve a CSS
+   custom property, so the stroke is the literal `#fff` — which is what the
+   design system's own JSX hardcodes (`stroke="#fff"`), and which equals
+   --text-on-accent, defined as #FFFFFF in BOTH themes. That equality is
+   not left to trust: scripts/test-next-checkbox.js asserts both theme
+   blocks in tokens/color.css still define --text-on-accent as #FFFFFF, so
+   a token change that would strand this literal goes red.
+
+   PREFIX: every selector here is `cur-check`, following the house
+   convention already used by `pring-`, `lb-` and `tx-`.
+
+   SIZE SCALES WITH THE TYPE RAMP (DERIVED). shared/text.css's rule is that
+   a px literal silently freezes at 1x while Settings > General's
+   --font-scale grows everything around it. The system's 16px is therefore
+   written `calc(16px * var(--font-scale))`, so the box keeps its
+   relationship to the label at every scale. The check glyph is sized as a
+   fraction of the box for the same reason.
+
+   EVERY FIGURE ABOVE IS MEASURED, NOT COMPUTED FROM THESE TOKENS BY HAND, by
+   scripts/test-next-checkbox-visual.js (LIVE_LOCAL) — in a real browser,
+   against the composited backdrop after cascade, with the probe controlled
+   at 1.00 on an identical pair and 21.00 on black-on-white before anything
+   else is believed. Two probes in this repo have been silently wrong in
+   exactly this way. The suite ASSERTS both floors rather than printing them,
+   and it also asserts that the deviation is still necessary — if
+   --border-strong is ever fixed, that assertion goes red and this component
+   should go back to following the system.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.cur-check {
+  /* One knob. A site that must be denser overrides this and everything
+     below — box, check glyph and indeterminate bar — re-derives from it. */
+  --cur-check-size: calc(16px * var(--font-scale));
+
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: var(--cur-check-size);
+  height: var(--cur-check-size);
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  /* --text-3, not --border-strong: see THE DELIBERATE DEVIATION above. This
+     is the only visible part of an unchecked box and it has to clear 3:1. */
+  border: var(--border-w) solid var(--text-3);
+  background-color: var(--surface-inset);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: calc(var(--cur-check-size) * 0.625);
+  transition: background-color var(--t-state), border-color var(--t-state);
+}
+
+/* DERIVED — the system specifies no hover on the box itself. --border-focus
+   is the token the app's inputs already move their border to on focus
+   (.sbw-input, .chat-reask-btn), so hover borrows the same "this is live"
+   colour rather than inventing a third one. */
+.cur-check:hover:not(:disabled) { border-color: var(--border-focus); }
+
+.cur-check:checked,
+.cur-check:indeterminate {
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The system's polyline, transcribed: viewBox 0 0 24 24, points 20 6 / 9 17
+   / 4 12, stroke-width 3.2, round cap and join, no fill. */
+.cur-check:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+}
+
+/* DERIVED — the system's Checkbox has no indeterminate state at all (no
+   prop, no branch). One site needs it: chat.js sets .indeterminate on
+   #chat-bulk-all when SOME but not all conversations are selected, and
+   "some" must not look like "none" on a control whose neighbouring button
+   deletes things. Drawn as the conventional dash, in the same white on the
+   same accent fill as the check, so the three states read as one family.
+   This rule follows the :checked one so it wins on source order when both
+   are set, which is the correct precedence: indeterminate is the more
+   specific claim about the selection. */
+.cur-check:indeterminate {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.2' stroke-linecap='round'%3E%3Cline x1='6' y1='12' x2='18' y2='12'/%3E%3C/svg%3E");
+}
+
+/* The system's disabled treatment, exactly: opacity 0.45 and not-allowed.
+   The audit that produced this work found disabled implemented with at
+   least five different opacities across the tree; this file uses the one
+   the system specifies rather than the one its neighbours happen to use. */
+.cur-check:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The ring comes from tokens/base.css's global `:focus-visible`. This rule
+   declares NO box-shadow — it exists only to stop that same global rule's
+   `border-radius: var(--radius-sm)` rounding the box on focus. */
+.cur-check:focus-visible { border-radius: var(--radius-xs); }
+
+/* DERIVED — a compact variant, for the three sites whose surrounding type
+   is --text-2xs or --text-xs (the chat conversation row, the chat bulk
+   strip, the Settings model filter). At the system's 16px the box
+   out-weighs a 10-11px label and, in the chat sidebar, grows every row.
+   13px is the metric .chat-conv-check already shipped, so this preserves
+   the density those three surfaces were designed at rather than inventing
+   a new one; everything else — colour, radius, states, focus — is the
+   component unchanged. */
+.cur-check-sm { --cur-check-size: calc(13px * var(--font-scale)); }
+
+/* The label half. The system's component is a flex label with 10px of gap
+   and the box top-aligned so a two-line label hangs correctly off the
+   first line. Sites that already had their own label class keep it; this
+   is here for the wrapping <label> of a checkbox that has none. */
+.cur-check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.cur-check-label:has(.cur-check:disabled) { cursor: not-allowed; opacity: 0.45; }
