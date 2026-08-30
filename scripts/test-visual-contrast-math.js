@@ -200,6 +200,14 @@ const GUARDED = [
   ['gotoView', probes.gotoView, ['chat']],
   ['railViews', probes.railViews, []],
   ['backdropSamples', probes.backdropSamples, [4]],
+  // The info-panel probes (LIVE_LOCAL test-info-panel-reachability.js). They
+  // measure geometry and run elementFromPoint, so a reading taken against
+  // another agent's tab would be silently wrong rather than absent — exactly
+  // what the guard exists for. Listed here so the guard is EXECUTED offline
+  // even on a machine with no browser, where the suite that uses them skips.
+  ['infoPanelSurvey', probes.infoPanelSurvey, []],
+  ['markGeometry', probes.markGeometry, ['some-btn']],
+  ['mutateForControl', probes.mutateForControl, ['dup-id']],
 ];
 for (const [name, fn, extra] of GUARDED) {
   let threw = false, msg = '';
