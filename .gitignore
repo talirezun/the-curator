@@ -115,7 +115,7 @@ docs/apple-developer-enrolment.md
 /*.screenshot.png
 
 
-# Local mirror of the design-system bundle (v3.25.0). READ-ONLY REFERENCE.
+# Local mirror of the design-system bundle (v3.26.0). READ-ONLY REFERENCE.
 # Kept out of the public repo because it is the maintainer's brand work, and
 # so agents can read the system without a personal Drive path appearing in a
 # committed file. The MASTER lives outside this repository — see
