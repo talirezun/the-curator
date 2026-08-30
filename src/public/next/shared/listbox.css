@@ -49,7 +49,7 @@
    the click and removes it from the tab order; these rules only say so on
    screen. The failure this replaces would be a div that merely looked
    unavailable while still firing its handler mid-write. */
-.lb-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.lb-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 .lb-btn-text {
   overflow: hidden;
@@ -129,7 +129,12 @@
 .lb-opt.is-active { background: var(--surface-hover); }
 .lb-opt.is-selected { background: var(--accent-tint); color: var(--accent-text); }
 .lb-opt.is-selected.is-active { background: var(--accent-tint-strong); }
-.lb-opt.is-disabled { opacity: 0.5; cursor: not-allowed; }
+/* A row, not a native control — it carries aria-disabled="true" and the
+   click/keyboard guards in shared/listbox.js are what actually refuse it.
+   `pointer-events: none` is therefore deliberately NOT set here: the JS
+   already refuses the interaction, and suppressing hit-testing would only
+   take the cursor away again. */
+.lb-opt.is-disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 .lb-opt-label {
   flex: 1 1 auto;

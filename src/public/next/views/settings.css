@@ -446,7 +446,24 @@
   background: var(--surface);
   flex-wrap: wrap;
 }
-.provider-row-unavailable { opacity: 0.55; }
+/* Was `opacity: 0.55` on the ROW. This row CONTAINS a
+   `<button class="btn btn-secondary btn-xs" disabled>`, which carries
+   --opacity-disabled (0.45), and nested opacities MULTIPLY: measured in a
+   real browser, that button rendered at an EFFECTIVE 0.2475, contrast 2.05
+   dark / 1.73 light. Neither value was wrong alone; a container-level
+   opacity over a control-level one is what produced it.
+
+   A container that wants to read as unavailable moves its TEXT down the
+   ramp instead, which composites once and cannot multiply. --text-3 is the
+   metadata rung and, since v3.25.0 re-based the ramp, it clears the 4.5 AA
+   floor in both themes — so this row is dimmer AND more legible than the
+   0.55 wash it replaces. The provider NAME stays at --text (it is the
+   row's identity, and "not available in this build" beside it is the
+   sentence that explains the disabled button — the one thing here that must
+   stay readable). */
+.provider-row-unavailable .provider-model,
+.provider-row-unavailable .provider-key-field,
+.provider-row-unavailable .provider-state { color: var(--text-3); }
 .provider-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .provider-name-block {
   width: 140px;

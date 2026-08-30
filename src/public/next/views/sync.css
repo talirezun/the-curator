@@ -81,8 +81,17 @@
   border-radius: 50%;
   flex: none;
   /* --text-3, not --text-faint: this dot is a non-text UI component, so its floor
-     is 3:1 (WCAG 1.4.11). --text-faint measured 2.26 dark / 2.34 light — under it.
-     --text-3 is 4.27 / 4.14, which clears 3:1 comfortably; it fails only as TEXT. */
+     is 3:1 (WCAG 1.4.11).
+
+     RE-MEASURED after v3.25.0 re-based the text ramp; the figures this comment
+     carried (--text-faint 2.26/2.34, --text-3 4.27/4.14) were TRUE WHEN
+     WRITTEN and are now false, and they were written in the PRESENT TENSE, so
+     they were left asserting something the tokens no longer do. Current, on
+     --surface: --text-faint 3.47 dark / 3.61 light, --text-3 6.16 / 5.60.
+     --text-faint now clears the 3:1 non-text floor too, so it would no longer
+     be WRONG here — but --text-3 stays, because the dot sits beside
+     .sync-domain-name at --text-2 and the pairing is what makes it read as
+     that row's marker rather than as the faintest thing on the screen. */
   background: var(--text-3);
 }
 .sync-domain-name { flex: 1; min-width: 0; font-size: var(--text-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -236,7 +245,13 @@
 .sync-disconnect-link:hover { color: var(--danger-text); }
 /* Doesn't carry the shared `.btn` class, so the global `.btn[disabled]`
    rule (shell.css) never applies to it — needs its own disabled treatment. */
-.sync-disconnect-link[disabled] { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
+/* `pointer-events: none` was here and is removed. The rule BELOW is the
+   proof it was the accident rather than the intent: `[disabled]:hover`
+   cancels the `--danger-text` hover two rules up, so a disabled Disconnect
+   does not turn red under the cursor — and with pointer-events suppressed
+   that rule could NEVER match. Removing the suppression makes an
+   already-written, already-correct rule live for the first time. */
+.sync-disconnect-link[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .sync-disconnect-link[disabled]:hover { color: var(--text-2); }
 
 .sync-disconnect-confirm {

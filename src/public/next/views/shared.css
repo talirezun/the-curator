@@ -303,7 +303,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   text-decoration-color: var(--border-strong);
 }
 .sb-leave-link:hover { color: var(--danger-text); }
-.sb-leave-link[disabled] { opacity: 0.5; cursor: not-allowed; }
+.sb-leave-link[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .sb-card-footer .sb-confirm-inline { flex: 1 1 100%; margin-left: 0; }
 
 /* ── Admin controls: admin token + contributor revocation ─────────────
@@ -522,7 +522,7 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--text-on-accent);
 }
 .sb-revoke-go .btn-danger:hover:not([disabled]) { background: var(--danger-text); border-color: var(--danger-text); }
-.sb-revoke-go .btn-danger[disabled] { opacity: 0.45; cursor: not-allowed; }
+.sb-revoke-go .btn-danger[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .sb-revoke-go .btn-danger svg { margin-right: 5px; vertical-align: -2px; }
 
 /* ── Revoke outcome ───────────────────────────────────────────────────
@@ -648,7 +648,13 @@ a.sb-card-repo:hover { color: var(--text-link); }
 /* M3 fix (shared-brain-wizard.js setSaveChromeDisabled): disabled while a
    save is in flight, so it visually matches the Save/Back buttons rather
    than looking clickable while its click handler silently no-ops. */
-.sbw-close[disabled] { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+/* Was `opacity: 0.35` with `pointer-events: none`. The comment above states
+   the intent as "visually matches the Save/Back buttons" — those are `.btn`,
+   which is 0.45, so 0.35 contradicted the reason given for it. The
+   pointer-events suppression is removed with the rest of the tree: this is a
+   real <button>, the UA already refuses the click, and the handler at
+   shared-brain-wizard.js:742 returns early on isSaveBlocking() as well. */
+.sbw-close[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 .sbw-header { text-align: center; margin-bottom: 18px; }
 .sbw-header-icon { color: var(--accent-text); margin-bottom: 6px; }

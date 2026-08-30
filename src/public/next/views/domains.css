@@ -439,7 +439,7 @@
   transition: background var(--t-state);
 }
 .dm-quick-btn:hover:not(:disabled) { background: var(--surface-hover); }
-.dm-quick-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.dm-quick-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .dm-quick-btn-ai { color: var(--accent-text); }
 .dm-quick-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .dm-quick-cost { font-size: var(--text-2xs); color: var(--text-2); }
@@ -707,7 +707,10 @@
   background: var(--accent-tint);
   color: var(--text);
 }
-.dm-lc-template[disabled] { opacity: 0.55; cursor: default; }
+/* `cursor: default` was here. It is not a variant of the disabled state, it
+   is the absence of one — this button is disabled while a domain create is
+   in flight, which is a temporarily-unavailable control and reads as one. */
+.dm-lc-template[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .dm-lc-template-label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .dm-lc-template-hint { font-size: var(--text-2xs); color: var(--text-2); }
 
@@ -1126,7 +1129,7 @@
   background: var(--surface-hover);
   color: var(--text);
 }
-.reader-source-reveal:disabled { opacity: 0.55; cursor: default; }
+.reader-source-reveal:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
 .reader-source-reveal:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 
 .reader-source-status:empty { display: none; }

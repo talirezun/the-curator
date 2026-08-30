@@ -948,7 +948,10 @@
 .chat-input:focus,
 .chat-input:focus-visible { outline: none; box-shadow: none; }
 .chat-input::placeholder { color: var(--text-3); }
-.chat-input[disabled] { opacity: 0.6; }
+/* Disabled while a send is in flight. Gains `cursor: not-allowed` with the
+   rest of the tree: a textarea's default text cursor over a field that
+   refuses input says nothing about why it refuses. */
+.chat-input[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 .chat-composer-controls {
   display: flex;
@@ -974,7 +977,7 @@
 }
 .chat-send-btn:hover { background: var(--accent-hover); }
 .chat-send-btn:active { transform: translateY(0.5px); }
-.chat-send-btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+.chat-send-btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* ── STOP ─────────────────────────────────────────────────────────────────
    The same button, while a turn is in flight. RECESSED, NOT DANGER-RED:
@@ -1226,7 +1229,7 @@
   transition: background var(--t-state), opacity var(--t-state);
 }
 .chat-compile-btn:hover { background: var(--accent-tint-strong); }
-.chat-compile-btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+.chat-compile-btn[disabled] { opacity: var(--opacity-disabled); cursor: not-allowed; }
 
 /* ── Compile outcome card ─────────────────────────────────────────────────
    Pushed into state.thread and rendered as a normal `.chat-msg`-adjacent

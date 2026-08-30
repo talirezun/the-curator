@@ -421,18 +421,39 @@ ok(indetRules.some(r => declares(r.body, 'background-image')),
    EVERY rule that dims a disabled checkbox must use the same one, so the two
    cannot drift apart into the "disabled implemented five ways" finding this
    whole pass came out of. */
+/* INVERTED, NOT DELETED — the two assertions below used to pin the LITERAL
+   `0.45` and now require the TOKEN. Their old text was:
+
+     "the `.cur-check:disabled` rule ITSELF sets opacity 0.45 — the system's
+      value, not one of the five other opacities the audit found in this tree"
+     "every rule that dims a disabled checkbox uses the SAME 0.45 …"
+
+   They flipped because the "disabled implemented five ways" finding those
+   sentences anticipate was then actually fixed: `--opacity-disabled` is
+   declared once, in shell.css, and all seventeen disabled rules tree-wide
+   route through it. So the INTENT is unchanged and better served — this
+   component still cannot drift to its own value, and now it cannot drift
+   away from the other sixteen either, which a pinned literal could not
+   express. That the token equals the system's 0.45 is asserted at its single
+   definition by scripts/test-next-disabled-state.js §1, which is the only
+   place it CAN be asserted once the literal is gone from here.
+
+   The `.some()` hazard the comment above records is UNCHANGED and still
+   guarded: the exact-selector rule must carry it, AND every dimming rule
+   must agree. */
 const disabledExact = componentRules.find(r =>
   r.selector.split(',').some(s => s.trim() === '.' + CLASS + ':disabled'));
-ok(!!disabledExact && /opacity\s*:\s*0\.45/.test(disabledExact.body),
-  'the `.cur-check:disabled` rule ITSELF sets opacity 0.45 — the system\'s value, not one of the ' +
-  'five other opacities the audit found in this tree');
+ok(!!disabledExact && /opacity\s*:\s*var\(--opacity-disabled\)/.test(disabledExact.body),
+  'the `.cur-check:disabled` rule ITSELF sets opacity: var(--opacity-disabled) — the ONE tree-wide ' +
+  'token, not a literal of its own (which is how five different opacities arose in the first place)');
 ok(!!disabledExact && /cursor\s*:\s*not-allowed/.test(disabledExact.body),
   'and that same rule sets cursor: not-allowed, per the system');
 const disabledOpacities = disabledRules
-  .map(r => (r.body.match(/opacity\s*:\s*([\d.]+)/) || [])[1])
-  .filter(Boolean);
-ok(disabledOpacities.length > 0 && disabledOpacities.every(v => v === '0.45'),
-  `every rule that dims a disabled checkbox uses the SAME 0.45 (found: ${disabledOpacities.join(', ') || 'none'}) ` +
+  .map(r => (r.body.match(/opacity\s*:\s*([^;}]+)/) || [])[1])
+  .filter(Boolean)
+  .map(v => v.trim());
+ok(disabledOpacities.length > 0 && disabledOpacities.every(v => v === 'var(--opacity-disabled)'),
+  `every rule that dims a disabled checkbox uses the SAME token (found: ${disabledOpacities.join(', ') || 'none'}) ` +
   '— the component must not itself become an instance of the "disabled implemented five ways" finding');
 ok(hoverRules.length > 0,
   'a hover state exists (DERIVED — the system specifies none on the box itself)');

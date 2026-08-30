@@ -174,7 +174,7 @@
    least five different opacities across the tree; this file uses the one
    the system specifies rather than the one its neighbours happen to use. */
 .cur-check:disabled {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -203,4 +203,4 @@
   gap: 10px;
   cursor: pointer;
 }
-.cur-check-label:has(.cur-check:disabled) { cursor: not-allowed; opacity: 0.45; }
+.cur-check-label:has(.cur-check:disabled) { cursor: not-allowed; opacity: var(--opacity-disabled); }
