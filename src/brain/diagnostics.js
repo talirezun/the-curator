@@ -19,6 +19,11 @@
 import { readFileSync, statSync, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import path from 'path';
+// execFile, never exec: no shell interpretation (the same rule
+// /api/mcp/reveal-config follows). Nothing user-supplied reaches it either way.
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { describeInstall, getCapabilities } from './install-mode.js';
 import { getDomainsDir, getApiKeys, getEffectiveKey } from './config.js';
 import { appPath, getCredentialFiles } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
@@ -28,6 +33,8 @@ import { writeFileAtomic } from './atomic-write.js';
 // Files that should be owner-only (0600). getCredentialFiles() in paths.js is
 // the SINGLE source of truth, shared with the startup chmod sweep in
 // server.js — the two lists previously had to be kept in sync by hand.
+
+const execFileAsync = promisify(execFile);
 
 function readVersion() {
   try {
@@ -170,6 +177,57 @@ async function checkSync() {
   }
 }
 
+// ── 6. Install mode ──────────────────────────────────────────────────────────
+//
+// 'info', never a pass/fail: neither mode is wrong, and the whole point of the
+// row is that a support conversation starts from the right mental model.
+// Whether the app can update itself is the fact that actually differs, so it is
+// stated rather than left to be inferred from the mode name.
+function checkInstallMode() {
+  try {
+    const { installMode, installModeLabel, capabilities } = describeInstall();
+    const updates = capabilities.canSelfUpdateViaGit
+      ? 'Updates in place from GitHub.'
+      : 'Updates are installed by replacing the app, not from Settings.';
+    return check('install-mode', 'Install mode', 'info', `${installModeLabel} (${installMode}). ${updates}`);
+  } catch (err) {
+    return check('install-mode', 'Install mode', 'warn', `Could not determine: ${err.message}`);
+  }
+}
+
+// ── 7. Git availability ──────────────────────────────────────────────────────
+//
+// Local, free and fast — a `git --version` subprocess, no network. It is here
+// because git being absent breaks TWO features at once (Personal Sync and the
+// updater) and its natural error text is actively misleading: `friendlyError`'s
+// bare `not found` substring used to render "git: command not found" as
+// "Repository not found. Check the URL." Fixed at source in sync.js; this row
+// is what makes the condition visible BEFORE a user hits either feature.
+//
+// SKIPPED entirely on a build that needs neither — reporting a missing tool a
+// packaged app never invokes would be a warning about nothing.
+async function checkGit() {
+  let caps;
+  try {
+    caps = getCapabilities();
+  } catch {
+    caps = null;
+  }
+  if (caps && !caps.canSelfUpdateViaGit && !caps.canRunNpmInstall) {
+    return check('git', 'Git', 'info', 'Not required by this build.');
+  }
+  try {
+    const { stdout } = await execFileAsync('git', ['--version'], { timeout: 5000 });
+    return check('git', 'Git', 'ok', (stdout || '').trim() || 'Available.');
+  } catch (err) {
+    const missing = /enoent|not found|not recognized/i.test(err && err.message ? err.message : '');
+    return check('git', 'Git', missing ? 'fail' : 'warn',
+      missing
+        ? 'Not found. Personal Sync and app updates both need it — on macOS, open Terminal and run `xcode-select --install`.'
+        : `Could not run \`git --version\`: ${err.message}`);
+  }
+}
+
 /**
  * Run all FREE, local checks. No network, no API call, no cost. Returns
  * { checks: [...], summary: {ok, warn, fail, info} }.
@@ -177,9 +235,11 @@ async function checkSync() {
 export async function runQuickDiagnostics() {
   const checks = [
     checkVersion(),
+    checkInstallMode(),
     checkProvider(),
     await checkDomainsWritable(),
     checkCredentialPerms(),
+    await checkGit(),
     await checkSync(),
   ];
   const summary = { ok: 0, warn: 0, fail: 0, info: 0 };

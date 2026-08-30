@@ -54,6 +54,21 @@ const execAsync = promisify(exec);
 const defaultExec = execAsync;
 const defaultFetch = (...args) => globalThis.fetch(...args);
 
+/**
+ * What to say when `git` is not on the subprocess PATH.
+ *
+ * Deliberately duplicated rather than shared with the sibling message in
+ * `src/brain/sync.js`: the two name DIFFERENT actions ("update" vs "sync"), and
+ * the only part that must not drift is the remedy. `scripts/test-install-mode.js`
+ * asserts BOTH carry `xcode-select --install` and that NEITHER can be answered
+ * with sync.js's "Repository not found" catch-all.
+ */
+const GIT_MISSING_MESSAGE =
+  'Git is not available to The Curator, so it cannot update itself. ' +
+  'On macOS, open Terminal and run `xcode-select --install`, then try again. ' +
+  'If git is installed somewhere unusual, launching The Curator from a terminal ' +
+  '(`npm start`) will pick up your shell PATH.';
+
 // ── BOOT: re-admit the persisted OpenRouter catalogue ───────────────────────
 //
 // This module is imported by `src/server.js` during boot, so this runs once,
@@ -2004,6 +2019,96 @@ router.post('/api-keys/validate', async (req, res) => {
 
 // ── Update ──────────────────────────────────────────────────────────────────
 
+/**
+ * Compare two dotted version strings. >0 if `a` is newer, <0 if older, 0 if
+ * equal OR UNCOMPARABLE.
+ *
+ * This is a deliberate, byte-for-byte port of `compareSemver` in
+ * `src/public/next/views/settings.js`. The two MUST agree, because /next
+ * applies its own local-ahead guard on top of this route's verdict and a
+ * disagreement would produce a UI that contradicts itself — so the algorithm
+ * is copied rather than re-derived. (It is not imported: that file is browser
+ * ESM served to the client and this is a server route; the ~20 lines are
+ * cheaper than a shared browser/server module for one function. The guard
+ * suite asserts the two implementations agree on a shared table.)
+ *
+ * "Uncomparable collapses to 0" is the fail-safe direction: a positive result
+ * SUPPRESSES the update offer, so guessing "local is newer" from a string we
+ * could not parse would hide a real, wanted update. Falling to 0 leaves the
+ * pre-existing commit comparison in charge — i.e. the old behaviour.
+ *
+ * Only the numeric core is compared, so a pre-release suffix (the retired
+ * `3.0.1-beta.27` line) makes the cores equal and returns 0.
+ */
+export function compareSemver(a, b) {
+  const parse = (v) => {
+    if (typeof v !== 'string') return null;
+    const core = v.trim().split('-')[0].split('+')[0];
+    const parts = core.split('.');
+    if (parts.length === 0 || parts.length > 4) return null;
+    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+    return nums.some(Number.isNaN) ? null : nums;
+  };
+  const av = parse(a), bv = parse(b);
+  if (!av || !bv) return 0;
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const x = av[i] || 0, y = bv[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * The update verdict, as a pure function — DOM-free, fetch-free, exported so
+ * the guard suite executes it directly instead of asserting on the shape of
+ * the source that calls it (v3.0.17's rule).
+ *
+ * ── The bug this fixes ───────────────────────────────────────────────────
+ *
+ * This route used to compute `const versionDiffers = latest !== current` — a
+ * PLAIN INEQUALITY, which is true in BOTH directions. A checkout whose local
+ * version is AHEAD of the published one (a release committed but not yet
+ * pushed — the maintainer's own routine state) therefore reported
+ * `updateAvailable: true`, and the button behind that verdict runs
+ * `git reset --hard origin/main`: a DOWNGRADE, offered as an update.
+ *
+ * `/next` added a client-side guard for exactly this (`classifyUpdate`'s
+ * 'local-ahead' arm). `/old` has NO guard at all — `src/public/app.js` reads
+ * `data.updateAvailable` and offers the button. So the verdict is wrong at
+ * source and only one of the two frontends papered over it.
+ *
+ * ── Why the commit comparison is subordinated rather than kept ───────────
+ *
+ * `commitsDiffer` alone is the LEGITIMATE case that must keep working: same
+ * version, new commits on main, so pull them. But when the local version is
+ * strictly newer, the commits differ BY CONSTRUCTION (that is what being
+ * ahead means), so leaving `|| commitsDiffer` in place would have left the
+ * defect fully intact in the exact state that triggers it. `localAhead`
+ * therefore vetoes, and only there.
+ *
+ * Equal-or-uncomparable versions are UNCHANGED: `cmp === 0` gives
+ * `versionDiffers === false` and the verdict is `commitsDiffer`, exactly as
+ * before. Genuinely-newer remote is UNCHANGED: `cmp < 0` gives true.
+ *
+ * `localAhead` is returned rather than folded away because `updateAvailable:
+ * false` now covers two different situations — "you are current" and "you are
+ * ahead of what is published" — and a client that cannot tell them apart
+ * would report the second as the first.
+ */
+export function decideUpdateAvailable({ current, latest, localCommit, remoteCommit }) {
+  const cmp = compareSemver(current, latest);
+  const localAhead = cmp > 0;
+  const versionDiffers = cmp < 0;
+  const commitsDiffer = Boolean(localCommit && remoteCommit && localCommit !== remoteCommit);
+  return {
+    updateAvailable: !localAhead && (versionDiffers || commitsDiffer),
+    localAhead,
+    versionDiffers,
+    commitsDiffer,
+  };
+}
+
 /** GET /api/config/update-check — compare local vs remote version AND git commit
  *
  * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). The repo arm
@@ -2059,17 +2164,15 @@ export async function updateCheckHandler(_req, res, deps = null) {
       }
     } catch { /* GitHub API unavailable — fall back to version comparison only */ }
 
-    // Update is available if version differs OR if commits differ
-    const versionDiffers = latest !== current;
-    const commitsDiffer = localCommit && remoteCommit && localCommit !== remoteCommit;
-    const updateAvailable = versionDiffers || commitsDiffer;
+    const verdict = decideUpdateAvailable({ current, latest, localCommit, remoteCommit });
 
     res.json({
       current,
       latest,
       localCommit,
       remoteCommit,
-      updateAvailable,
+      updateAvailable: verdict.updateAvailable,
+      localAhead: verdict.localAhead,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2134,6 +2237,23 @@ export async function updateHandler(_req, res, deps = null) {
   // matching check in src/routes/ingest.js). Cleared in `finally`.
   beginUpdate();
   try {
+    // 0. PREFLIGHT: is git reachable at all? The six commands below all assume
+    //    it. Without this, a machine with no git (Xcode CLT never installed, or
+    //    removed) fails at step 1 with the shell's own text —
+    //    "/bin/sh: git: command not found" — which names no remedy. The same
+    //    class is worse in Personal Sync, where `friendlyError`'s
+    //    `msg.includes('not found')` catch-all renders it as "Repository not
+    //    found. Check the URL — it must be a private repo you own." (a
+    //    confidently wrong diagnosis; fixed at source in src/brain/sync.js).
+    //
+    //    This ADDS one command to the sequence and changes none of the six.
+    //    ~5 ms against a flow that already takes minutes.
+    try {
+      await execAsync('git --version', execOpts({ timeout: 5000 }));
+    } catch {
+      throw new Error(GIT_MISSING_MESSAGE);
+    }
+
     // 1. Fetch before resetting so we never hard-reset to a stale ref if the remote is unreachable.
     await execAsync('git fetch origin main', execOpts({ timeout: 30000 }));
 

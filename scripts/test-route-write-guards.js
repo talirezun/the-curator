@@ -337,6 +337,49 @@ function dumbCountDirectCalls(stripped, routerVar) {
   return count;
 }
 
+/**
+ * Follow a one-line DELEGATION from a route registration to a named handler
+ * declared in the same file, and return that handler's body instead.
+ *
+ *   router.post('/update', (req, res) => updateHandler(req, res));
+ *
+ * Without this the classifier measures the arrow function — three tokens long,
+ * carrying no guard — and reports the route unguarded. That is not a false
+ * alarm to be silenced: the guard genuinely moved, and a scan that cannot
+ * follow the move would also go green on its DELETION, which is the far worse
+ * direction. So the fix is to follow the reference, never to widen the window
+ * or add an exemption.
+ *
+ * Deliberately NARROW, in three ways. The callback must be an EXPRESSION body
+ * (a `{` anywhere in the registration disqualifies it, so a real inline
+ * handler is never replaced), it must forward exactly `(req, res)`, and the
+ * target must be a function DECLARED IN THE SAME FILE. A handler imported from
+ * elsewhere, or reached through a variable, is left alone — the caller then
+ * measures the arrow function and, correctly, reports it unguarded rather than
+ * guessing.
+ *
+ * `body` here is the brace-matched ARGUMENT LIST of the registration —
+ * `('/update', (req, res) => updateHandler(req, res))` — not just the
+ * callback, which is why the match is not anchored to the start.
+ */
+function resolveDelegatedBody(body, fileSrc) {
+  if (body.includes('{')) return body;
+  const m = body.match(/=>\s*(\w+)\s*\(\s*(?:req|_req)\s*,\s*res\s*\)/);
+  if (!m) return body;
+  const name = m[1];
+  const declRe = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`);
+  const at = fileSrc.search(declRe);
+  if (at === -1) return body;
+  const open = fileSrc.indexOf('{', fileSrc.indexOf(')', at));
+  if (open === -1) return body;
+  let depth = 0;
+  for (let i = open; i < fileSrc.length; i++) {
+    if (fileSrc[i] === '{') depth++;
+    else if (fileSrc[i] === '}') { depth--; if (depth === 0) return fileSrc.slice(open, i + 1); }
+  }
+  return body;
+}
+
 function bodyIsGuarded(body, guardTokens, guardMode) {
   const res = guardTokens.map(t => new RegExp('\\b' + t + '\\s*\\(').test(body));
   return guardMode === 'all' ? res.every(Boolean) : res.some(Boolean);
@@ -511,7 +554,14 @@ function auditRouteGuards(relPath, { guardClasses, expectedMutatingCount, label 
     const exemptSet = new Set(exemptions.map(e => e.method + ' ' + e.path));
     const consumed = new Set();
 
-    for (const r of mutating) {
+    for (const r0 of mutating) {
+      // Follow a one-line delegation to a named handler in the same file
+      // before measuring; see resolveDelegatedBody()'s docblock for why this
+      // is a fix rather than a loosening.
+      // `info.stripped` (not commentsStripped): string CONTENTS are blanked
+      // there, so a guard token appearing inside a string literal can never
+      // satisfy the check — the same posture the rest of this classifier uses.
+      const r = { ...r0, body: resolveDelegatedBody(r0.body, info.stripped) };
       const pathDisplay = r.path === null ? '(non-literal)' : r.path;
       const chainNote = r.kind === 'chained' ? ' [chained via .route()]' : '';
       const routeLabel = `${label} [${name}] ${r.method} '${pathDisplay}'${chainNote}`;
@@ -793,8 +843,24 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
     '/pick-folder re-check happens BEFORE setDomainsDir(picked), not after');
 
   // /update must keep its own guard -- this change must not have disturbed it.
-  const upStart = src.indexOf("router.post('/update'");
-  assert(upStart !== -1 && src.slice(upStart, upStart + 1200).includes('hasActiveWrites()'),
+  //
+  // The registration DELEGATES to an exported `updateHandler` (the
+  // install-mode fork; see src/brain/install-mode.js), so a window measured
+  // from `router.post('/update'` no longer contains the guard. That is a real
+  // blind spot, not a false alarm — the guard moved, and a scan that cannot
+  // follow the move would go green on its DELETION too. Fixed by following the
+  // one-line delegation to the named handler rather than by widening the
+  // window: the assertion now proves the guard is in the body that actually
+  // runs. Deleting `hasActiveWrites()` from updateHandler still reds.
+  const upReg = src.indexOf("router.post('/update'");
+  assert(upReg !== -1, 'located the POST /update registration');
+  const upDelegate = src.slice(upReg, upReg + 200).match(/=>\s*(\w+)\s*\(\s*req\s*,\s*res\s*\)/);
+  const upStart = upDelegate
+    ? src.indexOf(`export async function ${upDelegate[1]}(`)
+    : upReg;
+  assert(upStart !== -1,
+    `POST /update's body is locatable${upDelegate ? ` (delegates to ${upDelegate[1]})` : ''}`);
+  assert(upStart !== -1 && src.slice(upStart, upStart + 1600).includes('hasActiveWrites()'),
     'POST /update still carries its original hasActiveWrites() guard');
 
   // sync.js's own "every mutating route must carry guardConcurrent" invariant
