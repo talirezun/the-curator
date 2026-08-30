@@ -18,6 +18,84 @@
   --app-sidebar-w: 272px;
 }
 
+/* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
+   Moved here from views/chat.css (v3.24.3). That file defined these three
+   tokens with a comment saying "If a second view ever groups by provider
+   they should move" — Settings' provider list and per-provider build list
+   (views/settings.js) became that second view, and until this move they had
+   silently diverged from it: Settings hand-picked `var(--type-summary)` for
+   Anthropic — the amber "human attention required" status colour, reused for
+   a provider identity dot — while chat.css used `var(--concept-400)` green,
+   so the SAME provider rendered two different colours depending on which
+   screen you were looking at. Confirmed against tokens/color.css's own
+   header, which reserves the type triad (cyan/green/amber = entity/concept/
+   summary) and status colours (amber = "attention") for exactly those two
+   jobs and states plainly they are "never used to mean a data type" outside
+   them — a provider name is neither a data type nor a status, so neither
+   list owned amber; Settings' choice was the one that had drifted onto a
+   token whose semantics elsewhere is "act on this", not "identify this".
+
+   ONE source now: both views/settings.js's PROVIDER_ROWS.dot (a JS string,
+   inlined as `style="background:var(--prov-...)"`) and this file's
+   `.chat-mm-prov-dot` rules read the SAME custom properties. CSS custom
+   properties are the unification point across the JS/CSS boundary — the JS
+   object never needs to know a hex value, only the token name, so the two
+   languages share one definition without either re-implementing the other.
+
+   They follow the file-wide theming rule: dark values on `:root`, light
+   values under `[data-theme="light"]`. There is no prefers-color-scheme
+   query here and there may not be one — the shell stamps the attribute.
+
+   ── THE PALETTE IS THE TYPE TRIAD, REUSED, AND THAT IS A DECISION ────────
+   color.css reserves cyan/green/amber for entity/concept/summary and says
+   plainly they are "never used to mean a data type" outside that. These are
+   not data-type markers, they appear only as a provider identity marker
+   (model picker, browse dialog, Settings provider rows and build list), and
+   inventing three more hues would put six unrelated colour families in one
+   app. Amber is refused for a provider because it is the attention colour
+   and, in the chat model menu, already carries the `caution` badge on the
+   same row — a provider chip in the same hue as the warning beside it would
+   read as a warning. The same reasoning applies wherever the marker
+   appears, including Settings, where amber is also the credential screen's
+   "not connected" / caution vocabulary elsewhere on the page.
+
+   MEASURED IN A REAL BROWSER, on the resolved computed colours, against the
+   chat model menu's own painted background — not estimated from the hex
+   values. (An earlier draft of this comment carried figures written from
+   expectation and was wrong on every one of the six; the numbers below were
+   read back off the page. The helper was self-checked against
+   white-on-black = 21.00:1 before any of them counted, because v3.17.3
+   records a contrast helper in this repo reporting 2.34 for an element
+   genuinely at 7.26.) Re-verified after this move: unchanged, because the
+   token values themselves did not change, only their file of origin.
+
+     dot  gemini      dark 11.19:1   light 3.47:1
+     dot  claude      dark 11.24:1   light 3.22:1
+     dot  openrouter  dark  6.19:1   light 6.57:1
+
+   All six clear WCAG 1.4.11's 3:1 floor for a non-text indicator. Light-theme
+   claude is the tightest at 3.22:1 and is recorded rather than rounded away.
+   These figures are against the CHAT MENU's backdrop specifically; Settings'
+   provider rows sit on a different surface and were not re-measured here —
+   the dot is a small non-text indicator in both places and the provider
+   NAME (below) is what carries the AA-graded information either way.
+
+   THE DOT IS NOT THE DISTINCTION — THE WORD IS. The provider NAME renders
+   beside every dot in --text-2 (chat) / --text (Settings), well above the
+   4.5:1 AA floor for body text in both. Colour alone never carries meaning
+   here, so a viewer who cannot tell the three hues apart loses a scanning
+   aid and no information. */
+:root {
+  --prov-gemini:     var(--entity-400);
+  --prov-anthropic:  var(--concept-400);
+  --prov-openrouter: var(--violet-400);
+}
+[data-theme="light"] {
+  --prov-gemini:     var(--entity-600);
+  --prov-anthropic:  var(--concept-600);
+  --prov-openrouter: var(--violet-600);
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
@@ -357,6 +435,36 @@ textarea {
 .rail-theme-toggle:hover { background: var(--surface-hover); color: var(--text-2); border-color: var(--border); }
 .rail-theme-toggle svg { width: 15px; height: 15px; }
 
+/* The Sync-pending count on the rail icon. This is a THEME-PARITY and
+   TOKEN-CONFORMANCE fix, not an accessibility one — the old raw hex already
+   measured 8.46:1, well over AA; it just never adapted to light theme and
+   never moved with --font-scale. `background`/`color` used two raw hex
+   values (#E0A33A / #150A31) instead of tokens, so light theme painted the
+   DARK theme's amber verbatim, sitting duller than everything else on a
+   light rail. `--attention` IS `--summary-500` dark / `--summary-600` light
+   (tokens/color.css) — themed automatically now, no raw hex either theme.
+   `color` stays `--violet-950`: it is a fixed point in the brand ramp (not
+   redefined under [data-theme="light"], see tokens/color.css), so one value
+   already serves both themes and was never the part that was wrong.
+   `font-size` moves onto the ramp (`--text-2xs`, 10px * --font-scale) so the
+   badge count scales with the app-wide text-size setting from v3.18.0
+   instead of being frozen at 9px below the ramp's own floor. `line-height`
+   stays a literal 15px, matching the box's fixed `height` — that pairing is
+   what keeps a 1-2 digit count vertically centred in the pill even as
+   font-size grows; the box does not grow with it, by design (see below).
+   `border-radius` reads `--radius-full` (999px, byte-identical value) so a
+   raw "999px" corner radius can't reappear ungoverned by the shape token.
+
+   CHECKED AT THE LARGEST font-scale (1.18, FONT_SCALES.largest in app.js):
+   --text-2xs resolves to 11.8px inside the unchanged 15px line-height / 15px
+   box height — verified in a real browser it still renders vertically
+   centred and unclipped for a 1-2 digit count. The box does NOT grow taller
+   with font-scale (by design — a badge is a small fixed-ish marker, and
+   growing the box would misalign it against the rail icon it sits on); at
+   1.18x a 3+ digit count could in principle challenge horizontal width, but
+   `min-width` (not a fixed `width`) plus `padding: 0 3px` lets the pill grow
+   sideways with its content, so width was never frozen the way font-size
+   was. */
 .rail-badge {
   position: absolute;
   top: 4px;
@@ -364,10 +472,10 @@ textarea {
   min-width: 15px;
   height: 15px;
   padding: 0 3px;
-  border-radius: 999px;
-  background: #E0A33A;
-  color: #150A31;
-  font: 500 9px/15px var(--font-mono);
+  border-radius: var(--radius-full);
+  background: var(--attention);
+  color: var(--violet-950);
+  font: var(--weight-medium) var(--text-2xs)/15px var(--font-mono);
   text-align: center;
   box-shadow: 0 0 0 2px var(--surface);
 }

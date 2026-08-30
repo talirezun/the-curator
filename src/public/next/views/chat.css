@@ -1347,54 +1347,19 @@
 }
 
 /* ── PROVIDER FAMILY COLOURS ──────────────────────────────────────────────
-   THREE tokens defined HERE and not in tokens/color.css, deliberately: they are
-   a chat-view concern (the model picker and its browse dialog are the only
-   surfaces that group by provider), and tokens/*.css is shared ground this view
-   does not own. If a second view ever groups by provider they should move.
-
-   They follow the file-wide theming rule: dark values on `:root`, light values
-   under `[data-theme="light"]`. There is no prefers-color-scheme query here and
-   there may not be one — the shell stamps the attribute.
-
-   ── THE PALETTE IS THE TYPE TRIAD, REUSED, AND THAT IS A DECISION ────────
-   color.css reserves cyan/green/amber for entity/concept/summary and says
-   plainly they are "never used to mean a data type" outside that. These are not
-   data-type markers, they appear only inside a model menu, and inventing three
-   more hues would put six unrelated colour families in one app. Amber is
-   avoided for a provider because it is the attention colour and already carries
-   the `caution` badge on the same row — a provider chip in the same hue as the
-   warning beside it would read as a warning.
-
-   MEASURED IN A REAL BROWSER, on the resolved computed colours, against the
-   menu's own painted background — not estimated from the hex values. (An
-   earlier draft of this comment carried figures written from expectation and
-   was wrong on every one of the six; the numbers below were read back off the
-   page. The helper was self-checked against white-on-black = 21.00:1 before
-   any of them counted, because v3.17.3 records a contrast helper in this repo
-   reporting 2.34 for an element genuinely at 7.26.)
-
-     dot  gemini      dark 11.19:1   light 3.47:1
-     dot  claude      dark 11.24:1   light 3.22:1
-     dot  openrouter  dark  6.19:1   light 6.57:1
-
-   All six clear WCAG 1.4.11's 3:1 floor for a non-text indicator. Light-theme
-   claude is the tightest at 3.22:1 and is recorded rather than rounded away.
-
-   THE DOT IS NOT THE DISTINCTION — THE WORD IS. The provider NAME renders
-   beside every dot in --text-2, measured 8.09:1 dark / 7.26:1 light, well above
-   the 4.5:1 AA floor for body text. Colour alone never carries meaning here, so
-   a viewer who cannot tell the three hues apart loses a scanning aid and no
-   information. */
-:root {
-  --prov-gemini:     var(--entity-400);
-  --prov-anthropic:  var(--concept-400);
-  --prov-openrouter: var(--violet-400);
-}
-[data-theme="light"] {
-  --prov-gemini:     var(--entity-600);
-  --prov-anthropic:  var(--concept-600);
-  --prov-openrouter: var(--violet-600);
-}
+   The three --prov-* tokens this view reads (gemini/anthropic/openrouter)
+   now live in shell.css, not here. They used to be defined in this file with
+   a comment reading "If a second view ever groups by provider they should
+   move" — Settings' provider list and its per-provider build list became
+   that second view (v3.24.3), and until the move they had silently forked:
+   Settings hand-picked var(--type-summary) for Anthropic (the amber "human
+   attention required" status colour) while this file used var(--concept-400)
+   green, so the SAME provider rendered two different colours on the same
+   screen visit (Settings -> Chat). Read the full rationale — why the palette
+   reuses the type triad, why amber is refused for a provider, and the
+   measured contrast figures — at the token definition in shell.css. Nothing
+   else in this rule changed: it still reads var(--prov-*) exactly as before,
+   now resolved from a shared source both views load. */
 
 /* The provider marker on EVERY row. See renderModelRowBodyHtml for why a group
    heading alone stopped being enough at ~194 rows. */
