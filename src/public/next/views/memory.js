@@ -549,7 +549,34 @@ async function reloadActive(token) {
   const project = state.activeProject;
   if (!project) return;
   const wantScope = state.scope;
-  const wantMachine = state.detail ? state.detail.machine : state.machine;
+  // ONLY a machine the user DELIBERATELY picked, which is what a non-null
+  // `state.machine` means: the machine picker's handler is the one place that
+  // writes it, and every other path into loadScope passes null on purpose.
+  //
+  // THIS USED TO READ `state.detail ? state.detail.machine : state.machine`,
+  // and that one expression is the reported bug. On arrival selectProject
+  // calls loadScope(scope, null), so the STORE resolves the most recently
+  // written machine into `state.detail.machine`; reading it back here turned
+  // that resolution into a pin the user never asked for, permanently, from
+  // the first successful load. When a later save landed in a DIFFERENT
+  // machine folder — which a hostname flap produces, see working-state.js
+  // D10 — Reload re-read the older folder, withdrew the stale notice and
+  // changed nothing on screen. Refresh shares this call and was equally
+  // inert. Observed as a view four hours out of date beside a save twelve
+  // minutes old.
+  //
+  // The v3.17.3 rule is not weakened, it is honoured more exactly: a
+  // document is never swapped under a reader BY THE POLL, and a machine the
+  // reader actually chose is still never taken away. What moves is only the
+  // case where nobody chose anything and the user has just clicked the
+  // control whose entire meaning is "show me the current one".
+  //
+  // NOT the same as the journal's "show more", which passes
+  // `state.detail.machine` DELIBERATELY: that is pagination over the
+  // document in front of you, so re-resolving there really would swap whose
+  // history you are part-way through reading. Two call sites, two meanings —
+  // do not unify them.
+  const wantMachine = state.machine;
 
   state.detailFetchedAt = Date.now();
   // Both reads below start now, so both marks move together here.

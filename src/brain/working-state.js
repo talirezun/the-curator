@@ -438,6 +438,54 @@ export function slugSegment(input) {
 export const INSTALL_ID_FILENAME = '.curator-install-id';
 const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
 
+// ── D10: the folder name is REMEMBERED, not recomputed ────────────────────
+//
+// D9 above made the id stable and left the OTHER half of the name — the
+// hostname — resolved fresh on every call. Measured on the maintainer's own
+// disk: ONE machine owning TWO folders under one scope,
+//
+//     state/<scope>/mac-17d23c/                 and
+//     state/<scope>/talis-macbook-pro-17d23c/
+//
+// same installation id in both, so the id was doing its job and the hostname
+// was not. macOS re-derives the hostname from DHCP, so `Talis-MacBook-Pro`
+// and a bare `Mac` alternate as the machine moves between networks. Both
+// directions were observed, on two consecutive days.
+//
+// The visible symptom was the Agent-memory view sitting four hours stale.
+// The worse one was silent: the APPEND-ONLY JOURNAL fragmented — 22 lines in
+// one folder, 4 in the other, for a single (project, scope) — and a
+// scope-less read returns only the most recently written machine, so half a
+// work-stream's history became unreachable without knowing to ask for the
+// other folder by name.
+//
+// So the name is computed ONCE and remembered beside the install id. The
+// hostname is consulted only when there is nothing to remember.
+//
+// ── Why beside the install id, and not anywhere else ──────────────────────
+// Same directory, same reason: it is OUTSIDE the synced tree. A remembered
+// name committed to git would make two clones resolve to the SAME folder,
+// which is precisely the v3.17.0 data loss D9 exists to prevent.
+//
+// ── Why we do NOT adopt an existing sibling folder ────────────────────────
+// The obvious repair for a machine that ALREADY has two folders is to scan
+// for one whose name ends in `-<installId>` and claim it. Rejected twice
+// over. First, the machine segment is nested PER SCOPE
+// (`state/<scope>/<machine>/`), so the same installation would resolve
+// differently in different scopes — a name that is not a constant is not an
+// identity. Second, and decisively: adoption keys on the id matching, so two
+// installations that DID collide on an id would actively merge into one
+// folder — this code inventing the collision it exists to prevent. Not
+// adopting fails in the safe direction, and it is the same call D9 already
+// made for legacy bare-hostname folders, for the same reason.
+//
+// WHAT HAPPENS TO A MACHINE THAT ALREADY HAS TWO: nothing is moved, merged
+// or deleted. Both folders stay listed, readable and addressable by name;
+// the picker shows each with its own age. Only the NEXT save is pinned, so
+// the split stops growing. That is D9's compatibility rule applied to D9's
+// own residue.
+export const MACHINE_ID_FILENAME = '.curator-machine-id';
+
 // Cached per RESOLVED user-data directory, never at module scope against a
 // snapshotted path: `userDataPath()` is re-resolved on every call, so an
 // override installed after import (which every test does) changes the answer
@@ -453,6 +501,9 @@ const INSTALL_ID_RE = /^[0-9a-f]{4,16}$/;
 // every read and a syscall per call is waste, not because correctness rests
 // on it. Do not add an assertion pretending otherwise.
 let _installIdCache = { dir: null, id: null };
+// Same keying, same reasoning, same honest scope: the FILE is what makes the
+// name stable across processes; this only avoids a syscall per call.
+let _machineIdCache = { dir: null, name: null };
 
 /**
  * The stable per-installation id, or null if it cannot be persisted.
@@ -535,15 +586,77 @@ export const INSTALL_ID_UNAVAILABLE_NOTE =
   'Another computer with that name shares the folder and a sync merge can replace one handoff. ' +
   'Make user-data writable.';
 
-/** TEST SEAM ONLY. Drops the cached id so a suite can move the user-data dir. */
+/**
+ * TEST SEAM ONLY. Drops BOTH cached identities so a suite can move the
+ * user-data dir, or simulate a fresh process, and get a real re-resolve.
+ *
+ * The machine cache is cleared here rather than through a second function
+ * because every existing call site wants both: they all switch the user-data
+ * directory, and a stale machine name under a new directory would be the same
+ * import-order-dependent staleness the id cache is keyed to avoid.
+ */
 export function __resetInstallIdCache() {
   _installIdCache = { dir: null, id: null };
+  _machineIdCache = { dir: null, name: null };
 }
+
+/**
+ * The folder name this installation has already chosen, or null.
+ *
+ * Read back through `isSafeSegment` rather than trusted: it arrives from a
+ * file, and a file is input. A hand-edited, truncated or half-written value
+ * would otherwise become a path segment — the one thing `resolveInsideState`
+ * exists to make impossible, reached from the other side.
+ */
+function persistedMachineId() {
+  let file;
+  try { file = userDataPath(MACHINE_ID_FILENAME); } catch { return null; }
+  const dir = path.dirname(file);
+  if (_machineIdCache.dir === dir) return _machineIdCache.name;
+
+  let name = null;
+  try {
+    const raw = readFileSync(file, 'utf8').trim();
+    if (isSafeSegment(raw)) name = raw;
+  } catch { /* absent or unreadable — the caller mints one */ }
+
+  _machineIdCache = { dir, name };
+  return name;
+}
+
+/**
+ * Remember the chosen name. Best effort: an unwritable home costs the
+ * stability guarantee, never the save (see the DEGRADATION note above).
+ */
+function rememberMachineId(name) {
+  if (!isSafeSegment(name)) return;
+  let file;
+  try { file = userDataPath(MACHINE_ID_FILENAME); } catch { return; }
+  try {
+    // 0600 and beside the credential files, matching the install id.
+    writeFileSync(file, name + '\n', { encoding: 'utf8', mode: 0o600 });
+  } catch { /* read-only home — documented fallback */ }
+  _machineIdCache = { dir: path.dirname(file), name };
+}
+
+/**
+ * TEST SEAM ONLY. Substitutes what `hostname()` returns, so a suite can
+ * reproduce a hostname CHANGE — which no test could otherwise do, and which
+ * is the exact condition D10 below exists for.
+ *
+ * Null in production, settable only from JS in-process (never from an env
+ * var), and a source guard in test-working-state.js §28 asserts nothing under
+ * `src/` or `mcp/` ever calls it — the same discipline `__setDomainsDirOverride`
+ * carries, for the same reason.
+ */
+let _hostnameOverride = null;
+export function __setHostnameForTest(v) { _hostnameOverride = v; }
 
 /** This host's slug, WITHOUT the installation id. The legacy folder name. */
 export function hostSlug() {
   let h = '';
-  try { h = hostname() || ''; } catch { h = ''; }
+  if (_hostnameOverride !== null) h = _hostnameOverride;
+  else { try { h = hostname() || ''; } catch { h = ''; } }
   return slugSegment(String(h).replace(/\.local$/i, '')) || 'unknown-machine';
 }
 
@@ -570,12 +683,26 @@ export function machineId(override) {
     // own history.
     return slugSegment(String(override).replace(/\.local$/i, ''));  // null → refusal
   }
+  // D10: what this installation ALREADY chose wins over what the hostname
+  // says today. The hostname is a fact about the network, not about the
+  // machine, and reading it on every call is what made one computer own two
+  // folders.
+  const remembered = persistedMachineId();
+  if (remembered) return remembered;
+
   const host = hostSlug();
   const id = installId();
-  if (!id) return host;                                  // documented fallback
   // 64 is the isSafeSegment ceiling; reserve room for `-<id>` rather than
   // letting slugSegment's tail-slice cut the id off and re-create collisions.
-  return slugSegment(`${host.slice(0, 64 - (id.length + 1))}-${id}`) || host;
+  const name = id
+    ? (slugSegment(`${host.slice(0, 64 - (id.length + 1))}-${id}`) || host)
+    : host;                                              // documented fallback
+  // Remembered even in the degraded (no-id) case: a machine whose home is
+  // read-only cannot persist either file, so this is a no-op exactly when the
+  // id is missing for that reason — but a home that can hold a name and not
+  // an id is still better off pinned than flapping.
+  rememberMachineId(name);
+  return name;
 }
 
 // ─────────────────────────────────────────────────────────────────────────

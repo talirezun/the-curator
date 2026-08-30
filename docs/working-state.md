@@ -184,8 +184,27 @@ identity, so there is nothing there for them to qualify.
 Cross-machine handoff still works, and works by reading rather than by writing: a read
 that names a scope but no machine returns the **most recently written** machine's state
 and lists every machine under that scope. Save on the laptop, resume on the desktop.
-It also degrades gracefully when a hostname changes — a DHCP rename or a rebuild would
-otherwise orphan your previous state behind a segment nobody would think to ask for.
+
+**A hostname change used to split one machine in two, and this paragraph used to claim
+otherwise.** It said the store "degrades gracefully when a hostname changes", on the
+reasoning that a newest-machine read would still find the new folder. Measured, that is
+not graceful: it is precisely the orphaning the sentence promised to avoid. macOS
+re-derives the hostname from DHCP, so one laptop alternated between `Talis-MacBook-Pro`
+and a bare `Mac` as it moved between networks, and — with the *same* install id in both —
+owned two folders under a single scope. The visible symptom was the Agent-memory view
+sitting four hours out of date beside a save twelve minutes old. The worse one was
+silent: the append-only journal fragmented, 22 entries in one folder and 4 in the other
+for one workstream, and a scope-less read returns only the newest machine, so half the
+history became unreachable without knowing to ask for the other folder by name.
+
+**So the folder name is now remembered, not recomputed.** It is chosen once — still
+`<hostname-slug>-<install-id>` — and written to `.curator-machine-id`, beside the install
+id and outside `domains/` for the same reason (a name that synced would make two clones
+resolve to the *same* folder, which is the collision the install id exists to prevent,
+one level worse). The hostname is consulted only when there is nothing remembered.
+Nothing is migrated: a machine that already owns two folders keeps both, readable,
+listed and addressable by name, each with its own age in the picker. Only the next save
+is pinned, so the split stops growing rather than being cleaned up underneath you.
 
 ### Scopes
 

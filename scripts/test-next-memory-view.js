@@ -1621,6 +1621,82 @@ ok('refreshScopeList never writes state.detail (the document is unreachable from
 ok('refreshScopeList never moves the selection',
   !/state\.(scope|machine)\s*=/.test(extractFunction(viewSrc, 'refreshScopeList', 'memory.js')));
 
+// ── §11i — A SAVE UNDER A DIFFERENT MACHINE, mid-poll ────────────────────
+//
+// The reported staleness, driven end to end at the layer it actually
+// happened at. A hostname flap (working-state.js D10) makes one computer
+// write into a SECOND machine folder under the SAME scope, so:
+//
+//   · the scope list is BYTE-IDENTICAL before and after — the picker's
+//     contents cannot carry this, and §11b/§11c's headline is therefore
+//     blind to it;
+//   · the sidebar row's counts are identical too — `scopeCount` counts
+//     DISTINCT SCOPES, and no new scope appeared;
+//   · the ONLY thing that moves is `lastWriteAt`, and the only thing on
+//     screen that can express it is the Reload offer.
+//
+// So this is the case where `state.staleWrite` is load-bearing all by
+// itself. Removing it from screenSignature leaves every other §11 assertion
+// green while the notice is computed and never painted.
+{
+  const t0 = 1_000_000;
+  const s = liveState({
+    scope: 'memory-view', machine: null,                 // nothing chosen
+    detail: { scope: 'memory-view', machine: 'mac-17d23c', machines: [
+      { machine: 'mac-17d23c', ageSeconds: 4 * 3600 }],
+      current: { present: true, text: 'FOUR HOURS OLD' }, journal: [] },
+    detailFetchedAt: t0, scopesFetchedAt: t0,
+  });
+  // The index sees the write because it reports the newest across ALL
+  // machines; the scope list does not, because no scope was added.
+  const wroteAt = t0 + 12 * 60 * 1000;
+  const r = makeRevalidator(s, (url) => {
+    if (url === '/api/memory') {
+      return { ok: true, json: async () => ({ ok: true, projects: [{
+        project: 'projects', hasBrief: true, scopeCount: 2, savedCopies: 3,
+        lastWriteAt: new Date(wroteAt).toISOString(), ageSeconds: 1,
+        headline: 'Second scope' }] }) };
+    }
+    return { ok: true, json: async () => ({ ok: true, project: 'projects',
+      scopes: [{ scope: 'memory-view' }, { scope: 'main' }] }) };
+  });
+
+  const before = { renders: r.calls.render, doc: s.detail.current.text };
+  await r.refreshIndex(1);
+
+  ok('a save into a SECOND machine folder under the SAME scope is NOTICED by the poll',
+    s.staleWrite === true, `staleWrite=${s.staleWrite}`);
+  ok('...and it changes what the screen says, so the Reload offer is actually painted',
+    r.calls.render > before.renders, `renders ${before.renders} -> ${r.calls.render}`);
+  eq('...while the document under the reader is NOT swapped by the poll',
+    s.detail.current.text, before.doc);
+  eq('...and the selection is not moved either', s.machine, null);
+  ok('corpus non-vacuous: the scope list really is unchanged, so nothing else could carry this',
+    JSON.stringify(s.projectRead.scopes.map((x) => x.scope)) === JSON.stringify(['memory-view', 'main']),
+    JSON.stringify(s.projectRead.scopes));
+
+  // THE DECISIVE ONE, driven through the SHIPPED screenSignature: with the
+  // scope list, the selection and the sidebar counts all unmoved, the stale
+  // flag is the only thing left that can make this poll visible. Flip it back
+  // and the signature must collapse to the pre-poll value — i.e. a signature
+  // blind to `staleWrite` would skip the render and leave the Reload offer
+  // computed but never painted.
+  const sigWith = r.screenSignature();
+  s.staleWrite = false;
+  const sigWithout = r.screenSignature();
+  s.staleWrite = true;                                   // restore
+  ok('the stale flag is LOAD-BEARING in the signature — nothing else moved to carry this poll',
+    sigWithout !== sigWith, `${sigWithout}\n vs \n${sigWith}`);
+  eq('...and restoring it reproduces the post-poll signature exactly',
+    r.screenSignature(), sigWith);
+
+  // A repeat poll finding the same write must stay free.
+  const rendersAfter = r.calls.render;
+  await r.refreshIndex(1);
+  eq('a repeat poll over the same unread write costs no further render',
+    r.calls.render, rendersAfter);
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 section('§12 — THE MOUNT CONTRACT, executed rather than grepped');
 // ═════════════════════════════════════════════════════════════════════════
@@ -1988,8 +2064,15 @@ function makeReloader(stateObj, responder) {
 }
 
 {
-  // Three scopes; the user is on the MIDDLE one, on a named machine.
-  const s = liveState({ scope: 'memory-view', machine: null,
+  // Three scopes; the user is on the MIDDLE one, having DELIBERATELY picked a
+  // machine from the picker. `state.machine` non-null is what "deliberately"
+  // means — it is written by exactly one place, the machine picker's handler.
+  //
+  // THIS FIXTURE USED TO CARRY `machine: null`, and that made the assertion
+  // below pin a defect: with nothing chosen, "the machine the user was on"
+  // was read off `state.detail.machine`, which is what the STORE resolved,
+  // not what anyone picked. See the case immediately after this one.
+  const s = liveState({ scope: 'memory-view', machine: 'machine-b',
     detail: { scope: 'memory-view', machine: 'machine-b', machines: [], current: { present: true, text: 'x' } } });
   const r = makeReloader(s, (url) => url.includes('?')
     ? { ok: true, json: async () => ({ ok: true, scope: 'memory-view', machine: 'machine-b',
@@ -2003,7 +2086,7 @@ function makeReloader(stateObj, responder) {
     r.calls.urls.some((u) => /scope=memory-view/.test(u)), JSON.stringify(r.calls.urls));
   ok('...and does not ask for the newest scope at all',
     !r.calls.urls.some((u) => /scope=newest-scope/.test(u)), JSON.stringify(r.calls.urls));
-  ok('Reload KEEPS the machine the user was on — dropping it silently swaps whose handoff you read',
+  ok('Reload KEEPS a machine the user CHOSE — dropping it silently swaps whose handoff you read',
     r.calls.urls.some((u) => /machine=machine-b/.test(u)), JSON.stringify(r.calls.urls));
   eq('the fresh scope list IS adopted (that is what Reload is for)', s.projectRead.scopes.length, 3);
   eq('the document was replaced with the fresh read', s.detail.current.text, 'reloaded');
@@ -2011,6 +2094,57 @@ function makeReloader(stateObj, responder) {
   eq('both marks moved together, because both reads started together', s.scopesFetchedAt, s.detailFetchedAt);
   ok('the marks moved forward', s.detailFetchedAt > 1_000_000);
   eq('loading finished', s.detailLoading, false);
+}
+{
+  // ── THE REPORTED BUG. An AUTO-RESOLVED machine is not a CHOICE. ─────────
+  //
+  // Reported: the Agent-memory view sat open showing state from four hours
+  // earlier; clicking the domain in the sidebar revealed a save from twelve
+  // minutes earlier. Root cause, and it is one expression:
+  //
+  //     const wantMachine = state.detail ? state.detail.machine : state.machine;
+  //
+  // On arrival, selectProject calls loadScope(scope, null): `state.machine`
+  // stays null and the STORE picks the most recently written machine, which
+  // lands in `state.detail.machine`. From that first successful load onward
+  // the expression above read the store's resolution back as though it were
+  // the user's selection — so a save into a DIFFERENT machine folder (which
+  // a hostname flap produces, see working-state.js D10) left Reload
+  // re-reading the older folder, withdrawing the stale notice, and changing
+  // nothing on screen. The Refresh button shares the same call and was
+  // therefore equally inert.
+  //
+  // The poll was never the broken part: `GET /api/memory` reports the newest
+  // write across ALL machines, so `staleWrite` flipped true and the Reload
+  // offer DID appear. It was the only control that could act on it that
+  // could not.
+  const s = liveState({ scope: 'memory-view', machine: null,
+    detail: { scope: 'memory-view', machine: 'stale-machine', machines: [],
+      current: { present: true, text: 'FOUR HOURS OLD' } },
+    staleWrite: true });
+  // The fake store behaves like the real one: naming a machine gets THAT
+  // machine's document, naming none gets the most recently written. Without
+  // this the fixture would be vacuous — every response identical, so the
+  // "moves forward" assertion could not fail however the URL was built.
+  const r = makeReloader(s, (url) => {
+    if (!url.includes('?')) {
+      return { ok: true, json: async () => ({ ok: true, scopes: [{ scope: 'memory-view' }, { scope: 'main' }] }) };
+    }
+    const pinned = /machine=stale-machine/.test(url);
+    return { ok: true, json: async () => ({ ok: true, scope: 'memory-view',
+      machine: pinned ? 'stale-machine' : 'fresh-machine',
+      current: { present: true, text: pinned ? 'FOUR HOURS OLD' : 'TWELVE MINUTES OLD' },
+      machines: [] }) };
+  });
+  await r.reloadActive(1);
+
+  ok('Reload does NOT pin to a machine the user never chose — the store re-resolves to the newest',
+    !r.calls.urls.some((u) => /machine=/.test(u)), JSON.stringify(r.calls.urls));
+  eq('...so the document actually moves forward instead of re-reading the stale folder',
+    s.detail.current.text, 'TWELVE MINUTES OLD');
+  eq('...and the scope is still the one the user was reading', s.scope, 'memory-view');
+  eq('...and nothing was pinned as a side effect, so the next Reload is free too', s.machine, null);
+  eq('the stale offer is withdrawn — and this time it was honestly satisfied', s.staleWrite, false);
 }
 {
   // The scope genuinely disappeared: fall back to the freshest, which is what
@@ -2047,6 +2181,34 @@ function makeReloader(stateObj, responder) {
 }
 eq('reloadActive is reachable from the UI exactly where it should be — the Reload button and Refresh',
   callSiteCount(viewSrc, 'reloadActive', { within: 'wire' }), 2);
+
+// ── TWO CALL SITES, TWO MEANINGS — and they must not be "tidied" into one ──
+//
+// Found by mutation, not by review: rewriting the journal's "show more"
+// handler to use `state.machine` (i.e. making it match reloadActive) left
+// this suite at 369/0. That is the likeliest future edit here, because the
+// two expressions now look gratuitously different, and it is a real defect —
+// expanding a journal would silently re-resolve to whichever machine wrote
+// most recently, swapping the history you are part-way through reading.
+//
+// A SOURCE GUARD, and named as one: the handler lives inside `wire`, which
+// needs a real DOM, so this checks the expression rather than executing it.
+// It is scoped to the two functions by name, so a copy under a third name is
+// invisible to it — stated rather than implied away.
+{
+  const reloadSrc = extractFunction(viewSrc, 'reloadActive', 'memory.js');
+  ok('RELOAD honours only a DELIBERATE choice: it reads state.machine…',
+    /const\s+wantMachine\s*=\s*state\.machine\s*;/.test(reloadSrc), reloadSrc.slice(0, 200));
+  ok('…and never reads the machine the STORE resolved, which is what made an auto-pick a permanent pin',
+    !/wantMachine\s*=\s*state\.detail/.test(reloadSrc));
+
+  const wireSrc = extractFunction(viewSrc, 'wire', 'memory.js');
+  const moreAt = wireSrc.indexOf('mem-journal-more');
+  ok('fixture: the journal "show more" handler is where we think it is', moreAt > 0);
+  const moreHandler = wireSrc.slice(moreAt, moreAt + 700);
+  ok('SHOW MORE keeps the machine ON SCREEN — pagination must not re-resolve to a newer one',
+    /state\.detail\s*\?\s*state\.detail\.machine/.test(moreHandler), moreHandler.slice(0, 300));
+}
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§16 — COVERAGE CENSUS — a new function cannot arrive untested in silence');

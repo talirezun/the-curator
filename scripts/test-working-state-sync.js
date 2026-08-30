@@ -827,6 +827,20 @@ try {
       'it lives in the user-data dir, outside the work-tree');
     assertEq(installId(), '333ccc', 'the store reads that file as this installation\'s identity');
 
+    // PREMISE 3 (D10): the REMEMBERED FOLDER NAME must not be in the synced
+    // tree either, and this one is worse than PREMISE 2 if it leaks. The
+    // install id is only HALF the folder name, so a clone that inherited it
+    // could still differ by hostname; the remembered name is the WHOLE path
+    // segment, so two clones sharing it write to a byte-identical
+    // `state/<scope>/<machine>/` with nothing left to separate them — §2's
+    // silent `-X theirs` loss, with the guard's own file as the cause.
+    assertTrue(!tracked.some(f => f.includes('.curator-machine-id')),
+      'PREMISE: .curator-machine-id is NOT tracked — it is the whole machine path segment');
+    assertTrue(!existsSync(path.join(pA.domainsDir, '.curator-machine-id')),
+      'and it does not live under the domains tree at all (it is user-data)');
+    assertTrue(existsSync(path.join(pA.userData, '.curator-machine-id')),
+      'it lives in the user-data dir, outside the work-tree, beside the install id');
+
     // The state file must not be classified BINARY by git — a binary blob is
     // invisible to `git diff` and to the recovery path the docs point at.
     const attrs = execSync(

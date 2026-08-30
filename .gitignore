@@ -97,6 +97,14 @@ docs/apple-developer-enrolment.md
 # excluded it. If you add another runtime artefact, add it here in the same
 # change, not in the release that discovers it.
 .curator-install-id
+# The chosen machine FOLDER NAME (v3.23.x, D10). Same file, same directory,
+# same reasoning, one level worse: `.curator-install-id` leaks an id that only
+# forms half the folder name, whereas this leaks the WHOLE path segment. Two
+# clones sharing it write to a byte-identical `state/<scope>/<machine>/` with
+# no hostname difference left to separate them. The SIXTH instance of the
+# class, added in the change that introduced the file — which is what the
+# paragraph above asks for.
+.curator-machine-id
 
 # Browser-driven test screenshots land in the repo ROOT, so a bare `git add -A`
 # stages them into a PUBLIC repo. .playwright-mcp/ was already covered; the root

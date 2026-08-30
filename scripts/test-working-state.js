@@ -34,8 +34,8 @@
  */
 
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync,
-  symlinkSync, existsSync, appendFileSync, utimesSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync,
+  symlinkSync, existsSync, appendFileSync, utimesSync, statSync,
 } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
@@ -1509,6 +1509,200 @@ section('27. Absence is reported about the RIGHT thing');
   const e = await readWorkingState(P, { scope: 'nothing-here', machine: 'boxc' });
   assert(/no other machine has state/.test(e.message || ''),
     'a truly empty scope still says exactly that', e.message);
+}
+
+section('28. D10 — the machine folder must not FLAP when the hostname does');
+{
+  // REPORTED, and reproduced on the maintainer's own disk before this section
+  // existed: ONE physical machine owned TWO state folders under a single
+  // scope,
+  //
+  //     state/session-2026-08-30-chat-streaming/mac-17d23c/               08:30
+  //     state/session-2026-08-30-chat-streaming/talis-macbook-pro-17d23c/ 11:41
+  //
+  // with the SAME installation id `17d23c` in both — which is the proof that
+  // the id was stable and the HOSTNAME was not. `hostSlug()` was resolved
+  // fresh on every call and macOS re-derives the hostname from DHCP, so
+  // `Talis-MacBook-Pro.local` and a bare `Mac` alternated as the machine
+  // moved between networks. Both directions were observed, on both days.
+  //
+  // TWO HARMS, and the second is the worse one:
+  //   · the Agent-memory view opened on whichever folder was newest, so a
+  //     save into the other folder sat four hours out of date on screen;
+  //   · the APPEND-ONLY JOURNAL fragmented. Measured on that same disk: 22
+  //     lines in one folder and 4 in the other for a single (project, scope).
+  //     A scope-less read returns the newest machine only, so half the
+  //     history was unreachable without knowing to ask for the other folder
+  //     by name.
+  //
+  // THE FIX: the chosen folder name is REMEMBERED, beside the install id and
+  // outside the synced tree, and reused verbatim thereafter. The hostname is
+  // consulted exactly once — when there is nothing to remember.
+  assert(typeof WS.__setHostnameForTest === 'function',
+    'the suite can substitute the hostname — otherwise a flap cannot be reproduced at all');
+  assert(typeof WS.MACHINE_ID_FILENAME === 'string' && WS.MACHINE_ID_FILENAME.startsWith('.'),
+    'the remembered name has a named, dot-prefixed file', WS.MACHINE_ID_FILENAME);
+
+  /** Read a file that may legitimately not exist yet, so a RED is named, never a crash. */
+  const peek = (f) => { try { return readFileSync(f, 'utf8').trim(); } catch { return null; } };
+
+  const FLAP = path.join(TMP, 'userdata-flap');
+  const flapFile = path.join(FLAP, WS.MACHINE_ID_FILENAME || '.curator-machine-id');
+  mkdirSync(FLAP, { recursive: true });
+  __setUserDataDirOverride(FLAP);
+  WS.__resetInstallIdCache();
+
+  // ── THE REPRODUCTION. One installation, two hostnames, one folder. ──────
+  WS.__setHostnameForTest('Talis-MacBook-Pro.local');
+  const first = machineId();
+  const flapId = installId();
+  assert(first === `talis-macbook-pro-${flapId}`,
+    'fixture: the first hostname composes the folder exactly the way it always did', first);
+
+  WS.__setHostnameForTest('Mac');
+  WS.__resetInstallIdCache();             // i.e. a fresh process — no in-memory help
+  const second = machineId();
+  assert(installId() === flapId,
+    'corpus non-vacuous: the INSTALL ID did not move — only the hostname did',
+    `${flapId} vs ${installId()}`);
+  assert(hostSlug() === 'mac',
+    'corpus non-vacuous: the hostname really does resolve differently now', hostSlug());
+  assert(second === first,
+    'THE FIX: one installation resolves to ONE folder even when the hostname changes underneath it',
+    `${first} -> ${second}`);
+  assert(existsSync(flapFile), 'because the chosen name is remembered on disk', flapFile);
+  assert(peek(flapFile) === first,
+    'and what is remembered is exactly the name that was used',
+    peek(flapFile));
+
+  // 0600, matching the install id it sits beside. It carries no secret, but
+  // it sits in the credential directory and the startup sweep in server.js
+  // does not know about it, so the mode is set at the write rather than
+  // inherited from umask.
+  if (process.platform !== 'win32') {
+    assert((statSync(flapFile).mode & 0o777) === 0o600,
+      'the remembered name is written 0600, like the install id beside it',
+      (statSync(flapFile).mode & 0o777).toString(8));
+  }
+
+  // OUTSIDE the synced tree, for the same reason the install id is: a name
+  // committed to git would make two clones resolve to the SAME folder and
+  // re-create the v3.17.0 data loss the install id exists to prevent.
+  assert(!existsSync(path.join(DOMAINS, path.basename(flapFile))),
+    'the remembered name is NOT inside domains/, which would re-create the collision');
+
+  // ── END TO END, through the real store and the real filesystem ──────────
+  WS.__setHostnameForTest('Talis-MacBook-Pro.local');
+  WS.__resetInstallIdCache();
+  const s1 = await saveWorkingState(P, { scope: 'flapscope', headline: 'before the flap', nowState: 'a' });
+  WS.__setHostnameForTest('Mac');
+  WS.__resetInstallIdCache();
+  const s2 = await saveWorkingState(P, { scope: 'flapscope', headline: 'after the flap', nowState: 'b' });
+  assert(s1.ok && s2.ok, 'both saves succeed', `${s1.message} / ${s2.message}`);
+  assert(s1.machine === s2.machine,
+    'two saves either side of a hostname change land on the SAME machine',
+    `${s1.machine} vs ${s2.machine}`);
+
+  const flapDirs = readdirSync(path.join(DOMAINS, P, 'state', 'flapscope'));
+  assert(flapDirs.length === 1,
+    'ONE folder on disk, not two — this is the count that was wrong on the real machine',
+    flapDirs.join(', '));
+
+  // The journal is APPEND-ONLY and its whole value is being one continuous
+  // record. Fragmenting it is the harm the view's staleness only hinted at.
+  const jl = readFileSync(
+    path.join(DOMAINS, P, 'state', 'flapscope', flapDirs[0], JOURNAL_FILENAME), 'utf8')
+    .split('\n').filter(Boolean);
+  assert(jl.length === 2, 'and ONE journal carrying both entries', String(jl.length));
+  const rd = await readWorkingState(P, { scope: 'flapscope' });
+  assert(rd.machineCount === 1, 'the read sees a single machine, not two halves', rd.machineCount);
+  assert((rd.journal?.entries || []).length === 2,
+    'so a scope-less read recovers the WHOLE history, not the newest half',
+    String((rd.journal?.entries || []).length));
+
+  // ── The remembered name arrives from a FILE, so it is input ─────────────
+  for (const junk of ['../../evil', '/etc/passwd', '', '   ', 'a/b', 'A B', 'x'.repeat(400)]) {
+    writeFileSync(flapFile, junk + '\n');
+    WS.__resetInstallIdCache();
+    WS.__setHostnameForTest('Mac');
+    const got = machineId();
+    assert(isSafeSegment(got),
+      `an unusable remembered name (${JSON.stringify(junk).slice(0, 20)}) yields a SAFE segment`, got);
+    assert(got !== junk && got !== junk.trim(),
+      '...and is never used verbatim', got);
+  }
+  // Surrounding whitespace is NOT junk: we write the file with a trailing
+  // newline ourselves, so trimming is required rather than lenient. A name
+  // that is safe once trimmed is accepted, and this is the case that proves
+  // the refusal above is about SHAPE and not about the file having an EOL.
+  writeFileSync(flapFile, '  kept-verbatim  \n');
+  WS.__resetInstallIdCache();
+  assert(machineId() === 'kept-verbatim',
+    'a remembered name is trimmed, not rejected — we write the trailing newline ourselves', machineId());
+
+  // Having refused a bad one, we must not re-read the same rubbish on every
+  // call: a usable name is minted and remembered in its place.
+  writeFileSync(flapFile, 'a/b\n');
+  WS.__resetInstallIdCache();
+  const healed = machineId();
+  assert(peek(flapFile) === healed,
+    'a refused name is REPLACED by a usable one rather than fought with forever', healed);
+
+  // ── The invariants D9 established must survive D10 ──────────────────────
+  assert(machineId('testbox') === 'testbox',
+    'an explicit machine name is STILL taken verbatim — a caller must address what it named');
+  assert(machineId('Alices-MacBook-Pro.local') === 'alices-macbook-pro',
+    'and is still normalised the same way');
+  assert(peek(flapFile) === healed,
+    'an explicit override does NOT overwrite what this installation remembers');
+
+  const FLAP2 = path.join(TMP, 'userdata-flap2');
+  mkdirSync(FLAP2, { recursive: true });
+  __setUserDataDirOverride(FLAP2);
+  WS.__resetInstallIdCache();
+  const other = machineId();
+  assert(other !== healed,
+    'D9 HOLDS: two installations on ONE hostname still resolve to different folders',
+    `${healed} vs ${other}`);
+
+  const NOWHERE = path.join(TMP, 'no', 'such', 'dir2');
+  __setUserDataDirOverride(NOWHERE);
+  WS.__resetInstallIdCache();
+  WS.__setHostnameForTest('Mac');
+  const degraded = machineId();
+  assert(degraded === 'mac' && installId() === null,
+    'an unwritable user-data dir still degrades to the bare hostname, not to a throw', degraded);
+  assert(WS.installIdAvailable() === false,
+    'and the degradation is still REPORTED rather than silent');
+
+  // Restore the suite's own installation.
+  WS.__setHostnameForTest(null);
+  __setUserDataDirOverride(USER_DATA);
+  WS.__resetInstallIdCache();
+  const restored = machineId();
+  assert(isSafeSegment(restored) && restored.endsWith(installId()),
+    'the suite\'s own installation is intact afterwards', `${restored} / ${installId()}`);
+  assert(machineId() === restored, 'and stable across calls again', machineId());
+}
+
+// ── The seam is TEST-ONLY, and that is ENFORCED rather than promised ──────
+{
+  const offenders = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(abs); continue; }
+      if (!e.name.endsWith('.js')) continue;
+      const src = readFileSync(abs, 'utf8');
+      const calls = (src.match(/__setHostnameForTest\s*\(/g) || []).length;
+      const defines = /export function __setHostnameForTest\s*\(/.test(src) ? 1 : 0;
+      if (calls > defines) offenders.push(path.relative(REPO, abs));
+    }
+  };
+  for (const r of ['src', 'mcp']) walk(path.join(REPO, r));
+  assert(offenders.length === 0,
+    'NO production file calls the hostname seam — it exists for suites, and only for suites',
+    offenders.join(', '));
 }
 
 console.log(`\n${'═'.repeat(60)}`);
