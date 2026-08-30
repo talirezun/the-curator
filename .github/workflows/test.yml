@@ -80,3 +80,44 @@ jobs:
           # When absent, the GitHub-backed live suites self-skip (exit 0).
           GITHUB_TEST_REPO: ${{ secrets.GITHUB_TEST_REPO }}
           GITHUB_TEST_PAT: ${{ secrets.GITHUB_TEST_PAT }}
+
+  # ── Dependency audit: advisory only, never gates anything. ──────────────────
+  # `main` has no branch protection and no rulesets (verified via
+  # `gh api repos/.../branches/main/protection` → 404 "Branch not protected",
+  # and `gh api repos/.../rulesets` → `[]`), so NO job in this workflow —
+  # including `offline`, described above as "the required gate" — can actually
+  # block a push or a merge today. Given that, `continue-on-error: true` on this
+  # step would buy nothing that isn't already true, and it has a real cost:
+  # GitHub does not send its default "workflow run failed" notification for a
+  # step marked continue-on-error, so a real advisory would surface only as a
+  # small warning triangle in the Actions list that someone has to go looking
+  # for — which is exactly the failure mode this job exists to close (external
+  # scanners found the fast-uri/multer advisories via PRs #7/#8 before this
+  # project noticed on its own). So this step is left free to fail for real: a
+  # red check + the default failure email, with nothing downstream depending on
+  # it (no `needs:` points at this job, and no branch protection exists to make
+  # a red check block anything). If branch protection is ever added to `main`,
+  # explicitly EXCLUDE "Dependency audit" from the required-checks list to keep
+  # it advisory rather than blocking.
+  #
+  # Caveat, measured 2026-08-30, not asserted: `npm audit` reads GitHub's
+  # ecosystem-wide (npm) advisory feed, which lags the per-package repo-level
+  # advisory list. `fast-uri` carried 9 HIGH severity advisories at the repo
+  # level (`gh api /repos/fastify/fast-uri/security-advisories`) but only 5 of
+  # those were present in the feed `npm audit` actually queries
+  # (`gh api "/advisories?ecosystem=npm&affects=fast-uri"`) — so at the time of
+  # the v3.1.2 fast-uri incident, `npm audit` would have printed
+  # "found 0 vulnerabilities" while 4 open HIGH advisories affecting <3.1.6
+  # stood unreported. A clean run here is a tripwire for the common case, NOT
+  # proof the dependency tree is clean.
+  audit:
+    name: Dependency audit (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
