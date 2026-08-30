@@ -871,13 +871,58 @@ function makeRunHarness(responses) {
 section('§8  CSS hygiene for the .cfd-* block');
 // ═════════════════════════════════════════════════════════════════════════
 
-const cfdBlock = sharedCss.slice(sharedCss.indexOf('.cfd-scrim'));
+// COMMENTS ARE STRIPPED BEFORE ANY OF THIS IS PARSED, and that is not
+// tidiness. The first run of the assertions below went red on a PROSE
+// COMMENT that names `var(--scrim, …)` while explaining why the code no
+// longer uses it — the guard reported the very thing the comment says was
+// removed. That is the same false positive v3.24.2's button scanner hit
+// (a comment above a rule read as part of the selector, hiding three of
+// five real bugs), reproduced here within one release of being recorded.
+// Blanking to spaces of equal length keeps every index and line number
+// intact, so nothing downstream has to know.
+const stripCssComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, (m) => ' '.repeat(m.length));
+const cfdBlock = stripCssComments(sharedCss.slice(sharedCss.indexOf('.cfd-scrim {')));
 ok(sharedCss.includes('.cfd-scrim {'), 'the dialog styles live in views/shared.css, which index.html already links');
-ok(!/\bvar\(--scrim/.test(cfdBlock),
-  'the scrim darkness is an INLINE rgba literal, never var(--scrim, …) — test-css-tokens.js asserts that name has exactly ONE reference (shell.css)');
-ok(/rgba\(5,5,10,0\.68\)/.test(cfdBlock), 'and it matches the darkness the two wizards already use');
-ok(/\[data-theme="light"\]\s*\.cfd-scrim/.test(cfdBlock),
-  'the light theme is handled via [data-theme], the attribute the shell stamps');
+// POSITIVE CONTROL for that strip: prove it actually removes a reference
+// that is present in the raw text, so a strip that silently stopped
+// working could not pass as "no findings".
+{
+  const probe = '.x { color: red; } /* mentions var(--not-a-real-token) in prose */';
+  ok(/var\(--not-a-real-token\)/.test(probe) && !/var\(--not-a-real-token\)/.test(stripCssComments(probe)),
+    'control: stripCssComments removes a var() written inside a comment, and the raw text really contained one');
+  ok(stripCssComments(probe).length === probe.length,
+    'control: …and it preserves length, so offsets and line numbers downstream stay correct');
+  ok(/color:\s*red/.test(stripCssComments(probe)),
+    'control: …while leaving real declarations intact — it is not just blanking everything');
+}
+ok(!/\bvar\(--scrim\b/.test(cfdBlock),
+  'the retired `--scrim` name is not referenced — it was never defined anywhere, and its "exactly ONE reference" baseline is what forced five surfaces to each inline their own copy');
+
+// ── THREE ASSERTIONS INVERTED, NOT DELETED ───────────────────────────────
+// They read, in order:
+//   'the scrim darkness is an INLINE rgba literal, never var(--scrim, …)'
+//   'and it matches the darkness the two wizards already use'   [rgba(5,5,10,0.68)]
+//   'the light theme is handled via [data-theme]'               [a .cfd-scrim override]
+// All three were true and all three encoded the DUPLICATION as the
+// invariant. `--scrim` was an undefined name carrying a hex fallback, and
+// test-css-tokens.js asserted it had exactly one reference — so the rule
+// "never var(--scrim)" was correct while the conclusion drawn from it
+// ("inline the literal") gave five surfaces five private copies, which
+// then drifted: dark agreed at 0.68, LIGHT split 0.42 / 0.5 three-to-two.
+// `--modal-scrim` is a REAL definition in shell.css, so the token baseline
+// shrinks to zero rather than growing, and the per-block [data-theme]
+// override is gone because the TOKEN carries the theme now — one
+// definition, one place for the light value to be right.
+ok(/background:\s*var\(--modal-scrim\)/.test(cfdBlock),
+  'the scrim reads the shared --modal-scrim token (was: an inline rgba literal, one of five copies)');
+ok(!/rgba\(5,5,10/.test(cfdBlock) && !/rgba\(20,20,31/.test(cfdBlock),
+  'and no rgba scrim literal survives in this block (was: asserted the literal was PRESENT and matched the wizards)');
+ok(!/\[data-theme="light"\]\s*\.cfd-scrim/.test(cfdBlock),
+  'no per-block light override — the token is themed at its definition (was: asserted this override existed)');
+ok(/backdrop-filter:\s*blur\(6px\)/.test(cfdBlock),
+  'the scrim carries backdrop-filter: blur(6px) — the design system scopes blur to exactly two places and the modal scrim is one of them; this dialog and chat-browse were the two that omitted it');
+ok(/border-radius:\s*var\(--radius-xl\)/.test(cfdBlock),
+  'the card is at --radius-xl (14px) — the bundle says "Modals 14px" in the readme, labels the 14px swatch "xl · modal" in the radius guideline, and sets it in Modal.jsx');
 ok(!/prefers-color-scheme/.test(cfdBlock),
   'and never via prefers-color-scheme — the "system" default stamps no attribute, so a media query would disagree with the toggle');
 
@@ -892,6 +937,15 @@ for (const f of readdirSync(tokenDir)) {
   for (const m of t.matchAll(/(--[a-z0-9-]+)\s*:/g)) definedTokens.add(m[1]);
 }
 for (const m of sharedCss.matchAll(/(--[a-z0-9-]+)\s*:/g)) definedTokens.add(m[1]);
+// shell.css too: it is linked globally by next/index.html and defines the
+// app-level custom properties that are NOT design-system tokens —
+// --app-sidebar-w, --prov-*, and (since the modal pass) --modal-scrim.
+// Without it this local echo reports a false undefined for a property that
+// resolves perfectly at runtime.
+const shellCss = readFileSync(path.join(NEXT, 'shell.css'), 'utf8');
+for (const m of shellCss.matchAll(/(--[a-z0-9-]+)\s*:/g)) definedTokens.add(m[1]);
+ok(definedTokens.has('--modal-scrim'),
+  'anti-vacuity: --modal-scrim really is defined in shell.css, so the undefined-ref check below is testing the right universe');
 ok(definedTokens.size > 100, `sanity: ${definedTokens.size} tokens collected (an empty set would pass every check below)`);
 const undefinedRefs = [];
 for (const m of cfdBlock.matchAll(/var\((--[a-z0-9-]+)/g)) {

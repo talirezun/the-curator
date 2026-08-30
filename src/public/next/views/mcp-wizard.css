@@ -23,15 +23,12 @@
   justify-content: center;
   padding: 24px;
   overflow-y: auto;
-  /* Plain literal, NOT var(--scrim, ...). That token is deliberately
-     undefined everywhere, and test-css-tokens.js baselines exactly ONE
-     fallback-carrying reference to it (shell.css) with a hard assertion
-     that the count is 1 — a second reference anywhere in /next fails the
-     suite. Same rgba value, inlined, exactly as views/shared.css does. */
-  background: rgba(5,5,10,0.68);
+  /* The ONE scrim (shell.css). Was an inline rgba pair whose light half
+     read 0.5; see shell.css for why the inlining existed and why it is
+     gone. */
+  background: var(--modal-scrim);
   backdrop-filter: blur(6px);
 }
-[data-theme="light"] .mcpw-scrim { background: rgba(20,20,31,0.5); }
 
 .mcpw-card {
   position: relative;
@@ -40,7 +37,8 @@
   overflow-y: auto;
   background: var(--surface-overlay);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  /* "Modals 14px" — see views/shared.css's .cfd-card note. */
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
   padding: 26px 28px 24px;
   margin: auto;

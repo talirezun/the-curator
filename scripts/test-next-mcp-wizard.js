@@ -87,8 +87,15 @@ const wizCode = assertStrippedSane(stripComments(wiz), 'mcp-wizard.js',
   ["async function getJson(url, init)", "export function openMcpWizard(opts)", "role=\"dialog\""]);
 const settingsCode = assertStrippedSane(stripComments(settings), 'settings.js',
   ["function wireMcpListeners()", "id=\"btn-mcp-wizard\"", "twenty tools"]);
+// The second canary was `rgba(5,5,10,0.68)` — the scrim darkness, inlined
+// here because `--scrim` was an undefined name baselined at exactly one
+// reference. All five /next overlays now read `--modal-scrim`, a real
+// definition in shell.css, so that literal is gone from this file. The
+// canary moves to the declaration that replaced it, which is what a
+// canary is for: a string that must survive the strip, not a value this
+// suite has an opinion about.
 const wizCssCode = assertStrippedSane(stripComments(wizCss), 'mcp-wizard.css',
-  [".mcpw-scrim {", "rgba(5,5,10,0.68)"]);
+  [".mcpw-scrim {", "var(--modal-scrim)"]);
 
 let passed = 0, failed = 0;
 function ok(cond, label) {
@@ -712,10 +719,23 @@ section('10. Seams — settings.js, index.html, CSS');
   ok(/<link rel="stylesheet" href="\/next\/views\/mcp-wizard\.css">/.test(nextIndex),
     'next/index.html links the wizard stylesheet (without it, test-css-tokens.js cannot see the file either)');
 
-  // The --scrim trap: exactly one baselined reference exists in /next, in
-  // shell.css. A second one anywhere fails test-css-tokens.js.
-  ok(!/var\(--scrim/.test(wizCssCode), 'the wizard CSS does NOT reference var(--scrim)');
-  ok(/rgba\(5,5,10,0\.68\)/.test(wizCssCode), 'it inlines the same scrim literal views/shared.css uses');
+  // ── TWO ASSERTIONS INVERTED, NOT DELETED ───────────────────────────────
+  // They read:
+  //   'the wizard CSS does NOT reference var(--scrim)'
+  //   'it inlines the same scrim literal views/shared.css uses'  [0.68]
+  // under a header calling it "the --scrim trap: exactly one baselined
+  // reference exists in /next, in shell.css. A second one anywhere fails
+  // test-css-tokens.js." That was accurate, and it is precisely how one
+  // value came to have five private copies across five files — which then
+  // drifted in the LIGHT theme (0.42 in two of them, 0.5 in three).
+  // `--scrim` never existed as a definition; `--modal-scrim` does, in
+  // shell.css, for both themes. The first assertion survives unchanged in
+  // spirit (the retired name stays retired) and the second flips.
+  ok(!/var\(--scrim\b/.test(wizCssCode), 'the wizard CSS does NOT reference the retired var(--scrim)');
+  ok(/background:\s*var\(--modal-scrim\)/.test(wizCssCode),
+    'it reads the shared --modal-scrim token (was: asserted it INLINED the rgba literal, one of five copies)');
+  ok(!/rgba\(5,5,10/.test(wizCssCode) && !/rgba\(20,20,31/.test(wizCssCode),
+    'and no scrim rgba literal survives in this file');
   // Regression guard for a bug browser verification caught and no amount of
   // reading did: `.mcpw-hidden` had only per-block definitions, so any
   // element whose base class sets its own `display` — every `.btn`, which
@@ -728,13 +748,33 @@ section('10. Seams — settings.js, index.html, CSS');
   ok(hiddenBtns >= 5, `the wizard relies on .mcpw-hidden in ${hiddenBtns} places, so the generic rule is load-bearing`);
 
   ok(!/prefers-color-scheme/.test(wizCssCode), 'theming is via [data-theme], never prefers-color-scheme');
-  ok(/\[data-theme="light"\] \.mcpw-scrim/.test(wizCssCode), 'and the light theme is handled explicitly');
+  // INVERTED. It read 'and the light theme is handled explicitly', pinning
+  // a `[data-theme="light"] .mcpw-scrim` override. The theme split moved UP
+  // into the token: shell.css defines --modal-scrim per theme, so this file
+  // must NOT carry its own override — a second one here would be the same
+  // five-copies drift, one level down.
+  ok(!/\[data-theme="light"\] \.mcpw-scrim/.test(wizCssCode),
+    'the scrim carries NO per-file light override — the token is themed at its definition in shell.css (was: asserted the override existed here)');
 
   // Prefix ownership: `mcpw-` belongs to this pair of files only.
-  const otherNextCss = ['shell.css', 'views/shared.css', 'views/settings.css', 'views/chat.css',
+  //
+  // COMMENTS STRIPPED, and this was a latent false positive found by
+  // running it: the scan ran over RAW text, so a prose comment in another
+  // stylesheet that merely NAMES `.mcpw-card` — views/shared.css has one,
+  // pointing at the shared radius decision — reads as that file defining an
+  // `.mcpw-` rule. Nothing was wrong with the CSS. Same shape as v3.24.2's
+  // button scanner, where an unstripped comment hid three of five real bugs.
+  const otherNextCssRaw = ['shell.css', 'views/shared.css', 'views/settings.css', 'views/chat.css',
     'views/domains.css', 'views/ingest.css', 'views/sync.css', 'views/memory.css']
     .map(f => readFileSync(path.join(ROOT, 'src/public/next', f), 'utf8')).join('\n');
+  const otherNextCss = stripComments(otherNextCssRaw);
   ok(!/\.mcpw-/.test(otherNextCss), 'no other /next stylesheet defines an .mcpw- rule');
+  // Positive control: the strip must be doing work here, or the assertion
+  // above is passing for the wrong reason on a future edit.
+  ok(/\.mcpw-/.test(otherNextCssRaw) && !/\.mcpw-/.test(otherNextCss),
+    'control: the raw text DOES name .mcpw- (in a comment) and the strip is what removes it — an unstripped scan would false-positive here');
+  ok(/\.cfd-scrim/.test(otherNextCss),
+    'control: …and the strip leaves real selectors in those files intact');
   ok(!/mcpw-/.test(settingsCode.replace(/mcp-wizard/g, '')), 'settings.js does not reach into the wizard’s own class namespace');
 
   // No inline style="" with a var() — test-css-tokens.js §8 walks these.

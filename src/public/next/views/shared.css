@@ -606,15 +606,12 @@ a.sb-card-repo:hover { color: var(--text-link); }
   justify-content: center;
   padding: 24px;
   overflow-y: auto;
-  /* Plain literal, not var(--scrim, ...) — that token is deliberately
-     undefined anywhere and test-css-tokens.js baselines its one fallback
-     use to shell.css:337 specifically; this is the same rgba value,
-     inlined, so a second /next surface can use the same scrim darkness
-     without tripping that "exactly one" invariant. */
-  background: rgba(5,5,10,0.68);
+  /* The ONE scrim (shell.css). Was an inline rgba pair whose light half
+     read 0.5; see shell.css for why the inlining existed and why it is
+     gone. */
+  background: var(--modal-scrim);
   backdrop-filter: blur(6px);
 }
-[data-theme="light"] .sbw-scrim { background: rgba(20,20,31,0.5); }
 
 .sbw-card {
   position: relative;
@@ -623,8 +620,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
   overflow-y: auto;
   background: var(--surface-overlay);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 24px 60px -20px rgba(0,0,0,0.55);
+  /* "Modals 14px" — see the .cfd-card note. */
+  border-radius: var(--radius-xl);
+  /* Was a hardcoded `0 24px 60px -20px rgba(0,0,0,0.55)`: a DARK shadow
+     rendered verbatim in light theme, the same class of defect as
+     v3.25.0's Sync rail badge. --shadow-lg is what Modal.jsx specifies,
+     it is what .cfd-card and .mcpw-card already use, and shape.css
+     carries a real light-theme value for it. */
+  box-shadow: var(--shadow-lg);
   padding: 26px 28px 24px;
   margin: auto;
 }
@@ -904,11 +907,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
 
    Every colour is an EXISTING token: test-css-tokens.js hard-fails on any
    undefined var() in /next and a fallback does not exempt it. The scrim
-   darkness is an INLINE rgba literal for the same reason mcpw-scrim and
-   sbw-scrim are — `--scrim` is baselined at exactly ONE reference
-   (shell.css) with a hard count assertion, so a second reference anywhere
-   in /next fails the suite. Theming is [data-theme] only, never
-   prefers-color-scheme (the shell stamps the attribute).
+   darkness USED to be an inline rgba literal here, and this comment used
+   to explain that the sibling wizard scrims inlined it for the same
+   reason — `--scrim` was baselined at exactly ONE reference, so a second
+   would fail the suite. That reasoning produced five private copies of one
+   value and they drifted in the light theme; the scrim is now the shared
+   `--modal-scrim`, defined once in shell.css. Theming is [data-theme]
+   only, never prefers-color-scheme (the shell stamps the attribute), and
+   it now happens at the token rather than per block.
    ══════════════════════════════════════════════════════════════════════ */
 
 .cfd-scrim {
@@ -920,9 +926,19 @@ a.sb-card-repo:hover { color: var(--text-link); }
   justify-content: center;
   padding: 24px;
   overflow-y: auto;
-  background: rgba(5,5,10,0.68);
+  /* The ONE scrim, defined in shell.css. This block used to inline the
+     rgba pair with a comment explaining that `var(--scrim, …)` was
+     baselined at exactly one reference — see shell.css for why that guard
+     was the CAUSE of five drifting copies rather than a protection
+     against them. The light value here was 0.5; the design system's app
+     prototype says 0.42, and two of the five surfaces already used it. */
+  background: var(--modal-scrim);
+  /* ADDED: the system's readme scopes backdrop blur to exactly two places
+     and the modal scrim is one of them ("the modal scrim … + backdrop-
+     filter: blur(6px)"). Both wizards already had it; the confirm dialog
+     and chat-browse did not, so the app had two visual grades of modal. */
+  backdrop-filter: blur(6px);
 }
-[data-theme="light"] .cfd-scrim { background: rgba(20,20,31,0.5); }
 
 .cfd-card {
   position: relative;
@@ -933,7 +949,12 @@ a.sb-card-repo:hover { color: var(--text-link); }
   padding: 22px 24px 18px;
   background: var(--surface-overlay);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  /* --radius-xl (14px), not --radius-lg (10px). The bundle states this
+     three ways: the radius guideline card labels the 14px swatch
+     "xl · modal", the readme says "Cards 10px. Modals 14px.", and
+     Modal.jsx sets borderRadius: var(--radius-xl). tokens/shape.css is
+     byte-frozen and is NOT touched — only this consumer moves. */
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
 }
 .cfd-card.cfd-danger { border-color: var(--danger); }
