@@ -500,10 +500,94 @@ export const MACHINE_ID_FILENAME = '.curator-machine-id';
 // re-read it. It is kept because machineId() is called on every save and
 // every read and a syscall per call is waste, not because correctness rests
 // on it. Do not add an assertion pretending otherwise.
+//
+// ── D11: ONLY A POSITIVE RESULT MAY BE CACHED ─────────────────────────────
+// Both caches store what is ON DISK. Nothing else may enter them — not a
+// "there is no file" reading, and not a name we composed but FAILED to
+// persist. Both of those are provisional answers, and a provisional answer
+// cached for the life of the process is a decision nothing can revise.
+//
+// That is not hypothetical. An MCP server lives for days; the app restarts in
+// seconds. A process that resolves its identity while the user-data dir
+// cannot yet hold these files pins a hostname-derived name in memory and
+// never sees the real file appear beside it, while every sibling process
+// reads that file and uses the other name — ONE machine, TWO folders, which
+// is precisely the split D10 exists to end, arriving through the cache
+// instead of through the hostname.
+//
+// THE COST IS BOUNDED AND IT IS THE RIGHT SHAPE. A re-read happens only while
+// nothing is remembered, and `machineId()` mints and persists on that very
+// same call, so on any writable installation the miss happens once and then
+// never again. It repeats per call only when the write itself keeps failing —
+// the already-degraded path, where a syscall is the least of the problems and
+// noticing the repair the moment it lands is worth far more.
 let _installIdCache = { dir: null, id: null };
 // Same keying, same reasoning, same honest scope: the FILE is what makes the
 // name stable across processes; this only avoids a syscall per call.
 let _machineIdCache = { dir: null, name: null };
+
+/** The install id ON DISK, or null. Re-validated: a file is input. */
+function readInstallIdFile(file) {
+  try {
+    const raw = readFileSync(file, 'utf8').trim().toLowerCase();
+    if (INSTALL_ID_RE.test(raw)) return raw;
+  } catch { /* absent or unreadable */ }
+  return null;
+}
+
+/** The remembered machine name ON DISK, or null. Same rule: a file is input. */
+function readMachineIdFile(file) {
+  try {
+    const raw = readFileSync(file, 'utf8').trim();
+    if (isSafeSegment(raw)) return raw;
+  } catch { /* absent or unreadable */ }
+  return null;
+}
+
+/**
+ * Persist `candidate` at `file` and return the value that actually WON — the
+ * one now on disk — or null if nothing could be persisted at all.
+ *
+ * ── WHY THE WRITE IS EXCLUSIVE (`wx`) AND NOT A PLAIN OVERWRITE ───────────
+ * Both identity files are minted lazily, on first use. Two processes can
+ * therefore reach the mint at the same time — an MCP server's first
+ * working-state call landing beside the app's — and a plain write makes them
+ * BOTH succeed, each clobbering the other and each keeping its own value in
+ * memory for life. For the machine name that is two folders whenever the
+ * hostname has flapped between the two mints; for the install id, whose
+ * candidate is RANDOM, it is two folders every single time.
+ *
+ * `wx` makes exactly one of them the writer. The loser reads back what the
+ * winner persisted and ADOPTS it, so both converge on one value rather than
+ * one silently overwriting the other. First writer wins, and the file — not
+ * either process's opinion — is the authority.
+ *
+ * ── AND WHY THERE IS STILL A PLAIN WRITE UNDERNEATH ───────────────────────
+ * A file that EXISTS but holds something unusable (hand-edited, truncated,
+ * half-written) must still be repairable, or the exclusive create turns
+ * self-repair into a permanent deadlock against rubbish. So the overwrite
+ * survives for exactly that case, and only after the read-back has proven
+ * there is no usable value to adopt.
+ *
+ * A write that fails for any OTHER reason returns null — deliberately, so the
+ * caller does not cache a name it did not manage to write down.
+ */
+function mintIdentityFile(file, candidate, readBack) {
+  try {
+    // 0600 and beside the credential files: getCredentialFiles()'s startup
+    // sweep does not know about these, so the mode is set at the write.
+    writeFileSync(file, candidate + '\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    return candidate;
+  } catch (err) {
+    if (!err || err.code !== 'EEXIST') return null;   // unwritable — NOT a decision
+    const winner = readBack(file);
+    if (winner) return winner;                        // someone else got there first
+    try {
+      writeFileSync(file, candidate + '\n', { encoding: 'utf8', mode: 0o600 });
+      return candidate;                               // present but unusable — repaired
+    } catch { return null; }
+  }
+}
 
 /**
  * The stable per-installation id, or null if it cannot be persisted.
@@ -513,27 +597,18 @@ export function installId() {
   let file;
   try { file = userDataPath(INSTALL_ID_FILENAME); } catch { return null; }
   const dir = path.dirname(file);
-  if (_installIdCache.dir === dir) return _installIdCache.id;
+  // D11: a POSITIVE hit only. A cached null is a provisional answer, and this
+  // one used to outlive the condition that produced it — an id file created
+  // after the process started was invisible to it forever, so
+  // installIdAvailable() reported the collision guard OFF long after it was
+  // armed, and machineId() kept composing the bare-hostname folder name.
+  if (_installIdCache.dir === dir && _installIdCache.id) return _installIdCache.id;
 
-  let id = null;
-  try {
-    const raw = readFileSync(file, 'utf8').trim().toLowerCase();
-    if (INSTALL_ID_RE.test(raw)) id = raw;
-  } catch { /* absent or unreadable — fall through to generate */ }
+  let id = readInstallIdFile(file);
+  // read-only home → null → documented bare-hostname fallback, uncached
+  if (!id) id = mintIdentityFile(file, randomBytes(3).toString('hex'), readInstallIdFile);
 
-  if (!id) {
-    const candidate = randomBytes(3).toString('hex');
-    try {
-      // 0600 and atomic-ish: this sits beside the credential files, and
-      // getCredentialFiles()'s startup sweep does not know about it.
-      writeFileSync(file, candidate + '\n', { encoding: 'utf8', mode: 0o600 });
-      id = candidate;
-    } catch {
-      id = null;                       // read-only home → documented fallback
-    }
-  }
-
-  _installIdCache = { dir, id };
+  if (id) _installIdCache = { dir, id };
   return id;
 }
 
@@ -612,31 +687,32 @@ function persistedMachineId() {
   let file;
   try { file = userDataPath(MACHINE_ID_FILENAME); } catch { return null; }
   const dir = path.dirname(file);
-  if (_machineIdCache.dir === dir) return _machineIdCache.name;
+  // D11: a POSITIVE hit only — see the cache declaration. Nothing is cached
+  // here on a miss, because `machineId()` mints on the very same call and
+  // whatever it manages to PERSIST is what gets remembered.
+  if (_machineIdCache.dir === dir && _machineIdCache.name) return _machineIdCache.name;
 
-  let name = null;
-  try {
-    const raw = readFileSync(file, 'utf8').trim();
-    if (isSafeSegment(raw)) name = raw;
-  } catch { /* absent or unreadable — the caller mints one */ }
-
-  _machineIdCache = { dir, name };
+  const name = readMachineIdFile(file);
+  if (name) _machineIdCache = { dir, name };
   return name;
 }
 
 /**
- * Remember the chosen name. Best effort: an unwritable home costs the
- * stability guarantee, never the save (see the DEGRADATION note above).
+ * Remember the chosen name, and return the name that is actually ON DISK
+ * afterwards — which may be ANOTHER process's, if it minted first.
+ *
+ * Best effort: an unwritable home costs the stability guarantee, never the
+ * save (see the DEGRADATION note above). But it must not cost the TRUTH
+ * either — when nothing was persisted this returns null and caches nothing,
+ * so the next call looks again and picks up a file that has since appeared.
  */
 function rememberMachineId(name) {
-  if (!isSafeSegment(name)) return;
+  if (!isSafeSegment(name)) return null;
   let file;
-  try { file = userDataPath(MACHINE_ID_FILENAME); } catch { return; }
-  try {
-    // 0600 and beside the credential files, matching the install id.
-    writeFileSync(file, name + '\n', { encoding: 'utf8', mode: 0o600 });
-  } catch { /* read-only home — documented fallback */ }
-  _machineIdCache = { dir: path.dirname(file), name };
+  try { file = userDataPath(MACHINE_ID_FILENAME); } catch { return null; }
+  const pinned = mintIdentityFile(file, name, readMachineIdFile);
+  if (pinned) _machineIdCache = { dir: path.dirname(file), name: pinned };
+  return pinned;
 }
 
 /**
@@ -701,8 +777,15 @@ export function machineId(override) {
   // read-only cannot persist either file, so this is a no-op exactly when the
   // id is missing for that reason — but a home that can hold a name and not
   // an id is still better off pinned than flapping.
-  rememberMachineId(name);
-  return name;
+  //
+  // D11: the RETURN VALUE is used, not discarded. If another process minted
+  // first, that is the name on disk and therefore the name every process must
+  // use; adopting it here is what makes two concurrent minters converge on
+  // one folder instead of each keeping its own. `|| name` covers the case
+  // where nothing could be persisted at all — the documented degradation,
+  // where the composed name is still the best answer available right now and
+  // is deliberately NOT cached, so a later repair is picked up.
+  return rememberMachineId(name) || name;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
