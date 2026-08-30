@@ -179,9 +179,12 @@ code at all. What ships now:
   notice.
 
 The note fires only for an **auto-detected** machine. An explicit `machine` argument is a
-name the caller chose and is taken verbatim — no install id was ever going to be appended
-to it, so nothing about that write has degraded, and warning about a risk that does not
-apply is how a real warning gets ignored. The *field* is returned either way, because
+name the caller chose — no install id was ever going to be appended to it, so nothing about
+that write has degraded, and warning about a risk that does not apply is how a real warning
+gets ignored. (It is not taken *verbatim*: it passes through the same `slugSegment`
+normalisation as the hostname path, with a trailing `.local` stripped, so `My Machine.local`
+becomes `my-machine`; a value that cannot be normalised into one safe path segment is
+refused rather than used.) The *field* is returned either way, because
 "is this installation identified?" is true or false about the installation regardless of
 how one call addressed it.
 
@@ -243,6 +246,32 @@ Two things follow, and both were real:
 
 None of this migrates anything either. It only means the *next* save is stable no matter
 which process makes it.
+
+**And there is a third consequence that no code change can reach, so it has to be an
+instruction: after updating The Curator, restart your MCP client.** No code change reaches
+a process that is *already running*. The live case that produced the fix above was exactly
+this — the machine-id support was committed at midday, the MCP servers had been spawned by
+Claude Desktop twenty-eight hours earlier, and those child processes went on splitting
+folders for a machine whose `.curator-machine-id` was already correct on disk. Quitting and
+reopening Claude Desktop (or Cursor, or whichever client spawns `mcp/server.js`) respawns
+the child on the new code. Nothing in the app can force this, and making a running process
+notice would mean re-checking the file on a timer — rejected, because it makes one process
+return two different folder names during one session for no visible reason.
+
+If a split has already happened, you read the orphaned half by **naming it**: pass its
+folder name as the `machine` argument to `get_working_state`. The Agent memory view's
+Machine picker lists every folder under the scope with its own age, so that is where to
+find the name.
+
+**Where the two files live, and what protects them**
+
+| | |
+|---|---|
+| Filenames | `.curator-install-id`, `.curator-machine-id` |
+| Location | `getUserDataDir()` — which in a repo install is the **app checkout root**, not a hidden support folder (in a future packaged build, `~/Library/Application Support/The Curator`). Outside `domains/`, which is the point: they must never sync |
+| Permissions | `0600`, set at the write itself. Note they are **not** in `getCredentialFiles()`, so the startup `chmod` sweep does not re-assert it |
+| Git | Both are in `.gitignore`. This matters more than it looks in repo mode, where they land inside the app repo — `.curator-machine-id` is the worse of the two to leak, because it is a whole path segment rather than half of one |
+| Validated on read | Yes, every time. A machine id must satisfy `isSafeSegment`; an install id must match `/^[0-9a-f]{4,16}$/`. Without that check a hand-edited `../../evil` would become a path segment. A value that fails is ignored and then overwritten, so a corrupt file self-repairs rather than wedging |
 
 ### Scopes
 

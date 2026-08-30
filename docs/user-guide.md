@@ -1054,8 +1054,57 @@ A chat is a great place to think out loud, but the conversation itself is not pa
 **How it works**
 
 1. Have a conversation in **Chat**. The **Compile to Wiki** button appears on the right of the **SCOPE** bar above the thread as soon as you've asked one question — so even a single sharp question worth keeping can be compiled (v3.0.1-beta.15; previously it needed two messages).
-2. Click **Compile to Wiki**. A progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
-3. After 15–45 seconds a **result card appears inline in the conversation**, right below the last message: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them. The card is part of the thread, so it scrolls with the conversation and you can keep chatting underneath it at full size (before v3.0.14 the result opened in a fixed panel above the input box that permanently squeezed the chat area — that's fixed). The card scrolls into view at its top, so the title and the ✨/✏️ counts are always what you see first. Compile again and you get a second card; the cards clear when you switch conversations or start a new chat. If you switch conversations *while* a compile is running, the pages are still written — you just won't see the card, since it belongs to the other conversation.
+2. Click **Compile to Wiki**. The button reads **Checking cost…** for a moment, then a dialog opens telling you what this compile is estimated to cost and where the pages will land. **Nothing has been spent yet.** See *"What it costs, before it costs it"* below.
+3. Click **Compile** in the dialog. *Now* the paid work starts, and a progress bar shows what's happening — loading the conversation, asking the AI to extract durable knowledge, writing pages, syncing entity backlinks, updating the index.
+4. After 15–45 seconds a **result card appears inline in the conversation**, right below the last message: how many pages were **created** (✨) and how many were **updated** (✏️), with byte sizes and per-section bullet deltas. Unchanged pages are hidden by default — click *"Show unchanged"* if you want to see them. The card is part of the thread, so it scrolls with the conversation and you can keep chatting underneath it at full size (before v3.0.14 the result opened in a fixed panel above the input box that permanently squeezed the chat area — that's fixed). The card scrolls into view at its top, so the title and the ✨/✏️ counts are always what you see first. Compile again and you get a second card; the cards clear when you switch conversations or start a new chat. If you switch conversations *while* a compile is running, the pages are still written — you just won't see the card, since it belongs to the other conversation.
+
+#### What it costs, before it costs it (v3.27.0)
+
+Compile to Wiki spends real money at your AI provider. Until v3.27.0 it did that the moment you clicked, with no warning and no number. Now every compile goes through a **free, local estimate** and a **confirmation dialog** — and the estimate itself costs nothing: it makes no AI call and no network request at all. It only reads the conversation, the domain schema and the list of pages already in your wiki.
+
+```mermaid
+flowchart TD
+    A["You click<br/><b>Compile to Wiki</b>"] --> B["Button reads<br/><b>Checking cost…</b>"]
+    B --> C["FREE local estimate<br/>no AI call · no network<br/>reads your conversation +<br/>your existing wiki pages"]
+
+    C --> R{"Can this<br/>conversation be<br/>compiled at all?"}
+    R -->|"No — too short, or<br/>already compiled"| RX["A card explains why.<br/><b>No dialog, nothing spent.</b>"]
+
+    R -->|Yes| D["Dialog opens:<br/>estimated cost range +<br/>which model + which wiki"]
+    D --> E{"Your choice"}
+    E -->|Cancel| F["<b>Nothing is spent.</b><br/>Zero AI calls made."]
+    E -->|Compile| G["The paid call runs<br/>progress bar · 15–45s"]
+    G --> H["Result card in the thread<br/>✨ created · ✏️ updated"]
+```
+
+**Why it's a range, not a price.** The dialog says something like *"Estimated cost $0.0003 – $0.0012 on Gemini "gemini-2.5-flash-lite"."* Two numbers, not one, because half the calculation is genuinely knowable and half is not:
+
+| Half of the cost | Known before the call? | Why |
+|---|---|---|
+| **Input** — the prompt sent to the AI | **Yes, exactly.** | The estimator builds the *real* prompt and measures it character by character. Three identical test runs produced the same input token count every time, to the token. |
+| **Output** — the pages the AI writes back | **No.** | How many pages the AI decides to write cannot be known in advance. Three runs on byte-identical input produced 19, 18 and 18 pages — about ±11%. And if the first attempt overruns its output limit, The Curator retries (see *Compiling a very large conversation* below), which costs more. |
+
+The range is deliberately generous on the high side. Across eleven real measured compiles, every actual bill landed **inside** the quoted range — and typically in its lower fifth. Over-quoting is the safe way to be wrong about money.
+
+**The number that surprises people: it's your wiki's size, not your chat's length.** Compile sends the AI a list of every entity and concept page you already have, so it can link into them instead of creating duplicates. That list dominates the prompt. The *same four-turn conversation* measured **5,740 prompt characters on a fresh domain and 12,431 on one holding 180 pages** — more than double, for an identical chat. A long conversation on a small domain is often cheaper than a short one on a large domain.
+
+**Four different things the dialog can say about cost — and it never confuses them:**
+
+| What the dialog says | What it means |
+|---|---|
+| *"Estimated cost $X – $Y on [provider] "[model]"."* | Normal case. A published price is on file and the range applies. |
+| *"…is free to use, so this compile will not cost anything."* | You're on a genuinely free model. This is not the same as "$0.00". |
+| *"No published price is on file for … so the cost cannot be shown in dollars."* | The Curator doesn't know this model's price. **Your provider will still bill you.** |
+| *"No AI provider is configured…"* | No API key. There's nothing to compile with — add a key in **Settings → API Keys** first. |
+
+An unknown cost is always said out loud. The dialog will never render an unpriced or unknown compile as **$0.00**.
+
+**Two more things worth knowing:**
+
+- **If the estimate itself fails**, the dialog still opens and tells you the cost could not be estimated. A broken estimate never silently spends your money, and it never disables a working feature either.
+- **A refusal never becomes a dialog.** If the conversation is too short, or you already compiled it, you get the explanation card straight away — you are not asked to authorise a spend that cannot happen.
+
+> **Not yet covered:** the legacy interface at `/old` still starts a compile with no estimate and no confirmation. Use the main interface for compiles.
 
 **What gets written**
 
@@ -1427,6 +1476,10 @@ Put durable material in working state and the next save quietly overwrites it. N
 Two computers writing to the same handoff file would collide on sync — and the way Sync resolves a collision keeps the *remote* version and discards your local one, silently. Giving each machine its own folder means the collision never happens.
 
 Cross-machine handoff still works, and it works on the reading side: ask for a workstream without naming a machine and you get the **most recently written** one, plus a list of every machine that has state for it. Save on the laptop, resume on the desktop.
+
+> **If one computer shows up as two machines, restart your MCP client.** The name is decided once and remembered, so it can no longer drift — but an MCP server that your client started *before* you updated The Curator is still running the old code, and no update reaches a process that is already running. Quit and reopen Claude Desktop (or whichever client you use) and the next save lands in the right folder.
+>
+> **Nothing is migrated, merged or deleted.** If a split already happened, both folders stay on disk, both stay listed in the machine picker with their own timestamps, and both stay readable by name. Only the *next* save is pinned — which is what stops the split growing.
 
 ### Treat a handoff as notes, not orders — with one exception
 
@@ -1908,7 +1961,23 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 > **Text size now reaches the controls too.** Buttons, text boxes and dropdowns are the one place a browser does *not* pass your font settings down on its own — left alone, they fall back to the browser's built-in face at a fixed size. Until now a handful of them did exactly that, so a few labels sat in a different typeface from every word around them and ignored this setting entirely. They now take the app's own typeface and follow the scale like everything else. Control heights and icons still deliberately stay put, so nothing grows into anything else.
 
-> **Faint labels got darker.** A large number of small secondary labels across the app — Domains, Ingest, Sync, Shared Brain, Agent memory, Settings, the setup guide and the MCP wizard — were painted in a grey that measured *below* the recognised contrast floor for readable text, in both themes. They now use the next step up. Nothing moved and nothing was restyled; the same words are simply legible now, which matters most on the small print you read least often and can least afford to misread.
+> **Secondary text is easier to read, in both themes (v3.25.0).** Body text is now a little lighter on dark and a little darker on light, and the small labels above section titles sit one clear step below it instead of level with it.
+>
+> This was a real repair rather than a repaint. The app has four levels of text — the brightest for headings, then body, then labels, then the faintest — and two of the lower three had drifted so close together that they read as one. Where an earlier release patched that over by promoting individual labels to the level above, this one moved the levels themselves. The patch was then removed, so those labels are back where they belong and the ladder has three usable rungs again instead of two.
+>
+> **The brightest level was deliberately not touched.** It is already a soft white rather than a pure one, which is what keeps a dark screen comfortable to read for a long stretch. Nothing moved and nothing was restyled; the same words are simply easier to tell apart.
+
+> **Controls now answer a click (v3.27.0).** Buttons, rail icons, list rows and dropdown triggers visibly react the instant you press them — they shift very slightly and change shade — and let go when you release. Previously most of the app did nothing at all on press, so on a slow action there was no way to tell a click had landed until the result arrived. This is feedback only; nothing about what the controls *do* has changed.
+>
+> **If you have Reduce Motion switched on** (macOS **System Settings → Accessibility → Display → Reduce Motion**, or the equivalent on Windows/Linux), The Curator respects it. Movement is removed and the shade change stays, so every control still confirms your press — you just don't see it move. Panels appear without sliding in.
+>
+> Two things deliberately keep going under Reduce Motion, and both are informational rather than decorative:
+>
+> | Still animates | Why |
+> |---|---|
+> | The **ingest progress ring** | It is the only sign the app is still working during a paid write that can run for minutes. Removing it would leave a still screen you cannot distinguish from a crash. |
+> | The **accent bar** marking your place in the Settings and Chat lists | It is a position marker, not an animation. Only the sliding is removed; the bar itself stays exactly where it is. |
+
 - **Setup guide** — **Show setup guide** re-opens the first-run checklist from [§5](#5-first-run--the-getting-started-panel). Dismissing that panel is never permanent; this is the one place it can be found again.
 
 ### System check
@@ -2648,9 +2717,12 @@ The cost figures throughout this section are for **Gemini and Claude**, the two 
 | **Wiki health — ✨ Ask AI on broken links** (Phase 1) | **GitHub Sync** (Sync now / Push only / Pull only) |
 | **Wiki health — ✨ Ask AI on orphan pages** (Phase 2) | **Wiki health structural scan** + deterministic fixes (folder-prefix, hyphen variants, cross-folder dedup, missing backlinks) |
 | **Wiki health — Semantic duplicate scan** (Phase 3, opt-in & cost-gated) | **Settings**, **API key management**, **updates** |
+| **Compile to Wiki** — turning a conversation into wiki pages (opt-in & cost-gated since v3.27.0) | **All three cost estimates** — batch ingest, semantic-dupe scan and Compile to Wiki. Each is computed locally with no AI call and no network request |
 | | **My Curator MCP server** (local bridge — free; the *frontier model* you connect to it bills you separately on its own plan) |
 
-So when you see a bill, the dominant line item is **ingest**. Chat and Health Ask-AI are negligible by comparison; everything else is genuinely free.
+So when you see a bill, the dominant line item is **ingest**. Chat, Compile and Health Ask-AI are negligible by comparison; everything else is genuinely free.
+
+**Three of those paid actions ask before they spend**, and none of the three costs anything to ask: batch ingest quotes a cost before the queue starts, the semantic-duplicate scan quotes one before it scans, and — since v3.27.0 — [Compile to Wiki quotes one before it compiles](#what-it-costs-before-it-costs-it-v3270). Single-file ingest and chat do not: they are the two you invoke deliberately and repeatedly, and a dialog on every message would be noise.
 
 ### Provider comparison
 
