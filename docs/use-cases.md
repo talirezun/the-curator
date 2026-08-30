@@ -158,6 +158,8 @@ The **Compile to Wiki** button on any chat conversation extracts what was learne
 | What gets written | Summary + entities + concepts | Same — uses the same write pipeline |
 | Re-running | Re-ingests merge new info into existing pages | Refused if the conversation hasn't changed (prevents bullet inflation) |
 | Cost | 1 LLM call for a short source (single-pass); 1 planning call + N batch calls for a long one (multi-phase, ~4 pages/call) | 1 LLM call normally; up to 3 if the AI's response is too large and the app retries with a more concise extraction |
+| Cost shown before it's spent | Only for **batch** ingest (the queue quotes the whole batch); a single-file ingest does not ask | **Yes, since v3.27.0** — a free local estimate quotes a range and asks you to confirm ([user guide](user-guide.md#what-it-costs-before-it-costs-it-v3270)) |
+| What drives the cost | The length of the document | Mostly **how big your wiki already is** — the prompt carries every existing entity and concept slug so the AI can link into them |
 
 ### Tip
 

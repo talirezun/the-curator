@@ -221,9 +221,13 @@ the-curator/
 │   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
 │   │   ├── diagnostics.js      GET /api/diagnostics/quick, POST /api/diagnostics/live (System Check)
+│   │   ├── write-status.js     GET /api/write-status — is it safe to quit? (v3.26.0; no repo-mode consumer yet)
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
+│   │   ├── install-mode.js     What this copy may do to its OWN code — getInstallMode() + a frozen
+│   │   │                       capability record. Imports isBundleInstall from paths.js; nothing
+│   │   │                       imports it back. Routes fork on a CAPABILITY, never on the mode (v3.26.0)
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
@@ -387,9 +391,28 @@ As of v3.1.0, `mcp/storage/local.js` imports `getCuratorConfigFile()` and `getDe
 
 `getUserDataDirState()` returns one of `'ready' | 'empty' | 'missing' | 'blocked'` rather than a boolean, because "does the folder exist" isn't the question a future bundle install needs answered. A fresh bundle install finds an *empty* `~/Library/Application Support/The Curator` while the user's real wiki still sits in their old checkout — a bundle has no way to infer where that checkout is. `'empty'` (the directory exists but holds neither a config file nor a `domains/` folder) is the intended trigger for a future one-time "import your existing wiki" prompt, to be shown *before* onboarding rather than letting the user believe their second brain is gone. `'blocked'` distinguishes a genuinely broken path (a regular file where a directory should be, a broken symlink, an unreadable directory, a failed `mkdir`) from `'missing'`, because every subsequent write would fail and the caller needs to know that rather than proceed as if empty. **Nothing in v3.1.0 calls this yet** — it ships now, unwired, so the seam is settled before the packaging work that will need it.
 
+### Test seams — for the USER-DATA paths above, not for the install mode
+
+Two independent overrides, both checked before any real detection logic runs, both `null`/unset in production. They belong to `paths.js` / `config.js`; **there is no test seam of any kind for the install mode** — see the Install modes section below for how a suite reaches the bundle arm.
+
+| Seam | Scope | Crosses process boundaries? |
+|---|---|---|
+| `__setDomainsDirOverride(dir)` (`config.js`) | `domains/` only | No — in-process only |
+| `CURATOR_TEST_DOMAINS_DIR` (env) | `domains/` only | Yes |
+| `__setUserDataDirOverride(dir)` (`paths.js`) | All of it: config, sync, Shared Brain, `.knowledge-git/`, and `domains/` (unless something higher in `getDomainsDir()`'s own chain overrides it — see the CONTRIBUTING.md guidance) | No — in-process only |
+| `CURATOR_TEST_USER_DATA_DIR` (env) | Same as above | Yes |
+
+See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-user-data) for which one to reach for and why the distinction is a real safety boundary, not a style choice.
+
+> **This section moved back up in v3.27.0's doc sweep.** v3.26.0 inserted the `## Install modes` heading between it and the `paths.js` section it belongs to, leaving it rendering as a subsection of Install modes — where it read as though these seams could switch the mode. They cannot.
+
+---
+
 ## Install modes (`src/brain/install-mode.js`)
 
 `paths.js` answers **where does user data live**. `install-mode.js` answers a different question — **what may this copy of The Curator do to its own code** — and the two are deliberately separate modules.
+
+The dependency runs one way only: `install-mode.js` imports `isBundleInstall` from `paths.js`, and `getInstallMode()` is literally `isBundleInstall() ? 'bundle' : 'repo'`. `paths.js` knows nothing about `install-mode.js`.
 
 ### Why a capability, not an install form
 
@@ -434,18 +457,17 @@ Both handlers are exported as `updateCheckHandler(req, res, deps)` / `updateHand
 - `GET /api/version` returns `installMode`, `installModeLabel` and the full `capabilities` record alongside the existing `version` / `onDiskVersion` / `restartRequired` (purely additive).
 - System Check gains an `install-mode` row (always `info` — neither mode is an error) and a `git` row.
 
-### Test seams
+### Forcing bundle mode (there is no override)
 
-Two independent overrides, both checked before any real detection logic runs, both `null`/unset in production:
+Because there is no test seam, the only way into the bundle arm is to satisfy `paths.js`'s real detection: drop the `BUNDLE_MARKER_FILE` (`.curator-bundle`) at `APP_ROOT`, or run from a path carrying an `<x>.app/Contents/` component. `scripts/test-install-mode.js` takes the second route — it materialises a fake `*.app/Contents`-shaped tree, copies `paths.js` and `install-mode.js` into it, and imports that copy **in a child process**, because the mode is decided by where the module is on disk.
 
-| Seam | Scope | Crosses process boundaries? |
-|---|---|---|
-| `__setDomainsDirOverride(dir)` (`config.js`) | `domains/` only | No — in-process only |
-| `CURATOR_TEST_DOMAINS_DIR` (env) | `domains/` only | Yes |
-| `__setUserDataDirOverride(dir)` (`paths.js`) | All of it: config, sync, Shared Brain, `.knowledge-git/`, and `domains/` (unless something higher in `getDomainsDir()`'s own chain overrides it — see the CONTRIBUTING.md guidance) | No — in-process only |
-| `CURATOR_TEST_USER_DATA_DIR` (env) | Same as above | Yes |
+### `GET /api/write-status` — built for the mode that does not exist yet
 
-See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-user-data) for which one to reach for and why the distinction is a real safety boundary, not a style choice.
+`hasActiveWrites()` had existed since v3.0.1-beta.8 and was reachable only as an internal route guard: a route could be *refused* because of it, but nothing could *ask* it. `GET /api/write-status` (v3.26.0) exposes it as `{ok, safeToQuit, activeWrites, updateInProgress, operations[], operationsTotal}` behind an explicit allow-list.
+
+It is a plain `GET`, **deliberately not behind `guardConcurrent`** — a 409 there would fire precisely when something is asking whether a write is in progress — and it registers no write of its own, which would make it report itself. On a registry throw it answers `200` with `safeToQuit: null` rather than a 500, because a quit handler that cannot get an answer must be *told* so, not handed an exception it will read as "busy".
+
+**Nothing in repo mode consumes it.** It exists for a packaged build's `before-quit` handler, and ships one release ahead of its caller for the same reason `getUserDataDirState()` did. Full response shape: [api-reference.md](api-reference.md#get-apiwrite-status).
 
 ---
 
@@ -1668,7 +1690,7 @@ It is **a store**, in the sense that it exposes plain functions, renders no prom
 | `saveProjectBrief(project, input)` | Overwrites `state/project.md` from `brief` / `decisions` / `workingModel` / `pointers`. Separate from the above on purpose: this tier is deliberate and rare, and it is returned on every read, so it must not churn with sessions. **Nothing in `mcp/` or `src/routes/` calls it** — the brief's only real writer is a human in Obsidian, and that absence is what decision 4 relies on. |
 | `readWorkingState(project, opts)` | Always returns the brief. With `opts.scope`, also that scope's `current.md`, the machines holding state under it, and recent journal entries; without one, the scope index. Never throws; every file read is byte-capped at the source. |
 | `listWorkingScopes(project)` | Every `(scope, machine)` pair with state, newest first, each with its last write time, age and latest headline. A hard requirement rather than a convenience — an agent told "carry on with the auth work" cannot otherwise resolve that to a scope slug it has never seen. |
-| `machineId(override)` | This machine's path segment. **Remembered, not recomputed:** it returns `.curator-machine-id` when that file holds a segment `isSafeSegment` accepts, and otherwise composes `<hostname-slug>-<install-id>` once and writes it there. The file is input, so it is re-validated on read rather than trusted. Still resolved **per call** (a module-scope `const X = getter()` is the v3.1.0 import-order bug this repo has a source guard against) — what is cached is the file, not the answer to a snapshotted path, and that sentence has only recently become true: a name that had been *composed but not successfully written* used to be cached too, which is the whole of the defect below. An explicit `override` is taken verbatim and neither consults nor overwrites what is remembered. An unusable hostname falls back to a literal rather than throwing: losing the machine distinction is a merge risk, refusing to save loses the handoff. |
+| `machineId(override)` | This machine's path segment. **Remembered, not recomputed:** it returns `.curator-machine-id` when that file holds a segment `isSafeSegment` accepts, and otherwise composes `<hostname-slug>-<install-id>` once and writes it there. The file is input, so it is re-validated on read rather than trusted. Still resolved **per call** (a module-scope `const X = getter()` is the v3.1.0 import-order bug this repo has a source guard against) — what is cached is the file, not the answer to a snapshotted path, and that sentence has only recently become true: a name that had been *composed but not successfully written* used to be cached too, which is the whole of the defect below. An explicit `override` neither consults nor overwrites what is remembered, and never has the install id appended — but it is **not** taken verbatim: it goes through the same `slugSegment` normalisation as the hostname path (with a trailing `.local` stripped), so `My Machine.local` resolves to `my-machine`, and a value that cannot be normalised into a safe segment is refused with `null`. An unusable hostname falls back to a literal rather than throwing: losing the machine distinction is a merge risk, refusing to save loses the handoff. |
 | `installId()` / `installIdAvailable()` | The per-installation id and whether it could actually be persisted. Cached per **resolved** user-data directory, never at module scope against a snapshotted path — `userDataPath()` is re-resolved per call, so an override installed after import (which every test does) must change the answer. **Only a positive result is cached** — see below. |
 | `sanitiseBlock` / `sanitiseLine` / `sanitiseList` / `sanitiseObservations` / `neutraliseProtocol` / `defang` / `escapeHeadings` | The sanitiser surface described above. None throws on any input. `neutraliseProtocol` is idempotent by construction, which matters because it runs on every read; `defang` is called from inside it, so the read path gets the URL/pipe rule without a second call site to keep in step. `escapeHeadings` is the one rule the read path cannot apply. |
 | `resolveInsideState(project, relPath)` | The single path chokepoint into `state/`. Nothing else may build one. |

@@ -283,6 +283,7 @@ Once a Shared Brain is set up, the `shared-<slug>/` domain appears in your Curat
 **"Repository not found"**
 - Check the repo URL the admin gave you (typo in owner/name).
 - Check that you accepted the GitHub collaborator invitation email.
+- **On versions older than v3.26.0, a missing `git` also produced this message.** If the URL is definitely right, update the app; it now says *"Git is not available to The Curator"* instead and tells you how to install it ([sync.md](sync.md#git-is-not-available-to-the-curator-so-syncing-cannot-run)).
 
 **Can't see the GitHub invitation email**
 - Check spam folder.

@@ -666,14 +666,35 @@ a user is asking what the next compile costs.
 
 A conversation the compile would refuse comes back `compilable: false` with the
 **exact** `refusal` string `POST /conversation` would have emitted, and **no
-cost fields at all** (`estimate`, `conversation` and `domainContext` are
-`null`). Both sides run one shared `precheckCompile`, so the estimate can never
-quote a price for something that is about to be refused for free. The three
-refusals are: conversation not found; fewer than `MIN_USER_MESSAGES` (1) user
-turns; and already compiled at the deterministic summary slug. A **read-only
-Shared Brain mirror** is reported the same way — as a `refusal`, not an HTTP
-error, because this endpoint is a question rather than an attempt (the POST
-still answers `400` for that case).
+cost fields at all**. `ok` stays `true` — a refusal is an answer, not an error:
+
+```json
+{
+  "ok": true,
+  "compilable": false,
+  "refusal": "Conversation too short to compile (need at least 1 user messages, got 0)",
+  "provider": null, "model": null,
+  "conversation": null, "domainContext": null, "estimate": null,
+  "warnings": []
+}
+```
+
+Both sides run one shared `precheckCompile`, so the estimate can never quote a
+price for something that is about to be refused for free. The four refusal
+strings, verbatim:
+
+| Condition | `refusal` |
+|---|---|
+| No such conversation | `Conversation not found` |
+| Fewer than `MIN_USER_MESSAGES` (**1**) user turns | `Conversation too short to compile (need at least 1 user messages, got N)` |
+| Already compiled at the deterministic summary slug | `Already compiled to <path>. Send another message in this conversation to extend it, or delete that file in your wiki to start over.` |
+| Destination is a read-only Shared Brain mirror | `Domain "<d>" is a read-only Shared Brain mirror. Compile into your personal opted-in domain instead, then push contributions from the Sync tab.` |
+
+The mirror case is reported as a `refusal` rather than an HTTP error because
+this endpoint is a question rather than an attempt; the POST answers `400` for
+it, with a **byte-identical** message. A malformed conversation file with no
+`messages` array does not throw — `messages` normalises to `[]` and it falls
+through to the "too short" refusal.
 
 **The range is a range, not a price.**
 
@@ -697,18 +718,29 @@ quoted range. **Both ends are estimates rather than limits.**
 | `null` | A price is on file; `usdLow`/`usdHigh` are real numbers and `priceKnown` is `true`. |
 | `"no-provider"` | No API key is configured. Token counts are still returned — the work is describable even when the price is not. |
 | `"free-model"` | The resolved model is free. The compile will cost nothing; that is a different statement from "we cannot tell you". |
-| `"no-price"` | The resolved model has no published price in `MODEL_PRICES_USD_PER_MTOK`. Your provider will still bill it. |
+| `"no-price"` | The resolved model has no price resolvable through `getModelPrice` — neither the static `MODEL_PRICES_USD_PER_MTOK` table nor the synced OpenRouter catalogue. Your provider will still bill it. |
 
-`tokenizerFactor` is the model's published input-token premium (1 for every
-model except the Opus tier, which measures 1.329x on real Curator prose). It is
-already applied to `inputTokensLow`/`High`.
+Exactly one of these three also produces exactly one sentence in the top-level
+`warnings[]`; on the priced path and on every refusal, `warnings` is `[]`.
+
+`tokenizerFactor` is the model's published input-token premium, read at runtime
+from the offerable-models catalogue and **already applied** to
+`inputTokensLow`/`High`. It is **1.329** for `claude-sonnet-5`,
+`claude-opus-5` and `claude-opus-4-8`, and **1** for every other shipped model
+— note that `claude-opus-4-5` is **not** in the premium set, so "the Opus tier"
+is the wrong way to describe it. An OpenRouter catalogue entry may carry its
+own factor (`defineOfferableModel` requires `>= 1`); a configured model that is
+not in `listOfferableModels(provider)` degrades to `1` rather than throwing.
+
+> The same wrong model list appears in a code comment in
+> `src/brain/compile-estimate.js`. Correcting it needs a code change.
 
 **Errors**
 
 | Status | Condition |
 |---|---|
-| `400` | Missing `domain`; missing `conversationId`; `conversationId` is not a UUID; unknown domain. |
-| `500` | The estimate could not be produced. The frontend still shows its confirm dialog in this case, saying the cost is unknown — a broken read route must neither silently spend nor disable a working feature. |
+| `400` | Missing `domain`; missing `conversationId`; `conversationId` is not a UUID; unknown domain. Validated in that order, deliberately identical to `POST /conversation`'s. |
+| `500` | `{ "error": "Failed to estimate compile cost." }` — a fixed string; the underlying error goes to `console.error` only. The frontend still shows its confirm dialog in this case, saying the cost is unknown — a broken read route must neither silently spend nor disable a working feature. |
 
 ---
 
@@ -716,7 +748,9 @@ already applied to `inputTokensLow`/`High`.
 
 **Spends money.** Streams Server-Sent Events (same primitive as
 `POST /api/ingest`). The `/next` frontend reaches this only after
-`GET /estimate` and a confirm dialog naming the cost.
+`GET /estimate` and a confirm dialog naming the cost. **That gate is in the
+client, not the server** — the frozen legacy frontend at `/old` still POSTs
+here directly with no estimate and no confirm.
 
 **Request body**
 
@@ -728,9 +762,8 @@ already applied to `inputTokensLow`/`High`.
 
 | `type` | Payload |
 |---|---|
-| `progress` | `{ pct, message }` |
-| `wait` | `{ pct, message }` — emitted during slow LLM waits |
-| `done` | `{ title, pagesWritten, changes, warnings }` |
+| `progress` | `{ pct, message }` — the **only** progress-shaped event this route emits |
+| `done` | `{ title, pagesWritten, changes, warnings }` — `warnings` is always an array, never absent |
 | `refused` | `{ reason }` — a **normal** outcome (too short, already compiled), not an error |
 | `error` | `{ message }` |
 
@@ -738,15 +771,29 @@ already applied to `inputTokensLow`/`High`.
 degrade — the compile succeeded, but with fewer pages than a full extraction
 would have written.
 
+> **There is no `wait` event on this stream.** `wait` is an **ingest**-stream
+> event (`src/brain/ingest.js` passes a third `'wait'` argument to its progress
+> callback); the compile path's callback takes `{ pct, message }` only. Both
+> frontends handle `wait` defensively, which is why the mistaken row survived
+> in this document until v3.27.0's doc sweep. The route's own docblock in
+> `src/routes/compile.js` still carries the same error and needs a code change
+> to agree with this page.
+
 **Errors** (plain JSON, before the SSE headers are sent)
 
 | Status | Condition |
 |---|---|
 | `400` | Missing `domain`/`conversationId`; non-UUID `conversationId`; unknown domain; the domain is a read-only Shared Brain mirror. |
-| `409` | An app update is in progress. |
+| `409` | An app update is in progress. `conflictResponse('compile a conversation')` — `{ error, conflict: "write_in_progress", active: [{domain, count, ops[]}], updateInProgress: true }`. |
 
-A file-lock failure arrives as an in-stream `error` event rather than an HTTP
-status, because the SSE headers have already been flushed by that point.
+**The `409` fires on `isUpdateInProgress()` only, not on active writes** —
+unlike `POST /api/config/update`, which 409s on `hasActiveWrites()`. Ordinary
+write contention on this route surfaces as an in-stream `error` event instead:
+
+> `Another process is already writing to "<domain>" (file lock held). If this seems stuck, manually delete <domains>/<domain>/.write-lock and retry.`
+
+A file-lock failure arrives that way rather than as an HTTP status because the
+SSE headers have already been flushed by that point.
 
 ---
 
@@ -1393,8 +1440,8 @@ Which version is running, which is on disk, and what this install is allowed to 
 
 ```json
 {
-  "version": "3.25.0",
-  "onDiskVersion": "3.25.0",
+  "version": "3.27.0",
+  "onDiskVersion": "3.27.0",
   "restartRequired": false,
   "installMode": "repo",
   "installModeLabel": "Source install (git checkout)",
@@ -1437,10 +1484,31 @@ Deliberately a **read** route, and deliberately **not** behind `guardConcurrent`
 | Field | Meaning |
 |---|---|
 | `safeToQuit` | `!activeWrites && !updateInProgress`. An update in flight is mid `git reset --hard` + `npm install`, which is at least as bad to interrupt as an ingest. |
-| `operations` | Capped at 50 entries, each an explicit `{domain, count, ops}` allow-list — never a spread of registry internals. |
-| `operationsTotal` | The **true** total, reported alongside the capped array so a cap is never mistaken for a measurement. |
+| `operations` | Capped at `MAX_LISTED_OPERATIONS` (**50**) entries, each an explicit `{domain, count, ops}` allow-list — never a spread of registry internals. `domain` is a string (`''` if the registry held a non-string), `count` a number (`0` if non-finite), `ops` an array of strings. Every string is capped at `MAX_WIRE_STRING` (2000 chars). |
+| `operationsTotal` | The **true** total, measured **before** the 50-cap is applied, so a cap is never mistaken for a measurement. |
 
-If the registry itself throws, the endpoint answers `200` with `{ "ok": false, "safeToQuit": null, "error": "…" }` rather than a 500 — a quit handler that cannot get an answer should be told so explicitly, not handed an exception it will read as "busy".
+> **A second, inner cap has no true total beside it.** Each entry's `ops` array
+> is sliced to **20**. Unlike `operations`, nothing reports how many were
+> dropped, so `operationsTotal`'s guarantee does not extend to it. Stated
+> because assuming otherwise is the easy mistake.
+
+`ops` values come from a fixed internal vocabulary — enumerable from the
+`registerWrite` call sites, currently `ingest`, `batch-ingest`, `compile`,
+`health-fix`, `health-fix-all`, `health-fix-all-safe`, `broken-links-apply`,
+`orphan-rescue-apply`, `semantic-dupes-merge-batch`, `sharedbrain-push`,
+`sharedbrain-pull`, `sharedbrain-synthesize`, `sharedbrain-revoke`, plus the
+default `write`. Shared Brain synthesis and revoke register against a
+`shared-<slug>` domain.
+
+If the registry itself throws, the endpoint answers `200` with **exactly three
+keys** — `{ "ok": false, "safeToQuit": null, "error": "…" }`, no
+`activeWrites`, `updateInProgress`, `operations` or `operationsTotal` — rather
+than a 500. A quit handler that cannot get an answer should be told so
+explicitly, not handed an exception it will read as "busy".
+
+Only `GET` is exposed. **Nothing in repo mode consumes this endpoint yet**: it
+exists for the packaged build's `before-quit` handler, which is the reason it
+was built one release ahead of its caller.
 
 ---
 
@@ -2916,8 +2984,8 @@ Compare the local version and commit against `main` on GitHub. Network read only
 
 ```json
 {
-  "current": "3.25.0",
-  "latest": "3.26.0",
+  "current": "3.27.0",
+  "latest": "3.28.0",
   "localCommit": "a1b2c3d",
   "remoteCommit": "e4f5a6b",
   "updateAvailable": true,
@@ -2973,6 +3041,9 @@ apart would report the second as the first.
 }
 ```
 
+**Error response** `500` — `{ "error": "…" }`. Reachable on the common failure
+(`Could not reach GitHub`) and on an unparseable local `package.json`.
+
 ---
 
 ## POST /api/config/update
@@ -3004,11 +3075,44 @@ Steps 2–7 are unchanged from every prior version; step 1 is the one addition.
 ```
 
 `partial: true` plus a `warning` means git succeeded and `npm install` did not — restart anyway.
+It fires **only** for the `npm: command not found` / `npm: not found` case; every other `npm`
+failure throws into the `500` arm.
+
+```json
+{
+  "ok": true, "restarting": true, "partial": true,
+  "from": "a1b2c3d", "to": "e4f5a6b",
+  "warning": "Files updated a1b2c3d → e4f5a6b. npm couldn't be found under the running app's PATH — …"
+}
+```
 
 **Refusal response** `501 Not Implemented` (a build that cannot self-update via git). **Zero
 subprocesses run**: every step above is impossible or actively destructive in a signed bundle, and
 `scripts/build-app.sh` ends in an ad-hoc `codesign --force --deep --sign -` that would destroy a
 Developer ID signature.
+
+```json
+{
+  "error": "Cannot update the app in this build of The Curator (Packaged app). This install does not have the \"canSelfUpdateViaGit\" capability.",
+  "refused": "capability_unavailable",
+  "capability": "canSelfUpdateViaGit",
+  "installMode": "bundle",
+  "hint": "Packaged builds are replaced by the installer, not by pulling this checkout."
+}
+```
+
+Note the two differences from `GET /update-check`'s 501: this body carries **no
+`updateAvailable` field**, and the `hint` string is different. Note also the
+**order**: the capability check runs **before** the `409` write-registry check,
+so a packaged build answers `501` even while a write is in flight — *this build
+cannot do that at all* beats *not right now*.
+
+**Other error responses**
+
+| Status | Body |
+|---|---|
+| `409` | `conflictResponse('update the app')` — fires on `hasActiveWrites()` (unlike `POST /api/compile/conversation`, which 409s only on an update in progress). |
+| `500` | `{ error, from, to }` — `from`/`to` are the short SHAs, **or `null`** depending on how far the sequence got. `error` may be a classified, actionable `npm` message rather than the raw one, or the git-missing message from step 1. |
 
 ---
 

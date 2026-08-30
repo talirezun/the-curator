@@ -99,7 +99,7 @@ The most common causes:
 | Log message | Cause | Fix |
 |-------------|-------|-----|
 | `nohup: node: No such file or directory` | Node.js path changed (e.g. after an upgrade or nvm switch) | Rebuild the app: `bash scripts/build-app.sh` |
-| `Error: No LLM API key found` | No API key configured | Open `http://localhost:3333` manually — the onboarding wizard will prompt for your key |
+| `Error: No LLM API key found` | No API key configured | Open `http://localhost:3333` manually and paste a key into **Settings → API Keys**. The first-run panel points you there; it is dismissible and never blocks the app |
 | `EADDRINUSE: address already in use :::3333` | Another process is using port 3333 | Run `lsof -ti :3333 \| xargs kill -9` then try again |
 
 **The Dock icon bounces but nothing happens**

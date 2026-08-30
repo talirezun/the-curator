@@ -227,6 +227,26 @@ Your Personal Access Token is wrong, expired, or doesn't have the right permissi
 - If the token has expired, create a new one and update it in `.sync-config.json` (open the file in any text editor and replace the `token` value). Fine-grained tokens are managed at [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens); classic tokens at [github.com/settings/tokens](https://github.com/settings/tokens).
 - A **classic token set to "No expiration"** will never expire — use this option if you want to avoid re-doing this step.
 
+### "Git is not available to The Curator, so syncing cannot run"
+
+Personal Sync drives the real `git` command, so it needs git on the machine
+**and** on the PATH the app was launched with. The message tells you what to do:
+
+- **macOS** — open Terminal and run `xcode-select --install`, then try again.
+- **Git installed somewhere unusual?** Launch The Curator from a terminal
+  (`npm start`) instead of the Dock icon, so it picks up your shell's PATH.
+
+The same missing `git` also stops **Settings → Check for updates**, where it says
+*"Git is not available to The Curator, so it cannot update itself…"* — a separate
+sentence for a separate action, with the same remedy. Seeing one and then the
+other is expected, not a second fault.
+
+> **If you're on a version older than v3.26.0, this same fault reported itself
+> as "Repository not found. Check the URL — it must be a private repo you own."**
+> That was a confidently wrong diagnosis: the URL was fine, git was missing. If
+> you have been chasing a repository URL that you are sure is correct, update
+> the app and try again — you will get the message above instead.
+
 ### "404 Not Found" or "repository not found"
 
 The repository URL is wrong, or the repository doesn't exist yet.
@@ -291,9 +311,25 @@ Someone pushed new changes to GitHub (from another computer) that you haven't pu
 
 (If you previously used *Push only* and got this error, that's why. **Sync now** handles both directions and avoids the problem entirely.)
 
-### Merge conflict
+### "Another sync check was running at the same time, so this one stopped early"
 
-If two computers edited the same wiki page in incompatible ways, git cannot automatically merge them. You'll see an error message mentioning "conflict".
+Two things reached git at once. **Nothing was changed** — wait a moment and click Sync again.
+
+The Curator serialises its *own* fetches, so this is normally another **process** on the same machine: the MCP server your AI client spawned, or a second copy of the app. It is a normal outcome, not damage.
+
+### "Pull found local files that would be overwritten by incoming changes"
+
+Stop and read this one. It means a file that exists on your disk but is **not tracked by sync** would be destroyed by the incoming version, and at least one of them does not look like a routine sync file — so The Curator refused the pull rather than guessing.
+
+- Nothing has been changed yet.
+- **Back up your domains folder** (copy it somewhere safe) before doing anything else.
+- Then ask for help. This needs a look at which files are involved, and there is no safe one-click answer.
+
+Note this message never uses the word *conflict* — it is a different fault from the one below, and searching for "conflict" will not find it.
+
+### Merge conflict — "Pull hit a real content conflict that couldn't be resolved automatically"
+
+If two computers edited the same wiki page in incompatible ways, git cannot automatically merge them. The app's message is the sentence in the heading; the same advice applies — back up your domains folder first.
 
 This is uncommon but can happen. To fix it:
 1. Open a terminal in your project folder
