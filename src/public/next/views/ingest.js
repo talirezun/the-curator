@@ -195,6 +195,20 @@ function freshState() {
     // not the selected one. See renderSidebar's live-marker block, and
     // adoptDestination for why one record being invisible was the whole bug.
     runningDomains: [],
+
+    // Every SETTLED record the server still remembers, newest-finished first,
+    // stored RAW — NOT filtered by this viewer's acknowledgements.
+    //
+    // THE ACK IS APPLIED AT READ TIME, DELIBERATELY, and that is the whole
+    // reason this holds the raw set. `dismissSettledElsewhere` and
+    // `dismissRemoteOutcome` both write the ack to localStorage and re-render
+    // immediately; if the ack had been applied HERE, at fetch time, a dismissal
+    // would not take effect until the next poll landed — up to 15 seconds of a
+    // notice the user has already told us to remove. `pendingRemoteOutcome`
+    // already reads `isActivityAcked` at call time for exactly this reason;
+    // these two surfaces follow it rather than inventing a second convention.
+    settledActivity: [],
+
     // Whether this mount still owes its one-and-only destination adoption.
     // Lives on `state` — NOT at module scope like `refreshingDomainStats` —
     // precisely because onEnter replaces `state` wholesale, and "has anyone
@@ -539,7 +553,28 @@ function activitySignature() {
   // poll and never painted. That is the dead-data shape this whole feature
   // exists to remove, reintroduced one level up inside its own fix.
   const running = (state.runningDomains || []).join(',');
-  if (!r) return 'none|' + running;
+  // THE SETTLED SET IS FOLDED IN THE SAME WAY, AND FOR THE SAME REASON.
+  // It is the exact trap above, one release later: the FINISHED case the
+  // maintainer reported — selected `articles`, a settled record on `posts` —
+  // also takes the `!r` fast path, so a settled set appended only to the array
+  // below would be recomputed on every poll and never painted. Both new
+  // surfaces would silently never appear, which is the defect they exist to
+  // remove. Computed here rather than inside the branch so both arms provably
+  // read the SAME value.
+  //
+  // The ACK-FILTERED set is what goes in, because acknowledgement is what the
+  // surfaces are gated on: dismissing a record must repaint. Status rides
+  // along because it picks the WORD on the row (Ingested vs Failed), and the
+  // id because it is what changes when one record replaces another.
+  //
+  // Deliberately NOT filtered to "elsewhere": that subset depends on
+  // `state.domain`, and a selection change already repaints directly through
+  // `selectDomain`. Keeping this selection-INDEPENDENT means the stored
+  // signature cannot go stale the moment the destination moves.
+  const settled = unackedSettledRecords()
+    .map((s) => s.domain + ':' + s.status + ':' + s.id)
+    .join(',');
+  if (!r) return 'none|' + running + '|' + settled;
   return JSON.stringify([
     r.id, r.status, r.pct, r.message, r.waiting, r.phaseStartedAt,
     r.filename, r.error,
@@ -554,7 +589,101 @@ function activitySignature() {
     // recorded failure verbatim: "a no-op guard that cannot see a pane is not
     // a guard for that pane."
     running,
+    // Same argument, for the settled surfaces. Without this a poll that
+    // discovered a run had FINISHED on another domain would leave the sidebar
+    // unmarked and the main-pane line unpainted.
+    settled,
   ]);
+}
+
+/**
+ * Every SETTLED record the server still remembers, newest-FINISHED first.
+ *
+ * ── THE HALF OF THE REPORT THE RUNNING FIX DID NOT COVER ────────────────
+ * The maintainer opened with "the process ended, but there's basically no way
+ * I can know if this article was ingested or not." v3.24.1's `adoptDestination`
+ * answers the RUNNING case — come back mid-ingest and the view adopts that
+ * domain — and its own commit message records the rest as unfixed: a run that
+ * FINISHES while you are elsewhere still surfaces nothing, because
+ * `pendingRemoteOutcome` is keyed on `state.remote`, which holds the SELECTED
+ * domain's record only. Ingest into `posts`, walk away, come back on
+ * `articles`: nothing is running so no marker, and no outcome panel. On Flash
+ * Lite an ingest can finish in ~9 s, so this is the COMMON path.
+ *
+ * ── WHY `finishedAt`, NOT `startedAt` ───────────────────────────────────
+ * `src/brain/ingest-activity.js` stamps `finishedAt` when a record settles and
+ * puts it on the wire through `wireNum` (so it is a finite number or null,
+ * exactly like `startedAt`). It is the honest key for this question: the user
+ * is asking WHICH ONE FINISHED, and a long run started first can finish last.
+ * It is also fixed for the life of the record, so re-evaluating on every poll
+ * cannot make the ordering ping-pong — the same stability argument
+ * `pickAdoptableDestination` makes for `startedAt`.
+ *
+ * Ties break on domain ASCENDING so the order is TOTAL and the answer is
+ * deterministic rather than dependent on the server's Map iteration order. A
+ * record with no `finishedAt` sorts LAST rather than poisoning the comparator
+ * with NaN — a record we cannot date must not outrank one we can. Both rules
+ * are lifted verbatim from `pickAdoptableDestination`, deliberately: two
+ * orderings over the same activity list that disagree would be a bug waiting
+ * to be discovered by a user rather than by a test.
+ *
+ * `id` is carried because it is what the acknowledgement store is keyed on —
+ * without it neither surface could be dismissed, and the ack is the ONLY thing
+ * that clears them.
+ */
+function settledActivityRecords(activity) {
+  const at = (r) => (Number.isFinite(r.finishedAt) ? r.finishedAt : -Infinity);
+  return (activity || [])
+    .filter((a) => a && (a.status === 'done' || a.status === 'error')
+      && typeof a.domain === 'string' && a.domain
+      && typeof a.id === 'string' && a.id)
+    .map((a) => ({
+      id: a.id,
+      domain: a.domain,
+      status: a.status,
+      finishedAt: Number.isFinite(a.finishedAt) ? a.finishedAt : null,
+      filename: typeof a.filename === 'string' ? a.filename : null,
+    }))
+    .sort((a, b) => {
+      if (at(b) !== at(a)) return at(b) - at(a);                       // newest finished first
+      return a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0;   // total order
+    });
+}
+
+/**
+ * The settled records THIS VIEWER has not dismissed.
+ *
+ * Reads `isActivityAcked` at CALL time, so a dismissal takes effect on the very
+ * next render rather than on the next poll. Both new surfaces derive from this
+ * one function, which is what makes the single existing acknowledgement clear
+ * BOTH of them — there is deliberately no second dismissal store.
+ */
+function unackedSettledRecords() {
+  return (state.settledActivity || []).filter((r) => !isActivityAcked(r.id));
+}
+
+/**
+ * The unacknowledged settled records for domains that are NOT the selected one.
+ *
+ * Two filters, each load-bearing for a different reason.
+ *
+ * NOT THE SELECTED DOMAIN — because that case is already served, completely and
+ * better, by `renderRemoteOutcome`: select the domain and the full panel appears
+ * with the page list, the warnings and the token usage. A line saying "an ingest
+ * finished here" directly above that panel would be the same instrument twice,
+ * which is the shape v3.20.0 records deleting from Domains.
+ *
+ * IN `state.domains` — because the ONLY action this line offers is "select that
+ * domain", and `selectDomain` on a slug the sidebar cannot draw would move the
+ * form to a destination with no row and no stats. The running marker gets this
+ * intersection for free at render time (a `Set.has` per row); the line has to
+ * ask for it explicitly, so it does.
+ */
+function settledElsewhere() {
+  const listed = new Set((state.domains || []).map((d) => d && d.slug));
+  return unackedSettledRecords().filter(
+    (r) => listed.has(r.domain) && r.domain !== state.domain
+  );
 }
 
 /**
@@ -722,6 +851,13 @@ async function refreshActivity(token) {
     // finishing clears its marker on the next poll.
     state.runningDomains = runningActivityDomains(got.activity);
 
+    // Every settled record, RAW — the acknowledgement filter is applied at read
+    // time (see settledActivity in freshState) so a dismissal repaints at once
+    // instead of waiting for the next poll. Recomputed on every fetch, so a
+    // record ageing out of the server's 30-minute TTL clears both of its
+    // surfaces without any client-side expiry logic.
+    state.settledActivity = settledActivityRecords(got.activity);
+
     const rec = state.domain
       ? got.activity.find((a) => a && a.domain === state.domain) || null
       : null;
@@ -843,6 +979,30 @@ function scheduleActivityPoll(token) {
  */
 function dismissRemoteOutcome(token) {
   if (state.remote) ackActivityId(state.remote.id);
+  renderedActivitySignature = activitySignature();
+  render(token);
+}
+
+/**
+ * Dismiss ONE settled record named by the main-pane line.
+ *
+ * Writes the SAME per-viewer acknowledgement `dismissRemoteOutcome` writes, so
+ * the sidebar marker for that domain clears in the same render — there is one
+ * dismissal store, not two that could disagree.
+ *
+ * Dismisses only the record it names. Clearing every settled record at once
+ * would silence outcomes the user was never actually shown — the line names
+ * one, so it may only speak for one. Where more remain, the count in the line
+ * has already said so and the next takes its place on this very re-render.
+ *
+ * `renderedActivitySignature` is refreshed BEFORE `render` for the reason
+ * `dismissRemoteOutcome` does the same: the signature is what the next poll
+ * compares against, and leaving it stale would make that poll believe the
+ * screen still needs the repaint it just did.
+ */
+function dismissSettledElsewhere(id, token) {
+  if (!id) return;
+  ackActivityId(id);
   renderedActivitySignature = activitySignature();
   render(token);
 }
@@ -1056,6 +1216,13 @@ function selectDomain(slug) {
   // is mis-attributed by a domain switch — it would render under the new
   // domain's name — whereas each marker in runningDomains names its own row
   // and stays true. Clearing it would blink every marker off on each click.
+  //
+  // `state.settledActivity` is NOT cleared for exactly the same reason, and
+  // the case is even clearer: every record in it carries its own `domain`, so
+  // nothing in it can be mis-attributed by a selection change. Clearing it
+  // would blank the sidebar's settled markers AND the main-pane line on every
+  // click, and the line would then reappear a poll later — a flicker in the
+  // one surface whose entire job is telling the user something happened.
   stopRemoteElapsedTimer();
   refreshActivity(myMountToken).catch(() => {});
   if (state.queueModeActive && !state.queueJob) {
@@ -1167,9 +1334,53 @@ function renderSidebar(token) {
   // count that lived on an empty span was unreachable by hover, keyboard AND
   // screen reader — is the reason that is not left to styling.
   const running = new Set(state.runningDomains || []);
+  // ── THE SETTLED MARKER — the same idea, one state along ────────────────
+  // A run that FINISHED while you were on another view surfaced nothing at
+  // all: nothing is running, so no live marker, and `pendingRemoteOutcome` is
+  // keyed on the SELECTED domain, so no outcome panel either. That is the
+  // sentence the maintainer opened with — "the process ended, but there's
+  // basically no way I can know if this article was ingested or not."
+  //
+  // ALL unacknowledged settled records are marked, not just the one the
+  // main-pane line names. That is what stops this fix recreating the very
+  // invisibility it removes: the line can only point at one domain, so if the
+  // sidebar showed only that one, a second finished run would be exactly as
+  // unfindable as before. Here the set is complete and dismissing one promotes
+  // the next into the line.
+  //
+  // DONE AND FAILED ARE DIFFERENT WORDS, and that is not decoration. The
+  // question being answered is literally "was this ingested or not", so a run
+  // that FAILED must not be reported with the word a successful one uses. One
+  // shared neutral label would make the marker answer a different question
+  // from the one asked.
+  //
+  // Clicking the row selects that domain, at which point the EXISTING
+  // `renderRemoteOutcome` panel renders the full result — page list, warnings,
+  // token usage, Dismiss. No second outcome panel is built: this marker is a
+  // POINTER to the one that already exists.
+  //
+  // Marked on the ACTIVE row too, for the reason the live marker records
+  // directly above: a marker that vanished the instant you clicked would read
+  // as the thing having gone away. Here the outcome panel appears in the same
+  // beat, so the row and the panel agree until the user dismisses, which
+  // clears both at once.
+  //
+  // TEXT, not a dot, so it reaches the row's accessible name — same v3.23.0
+  // finding as above.
+  const settledByDomain = new Map();
+  for (const rec of unackedSettledRecords()) {
+    // Newest-finished first (settledActivityRecords sorts), so the FIRST record
+    // seen for a domain is the one to describe; a later, older one must not
+    // overwrite it.
+    if (!settledByDomain.has(rec.domain)) settledByDomain.set(rec.domain, rec);
+  }
   const rows = state.domains.map((d) => {
     const isActive = d.slug === state.domain;
     const isRunning = running.has(d.slug);
+    // A domain that is running again is described as RUNNING, not as settled.
+    // The live state is the more urgent truth and the newer one, and showing
+    // both words on one row would make it say two things at once.
+    const settledRec = isRunning ? null : settledByDomain.get(d.slug) || null;
     return (
       '<button type="button" class="ing-dest-row' + (isActive ? ' active' : '') + '"' +
         ' data-dest-slug="' + escapeHtml(d.slug) + '"' +
@@ -1180,6 +1391,11 @@ function renderSidebar(token) {
           '<span class="ing-dest-meta mono">' + escapeHtml(formatDestinationMeta(d)) + '</span>' +
         '</span>' +
         (isRunning ? '<span class="ing-dest-live">Ingesting</span>' : '') +
+        (settledRec
+          ? '<span class="ing-dest-settled' + (settledRec.status === 'error' ? ' failed' : '') + '">' +
+              (settledRec.status === 'error' ? 'Failed' : 'Ingested') +
+            '</span>'
+          : '') +
         (isActive ? '<span class="ing-dest-mark" aria-hidden="true">' + icon('check', 13) + '</span>' : '') +
       '</button>'
     );
@@ -1266,8 +1482,16 @@ function renderMain(token) {
   // scripts/test-next-ingest-view.js asserts. Leaving the pair here would have
   // been an unread computation over the very constant whose single-source-of-
   // truth the deleted comment was about.
+  // ABOVE `body`, and OUTSIDE the branch that produced it — deliberately.
+  // `body` is one of five things (loader, domains error, empty state, queue,
+  // form), and a run finishing elsewhere is equally true in all of them. Put
+  // inside renderIngestForm it would vanish the moment the user entered batch
+  // mode, which is precisely a moment they are likely to be mid-workflow and
+  // away from where the last file landed. It self-suppresses when there is
+  // nothing to say, so the loading and error frames are unaffected.
   setMain(
     renderViewHeader({ eyebrow: 'the way material gets in', title: 'Ingest' }) +
+    renderSettledElsewhere() +
     body,
     token
   );
@@ -1643,12 +1867,96 @@ function renderRemoteProgress() {
 }
 
 /**
+ * One line saying an ingest finished somewhere ELSE, with a control that takes
+ * you there.
+ *
+ * ── WHY A LINE AND NOT ONLY A MARKER ────────────────────────────────────
+ * The sidebar marker (see renderSidebar) is AMBIENT — it is true, it is
+ * complete, and it is entirely dependent on the user happening to look left.
+ * The complaint being answered is that NOTHING TOLD HIM. A marker he may not
+ * look at is an improvement on silence; it is not an answer to it. This line
+ * sits in the pane he is already reading, in the same column as the form he
+ * just used, and names the domain in words.
+ *
+ * ── WHY THIS DOES NOT ADOPT THE DOMAIN ──────────────────────────────────
+ * The obvious move — do what `adoptDestination` does, but for settled records
+ * — was considered and REJECTED, and the reasoning is worth keeping because it
+ * is not obvious. A terminal record lives for `TERMINAL_TTL_MS` (30 minutes,
+ * `src/brain/ingest-activity.js`). Adoption fires once per mount, so within
+ * that half hour EVERY visit to Ingest would yank the destination onto a run
+ * that has already finished — including the visit where the user came to
+ * ingest something else, into the domain the picker is already showing. The
+ * running case does not have that problem: a running record means work is
+ * happening NOW, and it ends when the work ends.
+ *
+ * So this OFFERS the move instead of making it. One click, the user's choice,
+ * and `selectDomain` then does what it always does.
+ *
+ * ── CHOOSING AMONG SEVERAL, AND WHY NOTHING BECOMES UNREACHABLE ─────────
+ * The maintainer genuinely ran two concurrent ingests, so "the finished one" is
+ * under-specified. The line names the record with the LATEST `finishedAt`
+ * (ties on domain ascending — see settledActivityRecords for why that ordering
+ * is total and stable), and states how many others there are.
+ *
+ * That is safe ONLY because the sidebar marks every one of them. The line is a
+ * rotating pointer over a set that is fully enumerated elsewhere: dismiss the
+ * named one and the next takes its place, select it and its own panel opens.
+ * A line that named one record while the others were invisible would be this
+ * defect with a smaller blast radius, not a fix for it.
+ *
+ * ── DISMISSAL ──────────────────────────────────────────────────────────
+ * The same per-viewer acknowledgement the outcome panel writes
+ * (`ackActivityId`) — ONE store, so dismissing here also clears the sidebar
+ * marker, and dismissing in the panel also clears this line. There is
+ * deliberately no second dismissal state to keep in step.
+ *
+ * Dismiss is offered rather than forcing a visit, because the alternative is a
+ * notice that can only be silenced by navigating somewhere the user may not
+ * care about — a notice you cannot put down is the opposite failure to the one
+ * being fixed.
+ */
+function renderSettledElsewhere() {
+  const pending = settledElsewhere();
+  if (!pending.length) return '';
+  const top = pending[0];
+  const others = pending.length - 1;
+  const failed = top.status === 'error';
+
+  const label = state.domains.find((d) => d && d.slug === top.domain);
+  const shown = (label && label.displayName) || top.domain;
+
+  return (
+    '<div class="ing-settled-elsewhere' + (failed ? ' failed' : '') + '" role="status">' +
+      '<span class="ing-settled-elsewhere-text">' +
+        (failed ? 'An ingest failed in ' : 'An ingest finished in ') +
+        '<strong>' + escapeHtml(shown) + '</strong>' +
+        (top.filename ? ' · <span class="mono">' + escapeHtml(top.filename) + '</span>' : '') +
+        (others > 0
+          ? ' <span class="ing-settled-elsewhere-more">and ' + others +
+            ' more ' + (others === 1 ? 'domain' : 'domains') + '</span>'
+          : '') +
+      '</span>' +
+      '<span class="ing-settled-elsewhere-actions">' +
+        '<button type="button" class="btn btn-secondary btn-xs" data-settled-show="' +
+          escapeHtml(top.domain) + '">Show me</button>' +
+        '<button type="button" class="btn btn-ghost btn-xs" data-settled-dismiss="' +
+          escapeHtml(top.id) + '">Dismiss</button>' +
+      '</span>' +
+    '</div>'
+  );
+}
+
+/**
  * The RESTORED outcome: an ingest that finished while nobody was watching.
  *
  * This is the half of the report that had nothing at all — "the process ended,
  * but there's basically no way I can know if this article was ingested or not."
  * Dismiss is per-viewer and client-side (see ackActivityId), so a second tab
  * still gets told.
+ *
+ * Covers the SELECTED domain only, deliberately — `renderSettledElsewhere`
+ * handles every other domain by pointing back at this panel rather than
+ * duplicating it.
  */
 function renderRemoteOutcome() {
   const r = pendingRemoteOutcome();
@@ -2049,6 +2357,26 @@ function wireListeners() {
 
   const remoteDismiss = document.getElementById('ing-remote-dismiss');
   if (remoteDismiss) remoteDismiss.addEventListener('click', () => dismissRemoteOutcome(myMountToken));
+
+  // The main-pane settled line. "Show me" goes through `selectDomain` — the
+  // SAME writer the sidebar rows use, and one of §2's allow-listed writers of
+  // `state.domain`. It is deliberately not a new adoption path: this is the
+  // user making a choice, so it must look exactly like every other choice,
+  // including forfeiting the mount's pending adoption.
+  const settledShow = document.querySelector('[data-settled-show]');
+  if (settledShow) {
+    settledShow.addEventListener('click', () => {
+      selectDomain(settledShow.dataset.settledShow);
+      // Same revalidation the destination rows fire, for the same reason: the
+      // user is about to look at that domain's page count and last write.
+      refreshDomainStats(myMountToken).catch(() => {});
+    });
+  }
+  const settledDismiss = document.querySelector('[data-settled-dismiss]');
+  if (settledDismiss) {
+    settledDismiss.addEventListener('click', () =>
+      dismissSettledElsewhere(settledDismiss.dataset.settledDismiss, myMountToken));
+  }
 
   wireQueueListeners();
 }

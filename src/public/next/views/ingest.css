@@ -256,6 +256,36 @@
   white-space: nowrap;
 }
 
+/* The SETTLED marker — a run that finished while you were elsewhere.
+
+   Same construction as .ing-dest-live directly above, and that is deliberate:
+   tone lives in the BORDER and the TINT, the label is --text. v3.20.0 measured
+   .model-badge-flag painting --success-text as TEXT on --success-tint at
+   3.59:1 in light, under the 4.5 AA floor, so a coloured word here would fail
+   for exactly the reason the amber one already does. Following the sibling
+   also means the sidebar carries one visual grammar for "this row has
+   something to say" rather than two.
+
+   Two tones, because there are two facts. --success for a completed ingest,
+   --danger for a failed one. The question the user asked is literally "was
+   this ingested or not", so reporting a failure in the colour and word of a
+   success would answer a different question from the one they asked. */
+.ing-dest-settled {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--success-text);
+  background: var(--success-tint);
+  color: var(--text);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: nowrap;
+}
+.ing-dest-settled.failed {
+  border-color: var(--danger-text);
+  background: var(--danger-tint);
+}
+
 .ing-sidebar-pick-btn { width: 100%; margin: 10px 0 4px; justify-content: center; }
 .ing-file-name {
   display: block;
@@ -780,3 +810,54 @@
    this file set the estimate group's gap; the component's own value is fine
    and the override was this view re-describing a decision the system had
    already made. Deleted, then re-checked in a real browser. */
+
+/* ── The main-pane settled line ────────────────────────────────────────────
+   "An ingest finished in Posts", with a control that goes there.
+
+   Sits between the view header and the body, so it survives every body branch
+   (loader / domains-error / empty / queue / form) rather than living inside
+   the single-file form where entering batch mode would hide it.
+
+   TONE IN BORDER AND TINT, LABEL AT --text — the same rule as the two sidebar
+   markers, and for the same measured reason (v3.20.0: --success-text as TEXT
+   on --success-tint is 3.59:1 in light, under the 4.5 AA floor). Nothing here
+   states a cost or an irreversible action, so it is a report rather than a
+   warning; it still earns full-contrast text because it is the one thing on
+   screen answering "did my ingest finish".
+
+   The 1px border carries no information on its own — the sentence does — so it
+   is held to the 3:1 UI-component floor rather than being the sole signal.
+   Measured composited against the real backdrop; see the release notes. */
+.ing-settled-elsewhere {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--success-text);
+  background: var(--success-tint);
+  border-radius: var(--radius-md);
+}
+.ing-settled-elsewhere.failed {
+  border-color: var(--danger-text);
+  background: var(--danger-tint);
+}
+.ing-settled-elsewhere-text {
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* --text-2, not --text-3: v3.19.0 measured --text-3 at 4.38 dark / 4.00 light,
+   under the 4.5 AA floor, and this fragment states HOW MANY other domains are
+   waiting — a count the user acts on, not a passing hint. */
+.ing-settled-elsewhere-more { color: var(--text-2); }
+.ing-settled-elsewhere-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

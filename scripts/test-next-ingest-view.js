@@ -588,6 +588,82 @@ console.log('\n§ 12  The destination sidebar is not frozen at mount time');
 // scripts/test-ingest-activity.js) and this section pins the CLIENT half:
 // which of the two panes wins when both could paint, what a dismissal means,
 // and that the poll cannot outlive the mount.
+// -- THE SANDBOX DEPENDENCY GUARD ---------------------------------------
+// This suite lifts function bodies out by a HARDCODED NAME LIST and runs them
+// in a sandbox. That is the `FN_NAMES` blind spot this repo has now hit three
+// times (v3.11.0's loading-gate, v3.14.0's model picker, v3.24.0's markdown
+// renderer): when a lifted function grows a call to a helper the list does not
+// know about, the section dies with a raw `ReferenceError` -- a CRASH, not a
+// failing assertion. A crash names no expectation, aborts the run, leaves the
+// tally wrong, and reads as a broken harness rather than a gap in coverage.
+//
+// It happened again here: `activitySignature()` gained a call to
+// `unackedSettledRecords()` and 13 exploded with every later assertion unrun.
+// Fixing that in 13 alone was NOT enough -- mutation M13 then crashed 14
+// instead, because 14 builds its OWN sandbox over some of the same functions.
+// So the guard is SHARED and both callers use it: the class, not the instance.
+//
+// The scan is deliberately dumb -- an identifier followed by `(` -- and errs
+// toward false positives, the safe direction for a guard whose job is refusing
+// to run over an incomplete sandbox. Names declared INSIDE a body (several
+// define a local `const at = (r) => ...` comparator) resolve themselves,
+// collected per body so a helper local to one function is not silently
+// accepted as defined for another.
+//
+// Returns true when everything resolves. A false return MUST make the caller
+// skip its sandbox: naming the problem is not enough, the section has to stop.
+const SANDBOX_AMBIENT = new Set([
+  'JSON', 'Array', 'Number', 'String', 'Boolean', 'Object', 'Set', 'Map',
+  'Date', 'Math', 'isFinite', 'parseInt', 'parseFloat', 'if', 'for',
+  'while', 'switch', 'catch', 'return', 'typeof', 'function', 'filter',
+  'map', 'sort', 'join', 'includes', 'slice', 'some', 'every', 'find',
+  'push', 'has', 'get', 'set', 'stringify', 'parse', 'isArray',
+  'getItem', 'setItem', 'test', 'exec', 'replace', 'split', 'keys',
+  'values', 'entries', 'from', 'assign', 'freeze', 'hasOwn',
+]);
+function sandboxDepsResolved(bodies, sandboxedNames, provides, label) {
+  const stripComments = (t) => (t || '').split('\n')
+    .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+  const provided = new Set(provides);
+  const unresolved = new Set();
+  for (const n of sandboxedNames) {
+    const body = stripComments(bodies[n] || '');
+    const local = new Set();
+    const declRe = /(?:^|[^.\w$])(?:const|let|var|function)\s+([A-Za-z_$][\w$]*)/g;
+    let dm;
+    while ((dm = declRe.exec(body)) !== null) local.add(dm[1]);
+    const callRe = /(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+    let cm;
+    while ((cm = callRe.exec(body)) !== null) {
+      const id = cm[1];
+      if (provided.has(id) || SANDBOX_AMBIENT.has(id) || local.has(id)) continue;
+      unresolved.add(id + '() in ' + n + '()');
+    }
+  }
+  ok(unresolved.size === 0,
+    label + ' the sandbox supplies every function the lifted bodies CALL - a new ' +
+    'helper must fail here BY NAME, never as a ReferenceError mid-section ' +
+    (unresolved.size ? '(UNRESOLVED: ' + [...unresolved].join(', ') + ')' : '(all resolved)'));
+
+  // POSITIVE CONTROL - the scan can actually see a call it does not know, so a
+  // green above means "nothing unresolved", not "the scan found nothing".
+  const probeRe = /(?:^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+  const probeHits = [];
+  let pm;
+  while ((pm = probeRe.exec('function f(){ return someBrandNewHelper(1) + isActivityAcked(2); }')) !== null) {
+    probeHits.push(pm[1]);
+  }
+  ok(probeHits.includes('someBrandNewHelper'),
+    label + ' CONTROL - the call scan detects an unknown helper (so the assertion above is not vacuous)');
+
+  if (unresolved.size) {
+    console.log('\n\u274c ' + label + ' will not run its sandbox over an incomplete function ' +
+      'set - add the missing name(s) to the *_NEEDED list AND to the sandbox builder.');
+    return false;
+  }
+  return true;
+}
+
 console.log('\n§13  Server-backed activity — a run survives navigating away');
 {
   const code = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
@@ -598,6 +674,12 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
     'scheduleActivityPoll', 'stopActivityPoll', 'renderRemoteProgress',
     'renderRemoteOutcome', 'renderResultBodyHtml', 'dismissRemoteOutcome',
     'syncRemoteElapsedTimer', 'refreshActivity',
+    // v3.24.2 — the SETTLED surfaces. Added here rather than sandboxed
+    // separately because activitySignature() now calls unackedSettledRecords(),
+    // so omitting it does not weaken a test, it CRASHES the section (see the
+    // dependency guard below, which is what made that failure legible).
+    'settledActivityRecords', 'unackedSettledRecords', 'settledElsewhere',
+    'renderSettledElsewhere', 'dismissSettledElsewhere',
   ];
   const aBodies = {};
   let aFatal = false;
@@ -608,6 +690,12 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
     ok(wellFormed, '§13 POSITIVE CONTROL — extracted a WELL-FORMED body for ' + name + '()');
     if (!wellFormed) aFatal = true;
   }
+
+
+  const PROVIDES_13 = ['loadAckedActivityIds', 'isActivityAcked', 'ackActivityId',
+    'isRemoteIngestRunning', 'pendingRemoteOutcome', 'activitySignature',
+    'settledActivityRecords', 'unackedSettledRecords', 'settledElsewhere'];
+  if (!sandboxDepsResolved(aBodies, PROVIDES_13, PROVIDES_13, '§13a-pre')) aFatal = true;
 
   if (aFatal) {
     console.log('\n❌ §13 cannot check anything without its targets — failing loudly ' +
@@ -628,13 +716,16 @@ console.log('\n§13  Server-backed activity — a run survives navigating away')
         'return (() => {' +
         `const ACTIVITY_ACK_KEY = ${JSON.stringify(ACK_KEY)};` +
         `const ACTIVITY_ACK_MAX = ${ACK_MAX};` +
-        'let state = { submitting:false, progress:null, result:null, errorMessage:null, remote:null, remoteResultExpanded:false, domain:"articles", runningDomains:[] };' +
+        'let state = { submitting:false, progress:null, result:null, errorMessage:null, remote:null, remoteResultExpanded:false, domain:"articles", runningDomains:[], settledActivity:[], domains:[] };' +
         aBodies.loadAckedActivityIds + aBodies.isActivityAcked + aBodies.ackActivityId +
-        aBodies.isRemoteIngestRunning + aBodies.pendingRemoteOutcome + aBodies.activitySignature +
-        'return { get state(){return state;}, set state(v){state=v;}, loadAckedActivityIds, isActivityAcked, ackActivityId, isRemoteIngestRunning, pendingRemoteOutcome, activitySignature };' +
+        aBodies.isRemoteIngestRunning + aBodies.pendingRemoteOutcome +
+        aBodies.settledActivityRecords + aBodies.unackedSettledRecords + aBodies.settledElsewhere +
+        aBodies.activitySignature +
+        'return { get state(){return state;}, set state(v){state=v;}, loadAckedActivityIds, isActivityAcked, ackActivityId, isRemoteIngestRunning, pendingRemoteOutcome, activitySignature, settledActivityRecords, unackedSettledRecords, settledElsewhere };' +
         '})()';
       return new Function('window', src)({ localStorage: storageImpl });
     }
+
 
     function memStorage() {
       const m = new Map();
@@ -1072,6 +1163,10 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     'pickAdoptableDestination', 'adoptDestination', 'runningActivityDomains',
     'activitySignature', 'loadAckedActivityIds', 'isActivityAcked',
     'refreshActivity', 'selectDomain', 'renderSidebar',
+    // v3.24.2 — activitySignature() calls this, so §14's sandbox needs it for
+    // the same reason §13's does. Two sandboxes, one dependency: the second
+    // crash after fixing the first is exactly why the guard below counts.
+    'unackedSettledRecords', 'settledActivityRecords',
   ];
   const bBodies = {};
   let bFatal = false;
@@ -1082,6 +1177,19 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
     ok(wellFormed, '§14 POSITIVE CONTROL — extracted a WELL-FORMED body for ' + name + '()');
     if (!wellFormed) bFatal = true;
   }
+
+  // §14 builds its OWN sandbox over some of the same functions, so it carries
+  // the same hazard and gets the same guard. Mutation M13 proved that closing
+  // it in §13 alone was closing the INSTANCE, not the class: the crash simply
+  // moved here. Two sandboxes, one shared check.
+  //
+  // `refreshActivity` and `renderSidebar` are extracted for SOURCE SCANS in
+  // this section rather than executed inside makeSandbox14, so they are not in
+  // the provided/checked set — a scan does not need its callees to exist.
+  const B_SANDBOXED = ['loadAckedActivityIds', 'isActivityAcked',
+    'pickAdoptableDestination', 'adoptDestination', 'runningActivityDomains',
+    'settledActivityRecords', 'unackedSettledRecords', 'activitySignature'];
+  if (!sandboxDepsResolved(bBodies, B_SANDBOXED, B_SANDBOXED, '§14a-pre')) bFatal = true;
 
   if (bFatal) {
     console.log('\n❌ §14 cannot check anything without its targets — failing loudly ' +
@@ -1094,9 +1202,10 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
         'let state = ' + JSON.stringify(initialState) + ';' +
         bBodies.loadAckedActivityIds + bBodies.isActivityAcked +
         bBodies.pickAdoptableDestination + bBodies.adoptDestination +
-        bBodies.runningActivityDomains + bBodies.activitySignature +
+        bBodies.runningActivityDomains + bBodies.unackedSettledRecords +
+        bBodies.activitySignature +
         'return { get state(){return state;}, pickAdoptableDestination, adoptDestination,' +
-        ' runningActivityDomains, activitySignature };' +
+        ' runningActivityDomains, activitySignature, unackedSettledRecords };' +
         '})()';
       return new Function('window', src)({
         localStorage: { getItem: () => null, setItem: () => {} },
@@ -1294,7 +1403,8 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
           'const fetchActivity = async () => ({ activity: ACTIVITY, serverNow: 10000 });' +
           bBodies.loadAckedActivityIds + bBodies.isActivityAcked +
           bBodies.pickAdoptableDestination + bBodies.adoptDestination +
-          bBodies.runningActivityDomains + bBodies.activitySignature +
+          bBodies.runningActivityDomains + bBodies.settledActivityRecords +
+          bBodies.unackedSettledRecords + bBodies.activitySignature +
           bBodies.refreshActivity +
           'await refreshActivity(1);' +
           'return { state, renders };' +
@@ -1347,6 +1457,525 @@ console.log('\n§14  A running ingest is reachable whatever domain is selected')
         '§14f CONTROL — the render scans do NOT match an unrelated function');
       ok(/state\.domain\s*=/.test(code14(bBodies.adoptDestination)),
         '§14f CONTROL — adoptDestination really is a state.domain writer, so §2\'s allow-list entry for it is describing a live population rather than a name that no longer writes');
+    }
+  }
+}
+
+// ── §15 — A run that FINISHED while you were elsewhere ──────────────────
+//
+// THE OTHER HALF OF THE REPORT. v3.24.1 closed the RUNNING case: come back
+// mid-ingest and `adoptDestination` moves the selection, and every running
+// domain marks its sidebar row. Its own commit message recorded what was left:
+//
+//   "this covers RUNNING only. A single-file ingest that FINISHES while you are
+//    on another domain still surfaces no outcome panel, because
+//    pendingRemoteOutcome is likewise keyed on the selected domain."
+//
+// That is the sentence the maintainer actually opened with — "the process
+// ended, but there's basically no way I can know if this article was ingested
+// or not" — and on Flash Lite a small ingest finishes in ~9 s, so it is the
+// COMMON path, not an edge case.
+//
+// Two surfaces, one acknowledgement store:
+//   · every unacknowledged settled domain marks its SIDEBAR row (Ingested /
+//     Failed), which is what stops any finished run being unfindable;
+//   · one line in the MAIN PANE names the newest and offers to go there,
+//     because a marker the user may not look at is an improvement on silence
+//     and not an answer to it.
+//
+// ADOPTION IS DELIBERATELY NOT EXTENDED HERE, and §15f pins that: a terminal
+// record lives 30 minutes (TERMINAL_TTL_MS), so adopting one would yank the
+// destination on every Ingest mount inside that window.
+console.log('\n§15  A finished ingest is findable from any domain');
+{
+  const code15 = (t) => (t || '').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  const C_NEEDED = [
+    'settledActivityRecords', 'unackedSettledRecords', 'settledElsewhere',
+    'renderSettledElsewhere', 'dismissSettledElsewhere', 'isActivityAcked',
+    'loadAckedActivityIds', 'ackActivityId', 'activitySignature',
+    'renderSidebar', 'selectDomain', 'refreshActivity',
+  ];
+  const cBodies = {};
+  let cFatal = false;
+  for (const name of C_NEEDED) {
+    const body = extractFunction(js, name);
+    const wellFormed = !!body && /\n\}$/.test(body) && body.split('\n').length > 2;
+    cBodies[name] = wellFormed ? body : null;
+    ok(wellFormed, '§15 POSITIVE CONTROL — extracted a WELL-FORMED body for ' + name + '()');
+    if (!wellFormed) cFatal = true;
+  }
+
+  // §15 builds TWO sandboxes of its own (makeSandbox15, and the inline one in
+  // §15e2), so it takes the same shared guard. M13 found this section too,
+  // after §13 and §14 were both closed — three sandboxes, one hazard, which is
+  // exactly why the check is a shared function rather than three copies.
+  //
+  // `renderSidebar`, `selectDomain`, `refreshActivity` and
+  // `dismissSettledElsewhere` are extracted for SOURCE SCANS here, never
+  // executed, so they are outside the checked set.
+  const C_SANDBOXED = ['loadAckedActivityIds', 'isActivityAcked', 'ackActivityId',
+    'settledActivityRecords', 'unackedSettledRecords', 'settledElsewhere',
+    'renderSettledElsewhere', 'activitySignature'];
+  // escapeHtml is supplied by the sandbox preamble rather than lifted.
+  if (!sandboxDepsResolved(cBodies, C_SANDBOXED, C_SANDBOXED.concat(['escapeHtml']), '§15a-pre')) cFatal = true;
+
+  if (cFatal) {
+    console.log('\n❌ §15 cannot check anything without its targets — failing loudly ' +
+      'rather than reporting a green run over zero comparisons.');
+  } else {
+    // A sandbox with a REAL (breakable) acknowledgement store, so dismissal is
+    // exercised through the same localStorage path production uses rather than
+    // through a stub that cannot disagree with it.
+    function makeSandbox15(initialState, storageImpl) {
+      const src =
+        'return (() => {' +
+        "const ACTIVITY_ACK_KEY = 'curator-ingest-activity-ack-v1'; const ACTIVITY_ACK_MAX = 20;" +
+        'let state = ' + JSON.stringify(initialState) + ';' +
+        'const escapeHtml = (s) => String(s == null ? "" : s)' +
+        '.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")' +
+        '.replace(/"/g,"&quot;").replace(/\'/g,"&#39;");' +
+        cBodies.loadAckedActivityIds + cBodies.isActivityAcked + cBodies.ackActivityId +
+        cBodies.settledActivityRecords + cBodies.unackedSettledRecords +
+        cBodies.settledElsewhere + cBodies.renderSettledElsewhere +
+        'return { get state(){return state;}, settledActivityRecords, unackedSettledRecords,' +
+        ' settledElsewhere, renderSettledElsewhere, ackActivityId, isActivityAcked };' +
+        '})()';
+      return new Function('window', src)({ localStorage: storageImpl });
+    }
+    function mem15() {
+      const m = new Map();
+      return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); } };
+    }
+    const baseState15 = () => ({
+      domains: [{ slug: 'articles', displayName: 'Articles' },
+                { slug: 'posts', displayName: 'Posts' },
+                { slug: 'business', displayName: 'Business' }],
+      domain: 'articles', runningDomains: [], settledActivity: [],
+      remote: null, remoteResultExpanded: false,
+      submitting: false, progress: null, result: null, errorMessage: null,
+    });
+
+    const DONE_POSTS = { domain: 'posts', status: 'done', id: 'p-done', finishedAt: 5000, filename: 'paper.pdf' };
+    const DONE_BIZ = { domain: 'business', status: 'done', id: 'b-done', finishedAt: 9000, filename: 'deck.pdf' };
+    const ERR_POSTS = { domain: 'posts', status: 'error', id: 'p-err', finishedAt: 7000, filename: 'bad.pdf' };
+
+    // ── 15a  Ordering is by finishedAt, and it is TOTAL ────────────────
+    // `startedAt` would be the wrong key: the user is asking WHICH ONE
+    // FINISHED, and a long run started first can finish last. Ties break on
+    // domain so the answer cannot depend on the server's Map iteration order.
+    {
+      const sb = makeSandbox15(baseState15(), mem15());
+      const out = sb.settledActivityRecords([
+        { domain: 'posts', status: 'done', id: 'a', finishedAt: 1000 },
+        { domain: 'business', status: 'done', id: 'b', finishedAt: 9000 },
+        { domain: 'articles', status: 'done', id: 'c', finishedAt: 5000 },
+      ]);
+      ok(out.map((r) => r.domain).join(',') === 'business,articles,posts',
+        '§15a settled records come back NEWEST-FINISHED first (got ' + out.map((r) => r.domain).join(',') + ')');
+
+      // A run that STARTED first but finished last must sort last — this is the
+      // assertion that would go red if someone "simplified" the key to startedAt.
+      const byStart = sb.settledActivityRecords([
+        { domain: 'slow', status: 'done', id: 'a', startedAt: 1, finishedAt: 9000 },
+        { domain: 'quick', status: 'done', id: 'b', startedAt: 8000, finishedAt: 8500 },
+      ]);
+      ok(byStart[0].domain === 'slow',
+        '§15a the LONG run that started first but finished LAST sorts first — the key is finishedAt, not startedAt');
+
+      const ties = sb.settledActivityRecords([
+        { domain: 'zeta', status: 'done', id: 'z', finishedAt: 100 },
+        { domain: 'alpha', status: 'done', id: 'a', finishedAt: 100 },
+      ]);
+      ok(ties[0].domain === 'alpha',
+        '§15a ties break on domain ASCENDING, so the order is total and the answer deterministic');
+
+      const undated = sb.settledActivityRecords([
+        { domain: 'nodate', status: 'done', id: 'n' },
+        { domain: 'dated', status: 'done', id: 'd', finishedAt: 1 },
+      ]);
+      ok(undated[0].domain === 'dated' && undated[1].finishedAt === null,
+        '§15a a record with NO finishedAt sorts LAST and stores null — it must not poison the comparator with NaN');
+    }
+
+    // ── 15b  Only settled records, and only usable ones ────────────────
+    {
+      const sb = makeSandbox15(baseState15(), mem15());
+      const out = sb.settledActivityRecords([
+        { domain: 'posts', status: 'running', id: 'r', finishedAt: null },
+        { domain: 'posts', status: 'done', id: 'd', finishedAt: 1 },
+        { domain: 'x', status: 'error', id: 'e', finishedAt: 2 },
+        { domain: '', status: 'done', id: 'blank', finishedAt: 3 },
+        { domain: 'noid', status: 'done', finishedAt: 4 },
+        null,
+      ]);
+      const ids = out.map((r) => r.id).sort().join(',');
+      ok(ids === 'd,e',
+        '§15b a RUNNING record is not settled, and a record with no domain or no id is unusable (kept: ' + ids + ')');
+      ok(out.every((r) => r.status === 'done' || r.status === 'error'),
+        '§15b both terminal statuses survive — a FAILED run is exactly what the user asked about');
+    }
+
+    // ── 15c  The acknowledgement is read at CALL time ──────────────────
+    // If the filter ran at FETCH time instead, a dismissal would not take
+    // effect until the next poll landed — up to 15 s of a notice the user has
+    // already put down.
+    {
+      const st = baseState15();
+      const store = mem15();
+      const sb = makeSandbox15(st, store);
+      sb.state.settledActivity = sb.settledActivityRecords([DONE_POSTS, DONE_BIZ]);
+
+      ok(sb.unackedSettledRecords().length === 2,
+        '§15c both settled records start unacknowledged');
+      sb.ackActivityId('b-done');
+      ok(sb.unackedSettledRecords().map((r) => r.id).join(',') === 'p-done',
+        '§15c acking one drops it IMMEDIATELY, with no refetch — the filter is applied at read time');
+      ok(sb.state.settledActivity.length === 2,
+        '§15c …and the RAW set is untouched, which is what makes that possible');
+    }
+
+    // ── 15d  "Elsewhere" means: not selected, and drawable ─────────────
+    {
+      const st = baseState15();
+      const sb = makeSandbox15(st, mem15());
+      sb.state.settledActivity = sb.settledActivityRecords([
+        DONE_BIZ, DONE_POSTS,
+        { domain: 'articles', status: 'done', id: 'a-done', finishedAt: 6000 },
+        { domain: 'ghost', status: 'done', id: 'g-done', finishedAt: 9999 },
+      ]);
+      const out = sb.settledElsewhere();
+      const doms = out.map((r) => r.domain).join(',');
+      ok(!doms.includes('articles'),
+        '§15d the SELECTED domain is excluded — renderRemoteOutcome already shows it in full, and two instruments for one fact is the shape v3.20.0 deletes');
+      ok(!doms.includes('ghost'),
+        '§15d a domain NOT in state.domains is excluded — "Show me" calls selectDomain, and a slug the sidebar cannot draw would strand the form');
+      ok(doms === 'business,posts',
+        '§15d …leaving exactly the drawable, non-selected ones, newest first (got ' + doms + ')');
+    }
+
+    // ── 15e  THE SIGNATURE MUST SEE BOTH SURFACES ──────────────────────
+    // The trap v3.24.1 documented, one release later. The reported scenario —
+    // selected `articles`, settled record on `posts` — leaves state.remote NULL,
+    // so it takes activitySignature's `if (!r)` fast path. A settled set folded
+    // in only AFTER that branch would be recomputed on every poll and NEVER
+    // PAINTED: the dead-data shape, reintroduced inside its own fix.
+    {
+      const sigSrc = code15(cBodies.activitySignature);
+      const fastPath = /if\s*\(!r\)\s*return[^;]*;/.exec(sigSrc);
+      ok(!!fastPath, '§15e activitySignature still has the no-record fast path (so this check has a subject)');
+      ok(!!fastPath && /settled/.test(fastPath[0]),
+        '§15e the settled set is folded into the NO-RECORD fast path — the branch the reported scenario actually takes');
+      const beforeFast = sigSrc.slice(0, fastPath ? fastPath.index : 0);
+      ok(/const\s+settled\s*=/.test(beforeFast),
+        '§15e …and it is COMPUTED before that branch, so both arms provably read the same value');
+      ok(/settled,/.test(sigSrc.slice(fastPath ? fastPath.index : 0)),
+        '§15e the has-record arm carries it too, so the markers repaint whatever the selected domain is doing');
+    }
+
+    // ── 15e2  …and it does so BEHAVIOURALLY, not just by shape ─────────
+    {
+      const st = baseState15();
+      const sb15 = new Function('window', 'ACTIVITY',
+        'return (() => {' +
+        "const ACTIVITY_ACK_KEY = 'k'; const ACTIVITY_ACK_MAX = 20;" +
+        'let state = ' + JSON.stringify(st) + ';' +
+        cBodies.loadAckedActivityIds + cBodies.isActivityAcked +
+        cBodies.settledActivityRecords + cBodies.unackedSettledRecords +
+        cBodies.activitySignature +
+        'return { get state(){return state;}, settledActivityRecords, activitySignature };' +
+        '})()')({ localStorage: { getItem: () => null, setItem: () => {} } }, null);
+
+      // state.remote stays NULL throughout — exactly the reported scenario.
+      const before = sb15.activitySignature();
+      sb15.state.settledActivity = sb15.settledActivityRecords([DONE_POSTS]);
+      const after = sb15.activitySignature();
+      ok(before !== after,
+        '§15e2 with state.remote NULL, discovering a settled record CHANGES the signature — so the poll repaints and the surfaces actually appear');
+
+      sb15.state.settledActivity = sb15.settledActivityRecords([ERR_POSTS]);
+      const afterErr = sb15.activitySignature();
+      ok(after !== afterErr,
+        '§15e2 a DIFFERENT record changes it again — the id is in the signature, so one outcome replacing another repaints');
+
+      // Status rides along because it picks the WORD on the row.
+      const sameIdDone = sb15.settledActivityRecords([{ ...ERR_POSTS, status: 'done' }]);
+      sb15.state.settledActivity = sameIdDone;
+      ok(sb15.activitySignature() !== afterErr,
+        '§15e2 status is in the signature too — Ingested vs Failed is a visible difference on the same id');
+    }
+
+    // ── 15f  ADOPTION IS NOT EXTENDED TO SETTLED RECORDS ───────────────
+    // A terminal record lives TERMINAL_TTL_MS (30 min), so adopting one would
+    // move the destination on EVERY Ingest mount inside that window —
+    // including the visit where the user came to ingest something else. The
+    // running case has no such problem: it ends when the work ends.
+    {
+      const adopt = code15(extractFunction(js, 'pickAdoptableDestination'));
+      ok(/status\s*===\s*'running'/.test(adopt),
+        '§15f adoption still keys on RUNNING only');
+      ok(!/'done'/.test(adopt) && !/'error'/.test(adopt),
+        '§15f …and considers NO terminal status — a 30-minute-lived settled record must never yank the destination');
+      const adoptCaller = code15(extractFunction(js, 'adoptDestination'));
+      ok(!/settled/i.test(adoptCaller),
+        '§15f adoptDestination does not reach for the settled set either');
+    }
+
+    // ── 15g  The line: what it says and when it says nothing ───────────
+    {
+      const st = baseState15();
+      const sb = makeSandbox15(st, mem15());
+      ok(sb.renderSettledElsewhere() === '',
+        '§15g with nothing settled elsewhere the line renders NOTHING — it cannot become chrome the user learns to ignore');
+
+      sb.state.settledActivity = sb.settledActivityRecords([DONE_POSTS]);
+      const one = sb.renderSettledElsewhere();
+      ok(/An ingest finished in/.test(one) && /<strong>Posts<\/strong>/.test(one),
+        '§15g it names the DOMAIN in words, by display name');
+      ok(/paper\.pdf/.test(one),
+        '§15g …and the filename, so the user can tell WHICH file it was');
+      ok(/data-settled-show="posts"/.test(one),
+        '§15g it carries a control that goes to that domain');
+      ok(/data-settled-dismiss="p-done"/.test(one),
+        '§15g …and one that puts it down without going anywhere');
+      ok(!/and \d+ more/.test(one),
+        '§15g with a single record it does NOT invent a count of others');
+
+      // A FAILED run must not be reported in the words of a success — the
+      // question asked is literally "was this ingested or not".
+      sb.state.settledActivity = sb.settledActivityRecords([ERR_POSTS]);
+      const bad = sb.renderSettledElsewhere();
+      ok(/An ingest failed in/.test(bad) && !/An ingest finished in/.test(bad),
+        '§15g a FAILED run says FAILED — reporting it as finished would answer a different question from the one asked');
+      ok(/ing-settled-elsewhere failed/.test(bad),
+        '§15g …and carries the danger tone as a class, not as coloured text');
+    }
+
+    // ── 15h  MULTIPLE settled records: nothing becomes unreachable ─────
+    // The line can only point at one domain. That is safe ONLY because the
+    // sidebar marks every one of them and dismissing the named one PROMOTES
+    // the next. A line that named one while the rest were invisible would be
+    // this defect with a smaller blast radius.
+    {
+      const st = baseState15();
+      const sb = makeSandbox15(st, mem15());
+      sb.state.settledActivity = sb.settledActivityRecords([DONE_POSTS, DONE_BIZ]);
+
+      const two = sb.renderSettledElsewhere();
+      ok(/<strong>Business<\/strong>/.test(two),
+        '§15h the line names the NEWEST-finished of several (business at 9000 beats posts at 5000)');
+      ok(/and 1 more domain/.test(two),
+        '§15h …and states how many others are waiting, so the user knows the line is not the whole story');
+
+      sb.ackActivityId('b-done');
+      const promoted = sb.renderSettledElsewhere();
+      ok(/<strong>Posts<\/strong>/.test(promoted),
+        '§15h dismissing the named one PROMOTES the next — the line is a rotating pointer, so nothing is stranded');
+      ok(!/and \d+ more/.test(promoted),
+        '§15h …and the count follows it down');
+
+      sb.ackActivityId('p-done');
+      ok(sb.renderSettledElsewhere() === '',
+        '§15h dismissing the last one clears the line entirely');
+    }
+
+    // ── 15i  Escaping ─────────────────────────────────────────────────
+    // The filename is user-supplied and reaches innerHTML.
+    {
+      const st = baseState15();
+      st.domains.push({ slug: 'evil', displayName: '<img src=x onerror=alert(1)>' });
+      const sb = makeSandbox15(st, mem15());
+      sb.state.settledActivity = sb.settledActivityRecords([
+        { domain: 'evil', status: 'done', id: 'e1', finishedAt: 1, filename: '<script>alert(1)</script>.pdf' },
+      ]);
+      const html = sb.renderSettledElsewhere();
+      ok(!/<script>/.test(html) && /&lt;script&gt;/.test(html),
+        '§15i a hostile FILENAME is escaped, not executed');
+      ok(!/<img src=x/.test(html) && /&lt;img/.test(html),
+        '§15i a hostile DISPLAY NAME is escaped too');
+    }
+
+    // ── 15j  The sidebar marks EVERY settled domain ────────────────────
+    {
+      const sideSrc = code15(cBodies.renderSidebar);
+      ok(/ing-dest-settled/.test(sideSrc),
+        '§15j the sidebar renders a settled marker');
+      ok(/Ingested/.test(sideSrc) && /Failed/.test(sideSrc),
+        '§15j …with DIFFERENT words for a completed and a failed run');
+      ok(/unackedSettledRecords\(\)/.test(sideSrc),
+        '§15j …driven from the SAME unacknowledged set the main-pane line uses, so one dismissal clears both');
+      ok(/isRunning\s*\?\s*null\s*:/.test(sideSrc),
+        '§15j a domain that is running AGAIN is described as running, not settled — one row must not say two things at once');
+      // The marker is TEXT inside the row <button>, so it reaches the accessible
+      // name for free (v3.23.0's finding: a count on an empty span was
+      // unreachable by hover, keyboard AND screen reader).
+      ok(/<span class="ing-dest-settled/.test(sideSrc),
+        '§15j the marker is a text span inside the row button, so it lands in the accessible name');
+    }
+
+    // ── 15k  ONE acknowledgement store, not two ────────────────────────
+    // The single most likely way to break this later is to give the new line
+    // its own dismissal state. Then a record dismissed in the panel would
+    // still nag from the line, or vice versa.
+    {
+      const dis = code15(cBodies.dismissSettledElsewhere);
+      ok(/ackActivityId\(/.test(dis),
+        '§15k dismissing the line writes the EXISTING acknowledgement');
+      ok(!/localStorage/.test(dis),
+        '§15k …and does not reach for storage itself — there is one store, with one writer');
+      ok(/renderedActivitySignature\s*=\s*activitySignature\(\)/.test(dis),
+        '§15k …and refreshes the painted signature, so the next poll does not believe a repaint is still owed');
+
+      // Behavioural: an ack written by the PANEL clears the sidebar/line set too.
+      const st = baseState15();
+      const store = mem15();
+      const sb = makeSandbox15(st, store);
+      sb.state.settledActivity = sb.settledActivityRecords([DONE_POSTS]);
+      ok(sb.settledElsewhere().length === 1, '§15k precondition — the record is pending');
+      sb.ackActivityId('p-done');   // what dismissRemoteOutcome does
+      ok(sb.settledElsewhere().length === 0 && sb.unackedSettledRecords().length === 0,
+        '§15k an ack written by the OUTCOME PANEL clears the line AND the sidebar marker — one store, both surfaces');
+    }
+
+    // ── 15l  Storage that throws must not blank the view ───────────────
+    // Failing to READ an acknowledgement means the notice is shown again. That
+    // is the safe direction, and it is the same rule v3.8.0 set for its own
+    // dismissal: guidance reappearing is harmless; silently hiding an outcome
+    // has no visible symptom.
+    {
+      const throwing = {
+        getItem: () => { throw new Error('private mode'); },
+        setItem: () => { throw new Error('private mode'); },
+      };
+      const st = baseState15();
+      const sb = makeSandbox15(st, throwing);
+      sb.state.settledActivity = sb.settledActivityRecords([DONE_POSTS]);
+      let threw = false;
+      let out = '';
+      try { out = sb.renderSettledElsewhere(); } catch { threw = true; }
+      ok(!threw, '§15l a storage that THROWS on read does not take the render down');
+      ok(/An ingest finished in/.test(out),
+        '§15l …and the outcome is SHOWN rather than hidden — failing to read an ack must fail toward telling the user');
+      let threw2 = false;
+      try { sb.ackActivityId('p-done'); } catch { threw2 = true; }
+      ok(!threw2, '§15l a storage that THROWS on write does not take the dismissal down either');
+    }
+
+    // ── 15m  The line survives every body branch ───────────────────────
+    // Put inside renderIngestForm it would vanish the moment the user entered
+    // batch mode — a moment they are especially likely to be away from where
+    // the last file landed.
+    {
+      const mainSrc = code15(extractFunction(js, 'renderMain'));
+      ok(/renderSettledElsewhere\(\)/.test(mainSrc),
+        '§15m renderMain renders the line');
+      const setMainIdx = mainSrc.indexOf('setMain(');
+      const bodyAssign = mainSrc.lastIndexOf('body =');
+      ok(setMainIdx > bodyAssign,
+        '§15m precondition — the call sits in the setMain composition, after every body branch has been chosen');
+      ok(/renderSettledElsewhere\(\)\s*\+\s*\n?\s*body/.test(mainSrc),
+        '§15m …and OUTSIDE the branch that produced `body`, so it shows over the form, the queue, the loader and the empty state alike');
+      const formSrc = code15(extractFunction(js, 'renderIngestForm'));
+      ok(!/renderSettledElsewhere/.test(formSrc),
+        '§15m it is NOT inside the single-file form, where entering batch mode would hide it');
+    }
+
+    // ── 15n  selectDomain does not clear the settled set ───────────────
+    // Every record names its own domain, so nothing in it can be
+    // mis-attributed by a selection change — unlike `remote`, which would
+    // render under the wrong domain's name and IS cleared.
+    {
+      const sel = code15(cBodies.selectDomain);
+      ok(/state\.remote\s*=\s*null/.test(sel),
+        '§15n selectDomain still clears `remote`, which a switch WOULD mis-attribute');
+      ok(!/state\.settledActivity\s*=/.test(sel),
+        '§15n …and does NOT clear settledActivity, which would blink every marker and the line off on each click');
+      ok(!/state\.runningDomains\s*=/.test(sel),
+        '§15n …matching the running set, which v3.24.1 left alone for the same reason');
+    }
+
+    // ── 15o  refreshActivity recomputes the set every fetch ────────────
+    // So a record ageing out of the server's 30-minute TTL clears both
+    // surfaces with no client-side expiry logic to get wrong.
+    {
+      const ra = code15(cBodies.refreshActivity);
+      ok(/state\.settledActivity\s*=\s*settledActivityRecords\(got\.activity\)/.test(ra),
+        '§15o refreshActivity recomputes the settled set from the server on every fetch');
+      ok(!/isActivityAcked/.test(ra),
+        '§15o …and stores it RAW — applying the ack here would delay a dismissal until the next poll');
+    }
+
+
+    // ── 15q  CONTRAST PAIRING — added because a mutation stayed GREEN ──
+    // Chased, not filed. Mutation M14 repainted the settled marker's LABEL in
+    // --success-text and the whole suite stayed at 341/0: §14e guards that
+    // pairing for .ing-dest-live and nothing guarded the two rules this
+    // release adds. That is the "function executed but its call site never
+    // asserted" shape one step sideways — a rule shipped with no assertion on
+    // the one property that decides whether it is legible.
+    //
+    // The pairing rule, measured and recorded in this file's own header:
+    // --success-text is 3.79:1 in light and --attention-text 3.21:1, both under
+    // the 4.5 AA floor for TEXT. So tone lives in the BORDER and the TINT
+    // (3:1 non-text floor, which 3.79 and --danger-text's 4.73+ both clear) and
+    // the label stays --text. Same construction as .ing-dest-live above it.
+    {
+      const settledRule = /\.ing-dest-settled\s*\{([^}]*)\}/.exec(css);
+      ok(!!settledRule,
+        '§15q the settled marker has a real CSS rule (a class with no rule renders as unstyled text — the v3.9.1 styled-but-unlinked shape)');
+      if (settledRule) {
+        ok(/color:\s*var\(--text\)/.test(settledRule[1]),
+          '§15q its LABEL is --text — --success-text as text on --success-tint measures 3.79:1 in light, under the 4.5 AA floor');
+        ok(/border:[^;]*var\(--success-text\)/.test(settledRule[1]) &&
+           /background:\s*var\(--success-tint\)/.test(settledRule[1]),
+          '§15q …with the TONE carried by border and tint, matching .ing-dest-live so the sidebar speaks with one voice');
+      }
+      const failedRule = /\.ing-dest-settled\.failed\s*\{([^}]*)\}/.exec(css);
+      ok(!!failedRule && /var\(--danger-text\)/.test(failedRule[1]) && /var\(--danger-tint\)/.test(failedRule[1]),
+        '§15q a FAILED run is toned differently from a successful one — the words differ, and so does the colour');
+      // The boundary is load-bearing: an unanchored /color:/ also matches the
+      // `border-color:` this rule legitimately sets, so the first draft of this
+      // assertion failed on correct CSS. Caught by running it, not by reading it.
+      ok(!failedRule || !/(?:^|[;{\s])color:\s*var\(--danger-text\)/.test(failedRule[1]),
+        '§15q …without repainting the LABEL, which would reintroduce the sub-AA text pairing on the failure case');
+
+      const lineRule = /\.ing-settled-elsewhere\s*\{([^}]*)\}/.exec(css);
+      ok(!!lineRule, '§15q the main-pane line has a real CSS rule');
+      if (lineRule) {
+        ok(/border:[^;]*var\(--success-text\)/.test(lineRule[1]) &&
+           /background:\s*var\(--success-tint\)/.test(lineRule[1]),
+          '§15q …toned by border and tint, the same grammar as the markers');
+        ok(!/color:\s*var\(--success-text\)/.test(lineRule[1]),
+          '§15q …and never paints text in the tone colour');
+      }
+      const lineText = /\.ing-settled-elsewhere-text\s*\{([^}]*)\}/.exec(css);
+      ok(!!lineText && /color:\s*var\(--text\)/.test(lineText[1]),
+        '§15q the sentence itself is at FULL contrast — it is the one thing on screen answering "did my ingest finish"');
+      ok(/\.ing-settled-elsewhere-more\s*\{[^}]*var\(--text-2\)/.test(css),
+        '§15q the "and N more" count is --text-2, not --text-3 (v3.19.0 measured --text-3 at 4.38 dark / 4.00 light, under the 4.5 floor) — it is a count the user acts on');
+
+      // CONTROLS — the failing pairings are asserted ABSENT by name, so a
+      // future edit cannot quietly reintroduce them and leave the fix looking
+      // unnecessary.
+      ok(!/\.ing-dest-settled\s*\{[^}]*color:\s*var\(--success-text\)/.test(css),
+        '§15q CONTROL — the sub-AA marker pairing is asserted ABSENT (this is exactly what M14 mutated in, and what stayed green before this block existed)');
+      ok(!/\.ing-settled-elsewhere-text\s*\{[^}]*color:\s*var\(--text-3\)/.test(css),
+        '§15q CONTROL — the line does not drop to --text-3 either');
+      // Anti-vacuity: prove these scans can actually see a rule in this file.
+      ok(/\.ing-dest-live\s*\{[^}]*color:\s*var\(--text\)/.test(css),
+        '§15q CONTROL — the rule scans match a KNOWN-GOOD sibling, so a green above means "correct", not "matched nothing"');
+    }
+
+    // ── 15p  CONTROLS: these scans can fail ────────────────────────────
+    {
+      ok(!/ing-dest-settled/.test(code15(cBodies.refreshActivity)),
+        '§15p CONTROL — the render scans do NOT match an unrelated function');
+      ok(!/renderSettledElsewhere/.test(code15(cBodies.selectDomain)),
+        '§15p CONTROL — the renderMain scan is not satisfied by any function that merely mentions the name');
+      const st = baseState15();
+      const sb = makeSandbox15(st, mem15());
+      ok(sb.settledActivityRecords([]).length === 0 && sb.settledActivityRecords(null).length === 0,
+        '§15p CONTROL — an empty or absent activity list yields nothing rather than throwing');
     }
   }
 }
