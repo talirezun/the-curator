@@ -79,15 +79,21 @@
  * the tool was wrong and was fixed. Numbers here are from the fixed tool.)
  *
  *   --text    on --surface        16.71 dark / 18.27 light   AA
- *   --text-2  on --surface         8.34 dark /  7.26 light   AA
- *   --text-3  on --surface         4.27 dark /  4.14 light   FAILS AA (4.5)
- *   --text-faint on --surface      2.26 dark /  2.34 light   FAILS
+ *   --text-2  on --surface        10.54 dark /  9.33 light   AA
+ *   --text-3  on --surface         6.16 dark /  5.60 light   AA
+ *   --text-faint on --surface      3.47 dark /  3.61 light   FAILS AA (4.5),
+ *                                                            clears 3:1
  *
- * FINDING 1 — `--text-3` is under the AA floor for normal text in BOTH themes,
- * and 181 rules in /next currently use it as a text colour. No role here uses
- * it. Hierarchy therefore comes from size, weight and family; the system's own
- * fourth text colour is not usable for prose, so dimming is not available as a
- * hierarchy device and this file does not pretend otherwise.
+ * FINDING 1 — SUPERSEDED AT SOURCE, AND KEPT BECAUSE IT IS WHY THIS FILE IS
+ * SHAPED AS IT IS. It originally read: "`--text-3` is under the AA floor for
+ * normal text in BOTH themes, and 181 rules in /next currently use it as a
+ * text colour" — measured at 4.27 / 4.14 against a 4.5 floor. tokens/color.css
+ * has since lightened the dark rungs and darkened the light ones with the
+ * maintainer's approval, so --text-3 now clears AA and those 181 rules are no
+ * longer sub-floor. This file still takes NO third colour rung: hierarchy here
+ * comes from size, weight and family, which was the right answer for an
+ * instrument-style role independent of the floor, and re-admitting a colour
+ * step would be a design change with its own proof.
  *
  * FINDING 2 — UNBRIEFED, and it stopped a precedent being propagated intact.
  * `.model-badge-flag` (settings.css:939) sets `--attention-text` as TEXT on
@@ -186,10 +192,12 @@ function tone(v) {
  * tokens, timestamps" and that "the mono/sans split IS the brand voice".
  *
  * PROVENANCE IS AT --text-2, NOT --text-3, even though it is the quietest part.
- * --text-3 measures 4.27/4.14 and the AA floor is 4.5 (see CONTRAST above), so
- * the quiet step is made with SIZE and FAMILY instead of with dimming. This is
- * the single most-copied mistake in the existing tree — 181 rules — and it is
- * not reproduced here.
+ * --text-3 measured 4.27/4.14 against a 4.5 AA floor when this was written; it
+ * measures 6.16/5.60 since the ramp was fixed at source (see CONTRAST above)
+ * and would now clear. The quiet step is STILL made with SIZE and FAMILY
+ * rather than with dimming, because this file uses one colour rung by design
+ * — but the "single most-copied mistake in the existing tree, 181 rules"
+ * framing that used to sit here has EXPIRED and is recorded, not repeated.
  *
  * THERE IS DELIBERATELY NO `tone`. Colouring a number is a JUDGEMENT about the
  * number, and judgement is renderStatus's role. Keeping them separate also

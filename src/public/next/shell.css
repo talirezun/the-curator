@@ -307,7 +307,7 @@ textarea {
    --surface, --surface-sunken, --surface-raised), worst case per theme:
 
      --border-strong  1.54 dark / 1.48 light   FAILS  (~half the floor)
-     --text-faint     2.19 dark / 2.11 light   FAILS
+     --text-faint     2.19 dark / 2.11 light   FAILED at the time; see below
      --text-3         4.15 dark / 3.74 light   PASSES  <-- chosen
      --text-2         8.09 dark / 6.56 light   PASSES (too loud for rest)
 
@@ -315,6 +315,21 @@ textarea {
    why these are computed numbers and not an eyeballed choice. --text-3 is
    the quietest token in the system that still clears the floor, so it is
    the correct resolution of "quiet" vs ">= 3:1" rather than a compromise.
+
+   RE-MEASURED after tokens/color.css's approved text-ramp change (same
+   worst-case method, same four surfaces, helper controlled at 1.00 on an
+   identical pair and 21.00 on black-on-white):
+
+     --text-faint     2.11 -> 3.26 worst    now CLEARS 3:1
+     --text-3         3.74 -> 5.06 worst    still the choice
+     --text-2         6.56 -> 8.43 worst
+
+   --text-faint is therefore no longer disqualified on the numbers, and the
+   thumb DELIBERATELY stays on --text-3 anyway: at 3.26 worst-case it would sit
+   0.26 above the floor, and a scrollbar thumb is a control you have to find
+   before you can grab it. The row above is kept as the measurement of the day
+   it was taken rather than rewritten, because the CHOICE it justifies is
+   unchanged and the reasoning only reads correctly against those numbers.
 
    Both themes come from ONE declaration: --text-3 is a semantic token that
    color.css already redefines under [data-theme="light"], so the thumb is
@@ -542,7 +557,19 @@ textarea {
    shown placeholder for a 400ms minimum precisely so it cannot strobe, which
    is long enough to read and therefore long enough to have to be legible.
    Hierarchy is unaffected: `.sidebar-title` is --text at --type-h3, so a
-   smaller, dimmer --text-2 body-sm line is still visibly subordinate. */
+   smaller, dimmer --text-2 body-sm line is still visibly subordinate.
+
+   KEPT AFTER THE TEXT-RAMP CHANGE, ON ROLE GROUNDS RATHER THAN FLOOR GROUNDS.
+   tokens/color.css has since lifted --text-3 over the AA floor (5.98 dark /
+   5.06 light worst-case across the surfaces these sit on), so the CONTRAST
+   argument above no longer FORCES --text-2 here — and `.cur-eyebrow`'s override
+   was retired further down this file for exactly that reason. These two are
+   not, and the difference is what they hold. An eyebrow is a LABEL: third
+   level is its correct role and the system's own base.css says so. These carry
+   the only sentence on an otherwise empty screen — the one that says what the
+   empty list means and what to do next. Second level is the right role for
+   that whether or not the third level happens to clear a floor, so nothing
+   here changes. */
 .sidebar-hint {
   font: var(--type-body-sm);
   color: var(--text-2);
@@ -739,33 +766,35 @@ body.guide-docked .main {
   padding-right: var(--guide-dock-w);
 }
 
-/* ── THE APP-WIDE EYEBROW COLOUR, OVERRIDDEN HERE RATHER THAN AT SOURCE ──
-   `.cur-eyebrow` is declared in tokens/base.css, which is copied BYTE-FOR-BYTE
-   from the design-system bundle and must not be edited. Its `color: var(--text-3)`
-   measured 4.38 dark / 4.00 light in the live document — under the 4.5:1 AA
-   floor for text, and this is the class behind EVERY eyebrow in the app
-   ("CONFIGURATION", "PROJECTS", "KNOWLEDGE", the four Domains stat-card
-   labels, the Sync History label), at 11px with no large-text exemption.
-   So it was not one view's failure; it was the same failure ~20 times.
+/* ── THE APP-WIDE EYEBROW OVERRIDE THAT USED TO LIVE HERE, AND WHY IT IS GONE ─
+   There WAS a `.cur-eyebrow { color: var(--text-2) }` rule at this point. It is
+   deliberately removed, and this note stays so nobody re-adds it.
 
-   --text-2 measures 8.55 dark / 7.02 light on --canvas and 8.34 / 7.26 on
-   --surface (real browser, getComputedStyle, both themes, helper validated by
-   controls returning 1.00 on an identical pair and 21.0 on black-on-white).
+   `.cur-eyebrow` is declared in tokens/base.css, which is copied byte-for-byte
+   from the design-system bundle and must not be edited. The bundle paints it
+   `var(--text-3)` — a THIRD-LEVEL role for a metadata label, which is exactly
+   right for an 11px uppercase mono eyebrow. The problem was never the role, it
+   was the RUNG: --text-3 measured 4.38 dark / 4.00 light on --canvas, under the
+   4.5:1 AA floor, and this class is behind EVERY eyebrow in the app
+   ("CONFIGURATION", "PROJECTS", "KNOWLEDGE", the four Domains stat-card labels,
+   the Sync History label). So the override promoted ~20 sites to --text-2 to
+   get them over the floor — and in doing so flattened them into the same level
+   as the body text beneath them.
 
-   WHY THIS BEATS base.css, AND WHY IT DELIBERATELY DOES NOT BEAT A VIEW.
-   Identical specificity (0,1,0); index.html links tokens/base.css at line 27
-   and shell.css at line 39, so the later declaration wins — verified in the
-   LIVE cascade by enumerating every matching `color` rule across every linked
-   sheet in order, not by reading this file. A previous fix of this exact class
-   was INERT because another sheet declared the same selector later at the same
-   specificity, so the file-level edit changed nothing a user could see.
-   No selector is added here to raise specificity: `.dm-quick-eyebrow`
-   (views/domains.css, linked after this file) re-tones its eyebrow to
-   --accent-text on purpose, and out-specifying it would silently overrule a
-   view's own decision from a shared sheet. Equal-and-later is the whole fix. */
-.cur-eyebrow {
-  color: var(--text-2);
-}
+   tokens/color.css has since fixed --text-3 AT SOURCE (see the long note in
+   that file; the maintainer approved the change and the same diff is published
+   for the bundle at docs/design-system-text-ramp-patch.md). Measured with a
+   helper validated by controls returning 1.00 on an identical pair and 21.00 on
+   black-on-white, --text-3 on --canvas is now 6.32 dark / 5.42 light, over the
+   floor in both themes and over it on every other surface the eyebrow can sit
+   on (worst case 5.98 / 5.06 on --surface-raised and --surface-sunken).
+
+   So the override has no remaining job, and removing it RESTORES the design
+   system's own three-level hierarchy rather than departing from it. Do not
+   re-add it: an eyebrow that renders in the same colour as the paragraph under
+   it is the flattening this whole change set exists to undo. If --text-3 ever
+   regresses below 4.5 the answer is to fix the token again, not to rescue this
+   one class — scripts/test-next-contrast-ratchet.js §10 goes red either way. */
 
 .view-eyebrow {
   margin-bottom: 8px;
@@ -805,8 +834,15 @@ body.guide-docked .main {
    it is the one that says what to do next. It measured 4.27 dark / 4.14 light
    at --text-3 (live, both themes), under the 4.5:1 AA floor at 13px.
    The step below `.empty-title` survives: the title is --text (16.71 / 18.27)
-   and the body is --text-2 (8.34 / 7.26), so the pair still reads as a
-   heading over supporting prose without either half being sub-threshold. */
+   and the body is --text-2 (now 10.54 / 9.33 after the token change; 8.34 /
+   7.26 before it), so the pair still reads as a heading over supporting prose
+   without either half being sub-threshold.
+
+   KEPT after tokens/color.css lifted --text-3 over the floor, for the same
+   reason as `.sidebar-hint` and `.sidebar-note` and NOT for the same reason as
+   `.cur-eyebrow`, whose override was retired: this is the first sentence a new
+   user reads and the one that says what to do next, which is a second-level
+   role on its own merits rather than a third-level one rescued upward. */
 .empty-card .empty-body {
   font: var(--type-body-sm);
   color: var(--text-2);

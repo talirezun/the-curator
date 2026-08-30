@@ -40,12 +40,23 @@
  *     dark and light token blocks parse to genuinely different values (a bare
  *     indexOf for `[data-theme="light"]` matches color.css's own HEADER
  *     COMMENT, which is how one previous tool reported both themes identical).
- *  §3 The three token-level facts the fixes rest on still hold: --text-3 and
- *     --text-faint fail the 4.5 text floor in BOTH themes, and --attention-text
- *     fails it in LIGHT. If a future token edit makes them pass, these go red
- *     so nobody keeps routing around a problem that no longer exists.
+ *  §3 The token-level facts the fixes rest on. RE-BASED ON THE APPROVED TEXT-
+ *     RAMP CHANGE: --text-3 and --text-faint used to fail the 4.5 text floor in
+ *     both themes, and several assertions here demanded that they still did.
+ *     tokens/color.css has since lightened the dark rungs and darkened the
+ *     light ones at SOURCE, so --text-3 now CLEARS 4.5 (6.16 dark / 5.60 light
+ *     on --surface) and --text-faint now clears the 3:1 NON-TEXT floor (3.47 /
+ *     3.61) while still failing 4.5 as text. Those assertions are INVERTED, not
+ *     deleted, per this project's practice: they now guard the fix and go red
+ *     if the ramp regresses. --attention-text is untouched and still fails in
+ *     LIGHT.
  *  §4 THE CLASS RATCHET: zero declarations in the three owned files paint a
  *     below-floor token as TEXT. Counted, so a new one is a new failure.
+ *     BELOW_TEXT_FLOOR is a hand-written list, so §4a CROSS-CHECKS IT AGAINST
+ *     THE ARITHMETIC: every token on it must genuinely measure under 4.5, and
+ *     --text-3 must be absent BECAUSE it now measures over. That is what stops
+ *     the list becoming a blanket ban divorced from measurement — the failure
+ *     shape that made this re-base necessary in the first place.
  *  §5 The deliberate NON-TEXT survivors are asserted PRESENT with their
  *     measured values, because a survivor that silently disappears is as much
  *     a regression as a new failure — and because leaving them proves the
@@ -62,16 +73,25 @@
  *     copy was still broken; settings.css has since been fixed, so it is now
  *     INVERTED and guards the fix, including the ABSENCE of a second, later
  *     --text-3 declaration in the same file (a presence-only check misses it).
- *§10b The two SIDEBAR EMPTY-STATE roles, also in shell.css: .sidebar-hint
- *     (4.27 dark / 4.14 light on --surface) and .sidebar-note (4.33 / 3.87 on
- *     its OWN --surface-inset, which is the backdrop that makes the light
- *     figure the worse of the two). Six functional empty-state sentences
- *     across four views, plus gatedLoader's placeholder. Both -> --text-2.
- * §10 The two APP-WIDE fixes in shell.css — .cur-eyebrow (declared in the
- *     BYTE-FROZEN tokens/base.css, so the fix is an override) and the shared
- *     .empty-card .empty-body. Asserts the declarations, the base.css-before-
- *     shell.css load order they depend on READ OUT OF index.html, and that no
- *     sheet linked afterwards redeclares either selector standalone.
+ *§10b The two SIDEBAR EMPTY-STATE roles, also in shell.css: .sidebar-hint (on
+ *     --surface) and .sidebar-note (on its OWN --surface-inset, which is the
+ *     backdrop that makes the LIGHT figure the worse of the two — grading it
+ *     against --surface would have hidden that). Six functional empty-state
+ *     sentences across four views, plus gatedLoader's placeholder. Both were
+ *     --text-3, measured 4.27/4.14 and 4.33/3.87 AT THE TIME, both under the
+ *     floor; both went --text-2. Since the ramp change --text-3 clears the
+ *     floor on both backdrops, so these two are now KEPT on ROLE grounds
+ *     rather than floor grounds — see shell.css, and contrast with
+ *     .cur-eyebrow in §10, which was retired for exactly the opposite reason.
+ * §10 WAS the two APP-WIDE fixes in shell.css. `.cur-eyebrow`'s override has
+ *     been RETIRED — it existed only to escape the broken --text-3 rung, the
+ *     rung is fixed at source, and its own comment said it was overriding
+ *     "rather than at source". So §10 now asserts the override is GONE and the
+ *     BYTE-FROZEN base.css value paints and clears the floor. `.empty-card
+ *     .empty-body` is KEPT at --text-2 on role grounds, not floor grounds, and
+ *     still asserts the base.css-before-shell.css load order READ OUT OF
+ *     index.html plus that no sheet linked afterwards redeclares either
+ *     selector standalone.
  *
  * ── NOT ENFORCED ─────────────────────────────────────────────────────────
  *  · Borders. --border (1.24/1.29) and --border-strong (1.48/1.64) are under
@@ -294,12 +314,37 @@ section('§3  The token-level facts these fixes rest on');
 
 const TEXT_FLOOR = 4.5, NONTEXT_FLOOR = 3;
 
-ok(worst('--text-3', '--surface') < TEXT_FLOOR,
-   `--text-3 FAILS the ${TEXT_FLOOR} text floor (${C(D, '--text-3', '--surface')} dark / ` +
-   `${C(L, '--text-3', '--surface')} light). If this ever passes, the sweep below is unnecessary and should be revisited.`);
-ok(worst('--text-faint', '--surface') < NONTEXT_FLOOR,
-   `--text-faint fails even the ${NONTEXT_FLOOR} NON-TEXT floor (${C(D, '--text-faint', '--surface')} dark / ` +
-   `${C(L, '--text-faint', '--surface')} light) — roughly half of either floor.`);
+// ── INVERTED (1/6). This assertion used to read `< TEXT_FLOOR` and its label
+// said "--text-3 FAILS the 4.5 text floor (4.27 / 4.14). If this ever passes,
+// the sweep below is unnecessary and should be revisited." It has passed: the
+// approved ramp change moved --text-3 from #74748A to #8F8FA5 in dark and from
+// #7B7B90 to #66667B in light, AT SOURCE in tokens/color.css. Inverted rather
+// than deleted — it now guards the fix, and goes red the day the rung regresses.
+ok(worst('--text-3', '--surface') >= TEXT_FLOOR,
+   `--text-3 CLEARS the ${TEXT_FLOOR} text floor (${C(D, '--text-3', '--surface')} dark / ` +
+   `${C(L, '--text-3', '--surface')} light on --surface). It measured 4.27 / 4.14 before the ramp change and ` +
+   'this assertion demanded that it still failed. A third usable text rung is the entire point of the change: ' +
+   'the app had spent releases overriding --text-3 up to --text-2, and every such rescue flattened the ramp ' +
+   'by one more role.');
+// ── INVERTED (2/6). Was `< NONTEXT_FLOOR`, labelled "--text-faint fails even
+// the 3 NON-TEXT floor (2.26 / 2.34) — roughly half of either floor." The ramp
+// change moved it to #66667A / #858599 and it now clears 3:1. That matters
+// concretely: §5 below records .sync-domain-dot having to LEAVE --text-faint
+// because a 6px dot could not be seen at 2.26.
+ok(worst('--text-faint', '--surface') >= NONTEXT_FLOOR,
+   `--text-faint now clears the ${NONTEXT_FLOOR} NON-TEXT floor (${C(D, '--text-faint', '--surface')} dark / ` +
+   `${C(L, '--text-faint', '--surface')} light). It was 2.26 / 2.34 — under HALF the text floor and under the ` +
+   'non-text floor too, which is why nothing in the app painted it as text and only two rules used it at all.');
+// NOT inverted, and load-bearing: --text-faint still fails the TEXT floor. It
+// is the rung that is deliberately not for running text, and it is what keeps
+// §4's ratchet and §7's positive control able to fire at all. If a future edit
+// lifts it over 4.5, BELOW_TEXT_FLOOR loses its last both-theme failure and §7
+// must be re-based again rather than left to pass vacuously.
+ok(worst('--text-faint', '--surface') < TEXT_FLOOR,
+   `--text-faint still FAILS the ${TEXT_FLOOR} text floor (${C(D, '--text-faint', '--surface')} dark / ` +
+   `${C(L, '--text-faint', '--surface')} light), which is deliberate — it is the non-text rung. It is also the ` +
+   'only token in BELOW_TEXT_FLOOR that fails in BOTH themes, so it is what makes §7\'s positive control real. ' +
+   'If this ever goes red, §4 and §7 have lost their teeth and must be re-based, NOT relaxed.');
 ok(C(L, '--attention-text', '--surface') < TEXT_FLOOR,
    `--attention-text FAILS as text in LIGHT (${C(L, '--attention-text', '--surface')} on --surface, ` +
    `${C(L, '--attention-text', '--surface', '--attention-tint')} on its own tint) while PASSING in dark ` +
@@ -326,31 +371,67 @@ ok(worst('--attention-text', '--surface') >= NONTEXT_FLOOR,
 // ═════════════════════════════════════════════════════════════════════════
 section('§4  THE CLASS RATCHET — no below-floor token is painted as TEXT');
 
-const BELOW_TEXT_FLOOR = ['--text-3', '--text-faint', '--attention-text'];
+// RE-BASED. `--text-3` was the first entry here for the whole life of this
+// suite. It is GONE because it now MEASURES over the floor, not because anyone
+// decided to stop caring — which is exactly the distinction §4a below turns
+// into an assertion. Removing it makes §4 more permissive on paper; §4a is what
+// stops that being a weakening, by refusing to let the list drift away from the
+// arithmetic in EITHER direction.
+const BELOW_TEXT_FLOOR = ['--text-faint', '--attention-text'];
 
 for (const f of OWNED) {
   const hits = colorDecls(BELOW_TEXT_FLOOR, FILES[f]).filter((h) => !isNonText(h.sel));
   ok(hits.length === 0,
      `views/${f}.css paints ZERO below-floor tokens as text. Found ${hits.length}: ` +
      hits.map((h) => `${h.sel} { color: ${h.token} }`).join(', ') +
-     '. --text-3 measures 4.27/4.14, --text-faint 2.26/2.34, --attention-text 3.21 light on its own tint — ' +
-     'all under the 4.5 AA floor. Use --text-2 for dim body text; for a status, put the tone on the border ' +
-     'or the icon and the words in --text.');
+     `. --text-faint measures ${C(D, '--text-faint', '--surface')}/${C(L, '--text-faint', '--surface')}, ` +
+     '--attention-text 3.21 light on its own tint — under the 4.5 AA floor. Use --text-2 or --text-3 for dim ' +
+     'body text; for a status, put the tone on the border or the icon and the words in --text.');
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+section('§4a  THE LIST IS CROSS-CHECKED AGAINST THE ARITHMETIC, in both directions');
+
+// A hand-written ban list rots two ways: it keeps banning a token that has been
+// FIXED — which is exactly what happened here, and is why the app kept
+// overriding --text-3 up to --text-2 long after that had stopped being the right
+// answer — or it quietly drops a token that still fails. Both are now checked,
+// on the SAME numbers §3 uses, so the list cannot drift from the measurement.
+for (const t of BELOW_TEXT_FLOOR) {
+  ok(worst(t, '--surface') < TEXT_FLOOR,
+     `BELOW_TEXT_FLOOR entry ${t} genuinely measures under ${TEXT_FLOOR} ` +
+     `(${C(D, t, '--surface')} dark / ${C(L, t, '--surface')} light). A list entry that PASSES would make §4 a ` +
+     'blanket ban on a token rather than a measured floor rule.');
+}
+// ── INVERTED (4/6). The ABSENCE of --text-3 is asserted, and asserted TOGETHER
+// WITH the measurement that justifies it — so it cannot be re-added on taste,
+// and cannot stay out if the rung ever regresses.
+ok(!BELOW_TEXT_FLOOR.includes('--text-3') && worst('--text-3', '--surface') >= TEXT_FLOOR,
+   '--text-3 is deliberately ABSENT from BELOW_TEXT_FLOOR, and the reason is arithmetic: it measures ' +
+   `${C(D, '--text-3', '--surface')} / ${C(L, '--text-3', '--surface')}, over the ${TEXT_FLOOR} floor. It was on ` +
+   'this list from the suite\'s creation until the ramp change. If the token regresses, this pairing goes red, ' +
+   'so the omission can never outlive the measurement that earned it.');
+// And the list must retain at least one token failing in BOTH themes, or §7's
+// positive control degrades into a check that one theme happens to fail.
+ok(BELOW_TEXT_FLOOR.some((t) => C(D, t, '--surface') < TEXT_FLOOR && C(L, t, '--surface') < TEXT_FLOOR),
+   'at least one BELOW_TEXT_FLOOR token fails in BOTH themes (--text-faint, ' +
+   `${C(D, '--text-faint', '--surface')} / ${C(L, '--text-faint', '--surface')}), so the detector §7 exercises ` +
+   'fires on an unambiguously failing token rather than on a one-theme edge case');
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§5  Deliberate NON-TEXT survivors — present, and above the 3:1 floor');
 
 // This is NOT a token ban. --text-3 on a 6px dot or a chevron is correct: the
-// floor there is 3:1 and it measures 4.27/4.14. Asserting the survivors are
+// floor there is 3:1 and it now measures 6.16/5.60 (4.27/4.14 before the ramp
+// change, which already cleared 3:1 — the margin simply grew). Asserting the survivors are
 // PRESENT stops a later reader "finishing the job" by deleting a correct use,
 // and keeps views/domains.css above the `text3 > 0` clause that
 // test-next-domains-text.js's own ratchet depends on.
 const SURVIVORS = [
-  ['domains', /\.dm-browse-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.dm-browse-dot background — a 6px dot, 4.27 / 4.14 against a 3:1 floor'],
-  ['domains', /\.dm-group-summary svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.dm-group-summary svg — a chevron glyph, 4.27 / 4.14'],
-  ['sync',    /\.sync-domain-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.sync-domain-dot background — was --text-faint at 2.26 / 2.34, UNDER the 3:1 non-text floor; --text-3 clears it at 4.27 / 4.14'],
-  ['shared',  /\.sbw-note-block svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.sbw-note-block svg — an icon, 4.33 / 3.87'],
+  ['domains', /\.dm-browse-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.dm-browse-dot background — a 6px dot, 6.16 / 5.60 against a 3:1 floor (4.27 / 4.14 before the ramp change)'],
+  ['domains', /\.dm-group-summary svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.dm-group-summary svg — a chevron glyph, 6.16 / 5.60'],
+  ['sync',    /\.sync-domain-dot\s*\{[^}]*background:\s*var\(--text-3\)/, '.sync-domain-dot background — was --text-faint at 2.26 / 2.34, UNDER the 3:1 non-text floor at the time; --text-3 cleared it then at 4.27 / 4.14 and clears it now at 6.16 / 5.60'],
+  ['shared',  /\.sbw-note-block svg\s*\{[^}]*color:\s*var\(--text-3\)/, '.sbw-note-block svg — an icon, 6.24 / 5.24 on --surface-inset'],
 ];
 for (const [file, re, why] of SURVIVORS) {
   ok(re.test(stripComments(FILES[file])), `views/${file}.css KEEPS ${why}`);
@@ -358,8 +439,18 @@ for (const [file, re, why] of SURVIVORS) {
 ok(worst('--text-3', '--surface') >= NONTEXT_FLOOR,
    `and --text-3 genuinely clears the ${NONTEXT_FLOOR} non-text floor (${C(D, '--text-3', '--surface')} / ` +
    `${C(L, '--text-3', '--surface')}), so keeping those four is correct rather than merely tolerated`);
-ok(worst('--text-faint', '--surface') < NONTEXT_FLOOR,
-   'while --text-faint does NOT, which is why .sync-domain-dot had to move even though it is not text');
+// ── INVERTED (5/6). Was "while --text-faint does NOT, which is why
+// .sync-domain-dot had to move even though it is not text". The ramp change
+// lifted --text-faint over 3:1, so the CLAUSE is now false while the DECISION it
+// explains stays right. Inverted to record both halves: the dot's move was
+// correct at the time AND the token it left has since been repaired.
+ok(worst('--text-faint', '--surface') >= NONTEXT_FLOOR,
+   `--text-faint now ALSO clears the ${NONTEXT_FLOOR} non-text floor ` +
+   `(${C(D, '--text-faint', '--surface')} / ${C(L, '--text-faint', '--surface')}), where it measured 2.26 / 2.34 ` +
+   'when .sync-domain-dot was moved off it. The move was right on the numbers of the day and the dot deliberately ' +
+   'stays on --text-3 — a 6px dot wants the stronger of the two, and moving it back would be churn with no gain. ' +
+   'What has changed is that --text-faint is no longer BELOW the non-text floor, so a future non-text use of it ' +
+   'is defensible where it previously was not.');
 
 // ═════════════════════════════════════════════════════════════════════════
 section('§6  The named sites from the brief, pinned individually');
@@ -393,21 +484,33 @@ for (const [file, re, why] of NAMED) {
 // ═════════════════════════════════════════════════════════════════════════
 section('§7  POSITIVE CONTROLS — every detector must be able to fire');
 
-const plantedText = '.planted-a { color: var(--text-3); }';
+// RE-BASED. The planted rule used to be `--text-3` — the token whose failure the
+// whole suite was built around. That control DIED the moment --text-3 cleared
+// 4.5: it would have kept "passing" only if the list stayed stale. --text-faint
+// is the token that still fails in both themes, so it carries the control now,
+// and §4a above asserts that it really does, so this cannot go vacuous silently.
+const plantedText = '.planted-a { color: var(--text-faint); }';
 ok(colorDecls(BELOW_TEXT_FLOOR, plantedText).length === 1,
-   'CONTROL: the below-floor text detector fires on a planted --text-3 colour rule');
-ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-b { color: var(--text-faint); }').length === 1,
-   'CONTROL: ...and on --text-faint');
+   'CONTROL: the below-floor text detector fires on a planted --text-faint colour rule ' +
+   `(${C(D, '--text-faint', '--surface')} dark / ${C(L, '--text-faint', '--surface')} light, both under 4.5)`);
 ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-c { color: var(--attention-text); }').length === 1,
    'CONTROL: ...and on --attention-text');
-ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-d { background: var(--text-3); }').length === 0,
+ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-d { background: var(--text-faint); }').length === 0,
    'CONTROL: ...and NOT on a background, which is a non-text component at a 3:1 floor');
 ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-e { color: var(--text-2); }').length === 0,
    'CONTROL: ...and NOT on a passing token, so the detector is not simply always-true');
-ok(colorDecls(BELOW_TEXT_FLOOR, '/* .planted-f { color: var(--text-3); } */').length === 0,
+// ── INVERTED (6/6). This exact string used to be asserted to produce ONE hit.
+// It now must produce ZERO, and that is the single clearest statement in the
+// suite that the ramp changed: the same input, the opposite expected verdict.
+ok(colorDecls(BELOW_TEXT_FLOOR, '.planted-b { color: var(--text-3); }').length === 0,
+   'CONTROL, INVERTED: the detector no longer fires on --text-3. This assertion used to demand exactly ONE hit ' +
+   `on this same string. --text-3 measures ${C(D, '--text-3', '--surface')} / ${C(L, '--text-3', '--surface')} ` +
+   'and painting it as body text is now correct, so a detector that still fired here would be reporting a ' +
+   'failure that no longer exists — the precise failure mode that had the app overriding this token app-wide.');
+ok(colorDecls(BELOW_TEXT_FLOOR, '/* .planted-f { color: var(--text-faint); } */').length === 0,
    'CONTROL: ...and NOT on a rule that only exists inside a comment');
 ok(colorDecls(BELOW_TEXT_FLOOR, plantedText).filter((h) => !isNonText(h.sel)).length === 1 &&
-   colorDecls(BELOW_TEXT_FLOOR, '.dm-group-summary svg { color: var(--text-3); }').filter((h) => !isNonText(h.sel)).length === 0,
+   colorDecls(BELOW_TEXT_FLOOR, '.sbw-note-block svg { color: var(--text-faint); }').filter((h) => !isNonText(h.sel)).length === 0,
    'CONTROL: the non-text allow-list exempts exactly the listed selectors and nothing else');
 ok(!/\.sb-conn-state\s*\{[^}]*color:\s*var\(--text-2\)/.test('.sb-conn-state { color: var(--text-faint); }'),
    'CONTROL: the §6 named-site pattern does NOT match the pre-fix declaration');
@@ -570,19 +673,37 @@ section('§10  THE TWO SHARED FIXES IN shell.css, AND THE LOAD ORDER THEY REST O
   const shellCss = readFileSync(join(NEXT, 'shell.css'), 'utf8');
   const indexHtml = readFileSync(join(NEXT, 'index.html'), 'utf8');
 
-  // The fact being worked around. If base.css is ever unfrozen and fixed at
-  // source, this goes RED — at which point the shell.css override is redundant
-  // and should be re-measured and removed, not left to accumulate.
+  // base.css STILL declares --text-3 here, unchanged and byte-frozen — but the
+  // token it names has been repaired, so this is no longer "the problem at
+  // source". It is now the design system's correct third-level role, working.
   ok(/\.cur-eyebrow\s*\{[^}]*color:\s*var\(--text-3\)/.test(stripComments(baseCss)),
-     'THE PROBLEM IS STILL AT SOURCE: tokens/base.css declares .cur-eyebrow { color: var(--text-3) }, measured ' +
-     `${C(D, '--text-3', '--canvas')} dark / ${C(L, '--text-3', '--canvas')} light on --canvas — under the ` +
-     `${TEXT_FLOOR} AA floor. base.css is BYTE-FROZEN (copied from the design-system bundle), which is why the ` +
-     'fix is an override in shell.css rather than an edit here. If this ever goes RED, base.css has been fixed ' +
-     'at source and the override below should be re-measured and retired rather than left to accumulate.');
+     'tokens/base.css still declares .cur-eyebrow { color: var(--text-3) }, byte-frozen and untouched. It now ' +
+     `measures ${C(D, '--text-3', '--canvas')} dark / ${C(L, '--text-3', '--canvas')} light on --canvas, OVER ` +
+     `the ${TEXT_FLOOR} AA floor (4.38 / 4.00 before tokens/color.css was fixed at source). Third level is the ` +
+     'correct role for an 11px uppercase metadata label and the system says so; what was broken was the rung, ' +
+     'not the role.');
 
-  ok(/\.cur-eyebrow\s*\{[^}]*color:\s*var\(--text-2\)/.test(stripComments(shellCss)),
-     `shell.css overrides it to --text-2 (${C(D, '--text-2', '--canvas')} dark / ${C(L, '--text-2', '--canvas')} ` +
-     'light on --canvas, measured live at 8.55 / 7.02 on the real element)');
+  // ── INVERTED. This used to assert that shell.css OVERRODE the eyebrow to
+  // --text-2, and it was the suite's headline fix. The override existed only to
+  // escape a rung that failed AA; the rung is fixed, so the override is retired
+  // and its ABSENCE is now what is guarded. Re-adding it would flatten ~20
+  // eyebrows into the same colour as the body text under them, which is the
+  // hierarchy collapse the ramp change exists to undo.
+  ok(!/\.cur-eyebrow\s*\{[^}]*color:/.test(stripComments(shellCss)),
+     'shell.css NO LONGER overrides .cur-eyebrow. The override was added when --text-3 measured 4.38 / 4.00 and ' +
+     `promoted every eyebrow in the app to --text-2; --text-3 is now ${C(D, '--text-3', '--canvas')} / ` +
+     `${C(L, '--text-3', '--canvas')} on --canvas and clears the floor on every surface an eyebrow sits on ` +
+     `(worst case ${Math.min(C(D, '--text-3', '--surface-raised'), C(D, '--text-3', '--surface-sunken'))} dark / ` +
+     `${Math.min(C(L, '--text-3', '--surface-raised'), C(L, '--text-3', '--surface-sunken'))} light), so the ` +
+     'byte-frozen base.css value paints and the system\'s own third level is restored. This assertion demanded ' +
+     'the OPPOSITE until the ramp was fixed; it was inverted rather than deleted.');
+  ok(worst('--text-3', '--canvas') >= TEXT_FLOOR &&
+     worst('--text-3', '--surface') >= TEXT_FLOOR &&
+     worst('--text-3', '--surface-raised') >= TEXT_FLOOR &&
+     worst('--text-3', '--surface-sunken') >= TEXT_FLOOR,
+     '...and the retirement is measured, not assumed: --text-3 clears the floor on --canvas, --surface, ' +
+     '--surface-raised AND --surface-sunken in both themes. If ANY of those regresses this goes red, which is ' +
+     'the signal to fix the token again rather than re-add a per-class rescue.');
   ok(/\.empty-card \.empty-body\s*\{[^}]*color:\s*var\(--text-2\)/.test(stripComments(shellCss)),
      'shell.css paints .empty-card .empty-body --text-2 — the SHARED empty state app.js\'s emptyCard() renders ' +
      'for Ingest, Domains, Shared Brain and Memory, so on a fresh install it is the first sentence a new user ' +
@@ -596,9 +717,8 @@ section('§10  THE TWO SHARED FIXES IN shell.css, AND THE LOAD ORDER THEY REST O
   const iShell = linked.indexOf('/next/shell.css');
   ok(iBase >= 0 && iShell >= 0 && iBase < iShell,
      `index.html links tokens/base.css (#${iBase}) BEFORE shell.css (#${iShell}). Both declarations are ` +
-     'specificity (0,1,0), so ORDER is the only thing that decides which one paints. Confirmed in the live ' +
-     'document by enumerating every matching color rule across every linked sheet: base.css #0 -> ' +
-     'var(--text-3), then shell.css #7 -> var(--text-2), computed rgb(168,168,188) = #A8A8BC = --text-2.');
+     'specificity (0,1,0), so ORDER is the only thing that decides which one paints. That ordering is what made ' +
+     'the retired .cur-eyebrow override work at all, and it is still what .empty-card .empty-body rests on.');
 
   // Nothing linked AFTER shell.css may redeclare either selector STANDALONE.
   // Enumerated from index.html, never from a hardcoded list.
@@ -627,8 +747,19 @@ section('§10  THE TWO SHARED FIXES IN shell.css, AND THE LOAD ORDER THEY REST O
   }
 
   section('§10a  POSITIVE CONTROLS — every §10 detector is shown to fire');
-  ok(!/\.cur-eyebrow\s*\{[^}]*color:\s*var\(--text-2\)/.test('.cur-eyebrow { color: var(--text-3); }'),
-     'CONTROL: the shell.css eyebrow check goes RED on the pre-fix declaration');
+  // The eyebrow check is now an ABSENCE check, so its control must plant a
+  // PRESENCE and watch it fire — both the retired --text-2 form and any other
+  // colour, because "someone re-added an override" is the regression, not
+  // "someone re-added that exact value".
+  ok(/\.cur-eyebrow\s*\{[^}]*color:/.test(stripComments('.cur-eyebrow {\n  color: var(--text-2);\n}')),
+     'CONTROL: the eyebrow ABSENCE check fires on the retired override being re-added verbatim');
+  ok(/\.cur-eyebrow\s*\{[^}]*color:/.test(stripComments('.cur-eyebrow { color: #fff; }')),
+     'CONTROL: ...and on any other colour, since the regression is the override existing at all');
+  ok(!/\.cur-eyebrow\s*\{[^}]*color:/.test(stripComments('/* .cur-eyebrow { color: var(--text-2); } */')),
+     'CONTROL: ...and NOT on the retirement note this file keeps, which QUOTES the rule while explaining why ' +
+     'it went — the comment-stripping trap that has caught a tool in this repo before');
+  ok(!/\.cur-eyebrow\s*\{[^}]*color:/.test(stripComments('.cur-eyebrow { margin-bottom: 8px; }')),
+     'CONTROL: ...and NOT on a .cur-eyebrow rule that sets no colour, so a future layout tweak is not a failure');
   ok(!/\.empty-card \.empty-body\s*\{[^}]*color:\s*var\(--text-2\)/.test('.empty-card .empty-body { color: var(--text-3); }'),
      'CONTROL: the empty-body check goes RED on the pre-fix declaration');
   {
@@ -698,10 +829,18 @@ section('§10  THE TWO SHARED FIXES IN shell.css, AND THE LOAD ORDER THEY REST O
      '...and --text-3 is gone from that rule too');
 
   // The token-level facts these two rest on, asserted rather than assumed.
-  ok(C(D, '--text-3', '--surface-inset') < TEXT_FLOOR && C(L, '--text-3', '--surface-inset') < TEXT_FLOOR,
-     `--text-3 on --surface-inset fails the ${TEXT_FLOOR} floor in BOTH themes ` +
-     `(${C(D, '--text-3', '--surface-inset')} / ${C(L, '--text-3', '--surface-inset')}) — if a token edit ever ` +
-     'makes it pass, this goes RED so nobody keeps routing around a problem that no longer exists');
+  // ── INVERTED. Was `< TEXT_FLOOR`, with the label "if a token edit ever makes
+  // it pass, this goes RED so nobody keeps routing around a problem that no
+  // longer exists". A token edit made it pass, and it did go red. Inverted, and
+  // the KEEP decision for these two classes is re-argued on role rather than
+  // silently left resting on a floor that no longer binds — see shell.css.
+  ok(C(D, '--text-3', '--surface-inset') >= TEXT_FLOOR && C(L, '--text-3', '--surface-inset') >= TEXT_FLOOR,
+     `--text-3 on --surface-inset now CLEARS the ${TEXT_FLOOR} floor in BOTH themes ` +
+     `(${C(D, '--text-3', '--surface-inset')} / ${C(L, '--text-3', '--surface-inset')}, from 4.33 / 3.87). ` +
+     'So --text-2 on .sidebar-hint and .sidebar-note is no longer FORCED by contrast, and both are deliberately ' +
+     'kept anyway: an eyebrow is a label and third level is its role (which is why that override was retired), ' +
+     'while these carry the one sentence explaining an otherwise empty screen, which is a second-level role on ' +
+     'its own merits.');
   ok(C(D, '--text-2', '--surface') >= TEXT_FLOOR && C(L, '--text-2', '--surface') >= TEXT_FLOOR &&
      C(D, '--text-2', '--surface-inset') >= TEXT_FLOOR && C(L, '--text-2', '--surface-inset') >= TEXT_FLOOR,
      '--text-2 clears the floor on BOTH backdrops in BOTH themes — the replacement is not a token swap that ' +
