@@ -243,11 +243,23 @@ const SECTION_INFO = {
 // the same adapter serves a local runtime (Ollama, llama.cpp, LM Studio) once
 // there is a base-URL setting to point it at. That row is a real slot with a
 // real path to being filled, not a placeholder.
+// Dots for the three active providers read `--prov-*`, the SAME custom
+// properties views/chat.css's model picker uses for its provider markers
+// (both defined once, in shell.css — see the comment there). Before v3.24.3
+// this table hand-picked its own colours (`--type-entity`/`--type-summary`/
+// `--accent`) and diverged from chat.css's choices without anyone deciding
+// it should: Anthropic rendered amber here (the "human attention required"
+// status colour, `--type-summary`) and green in the chat model menu — same
+// provider, two colours, on a screen a user visits back-to-back. Read
+// shell.css for why amber is specifically wrong for a provider identity
+// marker. `local` keeps `--text-faint` deliberately: it is not an active
+// provider (see `available: false` below), so it is not part of the
+// provider-family palette and has never needed a dedicated hue.
 const PROVIDER_ROWS = [
-  { id: 'gemini',     name: 'Gemini',      dot: 'var(--type-entity)',  available: true  },
-  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--type-summary)', available: true  },
-  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--accent)',       available: true  },
-  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',   available: false },
+  { id: 'gemini',     name: 'Gemini',      dot: 'var(--prov-gemini)',     available: true  },
+  { id: 'anthropic',  name: 'Anthropic',   dot: 'var(--prov-anthropic)',  available: true  },
+  { id: 'openrouter', name: 'OpenRouter',  dot: 'var(--prov-openrouter)', available: true  },
+  { id: 'local',      name: 'Local model', dot: 'var(--text-faint)',      available: false },
 ];
 
 // ── Updates: the decision, as pure functions ─────────────────────────────
