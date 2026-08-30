@@ -237,6 +237,25 @@
 .ing-dest-meta { font-size: var(--text-2xs); color: var(--text-2); }
 .ing-dest-mark { flex: none; color: var(--accent-text); display: flex; }
 
+/* A destination with a single-file ingest running RIGHT NOW.
+   TONE IN THE BORDER AND TINT, LABEL IN --text. That is v3.20.0's measured
+   rule, not a style preference: painting --attention-text AS TEXT on
+   --attention-tint measures 3.21:1 in light at this size, under the 4.5 AA
+   floor, which is exactly how .model-badge-flag failed. The same pairing is
+   already correct one block up in .ing-sidebar-busy; this is that shape at
+   row scale, so the sidebar speaks with one voice about one fact. */
+.ing-dest-live {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--text);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  white-space: nowrap;
+}
+
 .ing-sidebar-pick-btn { width: 100%; margin: 10px 0 4px; justify-content: center; }
 .ing-file-name {
   display: block;
