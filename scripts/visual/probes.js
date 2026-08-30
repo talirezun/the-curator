@@ -486,3 +486,290 @@ export function backdropSamples(expectPort, limit) {
   // rarely runs is barely a control.
   return { considered, samples: out };
 }
+
+/**
+ * Survey every info affordance (`renderViewHeader`'s circled-i) on screen and
+ * the panel each one claims to control.
+ *
+ * WHY THIS IS A BROWSER PROBE AND NOT A SOURCE SCAN
+ * The static guard in test-next-view-header.js proves panel ids are UNIQUE.
+ * It cannot prove the RIGHT PANEL OPENS, and in v3.24.0 those two came apart:
+ * a sidebar header and a main header of the same view derived the same panel
+ * id, `document.getElementById` returned the first in document order, and
+ * clicking the MAIN mark opened the SIDEBAR's panel while the main panel sat
+ * at 0x0 with `offsetParent === null`. Every attribute-level assertion passed
+ * — `aria-expanded` flipped to "true" on the right button — while the prose
+ * was unreachable by mouse, keyboard and screen reader alike. Only geometry
+ * measured in a real browser separates those two states.
+ *
+ * IDENTITY, NOT COPY. Each mark records `ownHeaderPanelId`: the id of the
+ * `.tx-vh-panel` that is a DOM descendant of the SAME `header.tx-vh`. That is
+ * the invariant a caller asserts against, so this probe never needs to know
+ * what any panel says. Pinning a sentence would make the suite fail on a copy
+ * edit and pass on a re-collision the day someone reworded both panels alike.
+ */
+export function infoPanelSurvey(expectPort) {
+  if (String(location.port) !== String(expectPort)) {
+    throw new Error(`origin guard: measuring port ${location.port}, expected ${expectPort}`);
+  }
+  if (!window.innerWidth) throw new Error('origin guard: zero-width viewport');
+
+  const headers = Array.prototype.slice.call(document.querySelectorAll('header.tx-vh'));
+  // ADDRESS PANELS BY POSITION, NOT BY ID. Under the very defect this suite
+  // exists to catch, two panels SHARE an id — so a lookup keyed on the id
+  // returns whichever comes first in document order and cannot tell the two
+  // apart. A `find(p => p.id === expected)` therefore reports the sidebar's
+  // panel as the main header's own and passes while the bug is live: measured,
+  // it read back the sidebar's 65-character prose for a main panel holding 231.
+  // The NodeList index is unique by construction, so the behavioural assertion
+  // keeps discriminating exactly where id-matching stops.
+  const panelEls = Array.prototype.slice.call(document.querySelectorAll('div.tx-vh-panel'));
+  const idxOf = (el) => {
+    const h = el && el.closest ? el.closest('header.tx-vh') : null;
+    return h ? headers.indexOf(h) : -1;
+  };
+  const regionOf = (el) => {
+    const h = el && el.closest ? el.closest('header.tx-vh') : null;
+    return h && h.classList.contains('tx-vh-sidebar') ? 'sidebar' : 'main';
+  };
+
+  // Duplicate ids are measured across the WHOLE document, not just headers.
+  // The defect was a collision between two panels, but the same collision can
+  // arrive from any other pair, and `getElementById` is document-wide.
+  const allIds = Array.prototype.slice.call(document.querySelectorAll('[id]')).map((e) => e.id);
+  const seen = Object.create(null);
+  const dup = Object.create(null);
+  for (const id of allIds) { if (seen[id]) dup[id] = true; seen[id] = true; }
+
+  const marks = Array.prototype.slice.call(document.querySelectorAll('button.tx-vh-info')).map((b) => {
+    const header = b.closest('header.tx-vh');
+    const target = b.getAttribute('data-tx-info');
+    // What getElementById ACTUALLY resolves to — the measured failure mode.
+    const resolved = target ? document.getElementById(target) : null;
+    const ownPanel = header ? header.querySelector('div.tx-vh-panel') : null;
+    const titleEl = header ? header.querySelector('.tx-vh-title') : null;
+    // TWO PRODUCERS EMIT THIS AFFORDANCE, not one. `renderViewHeader` in
+    // shared/text.js derives its ids from the title (the collision-prone case),
+    // and settings.js's local `infoMark` takes an explicit id and renders
+    // OUTSIDE any header — beside the build-lane chip. Both are driven by the
+    // same delegated listener, so both are in scope here. A survey that
+    // recognised only header marks would have reported the standalone one as
+    // broken forever, and would have said nothing at all if it really broke.
+    //
+    // What both producers share is the pairing convention `btn.id === panel.id
+    // + '-btn'`, so the expected panel is derived from the header when there is
+    // one (which is what pins the v3.24.0 shape) and from that convention when
+    // there is not.
+    const pairedId = /-btn$/.test(b.id) ? b.id.replace(/-btn$/, '') : null;
+    const expectedPanelId = ownPanel ? ownPanel.id : pairedId;
+    // Resolved by ELEMENT IDENTITY for a header mark; a standalone mark has no
+    // header, so it falls back to first-id-match — which is unambiguous only
+    // while ids are unique, and the document-wide uniqueness assertion is what
+    // guarantees that. Stated so the weaker half is not mistaken for the strong one.
+    const expectedPanelIdx = ownPanel
+      ? panelEls.indexOf(ownPanel)
+      : panelEls.findIndex(function (p) { return p.id === pairedId; });
+    const r = b.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const onScreen = r.width > 0 && r.height > 0
+      && cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
+    let topAtCentre = 'off-screen';
+    if (onScreen) {
+      const hit = document.elementFromPoint(cx, cy);
+      topAtCentre = !hit ? 'none'
+        : (hit.closest && hit.closest('button.tx-vh-info') === b ? 'self'
+          : hit.tagName + (hit.className ? '.' + String(hit.className).split(/\s+/)[0] : ''));
+    }
+    return {
+      headerIdx: idxOf(b),
+      producer: header ? 'view-header' : 'standalone',
+      region: regionOf(b),
+      title: titleEl ? (titleEl.textContent || '').trim() : null,
+      btnId: b.id,
+      target,
+      ariaControls: b.getAttribute('aria-controls'),
+      ariaExpanded: b.getAttribute('aria-expanded'),
+      ownHeaderPanelId: ownPanel ? ownPanel.id : null,
+      expectedPanelId,
+      expectedPanelIdx,
+      followsBtnIdConvention: pairedId !== null,
+      // Only meaningful for a header mark; a standalone mark has no header to
+      // be contained by, and `null` says so rather than reading as a failure.
+      resolvesToPanelInSameHeader: header ? !!(resolved && header.contains(resolved)) : null,
+      // The producer-independent form: whatever getElementById hands the click
+      // handler must BE the panel this mark is paired with.
+      resolvesToExpectedPanel: !!(resolved && expectedPanelId && resolved.id === expectedPanelId
+        && resolved.classList && resolved.classList.contains('tx-vh-panel')),
+      // aria-controls and data-tx-info must name the SAME panel; AT follows the
+      // former while the click handler follows the latter, so a divergence
+      // routes a screen reader and a mouse to different places.
+      ariaMatchesTarget: b.getAttribute('aria-controls') === target,
+      onScreen,
+      topAtCentre,
+      cx: Math.round(cx),
+      cy: Math.round(cy),
+    };
+  });
+
+  const panels = panelEls.map((p, idx) => {
+    const r = p.getBoundingClientRect();
+    return {
+      idx,
+      id: p.id,
+      headerIdx: idxOf(p),
+      region: regionOf(p),
+      hidden: !!p.hidden,
+      // `hidden` is the attribute the handler sets; offsetParent and the rect
+      // are whether the user can SEE it. The v3.24.0 panel had hidden=false
+      // and a 0x0 rect at the same time, so both are recorded.
+      offsetParentNull: p.offsetParent === null,
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      text: (p.textContent || '').trim().slice(0, 300),
+    };
+  });
+
+  return {
+    guard: { port: String(location.port) },
+    headerCount: headers.length,
+    dupIds: Object.keys(dup),
+    marks,
+    panels,
+    // Which panels a USER can actually see right now. The suite asserts on
+    // this set rather than on `hidden` alone.
+    visiblePanelIds: panels.filter((p) => !p.hidden && !p.offsetParentNull && p.w > 0 && p.h > 0).map((p) => p.id),
+    visiblePanelIdxs: panels.filter((p) => !p.hidden && !p.offsetParentNull && p.w > 0 && p.h > 0).map((p) => p.idx),
+    expandedBtnIds: marks.filter((m) => m.ariaExpanded === 'true').map((m) => m.btnId),
+    activeElement: document.activeElement
+      ? (document.activeElement.id || document.activeElement.tagName) : null,
+  };
+}
+
+/**
+ * Scroll one info mark to the middle of the viewport and return its FRESH
+ * centre, so a click is dispatched at coordinates measured after the scroll.
+ *
+ * Re-measuring is not defensive tidiness: opening a panel reflows the header,
+ * and a survey taken before that reflow can put a later click on whatever slid
+ * into the old coordinates. A click that lands somewhere else would still pass
+ * an assertion written against `aria-expanded`.
+ */
+export function markGeometry(expectPort, btnId) {
+  if (String(location.port) !== String(expectPort)) {
+    throw new Error(`origin guard: measuring port ${location.port}, expected ${expectPort}`);
+  }
+  if (!window.innerWidth) throw new Error('origin guard: zero-width viewport');
+  const b = document.getElementById(btnId);
+  if (!b) return { found: false };
+  if (b.scrollIntoView) b.scrollIntoView({ block: 'center', inline: 'nearest' });
+  const r = b.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const onScreen = r.width > 0 && r.height > 0
+    && cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight;
+  const hit = onScreen ? document.elementFromPoint(cx, cy) : null;
+  return {
+    found: true,
+    onScreen,
+    cx: Math.round(cx),
+    cy: Math.round(cy),
+    topAtCentre: !onScreen ? 'off-screen'
+      : (!hit ? 'none'
+        : (hit.closest && hit.closest('button.tx-vh-info') === b ? 'self'
+          : hit.tagName + (hit.className ? '.' + String(hit.className).split(/\s+/)[0] : ''))),
+  };
+}
+
+/**
+ * Plant one defect in the LIVE page, or undo it — the control on
+ * `infoPanelSurvey`'s own detectors.
+ *
+ * A clean sweep is worth nothing until each detector has been shown to fire,
+ * and this repo has shipped several guards that could not. Planting in the
+ * running DOM (rather than mutating source) keeps the control inside the same
+ * run that produces the verdict, so a detector that has quietly stopped
+ * working cannot be reported as "no defects found".
+ *
+ * Restore state hangs off `window` because each probe is stringified
+ * separately and shares no closure with the last one.
+ */
+export function mutateForControl(expectPort, kind) {
+  if (String(location.port) !== String(expectPort)) {
+    throw new Error(`origin guard: measuring port ${location.port}, expected ${expectPort}`);
+  }
+  if (!window.innerWidth) throw new Error('origin guard: zero-width viewport');
+  const KEY = '__curatorInfoPanelControl';
+
+  if (kind === 'restore') {
+    const st = window[KEY];
+    if (!st) return { restored: false, reason: 'nothing planted' };
+    // NOT getElementById(st.id): the id is DUPLICATED by construction here, so
+    // it returns the REAL panel (first in document order) and the planted clone
+    // would survive the restore — contaminating every later view. That is the
+    // very defect this control exists to plant, met inside its own cleanup.
+    if (st.kind === 'dup-id') { const n = document.querySelector('[data-curator-control="1"]'); if (n) n.remove(); }
+    if (st.kind === 'cross-header') { const b = document.getElementById(st.btnId); if (b) b.setAttribute('data-tx-info', st.prev); }
+    if (st.kind === 'occlude') { const n = document.querySelector('[data-curator-control="overlay"]'); if (n) n.remove(); }
+    if (st.kind === 'unhide') { const p = document.getElementById(st.id); if (p) p.hidden = true; }
+    window[KEY] = null;
+    return { restored: true, kind: st.kind };
+  }
+
+  const marks = Array.prototype.slice.call(document.querySelectorAll('button.tx-vh-info'));
+  const panels = Array.prototype.slice.call(document.querySelectorAll('div.tx-vh-panel'));
+
+  if (kind === 'dup-id') {
+    if (!panels.length) return { planted: false, reason: 'no panel on screen' };
+    // Clone an id that is currently UNIQUE. A control must introduce a NEW
+    // defect: re-planting one the page already has changes nothing observable,
+    // and the detector then reads as "did not fire" when the truth is "was
+    // already true". Refusing with a reason says which of the two it is.
+    const counts = Object.create(null);
+    Array.prototype.slice.call(document.querySelectorAll('[id]')).forEach((e) => { counts[e.id] = (counts[e.id] || 0) + 1; });
+    const target = panels.filter((p) => p.id && counts[p.id] === 1)[0];
+    if (!target) return { planted: false, reason: 'no panel carries a unique id — the page already has the defect this control plants' };
+    const id = target.id;
+    const clone = document.createElement('div');
+    clone.id = id;                       // the collision itself
+    clone.dataset.curatorControl = '1';
+    document.body.appendChild(clone);
+    window[KEY] = { kind, id };
+    return { planted: true, id };
+  }
+  if (kind === 'cross-header') {
+    // Point a mark at a panel in a DIFFERENT header — the shape of the bug.
+    // The foreign panel must be DISTINGUISHABLE from the mark's current target,
+    // or the repoint is a no-op — which is exactly what happens on a page whose
+    // ids have already collided. Same rule as dup-id above.
+    let b = null, foreign = null;
+    for (const m of marks) {
+      const own = m.closest('header.tx-vh');
+      if (!own) continue;
+      const cand = panels.filter((p) => !own.contains(p) && p.id && p.id !== m.getAttribute('data-tx-info'))[0];
+      if (cand) { b = m; foreign = cand; break; }
+    }
+    if (!b) return { planted: false, reason: 'no mark could be repointed at a DISTINCT panel in another header' };
+    const own = b.closest('header.tx-vh');
+    const prev = b.getAttribute('data-tx-info');
+    b.setAttribute('data-tx-info', foreign.id);
+    window[KEY] = { kind, btnId: b.id, prev };
+    return { planted: true, btnId: b.id, pointedAt: foreign.id };
+  }
+  if (kind === 'occlude') {
+    if (!marks.length) return { planted: false, reason: 'no mark on screen' };
+    const r = marks[0].getBoundingClientRect();
+    const o = document.createElement('div');
+    o.dataset.curatorControl = 'overlay';
+    o.style.cssText = 'position:fixed;z-index:99999;left:' + (r.left - 4) + 'px;top:' + (r.top - 4)
+      + 'px;width:' + (r.width + 8) + 'px;height:' + (r.height + 8) + 'px;background:transparent';
+    document.body.appendChild(o);
+    window[KEY] = { kind };
+    return { planted: true, btnId: marks[0].id };
+  }
+  if (kind === 'unhide') {
+    if (!panels.length) return { planted: false, reason: 'no panel on screen' };
+    panels[0].hidden = false;
+    window[KEY] = { kind, id: panels[0].id };
+    return { planted: true, id: panels[0].id };
+  }
+  return { planted: false, reason: `unknown kind ${kind}` };
+}

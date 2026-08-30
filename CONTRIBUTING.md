@@ -76,8 +76,8 @@ Escape hatch, rarely the right answer: `git commit --no-verify`.
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (138 suites total — 120 OFFLINE
-+ 14 LIVE_CI + 4 LIVE_LOCAL — thousands of assertions). One command runs them
+The Curator has an extensive battle-test suite (139 suites total — 120 OFFLINE
++ 14 LIVE_CI + 5 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
 `OFFLINE`/`LIVE_CI`/`LIVE_LOCAL` arrays at the top of
@@ -370,8 +370,10 @@ tests already failed.
 **CI runs only the CI-safe live suites.** GitHub sets `CI=true`, and
 [scripts/run-tests.js](scripts/run-tests.js) uses that to run the `LIVE_CI` set
 (self-contained, deterministic) and skip the `LIVE_LOCAL` set (real-data
-benchmarks like `test-beta13-chat-live` and `test-ingest-real-llm`, and the
-quality-threshold `test-ingest-deep`). Those local-only suites still run in a
+benchmarks like `test-beta13-chat-live` and `test-ingest-real-llm`, the
+quality-threshold `test-ingest-deep`, and the two browser sweeps —
+`test-visual-regression` and `test-info-panel-reachability` — which cost \$0 and
+need no key but do need a browser GitHub's runners do not reliably have). Those local-only suites still run in a
 full local `npm run test:live`. A CI-safe live suite must not read a file
 outside the repo: use a committed fixture (e.g. `docs/ingestion-pipeline.md`
 as a large source, or `scripts/test-ingest-deep-inputs/`) rather than anything

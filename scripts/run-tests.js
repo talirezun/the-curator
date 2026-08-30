@@ -247,6 +247,18 @@ const LIVE_LOCAL = [
   // that measures real rendering, layout, occlusion or contrast; every
   // other one says in its own header that it does not.
   'test-visual-regression.js',
+  // test-info-panel-reachability: here for the SAME reason as its neighbour
+  // above — a browser, not an API key. It is the only suite that proves the
+  // circled-i beside a view title opens ITS OWN panel and that the panel is
+  // genuinely on screen. v3.24.0 is why it exists: two headers derived one
+  // panel id, `getElementById` returned the first in document order, and the
+  // main Sync panel — carrying the git-recovery route — sat at 0x0 with
+  // `offsetParent === null` while `aria-expanded` flipped to "true" on the
+  // correct button. Every attribute-level assertion passed. All 120 offline
+  // suites were green. No static scan can ever separate those two states;
+  // only geometry in a real browser can. Self-skips at exit 0 with a `⊘` line
+  // and no assertion tally when no browser is installed.
+  'test-info-panel-reachability.js',
 ];
 
 // All live suites, for labelling.

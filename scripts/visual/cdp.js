@@ -254,6 +254,42 @@ export class CdpPage {
     return res.result?.value;
   }
 
+  /**
+   * A REAL left click at viewport coordinates, through Chrome's input
+   * pipeline.
+   *
+   * NOT `el.click()`. A synthetic `.click()` fires on the element you already
+   * hold a reference to, so it passes even when the control is covered by an
+   * overlay, sits at 0x0, or has scrolled off screen — which is exactly the
+   * class of defect a browser harness exists to catch. Dispatching at a
+   * coordinate means the hit test decides who receives the event, so a click
+   * that would land on something else fails here the way it fails for a user.
+   */
+  async click(x, y, { settleMs = 160 } = {}) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await this.send('Input.dispatchMouseEvent', {
+        type, x, y, button: 'left', clickCount: 1,
+        buttons: type === 'mousePressed' ? 1 : 0,
+      });
+    }
+    await delay(settleMs);
+  }
+
+  /**
+   * A REAL key press. Only the keys this harness needs are mapped; an unknown
+   * key THROWS rather than silently dispatching a keydown with no
+   * windowsVirtualKeyCode, which some handlers ignore — a press that quietly
+   * does nothing would read as "the app did not respond" and be believed.
+   */
+  async pressKey(key, { settleMs = 160 } = {}) {
+    const CODES = { Escape: 27, Enter: 13, Tab: 9, ' ': 32 };
+    if (!(key in CODES)) throw new Error(`pressKey: unmapped key ${JSON.stringify(key)} — add it to CODES with its virtual key code`);
+    const common = { key, code: key === ' ' ? 'Space' : key, windowsVirtualKeyCode: CODES[key] };
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...common });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...common });
+    await delay(settleMs);
+  }
+
   async close() {
     try { await this.conn.send('Target.closeTarget', { targetId: this.targetId }); } catch { /* browser may be gone */ }
   }
