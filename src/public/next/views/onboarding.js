@@ -71,6 +71,7 @@
 // Owns views/onboarding.css (the `obp-` prefix, used nowhere else).
 
 import { navigate, icon, escapeHtml } from '../app.js';
+import { loadUiState, durableStorage } from '../shared/ui-state.js';
 
 // Namespaced like every other /next key (curator-next-theme,
 // curator-next-view, curator-next-chat-domain).
@@ -357,19 +358,32 @@ let autoCloseOnComplete = true;
 let panelGen = 0;
 function isFresh(myGen) { return myGen === panelGen; }
 
-// localStorage access is wrapped rather than referenced directly so the
-// whole module keeps working in a context where the property access itself
-// throws (some privacy modes throw on `window.localStorage`, not just on
-// getItem). Returns an object that always satisfies the readDismissed /
-// writeDismissed contract; its methods throwing is the tested path.
+// ── DURABLE, NOT MERELY LOCAL (v3.28.0) ────────────────────────────────
+// The dismissal is now recorded server-side as well as in localStorage,
+// through shared/ui-state.js. The reason is the storage PARTITION, not the
+// key name: a native shell (Electron) gets an empty one, so a fully set-up
+// user would be shown the first-run setup panel again on the app's first
+// launch — the app stating something false about them.
+//
+// durableStorage() is a drop-in for the wrapper this function used to build:
+// same getItem/setItem shape, same key, and an UNRECORDED field still falls
+// through to real localStorage AND ITS THROW. That is what preserves this
+// file's deliberate fail-safe direction — SHOW, the OPPOSITE of
+// views/cutover-notice.js's, for the reason argued in the header — without
+// this change having to restate or re-derive it.
+//
+// `removeItem` STAYS in the shape, and it is the reason this field is the
+// one durable field that is NOT monotonic. clearDismissed() below is reached
+// from views/settings.js's "Show setup guide" — an explicit UN-dismiss the
+// product deliberately offers ("a tour you can never get back is worse than
+// none"). A first draft of this change made every field monotonic; that would
+// have left `storage.removeItem` undefined, so clearDismissed()'s try/catch
+// would swallow a TypeError and report false while the server kept holding
+// the dismissal — the re-open silently ceasing to persist. Caught by reading
+// the call sites rather than by trusting the sentence that had already been
+// written here claiming nothing called it.
 function storage() {
-  try {
-    return window.localStorage;
-  } catch {
-    return { getItem() { throw new Error('no storage'); },
-             setItem() { throw new Error('no storage'); },
-             removeItem() { throw new Error('no storage'); } };
-  }
+  return durableStorage();
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -425,6 +439,11 @@ async function loadFacts() {
 // call-site half.
 export async function maybeShowOnboarding() {
   try {
+    // ONE shared GET for the whole page load, memoised in shared/ui-state.js
+    // — views/cutover-notice.js has already awaited the same promise by the
+    // time this runs, so this call costs no second request. It never throws
+    // and never rejects, so the markBooted() property above is untouched.
+    await loadUiState();
     const dismissed = readDismissed(storage());
     // Short-circuit BEFORE the two GETs. A dismissed panel cannot show
     // whatever the facts say, and this runs on every page load for the
