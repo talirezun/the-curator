@@ -90,6 +90,7 @@ const OFFLINE = [
   'test-next-form-control-scaling.js', // the ONE rule that lets button/input/select/textarea follow the Settings text-size control. font-size on a form control is NOT inherited — the UA stylesheet sets it (`button { font: 400 13.3333px Arial }`), so any control with no font rule of its own is FROZEN at ~13.33px IN ARIAL whatever the user picks: measured 23 of 92 control shapes frozen, 21 of those also in Arial, plus 6 more already-sized controls still in Arial. YOU CANNOT GREP FOR AN ABSENT DECLARATION, so the guard is inverted — it pins the rule that makes the class impossible, and the four ways it silently weakens: a px literal in the font-size slot (looks like a fix, still frozen); a SCOPED selector, which would outrank component rules instead of losing to them; `line-height`/the `font` shorthand, EXCLUDED by measurement because inheriting body's 1.45 grew 11 controls 3-4px and 7 of them were never frozen; and a competing bare `button { font-size: … }` in a view file, which has identical 0,0,1 specificity and is linked LATER. Also pins reachability (the v3.9.1 styled-but-unlinked trap) and that the --text-* ramp is still multiplied by --font-scale, without which `inherit` inherits a constant. NOT ENFORCED and said so in the header: nothing here measures rendering.
   'test-next-scrollbars.js',
   'test-next-sync-spin.js',       // the app-wide scrollbar treatment in shell.css. Pins the four ways it regresses: (1) collapsing it into a `:root { scrollbar-width }` one-liner — scrollbar-color IS inherited and scrollbar-width is NOT (measured in a real browser), so that recolours every bar while leaving it full thickness, i.e. it LOOKS fixed while failing the actual report; (2) a ::-webkit-scrollbar rule escaping its `@supports not` guard, which opts elements out of macOS overlay scrollbars and forces a permanent layout gutter for trackpad users — the mechanism chat.css:226 already records; (3) a hardcoded colour, which also breaks theming, since both themes come from ONE declaration only because the thumb is a semantic token color.css redefines under [data-theme="light"]; (4) a thumb under WCAG 1.4.11's 3:1 — contrast is COMPUTED from whichever token shell.css actually names, resolved through color.css in both themes over four surfaces, with a positive control requiring --border-strong (the intuitive "quiet subtle border" pick, ~1.5:1) to fail
+  'test-next-checkbox.js',        // No checkbox may fall through to OS chrome: every <input type="checkbox"> in /next — ENUMERATED FROM DISK in both markup-string and createElement form, because a hand-written audit list reported six sites and there are seven — adopts shared/checkbox.css, which replaces the native APPEARANCE while keeping the real input as the accessible element. The sharpest site is the Shared Brain consent gate.
   'test-next-button-chrome.js',   // No button may fall through to UA chrome: .btn carries a neutral baseline, .btn-danger is defined centrally (confirm.js adds it at RUNTIME, so a scoped-only rule left every destructive confirm a native OS button), and delete affordances stay icon-only while remaining focusable.
   'test-next-provider-colors-and-badge.js', // Anthropic no longer renders amber in Settings and green in the chat model picker: the three --prov-* provider tokens have exactly one source (shell.css), settings.js's PROVIDER_ROWS reads them by name rather than hand-picking its own, and the Sync rail badge lost its hardcoded dark-theme hex + below-ramp font-size in favour of --attention/--radius-full/--text-2xs.
   'test-next-view-enter-motion.js', // navigate() fires the enter animation ONCE per navigation on the STABLE containers (#view-root/#sidebar) — not on .main-inner, which setMain replaces twice per entry on domains/chat, and not on #main, which would make the fixed reader overlay a descendant of a transformed element
@@ -263,6 +264,19 @@ const LIVE_LOCAL = [
   // only geometry in a real browser can. Self-skips at exit 0 with a `⊘` line
   // and no assertion tally when no browser is installed.
   'test-info-panel-reachability.js',
+  // test-next-checkbox-visual: here for the SAME reason as its two
+  // neighbours above — a browser, not an API key. Its offline sibling
+  // (test-next-checkbox.js) proves every checkbox ADOPTS the component; only
+  // a browser can prove the component then renders as something other than
+  // OS chrome, that Space toggles it and Tab reaches it, and that the check
+  // against its fill and the unchecked border against its backdrop clear
+  // WCAG's 3:1 non-text floor COMPOSITED AFTER CASCADE. This repo has had
+  // two contrast probes be silently wrong computing that from tokens — one
+  // read a transparent backdrop as black and reported 1.15 for text that
+  // was really 17.68 — so this suite states its own controls (an identical
+  // pair must read 1.00, black-on-white 21.00) in its output every run.
+  // Self-skips at exit 0 with a `⊘` line when no browser is installed.
+  'test-next-checkbox-visual.js',
 ];
 
 // All live suites, for labelling.

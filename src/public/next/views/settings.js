@@ -3869,7 +3869,7 @@ function renderModelFilterBar(provider, f, shown, total, unranked) {
       // the open list the way it constrained the closed select.
       renderListboxHtml(sortCfg) +
       '<label class="model-filter-measured">' +
-        '<input type="checkbox" data-model-filter-measured="' + pid + '"' +
+        '<input type="checkbox" class="cur-check cur-check-sm" data-model-filter-measured="' + pid + '"' +
           (f.measuredOnly ? ' checked' : '') + '>' +
         'Measured by The Curator' +
       '</label>' +

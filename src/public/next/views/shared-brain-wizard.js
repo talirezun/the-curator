@@ -684,7 +684,7 @@ function panelStep4() {
         '<span class="sbw-help">Stored locally on your machine. Only shared as a UUID by default — see attribution below.</span>' +
       '</div>' +
       '<div class="sbw-field">' +
-        '<label class="sbw-checkbox-label"><input type="checkbox" id="sbw-attribute-name"><span>Show my name in my contribution records (default: anonymous UUID)</span></label>' +
+        '<label class="sbw-checkbox-label"><input type="checkbox" class="cur-check" id="sbw-attribute-name"><span>Show my name in my contribution records (default: anonymous UUID)</span></label>' +
         '<span class="sbw-help">Off by default. Wiki pages always credit a short UUID either way; this controls only whether your name is stored in the contribution records every collaborator on the repo can read. It is set here, when you join — changing it later means disconnecting and re-joining. It applies only to future pushes and cannot remove a name already published.</span>' +
       '</div>' +
       '<div id="sbw-step4-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
@@ -717,7 +717,12 @@ function panelStep5() {
           '<li>You can disconnect anytime — your local wiki is unaffected.</li>' +
           '<li>Your access token is stored locally on this computer only. We never transmit it except to GitHub on your behalf.</li>' +
         '</ul>' +
-        '<label class="sbw-checkbox-label sbw-consent-check"><input type="checkbox" id="sbw-consent"><span>I understand and consent to the above.</span></label>' +
+        // THE CONSENT GATE. This is the control by which a user agrees to
+        // contribute their own knowledge to a Shared Brain, and until this
+        // release it rendered as raw OS chrome inside an otherwise-designed
+        // dialog. `cur-check` is the design system's own Checkbox, whose
+        // prompt names the consent gate as the pattern it exists for.
+        '<label class="sbw-checkbox-label sbw-consent-check"><input type="checkbox" class="cur-check" id="sbw-consent"><span>I understand and consent to the above.</span></label>' +
       '</div>' +
       '<div id="sbw-step5-status" class="sbw-status sbw-hidden" aria-live="polite"></div>' +
       '<div class="sbw-actions">' +
@@ -984,6 +989,12 @@ async function populateDomains() {
       label.className = 'sbw-checkbox-label';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
+      // Same component as the two markup-string checkboxes in this file.
+      // This site is built with createElement rather than an HTML string,
+      // which is exactly why a hand-written audit list missed it — the
+      // class invariant in scripts/test-next-checkbox.js enumerates BOTH
+      // shapes from disk for that reason.
+      cb.className = 'cur-check';
       cb.value = name;
       cb.checked = state.selectedDomains.has(name); // rule 2
       const span = document.createElement('span');

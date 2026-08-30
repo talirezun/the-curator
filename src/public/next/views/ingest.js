@@ -3247,7 +3247,7 @@ function renderQueueEstimate(est) {
       '<label class="ing-label" for="ing-queue-budget">Budget cap (optional)</label>' +
       '<input type="number" class="ing-select ing-queue-budget-input" id="ing-queue-budget" min="0" step="0.01" placeholder="No cap" value="' + escapeHtml(state.queueBudgetInput) + '">' +
     '</div>' +
-    '<label class="ing-queue-overwrite-row"><input type="checkbox" id="ing-queue-overwrite"' + (state.queueOverwriteInput ? ' checked' : '') + '> Overwrite existing pages for files already ingested</label>' +
+    '<label class="ing-queue-overwrite-row"><input type="checkbox" class="cur-check" id="ing-queue-overwrite"' + (state.queueOverwriteInput ? ' checked' : '') + '> <span>Overwrite existing pages for files already ingested</span></label>' +
     '<div class="ing-queue-confirm-actions">' +
       // sparkles marks a token-spending action (design rule), paired here
       // with the real "Estimated cost" row already rendered above — the

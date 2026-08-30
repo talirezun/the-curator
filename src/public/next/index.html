@@ -88,6 +88,27 @@
      components above document. -->
 <link rel="stylesheet" href="/next/shared/text.css">
 
+<!-- shared/checkbox.css — the ONE checkbox surface in /next, replacing the
+     OS-native `<input type="checkbox">` chrome at every call site, the same
+     way listbox.css replaced every native <select> in v3.18.0. Linked here
+     for the same reason the ring, the listbox and the text system are: it
+     owns the whole `cur-check` prefix, and a view that adopts the component
+     must not have to touch this file.
+
+     Linked ABOVE the views on purpose. Three call sites (views/chat.css's
+     conversation row and bulk strip, views/settings.css's model filter) add
+     placement and a hover/reveal treatment at equal specificity AFTER this
+     point and must win — the same layering the three components above
+     document. Appending this <link> after the views instead would invert
+     that: .cur-check and .chat-conv-check are both single-class selectors,
+     so the loser is decided purely by source order.
+
+     Load-bearing twice over, as the three <link>s above record: without it
+     every checkbox in the app falls back to OS chrome in both themes, AND
+     the file is invisible to scripts/test-css-tokens.js §5, which discovers
+     /next stylesheets only from this file's <link> tags. -->
+<link rel="stylesheet" href="/next/shared/checkbox.css">
+
 <!-- One CSS file per view (views/README.md) — linked here so the views/
      directory never has to touch this file to add view-specific styling.
      All seven exist even where a view currently has no rules of its own,

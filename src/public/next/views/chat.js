@@ -1997,7 +1997,7 @@ function conversationRowHtml(c) {
       // under the pointer cannot be reached by keyboard at all (the sibling
       // delete button's `display:none` until :hover has exactly that
       // problem), and multi-select is unusable if you cannot find the way in.
-      '<input type="checkbox" class="chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
+      '<input type="checkbox" class="cur-check cur-check-sm chat-conv-check" data-conv-check="' + escapeHtml(c.id) + '"' +
         (selected ? ' checked' : '') +
         ' aria-label="Select ' + escapeHtml(title) + '">' +
       '<div class="chat-conv-row-main" role="button" tabindex="0" data-conv-select="' + escapeHtml(c.id) + '">' +
@@ -2050,7 +2050,7 @@ function bulkBarHtml() {
   return (
     '<div class="chat-bulk-bar">' +
       '<label class="chat-bulk-all">' +
-        '<input type="checkbox" id="chat-bulk-all"' + (allChecked ? ' checked' : '') + ' aria-label="Select all conversations">' +
+        '<input type="checkbox" class="cur-check cur-check-sm" id="chat-bulk-all"' + (allChecked ? ' checked' : '') + ' aria-label="Select all conversations">' +
         '<span class="mono">' + (n === 0 ? 'Select all' : n + ' selected') + '</span>' +
       '</label>' +
       (n > 0
