@@ -176,7 +176,7 @@
    padding took 12px more of the width.
 
    YOU CANNOT GREP FOR AN ABSENT DECLARATION — the same class shell.css
-   already records for the frozen-font-size trap. `scripts/test-next-icon-
+   already records for the frozen-font-size trap. `scripts/test-next-
    button-chrome.js` therefore asserts the border is PRESENT rather than
    trying to enumerate what happens when it is missing.
 
