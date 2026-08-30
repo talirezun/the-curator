@@ -120,6 +120,8 @@ first group applies to all three.
 | Document | What's inside |
 |----------|---------------|
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
+| [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) | **This project's memory.** Every release row older than the newest five, moved out of `CLAUDE.md` **byte-for-byte** — the measurements, traps and "KNOWN AND UNFIXED" items that explain why the code is shaped the way it is. `CLAUDE.md` keeps the newest five in full plus a one-line index of every entry here. Read the full row before changing anything with a history. It lives at the repo **root**, not in `docs/`, and that is load-bearing — the preserved rows carry root-relative links; see the note at the top of the file |
+| [roadmap-chat-modes.md](roadmap-chat-modes.md) | Design context for Chat Modes 3 (**Dictate**) and 4 (**Curate**) — **designed but never built**. Nothing in it describes shipped behaviour; read it before implementing either mode |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |
 | [architecture.md](architecture.md) | System design, data flow, module reference |
 | [chat-streaming.md](chat-streaming.md) | How a chat turn streams from the provider to the screen — the frame format, how reasoning is kept out of the answer, and why a streamed attempt is never retried or handed to a fallback model |
