@@ -245,11 +245,31 @@ console.log(`  · renderer home: ${HOME.label}`);
     'calling renderMarkdown is NOT counted as declaring it');
 }
 
+// ── 0b. THE HARDCODED FN LIST CANNOT SILENTLY GO STALE ───────────────────
+// FNS below is hand-maintained, and v3.14.0 recorded exactly how that shape
+// fails: a new helper the subject starts calling is NOT in the list, so the
+// sandbox throws a ReferenceError at CALL time and the suite CRASHES with a
+// stack trace instead of failing a named assertion. Loud, but useless — and
+// on a bad day someone reads the crash as an environment problem.
+//
+// This closes it for this file. Enumerate every top-level `function NAME`
+// the subject declares, then require that FNS names all of them. It is a
+// SUPERSET check on purpose: extracting a function nothing calls costs a few
+// bytes, whereas missing one is the crash above.
+function declaredTopLevelFunctions(src) {
+  const names = [];
+  const re = /^(?:export\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/gm;
+  let m;
+  while ((m = re.exec(src))) names.push(m[1]);
+  return names;
+}
+
 // ── Build the sandbox ─────────────────────────────────────────────────────
 // `icon` is the only thing the renderer closes over from the shell. The stub
 // is deliberately marked (`data-icon`) so an assertion can tell "the citation
 // chip carries its dot icon" from "some other svg happened to be there".
-const FNS = ['escHtml', 'formatSegment', 'renderInline', 'renderMarkdown'];
+const FNS = ['escHtml', 'formatSegment', 'renderInline',
+  'splitTableRow', 'isTableDelimiterCell', 'tableAlignClass', 'renderMarkdown'];
 const bodySrc = FNS.map((n) => extractFunction(HOME.src, n, HOME.label)).join('\n\n');
 const iconCalls = [];
 const iconStub = (name, size) => {
@@ -257,12 +277,30 @@ const iconStub = (name, size) => {
   return '<svg data-icon="' + name + '" width="' + (size || 19) + '"></svg>';
 };
 const sandbox = new Function('icon', `${bodySrc}\nreturn { ${FNS.join(', ')} };`)(iconStub);
+section('0b. The extraction list covers every function the subject declares');
+{
+  const declared = declaredTopLevelFunctions(HOME.src);
+  ok(declared.length >= 4, `sanity: the scan finds top-level functions at all (found ${declared.length})`);
+  const missing = declared.filter((n) => !FNS.includes(n));
+  ok(missing.length === 0,
+    `every top-level function in ${HOME.label} is in FNS — a missing one crashes this suite instead of failing it` +
+    (missing.length ? ` (missing: ${missing.join(', ')})` : ''));
+  // Positive control: the scan must actually be able to SEE a new function.
+  const probe = declaredTopLevelFunctions(HOME.src + '\nfunction zzProbeOnly() { return 1; }\n');
+  ok(probe.includes('zzProbeOnly'), 'positive control — the scan detects a newly added top-level function');
+}
+
 const { renderMarkdown, escHtml } = sandbox;
 
 // A helper for the recurring "did any LIVE markup form?" question. Live markup
 // means: a real tag we did not put on the allow-list, or ANY event-handler /
 // URL attribute at all.
-const ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'div', 'span', 'svg']);
+const ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'div', 'span', 'svg',
+  // Added with GFM table support — the renderer now legitimately emits
+  // these. Widening the allow-list is safe for the same reason the whole
+  // file is safe: every `<` in the INPUT was escaped before any pass ran,
+  // so the only real tags in the output are ones this renderer wrote.
+  'table', 'thead', 'tbody', 'tr', 'th', 'td']);
 function foreignTags(html) {
   const out = [];
   const re = /<\/?([a-zA-Z][a-zA-Z0-9-]*)\b/g;
@@ -772,6 +810,111 @@ section('9. Wiring — chat and the wiki reader share ONE renderer');
   ok(/\.reader-body-text pre \{/.test(chatCss), 'the reader body styles <pre> (a wiki page may contain a fenced block)');
   ok(/\.reader-body-text code \{/.test(chatCss), 'the reader body styles inline <code>');
   ok(/\.reader-body-text pre code \{/.test(chatCss), 'code inside a fenced block is not double-backgrounded');
+}
+
+// ── 10. GFM TABLES ────────────────────────────────────────────────────────
+// Added with table support. The reported defect was that a table an LLM
+// wrote CORRECTLY came out as one paragraph of pipes and dashes joined by
+// <br> — so the first assertion here is the regression itself, and the rest
+// guard the two things a table pass can plausibly get wrong: swallowing
+// something that is NOT a table, and opening a hole in the cardinal rule by
+// emitting an attribute.
+section('10. GFM tables');
+{
+  const REPORTED = [
+    '| Layer | Purpose | From Your Earlier Work |',
+    '|-------|---------|--------------------|',
+    '| **Foundational documentation** | Stable project knowledge | "Three-Phase Process" |',
+    '| **Working state** (agent memory) | Current session context | *This article*—now automated |',
+  ].join('\n');
+  const h = renderMarkdown(REPORTED);
+  ok(h.includes('<table class="chat-md-table">'), 'the reported table renders as a real <table>');
+  ok(/<thead><tr><th>Layer<\/th><th>Purpose<\/th>/.test(h), 'the header row becomes <th> cells');
+  ok((h.match(/<tr>/g) || []).length === 3, 'one header row + two body rows');
+  ok((h.match(/<td>/g) || []).length === 6, 'six body cells across two rows');
+  // THE REGRESSION, stated as itself: before this pass existed, every one of
+  // those lines landed in a single <p> joined by <br>, pipes and all.
+  ok(!/<p>\|/.test(h) && !h.includes('|-------|'),
+    'REGRESSION: no raw pipe/dash row survives into a paragraph');
+  ok(h.includes('<strong>Foundational documentation</strong>'), 'cell content is still inline-formatted');
+  ok(h.includes('<div class="chat-md-table-wrap">'),
+    'the table is wrapped for horizontal containment — #main is the scroller, so an unwrapped wide table moves the whole page');
+
+  // Alignment comes from a FIXED enum, never from parsed text.
+  const al = renderMarkdown('| L | C | R |\n| :-- | :-: | --: |\n| a | b | c |');
+  ok(al.includes('<th class="chat-md-al-left">L</th>'), 'left alignment class');
+  ok(al.includes('<th class="chat-md-al-center">C</th>'), 'center alignment class');
+  ok(al.includes('<th class="chat-md-al-right">R</th>'), 'right alignment class');
+  ok(al.includes('<td class="chat-md-al-center">b</td>'), 'body cells inherit the column alignment');
+  ok(sandbox.tableAlignClass('---') === '', 'no alignment marker emits no attribute at all');
+
+  // GFM's optional edge pipes.
+  const bare = renderMarkdown('a | b\n--- | ---\n1 | 2');
+  ok(bare.includes('<th>a</th><th>b</th>'), 'leading/trailing pipes are optional (GFM)');
+
+  // An empty FIRST column is a real column. Dropping empty edge cells instead
+  // of stripping ONE delimiter pipe shifts every cell left and silently
+  // misaligns the row against its header — the reason splitTableRow strips
+  // delimiters rather than filtering.
+  const empt = renderMarkdown('| | b |\n|---|---|\n| | y |');
+  ok(empt.includes('<th></th><th>b</th>'), 'an empty leading column is preserved, not shifted away');
+  ok(empt.includes('<td></td><td>y</td>'), 'the body row stays aligned under it');
+
+  // Escaped pipes belong to the cell.
+  const esc = renderMarkdown('| cmd | note |\n|---|---|\n| `a \\| b` | pipes |');
+  ok(esc.includes('<code>a | b</code>'), 'an escaped \\| is a literal pipe inside the cell, not a column break');
+  ok((esc.match(/<td/g) || []).length === 2, 'and it does not create a third column');
+
+  // Ragged rows: GFM pads short and truncates long, both to the header count.
+  const rag = renderMarkdown('| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |');
+  const rows = rag.split('<tr>').slice(2); // drop pre-table and the header row
+  ok(rows.every((r) => (r.match(/<td/g) || []).length === 3),
+    'every body row carries exactly the header column count (short padded, long truncated)');
+
+  // ── What must NOT become a table ─────────────────────────────────────
+  ok(renderMarkdown('Some text\n-------').includes('<p>'),
+    'a setext-style "text over dashes" is NOT swallowed as a one-column table');
+  ok(!renderMarkdown('Use the | character\n--------').includes('<table'),
+    'prose that merely mentions a pipe above a rule is not a table (cell counts differ)');
+  ok(!renderMarkdown('| a | b |\n|---|').includes('<table'),
+    'a delimiter row whose cell count differs from the header is rejected (GFM)');
+  ok(!renderMarkdown('| a | b |\n| c | d |').includes('<table'),
+    'two pipe rows with no delimiter row between them are not a table');
+
+  // A fence is handled one branch UP; eating it here would swallow a whole
+  // code block into a cell.
+  const fen = renderMarkdown('| a |\n|---|\n| 1 |\n```\n| not | a | row |\n```');
+  ok(fen.includes('<pre><code>| not | a | row |</code></pre>'),
+    'a fence terminates the table and its contents stay a code block');
+  ok((fen.match(/<table/g) || []).length === 1, 'and only one table was produced');
+
+  // Prose resumes after the table.
+  ok(renderMarkdown('| a |\n|---|\n| 1 |\nplain prose, no pipe').includes('<p>plain prose, no pipe</p>'),
+    'a pipe-less line ends the table and resumes as a paragraph');
+
+  // ── THE CARDINAL RULE, inside cells ──────────────────────────────────
+  const hostile = '| <script>alert(1)</script> | " onerror="alert(2) |\n|---|---|\n' +
+                  '| <img src=x onerror=alert(3)> | [[a]] |';
+  const hh = renderMarkdown(hostile);
+  ok(foreignTags(hh).length === 0, 'no foreign tag escapes from a table cell (' + foreignTags(hh).join(',') + ')');
+  // Scanned over REAL TAGS ONLY, deliberately. The hostile input above carries
+  // the literal characters ` onerror="` as CELL TEXT; escHtml turned its quotes
+  // into &quot; and it stays inert text forever. A whole-string regex here
+  // reports that as an attribute and fails green-for-the-wrong-reason — the
+  // same distinction the foreignTags() note above already draws.
+  const tagStrings = (hh.match(/<[a-zA-Z][^>]*>/g) || []).join(' ');
+  ok(!/\son\w+\s*=/.test(tagStrings), 'no event-handler attribute is ever emitted from a table cell');
+  ok(hh.includes('&quot; onerror=&quot;alert(2)'),
+    'and the attribute-shaped text is still present as inert, escaped TEXT (so the assertion above is not vacuous)');
+  ok(hh.includes('&lt;script&gt;'), 'raw HTML in a cell stays escaped text');
+  // The ONLY attribute a table emits is class, and only from the fixed enum.
+  const attrs = (hh.match(/<(?:table|thead|tbody|tr|th|td)[^>]*>/g) || []).join(' ');
+  ok(!/\s(?!class=")\w[\w-]*=/.test(attrs.replace(/class="chat-md-(?:table|al-left|al-center|al-right)"/g, '')),
+    'table markup carries no attribute other than the renderer\'s own fixed class names');
+
+  // A table row is not a bullet list, and vice versa.
+  ok(!renderMarkdown('| - | x |\n|---|---|\n| a | b |').includes('<ul>'),
+    'a cell whose text is "-" does not start a bullet list');
 }
 
 console.log(`\n${'─'.repeat(60)}`);

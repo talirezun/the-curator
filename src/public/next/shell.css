@@ -698,9 +698,7 @@ body.guide-docked .main {
    at --text-3 (live, both themes), under the 4.5:1 AA floor at 13px.
    The step below `.empty-title` survives: the title is --text (16.71 / 18.27)
    and the body is --text-2 (8.34 / 7.26), so the pair still reads as a
-   heading over supporting prose without either half being sub-threshold.
-   `.sync-history-empty .empty-body` (views/sync.css) is a separate selector on
-   a different container and already carries --text-2; it is unaffected. */
+   heading over supporting prose without either half being sub-threshold. */
 .empty-card .empty-body {
   font: var(--type-body-sm);
   color: var(--text-2);

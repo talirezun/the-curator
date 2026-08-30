@@ -173,6 +173,22 @@ function freshState() {
     result: null,           // {title, changes, warnings, truncated, wasOverwrite, tokenUsage, unchangedExpanded} | null
     errorMessage: null,
 
+    // ── Server-backed activity (v3.24.0) ─────────────────────────────
+    // The record GET /api/ingest/activity holds for the SELECTED domain,
+    // or null. This is what makes a single-file ingest survive navigating
+    // away, a reload and a second tab: the events were always arriving and
+    // always being dropped (see runIngest's setProgress comment), so the
+    // fix is not to keep the fetch alive, it is to let the server remember.
+    remote: null,               // wire record for state.domain, or null
+    // `remote.phaseStartedAt` is on the SERVER's clock. This is the same
+    // instant expressed on THIS machine's clock, computed once per fetch as
+    // `Date.now() - (serverNow - phaseStartedAt)` — a subtraction of two
+    // readings from the same clock, so machine-to-machine skew cancels and
+    // is never reasoned about. Everything on screen ticks from this.
+    remotePhaseStartedAtLocal: null,
+    remoteError: null,          // a failed activity fetch; never blanks what is on screen
+    remoteResultExpanded: false, // the restored result's unchanged-pages fold
+
     // ── Batch queue (Phase 2) ────────────────────────────────────────
     // Pre-job (confirm-gate) state — mirrors src/public/app.js's
     // selectedFiles/queueModeActive/queueEstimate.
@@ -227,6 +243,35 @@ let phaseStartedAt = null;
 // (see onWriteGateChange in app.js) — released in teardown.
 let unsubscribeWriteGate = null;
 
+// ── Server-backed activity: polling + the reattached elapsed clock ───────
+//
+// Cadence is two-speed and the endpoint is why: GET /api/ingest/activity
+// reads an in-memory Map and touches no filesystem and no network, unlike
+// views/memory.js's index route (which stats every (scope, machine) pair
+// across up to 200 domains and therefore had to derive its interval from
+// measured cost). Measured here at well under a millisecond server-side, so
+// a fixed pair of constants is honest rather than under-thought:
+//   ACTIVE — a run is in flight and the phase label/ring must track it. The
+//     elapsed clock ticks LOCALLY every second in between, so this only has
+//     to be fast enough that the PHASE looks current, not the seconds.
+//   IDLE — nothing is running for this domain. Still polled, because an
+//     ingest can be started from another tab, and that tab is exactly the
+//     case this whole feature exists for.
+const ACTIVITY_POLL_ACTIVE_MS = 2000;
+const ACTIVITY_POLL_IDLE_MS = 15000;
+
+let activityPollTimer = null;
+let activityWakeHandler = null;
+let activityInFlight = false;
+// Separate from `elapsedTimerId`, which belongs to runIngest and is cleared
+// in its `finally`. Merging the two would mean one teardown path deciding the
+// lifetime of two clocks with different owners.
+let remoteElapsedTimerId = null;
+// What render() last painted for the activity panes. A poll that finds nothing
+// new must not re-render — views/memory.js's screenSignature, same reason: a
+// rebuild would disturb an open fold and the scroll position for no change.
+let renderedActivitySignature = null;
+
 // ── Batch queue module-level tracking (Phase 2) ───────────────────────────
 // Deliberately module-level, NOT `state` fields — they track a live network
 // resource (the SSE connection) and a busy-gate handle that must be torn
@@ -253,7 +298,13 @@ registerView('ingest', {
     });
     loadGate.begin();
     render(mountToken);
-    loadDomains(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+    loadDomains(mountToken)
+      .then(() => {
+        // See the chaining note below: the activity record is keyed by domain,
+        // so this must run AFTER a destination exists.
+        if (isCurrentMount(mountToken)) refreshActivity(mountToken).catch(() => {});
+      })
+      .catch((err) => reportAsyncMountFailure(mountToken, err));
 
     // Re-render whenever ANY domain's write-gate state changes — e.g.
     // another mount's abandoned ingest on the currently-selected domain
@@ -270,6 +321,45 @@ registerView('ingest', {
     // from src/public/app.js's checkActiveQueueJob(), called the same way
     // (on every Ingest-view entry).
     checkActiveQueueJob(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
+
+    // SINGLE-FILE resume-on-return (v3.24.0). The comment at the top of this
+    // file used to say there was "no server-side 'get status' endpoint" for
+    // the single-file path and therefore "nothing to reattach to". There is
+    // now: GET /api/ingest/activity. So this mount asks what the server knows
+    // the moment it opens, exactly as checkActiveQueueJob does for a batch.
+    //
+    // Errors are swallowed rather than routed through reportAsyncMountFailure:
+    // refreshActivity already treats a failure as "keep what is on screen and
+    // try again next tick", and a view whose whole job is telling you what
+    // happened must not itself fail to open because one poll did.
+    // CHAINED ONTO loadDomains, NOT fired beside it. `state.domain` is null
+    // until loadDomains resolves and picks a destination, and the record is
+    // looked up BY DOMAIN — so an immediate call finds nothing and the view
+    // then shows an empty form over a live ingest until the next IDLE poll,
+    // up to 15 s later. Measured in a real browser: the server reported
+    // `running, pct 12, "Phase 1: planning wiki structure…"` while the view
+    // rendered a plain drop zone. Chaining costs nothing (loadDomains is
+    // already awaited by the mount) and removes the window entirely.
+    renderedActivitySignature = activitySignature();
+
+    // REVALIDATE ON WAKE, for the reason views/memory.js gives for its own:
+    // `focus` covers alt-tabbing back, `visibilitychange` covers a background
+    // tab being brought forward (which fires no focus event). Both are free
+    // while the user is elsewhere — which is exactly when an ingest they
+    // started is still running.
+    //
+    // The mount token is CAPTURED rather than read from `myMountToken`: a
+    // later mount overwrites that module-level variable, and a listener that
+    // outlived its teardown would then hand isCurrentMount the wrong view's
+    // token and be waved through.
+    activityWakeHandler = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (!isCurrentMount(mountToken)) return;
+      refreshActivity(mountToken).catch(() => {});
+    };
+    if (typeof window !== 'undefined') window.addEventListener('focus', activityWakeHandler);
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', activityWakeHandler);
+    scheduleActivityPoll(mountToken);
 
     return () => {
       // Deliberately does NOT abort an in-flight SINGLE-FILE fetch. A
@@ -300,6 +390,19 @@ registerView('ingest', {
       // this teardown would paint a loader into whatever view comes next.
       if (loadGate) { loadGate.cancel(); loadGate = null; }
 
+      // Activity poll + clock hygiene. An armed poll timer surviving this
+      // teardown is worse than a stray delay timer: it would keep FETCHING for
+      // a view nobody is looking at, for the life of the page. Verified at 0
+      // requests after leaving the view.
+      stopActivityPoll();
+      stopRemoteElapsedTimer();
+      if (activityWakeHandler) {
+        if (typeof window !== 'undefined') window.removeEventListener('focus', activityWakeHandler);
+        if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', activityWakeHandler);
+        activityWakeHandler = null;
+      }
+      renderedActivitySignature = null;
+
       // Write-gate subscription cleanup — a torn-down mount must stop
       // reacting to gate changes.
       if (unsubscribeWriteGate) { unsubscribeWriteGate(); unsubscribeWriteGate = null; }
@@ -314,6 +417,252 @@ registerView('ingest', {
     };
   },
 });
+
+// ── Server-backed activity ═══════════════════════════════════════════════
+//
+// THE DEFECT, and why the fix is server-side. Reported from real use: start a
+// single-file ingest, navigate away, come back, and the view shows only the
+// generic "Waiting on another write in this domain" note — no file, no phase,
+// no progress — and when the ingest finishes, nothing at all.
+//
+// MEASURED: the events were never lost. This view deliberately does NOT abort
+// its SSE fetch on navigate-away (see the teardown's comment, and runIngest's),
+// so every `progress` event AND the `done` event still arrive — and are then
+// DROPPED, because setProgress and the done handler are gated on
+// isCurrentMount(token) and a returning mount has a brand-new `state`. Data
+// received, no consumer reads it: this repo's dead-data shape.
+//
+// Keeping the fetch alive across mounts would not fix it either — a reload or
+// a second tab has no fetch to keep. The only thing that survives all three is
+// the SERVER remembering, which is what src/brain/ingest-activity.js does and
+// what GET /api/ingest/activity hands back.
+
+// Acknowledgement is PER VIEWER and lives in localStorage, deliberately.
+//
+// "I have seen this result" is a fact about one person looking at one browser,
+// not about the ingest — a DIFFERENT browser, machine or profile has not seen
+// it and should still be told. (Precisely: localStorage is per ORIGIN and per
+// profile, so a second TAB in the same browser shares the dismissal. An
+// earlier draft of this comment claimed a second tab would still be told,
+// which is false, and was corrected after checking rather than left standing.)
+// Making it server state would also
+// mean a MUTATING endpoint, and a route that writes needs registerWrite, a
+// file lock and a place in the write-guard class invariants; that is a real
+// cost to buy a dismissed-ness flag.
+//
+// Every read AND write is wrapped: storage throws outright in some private
+// modes, and the view must render correctly with no stored value. Failing to
+// read means the result is shown again — the SAFE direction, matching the rule
+// v3.8.0 set for its own dismissal (guidance reappearing is harmless; silently
+// hiding an outcome has no visible symptom).
+const ACTIVITY_ACK_KEY = 'curator-ingest-activity-ack-v1';
+// Ids are UUIDs and only the most recent handful can ever still be live, so
+// the list is trimmed rather than grown forever in a store with a size cap.
+const ACTIVITY_ACK_MAX = 20;
+
+function loadAckedActivityIds() {
+  try {
+    const raw = window.localStorage.getItem(ACTIVITY_ACK_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function isActivityAcked(id) {
+  if (!id) return false;
+  return loadAckedActivityIds().includes(id);
+}
+
+function ackActivityId(id) {
+  if (!id) return;
+  try {
+    const next = [id, ...loadAckedActivityIds().filter((v) => v !== id)].slice(0, ACTIVITY_ACK_MAX);
+    window.localStorage.setItem(ACTIVITY_ACK_KEY, JSON.stringify(next));
+  } catch {
+    /* private mode / storage disabled — the result simply shows again */
+  }
+}
+
+/**
+ * The activity request, and NOTHING else.
+ *
+ * Split out for the reason views/memory.js records for its own `fetchIndex`:
+ * a revalidation that builds its own request is a second copy of the parse,
+ * and two copies of a parse drift about what an error means. Returns a plain
+ * result and writes NOTHING to `state`.
+ */
+async function fetchActivity() {
+  try {
+    const res = await fetch('/api/ingest/activity');
+    if (!res.ok) return { error: 'Could not read ingest activity (' + res.status + ')' };
+    const data = await res.json();
+    if (!data || !Array.isArray(data.activity)) return { error: 'Ingest activity response was malformed' };
+    return { activity: data.activity, serverNow: Number(data.serverNow) };
+  } catch (err) {
+    return { error: err && err.message ? err.message : 'Could not read ingest activity' };
+  }
+}
+
+/**
+ * What the activity panes currently show, as a comparable string.
+ *
+ * Built from the values that are actually PAINTED, so a poll that changed
+ * nothing visible costs no render. `phaseStartedAt` is included because the
+ * clock resetting IS a visible change; the ticking seconds are not, because
+ * they are patched into #ing-remote-elapsed by textContent rather than by a
+ * re-render (same split the live path already uses for #ing-elapsed).
+ */
+function activitySignature() {
+  const r = state.remote;
+  if (!r) return 'none';
+  return JSON.stringify([
+    r.id, r.status, r.pct, r.message, r.waiting, r.phaseStartedAt,
+    r.filename, r.error,
+    r.result ? [r.result.title, r.result.changesTotal, r.result.warningsTotal] : null,
+    isActivityAcked(r.id),
+    state.remoteResultExpanded,
+  ]);
+}
+
+/**
+ * Re-ask the server what it knows, and reconcile ONE thing: the record for the
+ * currently-selected domain.
+ *
+ * Deliberately narrow. It touches neither the selected file, nor the domain,
+ * nor this mount's own in-flight ingest — a revalidation that moved any of
+ * those would be a worse bug than the staleness it fixes (views/memory.js's
+ * v3.17.3 rule, applied to a screen with the same "something else is writing
+ * while you watch" premise).
+ */
+async function refreshActivity(token) {
+  if (activityInFlight) return;
+  activityInFlight = true;
+  try {
+    const got = await fetchActivity();
+    if (!isCurrentMount(token)) return;
+
+    // A failed revalidation must NOT blank a record that is on screen and
+    // still broadly true. Keep what we have and try again next tick — the
+    // opposite of an initial load, where an error IS the answer.
+    if (got.error) {
+      state.remoteError = got.error;
+      return;
+    }
+    state.remoteError = null;
+
+    const rec = state.domain
+      ? got.activity.find((a) => a && a.domain === state.domain) || null
+      : null;
+
+    const before = renderedActivitySignature;
+    state.remote = rec;
+    // Server clock -> this machine's clock, by subtraction only. Both figures
+    // come from the same server reading, so skew cancels; see listActivity's
+    // own comment for why that makes this safe where a bare timestamp is not.
+    state.remotePhaseStartedAtLocal =
+      rec && Number.isFinite(rec.phaseStartedAt) && Number.isFinite(got.serverNow)
+        ? Date.now() - (got.serverNow - rec.phaseStartedAt)
+        : null;
+
+    const after = activitySignature();
+    if (after !== before) {
+      renderedActivitySignature = after;
+      render(token);
+    }
+    syncRemoteElapsedTimer(token);
+  } finally {
+    activityInFlight = false;
+  }
+}
+
+/**
+ * True when the SERVER says an ingest is running on the selected domain and
+ * this mount is not the one running it.
+ *
+ * The two halves matter separately. `state.submitting` means this mount owns
+ * the run and is already painting its own live progress from the SSE stream —
+ * rendering the server's copy alongside it would put the same ingest on screen
+ * twice, on two update cadences.
+ */
+function isRemoteIngestRunning() {
+  return !!(state.remote && state.remote.status === 'running' && !state.submitting && !state.progress);
+}
+
+/** A settled record this viewer has not dismissed, and is not already seeing. */
+function pendingRemoteOutcome() {
+  const r = state.remote;
+  if (!r || r.status === 'running') return null;
+  // This mount is already showing its OWN outcome for the same ingest —
+  // the server's copy is the same event, not a second one.
+  if (state.result || state.errorMessage || state.progress || state.submitting) return null;
+  if (isActivityAcked(r.id)) return null;
+  return r;
+}
+
+/**
+ * The reattached elapsed clock.
+ *
+ * Runs ONLY while a remote run is on screen, and patches #ing-remote-elapsed
+ * by textContent rather than re-rendering — the same targeted-DOM-write
+ * exception the live path already makes for #ing-elapsed, and for the same
+ * reason: a full panel rebuild every second while nothing else changed.
+ */
+function syncRemoteElapsedTimer(token) {
+  const wanted = isRemoteIngestRunning() && state.remotePhaseStartedAtLocal != null;
+  if (!wanted) { stopRemoteElapsedTimer(); return; }
+  if (remoteElapsedTimerId != null) return;
+  remoteElapsedTimerId = setInterval(() => {
+    if (!isCurrentMount(token) || state.remotePhaseStartedAtLocal == null) return;
+    const el = document.getElementById('ing-remote-elapsed');
+    if (el) el.textContent = formatElapsedMs(Date.now() - state.remotePhaseStartedAtLocal);
+  }, 1000);
+}
+
+function stopRemoteElapsedTimer() {
+  if (remoteElapsedTimerId != null) { clearInterval(remoteElapsedTimerId); remoteElapsedTimerId = null; }
+}
+
+function stopActivityPoll() {
+  if (activityPollTimer !== null) { clearTimeout(activityPollTimer); activityPollTimer = null; }
+}
+
+/**
+ * A setTimeout CHAIN, re-armed only after the previous refresh settles.
+ * setInterval would queue a second fetch on top of a slow first one; this
+ * structurally cannot. A hidden tab reschedules WITHOUT fetching — nobody is
+ * looking, and the wake handler refreshes the moment they are.
+ */
+function scheduleActivityPoll(token) {
+  stopActivityPoll();
+  const delay = isRemoteIngestRunning() || state.submitting
+    ? ACTIVITY_POLL_ACTIVE_MS
+    : ACTIVITY_POLL_IDLE_MS;
+  activityPollTimer = setTimeout(() => {
+    activityPollTimer = null;
+    if (!isCurrentMount(token)) return;
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (hidden) { scheduleActivityPoll(token); return; }
+    refreshActivity(token)
+      .catch(() => { /* a failed poll keeps what is on screen; see refreshActivity */ })
+      .finally(() => { if (isCurrentMount(token)) scheduleActivityPoll(token); });
+  }, delay);
+}
+
+/**
+ * Dismiss a settled record, for this viewer only.
+ *
+ * UI-only: no server call, and the record itself is untouched, so a second tab
+ * still sees its outcome. Mirrors v3.3.1's batch Dismiss, which is also
+ * client-side for the same reason.
+ */
+function dismissRemoteOutcome(token) {
+  if (state.remote) ackActivityId(state.remote.id);
+  renderedActivitySignature = activitySignature();
+  render(token);
+}
 
 /**
  * Fetch + parse the destination list. ONE request shape, ONE parse, shared by
@@ -507,6 +856,15 @@ function render(token) {
 function selectDomain(slug) {
   if (!slug || slug === state.domain) return;
   state.domain = slug;
+  // The activity record is PER DOMAIN, so the one on screen belongs to the
+  // domain we just left. Clear it immediately — showing domain A's ingest
+  // under domain B's name is a correctness bug, strictly worse than the brief
+  // gap before the refetch lands (the same ordering domains.js settled on for
+  // its health report in v3.11.0: KEEP on re-entry, CLEAR on a domain switch).
+  state.remote = null;
+  state.remotePhaseStartedAtLocal = null;
+  stopRemoteElapsedTimer();
+  refreshActivity(myMountToken).catch(() => {});
   if (state.queueModeActive && !state.queueJob) {
     startQueueSelection(myMountToken);
   } else {
@@ -550,12 +908,23 @@ function formatDestinationMeta(d) {
 
 function renderSidebar(token) {
   const inQueueMode = state.queueModeActive || !!state.queueJob;
-  const crossBusy = !inQueueMode && state.domain && !state.submitting && isDomainWriteBusy(state.domain);
-  const busyNote = crossBusy
-    ? '<div class="ing-sidebar-busy">' + icon('alertTriangle', 13) +
-      '<span>A write (' + escapeHtml(getDomainWriteLabel(state.domain) || 'write') +
-      ') is already running for <span class="mono">' + escapeHtml(state.domain) + '</span>.</span></div>'
-    : '';
+  // See renderIngestForm for why the server record is ORed in (the client gate
+  // is blind after a reload) and why a known ingest gets a specific sentence
+  // instead of "a write is already running".
+  const remoteRunning = !inQueueMode && isRemoteIngestRunning();
+  const crossBusy = !inQueueMode && state.domain && !state.submitting &&
+    (isDomainWriteBusy(state.domain) || remoteRunning);
+  const busyNote = !crossBusy
+    ? ''
+    : remoteRunning
+      ? '<div class="ing-sidebar-busy">' + icon('alertTriangle', 13) +
+        '<span>Ingesting ' +
+        (state.remote.filename ? '<span class="mono">' + escapeHtml(state.remote.filename) + '</span>' : 'a file') +
+        ' into <span class="mono">' + escapeHtml(state.domain) + '</span> — ' +
+        escapeHtml(state.remote.message || 'working…') + '</span></div>'
+      : '<div class="ing-sidebar-busy">' + icon('alertTriangle', 13) +
+        '<span>A write (' + escapeHtml(getDomainWriteLabel(state.domain) || 'write') +
+        ') is already running for <span class="mono">' + escapeHtml(state.domain) + '</span>.</span></div>';
 
   const hint = inQueueMode
     ? 'Files process one at a time, so a single failure costs one file, not the whole batch. A paused or ' +
@@ -722,7 +1091,23 @@ function domainListboxCfg({ disabled = false } = {}) {
 }
 
 function renderIngestForm() {
-  const crossBusy = state.domain && !state.submitting && isDomainWriteBusy(state.domain);
+  // TWO sources of "this domain is busy", and they are not redundant.
+  //
+  // isDomainWriteBusy is app.js's CLIENT-SIDE gate: accurate for anything this
+  // browser tab started and still owns, and blind after a reload or in a
+  // second tab, because it lives in a module variable that a page load resets.
+  // The SERVER record is what survives all three. After F5 mid-ingest the gate
+  // reads false while the write is genuinely still running, so without the OR
+  // the Ingest button would look live, and pressing it would send a second
+  // upload that the per-domain file lock refuses — an error the user has no
+  // way to have predicted.
+  //
+  // Deliberately NOT done here: teaching app.js's gate about server truth.
+  // That is a shell-level change affecting every view that reads the gate, and
+  // this is one view's own button. The narrower fix is the honest one to make
+  // from inside this file.
+  const remoteRunning = isRemoteIngestRunning();
+  const crossBusy = state.domain && !state.submitting && (isDomainWriteBusy(state.domain) || remoteRunning);
   const btnDisabled = !state.file || !!state.fileError || state.submitting || crossBusy || !state.domain;
 
   // ── WHY INGEST IS GREYED OUT IS VISIBLE TEXT, NOT A TOOLTIP ────────────
@@ -737,7 +1122,17 @@ function renderIngestForm() {
   // settings.js gives the identical message (renderCrossWriteBanner) and the
   // same rule v3.22.0 applied when it refused to fold a data-loss warning
   // behind the header's info mark.
-  const crossBusyNote = crossBusy
+  //
+  // WHEN WE KNOW WHAT IS RUNNING, WE SAY WHAT IS RUNNING. The generic sentence
+  // below is the whole of what the reported screenshot showed — "A write
+  // (ingest) is already running for domain 'articles'" — which names neither
+  // the file, nor the phase, nor how long it has been going, on the one screen
+  // whose premise is that something else is writing while you watch. When a
+  // server record exists, renderRemoteProgress replaces this outright with the
+  // real ring, the real phase and the real clock. The generic note remains for
+  // the case it was actually written for: a write of some OTHER kind (a Sync
+  // push, a Shared Brain pull) that this store knows nothing about.
+  const crossBusyNote = (crossBusy && !remoteRunning)
     ? '<div class="ing-status-block">' +
         renderStatus({
           state: 'attention',
@@ -772,6 +1167,8 @@ function renderIngestForm() {
       icon('sparkles', 14) + ' ' + (state.submitting ? 'Ingesting…' : 'Ingest') +
     '</button>' +
     renderProgress() +
+    renderRemoteProgress() +
+    renderRemoteOutcome() +
     renderDuplicate() +
     (state.errorMessage
       ? '<div class="ing-status-block">' +
@@ -963,6 +1360,112 @@ function formatByteDeltaLabel(n) {
   return sign + (abs < 1024 ? (abs + ' B') : ((abs / 1024).toFixed(1) + ' KB'));
 }
 
+/**
+ * The REATTACHED progress view: a run this mount is not watching, painted
+ * from what the server remembers.
+ *
+ * Uses the SAME ring, the SAME stage map and the SAME elapsed format as the
+ * live path — deliberately, because a user who navigates away and back is
+ * looking at one ingest, not two, and a second visual vocabulary for it would
+ * be a worse answer than the generic amber note it replaces. What differs is
+ * only where the numbers come from (a poll rather than an SSE stream) and the
+ * clock's anchor (`remotePhaseStartedAtLocal`, converted once per fetch).
+ *
+ * The file name is here and the old note had none: "an ingest is running" is
+ * not the question a returning user has. "Is THIS article in?" is.
+ */
+function renderRemoteProgress() {
+  if (!isRemoteIngestRunning()) return '';
+  const r = state.remote;
+  const pct = Number.isFinite(r.pct) ? Math.max(0, Math.min(100, r.pct)) : 0;
+  const { stage, stageProgress } = mapIngestPctToStage(pct);
+  const stageOrdinal = Math.min(stage + 1, INGEST_STAGES.length);
+  const elapsedNow = state.remotePhaseStartedAtLocal != null
+    ? formatElapsedMs(Date.now() - state.remotePhaseStartedAtLocal)
+    : '';
+  // ONE quantity, ONE number — the shownPct comes from ringAria, the same
+  // function progressRingHtml calls to stamp aria-valuenow, exactly as the
+  // live path does. Recomputing it here would be a second copy of the
+  // arithmetic and is precisely how the three-figure defect started.
+  const shownPct = ringAria({ stages: INGEST_STAGES, stage, stageProgress }).valueNow;
+  const sublabelHtml =
+    'stage <span class="mono">' + stageOrdinal + '</span> of <span class="mono">' + INGEST_STAGES.length + '</span>' +
+    ' · <span class="mono" id="ing-remote-elapsed">' + escapeHtml(elapsedNow) + '</span>' +
+    ' · <span class="mono">' + shownPct + '%</span>';
+
+  return (
+    '<div class="ing-status-block">' +
+      renderStatus({
+        state: 'attention',
+        title: 'An ingest is already running in this domain',
+        detail: 'Started here or in another tab. It keeps running whether or not this view is open — ' +
+                'the result will appear below when it finishes.',
+      }) +
+    '</div>' +
+    '<div class="ing-progress ing-progress-remote">' +
+      (r.filename
+        ? '<div class="ing-remote-file">Ingesting <strong class="mono">' + escapeHtml(r.filename) + '</strong> into <span class="mono">' + escapeHtml(r.domain) + '</span></div>'
+        : '') +
+      progressRingHtml({
+        stages: INGEST_STAGES,
+        stage,
+        stageProgress,
+        size: 48,
+        center: 'none',
+        // waiting === a retry/backoff sub-event, which re-sends the SAME pct —
+        // so the ring correctly does not advance, and amber says why.
+        tone: r.waiting ? 'attention' : 'accent',
+        labelHtml: escapeHtml(r.message || 'Working…'),
+        sublabelHtml,
+        className: 'ing-progress-ring',
+      }) +
+      '<div class="ing-progress-note">Large documents can take a minute or more per phase — especially planning. The timer keeps ticking while the AI works; it isn’t stuck.</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * The RESTORED outcome: an ingest that finished while nobody was watching.
+ *
+ * This is the half of the report that had nothing at all — "the process ended,
+ * but there's basically no way I can know if this article was ingested or not."
+ * Dismiss is per-viewer and client-side (see ackActivityId), so a second tab
+ * still gets told.
+ */
+function renderRemoteOutcome() {
+  const r = pendingRemoteOutcome();
+  if (!r) return '';
+
+  const header =
+    '<div class="ing-remote-outcome-head">' +
+      '<span class="ing-remote-outcome-when">Finished while you were away' +
+        (r.filename ? ' · <span class="mono">' + escapeHtml(r.filename) + '</span>' : '') +
+      '</span>' +
+      '<button type="button" class="btn btn-ghost btn-xs" id="ing-remote-dismiss">Dismiss</button>' +
+    '</div>';
+
+  if (r.status === 'error') {
+    return (
+      '<div class="ing-remote-outcome">' + header +
+        '<div class="ing-status-block">' +
+          renderStatus({
+            state: 'danger',
+            title: 'Ingest failed',
+            detail: r.error || 'The ingest did not complete.',
+          }) +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // Same builder as the live panel — see renderResultBodyHtml.
+  return (
+    '<div class="ing-remote-outcome">' + header +
+      renderResultBodyHtml(r.result || {}, state.remoteResultExpanded, 'ing-remote-unchanged-toggle') +
+    '</div>'
+  );
+}
+
 function renderDuplicate() {
   if (!state.duplicate) return '';
   return (
@@ -980,19 +1483,42 @@ function renderDuplicate() {
 }
 
 function renderResult() {
-  const r = state.result;
-  if (!r) return '';
+  if (!state.result) return '';
+  return renderResultBodyHtml(state.result, state.result.unchangedExpanded, 'ing-unchanged-toggle');
+}
+
+/**
+ * The outcome panel's markup, from a result-shaped object.
+ *
+ * Factored out so the LIVE result (this mount watched the ingest finish) and
+ * the RESTORED one (the server remembered it while nobody was watching) are
+ * ONE builder rather than two. They describe the same event, and two
+ * hand-maintained copies of one panel is this repo's named drift shape — the
+ * copies agree right up until one of them is edited.
+ *
+ * The restored record carries `changesTotal` / `warningsTotal` alongside the
+ * (capped) arrays. Where they disagree the panel SAYS SO rather than silently
+ * rendering the shorter list: counts derived from a quietly-shortened array
+ * under-state the user's own ingest, which is the dishonest direction.
+ */
+function renderResultBodyHtml(r, unchangedExpanded, toggleId) {
   const titlePrefix = r.wasOverwrite ? 'Re-ingested:' : 'Ingested:';
   const warningsHtml = renderWarningsHtml(r.warnings);
-  const changesHtml = renderChangeRecordsHtml(r.changes, titlePrefix + ' ' + (r.title || ''), r.unchangedExpanded);
+  const changesHtml = renderChangeRecordsHtml(r.changes, titlePrefix + ' ' + (r.title || ''), unchangedExpanded, toggleId);
   const fallbackHtml = (!r.changes || !r.changes.length)
     ? '<ul class="ing-change-list-flat">' + (r.pagesWritten || []).map((p) => '<li class="mono">' + escapeHtml(p) + '</li>').join('') + '</ul>'
     : '';
   const tokenHtml = formatTokenUsageHtml(r.tokenUsage);
+  const shownChanges = Array.isArray(r.changes) ? r.changes.length : 0;
+  const truncNote = (Number.isFinite(r.changesTotal) && r.changesTotal > shownChanges)
+    ? '<div class="ing-change-empty">Showing <span class="mono">' + shownChanges +
+      '</span> of <span class="mono">' + r.changesTotal + '</span> changed pages — the rest were not kept in this summary.</div>'
+    : '';
   return (
     '<div class="ing-result">' +
       warningsHtml +
       (r.changes && r.changes.length ? changesHtml : ('<h3 class="ing-result-title">' + escapeHtml(titlePrefix + ' ' + (r.title || '')) + '</h3>' + fallbackHtml)) +
+      truncNote +
       tokenHtml +
     '</div>'
   );
@@ -1010,7 +1536,12 @@ function formatBytesLocal(n) {
   return (n / 1024).toFixed(1) + ' KB';
 }
 
-function renderChangeRecordsHtml(changes, title, unchangedExpanded) {
+// `toggleId` defaults to the live path's original literal, so that call site
+// is byte-unchanged. The RESTORED result (see renderRemoteOutcome) needs its
+// own id because it has its own fold state — two controls sharing one id is
+// invalid HTML and, worse, would make a click on either flip whichever one
+// getElementById happened to find first.
+function renderChangeRecordsHtml(changes, title, unchangedExpanded, toggleId = 'ing-unchanged-toggle') {
   const created = changes.filter((c) => c.status === 'created');
   const updated = changes.filter((c) => c.status === 'updated');
   const unchanged = changes.filter((c) => c.status === 'unchanged');
@@ -1055,7 +1586,7 @@ function renderChangeRecordsHtml(changes, title, unchangedExpanded) {
 
   const unchangedBlock = unchanged.length ? (
     '<div class="ing-change-section">' +
-      '<button type="button" class="ing-change-toggle" id="ing-unchanged-toggle">' +
+      '<button type="button" class="ing-change-toggle" id="' + toggleId + '">' +
         (unchangedExpanded ? 'Hide ' : 'Show ') + '<span class="mono">' + unchanged.length + '</span> unchanged ' + (unchanged.length === 1 ? 'page' : 'pages') +
       '</button>' +
       (unchangedExpanded ? '<ul class="ing-change-list">' + unchanged.map(formatRecord).join('') + '</ul>' : '') +
@@ -1281,6 +1812,25 @@ function wireListeners() {
       render(myMountToken);
     });
   }
+
+  // ── Restored outcome (v3.24.0) ──────────────────────────────────────
+  // Its own fold state and its own toggle id, because it can never share
+  // either with the live panel (see renderChangeRecordsHtml's toggleId).
+  const remoteToggle = document.getElementById('ing-remote-unchanged-toggle');
+  if (remoteToggle) {
+    remoteToggle.addEventListener('click', () => {
+      state.remoteResultExpanded = !state.remoteResultExpanded;
+      // Keep the no-op guard's idea of the screen in step with the render we
+      // are about to do ourselves, or the next poll would compare against a
+      // stale signature and repaint the fold shut.
+      renderedActivitySignature = null;
+      render(myMountToken);
+      renderedActivitySignature = activitySignature();
+    });
+  }
+
+  const remoteDismiss = document.getElementById('ing-remote-dismiss');
+  if (remoteDismiss) remoteDismiss.addEventListener('click', () => dismissRemoteOutcome(myMountToken));
 
   wireQueueListeners();
 }
@@ -1509,7 +2059,37 @@ async function runIngest(token, overwrite) {
     if (isCurrentMount(token)) {
       state.submitting = false;
       render(token);
+      // THIS mount watched the run end and is already showing the outcome, so
+      // the server's copy of it is the same event, not a second one. Mark it
+      // seen, or navigating away and back would re-present a result the user
+      // has already read — which is noise, and noise on this panel is what
+      // makes a real one easy to walk past.
+      //
+      // The ack is deliberately INSIDE the mount check: an ABANDONED mount
+      // reaching here means the user was not looking, so the record must stay
+      // unacknowledged for whoever comes back. That is the entire feature.
+      //
+      // Acked by asking the server which record this was, rather than by
+      // remembering an id locally: the id is minted server-side and the client
+      // is never told it, and inventing a second channel to carry it would be
+      // a protocol change to save one cheap request on an event that already
+      // fires refreshDomainStats.
+      ackOwnCompletedRun(token).catch(() => {});
     }
+  }
+}
+
+/**
+ * Mark the record for the run this mount just watched as seen.
+ * Best-effort: a failure means the outcome shows once more. Harmless.
+ */
+async function ackOwnCompletedRun(token) {
+  await refreshActivity(token);
+  if (!isCurrentMount(token)) return;
+  const r = state.remote;
+  if (r && r.status !== 'running') {
+    ackActivityId(r.id);
+    renderedActivitySignature = activitySignature();
   }
 }
 

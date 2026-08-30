@@ -12,6 +12,12 @@ import {
   isUpdateInProgress,
   conflictResponse,
 } from '../brain/write-registry.js';
+import {
+  startActivity,
+  observeActivity,
+  settleAbandoned,
+  listActivity,
+} from '../brain/ingest-activity.js';
 
 const router = Router();
 
@@ -124,7 +130,28 @@ router.post('/', upload.single('file'), async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders(); // Send headers immediately so the client opens the stream
 
+    // Assigned once the file lock is genuinely held (below), and NOT before.
+    // Order is load-bearing: if the lock is already held, some OTHER ingest on
+    // this domain owns the activity record, and starting one here would
+    // clobber a live run's record with this request's refusal. Left null until
+    // then, which makes every observeActivity call a no-op — so the lock-
+    // refusal emit a few lines down correctly records nothing and the running
+    // record stands. (startActivity refuses to displace a running record too;
+    // this is the first of those two layers.)
+    let activityId = null;
+
+    // THE SINGLE INTEGRATION POINT. Every event this route produces —
+    // progress, wait, done and error — already flows through this one closure,
+    // so folding the activity record in here covers all four at once rather
+    // than at four call sites that can each be forgotten separately.
+    //
+    // observeActivity never throws (it swallows internally); the try/catch is
+    // the deliberate SECOND layer, because a bookkeeping side-channel must
+    // never be able to fail the ingest it is describing (same rule as the
+    // v3.5.0 raw-source manifest). The write to the client happens regardless
+    // and is not downstream of it.
     const emit = (data) => {
+      try { observeActivity(activityId, data); } catch { /* never fail an ingest */ }
       if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
@@ -150,6 +177,12 @@ router.post('/', upload.single('file'), async (req, res) => {
       });
       return res.end();
     }
+
+    // Lock held: this request is the one writing to this domain, so it owns
+    // the activity record. Best-effort — a null id degrades to exactly the
+    // pre-v3.24.0 behaviour (events stream to whoever is watching and are
+    // remembered by nobody), never to a failed ingest.
+    try { activityId = startActivity(domain, req.file.originalname); } catch { activityId = null; }
 
     try {
       const result = await ingestFile(
@@ -181,6 +214,14 @@ router.post('/', upload.single('file'), async (req, res) => {
       console.error('Ingest error:', err);
       emit({ type: 'error', message: err.message });
     } finally {
+      // A record structurally cannot outlive its request. The catch above
+      // already emits an `error` event on the normal failure path, so this is
+      // a no-op almost always — it exists for a throw that never reaches
+      // emit() at all, which would otherwise leave a record reading `running`
+      // forever. That matters more than it sounds: the view treats a running
+      // record as "this domain is busy", so a stuck record becomes a stuck
+      // Ingest button until the app restarts.
+      try { settleAbandoned(activityId); } catch { /* never fail an ingest */ }
       try { await releaseFileLock(); } catch { /* best-effort */ }
       releaseRegistry();
       res.end();
@@ -189,6 +230,38 @@ router.post('/', upload.single('file'), async (req, res) => {
     if (req.file && req.file.path) {
       try { await unlink(req.file.path); } catch { /* best-effort — temp dir cleanup only */ }
     }
+  }
+});
+
+// ── GET /activity ────────────────────────────────────────────────────────────
+//
+// What the server currently knows about single-file ingests, so a view that
+// was not watching when an ingest ran can still show its progress and its
+// outcome. See src/brain/ingest-activity.js for the defect this closes.
+//
+// READ-ONLY and in-memory: it takes no lock, touches no filesystem, and
+// mutates nothing, so it is deliberately NOT registered as a write and
+// deliberately NOT guarded by isUpdateInProgress/guardConcurrent. Guarding it
+// would be actively harmful for the same reason config.js records for
+// /validate-key: a 409 here would fire precisely while an ingest is running,
+// which is exactly the moment the user is asking "did my file get in?".
+//
+// NOTE for whoever extends this router: scripts/test-route-write-guards.js
+// audits config.js, sync.js, domains.js and health.js from a HARDCODED list
+// and does not classify this file at all, so its class invariants do not
+// reach this route. That is a coverage gap in that suite, not a licence —
+// a MUTATING route added here still needs registerWrite + a file lock, the
+// way the POST above has them.
+router.get('/activity', (req, res) => {
+  // listActivity swallows its own errors and returns an empty list rather
+  // than throwing, so this cannot 500 the one screen whose job is reporting
+  // what happened. The try/catch is the second layer, matching the emit path.
+  try {
+    const { serverNow, activity } = listActivity();
+    res.json({ ok: true, serverNow, activity });
+  } catch (err) {
+    console.error('[ingest] activity error:', err);
+    res.json({ ok: true, serverNow: Date.now(), activity: [] });
   }
 });
 

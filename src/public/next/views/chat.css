@@ -565,6 +565,57 @@
 }
 .chat-citation-tag:hover { color: var(--text-2); }
 
+/* ── GFM tables (shared renderer) ─────────────────────────────────────────
+   UNSCOPED, like `.chat-md-h` above and for the same reason: this stylesheet
+   is loaded globally by index.html, and next/shared/markdown.js emits these
+   names on BOTH surfaces — a chat answer and a wiki page body in the reader
+   overlay. Wiki pages are, if anything, the more table-heavy of the two.
+
+   THE WRAPPER IS NOT DECORATION. `.chat-thread` has no scroll of its own —
+   the real scrolling ancestor is `#main` (see chat.js's note at the bottom
+   of renderThreadOnly) — so a table wider than the column would push the
+   WHOLE PAGE sideways rather than scrolling inside its own bubble. Same
+   containment `.chat-answer pre` already relies on, same reason.
+
+   THE HEADER IS NOT DISTINGUISHED BY ITS TINT, and that is deliberate:
+   `--surface-raised` is BYTE-IDENTICAL to `--surface` in the light theme
+   (measured in v3.20.0 — elevation is 1.00:1 there), so a tint-only header
+   row would simply vanish for half the users. The separation is carried by
+   font-weight and full-contrast `--text` in both themes, with the rule under
+   the header as reinforcement rather than as the signal. That rule is
+   `--border-strong`, which measures ~1.5:1 against the surface and so does
+   not meet WCAG 1.4.11's 3:1 — stated rather than implied away, and
+   acceptable here precisely BECAUSE no information rests on it alone. */
+.chat-md-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+.chat-md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95em;
+  text-align: left;
+}
+.chat-md-table th,
+.chat-md-table td {
+  padding: 7px 11px 7px 0;
+  vertical-align: top;
+}
+.chat-md-table th:last-child,
+.chat-md-table td:last-child { padding-right: 0; }
+.chat-md-table thead th {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+  border-bottom: 1px solid var(--border-strong);
+}
+.chat-md-table tbody td { border-bottom: 1px solid var(--border); }
+.chat-md-table tbody tr:last-child td { border-bottom: none; }
+/* The four alignment classes the renderer can emit, from its own fixed
+   enum — no parsed text ever reaches these attributes. */
+.chat-md-al-left { text-align: left; }
+.chat-md-al-center { text-align: center; }
+.chat-md-al-right { text-align: right; }
+
 .chat-cite-row {
   display: flex;
   flex-wrap: wrap;
@@ -1047,7 +1098,9 @@
    `chat-`: the renderer was lifted OUT of views/chat.js into next/shared/
    so the wiki-browse reader could stop showing escaped Markdown source. Its
    emitted class names (`chat-md-h`, `chat-wikilink`, `chat-citation-tag`,
-   `chat-cite-path`) were deliberately NOT renamed in that change — renaming
+   `chat-cite-path`, and the `chat-md-table*` / `chat-md-al-*` family added
+   with GFM table support) were deliberately NOT renamed in that change —
+   renaming
    would have altered the renderer's output in the very change whose safety
    proof is that its output is byte-identical before and after the move. A
    rename is a separate, mechanical change; until then the three classes that

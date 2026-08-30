@@ -113,6 +113,7 @@ first group applies to all three.
 | Document | What's inside |
 |----------|---------------|
 | [working-state.md](working-state.md) | Carry build context across sessions, agents, models, harnesses and machines through MCP. What the store holds, why state supersedes while knowledge accumulates, how to treat what comes back, and what is deliberately not built |
+| [project-brief-template.md](project-brief-template.md) | A copyable `state/project.md` — the standing brief you write by hand. Carries the `## Operating directives` convention, the capability-fallback pattern, and the limit on what a directive may ask for |
 
 **For developers**
 

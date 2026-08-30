@@ -443,6 +443,65 @@ ok(!code.syncCss.includes('.sync-domain-footnote {'), 'sync.css: .sync-domain-fo
 ok(code.sync.includes('sync-domain-name'), 'sync: the real domain NAMES (from GET /api/domains) are still listed');
 ok(!code.sync.includes('PER DOMAIN'), 'sync: the heading no longer promises per-domain state');
 
+// ── §7b the "History — coming soon" card (v3.24.0) ──────────────────────
+// Maintainer-reported: an unexplained "Commit history & revert are coming
+// soon" card sat under a bare "History" eyebrow on the Sync view with no
+// backend behind it and no clear reason to be there. Removed outright —
+// NOT reworded (the memory.js UNBUILT check in §8 below covers the
+// reword-a-false-claim class; this is a different class, deleting a card
+// nobody asked for). The one real fact it carried — every sync is a git
+// commit, so a git client can revert by hand — is not thrown away: it
+// moves into renderMain()'s renderViewHeader `info` field, which per
+// text.js's own docblock is the correct home for an EXPLANATION (as
+// opposed to a warning/cost/irreversibility notice, which must stay
+// unfolded). Named to the function, not a whole-file grep, so a future
+// edit that re-adds a dedicated card elsewhere in the file would still be
+// caught here as long as it does not also happen to land inside
+// renderMain().
+section('§7b  The "History — coming soon" card is gone; the recovery fact moved to the header info mark');
+
+ok(!code.sync.includes('sync-history-empty'), 'sync: the .sync-history-empty card element is gone');
+ok(!code.syncCss.includes('.sync-history-empty'), 'sync.css: every .sync-history-empty rule went with it (class AND scoped children)');
+ok(!/commit history/i.test(code.sync), 'sync: no "Commit history" heading/copy remains anywhere in the view');
+ok(!/coming soon/i.test(code.sync), 'sync: no "coming soon" roadmap teaser remains anywhere in the view');
+ok(!code.sync.includes("'History'"), 'sync: the bare "History" eyebrow that introduced the card is gone');
+
+{
+  const fnMain = extractFunction(code.sync, 'renderMain');
+  ok(/info:\s*'/.test(fnMain), 'renderMain: renderViewHeader is now called WITH an info field (was header-only before)');
+  ok(/real git commit/.test(fnMain), 'renderMain: the info text names the actual recovery mechanism (a real git commit)');
+  ok(/git client/.test(fnMain), 'renderMain: the info text names how to act on it (a git client)');
+  ok(!/coming soon/i.test(fnMain), 'renderMain: the relocated sentence does not resurrect "coming soon" wording');
+
+  // ── THE FALSE-REVERT CLASS, GUARDED RATHER THAN RE-FIXED ──────────────
+  // CLAUDE.md tracks this class from v3.9.1 (a "revert it from the Sync tab"
+  // promise found at EIGHT sites) through v3.20.0 (a NINTH: "Every sync is a
+  // git commit, so anything can be reverted" — in this very file). There is
+  // no revert route in src/routes/sync.js and never has been. The v3.24.0
+  // rewrite's own first draft reached for "so nothing is lost", which is
+  // false twice over: `*/raw/` is gitignored (ingested source files are
+  // NEVER committed, so no git history restores them) and pull() resolves
+  // with `-X theirs`, measured in v3.17.2 to silently discard the local side
+  // of a conflicting hunk. Guarding the SHAPE, not the sentence, because the
+  // next instance will be written by someone who never read this file.
+  const ABSOLUTES = [
+    /nothing is lost/i,
+    /anything can be reverted/i,
+    /revert it from the sync tab/i,
+    /everything is recoverable/i,
+  ];
+  for (const re of ABSOLUTES) {
+    ok(!re.test(fnMain), `renderMain: the info text makes no absolute safety promise (${re.source})`);
+  }
+  // And the positive half, so the guard above cannot be satisfied by simply
+  // deleting the sentence: the ABSENCE of an in-app revert must be STATED,
+  // which is what stops a user hunting the UI for a button that is not there.
+  ok(/no revert control/i.test(fnMain),
+    'renderMain: the info text says plainly that there is no revert control in the app');
+  ok(/auto-saves/i.test(fnMain),
+    'renderMain: it names the mechanism that makes the recovery path real (pull auto-saves before merging)');
+}
+
 // ── §8 CLASS-LEVEL: no preview-era vocabulary in user-visible strings ───
 // The point of a class-level assertion rather than four spot checks: this
 // vocabulary was scattered by an era, not by an author, and the next

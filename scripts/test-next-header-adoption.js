@@ -319,8 +319,18 @@ section('§4  THE TWO NEW ADOPTIONS, AT NAMED SITES');
     /renderExplainer\(\{/.test(m) && /summary: 'How this works'/.test(m));
   ok('sync.js sidebar: the component, in the sidebar density',
     /renderViewHeader\(\{\s*variant: 'sidebar',\s*title: 'Sync',/.test(s));
-  ok('sync.js centre: the component, eyebrow + title',
-    /renderViewHeader\(\{ eyebrow: 'where it all lives', title: 'Sync' \}\)/.test(s));
+  // v3.24.0: this site GAINED an `info` field (the maintainer flagged the
+  // dedicated "Commit history & revert are coming soon" card as unexplained
+  // roadmap noise; that card is gone and the one real fact it carried — a
+  // git client can revert, because every sync is a real commit — moved
+  // here). The v3.22.0-era assertion pinned "eyebrow + title, no info"; that
+  // shape is now WRONG BY DESIGN, so the regex is widened to require the
+  // eyebrow/title pair PLUS a non-empty info string, rather than merely
+  // dropping the check — an info-less regression at this exact call site
+  // would still be caught (the info clause is mandatory in the pattern, not
+  // optional).
+  ok('sync.js centre: the component, eyebrow + title + info (recovery mechanism, relocated in v3.24.0)',
+    /renderViewHeader\(\{\s*eyebrow: 'where it all lives',\s*title: 'Sync',\s*info: '[^']+',?\s*\}\)/.test(s));
   ok('neither view still imports eyebrow() — an unused import is an unadopted component',
     !/\beyebrow\b/.test((m.match(/import \{[\s\S]*?\} from '\.\.\/app\.js';/) || [''])[0])
     && !/\beyebrow\b/.test((s.match(/import \{[\s\S]*?\} from '\.\.\/app\.js';/) || [''])[0]));

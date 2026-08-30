@@ -14,12 +14,26 @@
 //     (404s cleanly when the flag is off — treated as "not connected", not
 //     an error)
 //
-// Honesty notes (see this session's task brief):
+// Honesty notes:
 //   - There is NO commit-history/revert endpoint anywhere in the backend
 //     (verified against src/brain/sync.js and src/routes/sync.js — push()
 //     and pull() return only a same-call file-count/preview, not a
-//     persisted log with revertable entries). The design's History section
-//     is rendered as an honest "coming soon" empty state — never a fake list.
+//     persisted log with revertable entries), and there never has been one —
+//     CLAUDE.md v3.9.1 records finding a FALSE "revert it from the Sync tab"
+//     claim at 8 sites app-wide. The design's original History section
+//     rendered an honest "coming soon" card for it. Reported by the
+//     maintainer (v3.24.0): that card reads as an unexplained roadmap note
+//     on an operational panel — "why is this here?" — because it names a
+//     feature nobody asked for, on a screen whose job is running syncs, not
+//     announcing a backlog. Removed outright. The one fact worth keeping —
+//     every sync IS a real git commit, so a git client pointed at the
+//     knowledge-base folder can already revert by hand — is not a "coming
+//     soon" tease, it is the actual recovery path today; it now lives
+//     behind renderMain()'s info mark (see renderMain() below) rather than
+//     in a dedicated card, per v3.22.0's rule that an EXPLANATION (as
+//     opposed to a warning, a cost, or an irreversibility notice) belongs
+//     behind the icon. The same fact is documented in full, with the exact
+//     git commands, at docs/sync.md's "no revert control" callout.
 //   - GET /api/sync/status returns a single TOTAL changesCount from
 //     `git status --porcelain`; there is no per-file or per-domain endpoint
 //     that doesn't ALSO perform a real push/pull. The sidebar therefore
@@ -340,15 +354,45 @@ function renderMain(token) {
     body = renderConfigured(s);
   }
 
-  // THE SENTENCE IS CUT, NOT RELOCATED. In the CONFIGURED state the status card
-  // directly below says "Connected", prints the repo URL and the last sync time
-  // — the sentence restated all three in the abstract. In the UNCONFIGURED state
-  // the setup card's own title is "Connect a GitHub repository" and its hint
-  // names the private repo and the token. Either way it taught nothing to
-  // someone already looking at the screen, which is the test v3.22.0 cut
-  // ingest's drop-zone sentence against.
+  // v3.22.0's ORIGINAL sentence was cut, not relocated: in the CONFIGURED
+  // state the status card directly below says "Connected", prints the repo
+  // URL and the last sync time — the sentence restated all three in the
+  // abstract. In the UNCONFIGURED state the setup card's own title is
+  // "Connect a GitHub repository" and its hint names the private repo and
+  // the token. Either way it taught nothing to someone already looking at
+  // the screen, which is the test v3.22.0 cut ingest's drop-zone sentence
+  // against.
+  //
+  // `info` here (v3.24.0) is a DIFFERENT fact, not a reintroduction of that
+  // one: how to recover, which nothing else on this screen states once the
+  // "coming soon" History card is gone (see this file's header comment).
+  // It qualifies for the mark rather than an unfolded renderStatus box
+  // because it explains a MECHANISM and warns of nothing — no cost, no
+  // irreversibility, no action currently in flight — matching Domains'
+  // DOMAIN_BLURB, the other real-world example of `info` on a main-variant
+  // header. True in every state (unconfigured included: it describes what
+  // happens once syncing starts, not something that has already happened),
+  // so it is not gated on `s.configured`.
+  //
+  // THE PHRASE "so nothing is lost" WAS IN THE FIRST DRAFT AND WAS CUT, on
+  // measurement rather than taste. Two things make it false as an absolute:
+  // `*/raw/` is the FIRST entry in DOMAINS_GITIGNORE_RULES, so the source
+  // files a user ingested are never committed and a git history cannot
+  // restore them; and pull() resolves with `-X theirs`, which v3.17.2
+  // measured SILENTLY discarding — and in one shape SPLICING — the local
+  // side of a conflicting hunk. What IS true is the narrower mechanism now
+  // stated: pull() runs `add -A` + an "Auto-save before sync" commit BEFORE
+  // the merge (src/brain/sync.js), so the pre-merge local state is in the
+  // history a git client can reach. This file is the ninth-plus site of the
+  // false-revert class CLAUDE.md tracks from v3.9.1 through v3.20.0; an
+  // absolute safety promise here is exactly how that class keeps recurring,
+  // so the copy states the MECHANISM and names the ABSENCE instead.
   setMain(
-    renderViewHeader({ eyebrow: 'where it all lives', title: 'Sync' }) +
+    renderViewHeader({
+      eyebrow: 'where it all lives',
+      title: 'Sync',
+      info: 'Every push and pull is a real git commit, and a pull auto-saves your local changes before merging. There is no revert control in the app, but a git client pointed at your knowledge-base folder can browse that history and roll back.',
+    }) +
     body,
     token
   );
@@ -442,14 +486,6 @@ function renderConfigured(s) {
     '</div>' +
 
     renderSharedBrainRow() +
-
-    '<span class="cur-eyebrow" style="display:block;margin-bottom:11px">History</span>' +
-    '<div class="sync-history-empty">' +
-      '<div class="empty-title">Commit history &amp; revert are coming soon</div>' +
-      '<div class="empty-body">Every sync is already a real git commit, so the data to revert from exists on disk ' +
-      '— there just isn’t a history endpoint yet to list or revert individual commits from this view. Until then, ' +
-      'a git client pointed at your knowledge base folder can do it directly.</div>' +
-    '</div>' +
 
     renderDisconnect()
   );

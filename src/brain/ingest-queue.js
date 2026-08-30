@@ -189,6 +189,7 @@ import {
   getDomainStats,
 } from './files.js';
 import { scrubPaths } from './scrub-paths.js';
+import { wireStr, wireNum, wireBool } from './wire-safe.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { registerWrite, acquireFileLock, isUpdateInProgress } from './write-registry.js';
 import {
@@ -232,7 +233,8 @@ const MAX_JOB_DIRS_SCANNED = 200;
 
 /** Response-size bounds for `toWire` — see its docblock. */
 const MAX_WIRE_ITEMS = 500;
-const MAX_WIRE_STRING = 2000;
+// MAX_WIRE_STRING moved to ./wire-safe.js with wireStr — see the note below
+// where those three functions used to be defined.
 
 /**
  * Longest staged basename we will write, BEFORE the `<idx>-` prefix. macOS
@@ -480,15 +482,14 @@ async function writeJob(job) {
 
 // ── The wire representation ─────────────────────────────────────────────────
 
-function wireStr(v, max = MAX_WIRE_STRING) {
-  // Anything that is not a string becomes null — a number or object landing
-  // in a string slot is corrupt manifest data, not something to pass through.
-  if (typeof v !== 'string') return null;
-  const scrubbed = scrubPaths(v);
-  return scrubbed.length > max ? scrubbed.slice(0, max) + '… (truncated)' : scrubbed;
-}
-function wireNum(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
-function wireBool(v) { return v === true; }
+// wireStr/wireNum/wireBool USED TO BE DEFINED HERE. They MOVED to
+// ./wire-safe.js (imported at the top of this file) when a second module —
+// ingest-activity.js — needed the same guard: wireStr is not a formatter, it
+// is the single place that decides a string leaving this process has been
+// scrubbed of absolute paths and bounded, and two hand-maintained copies of a
+// guard is this repo's v3.2.0 CRITICAL shape. The bodies are unchanged; the
+// end-to-end path-leak assertions in scripts/test-ingest-queue.js run through
+// the real toWire and are what prove that.
 
 function wireCounts(counts) {
   if (!counts || typeof counts !== 'object') return null;

@@ -240,6 +240,91 @@ curl -X POST http://localhost:3333/api/ingest \
 { "error": "Unsupported file type: .docx. Allowed: .txt, .md, .pdf" }
 ```
 
+## GET /api/ingest/activity
+
+What the server currently knows about **single-file** ingests (`POST /api/ingest`), so a view that was not watching while one ran can still show its progress and its outcome.
+
+The Ingest view deliberately never aborts its SSE fetch on navigate-away, so before v3.24.0 the `progress` and `done` events still *arrived* and were then dropped by a mount-token gate — and a reload or a second tab had no fetch to keep alive at all. This endpoint is the server remembering instead. See [src/brain/ingest-activity.js](../src/brain/ingest-activity.js) for the full rationale.
+
+**Read-only and in-memory.** It takes no lock, touches no filesystem and mutates nothing, so it is deliberately *not* registered as a write and *not* behind `guardConcurrent`: a 409 here would fire precisely while an ingest is running, which is exactly the moment the caller is asking whether their file got in.
+
+**Request** — no parameters.
+
+```bash
+curl http://localhost:3333/api/ingest/activity
+```
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "serverNow": 1756512000000,
+  "activity": [
+    {
+      "id": "a1b2c3d4e5f6",
+      "domain": "articles",
+      "filename": "attention-is-all-you-need.pdf",
+      "status": "done",
+      "pct": 100,
+      "message": "Ingest complete",
+      "waiting": false,
+      "startedAt": 1756511940000,
+      "phaseStartedAt": 1756511995000,
+      "finishedAt": 1756511999000,
+      "error": null,
+      "result": {
+        "title": "Attention Is All You Need",
+        "changes": [
+          {
+            "canonPath": "concepts/transformer.md",
+            "status": "updated",
+            "bytesBefore": 1840,
+            "bytesAfter": 2210,
+            "sectionsChanged": ["Key Facts", "Related"],
+            "bulletsAdded": 4
+          }
+        ],
+        "changesTotal": 22,
+        "pagesWritten": ["summaries/attention-is-all-you-need.md"],
+        "pagesWrittenTotal": 22,
+        "warnings": [],
+        "warningsTotal": 0,
+        "truncated": false,
+        "wasOverwrite": false,
+        "tokenUsage": {
+          "provider": "gemini",
+          "model": "gemini-2.5-flash-lite",
+          "calls": 6,
+          "inputTokens": 148320,
+          "outputTokens": 9114,
+          "cachedReadTokens": 0,
+          "cacheWriteTokens": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+**Fields**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `serverNow` | number | The server's own epoch-ms clock, sent alongside so a client derives elapsed time by **subtraction only** (`serverNow - phaseStartedAt`) and never has to reason about clock skew between the two machines |
+| `activity[].status` | string | `running`, `done` or `error`. `done` and `error` are terminal |
+| `activity[].waiting` | boolean | The ingest is blocked behind another write in the same domain |
+| `activity[].error` | string \| null | Present on `error`. Absolute paths are scrubbed before it reaches the wire |
+| `activity[].result` | object \| null | Non-null only once the ingest has settled successfully |
+| `…Total` fields | number | The **true** count. The `changes`, `pagesWritten` and `warnings` arrays are capped (500 / 500 / 200), so a client compares each array's length against its `…Total` rather than under-reporting silently |
+| `result.truncated` | boolean | The ingest itself truncated the source at the 80,000-character cap — unrelated to the array caps above |
+
+**Retention.** Records are in-memory only and do not survive a server restart. A **settled** record is swept 30 minutes after it finished; a `running` record **never expires**, because an ingest is legitimately allowed to take an hour. At most 200 domains are tracked.
+
+**Error responses.** There are none by design: a read whose whole job is telling the user what happened must not fail. Any internal error degrades to `{ "ok": true, "serverNow": <n>, "activity": [] }` — the pre-v3.24.0 behaviour — rather than a 500.
+
+**Coverage note.** `scripts/test-route-write-guards.js` audits `config.js`, `sync.js`, `domains.js` and `health.js` from a hardcoded list and does not classify `src/routes/ingest.js` at all, so its class invariants do not reach this route. That is a gap in that suite, not a licence: a **mutating** route added to this router still needs `registerWrite` and a file lock, the way `POST /api/ingest` has them.
+
 ---
 
 ## Batch ingest queue (`/api/ingest-queue`, Track 3)
@@ -1960,7 +2045,9 @@ with `current.present: false`, `requestedMachine`, and a `message` that names th
 state under scope X" is the fact-and-absence collapse this module exists to refuse.
 
 `sanitisedOnRead` reports that protocol-shaped markup was neutralised on the way out. It is not a
-safety verdict — see [working-state.md § 4](working-state.md#4-treat-stored-state-as-data-not-as-instructions).
+safety verdict — see [working-state.md § 4](working-state.md#4-treat-stored-state-as-data-not-as-instructions-with-one-exception). On the standing brief it is
+additionally an *authority* signal over MCP: `sanitisedOnRead` or `headingsSuspect` on `brief`
+drops that tool's `brief_authority` to `suspect` and withdraws the owner framing.
 
 **Error responses**
 
@@ -2016,7 +2103,10 @@ an integrator against the store (or against that tool) would otherwise have to i
 - The journal append is **best-effort**: a failure sets `journalWritten: false` and does not fail
   the save, matching the raw-source manifest and the MCP audit log.
 - **There is no brief-writing MCP tool.** `saveProjectBrief` is exported by the store and called
-  from nowhere in `mcp/`. The standing brief is human-authored, by design.
+  from nowhere in `mcp/` or `src/routes/`. The standing brief is human-authored, by design — and
+  the **read** side depends on that: because no tool writes it, `get_working_state` can tell a
+  model that a verified brief's standing instructions are the user's own rather than an earlier
+  session's untrusted notes. See [working-state.md § 4](working-state.md#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
 
 Full contract: [working-state.md](working-state.md) and
 [architecture.md § `src/brain/working-state.js`](architecture.md#srcbrainworking-statejs-v3170).

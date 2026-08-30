@@ -491,8 +491,17 @@ export function renderExplainer(o) {
  * explanatory prose lives. This mirrors the deliberate Settings/composer split
  * v3.16.1 recorded: different density, same vocabulary.
  *
+ * Because that pattern puts two headers of the same view — and usually the same
+ * TITLE — on one screen, THE VARIANT IS PART OF THE DERIVED PANEL ID. Deriving
+ * from the title alone shipped duplicate DOM ids on Sync and made one panel
+ * permanently unreachable; the reasoning is at the derivation itself.
+ *
  * @param {{eyebrow?:string, title:string, info?:string, infoHtml?:boolean,
  *          infoId?:string, actionsHtml?:string, variant?:string}} o
+ *   `infoId` overrides the derived panel id. It is needed only when the title
+ *   is DYNAMIC (views/domains.js renders a domain's own name, which could be
+ *   the literal word "Domains"); the sidebar-vs-main case derives correctly on
+ *   its own and no longer needs one.
  * @returns {string} HTML, or '' when there is no title
  */
 export function renderViewHeader(o) {
@@ -502,10 +511,39 @@ export function renderViewHeader(o) {
   const eyebrowText = str(o.eyebrow);
   const info = str(o.info);
   const actions = safeActions(o.actionsHtml);
-  const panelId = str(o.infoId) || ('tx-vh-info-' + slugForId(title));
+  const sidebar = o.variant === 'sidebar';
+  // THE VARIANT IS PART OF THE ID, AND THAT IS THE FIX FOR A MEASURED BUG.
+  // See "TWO DENSITIES, ONE VOCABULARY" above: this component actively invites
+  // a sidebar header and a main header of the SAME view — and therefore very
+  // often the same TITLE — to sit on one screen. Deriving the panel id from the
+  // title alone made that blessed call pattern emit DUPLICATE DOM ids, and
+  // `document.getElementById` returns the first in document order: measured on
+  // Sync, clicking the MAIN header's mark opened the SIDEBAR's panel (243x58,
+  // hidden=false) while the main panel stayed hidden with a 0x0 rect. Its prose
+  // — the git-recovery route, the one sentence a user needs when something has
+  // gone wrong — existed in the DOM and could not be reached by anyone.
+  // `aria-controls` was ambiguous too, so AT was routed to the wrong panel.
+  //
+  // `infoId` already existed as an escape hatch and TWO adopters had reached for
+  // it by hand (domains.js, ingest.js). The third forgot, and every one of the
+  // 120 offline suites stayed green — including this component's own, which
+  // asserts the OVERRIDE WORKS but never that an adopter uses it. That is the
+  // v3.20.0 shape verbatim: a guard that proves a mechanism exists proves
+  // nothing about adoption. So the collision is removed by CONSTRUCTION rather
+  // than by remembering, which is v3.22.0's rule (make wrong output
+  // inexpressible) and v3.13.0's (remove the PATH, not the symptom).
+  //
+  // The MAIN variant's id is deliberately BYTE-IDENTICAL to before — only a
+  // sidebar header moves. That keeps the blast radius to the two sidebar
+  // headers that carry `info` at all, one of which already overrides to exactly
+  // the string this now derives. RESIDUAL, stated rather than implied away: two
+  // headers sharing BOTH title and variant in one view still collide. Nothing
+  // renders that today, and it is covered by the class scan in
+  // scripts/test-next-view-header.js §4b rather than assumed away.
+  const panelId = str(o.infoId) ||
+    ('tx-vh-info-' + slugForId(title) + (sidebar ? '-sidebar' : ''));
   const btnId = panelId + '-btn';
   const name = 'About ' + title;
-  const sidebar = o.variant === 'sidebar';
 
   return (
     '<header class="tx-vh' + (sidebar ? ' tx-vh-sidebar' : '') + '">' +

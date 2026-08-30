@@ -290,6 +290,41 @@
   line-height: var(--leading-normal);
 }
 
+/* ── Server-backed activity (v3.24.0) ────────────────────────────────────
+   The reattached progress view and the restored outcome. Both reuse the
+   existing .ing-progress / .ing-result blocks wholesale — same ring, same
+   panel — so these rules only add what is genuinely new: the "which file"
+   line, and the restored panel's header row. Every colour is a token; no
+   rule here defines a colour that exists nowhere else. */
+
+.ing-remote-file {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+.ing-remote-outcome {
+  margin-top: 20px;
+  max-width: 640px;
+}
+/* The panel below carries its own margin-top; collapsing it here keeps the
+   header visually attached to the result it heads rather than floating. */
+.ing-remote-outcome .ing-result { margin-top: 8px; }
+.ing-remote-outcome-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ing-remote-outcome-when {
+  font-size: var(--text-xs);
+  /* --text-2, not --text-3: v3.19.0 measured --text-3 at 4.38 dark / 4.00
+     light against the 4.5 AA floor for text, and this line carries the file
+     name — the single fact a returning user is here to read. */
+  color: var(--text-2);
+  line-height: var(--leading-normal);
+}
+
 /* ── Duplicate-file banner ───────────────────────────────────────────── */
 
 .ing-duplicate {

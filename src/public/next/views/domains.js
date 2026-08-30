@@ -157,10 +157,14 @@ const AUTO_FIX_TYPES = new Set(['brokenLinks', 'folderPrefixLinks', 'crossFolder
 // Every one of these surfaces used to promise the change was "revertable from
 // Sync". THAT CONTROL DOES NOT EXIST AND NEVER HAS. The backend exposes exactly
 // status / setup / push / pull / sync / disconnect (src/routes/sync.js) — no
-// revert, no discard, no restore — and neither frontend has such a button. The
-// Sync view in this very build says so two clicks away ("Commit history & revert
-// are coming soon"). So the app was offering a safety net it does not have, on
-// the panel that launches its most destructive operations.
+// revert, no discard, no restore — and neither frontend has such a button. Up
+// through v3.23.x the Sync view said so two clicks away, in a "Commit history &
+// revert are coming soon" card — which the maintainer flagged (v3.24.0) as
+// unexplained roadmap noise on an operational panel and which is now gone; the
+// same underlying fact (a git client can revert directly, because every sync is
+// a real commit) lives behind that view's header info mark instead. Either way,
+// the app has never offered — and does not now offer — an in-app revert on the
+// panel that launches its most destructive operations.
 //
 // What IS true is the part underneath: the wiki folder is a git working tree, so
 // the change is genuinely recoverable — from a git client, not from the app. But

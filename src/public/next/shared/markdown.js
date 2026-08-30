@@ -92,6 +92,23 @@ import { icon } from '../app.js';
 // the reasons are recorded in full at the call site and must be read before
 // reordering anything in that function.
 
+// ── /next addition 3 ─────────────────────────────────────────────────────
+// GFM TABLES. The shipping renderer has no table pass and neither did this
+// one, so a model that emitted a perfectly ordinary Markdown table got its
+// rows dumped into a single <p> joined by <br> — pipes, dashes and all.
+// Reported from real use against a table an LLM wrote correctly; the bug was
+// entirely ours, which is why the fix belongs HERE, in the one renderer both
+// surfaces share, rather than in a prompt. Wiki pages carry tables too (this
+// repo's own CLAUDE.md is mostly one), so the reader gains them in the same
+// change.
+//
+// The parse is deliberately NOT a regex over the whole block. Cells are
+// split by a LINEAR character scan (splitTableRow) and the delimiter row is
+// validated cell-by-cell against a single anchored pattern — no alternation,
+// no nesting, nothing that can backtrack. That is the same discipline the
+// ReDoS note above forced on the two token passes, applied before it could
+// become a finding rather than after.
+
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;')
@@ -243,6 +260,72 @@ function renderInline(text) {
   return out;
 }
 
+// ── GFM TABLE SUPPORT ────────────────────────────────────────────────────
+// Three small pure helpers, used only by renderMarkdown's block loop below.
+// They run on text escHtml() has ALREADY escaped, exactly like every other
+// pass in this file — `|`, `\` and `:` are untouched by escaping, so the
+// grammar is intact while `<`, `>`, `&`, `"` and `'` are already inert.
+//
+// scripts/test-next-markdown.js extracts these by name, and its §0b guard
+// fails if a helper renderMarkdown calls is missing from that list — the
+// v3.14.0 "hardcoded FN list" blind spot, closed for this file rather than
+// left to surface as a ReferenceError crash in a later change.
+
+// Split ONE table row into its cells. A linear scan, never a regex: the
+// obvious spelling needs a lookbehind or an alternation to skip escaped
+// pipes, and this file already carries a measured ReDoS note explaining why
+// that shape is not welcome here. A backslash escapes the character after
+// it, so `\|` is a literal pipe INSIDE a cell and `\\` a literal backslash.
+//
+// GFM's leading/trailing pipes are optional and are stripped as DELIMITERS
+// before the split — exactly one of each, never by dropping empty cells
+// afterwards. That distinction is load-bearing: `| | b |` has a genuinely
+// empty FIRST COLUMN, and a "drop empty edge cells" shortcut silently eats
+// it and shifts every remaining cell one column left, misaligning the whole
+// row against its header.
+function splitTableRow(line) {
+  let s = String(line).trim();
+  if (s.charAt(0) === '|') s = s.slice(1);
+  // `\|` at the end is an ESCAPED pipe belonging to the last cell, not the
+  // row's closing delimiter.
+  if (s.length && s.charAt(s.length - 1) === '|' && s.charAt(s.length - 2) !== '\\') s = s.slice(0, -1);
+
+  const cells = [];
+  let cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charAt(i);
+    if (ch === '\\' && i + 1 < s.length) {
+      const next = s.charAt(i + 1);
+      if (next === '|' || next === '\\') { cur += next; i++; continue; }
+      cur += ch;
+      continue;
+    }
+    if (ch === '|') { cells.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+
+// A delimiter cell is `---`, `:--`, `--:` or `:-:`. Anchored, one quantifier,
+// no alternation — linear in the cell length whatever is thrown at it.
+function isTableDelimiterCell(cell) {
+  return /^:?-+:?$/.test(cell);
+}
+
+// Alignment is read off the delimiter cell and mapped to ONE OF FOUR fixed
+// class names. The parsed text itself NEVER reaches the attribute — the
+// return value here is a literal from this function, which is what keeps the
+// cardinal rule intact while still emitting a class attribute at all.
+function tableAlignClass(delimCell) {
+  const left = delimCell.charAt(0) === ':';
+  const right = delimCell.charAt(delimCell.length - 1) === ':';
+  if (left && right) return ' class="chat-md-al-center"';
+  if (right) return ' class="chat-md-al-right"';
+  if (left) return ' class="chat-md-al-left"';
+  return '';
+}
+
 export function renderMarkdown(raw) {
   const escaped = escHtml(raw);
   const lines = escaped.split('\n');
@@ -274,6 +357,51 @@ export function renderMarkdown(raw) {
 
     const h = line.match(/^\s*(#{1,6})\s+(.*)$/);
     if (h) { flushPara(); flushList(); out.push('<div class="chat-md-h">' + renderInline(h[2]) + '</div>'); continue; }
+
+    // ── GFM table ────────────────────────────────────────────────────────
+    // Two conditions, and BOTH matter. The header row must contain at least
+    // one `|`, which stops a `Some text` / `-------` pair — a setext H2 this
+    // renderer does not support and which would otherwise be swallowed as a
+    // one-column table. And the delimiter row's cell count must EQUAL the
+    // header's, which is GFM's own rule and additionally rejects ordinary
+    // prose that merely happens to mention a pipe above a horizontal rule.
+    if (line.indexOf('|') !== -1 && li + 1 < lines.length) {
+      const headerCells = splitTableRow(line);
+      const delimCells = splitTableRow(lines[li + 1]);
+      if (headerCells.length > 0 && delimCells.length === headerCells.length &&
+          delimCells.every(isTableDelimiterCell)) {
+        flushPara(); flushList();
+        const aligns = delimCells.map(tableAlignClass);
+        let tbl = '<div class="chat-md-table-wrap"><table class="chat-md-table"><thead><tr>';
+        for (let c = 0; c < headerCells.length; c++) {
+          tbl += '<th' + aligns[c] + '>' + renderInline(headerCells[c]) + '</th>';
+        }
+        tbl += '</tr></thead><tbody>';
+        let r = li + 2;
+        for (; r < lines.length; r++) {
+          const rowLine = lines[r];
+          // The table ends at a blank line, at a line carrying no pipe, or at
+          // a fence. The fence case is not defensive tidiness: ``` is handled
+          // by a branch ABOVE this one, and eating it here would swallow an
+          // entire code block into a table cell.
+          if (/^\s*$/.test(rowLine)) break;
+          if (/^\s*```/.test(rowLine)) break;
+          if (rowLine.indexOf('|') === -1) break;
+          const cells = splitTableRow(rowLine);
+          tbl += '<tr>';
+          for (let c = 0; c < headerCells.length; c++) {
+            // GFM: a short row is PADDED and a long one TRUNCATED, both
+            // against the header's column count. Never render a ragged table.
+            tbl += '<td' + aligns[c] + '>' + (c < cells.length ? renderInline(cells[c]) : '') + '</td>';
+          }
+          tbl += '</tr>';
+        }
+        tbl += '</tbody></table></div>';
+        out.push(tbl);
+        li = r - 1; // the outer loop's own li++ lands us exactly on `r`
+        continue;
+      }
+    }
 
     const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
     if (bullet) {

@@ -32,6 +32,11 @@
  *  §4  THE AFFORDANCE IS A REAL CONTROL: a <button type="button"> with an
  *      accessible name, aria-expanded="false", and aria-controls naming a
  *      panel id that actually exists in the same string.
+ *  §4b NO TWO HEADERS IN ONE VIEW RESOLVE TO THE SAME INFO-PANEL DOM ID, over
+ *      every view file ENUMERATED FROM DISK. §4 proved the `infoId` override
+ *      WORKS; it never proved an adopter USES it, and v3.24.0 shipped duplicate
+ *      ids on Sync through that gap with all 120 suites green. Ids are derived
+ *      by RUNNING renderViewHeader, so the guard cannot drift from production.
  *  §5  ABSENT IS NOT ZERO, inherited from the rest of text.js: no info means
  *      no button AND no panel, not an empty one.
  *  §6  ESCAPING on every interpolated value; `infoHtml` is opt-in only.
@@ -78,6 +83,20 @@
  *    carries the attributes the handler keys on) and as SOURCE, not as
  *    executed DOM: there is no DOM in this process. The keyboard path was
  *    driven in a real browser instead.
+ *  • §4b IS A STATIC SCAN, and a static scan cannot see: a title built from a
+ *    variable (reported as unresolvable, never guessed — and REQUIRED to carry
+ *    an explicit infoId once a file has a second info-carrying header, which is
+ *    the only point at which it could collide); a header rendered from a shared
+ *    helper in a file outside views/; two DIFFERENT views mounting headers at
+ *    the same time (not reachable today — the shell renders one view, whose
+ *    sidebar and main are the pair this covers); an id assigned or rewritten at
+ *    runtime; and any panel emitted by something other than renderViewHeader —
+ *    views/settings.js hand-rolls its own `.tx-vh-info` marks through a local
+ *    infoMark(), and those ids are outside this scan (they are namespaced
+ *    `settings-*`, so they cannot collide with a `tx-vh-info-*` header id, but
+ *    that is a fact about today's strings and not something asserted here).
+ *  • It proves ids are UNIQUE. It does not prove the right panel OPENS — that
+ *    needs a browser, and it was driven in one.
  */
 
 import { readFileSync, readdirSync } from 'fs';
@@ -260,6 +279,244 @@ section('§4  THE AFFORDANCE IS A REAL CONTROL, NOT A TOOLTIP');
     /if \(txInfoWired \|\| typeof document === 'undefined'\) return;/.test(src));
   ok('...and guarded on `document`, so this module still imports in Node',
     src.includes("typeof document === 'undefined'"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§4b TWO HEADERS IN ONE VIEW CANNOT COLLIDE ON A DOM ID');
+// ═══════════════════════════════════════════════════════════════════════════
+// §4's last pair proves the `infoId` OVERRIDE WORKS. It never proved that any
+// adopter USES it — and that gap shipped a real defect.
+//
+// v3.24.0 added an `info` to views/sync.js's MAIN header. Its SIDEBAR header
+// already had one, and both are titled 'Sync', so both derived the same panel
+// id. `document.getElementById` returns the first in document order, so
+// clicking the main mark opened the SIDEBAR's panel (measured: 243x58,
+// hidden=false) while the main panel stayed hidden at 0x0 with
+// `offsetParent === null`. Its prose — the git-recovery route, i.e. the one
+// sentence a user needs when something has gone wrong, and the stated
+// justification for deleting the "coming soon" History card — was in the DOM
+// and unreachable by anyone. `aria-controls` was ambiguous too, so assistive
+// tech was pointed at the wrong panel.
+//
+// ALL 120 OFFLINE SUITES WERE GREEN OVER IT, this one included. That is the
+// v3.20.0 shape verbatim: a suite that proves a mechanism exists proves nothing
+// about adoption. And the shape recurs — views/domains.js and views/ingest.js
+// had BOTH already reached for `infoId` by hand. Two remembered, one forgot.
+//
+// The derivation now folds the variant in, so the sidebar-vs-main case cannot
+// collide by construction. This section covers the RESIDUAL that construction
+// does not reach: two headers sharing BOTH title and variant, and a header
+// whose title is dynamic in a file that has another header to collide with.
+//
+// IT USES THE REAL renderViewHeader TO DERIVE EVERY ID. A second copy of the
+// slug rule here would be a second thing to keep in step, and this repo's
+// v3.2.0 CRITICAL came from exactly that. Change the derivation and this
+// follows; what it asserts is ADOPTION, which is the half that was missing.
+{
+  /** Text between the parens of a call, respecting strings and nesting. */
+  function argText(src, openParen) {
+    let depth = 0, q = null;
+    for (let i = openParen; i < src.length; i++) {
+      const c = src[i];
+      if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+      if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+      if (c === '(' || c === '{' || c === '[') depth++;
+      else if (c === ')' || c === '}' || c === ']') {
+        depth--;
+        if (depth === 0) return src.slice(openParen + 1, i);
+      }
+    }
+    return null;
+  }
+
+  /** Depth-0 properties of an object literal body → { key: rawValueText }. */
+  function props(body) {
+    const parts = [];
+    let depth = 0, q = null, buf = '';
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (q) { buf += c; if (c === '\\') buf += body[++i] || ''; else if (c === q) q = null; continue; }
+      if (c === "'" || c === '"' || c === '`') { q = c; buf += c; continue; }
+      if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) depth--;
+      if (c === ',' && depth === 0) { parts.push(buf); buf = ''; continue; }
+      buf += c;
+    }
+    if (buf.trim()) parts.push(buf);
+
+    const out = {};
+    for (const p of parts) {
+      if (!p.trim()) continue;
+      // First depth-0 colon splits key from value. No colon = ES6 shorthand,
+      // which is by definition a variable and therefore dynamic.
+      let d = 0, qq = null, at = -1;
+      for (let i = 0; i < p.length; i++) {
+        const c = p[i];
+        if (qq) { if (c === '\\') i++; else if (c === qq) qq = null; continue; }
+        if (c === "'" || c === '"' || c === '`') { qq = c; continue; }
+        if ('([{'.includes(c)) d++;
+        else if (')]}'.includes(c)) d--;
+        else if (c === ':' && d === 0) { at = i; break; }
+      }
+      if (at === -1) out[p.trim()] = null;                 // shorthand → dynamic
+      else out[p.slice(0, at).trim().replace(/^['"]|['"]$/g, '')] = p.slice(at + 1).trim();
+    }
+    return out;
+  }
+
+  /** A single-quoted or double-quoted literal with no interpolation, else null. */
+  function literal(v) {
+    if (typeof v !== 'string') return null;
+    const m = v.trim().match(/^'([^'\\]*)'$|^"([^"\\]*)"$/);
+    return m ? (m[1] !== undefined ? m[1] : m[2]) : null;
+  }
+
+  function callsIn(src) {
+    const found = [];
+    const re = /renderViewHeader\s*\(/g;
+    let m;
+    while ((m = re.exec(src))) {
+      const open = m.index + m[0].length - 1;
+      const arg = argText(src, open);
+      if (arg === null) { found.push({ opaque: true }); continue; }
+      if (!arg.trim().startsWith('{')) { found.push({ opaque: true }); continue; }
+      const body = argText(arg, arg.indexOf('{'));
+      const p = props(body === null ? '' : body);
+      const hasInfoKey = Object.prototype.hasOwnProperty.call(p, 'info');
+      const infoVal = hasInfoKey ? String(p.info === null ? '' : p.info).trim() : '';
+      found.push({
+        opaque: false,
+        // Conservative: anything not literally null/undefined/'' may emit a panel.
+        hasInfo: hasInfoKey && !['null', 'undefined', "''", '""'].includes(infoVal),
+        title: literal(p.title), titleGiven: Object.prototype.hasOwnProperty.call(p, 'title'),
+        variant: literal(p.variant), variantGiven: Object.prototype.hasOwnProperty.call(p, 'variant'),
+        infoId: literal(p.infoId), infoIdGiven: Object.prototype.hasOwnProperty.call(p, 'infoId'),
+      });
+    }
+    return found;
+  }
+
+  const panelIdOf = (html) => (html.match(/<div class="tx-vh-panel" id="([^"]+)"/) || [])[1];
+
+  /**
+   * The id this call will emit, or null when a static scan cannot know.
+   * Derived by RUNNING the component, never by re-implementing its slug rule.
+   */
+  function idFor(c) {
+    if (!c.hasInfo) return { kind: 'none' };
+    if (c.infoIdGiven) {
+      return c.infoId === null
+        ? { kind: 'unknown', why: 'infoId is not a literal' }
+        : { kind: 'id', id: panelIdOf(renderViewHeader({ title: 'x', info: 'x', infoId: c.infoId })) };
+    }
+    if (c.variantGiven && c.variant === null) return { kind: 'unknown', why: 'variant is not a literal' };
+    if (c.title === null) return { kind: 'unknown', why: 'title is not a literal' };
+    const html = renderViewHeader({
+      title: c.title, info: 'x', ...(c.variantGiven ? { variant: c.variant } : {}),
+    });
+    return { kind: 'id', id: panelIdOf(html) };
+  }
+
+  // ── The scan, over every view file ENUMERATED FROM DISK ────────────────────
+  // Never a hardcoded list. A hardcoded list is how §8 went blind on chat.js,
+  // and how three other guards in this repo went blind (v3.14.0, v3.23.0).
+  const dir = join(NEXT, 'views');
+  const files = readdirSync(dir).filter((f) => f.endsWith('.js'));
+  ok('view files were enumerated FROM DISK, not from a hardcoded list',
+    files.length >= 8, `${files.length} files`);
+
+  let totalCalls = 0, infoCalls = 0, opaque = 0, filesWithTwo = 0, scanned = 0;
+  for (const f of files) {
+    const src = stripComments(readFileSync(join(dir, f), 'utf8'));
+    scanned++;
+    const calls = callsIn(src);
+    totalCalls += calls.length;
+    opaque += calls.filter((c) => c.opaque).length;
+
+    const live = calls.filter((c) => !c.opaque && c.hasInfo);
+    infoCalls += live.length;
+    if (live.length >= 2) filesWithTwo++;
+
+    const ids = live.map(idFor);
+    const concrete = ids.filter((r) => r.kind === 'id').map((r) => r.id);
+    const dup = concrete.find((id, i) => concrete.indexOf(id) !== i);
+    ok(`${f}: no two view headers resolve to the same info-panel DOM id`,
+      dup === undefined,
+      dup && `duplicate id "${dup}" — getElementById returns the FIRST, so one panel is unreachable`);
+
+    // A dynamic title cannot be compared. That is fine alone and NOT fine
+    // beside a sibling: it is precisely why views/domains.js passes an explicit
+    // infoId for a title that is a user-chosen domain name — and a domain
+    // named "Domains" would otherwise collide with the view's own header.
+    if (live.length >= 2) {
+      const blind = ids.filter((r) => r.kind === 'unknown');
+      ok(`${f}: every header whose id a static scan cannot resolve carries an explicit infoId`,
+        blind.length === 0,
+        blind.length ? `${blind.length} unresolvable (${blind.map((b) => b.why).join('; ')})` : '');
+    }
+  }
+  ok('...and EVERY view file was scanned', scanned === files.length, `${scanned}/${files.length}`);
+
+  // ── ANTI-VACUITY. A parser that silently stops matching reports zero
+  // collisions forever. These fail if the scan ever goes blind. ─────────────
+  // 13 real call sites today: chat 3, domains 2, ingest 2, memory 2, settings 1,
+  // shared 1, sync 2. A raw grep says 14 — chat.js:2248 MENTIONS the token in a
+  // comment, and stripComments removes it. That gap is the reason this floor is
+  // a measured number and not a guessed one.
+  ok('the scan actually parsed the call sites it is meant to police',
+    totalCalls >= 13, `found ${totalCalls} renderViewHeader calls`);
+  ok('...and found headers that carry `info` at all — otherwise there are no ids to compare',
+    infoCalls >= 8, `${infoCalls} info-carrying headers`);
+  ok('...and at least one view has TWO of them, so the comparison is non-vacuous',
+    filesWithTwo >= 1, `${filesWithTwo} files with 2+ info-carrying headers`);
+  ok('no call site passes an opaque (non-literal) options object the scan cannot read',
+    opaque === 0, `${opaque} opaque call sites`);
+
+  // ── CONTROLS: the detector must fire on the real shape, and not on others ──
+  const dupSrc =
+    "renderViewHeader({ variant: 'sidebar', title: 'Sync', info: 'a' }) +\n" +
+    "renderViewHeader({ variant: 'sidebar', title: 'Sync', info: 'b' })";
+  {
+    const ids = callsIn(dupSrc).filter((c) => c.hasInfo).map(idFor).map((r) => r.id);
+    ok('CONTROL: FIRES on two headers sharing BOTH title and variant — the residual construction cannot remove',
+      ids[0] !== undefined && ids[0] === ids[1], ids.join(' / '));
+  }
+  {
+    // Byte-for-byte the shape v3.24.0 shipped, minus the variant fold.
+    const shipped =
+      "renderViewHeader({ variant: 'sidebar', title: 'Sync', info: 'x' }) +\n" +
+      "renderViewHeader({ eyebrow: 'where it all lives', title: 'Sync', info: 'y' })";
+    const ids = callsIn(shipped).filter((c) => c.hasInfo).map(idFor).map((r) => r.id);
+    ok('CONTROL: the sidebar/main pair that SHIPPED broken now resolves to two distinct ids',
+      ids[0] && ids[1] && ids[0] !== ids[1], ids.join(' / '));
+  }
+  {
+    const ids = callsIn(
+      "renderViewHeader({ title: 'Sync', info: 'a' }) +\n" +
+      "renderViewHeader({ title: 'Sync', info: 'b', infoId: 'tx-vh-info-sync-two' })"
+    ).filter((c) => c.hasInfo).map(idFor).map((r) => r.id);
+    ok('CONTROL: an explicit infoId separates them', ids[0] !== ids[1], ids.join(' / '));
+  }
+  {
+    const cs = callsIn("renderViewHeader({ title: 'Sync' }) + renderViewHeader({ title: 'Sync', info: null })");
+    ok('CONTROL: does NOT fire on headers with no info — they emit no panel and no id',
+      cs.every((c) => !c.hasInfo), JSON.stringify(cs));
+  }
+  {
+    const cs = callsIn("renderViewHeader({ title, info: info ? info.text : null })");
+    ok('CONTROL: a dynamic title is reported as unresolvable, never guessed',
+      cs[0].title === null && idFor(cs[0]).kind === 'unknown', JSON.stringify(cs[0]));
+  }
+  {
+    const cs = callsIn("renderViewHeader({ title: 'A, B', info: 'x, y' })");
+    ok('CONTROL: a comma inside a string literal does not split a property',
+      cs[0].title === 'A, B' && cs[0].hasInfo, JSON.stringify(cs[0]));
+  }
+  {
+    const cs = callsIn("renderViewHeader({ title: 'X', info: 'x', actionsHtml: btn({ a: 1, b: 2 }) })");
+    ok('CONTROL: a nested object in another property does not confuse the split',
+      cs[0].title === 'X' && cs[0].hasInfo, JSON.stringify(cs[0]));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

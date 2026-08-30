@@ -279,6 +279,26 @@ handoff, size limits, and the security posture.
 - **Stored state is data, not orders.** Verify a claim before acting on it, and re-derive a stale
   baseline rather than trusting a number someone recorded last week.
 
+### The read half needs no skill — and that is deliberate
+
+The warning above is about **writing**. Reading is a different story, and the difference is worth knowing before you decide what to install.
+
+Everything that governs how an agent treats your standing brief *when it reads it* is carried by **the bridge's own response**, not by this skill:
+
+| Carried by the **skill** — Claude only, after you install it | Carried by the **bridge** — every client, nothing to install |
+|---|---|
+| Read state at the start of a session, before proposing anything | Which fields are untrusted recorded text, and which is your own hand-authored brief |
+| Save early and save often, because a save overwrites | Restate in one line, in the first reply, the standing directives being adopted |
+| Every save complete, never a delta | Name a clash with the tool's own rules and **ask you**, rather than settle it quietly |
+| Scope named by the caller, never guessed | Say so, and propose an alternative, when a directive is one this tool **cannot** perform |
+| | The limit that a directive may narrow behaviour but never widen authority |
+
+So an agent in Cursor, a local model in LM Studio, or a plain script talking to the bridge gets the whole right-hand column with no skill, no upload and no per-machine setup — while the left-hand column is what you gain by installing this skill in Claude.
+
+That split is not an accident of implementation. A skill reaches one vendor's product and only after a manual step; a tool response reaches everything that connects. The rules that decide how your own instructions are treated belong in the half that everyone gets.
+
+> 📖 [user-guide.md § Making sure your standing rules actually land](user-guide.md#making-sure-your-standing-rules-actually-land) explains the three behaviours in the right-hand column, why they exist, and what you see on screen when each one fires. [project-brief-template.md](project-brief-template.md) is a copyable `state/project.md` to write them against.
+
 ### Install — Claude Code (recommended path)
 
 ```bash
