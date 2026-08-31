@@ -96,6 +96,11 @@ names out of both files rather than from a hardcoded list.
 | `lib/update-plan.js` | Every DECISION the in-app updater makes, and no I/O. Includes the swap script's text. |
 | `lib/update-release.js` | "Which release, which .dmg?" — delegates every version question to `src/routes/config.js`. |
 | `lib/update-engine.js` | Download, verify, stage, swap, relaunch. Every effect injected. |
+| `lib/tray-model.js` | The menubar widget's ROW MODEL: order, ages, the harness-vs-machine slot, caps, notices, the glyph state. Pure. |
+| `lib/tray-menu.js` | Row model → `Menu.buildFromTemplate` template. Pure. |
+| `lib/tray-icon.js` | Generates the template-image glyph as PNG bytes. No binary is checked in. Pure. |
+| `lib/background-mode.js` | Resolves `backgroundMode` and the 3x3 live transition between modes. Pure. |
+| `lib/state-watch.js` | The refresh strategy: `/state/` path filter, 150 ms debounce, 5-minute fallback, one-shot glyph expiry. Every timer injected. |
 
 The `lib/` modules import **nothing** from Electron and nothing from
 `src/`, which is what lets `scripts/test-desktop-packaging.js` and
@@ -243,6 +248,62 @@ All four were verified against the source in this repo.
    throws — `lib/quit-decision.js` treats that as its own case and **asks**,
    because treating it as safe truncates paid work and treating it as busy makes
    the app permanently un-quittable.
+
+---
+
+## The menubar widget (Phase 1) — and NO TRAY ICON HAS EVER BEEN RENDERED
+
+Stated first, because two features in this project have shipped in exactly this
+condition (the update UI and the sync UI) and it must not be implied away:
+**`new Tray()` has never been called, on this machine or any other.** Electron
+is not an offline-suite dependency, so `main.js` cannot be executed by
+`npm test`; and the maintainer was at his own computer while this was written,
+so nothing was launched. Every claim about how macOS behaves here comes from
+Electron's and Apple's documentation.
+
+What IS proven, by execution rather than by scan, in
+`scripts/test-tray-shell.js` (200 assertions, OFFLINE):
+
+- the row model, including that a `null` age renders as *time unknown* and
+  never as *just now*, and that an `ageSource: 'file'` row says **changed**
+  rather than **written** — git rewrites mtime on checkout, so an unqualified
+  age on a pulled handoff is the reading that stops someone looking;
+- the menu template: the headline answer is the first item, *Open The Curator*
+  exists in every state, *Quit* is always last and is `role: 'quit'` with **no
+  click handler**, so there is structurally no path that could call `app.exit()`
+  and walk past the `before-quit` write guard;
+- the glyph's actual pixels, decoded back out of the PNG the encoder produced —
+  greyscale with every grey value 0 (a template image carries everything in
+  alpha), hollow when idle, filled when live, and differing in **zero** pixels
+  outside the centre;
+- the mode resolution and all nine mode-to-mode transitions, including that a
+  same-mode "change" is a no-op — an atomic config write fires the watch more
+  than once, and re-creating a status item moves it in the menu bar;
+- the watch's filter, its debounce (three events per save collapse to one
+  refresh), and the fallback interval.
+
+**What is NOT proven, beyond the fact that nothing has been rendered:** that
+Electron accepts these `role` and `sublabel` values; that macOS tints the
+generated image as a template (that needs `setTemplateImage(true)` at runtime,
+which is source-scanned only); that `tray.on('mouse-enter')` fires; and that the
+data layer's `getTraySummary()` exists or returns the documented shape — the
+model is only proven to survive it not doing so.
+
+**`tray-only` is recognised and deliberately half-applied.** It turns the tray
+on and leaves the Dock icon alone. Hiding it needs
+`app.setActivationPolicy('accessory')`, and the reported bug is in exactly the
+direction the mode depends on — the *accessory → regular* transition, which is
+what happens the moment the user opens the window from the tray. That cannot be
+tested from here. `resolveTrayPlan()` returns `hedged: true` and a reason rather
+than pretending.
+
+**One coordination point with `src/`:** the shell cannot be told the setting
+changed. `registerDesktopHost()` **throws** on an unknown hook name and its
+frozen list is `pickFolder, relaunch, prepareUpdate, installUpdate`, so there is
+no channel to add without a change in `src/`. The shell therefore watches
+`.curator-config.json`'s **directory** (not the file — the config is written
+atomically, and a watch on an inode that gets renamed over stops delivering
+events silently) and re-reads the mode itself.
 
 ---
 
