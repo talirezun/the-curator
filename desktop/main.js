@@ -150,7 +150,24 @@ async function boot() {
   // ESM specifier; this file is macOS-first but the conversion costs nothing.
   await import(pathToFileURL(SERVER_ENTRY).href);
 
-  installRestartInterceptor(port);
+  // Hand the shell's native capabilities to the server. They are in the SAME
+  // Node realm — the import above ran `src/server.js` in this process — so a
+  // module registry is a real channel, not a message bus. The specifier is
+  // resolved from the same APP_ROOT as SERVER_ENTRY on purpose: a different
+  // specifier gives a second module instance and a registry nobody reads.
+  const { registerDesktopHost } =
+    await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'desktop-host.js')).href);
+  registerDesktopHost({
+    pickFolder: async ({ prompt }) => {
+      const r = await dialog.showOpenDialog(mainWindow, {
+        title: prompt,
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+    },
+    relaunch: () => { quitAuthorised = true; app.relaunch(); app.exit(0); },
+  });
+
   createWindow();
 }
 
@@ -187,52 +204,24 @@ function createWindow() {
 
   mainWindow.loadURL(baseUrl);
 }
+// ── Restart ──────────────────────────────────────────────────────────────────
+//
+// There is NO interceptor here any more, and its absence is the point.
+//
+// This file previously cancelled `POST /api/restart` at the HTTP layer with
+// `session.webRequest.onBeforeRequest`, because the route spawned
+// `process.execPath` — which under Electron is the app binary, so it produced a
+// second window rather than a server. That was a workaround and said so.
+//
+// The route now branches on the `restartStyle` capability and calls the
+// `relaunch` hook registered above. The interceptor had to GO rather than stay
+// as belt-and-braces: it cancelled the request BEFORE Express, so the real
+// branch could never run and the workaround would have silently won. Two
+// mechanisms for one job, where the worse one executes first, is not redundancy.
+//
+// It also only ever caught the RENDERER. A restart from curl, a script or the
+// MCP took the broken path; the route-level branch covers all of them.
 
-// ── 3. Restart ───────────────────────────────────────────────────────────────
-//
-// `POST /api/restart` in `src/server.js` does:
-//
-//     spawn(process.execPath, [path.join(PROJECT_ROOT, 'src/server.js')], …)
-//
-// Under Electron `process.execPath` is the APP BINARY, not `node`. Spawning it
-// with a script path launches a SECOND CURATOR WINDOW rather than a headless
-// server — and then the old process exits, leaving a window whose backend was
-// never started the way this file starts it. The route is right for repo mode
-// and wrong here.
-//
-// `src/brain/install-mode.js` already names the correct answer as a capability
-// (`restartStyle: 'app-relaunch'`) and states that nothing branches on it yet.
-// The clean fix is for the route to consult it — that is a change in `src/`,
-// which this change deliberately does not make.
-//
-// So the interception lives here, at the HTTP layer, where it needs no `src/`
-// change at all: cancel the request before it reaches Express, and relaunch.
-//
-// HONEST CAVEATS, because this is a workaround and should read as one:
-//   · The renderer's fetch rejects with ERR_BLOCKED_BY_CLIENT. The app is
-//     relaunching, so the window is gone before that matters — but if the
-//     relaunch ever fails, the user sees a network error, not a restart error.
-//   · This only catches requests from the RENDERER. A restart triggered by
-//     anything else (curl, a script, the MCP) still takes the broken path.
-//   · An exact-URL filter is used rather than a wildcard so this can never
-//     accidentally intercept a different route on a different port.
-// The durable fix is a `restartStyle` branch in the route. Report it, do not
-// let this comment become the reason nobody does it.
-function installRestartInterceptor(port) {
-  const target = `http://127.0.0.1:${port}/api/restart`;
-  session.defaultSession.webRequest.onBeforeRequest({ urls: [target] }, (details, callback) => {
-    if (details.method !== 'POST') return callback({});
-    callback({ cancel: true });
-    // relaunch() queues an argv-identical launch for after this process exits;
-    // exit(0) is what actually ends it. quitAuthorised is set first so the
-    // before-quit handler does not stop a restart the user just asked for —
-    // /api/restart already refuses while writes are active (hasActiveWrites()),
-    // so that check has been made by the server before we ever see the request.
-    quitAuthorised = true;
-    app.relaunch();
-    app.exit(0);
-  });
-}
 
 // ── 4. Quit ──────────────────────────────────────────────────────────────────
 //

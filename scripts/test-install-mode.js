@@ -628,7 +628,23 @@ function extractExportedAsyncFn(src, name) {
   const whole = braceSlice(src, at);
   return whole ? whole.replace(/^export /, '') : null;
 }
-const headPick = extractHeadPickFolder(headConfigSrc);
+// ONCE THIS CHANGE IS COMMITTED, HEAD CARRIES THE NEW SHAPE TOO. The note at
+// the foot of this file predicted the comparison would then become "trivially
+// true". That was WRONG in the dangerous direction: `extractHeadPickFolder`
+// still finds `router.post('/pick-folder'` and brace-slices the thin
+// DELEGATING wrapper, then compares that against the real handler — so the
+// assertion went falsely RED on a correct tree, which is how a guard teaches
+// people to ignore it.
+//
+// So the pre/post comparison is only meaningful while HEAD predates the change.
+// Detect that rather than guessing: if HEAD already exports the handler, the
+// two revisions are the same code and the honest assertion is that IDENTITY,
+// not a fabricated behavioural diff. The parts that keep working forever are
+// §5b-a's transcribed literals and the DISAGREEMENT control below.
+const headHasNewShape = headConfigSrc.includes('export async function pickFolderHandler(');
+const headPick = headHasNewShape
+  ? extractExportedAsyncFn(headConfigSrc, 'pickFolderHandler')
+  : extractHeadPickFolder(headConfigSrc);
 const workPick = extractExportedAsyncFn(workConfigSrc, 'pickFolderHandler');
 ok(!!headPick && !!workPick, '§5b-b extracted the pick-folder handler from BOTH revisions');
 ok(/^async function pickFolderHandler/.test(headPick || '') && /^async function pickFolderHandler/.test(workPick || ''),
@@ -1322,7 +1338,12 @@ ok(typeof configRoute.updateCheckHandler === 'function' && configRoute.updateChe
  *     from disk — a fork placed anywhere else (`mcp/`, `scripts/`) is unseen.
  *  4a. THE EQUIVALENCE PROOFS COMPARE AGAINST `HEAD`, so once this change is
  *     committed they compare the working tree to itself and the "they agree"
- *     halves become trivially true. What survives that is the part built to:
+ *     halves become trivially true. CORRECTED AFTER IT HAPPENED: they did not
+ *     become trivially true, they went falsely RED — the HEAD extractor kept
+ *     matching `router.post('/pick-folder'` and sliced the thin delegating
+ *     wrapper, comparing it against the real handler. The extractor now
+ *     detects which shape HEAD carries. A guard that reds on a correct tree is
+ *     worse than one that passes vacuously, because people learn to ignore it. What survives that is the part built to:
  *     the transcribed literals in §5b-a/§5c-a, which fail if the surviving arm
  *     is ever edited, and the DISAGREEMENT controls, which fail if the branch
  *     stops doing anything. Read a green §5b-b/§5c-b on a later commit as

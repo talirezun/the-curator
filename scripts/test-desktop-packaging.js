@@ -818,7 +818,24 @@ section('§10 main.js source scan, and what is NOT enforced');
   ok(/decideQuit\(/.test(main), 'before-quit routes through decideQuit()');
   ok(/fetchWriteStatus\(/.test(main), 'before-quit consults GET /api/write-status');
   ok(/app\.relaunch\(\)/.test(main), 'main.js calls app.relaunch() rather than letting the spawn-based restart run');
-  ok(/api\/restart/.test(main), 'main.js intercepts POST /api/restart');
+
+  // INVERTED, not deleted. This read `main.js intercepts POST /api/restart`,
+  // and that interception was a WORKAROUND for the route spawning
+  // process.execPath — which under Electron is the app binary. The route now
+  // branches on the restartStyle capability and calls the `relaunch` hook.
+  //
+  // The interceptor had to GO rather than remain as belt-and-braces: it
+  // cancelled the request BEFORE Express, so the real branch could never run
+  // and the workaround would silently keep winning. Two mechanisms for one job,
+  // where the worse one executes first, is not redundancy.
+  ok(!/onBeforeRequest/.test(main),
+     'main.js does NOT intercept the restart at the HTTP layer — the route branches on restartStyle instead, and an interceptor would cancel the request before that branch could run');
+  ok(/registerDesktopHost\(/.test(main),
+     'main.js registers its native hooks with the server it just imported — same Node realm, so the registry is a real channel');
+  ok(/relaunch\s*:/.test(main),
+     'the registered hooks include relaunch, which is what the restartStyle bundle arm calls');
+  ok(/pickFolder\s*:/.test(main),
+     'the registered hooks include pickFolder — without it the bundle arm of /api/config/pick-folder refuses, which is the fail-safe but not the feature');
 
   ok(/nodeIntegration:\s*false/.test(main), 'the renderer has no Node integration');
   ok(/contextIsolation:\s*true/.test(main), 'the renderer is context-isolated');
