@@ -21,6 +21,7 @@ import {
   conflictResponse,
   beginUpdate,
   endUpdate,
+  isUpdateInProgress,
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
 import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
@@ -2756,6 +2757,594 @@ export async function updateCheckHandler(_req, res, deps = null) {
 
 router.get('/update-check', (req, res) => updateCheckHandler(req, res));
 
+// ── The IN-APP update path (bundle installs with a desktop updater attached) ─
+//
+// ── WHAT CHANGED AND WHY ───────────────────────────────────────────────────
+//
+// v3.31.0 shipped the bundle arm of `GET /update-check` as CHECK-AND-TELL: it
+// finds the newest release carrying an installer and opens the download page.
+// That was the right call while nothing could download or verify anything. The
+// maintainer then updated v3.31.0 -> v3.32.0 by hand and called the experience
+// "terrible":
+//
+//     "update the app in the app itself like it is done for professional apps.
+//      When you click update, some progress bar shows that you download the
+//      app, and then the app restarts and that's it."
+//
+// The download / verify / stage / swap / relaunch engine lives in the DESKTOP
+// SHELL, not here — it needs Electron's own process, filesystem and relaunch.
+// It reaches this process through `src/brain/desktop-host.js`, the plain module
+// registry that works because `desktop/main.js` imports `src/server.js` into
+// the Electron main process: one Node realm, no IPC. Read that module's header
+// before changing anything below.
+//
+// THIS ROUTE OWNS EXACTLY THREE THINGS and deliberately nothing else:
+//   1. the capability fork, so repo mode is untouched;
+//   2. the refusals — write-in-flight, no engine attached, nothing staged;
+//   3. turning the engine's progress into an SSE stream, and its NAMED
+//      failure reasons into sentences a non-developer can act on.
+//
+// ── THE CONTRACT WITH THE ENGINE ───────────────────────────────────────────
+//
+// Two hooks, because staging and swapping are different decisions:
+//
+//   prepareUpdate({ onProgress, signal })
+//       Resolves, downloads, verifies and STAGES. Replaces nothing. Resolves
+//       {ok:true, token, version, current, bytes, verifiedDigest, prerelease,
+//       warning} — or {ok:false, reason, message}. A FAILURE IS A RESOLVED
+//       VALUE, not a rejection. A rejection is still handled below, as an
+//       engine-contract violation rather than as an expected outcome.
+//
+//   installUpdate({ token, onProgress }) -> Promise<never>
+//       Swaps the staged bundle in and relaunches. Not expected to return.
+//
+// ── THE TOKEN IS OPAQUE, AND THAT IS A SECURITY PROPERTY ───────────────────
+//
+// `installUpdate` takes the token `prepareUpdate` produced and NEVER a path.
+// This route's caller is a RENDERER: a hook accepting {stagedPath, targetPath}
+// would be a "replace any directory with any other" primitive reachable from a
+// page. So the token is stored on the job, passed straight back, and NEVER put
+// on the wire — `updateJobToWire()`'s allow-list is what enforces that, and the
+// suite asserts it. No filesystem path is constructed, logged or rendered
+// anywhere on these paths.
+//
+// ── WHAT `signal` IS FOR, AND WHY IT IS NEVER FIRED HERE ───────────────────
+//
+// The hook accepts one, so a real AbortSignal is passed rather than undefined,
+// and the engine's own guards see a well-formed object. This route NEVER
+// aborts it — see the navigate-away argument below. That is a deliberately
+// quiescent parameter with its reason written down, not a half-wired cancel:
+// there is no cancel, and nothing here pretends otherwise.
+//
+// SPLITTING THEM IS THE FEATURE, not tidiness. A single hook would make the
+// window vanish mid-progress with no way to say "ready — restarting now", and
+// would relaunch the app out from under an ingest that started during the
+// download. The split lets the second step be re-checked against
+// `hasActiveWrites()` at the moment it actually matters.
+//
+// ── WHY THE CLIENT HANGING UP DOES *NOT* CANCEL ────────────────────────────
+//
+// `POST /openrouter/qualify` in this same file takes the opposite position —
+// "the client hanging up IS the cancel" — and that is right there, because the
+// run costs money per call and produces nothing until it finishes.
+//
+// It would be wrong here. A 140 MB download that dies because the user clicked
+// Chat is a worse outcome than one that finishes unwatched: the bytes are free
+// to keep, the work is resumable by nobody, and the user asked for it. So the
+// stream is a VIEW of the job, not the job itself. Navigating away, or
+// reloading the page outright, leaves the download running; `GET
+// /update-progress` is how a returning client finds it again.
+//
+// The consequence is stated rather than hidden: there is no cancel. Adding one
+// means an engine-side abort signal, which is the engine's to own.
+
+/** The hook names this route asks `desktop-host.js` for.
+ *
+ *  CONSTANTS RATHER THAN LITERALS because they are a CONTRACT ACROSS TWO
+ *  FILES this route does not own. `getDesktopHook()` returns null for a name
+ *  that is not in its own frozen list, so a mismatch fails in the safe
+ *  direction — the route refuses with `no-updater`, names it, and points the
+ *  user at the download page they have always had. It cannot half-work. */
+export const UPDATE_STAGE_HOOK = 'prepareUpdate';
+export const UPDATE_APPLY_HOOK = 'installUpdate';
+
+/** The phases the engine may report, in order.
+ *
+ *  This is the OUTER RING'S SEGMENT LIST as well as a validation set — the UI
+ *  renders one segment per phase — so the order is load-bearing and the list is
+ *  frozen. An unrecognised phase name is IGNORED rather than displayed: the UI
+ *  has one sentence per phase and no sentence for a name nobody wrote, and a
+ *  progress display that renders a phase it cannot describe is worse than one
+ *  that keeps showing the last phase it could. */
+export const UPDATE_PHASES = Object.freeze([
+  'resolving', 'downloading', 'verifying', 'staging', 'installing',
+]);
+
+/** The `updateStyle` values this file serves through the installer arms.
+ *
+ *  A LIST rather than an `=== 'download-installer'`, and that is the whole
+ *  point: `scripts/test-update-in-app.js` cross-checks it against every
+ *  `updateStyle` value in `install-mode.js`'s capability table and fails if a
+ *  value exists that NEITHER arm handles. Adding a third install form (a
+ *  Homebrew cask, a Windows MSI) then reddens a test here instead of silently
+ *  falling through to the git arm, which would run `git reset --hard` in a
+ *  packaged app. */
+export const INSTALLER_UPDATE_STYLES = Object.freeze(['download-installer']);
+
+/** True when this install receives updates as a downloadable build. */
+function usesInstallerUpdates(caps) {
+  return INSTALLER_UPDATE_STYLES.includes(caps && caps.updateStyle);
+}
+
+/**
+ * The failures THIS ROUTE owns, and the sentence each one gets.
+ *
+ * ── THE ENGINE OWNS ITS OWN COPY, AND THIS TABLE DELIBERATELY DOES NOT ─────
+ *
+ * `prepareUpdate` resolves `{ok:false, reason, message}` across 34 named
+ * reasons, and `message` is ALREADY a user-facing sentence written by the side
+ * that knows what actually happened. This route relays it verbatim. Writing a
+ * second sentence per reason here would be a second copy of the same fact,
+ * free to drift from the first — the shape this project has paid for twice
+ * (five private copies of one scrim value; two copies of a money constant).
+ *
+ * What is left is only what the engine cannot say because it was never
+ * reached: the refusals this route makes on its own. Plus one total fallback,
+ * for an engine that reports a failure with nothing to say.
+ *
+ * `reason` is for branching and for logs. It is NOT surfaced to the user — a
+ * slug beside a sentence is an internal identifier shown to a person, which is
+ * the v3.31.0 defect this whole release exists to undo.
+ */
+export const UPDATE_FAILURE_COPY = Object.freeze({
+  'no-updater': {
+    error: 'This build of The Curator has no built-in updater attached, so it cannot install an update for itself.',
+    hint: 'Download the installer from the release page and run it — it replaces this copy.',
+  },
+  'nothing-staged': {
+    error: 'There is no downloaded update waiting to be installed.',
+    hint: 'Check for updates again to download one.',
+  },
+});
+
+/**
+ * Pure, TOTAL. `(reason, engineMessage?)` -> `{ reason, error, hint }`.
+ *
+ * The engine's `message` wins whenever there is one, which is every failure
+ * that actually reached the engine. The fallback covers the rest and says the
+ * two things true of every `prepareUpdate` failure by construction: nothing
+ * was replaced, and there is another way to get the update.
+ *
+ * `reason` is echoed on the wire — for the client's branching and for logs,
+ * never for display — and an unrecognised code is echoed rather than flattened
+ * to "unknown", so a fact and its absence stay different values.
+ */
+export function updateFailureCopy(reason, engineMessage) {
+  const code = typeof reason === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(reason) ? reason : 'unknown';
+  const msg = typeof engineMessage === 'string' && engineMessage.trim() ? engineMessage.trim() : null;
+  if (msg) {
+    return {
+      reason: code,
+      error: msg,
+      hint: 'You can also download the installer from the release page and run it yourself.',
+    };
+  }
+  const known = Object.hasOwn(UPDATE_FAILURE_COPY, code) ? UPDATE_FAILURE_COPY[code] : null;
+  if (known) return { reason: code, error: known.error, hint: known.hint };
+  return {
+    reason: code,
+    error: 'The update stopped before it finished, and nothing was replaced — this copy of The Curator still works.',
+    hint: 'Try again, or download the installer from the release page and run it yourself.',
+  };
+}
+
+/**
+ * Pull a named reason off whatever the engine rejected with, WITHOUT ever
+ * reading its message.
+ *
+ * Not reading `err.message` is the point, and it is the same discipline
+ * `installerUpdateCheck`'s network catch already applies in this file: an
+ * exception message can carry an absolute path, a temp directory, a URL with a
+ * token in it, or a Node errno string, and none of that is something a user can
+ * act on. The engine's whole contract is that failures are NAMED; a rejection
+ * with no name is itself a fact worth reporting as `unknown` rather than
+ * papering over with the raw text.
+ */
+export function reasonFromError(err) {
+  if (err && typeof err === 'object' && typeof err.reason === 'string') return err.reason;
+  return 'unknown';
+}
+
+/**
+ * Pure. Normalise one `onProgress` payload from the engine into the four
+ * fields the wire carries, or `null` if it says nothing usable.
+ *
+ * ── WHY `percent` IS COMPUTED HERE AND NOT TRUSTED ─────────────────────────
+ *
+ * The engine may send `percent`, or bytes, or both. Bytes are the measurement;
+ * a percent without bytes behind it is a claim. So when both byte counts are
+ * present the percent is DERIVED from them and any supplied percent is
+ * discarded — two numbers on screen that disagree is worse than one.
+ *
+ * ── WHY AN UNKNOWN TOTAL PRODUCES `percent: null`, NOT 0 ───────────────────
+ *
+ * A server that omits `content-length` is common. `percent: 0` would render as
+ * a bar sitting at the far left for two minutes — indistinguishable from a
+ * hang, which is the exact report this app has already had (v3.0.17, ingest
+ * Phase 1). `null` is a different fact and the UI renders it as a different
+ * thing: bytes received, no proportion claimed.
+ */
+export function normaliseUpdateProgress(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const phase = UPDATE_PHASES.includes(raw.phase) ? raw.phase : null;
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+  const receivedBytes = num(raw.receivedBytes);
+  const totalBytes = num(raw.totalBytes) || null;   // 0 total is "unknown", not "empty"
+  let percent = null;
+  if (receivedBytes !== null && totalBytes) {
+    percent = Math.max(0, Math.min(100, (receivedBytes / totalBytes) * 100));
+  } else if (typeof raw.percent === 'number' && Number.isFinite(raw.percent)) {
+    percent = Math.max(0, Math.min(100, raw.percent));
+  }
+  if (phase === null && receivedBytes === null && percent === null) return null;
+  return { phase, receivedBytes, totalBytes, percent };
+}
+
+// ── The job record ─────────────────────────────────────────────────────────
+//
+// Module-level and process-local, exactly like `src/brain/ingest-activity.js`:
+// it dies with the process, which is correct because the thing it describes
+// dies with the process too. It is deliberately NOT persisted — a staged
+// bundle that survived a restart would be a claim this route cannot verify.
+//
+// ONE JOB AT A TIME, because there is one app to replace.
+let updateJob = null;
+
+/** Explicit ALLOW-LIST, never a spread — the v3.3.0 `toWire()` rule. The job
+ *  never holds anything but these fields today, and the allow-list is what
+ *  keeps that true after somebody stashes an error object on it. */
+function updateJobToWire(job) {
+  if (!job) return null;
+  return {
+    state: job.state,
+    phase: job.phase,
+    receivedBytes: job.receivedBytes,
+    totalBytes: job.totalBytes,
+    percent: job.percent,
+    version: job.version,
+    prerelease: job.prerelease,
+    warning: job.warning,
+    startedAt: job.startedAt,
+    reason: job.reason,
+    error: job.error,
+    hint: job.hint,
+    // `token` is ABSENT, and its absence is the security property this
+    // allow-list exists for. Do not add it.
+  };
+}
+
+/** TEST-ONLY. Clears the job so a suite can drive the refusing arm and the
+ *  running arm in the same process, in either order. Same rationale as
+ *  `__resetDesktopHost()`: the only thing it can achieve in production is a
+ *  fresh start, which is the fail-safe direction. */
+export function __resetUpdateJob() { updateJob = null; }
+
+/**
+ * GET /api/config/update-progress — what the in-app updater is doing.
+ *
+ * READ-ONLY, in-memory, no lock, no filesystem, no network. Deliberately NOT
+ * behind `guardConcurrent` and NOT registered as a write, for the reason
+ * `src/routes/ingest.js` records about `GET /activity` and this file records
+ * about `/validate-key`: a 409 here would fire precisely when a write IS in
+ * progress, which is exactly the moment someone is asking "is my update still
+ * going?".
+ *
+ * THIS IS THE ANSWER TO "what if they navigate away". The stream is a view;
+ * this is how a client that lost the view — switched section, switched tab,
+ * reloaded the page — finds the job again.
+ *
+ * ── `updaterAttached` IS NOT DECORATION ────────────────────────────────────
+ *
+ * It is the only way the UI can know whether to offer a BUTTON that installs
+ * or the LINK that has always opened the download page. Without it the app
+ * would have to show a button, POST, and discover from a 501 that this build
+ * has no engine — i.e. advertise an action it cannot perform, which is the
+ * exact defect v3.31.0 was written to fix, wearing the opposite hat.
+ *
+ * It reports a BOOLEAN and never the hook, matching `describeDesktopHost()`'s
+ * own wire-safety rule. It is derived live rather than cached, because a shell
+ * may register after the server starts (see desktop-host.js's ordering note).
+ */
+router.get('/update-progress', (_req, res) => {
+  res.json({
+    ok: true,
+    updaterAttached: typeof getDesktopHook(UPDATE_STAGE_HOOK) === 'function',
+    job: updateJobToWire(updateJob),
+  });
+});
+
+/**
+ * The `download-installer` arm of `POST /api/config/update`. SSE.
+ *
+ * Events (this list is the documentation in `docs/api-reference.md`, and the
+ * suite asserts the route emits these and ONLY these — the compile route once
+ * documented a `wait` event it has never emitted, and that is the mistake this
+ * comment exists to not repeat):
+ *
+ *   progress  { type, phase, receivedBytes, totalBytes, percent }
+ *   staged    { type, version }
+ *   error     { type, reason, error, hint }
+ *
+ * There is no `done`. "Staged" is not "done" — the bundle is verified and
+ * sitting beside the running app, and NOTHING HAS BEEN REPLACED. Calling it
+ * `done` would be the same collapse of two facts into one word that this file
+ * refuses everywhere else; `POST /update/apply` is the step that finishes.
+ */
+async function installerUpdateApply(res, deps) {
+  const busy = (deps && deps.hasActiveWrites) || hasActiveWrites;
+  const updating = (deps && deps.isUpdateInProgress) || isUpdateInProgress;
+  const hook = (deps && Object.hasOwn(deps, 'prepareUpdateHook'))
+    ? deps.prepareUpdateHook
+    : getDesktopHook(UPDATE_STAGE_HOOK);
+
+  // Refusals FIRST, all as plain JSON, all before a single SSE header is sent.
+  // Once `flushHeaders()` has run the status code is spent and every refusal
+  // has to be expressed inside the stream, where the client's `res.ok` check
+  // has already passed — the failure shape src/routes/ingest.js warns about in
+  // its own error middleware.
+  //
+  // ONE CHECK FOR TWO REFUSALS, and it is the SHARED `conflictResponse` rather
+  // than a hand-rolled 409 — which `scripts/test-route-write-guards.js`
+  // enforces over this whole file, and is right to: a refusal that looks
+  // different from every other refusal in the app is one the frontend has to
+  // learn separately. `conflictResponse` already words the two cases
+  // differently on its own (it reads the update flag), so "a write is running"
+  // and "an update is already running" arrive as different sentences without
+  // this route choosing either.
+  if (busy() || updating()) {
+    const { status, body } = conflictResponse('update the app');
+    return res.status(status).json({ ...body, reason: updating() ? 'already-running' : 'write-in-flight' });
+  }
+  if (typeof hook !== 'function') {
+    // NOT a fallback, and not a dead end either. `desktop-host.js`'s no-fallback
+    // rule forbids quietly doing something else; it does not forbid telling the
+    // user the thing that has always worked. This is v3.31.0's check-and-tell
+    // behaviour, surfaced as a named refusal instead of silence.
+    const copy = updateFailureCopy('no-updater');
+    return res.status(501).json({
+      ...copy,
+      refused: 'updater_unavailable',
+      updateStyle: 'download-installer',
+      releasesPageUrl: RELEASES_PAGE_URL,
+    });
+  }
+
+  // Same flag the git arm sets: an ingest arriving during the download is
+  // refused with a clear 409 rather than racing a process that is about to be
+  // replaced. Cleared in `finally` on every path.
+  beginUpdate();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+  const send = (event) => {
+    if (res.writableEnded) return;
+    res.write(`event: ${event.type}\n`);
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  updateJob = {
+    state: 'running',
+    phase: 'resolving',
+    receivedBytes: null,
+    totalBytes: null,
+    percent: null,
+    version: null,
+    prerelease: false,
+    warning: null,
+    startedAt: Date.now(),
+    reason: null,
+    error: null,
+    hint: null,
+    // OPAQUE, and absent from `updateJobToWire()`'s allow-list on purpose. See
+    // the token block in this file's header: it is the engine's handle on the
+    // staged bundle, and it must never be reachable from a renderer.
+    token: null,
+  };
+
+  // DELIBERATELY NO `req.on('close')` HANDLER. See the header block above: the
+  // stream is a view of the job, not the job. A closed connection stops the
+  // writes (via `res.writableEnded`) and changes nothing else.
+  // Passed so the hook's `{onProgress, signal}` destructure sees a real signal.
+  // NEVER aborted here — see the header. Held in a const so the intent is
+  // visible at the call site rather than inferred from an inline expression.
+  const abort = new AbortController();
+
+  try {
+    const result = await hook({
+      signal: abort.signal,
+      onProgress: (raw) => {
+        const p = normaliseUpdateProgress(raw);
+        if (!p) return;
+        // An unrecognised phase leaves the previous one standing rather than
+        // blanking it — a display with no sentence for what it is showing is
+        // worse than one showing the last phase it could describe.
+        if (p.phase) updateJob.phase = p.phase;
+        updateJob.receivedBytes = p.receivedBytes;
+        updateJob.totalBytes = p.totalBytes;
+        updateJob.percent = p.percent;
+        send({
+          type: 'progress',
+          phase: updateJob.phase,
+          receivedBytes: updateJob.receivedBytes,
+          totalBytes: updateJob.totalBytes,
+          percent: updateJob.percent,
+        });
+      },
+    });
+
+    // A FAILURE IS A RESOLVED VALUE on this contract, not a rejection. Checked
+    // for `ok === false` explicitly rather than for falsiness: an engine that
+    // resolved `undefined` is a contract violation, not a success, and the
+    // arm below must catch it rather than reporting a staged update that does
+    // not exist.
+    if (!result || result.ok !== true) {
+      const copy = updateFailureCopy(result && result.reason, result && result.message);
+      updateJob.state = 'failed';
+      updateJob.reason = copy.reason;
+      updateJob.error = copy.error;
+      updateJob.hint = copy.hint;
+      send({ type: 'error', ...copy });
+      return;
+    }
+    updateJob.state = 'staged';
+    updateJob.phase = 'staging';
+    updateJob.version = typeof result.version === 'string' ? result.version : null;
+    updateJob.prerelease = result.prerelease === true;
+    updateJob.warning = typeof result.warning === 'string' && result.warning ? result.warning : null;
+    updateJob.token = result.token ?? null;
+    send({
+      type: 'staged',
+      version: updateJob.version,
+      prerelease: updateJob.prerelease,
+      warning: updateJob.warning,
+      // NO TOKEN, no path, no digest. The client has no use for any of them
+      // and each one is a handle it should not be able to hold.
+    });
+  } catch (err) {
+    // A REJECTION IS AN ENGINE-CONTRACT VIOLATION on this contract, not an
+    // expected outcome — failures are supposed to arrive as resolved values.
+    // Still handled, because a route that crashes on an unexpected throw
+    // leaves the user on a progress ring that will never move again.
+    const copy = updateFailureCopy(reasonFromError(err));
+    updateJob.state = 'failed';
+    updateJob.reason = copy.reason;
+    updateJob.error = copy.error;
+    updateJob.hint = copy.hint;
+    send({ type: 'error', ...copy });
+  } finally {
+    endUpdate();
+    res.end();
+  }
+}
+
+/**
+ * POST /api/config/update/apply — swap the staged bundle in and relaunch.
+ *
+ * ── WHY THIS IS A SECOND REQUEST ───────────────────────────────────────────
+ *
+ * Because the answer to "may I restart now?" is only knowable at the moment of
+ * restarting. The download can take minutes; an ingest started during it would
+ * be truncated by a relaunch authorised before it began. `hasActiveWrites()`
+ * is therefore re-checked HERE, against the state that actually exists when the
+ * swap happens — the same reasoning `pick-folder` records for re-checking after
+ * its 60-second dialog, and the same reason the engine contract splits staging
+ * from swapping at all.
+ *
+ * ── WHY IT DOES NOT RESPOND FIRST ──────────────────────────────────────────
+ *
+ * `POST /api/restart` can answer first because respawning a Node process cannot
+ * really fail in a way the user needs told about. Replacing an application
+ * bundle can: a read-only volume, a translocated copy, a revoked permission.
+ * So the hook is AWAITED. On success it does not return — the process is gone
+ * and the client's fetch rejects, which is precisely what the restart poller
+ * already treats as normal. On rejection there IS a response, naming what went
+ * wrong, and the old app is still running and still works.
+ */
+export async function updateApplyHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  const busy = (deps && deps.hasActiveWrites) || hasActiveWrites;
+  const hook = (deps && Object.hasOwn(deps, 'installUpdateHook'))
+    ? deps.installUpdateHook
+    : getDesktopHook(UPDATE_APPLY_HOOK);
+
+  if (!usesInstallerUpdates(caps)) {
+    // A git checkout finishes an update through POST /api/restart and always
+    // has. Naming that route matters more than naming the capability: the
+    // v3.31.0 defect was a refusal that told the user an internal identifier
+    // and no way forward.
+    const { status, body } = capabilityRefusal('updateStyle', 'install a downloaded update', {
+      updateStyle: caps.updateStyle,
+      hint: 'This install updates by pulling its own source. Use Check for updates, which finishes with a restart.',
+    });
+    return res.status(status).json(body);
+  }
+  if (busy()) {
+    const { status, body } = conflictResponse('restart to finish the update');
+    return res.status(status).json(body);
+  }
+  if (!updateJob || updateJob.state !== 'staged') {
+    // 412 AND NOT 409, and the distinction is not pedantry. Every 409 in this
+    // app means "somebody else is using this right now, try later" and carries
+    // `conflictResponse`'s shape, which the frontend reads as exactly that. But
+    // "there is nothing staged" is not a contended resource — waiting will
+    // never make it true. A precondition of this request is simply not met, so
+    // it says so with its own status and its own reason code, and cannot be
+    // mistaken for a queue to wait in.
+    return res.status(412).json({
+      error: 'There is no downloaded update waiting to be installed.',
+      reason: 'nothing-staged',
+    });
+  }
+  if (typeof hook !== 'function') {
+    const copy = updateFailureCopy('no-updater');
+    return res.status(501).json({ ...copy, refused: 'updater_unavailable', releasesPageUrl: RELEASES_PAGE_URL });
+  }
+
+  const token = updateJob.token;
+  updateJob.state = 'applying';
+  updateJob.phase = 'installing';
+  beginUpdate();
+  try {
+    // The token, straight back, unread and unmodified. This route does not
+    // know what is in it and must not: a path here would be a
+    // replace-any-directory primitive reachable from a page.
+    const result = await hook({ token, onProgress: () => {} });
+    // BOTH FAILURE SHAPES. The contract specifies a resolved `{ok:false,
+    // reason, message}` for `prepareUpdate`; `installUpdate` is documented only
+    // as "swap and relaunch", so it may reject instead. A resolved failure is
+    // recognised here and its `message` — written for a user by the side that
+    // knows what happened — is relayed. A REJECTION's `.message` is NOT mined,
+    // because a rejection can also be an ordinary TypeError whose message
+    // carries a path.
+    if (result && result.ok === false) return applyFailed(res, result.reason, result.message);
+    // Reached only if the shell chose not to end the process. Harmless, and an
+    // honest thing to be able to say, so it is said rather than assumed away.
+    return res.json({ ok: true, relaunching: true, version: updateJob.version });
+  } catch (err) {
+    return applyFailed(res, reasonFromError(err), null);
+  } finally {
+    endUpdate();
+  }
+}
+
+/**
+ * One place that records a failed swap, so the resolved-failure arm and the
+ * rejection arm cannot land the job in two different states.
+ *
+ * Back to `staged`, NOT `failed`: the verified bundle is still on disk and
+ * still installable, so the honest state is "downloaded, not yet in place",
+ * and the button that finishes it is still the right offer.
+ */
+function applyFailed(res, reason, message) {
+  const copy = updateFailureCopy(reason, message);
+  updateJob.state = 'staged';
+  updateJob.phase = 'staging';
+  updateJob.reason = copy.reason;
+  updateJob.error = copy.error;
+  updateJob.hint = copy.hint;
+  return res.status(500).json({ ...copy, releasesPageUrl: RELEASES_PAGE_URL });
+}
+
+// `guardConcurrent` on the REGISTRATION *and* a re-check inside the handler —
+// the same two layers `pick-folder` carries, for the same reason. The
+// middleware proves the state when the request arrived; the handler's own
+// check is the one that matters, because it is the last thing that happens
+// before an application bundle is swapped underneath a running ingest.
+router.post('/update/apply', guardConcurrent('restart to finish the update'), (req, res) => updateApplyHandler(req, res));
+
+
 /** POST /api/config/update — fetch latest code, hard-sync to origin/main, install deps, rebuild .app
  *
  * We use `fetch + reset --hard` instead of `pull` because `npm install` commonly
@@ -2780,9 +3369,27 @@ router.get('/update-check', (req, res) => updateCheckHandler(req, res));
  * `deps` is the test-only seam: null in production. It is the ONLY reason an
  * offline suite can drive this handler — calling it for real runs
  * `git reset --hard origin/main` against the developer's own checkout.
+ *
+ * ── FORK ONE, ADDED FOR THE IN-APP UPDATER ─────────────────────────────────
+ *
+ * `updateStyle` is now checked FIRST, in the same shape and the same order as
+ * `updateCheckHandler` above, and for the same reason: it has an answer for
+ * every install form, while `canSelfUpdateViaGit` only says what one of them
+ * cannot do. In repo mode `updateStyle` is 'git-pull', so control falls
+ * straight through and every line below runs with the inputs it always had —
+ * an EARLY RETURN above an otherwise unchanged body.
+ *
+ * That equivalence is proved BEHAVIOURALLY rather than by reading a diff:
+ * `scripts/test-update-in-app.js` §2 extracts this function from
+ * `git show HEAD:` and from the working tree and drives both through the same
+ * `deps` seam over a repo-mode matrix, requiring the identical command
+ * sequence and the identical response on every input.
  */
 export async function updateHandler(_req, res, deps = null) {
   const caps = (deps && deps.caps) || getCapabilities();
+  // FORK ONE — `updateStyle`. See the docblock above.
+  if (usesInstallerUpdates(caps)) return installerUpdateApply(res, deps);
+  // FORK TWO — unchanged.
   if (!caps.canSelfUpdateViaGit) {
     const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'update the app', {
       hint: 'Packaged builds are replaced by the installer, not by pulling this checkout.',

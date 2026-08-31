@@ -1053,6 +1053,25 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--text);
 }
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* The in-app updater's progress ring, inside the same .upd-status box every
+   other update state uses. ONE rule, and it is spacing only.
+
+   NO ANIMATION IS DECLARED HERE, deliberately. The ring is
+   shared/progress-ring.js, which already owns its own motion AND its own
+   `prefers-reduced-motion` answer — rotation dropped, a 2.6s opacity breath
+   substituted, so the liveness cue survives for a user who asked for less
+   motion. That is the right answer for a multi-minute download for exactly the
+   reason it is the right answer for a multi-minute ingest, and inheriting it is
+   strictly better than re-deciding it in a second place. A new keyframe here
+   would also need its own reduce-block escape to satisfy
+   scripts/test-next-reduced-motion.js, which is the guard saying the same
+   thing.
+
+   NO box-shadow either: nothing in this block is focusable, and the house rule
+   is that a shadow on a focusable control fights base.css's :focus-visible
+   ring. */
+.upd-progress { margin: 9px 0 3px; }
 /* A packaged install cannot replace its own files, so its "Update available"
    action is a LINK to the download page rather than a button that starts
    something. `.btn` already sets inline-flex and every colour, so the only

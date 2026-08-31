@@ -1234,7 +1234,13 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // which is the tripwire working: the bump IS the human look, and the
     // exemption below carries the reason rather than the route being waved
     // through by a cleverer classifier.
-    expectedMutatingCount: 13,
+    // 13 -> 14: POST /update/apply — the second half of the in-app updater,
+    // which swaps the staged bundle in and relaunches. It is the most
+    // destructive route in this file (it replaces the running application), it
+    // carries `guardConcurrent('restart to finish the update')` on the
+    // REGISTRATION and re-checks `hasActiveWrites()` inside the handler, and it
+    // needs no exemption. The bump IS the human look this comment demands.
+    expectedMutatingCount: 14,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also

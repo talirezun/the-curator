@@ -593,12 +593,31 @@ function recordingExec(responses = {}) {
 }
 
 // ── POST /update ───────────────────────────────────────────────────────────
+//
+// ── WHAT CHANGED HERE, AND WHY THE OLD ASSERTION WAS RETIRED ───────────────
+//
+// This block used to assert `res.body.capability === 'canSelfUpdateViaGit'` —
+// i.e. that a packaged build REFUSES to update on the git capability. That is
+// no longer the behaviour and asserting it would pin the defect: the bundle arm
+// now drives the desktop updater engine through the hook registry.
+//
+// The refusal is still here, and it is still a 501 — but it now names the
+// thing that is actually missing. With NO engine attached (this checkout, and
+// any packaged build whose shell registered no `stageUpdate` hook) the answer
+// is `no-updater`, whose message tells the user to download the installer,
+// which is the behaviour v3.31.0 shipped. The two properties that made the old
+// assertion worth having are UNCHANGED and still asserted below: zero
+// subprocesses, and the update flag left clear.
 {
   const rec = recordingExec();
   const res = fakeRes();
   await configRoute.updateHandler({}, res, { caps: BUNDLE_CAPS, execAsync: rec.exec });
   eq(res.statusCode, 501, 'update BUNDLE arm answers 501');
-  eq(res.body.capability, 'canSelfUpdateViaGit', 'update bundle arm names the capability');
+  eq(res.body.reason, 'no-updater',
+    'update bundle arm with no engine attached names the missing UPDATER, not the git capability');
+  eq(res.body.refused, 'updater_unavailable', 'and carries a machine-readable refusal code');
+  ok(/release page/.test(String(res.body.hint || '')),
+    'and the refusal still points at the download page — the behaviour it replaces, kept as the way out');
   eq(rec.calls.length, 0, 'update bundle arm runs ZERO subprocesses — no git, no npm, no build-app.sh');
   ok(!writeRegistry.isUpdateInProgress(), 'update bundle arm leaves the update flag CLEAR (it never began one)');
 }

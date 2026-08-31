@@ -3323,6 +3323,12 @@ is neither: a git-less tarball drop, a package-manager cask.
 
 ## POST /api/config/update
 
+**Forked on `updateStyle`**, exactly as `GET /update-check` is. Arm 1 (`git-pull`, every browser
+install and every git checkout) is documented immediately below and is unchanged. Arm 2
+(`download-installer`) is the in-app updater and is documented further down.
+
+### Arm 1 — `git-pull`
+
 Fetch the latest code, hard-sync to `origin/main`, install dependencies, rebuild the `.app`. The
 frontend follows a success with `POST /api/restart`.
 
@@ -3390,6 +3396,171 @@ cannot do that at all* beats *not right now*.
 | `500` | `{ error, from, to }` — `from`/`to` are the short SHAs, **or `null`** depending on how far the sequence got. `error` may be a classified, actionable `npm` message rather than the raw one, or the git-missing message from step 1. |
 
 ---
+
+### Arm 2 — the in-app updater (`updateStyle: 'download-installer'`)
+
+**Server-Sent Events.** Downloads the newest installable build, verifies it, and stages it beside
+the running app. It does **not** replace anything — [`POST /api/config/update/apply`](#post-apiconfigupdateapply)
+is the step that does.
+
+This replaces v3.31.0's check-and-tell behaviour, which found the newest release carrying an
+installer and opened its download page. That path is still the fallback and is still reachable: see
+the `no-updater` refusal below.
+
+**The work is not done here.** Download, verification, staging, the bundle swap and the relaunch all
+live in the desktop shell and reach this process through the hook registry in
+`src/brain/desktop-host.js`:
+
+| Hook | Shape |
+|---|---|
+| `prepareUpdate({onProgress, signal})` | Resolves, downloads, verifies, stages. Replaces nothing. Resolves `{ok:true, token, version, current, bytes, verifiedDigest, prerelease, warning}` or `{ok:false, reason, message}`. **A failure is a resolved value, not a rejection** — a rejection is still handled, as a contract violation rather than an expected outcome. |
+| `installUpdate({token, onProgress})` | Swaps the staged bundle in and relaunches. Not expected to return. |
+
+**`installUpdate` takes an opaque token and never a path, and that is a security property.** This
+route's caller is a renderer; a hook accepting `{stagedPath, targetPath}` would be a
+*replace-any-directory-with-any-other* primitive reachable from a page. The token is stored on the
+job, passed straight back unread, and is **absent from `GET /update-progress`'s allow-list**. No
+filesystem path is constructed, logged or rendered on any of these paths.
+
+`signal` is a real `AbortSignal` and **this route never fires it** — see the no-cancel note below. It
+is passed so the engine's own guards see a well-formed object, not as a half-wired cancel.
+
+The route owns the capability fork, the refusals, and the translation of the engine's progress into a
+stream. It does **not** own the engine's copy: `prepareUpdate` carries 34 named reasons and a
+user-facing `message` for each, and that sentence is **relayed verbatim**. A second sentence per
+reason here would be a second copy of one fact, free to drift.
+
+**Events** — this table is exhaustive in both directions; `scripts/test-update-in-app.js` §4 drives
+the real route and compares the events it emitted against this table, and this table against them.
+
+| Event | Payload |
+|---|---|
+| `progress` | `{type, phase, receivedBytes, totalBytes, percent}` — `phase` is one of `resolving`, `downloading`, `verifying`, `staging`, `installing`. `percent` is **derived from the two byte counts** when both are present, and is **`null`** when the total is unknown (no `content-length`) — never `0`, which would render as a bar stuck at the far left, i.e. indistinguishable from a hang. |
+| `staged` | `{type, version, prerelease, warning}` — downloaded, verified and staged. **Nothing has been replaced.** Carries **no token, no path and no digest**: the client has no use for any of them and each is a handle it should not hold. |
+| `error` | `{type, reason, error, hint}` — `error` is the engine's own `message` when there is one. `reason` is a short slug **for branching and for logs only**; the Settings UI deliberately does not render it, because an internal identifier shown to a person is the v3.31.0 defect this release undoes. |
+
+**There is no `done` event, deliberately.** "Staged" is not "done": the bundle is sitting beside the
+running app and the swap has not happened. Calling it `done` would collapse two different facts into
+one word.
+
+**No raw exception text ever reaches the wire.** A `{ok:false, message}` is the engine's own
+user-facing sentence and is relayed. A **rejection** is different: `reasonFromError()` reads
+`err.reason` and never `err.message`, because a rejection can be an ordinary `TypeError` whose
+message carries an absolute path. An unnamed rejection is reported as `reason: "unknown"` with a
+generic-but-actionable sentence, never as the raw text.
+
+**A result that is not `{ok:true}` is a failure.** Checked for `ok === true`, not for truthiness: an
+engine resolving `undefined`, `{}` or `{version}` is a contract violation, and reporting a staged
+update that does not exist would send the user to a swap of nothing.
+
+**What is verified is INTEGRITY, not Apple's blessing.** The engine checks sha256 against the
+`digest` GitHub publishes for the asset, plus byte length, the staged bundle's version, and
+`codesign --verify`. Authenticity rests on that digest and on TLS to GitHub. Nothing in the UI claims
+Apple vouched for the build.
+
+**The route's own failure table holds two entries**, not 34: `no-updater` and `nothing-staged` — the
+refusals the engine never reached. Everything else is the engine's. The mapper is **total**: an
+unrecognised slug is echoed back and still produces a usable sentence.
+
+**Closing the connection does NOT cancel the download**, and this is the opposite position from
+[`POST /api/config/openrouter/qualify`](#post-apiconfigopenrouterqualify), which treats a hang-up as
+the cancel. There the run costs money per call and produces nothing until it finishes; here the
+bytes are already paid for and the user asked for them. The stream is a **view** of the job, not the
+job — navigating away or reloading the page leaves it running, and
+[`GET /api/config/update-progress`](#get-apiconfigupdate-progress) is how a client finds it again.
+The consequence is stated rather than hidden: **there is no cancel.**
+
+**Refusals** — all plain JSON, all sent **before any SSE header**, so the status code is still
+meaningful and a refusal can never arrive inside a stream the client has already accepted.
+
+| Status | Body | When |
+|---|---|---|
+| `409` | `conflictResponse('update the app')` + `reason: "write-in-flight"` | a wiki write is in flight |
+| `409` | `conflictResponse('update the app')` + `reason: "already-running"` | an update is already in progress |
+| `501` | `{error, hint, reason: "no-updater", refused: "updater_unavailable", releasesPageUrl}` | **no updater engine is attached** — this is every build whose shell registered no `prepareUpdate` hook, and every git checkout is unaffected because it never reaches this arm. The hint points at the release page: v3.31.0's behaviour, kept as the way out. |
+
+While the stream is open the update flag is set (`beginUpdate()`), so `POST /api/ingest` and the
+batch queue refuse with a clear `409` rather than starting work against a process about to be
+replaced. It is cleared on every exit path.
+
+---
+
+## GET /api/config/update-progress
+
+What the in-app updater is doing. **Read-only, in-memory, no lock, no filesystem, no network.**
+Deliberately **not** guarded — a `409` here would fire precisely when a write is in progress, which
+is exactly the moment someone is asking whether their update is still going. No body.
+
+```json
+{
+  "ok": true,
+  "updaterAttached": true,
+  "job": {
+    "state": "downloading-or-staged-etc",
+    "phase": "downloading",
+    "receivedBytes": 61000000,
+    "totalBytes": 143165576,
+    "percent": 42.6,
+    "version": "3.33.0",
+    "prerelease": false,
+    "warning": null,
+    "startedAt": 1756600000000,
+    "reason": null,
+    "error": null,
+    "hint": null
+  }
+}
+```
+
+`job` is **`null`** when nothing has run — an absence, not an empty object. `state` is one of
+`running`, `staged`, `applying`, `failed`. The shape is an explicit allow-list, never a spread — and
+**the opaque token `prepareUpdate` returned is not in it.** Do not add it: its absence is what keeps
+a handle on the staged bundle out of reach of a page.
+
+`updaterAttached` is not decoration: it is the only way the Settings UI can know whether to offer a
+button that installs or the link that opens the download page. Without it the app would have to show
+a button, POST, and learn from a `501` that this build has no engine — advertising an action it
+cannot perform. It reports a boolean and never the hook itself, and it is derived live, because a
+shell may register after the server has started.
+
+The job is **process-local and never persisted.** A staged bundle that survived a restart would be
+a claim this route cannot verify.
+
+---
+
+## POST /api/config/update/apply
+
+Swap the staged bundle in and relaunch. No body.
+
+**Why this is a second request.** The download takes minutes; an ingest started *during* it would be
+truncated by a relaunch authorised before it began. `hasActiveWrites()` is therefore re-checked
+**here**, against the state that exists at the moment of the swap — the same reasoning
+`POST /api/config/pick-folder` records for re-checking after its 60-second dialog. It is also why
+the engine contract splits staging from swapping at all.
+
+**Why it does not respond first.** `POST /api/restart` can answer before acting, because respawning
+a Node process cannot really fail in a way the user needs told about. Replacing an application
+bundle can — a read-only volume, a translocated copy, a revoked permission. So the hook is
+**awaited**. On success it does not return: the process is gone and the client's `fetch` rejects,
+which the restart poller already treats as normal. On failure there **is** a response, and the old
+app is still running.
+
+**Success response** `200 OK` — only reached if the shell chose not to end the process.
+
+```json
+{ "ok": true, "relaunching": true, "version": "3.33.0" }
+```
+
+| Status | Body | When |
+|---|---|---|
+| `501` | `capabilityRefusal('updateStyle', …)` with a hint naming **Check for updates** | a git checkout, which finishes an update through `POST /api/restart` and always has |
+| `409` | `conflictResponse('restart to finish the update')` | a wiki write is in flight — `guardConcurrent` on the registration *and* a re-check inside the handler |
+| `412` | `{error, reason: "nothing-staged"}` | there is no staged update. **`412` and not `409`**: every `409` in this app means *somebody else is using this, try later*, and waiting will never make this one true. It carries no `conflict` field, so it cannot be mistaken for a queue to wait in. |
+| `501` | `{error, hint, reason: "no-updater", refused: "updater_unavailable"}` | no `installUpdate` hook is attached |
+| `500` | `{error, hint, reason, releasesPageUrl}` | the swap failed. The job goes back to **`staged`**, not `failed` — the verified bundle is still on disk, so *downloaded, not yet installed* is the true state and the finish button is still the right offer. |
+
+---
+
 
 ## Static files
 
