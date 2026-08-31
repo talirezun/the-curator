@@ -10,8 +10,8 @@
 <p align="center">
   <a href="#licensing"><img src="https://img.shields.io/badge/License-MIT%20%2B%20source--available-yellow.svg" alt="License: MIT + source-available"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18%2B-green" alt="Node.js 18+"></a>
-  <a href="https://www.apple.com/macos/"><img src="https://img.shields.io/badge/Installer-macOS-blue" alt="Installer: macOS"></a>
-  <a href="#option-b--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
+  <a href="https://github.com/talirezun/the-curator/releases"><img src="https://img.shields.io/badge/Mac%20app-.dmg%20(unsigned)-blue" alt="Mac app: .dmg (unsigned)"></a>
+  <a href="#option-c--manual-setup-windows--linux--mac"><img src="https://img.shields.io/badge/Manual%20setup-Windows%20%7C%20Linux-lightgrey" alt="Manual setup: Windows / Linux"></a>
   <a href="https://github.com/talirezun/the-curator"><img src="https://img.shields.io/badge/Status-Active-brightgreen" alt="Status: Active"></a>
   <br>
   <a href="https://github.com/talirezun/the-curator/blob/main/package.json"><img src="https://img.shields.io/github/package-json/v/talirezun/the-curator?label=Version&color=blue" alt="Current Version"></a>
@@ -166,25 +166,64 @@ flowchart TD
 
 ## Quick start
 
-The Curator runs as a **local server you open in your browser**. That is how you
-install it on every platform today, and it is the only way on Windows and Linux.
+On a **Mac** you can download the app. On **Windows and Linux** — and on a Mac too, if you
+prefer it — The Curator runs as a **local server you open in your browser**. Same codebase,
+same release, same features, same files: one shell around `src/`, not a fork. The browser
+install is **not** a legacy path and is fully supported everywhere.
 
-> **On a Mac, is there an app to download?** Not yet. The Mac installer builds a
-> Dock launcher on your machine — a small AppleScript wrapper around the same
-> server — so you never need the Terminal, but **there is no signed `.dmg`.**
->
-> A properly packaged Mac app is being worked on. It is the **same codebase and
-> the same release** as the browser app, not a separate product: one shell around
-> `src/`, not a fork. The browser install is **not** a legacy path and stays
-> fully supported.
->
-> The decisions taken so far — and, for each one, whether code exists yet —
-> are recorded in
-> [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
-> Short answer for existing users: **your wiki is plain markdown and comes across
-> untouched**; you re-paste your API key and re-run the MCP wizard.
+### Option A — Download the Mac app (`.dmg`)
 
-### Option A — One-command installer (Mac, recommended)
+**[→ Download from the Releases page](https://github.com/talirezun/the-curator/releases)** — take
+the newest release at the top. Two builds are attached to each one; you need exactly one:
+
+| Your Mac | Download the `.dmg` with… |
+|---|---|
+| **Apple Silicon** (M1 and later) | **`arm64`** in the filename |
+| **Intel** | **`x64`** in the filename |
+
+Not sure which you have?  → **About This Mac**. *Chip: Apple M…* is Apple Silicon;
+*Processor: Intel…* is Intel. It is a big download — about **140 MB** — because the app carries
+its own runtime.
+
+Then open the `.dmg` and **drag The Curator onto the Applications folder** in the window that
+appears. Eject the disk image afterwards.
+
+> **⚠️ First launch — you have to allow it explicitly.**
+>
+> **The app is not yet signed with an Apple developer identity.** Apple Developer enrolment is
+> in progress; until it completes, macOS cannot verify who built The Curator, so Gatekeeper
+> refuses a plain double-click. That is a signing status, not a verdict on the app — everything
+> that goes into it is in this repository.
+>
+> 1. Open **Applications** and double-click **The Curator**. macOS blocks it — dismiss the dialog.
+> 2. Open **System Settings → Privacy & Security**, scroll down to **Security**, and click
+>    **Open Anyway**. Confirm, and enter your password if asked.
+> 3. Open the app again. The exception is remembered — you do this once.
+>
+> Don't leave a long gap between steps 1 and 2: the button appears only for a while after a
+> blocked launch. If it isn't there, double-click the app again and go straight back.
+>
+> **Control-click → Open no longer works.** Apple removed that shortcut in macOS Sequoia (15);
+> System Settings is the only route on Sequoia and later.
+>
+> **If macOS instead says the app *"is damaged and can't be opened"*** — and offers no Open
+> Anyway button — that is the download-quarantine flag on an unsigned app, not a corrupt file.
+> In Terminal:
+>
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/The Curator.app"
+> ```
+>
+> then open it normally. (Don't disable Gatekeeper system-wide to get around this.)
+
+**What this first Mac release is, plainly.** It is a first release, unsigned, and it has **no
+auto-update** — moving to a newer version means downloading the new `.dmg` and replacing the app.
+Your knowledge is plain markdown in a folder you chose, so nothing about it is affected. Coming
+from the shell installer below? Your wiki comes across untouched; you re-paste your API key and
+re-run the MCP wizard. The decisions behind the packaging — and, for each, whether code exists
+yet — are in [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
+
+### Option B — One-command installer (Mac, no download)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/talirezun/the-curator/main/install.sh | bash
@@ -200,10 +239,12 @@ points you to API key setup.
 > `research/` folder of second-brain articles that the app does not need — delete it for the disk
 > space if you like.
 
-### Option B — Manual setup (Windows / Linux / Mac)
+### Option C — Manual setup (Windows / Linux / Mac)
 
-The Node server runs anywhere Node 18+ runs. Only the one-line installer and the auto-built `.app`
-Dock launcher are macOS-specific.
+**There is no Windows or Linux app**, so this is the way in on those platforms — and it is a
+first-class one: ingest, chat, wiki, MCP, sync and Health are all here. The Node server runs
+anywhere Node 18+ runs; only the `.dmg`, the one-line installer and the auto-built `.app` Dock
+launcher are macOS-specific.
 
 **Prerequisites:** [Node.js 18+](https://nodejs.org) · an API key from
 [Google Gemini](https://aistudio.google.com/app/apikey) (free tier available),
