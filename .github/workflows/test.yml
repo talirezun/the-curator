@@ -10,6 +10,20 @@ name: Tests
 # Gemini/Anthropic credits (or Actions minutes) on a documentation-only commit.
 # A push that touches ANY non-doc file still runs normally. Pull requests are NOT
 # path-filtered, so a docs PR still gets the free offline check + a green tick.
+#
+# ── DO NOT ADD A `branches:` FILTER TO THE PUSH TRIGGER ─────────────────────
+# The absence of one is LOAD-BEARING. `scripts/release.js` releases through a
+# gate — it pushes `release/vX.Y.Z`, waits for THAT branch's run, and fast-
+# forwards `main` onto it only when the run is green. A bare `push:` fires on
+# every branch, which is what makes the release branch get a run at all.
+#
+# Restricting this to `main` would not break loudly: the release branch would
+# simply get NO run, and a gate that waits for a run which never starts is
+# worse than having no gate, because it looks like one. `release.js` therefore
+# REFUSES to release (`ci-not-reachable`) if it finds a `branches:` or
+# `branches-ignore:` key under `push:` here, and `test-release-preconditions.js`
+# asserts the same thing against this file. If you genuinely need a filter,
+# make it include `release/v*` and update both.
 on:
   push:
     paths-ignore:
@@ -48,6 +62,16 @@ jobs:
   # don't spend a cent if the free tests already failed. On CI the runner sets
   # CI=true, so run-tests.js automatically excludes the local-only suites
   # (real-data / quality-benchmark / server-spawning) and runs only LIVE_CI.
+  #
+  # This `if:` also means `live` does NOT run on a `release/v*` branch, so it is
+  # not part of `scripts/release.js`'s gate — deliberately. It spends real money,
+  # can take 20 minutes, and is explicitly flake-tolerant via scripts/ci-flake.js;
+  # a required check designed to tolerate its own transient failures is the wrong
+  # thing to block a green tree on. It still runs here on the post-merge push to
+  # `main`, exactly as before, and `release.js --watch-main` waits for it and
+  # reports it WITHOUT changing the release's exit code. If you ever want live in
+  # the gate, widen this `if:` to cover `refs/heads/release/` AND accept that a
+  # provider 503 will then hold up a release.
   live:
     name: Live API tests (Gemini + Anthropic)
     runs-on: ubuntu-latest
