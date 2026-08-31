@@ -44,11 +44,14 @@
  */
 
 import { app, BrowserWindow, Menu, dialog, nativeTheme, screen, shell } from 'electron';
-import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { pickFreePort, appUrl } from './lib/port.js';
+import { createUpdateEngine } from './lib/update-engine.js';
+import { resolveInstallerRelease } from './lib/update-release.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
 import { applyAboutPanel } from './lib/app-version.js';
@@ -217,6 +220,13 @@ async function boot() {
   // specifier gives a second module instance and a registry nobody reads.
   const { registerDesktopHost } =
     await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'desktop-host.js')).href);
+
+  // The in-app updater. Built here rather than in lib/ because this is the one
+  // place that legitimately holds Electron, `src/` and the process identity at
+  // once; everything it needs is handed to the engine as a plain function so
+  // the engine itself stays executable by the offline suite.
+  const updater = await buildUpdateEngine();
+
   registerDesktopHost({
     pickFolder: async ({ prompt }) => {
       const r = await dialog.showOpenDialog(mainWindow, {
@@ -226,6 +236,15 @@ async function boot() {
       return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
     },
     relaunch: () => { quitAuthorised = true; app.relaunch(); app.exit(0); },
+    // Registered only when the engine could be built. A partial registration is
+    // the designed shape (`desktop-host.js`: "a shell that can relaunch but has
+    // no folder picker registers only what it has"), and the consumer of a
+    // missing hook REFUSES with a named reason rather than falling back to
+    // something that half-works.
+    ...(updater ? {
+      prepareUpdate: (opts = {}) => updater.prepareUpdate(opts),
+      installUpdate: (opts = {}) => updater.installUpdate(opts),
+    } : {}),
   });
 
   // Where Help ▸ Show Logs points. Read from the app's OWN resolver — the same
@@ -246,6 +265,155 @@ async function boot() {
   }
 
   createWindow();
+}
+
+// ── 2a. The in-app updater ───────────────────────────────────────────────────
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  WHY THIS IS NOT electron-updater — MEASURED ON THE SHIPPED ARTIFACT.     ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// The full argument, with the numbers, is in lib/update-engine.js's docblock.
+// The one-line version: `codesign -d -r-` on the installed v3.32.0 bundle
+// prints `# designated => cdhash H"…"`, because an ad-hoc signature has no
+// certificate and no team for a requirement to name. Squirrel.Mac — which is
+// what electron-updater drives on macOS — validates every downloaded build
+// against that requirement, and a cdhash requirement is satisfiable by exactly
+// one build: the one already installed. So it rejects every genuine update,
+// deterministically, and no configuration reaches the check because it lives
+// in Electron's own binary rather than in electron-updater's JavaScript.
+//
+// This is what Mac apps did before notarisation, and it works unsigned.
+//
+// ── EVERY EFFECT IS PASSED IN AS A FUNCTION ─────────────────────────────────
+//
+// Not for tidiness. Nothing in this file can be executed by `npm test` —
+// Electron is deliberately not an offline-suite dependency — so anything that
+// lives HERE can only ever be source-scanned, which this repo has repeatedly
+// found to be worth very little (v3.0.17). Both hooks are therefore real,
+// executable code in lib/, and this function is the fifteen lines of wiring
+// that cannot be anywhere else.
+async function buildUpdateEngine() {
+  try {
+    const paths = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
+    const registry = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'write-registry.js')).href);
+    const launcher = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'mcp-launcher.js')).href);
+    // The module that OWNS the question "which release is newest". It is
+    // already in this realm — `src/server.js` imported it a few lines ago —
+    // so this is a module-cache hit, and it is the same instance the HTTP
+    // route uses. Resolving it from the same APP_ROOT as everything else is
+    // what keeps that true.
+    const cfg = await import(pathToFileURL(path.join(APP_ROOT, 'src', 'routes', 'config.js')).href);
+
+    return createUpdateEngine({
+      // ── which release, and which .dmg inside it ──
+      resolveRelease: ({ signal }) => resolveInstallerRelease({
+        configModule: cfg,
+        fetchImpl: globalThis.fetch,
+        // Read from the SAME file `installerUpdateCheck()` reads, rather than
+        // from `app.getVersion()`. They agree today — lib/verify-version.mjs
+        // refuses a build where the Info.plist and the manifest disagree — but
+        // "two sources that a build hook keeps in step" is still two sources,
+        // and the updater must ask the same question the update-check endpoint
+        // asked or the two can name different versions.
+        currentVersion: readAppVersion(),
+        arch: process.arch,
+        signal,
+      }),
+
+      // ── where we are, and whether we may replace it ──
+      execPath: process.execPath,
+      homeDir: app.getPath('home'),
+      arch: process.arch,
+      // REUSED, not re-implemented. The path-component match on
+      // `AppTranslocation`, the case-insensitive ~/Downloads check (because
+      // APFS is case-insensitive) and the empty-execPath case were all got
+      // right once, in mcp-launcher.js, each detail with a recorded failure
+      // behind it. A second copy is the thing that drifts.
+      classifyLaunchOrigin: launcher.classifyLaunchOrigin,
+
+      // ── where the download lands ──
+      // getAppSupportDir(), NOT getUserDataDir(): in repo mode the latter IS
+      // the git checkout, and a 140 MB .dmg dropped into a live working tree
+      // is the class of mistake this project has already shipped twice
+      // (.DS_Store in v3.0.16, .write-lock in v3.0.15). Same precedent, and
+      // the same reasoning, as getMcpLauncherDir()'s own docblock.
+      workDir: path.join(paths.getAppSupportDir(), 'updates'),
+      logPath: path.join(paths.getLogsDir(), 'update-install.log'),
+
+      // ── subprocesses ──
+      runCommand,
+      spawnDetached: (cmd, args) => {
+        // `detached` gives the helper its own process group, so it survives
+        // this app's exit — which is the entire point of it. `stdio: 'ignore'`
+        // because a pipe nobody reads fills and blocks, and there is nobody
+        // left to read it. `unref` so this process is not held open by it.
+        const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+        child.unref();
+        return child;
+      },
+
+      // ── quitting ──
+      // `app.quit()`, not `app.exit(0)`. quit() runs the window's own `close`
+      // handler, which is what persists the remembered size and position;
+      // exit() would silently throw that away on every update. `quitAuthorised`
+      // is set first so `before-quit` does not re-ask about writes we have
+      // already checked.
+      quitApp: () => { quitAuthorised = true; app.quit(); },
+
+      // ── the guard that stops an update truncating a paid ingest ──
+      writeRegistry: {
+        hasActiveWrites: registry.hasActiveWrites,
+        listActiveWrites: registry.listActiveWrites,
+        beginUpdate: registry.beginUpdate,
+        endUpdate: registry.endUpdate,
+      },
+    });
+  } catch (err) {
+    // A shell that cannot build the updater still runs the app. The hooks are
+    // simply not registered, and the consumer refuses with a named reason —
+    // the no-fallback rule in desktop-host.js's header.
+    console.error('[The Curator] in-app updater unavailable:', err && err.message ? err.message : err);
+    return null;
+  }
+}
+
+/** The running version, read from the packaged manifest — the same file
+ *  `installerUpdateCheck()` reads. Returns '' rather than throwing, which the
+ *  resolver reports as `local-version-unreadable`. */
+function readAppVersion() {
+  try {
+    return String(JSON.parse(readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')).version || '');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Run a command, collect its output, never throw.
+ *
+ * `spawn`, not `execFile`: `ditto` of a 400 MB bundle takes seconds, and
+ * anything synchronous here freezes the window for the whole of it. Output is
+ * capped because `hdiutil` and `codesign` can be verbose and nothing reads
+ * more than a status line — an uncapped buffer on a subprocess this code does
+ * not control is a memory hazard for no benefit.
+ */
+function runCommand(cmd, args, opts = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      resolve({ status: 127, stdout: '', stderr: String(err && err.message ? err.message : err) });
+      return;
+    }
+    const cap = Number.isFinite(opts.maxOutput) ? opts.maxOutput : 64 * 1024;
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', (d) => { if (stdout.length < cap) stdout += d.toString(); });
+    child.stderr.on('data', (d) => { if (stderr.length < cap) stderr += d.toString(); });
+    child.on('error', (err) => resolve({ status: 127, stdout, stderr: String(err && err.message ? err.message : err) }));
+    child.on('close', (code) => resolve({ status: typeof code === 'number' ? code : 1, stdout, stderr }));
+  });
 }
 
 // ── 2b. The application menu ─────────────────────────────────────────────────
