@@ -176,18 +176,19 @@ save_working_state({ project: "curator-notes", scope: "main", headline: "..." })
 ok: false
 reason: "unknown-project"
 error: "curator-notes is not a domain in this Curator. ... a folder with no
-        CLAUDE.md is pruned by the next sync pull, so state saved there would
-        be silently deleted. Known projects: curator, articles, business, ..."
+        CLAUDE.md is invisible to list_domains and every tool that lists
+        domains, so state saved there would go unseen. Known projects:
+        curator, articles, business, ..."
 ```
 
-**The wrong response is to invent a name that gets past the check.** The refusal is protecting against a real data-loss path: state written outside a real project is removed by a later sync, so the save would appear to succeed and the state would be gone by the time anyone looked for it.
+**The wrong response is to invent a name that gets past the check.** The refusal is protecting against a real visibility gap: a folder with no `CLAUDE.md` is hidden from the app and every tool that lists domains, so the save would appear to succeed and the state would never be found again.
 
 ```
 list_domains()
 → curator, articles, business, projects
 ```
 
-> *"I could not save — `curator-notes` is not a project here. The closest is `curator`. Should I save this state under `curator`, or do you want to create `curator-notes` as a domain in the app first? I am not going to write it somewhere it would be deleted on your next sync."*
+> *"I could not save — `curator-notes` is not a project here. The closest is `curator`. Should I save this state under `curator`, or do you want to create `curator-notes` as a domain in the app first? I am not going to write it somewhere the app would never show you."*
 
 The same applies to a `readonly` refusal on a shared mirror: save on the user's own project, and tell them why the mirror was refused.
 

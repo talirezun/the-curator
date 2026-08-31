@@ -506,7 +506,7 @@ open the state at all.
 
 | Refusal | Why |
 |---|---|
-| The project is not a real domain | Working state lives inside a domain. A folder with no `CLAUDE.md` is pruned by the next sync pull, so state saved there would be silently deleted. The message lists the domains that do exist. |
+| The project is not a real domain | Working state lives inside a domain. A folder with no `CLAUDE.md` is invisible to `listDomains()` — hidden from the app, the wiki reader, and every tool that lists domains — so state saved there would go unseen. The message lists the domains that do exist. |
 | The project is a read-only `shared-*` Shared Brain mirror | Mirrors are rebuilt from the collective; a local write is lost. Save on your own project instead. |
 | No `headline` | See above. |
 | The scope or machine name is unusable | Both are single path segments and are validated as such. |
