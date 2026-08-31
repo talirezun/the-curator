@@ -248,6 +248,138 @@
 }
 .mem-stale-btn { flex: none; }
 
+/* ── THE SAVE-STATUS STRIP — "am I saved?", answered in about a second ──────
+
+   Reported from real use: someone near the end of a context window, least able
+   to go digging, repeatedly asking whether the scope and the standing brief
+   are up to date. So this sits ABOVE the pickers, above both conditional
+   notes, and above the document — the answer must not be the fifth thing on a
+   busy day.
+
+   It reads as a member of the .mem-doc-card family (same --surface, same
+   --border, one step less padding) rather than as a banner: it is a reading,
+   not an alert, and on a healthy day it says only two quiet things. The
+   loud treatment below is reserved for the two conditions that are genuinely
+   wrong — a trimmed save and two tools sharing one handoff file.
+
+   CONTRAST. Arithmetic over OPAQUE values, which is exact — nothing under the
+   pip or the body text is translucent, so there is nothing to composite and
+   nothing a browser could report differently. Only the loud line's tint is
+   translucent, and it is composited over this box's own --surface below.
+
+     on --surface:  --text-2      10.54 dark /  9.33 light   (4.5 AA floor)
+                    --text        16.71      / 18.27
+                    --accent       4.30      /  6.57   (3:1 non-text floor)
+                    --text-3       6.16      /  5.60
+                    --text-faint   3.47      /  3.61
+     loud line, --attention-tint composited over --surface:
+                    --attention border  7.22 /  3.21   (3:1 non-text floor)
+                    --text-2            8.67 /  8.38
+                    --text (the bold lead) 13.75 / 16.41                    */
+.mem-save {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  max-width: var(--prose-max);
+}
+.mem-save-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  /* min-width: 0 for the same reason .mem-ctl needs it — the readout's
+     provenance carries a machine id, which is long and hex-suffixed. */
+  min-width: 0;
+}
+
+/* THE PIP — five discrete steps, and NOT a bar.
+
+   "How old" has no maximum, so a meter that is half full would be inventing
+   one. Five states, cut on formatAge's own unit bands (see freshnessStep in
+   memory.js) so the mark and the word change at the same instant and can never
+   contradict each other on screen.
+
+   The pre-attentive contrast is deliberately concentrated at the boundary that
+   was ASKED FOR — "5 minutes ago" against "4 hours ago" — which is the filled/
+   hollow line at one hour. Inside "filled", the halo separates the last minute;
+   inside "hollow", the ring's colour and weight separate days from weeks.
+   Colour is never the only signal: the age is in words immediately beside it.
+
+   SQUARE, 2px radius — the same rule the project rows follow (agent memory is
+   a different KIND of thing from a knowledge domain, which uses a round dot).
+
+   NO TRANSITION, deliberately. Every render replaces the whole main pane by
+   innerHTML, so a class-keyed transition here could never run — it would be a
+   declaration that reads as behaviour and is dead on arrival, which is exactly
+   what v3.27.0 found and left in progress-ring.js. Saying so is cheaper than
+   shipping one and letting the next reader believe it animates.               */
+.mem-save-pip {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: transparent;
+}
+/* under a minute — an agent is saving right now */
+.mem-save-pip-s4 { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+/* minutes — this session */
+.mem-save-pip-s3 { background: var(--accent); }
+/* hours — today */
+.mem-save-pip-s2 { box-shadow: inset 0 0 0 2px var(--accent); }
+/* days — this week */
+.mem-save-pip-s1 { box-shadow: inset 0 0 0 2px var(--text-3); }
+/* weeks and older — dormant. NOT a failure state: a finished work-stream is
+   supposed to look like this, so it gets the quietest ring and no colour. */
+.mem-save-pip-s0 { box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+/* AGE UNKNOWN IS NOT AGE ZERO and it is not "old" either — a dashed ring, so
+   the one state where we do not know is the one state that looks different in
+   kind rather than merely further along the ramp. */
+.mem-save-pip-unknown {
+  box-shadow: none;
+  border: 1.5px dashed var(--text-faint);
+  width: 12px; height: 12px;
+  box-sizing: border-box;
+}
+
+/* The qualifying lines. Each appears ONLY when it has something to say, so the
+   healthy case is the reading plus one brief line and nothing else. */
+.mem-save-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 9px;
+  /* --text-2, not --text-3: these are the strip's quietest WARNINGS, and this
+     file's standing rule is that a caution must never be the hardest sentence
+     on the screen to read. */
+  color: var(--text-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+.mem-save-line svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+.mem-save-line .mono { font: var(--type-mono); font-size: var(--text-2xs); }
+/* The two conditions that are genuinely wrong: a save the store had to trim,
+   and two tools overwriting one handoff. Same treatment as .mem-note-loud, for
+   the same reason — the rest of the strip is about to read as calm. */
+.mem-save-line-loud {
+  padding: 7px 9px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention);
+  background: var(--attention-tint);
+}
+.mem-save-line-loud b { color: var(--text); font-weight: var(--weight-semibold); }
+/* THE BRIEF IS ON A DIFFERENT CLOCK AND GETS NO PIP. It changes on the order
+   of weeks; an old brief is not a stale one, and marking it the way a handoff
+   is marked would state something false. A plain line, always present, because
+   "is the standing brief up to date" was the second half of the question. */
+.mem-save-line-brief {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-2xs);
+}
+
 /* ── Controls: scope / machine ───────────────────────────────────────── */
 
 .mem-controls {

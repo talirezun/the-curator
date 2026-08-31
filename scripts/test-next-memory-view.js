@@ -477,6 +477,10 @@ ok('the real renderMarkdown was lifted and works',
 const formatAge = new Function(extractFunction(viewSrc, 'formatAge', 'memory.js') + '\nreturn formatAge;')();
 const projectMetaLine = new Function(
   extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+  // projectMetaLine now reads the AGENT'S clock where the store recovered one
+  // (effectiveSave), falling back to filesystem mtime. Lifted with it so this
+  // executes the shipped function rather than a version missing its collaborator.
+  extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
   extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\nreturn projectMetaLine;')();
 const splitHandoffPreamble = new Function(
   extractFunction(viewSrc, 'splitHandoffPreamble', 'memory.js') + '\nreturn splitHandoffPreamble;')();
@@ -566,6 +570,17 @@ function makeRenderers(stateObj) {
   // executes the shipped code rather than a paraphrase of it.
   const body =
     extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    // The freshness surface: renderProject renders renderSaveStatus above
+    // everything else, and it reads through these five. Lifted so the escaping
+    // battery below covers the strip too — it interpolates a scope name, a
+    // machine id and a harness name, all of which arrive from disk.
+    extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'freshnessStep', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'newestPair', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'harnessOf', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'firstNote', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'saveLine', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'renderSaveStatus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'splitHandoffPreamble', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderScopeControls', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'renderHandoff', 'memory.js') + '\n' +
@@ -591,7 +606,7 @@ function makeRenderers(stateObj) {
     extractFunction(listboxSrc, 'renderListboxHtml', 'listbox.js') + '\n' +
     'return { renderScopeControls, renderHandoff, renderJournal, renderBrief, renderAbout, ' +
     'renderEmptyProject, renderStaleNotice, renderUnlistedNote, renderBriefOnlyNotice, ' +
-    'unlistedCount, renderProject, pendingListboxes };';
+    'unlistedCount, renderProject, renderSaveStatus, freshnessStep, effectiveSave, pendingListboxes };';
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE', 'pendingListboxes',
     // The real shared text renderers, so §6's escaping battery runs through
@@ -1235,6 +1250,11 @@ function makeRevalidator(stateObj, responder, opts = {}) {
     extractFunction(viewSrc, 'captureFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'restoreFocus', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'formatAge', 'memory.js') + '\n' +
+    // screenSignature now folds the save-status strip's own readings through
+    // effectiveSave + formatAge, so a save into another scope of the same
+    // project — or the reading simply ageing into the next band — repaints.
+    extractFunction(viewSrc, 'effectiveSave', 'memory.js') + '\n' +
+    extractFunction(viewSrc, 'newestPair', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'projectMetaLine', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchIndex', 'memory.js') + '\n' +
     extractFunction(viewSrc, 'fetchState', 'memory.js') + '\n' +
@@ -2024,6 +2044,22 @@ section('§14 — The Reload OFFER is painted, and reaches every content branch'
     ok('...and the ' + name + ' branch shows NO offer when nothing has been written',
       !makeRenderers({ ...s, staleWrite: false }).renderProject().includes('id="mem-reload"'));
   }
+
+  // THE SAVE-STATUS STRIP REACHES THE SAME THREE BRANCHES, for the same
+  // reason and with the same failure mode: it answers "am I saved?", and the
+  // branch where it matters most is the one where the rest of the screen says
+  // "nothing saved for this project yet". Deleting `saveStatus` from any one
+  // return leaves every other assertion in this file green; scripts/
+  // test-memory-truth.js executes what the strip SAYS, and this proves it is
+  // on the page at all. It is ABOVE the reload notice in every branch, which
+  // is the placement decision — the answer must not sit under its caveats.
+  for (const [name, out] of [['FULL', full], ['BRIEF-ONLY', briefOnly], ['EMPTY', empty]]) {
+    ok('the save-status strip reaches the ' + name + ' branch',
+      out.includes('class="mem-save"'), out.slice(0, 200));
+    ok('...and it is painted ABOVE the reload notice there',
+      out.indexOf('class="mem-save"') < out.indexOf('class="mem-stale"'),
+      out.indexOf('class="mem-save"') + ' vs ' + out.indexOf('class="mem-stale"'));
+  }
 }
 {
   // The unlisted note: the store's own sentence, echoed rather than
@@ -2225,6 +2261,11 @@ const TOP_LEVEL_FNS = [...viewNoComments.matchAll(/^(?:export\s+)?(?:async\s+)?f
 // Executed somewhere above, with real assertions over what they returned/did.
 const EXECUTED = new Set([
   'formatAge', 'projectMetaLine', 'splitHandoffPreamble',
+  // The freshness surface (v3.31.0). All seven are lifted from live source by
+  // §6's makeRenderers and reached through renderProject, which §6/§14 execute;
+  // effectiveSave is additionally lifted into §5 and §11.
+  'effectiveSave', 'freshnessStep', 'renderSaveStatus', 'newestPair', 'harnessOf',
+  'firstNote', 'saveLine',
   'renderScopeControls', 'renderHandoff', 'renderJournal', 'renderBrief', 'renderAbout',
   'renderEmptyProject', 'renderStaleNotice', 'renderUnlistedNote', 'renderBriefOnlyNotice',
   'unlistedCount', 'renderProject',
