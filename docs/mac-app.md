@@ -62,6 +62,69 @@ You click **Check for updates** in the **Settings** view (reached from the left 
 
 ---
 
+## Updates in the packaged app
+
+A checkout replaces its own files (`git fetch` + `git reset --hard` + `npm install`
++ a restart). **A packaged app cannot**, and does not pretend to: it is read-only,
+has no `.git` and no `node_modules` to install into, and re-running
+`scripts/build-app.sh` would destroy a real code signature. The capability record
+in `src/brain/install-mode.js` says so by name — `canSelfUpdateViaGit: false` —
+and `POST /api/config/update` refuses with a `501`.
+
+So **Settings → Software update** does something different there, and the section
+says which before you click anything:
+
+1. **Check for updates** calls `GET /api/config/update-check`, which — because the
+   install's `updateStyle` is `download-installer` — reads GitHub's public release
+   list instead of a git branch. One unauthenticated `GET`, no credentials, no
+   personal data, an 8-second timeout.
+2. It selects **the newest release that actually carries an installer** and
+   compares that version with the one you are running.
+3. If yours is older you get **Update available**, the release name, and a link
+   that opens the download page in your own browser. You download the disk image
+   and run it; it replaces the app in `/Applications`. Nothing is downloaded or
+   installed for you.
+4. If yours is current, or newer than anything published, or nothing installable
+   has been published at all, or the check could not reach GitHub — you get four
+   **different** messages. "You're up to date" and "we couldn't check" never share
+   wording.
+
+**Automatic download and install are deliberately not built.** `electron-updater`
+needs a signed, notarized app and a paid Apple Developer enrolment; until those
+exist, an updater that silently swaps an unsigned binary is worse than a link.
+
+### Why a pre-release can be offered
+
+GitHub's `/releases/latest` means *newest release that is neither a draft nor a
+pre-release*. Measured against this repository on 2026-08-31:
+
+| Query | Answer | Carries an installer? |
+|---|---|---|
+| `/releases/latest` | `v3.9.0` | **No** — zero assets |
+| `/releases` | 5 releases; exactly one has a `.dmg` | `v3.30.0`, flagged **pre-release** |
+
+Excluding pre-releases would therefore have told every packaged user they were
+*ahead of the published version*, permanently, and — if it had ever offered
+anything — pointed them at a page with nothing to download. The rule is instead
+**newest release with an installer**, and the pre-release status is shown in the
+status box rather than hidden. Today the only way to have the Mac app at all is an
+unsigned preview build, so hiding that would be the dishonest half of the trade.
+When signed stable builds start shipping they become the newest installable
+release with no code change.
+
+### Going back to an earlier version
+
+There is no in-app rollback, and the panel behind the ⓘ next to *Software update*
+does not claim one. Going back means installing an older build the same way you
+installed this one — and **only releases that carry a download can be
+reinstalled**. Check
+[the releases page](https://github.com/talirezun/the-curator/releases) to see which
+ones do before relying on it. Your knowledge base, API keys and sync settings are
+stored outside the app and are untouched by installing, reinstalling or deleting
+it.
+
+---
+
 ## Adding to Dock
 
 After installation:
@@ -110,7 +173,7 @@ is in [desktop-app-decisions.md](desktop-app-decisions.md).
 |---|---|---|
 | **What you install** | The installer clones the repo and builds a `.app` **on your machine** | A signed application you download |
 | **Where your knowledge lives** | Inside the checkout, at `~/the-curator/domains/` | Anywhere you point it — the app cannot write inside itself |
-| **Updates** | Settings → Check for updates runs `git` against the checkout | The app's own updater; the git route refuses with a `501` |
+| **Updates** | Settings → Check for updates runs `git` against the checkout | Settings → Check for updates reads GitHub's **release list** and, if a newer downloadable build exists, opens its page — **you** run the installer. The git route still refuses with a `501`. See [§ Updates in the packaged app](#updates-in-the-packaged-app) |
 | **Rebuilding the `.app`** | `bash scripts/build-app.sh`, as above | Never — the ad-hoc `codesign` above would destroy a real signature |
 | **Your files** | Plain markdown in `domains/` | **Identical.** Same files, same folder, same Obsidian vault |
 

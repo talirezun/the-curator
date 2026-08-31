@@ -1053,6 +1053,14 @@ a.sb-card-repo:hover { color: var(--text-link); }
   color: var(--text);
 }
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* A packaged install cannot replace its own files, so its "Update available"
+   action is a LINK to the download page rather than a button that starts
+   something. `.btn` already sets inline-flex and every colour, so the only
+   thing an <a> needs back is the underline the UA adds to a href — the same
+   one line `.sbw-link-btn` exists for on the three wizard links. No new
+   colour, no box-shadow (the focus ring is `base.css`'s global
+   `:focus-visible` and a shadow here would fight it). */
+.upd-actions a.btn { text-decoration: none; }
 
 /* ── Reduced motion: press ────────────────────────────────────────────────
    Travel off, colour step kept. The `.sbw-panel` entrance has its own

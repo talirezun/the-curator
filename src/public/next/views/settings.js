@@ -321,21 +321,30 @@ function compareSemver(a, b) {
  */
 function classifyUpdate(check, versionInfo) {
   if (!check) return { kind: 'idle' };
-  if (check.error) return { kind: 'error', message: String(check.error) };
+  if (check.error) return { kind: 'error', message: String(check.error), style: updateStyleOf(check) };
 
   if (versionInfo && versionInfo.restartRequired) {
-    return { kind: 'restart-required', running: versionInfo.version, onDisk: versionInfo.onDiskVersion };
+    return { kind: 'restart-required', running: versionInfo.version, onDisk: versionInfo.onDiskVersion,
+      style: updateStyleOf(check) };
   }
+
+  // THE FORK. `download-installer` cannot reuse the arm below, and not for
+  // cosmetic reasons: that arm's "available" verdict ends in a button that
+  // POSTs /api/config/update, which a packaged build answers 501 to. Its
+  // "local-ahead" copy tells the reader to push their unpushed work, which is
+  // nonsense to someone who installed a DMG. Same question, different app.
+  if (updateStyleOf(check) === 'download-installer') return classifyInstallerUpdate(check);
 
   const cmp = compareSemver(check.current, check.latest);
   if (cmp > 0) {
-    return { kind: 'local-ahead', current: check.current, latest: check.latest };
+    return { kind: 'local-ahead', current: check.current, latest: check.latest, style: 'git-pull' };
   }
   if (!check.updateAvailable) {
-    return { kind: 'current', current: check.current };
+    return { kind: 'current', current: check.current, style: 'git-pull' };
   }
   return {
     kind: 'available',
+    style: 'git-pull',
     current: check.current,
     latest: check.latest,
     localCommit: check.localCommit || null,
@@ -344,6 +353,55 @@ function classifyUpdate(check, versionInfo) {
     // has to read "v3.9.0 (abc → def)", not "v3.9.0 → v3.9.0".
     versionsDiffer: cmp < 0,
   };
+}
+
+/**
+ * Which update mechanism a payload describes.
+ *
+ * ABSENT MEANS `git-pull`, deliberately. The repo arm of
+ * `GET /api/config/update-check` is byte-identical to what it has always
+ * returned — no field was added to it — so a missing `updateStyle` is the
+ * normal, unchanged, overwhelmingly common case rather than an unknown. The
+ * install's real capability is separately observable on `GET /api/version`
+ * (`capabilities.updateStyle`); this function reads only what the CHECK said,
+ * so the verdict describes the payload in hand and can never disagree with it.
+ */
+function updateStyleOf(check) {
+  return (check && check.updateStyle === 'download-installer') ? 'download-installer' : 'git-pull';
+}
+
+/**
+ * The `download-installer` verdicts. FOUR outcomes, and none of them shares
+ * wording with another — this repo's rule that a fact and its ABSENCE are
+ * never the same value:
+ *
+ *   no-release        nothing installable has been published yet
+ *   unknown-version   a build exists; its version cannot be compared with ours
+ *   local-ahead       we are newer than anything published
+ *   current           we are on the newest installable build
+ *   available         a newer installable build exists — here is its page
+ *
+ * The server has already decided all of this (it is the only side that can:
+ * it read the release list). This function does NOT recompute the comparison
+ * from `current`/`latest`, because a second, independent verdict on the client
+ * is how a UI comes to contradict its own API. The git arm above recomputes
+ * because it historically had to — the route used to get local-ahead wrong.
+ */
+function classifyInstallerUpdate(check) {
+  const base = {
+    style: 'download-installer',
+    current: check.current,
+    latest: check.latest || null,
+    releaseUrl: typeof check.releaseUrl === 'string' ? check.releaseUrl : null,
+    releasesPageUrl: typeof check.releasesPageUrl === 'string' ? check.releasesPageUrl : null,
+    releaseName: typeof check.releaseName === 'string' ? check.releaseName : null,
+    prerelease: check.prerelease === true,
+  };
+  if (check.noInstallableRelease) return { ...base, kind: 'no-release' };
+  if (check.comparable === false) return { ...base, kind: 'unknown-version' };
+  if (check.localAhead) return { ...base, kind: 'local-ahead' };
+  if (!check.updateAvailable) return { ...base, kind: 'current' };
+  return { ...base, kind: 'available' };
 }
 
 // ── Model lifecycle: the decision, as pure functions ─────────────────────
@@ -1062,6 +1120,41 @@ const UPDATE_RECOVERY_INFO =
   'several releases behind this copy. Your knowledge base, API keys and sync settings are ignored by ' +
   'git and are not touched. Checking for updates again puts this copy back on the published version.';
 
+/**
+ * The same panel for a packaged install, where every sentence above is false:
+ * there is no app folder, no checkout, and `git` is not how this copy got here.
+ *
+ * IT PROMISES NOTHING IT CANNOT SHOW. This project has a recorded history of
+ * revert copy describing a path that does not exist — v3.9.1 found "anything
+ * can be reverted from the Sync tab" at eight sites for a feature that has
+ * never shipped. So this does NOT say "you can go back to the previous
+ * version": at the time of writing exactly ONE release carries an installer,
+ * so there is nothing older to reinstall. It says how to find out, which stays
+ * true whether that list has one entry or twenty.
+ */
+const UPDATE_RECOVERY_INFO_INSTALLER =
+  'This copy was installed from a downloaded file, so The Curator never replaces its own program ' +
+  'files — updating means downloading the new installer and running it, and it replaces this copy in ' +
+  'place. Going back means installing an older build the same way, and only releases that actually ' +
+  'carry a download can be reinstalled: check github.com/talirezun/the-curator/releases to see which ' +
+  'ones do before relying on it. Your knowledge base, API keys and sync settings are stored outside ' +
+  'the app and are untouched by installing, reinstalling or deleting it.';
+
+/**
+ * How THIS INSTALL receives updates, from the capability record that rides
+ * along on `GET /api/version`. Used for the copy that has to be right BEFORE
+ * any check has run; the verdict itself uses `updateStyleOf(check)`, which
+ * describes the payload in hand.
+ *
+ * Unknown resolves to `git-pull` — the same fail-safe direction as the server's
+ * own install-mode detection, and the case that covers every existing browser
+ * user plus any moment before `/api/version` has answered.
+ */
+function installUpdateStyle() {
+  const caps = state.version && state.version.capabilities;
+  return (caps && caps.updateStyle === 'download-installer') ? 'download-installer' : 'git-pull';
+}
+
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
 async function ensureSectionData(section, token) {
@@ -1293,7 +1386,9 @@ function renderGeneral() {
   const dark = currentTheme() === 'dark';
   // Re-checking mid-install would race the very process being replaced.
   const updatesBusy = state.updateChecking || state.updatePhase === 'applying' || state.updatePhase === 'restarting';
-  const recovery = infoMark('settings-update-recovery-info', 'How to go back to an earlier version', UPDATE_RECOVERY_INFO);
+  const installerMode = installUpdateStyle() === 'download-installer';
+  const recovery = infoMark('settings-update-recovery-info', 'How to go back to an earlier version',
+    installerMode ? UPDATE_RECOVERY_INFO_INSTALLER : UPDATE_RECOVERY_INFO);
   const quick = state.quick;
   const summary = quick && !quick.error
     ? quick.summary
@@ -1348,8 +1443,18 @@ function renderGeneral() {
       // stays put while the server is restarting under it.
       '<div class="settings-field-block" id="block-updates">' +
         '<span class="settings-field-label settings-label-row">Software update' + recovery.btn + '</span>' +
-        '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
-        'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>' +
+        // The hint has to be right BEFORE the button is clicked, so it reads
+        // the install's own capability rather than a check result that does
+        // not exist yet. The git sentence ("installing replaces The Curator's
+        // own program files and restarts it") is not merely irrelevant to a
+        // packaged install — it describes something that build refuses to do.
+        (installerMode
+          ? '<p class="settings-hint-text">Compares this copy with the newest downloadable build. ' +
+            'The Curator can’t install an update for itself — it tells you one exists and opens the ' +
+            'download page, and you run the installer. Your knowledge base, API keys and sync settings ' +
+            'are never touched.</p>'
+          : '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
+            'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>') +
         recovery.panel +
         '<div class="settings-btn-row">' +
           '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
@@ -1445,6 +1550,8 @@ function renderUpdateStatus() {
       '<button type="button" class="btn btn-primary btn-xs" id="btn-update-restart">Restart now</button>');
   }
 
+  if (v.style === 'download-installer') return renderInstallerUpdateStatus(v);
+
   if (v.kind === 'local-ahead') {
     // The maintainer's own state: a release committed locally and not yet
     // pushed. The route's updateAvailable is true here purely because the
@@ -1479,6 +1586,81 @@ function renderUpdateStatus() {
     updBusy ? 'Wait for the running ingest or sync to finish before installing.' : null,
     'Installing replaces the app’s program files and restarts it. Your knowledge base, keys and sync settings are untouched.',
     '<button type="button" class="btn btn-primary btn-xs" id="btn-apply-update"' + (updBusy ? ' disabled' : '') + '>Install update</button>');
+}
+
+/**
+ * The `download-installer` half of the status box.
+ *
+ * ── WHY A LINK AND NOT A BUTTON ────────────────────────────────────────────
+ *
+ * There is no button here that starts anything, because the app cannot start
+ * anything: it has no signed updater, so it can only say what exists and open
+ * the page. An `<a target="_blank" rel="noopener noreferrer">` is the honest
+ * control for that — it looks like what it does, the middle-click and
+ * copy-link affordances a user expects from a link keep working, and in the
+ * packaged app `desktop/main.js`'s `setWindowOpenHandler` turns it into
+ * `shell.openExternal`, i.e. the user's own browser rather than a second
+ * Electron window with no chrome.
+ *
+ * ── WHY THE PRE-RELEASE FLAG IS SHOWN AND NOT HIDDEN ───────────────────────
+ *
+ * The server picks the newest release that actually carries an installer,
+ * pre-release or not — measured, because the ONLY release carrying a DMG today
+ * is flagged pre-release, so filtering them out makes the whole feature answer
+ * "you are ahead of the published version" forever. Offering a pre-release
+ * without saying so would be the dishonest half of that trade, so it is said.
+ *
+ * No new CSS variant, no new modal, no new tone: this reuses `box()` and the
+ * same three `.upd-status` variants the git arm uses.
+ */
+function renderInstallerUpdateStatus(v) {
+  const ver = (s) => 'v' + escapeHtml(String(s));
+  const page = v.releaseUrl || v.releasesPageUrl;
+  const link = (label, cls) => (page
+    ? '<a class="btn ' + cls + ' btn-xs" href="' + escapeHtml(page) + '" target="_blank" rel="noopener noreferrer">' +
+      escapeHtml(label) + '</a>'
+    : null);
+
+  if (v.kind === 'no-release') {
+    // NOT "up to date" and NOT "we couldn't check" — a third fact, with its
+    // own sentence, because collapsing it into either would be a lie.
+    return box('', 'No installable release published yet',
+      'You’re running ' + ver(v.current) + '. There is no downloadable build on the releases page to compare it with.',
+      null, null, link('Open the releases page', 'btn-secondary'));
+  }
+
+  if (v.kind === 'unknown-version') {
+    return box('upd-attention', 'Couldn’t compare versions',
+      'You’re running ' + ver(v.current) + '. The published build is tagged ' +
+        escapeHtml(String(v.latest || 'something this app can’t read')) +
+        ', which isn’t a version number this app can compare — so it can’t tell you whether it’s newer.',
+      null, 'Open the release page and compare by hand.',
+      link('Open the release page', 'btn-secondary'));
+  }
+
+  if (v.kind === 'local-ahead') {
+    return box('upd-good', 'This copy is newer than the published one',
+      'You’re running ' + ver(v.current) + '; the newest downloadable build is ' + ver(v.latest) +
+        '. There is nothing to install.',
+      null, null, link('Open the release page', 'btn-secondary'));
+  }
+
+  if (v.kind === 'current') {
+    return box('upd-good', 'You’re up to date',
+      'Running ' + ver(v.current) + ' — the newest downloadable build.' +
+        (v.prerelease ? ' It is published as a pre-release.' : ''));
+  }
+
+  // available
+  return box('upd-attention', 'Update available',
+    ver(v.current) + ' → ' + ver(v.latest) +
+      (v.releaseName ? '<span class="upd-detail">' + escapeHtml(v.releaseName) + '</span>' : ''),
+    v.prerelease
+      ? 'This build is published as a pre-release. It is the newest one with an installer.'
+      : null,
+    'The Curator can’t install this for itself. The release page has the download — open it, ' +
+      'run the installer, and it replaces this copy. Your knowledge base, keys and sync settings are untouched.',
+    link('Open the download page', 'btn-primary'));
 }
 
 // Small local builder — everything interpolated is either escaped at the
@@ -5409,6 +5591,13 @@ async function onCheckForUpdates(token) {
 function onApplyUpdate(token) {
   const v = classifyUpdate(state.updateCheck, state.version);
   if (v.kind !== 'available') return Promise.resolve(); // the button only renders in this state
+  // A second, independent refusal for the installer path. The `#btn-apply-update`
+  // element is never emitted there (renderInstallerUpdateStatus emits an <a>),
+  // so this is unreachable through the UI — which is exactly why it is here:
+  // the work below POSTs /api/config/update, a packaged build answers that
+  // 501, and the user would see "Update failed" with a capability string in it
+  // for having clicked something that should not have existed.
+  if (v.style !== 'git-pull') return Promise.resolve();
   const label = v.versionsDiffer ? 'v' + v.current + ' → v' + v.latest : 'v' + v.current + ' (newer commits)';
   return confirmThen({
     title: 'Install this update?',
