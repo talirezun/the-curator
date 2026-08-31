@@ -88,12 +88,126 @@ names out of both files rather than from a hardcoded list.
 | `lib/port.js` | Picks a free loopback port; builds the app URL. Pure enough to test. |
 | `lib/write-status.js` | Asks `GET /api/write-status`. Never rejects. |
 | `lib/quit-decision.js` | Turns that answer into `quit` / `ask`. Pure; the suite executes it. |
+| `lib/window-state.js` | Remembers the window's size and position; refuses an off-screen restore. |
+| `lib/app-version.js` | The app's version, and the About panel. See *Version identity* below. |
+| `lib/dist.js` | `npm run dist`. Injects the root manifest's version into the build. |
+| `lib/verify-version.mjs` | electron-builder `afterPack` hook. **Fails the build** on a wrong version. |
 
-The three `lib/` modules import **nothing** from Electron and nothing from
-`src/`, which is what lets `scripts/test-desktop-packaging.js` run them for
+The `lib/` modules import **nothing** from Electron and nothing from
+`src/`, which is what lets `scripts/test-desktop-packaging.js` and
+`scripts/test-desktop-version-identity.js` run them for
 real. `main.js` itself can only be source-scanned from the offline suite —
 Electron is not an offline-suite dependency and never will be — and the suite
 says so in its own NOT ENFORCED block rather than implying otherwise.
+
+---
+
+## Version identity
+
+**The first shipped DMG's About panel read `0.0.0 (0.0.0)`.** That was not a
+display bug. The packaged `Info.plist` genuinely carried
+`CFBundleShortVersionString=0.0.0` and `CFBundleVersion=0.0.0`, because
+electron-builder derives both from the app manifest's `version` and
+`desktop/package.json` is pinned at `0.0.0`. The DMGs were then **renamed by
+hand** at upload time, so the filename said `3.30.0` and the app inside said
+`0.0.0`.
+
+### A claim in v3.30.0's changelog row that was half wrong
+
+> desktop/package.json … version pinned `0.0.0` so the DMG version can only
+> come from the git tag
+
+`.github/workflows/desktop-dmg.yml` really does pass
+`--config.extraMetadata.version="${GITHUB_REF_NAME#v}"`, and that path was
+never broken. What was false is **"can only"**. `npm run dist` was
+
+```
+electron-builder --mac --config electron-builder.yml
+```
+
+with no version anywhere in it — and that is the command that built the DMGs
+that shipped. The pin turned a missing value into a plausible-looking one.
+
+### The rule
+
+**The root `package.json` version is the only source of truth.** It is the
+field `scripts/release.js` already moves in lockstep with `package-lock.json`
+and `CLAUDE.md`'s `- **Version:**` line.
+
+`desktop/package.json` stays at `0.0.0` **forever**. It is a *sentinel*, not a
+number to maintain — two manifests that must agree by hand is exactly how this
+broke, so the second one is never allowed to be right. (npm still needs a
+parseable version there, and `desktop/package-lock.json` records `0.0.0`.)
+
+### Two mechanisms, doing two different jobs
+
+| | |
+|---|---|
+| `lib/dist.js` (`npm run dist`) | makes the version **correct** — reads the root manifest and passes `--config.extraMetadata.version`. |
+| `lib/verify-version.mjs` (`afterPack`) | makes a wrong version **impossible to ship** — reads the real `Info.plist` off disk after packing and **throws** if either key disagrees with the root manifest or is still `0.0.0`. |
+
+The second is the one that matters, because `npm run dist` is only one of the
+ways this gets built. The hook fires for `npm run dist`, for the CI workflow,
+and for a hand-typed `npx electron-builder --mac` — electron-builder
+auto-discovers `electron-builder.yml` in the working directory even with no
+`--config`.
+
+Verified by reading electron-builder 26.15.3's own source rather than recalled:
+`macPackager.applyCommonInfo` writes both version keys during `doPack`;
+`platformPackager.pack` emits `afterPack` after `doPack` returns;
+`AsyncEventEmitter.emit` awaits user hooks with **no try/catch**, so the throw
+aborts the build — before any `.dmg` exists.
+
+### Measured, by actually building
+
+| Invocation | Result |
+|---|---|
+| `electron-builder --mac --dir` (no injection) | **BUILD REFUSED** at `afterPack`, non-zero exit, no DMG |
+| `npm run dist` equivalent | exit 0; `Info.plist` reads `3.30.0` for **both** keys |
+| injected `--config.extraMetadata.version=9.9.9` | **BUILD REFUSED**, mismatch named (`9.9.9` vs `3.30.0`) |
+| the built `.app`, launched under test isolation | boots, serves, window opens |
+
+### What it does NOT close, stated plainly
+
+- A **deliberate** bypass still works: a different `--config`, an explicit
+  `--config.afterPack=null`, or packaging by hand. What is closed is the path
+  that actually shipped — forgetting the version entirely.
+- **The root manifest and the git tag are still two sources.** CI derives the
+  version from the tag; the hook then checks it against the root manifest, so a
+  tag that disagrees now *fails the build* rather than shipping. That is a
+  cross-check, not a single source. `scripts/release.js` is what keeps them
+  equal, and nothing in `desktop/` owns that.
+- The workflow's `--config.extraMetadata.version` line is now **redundant**
+  with `npm run dist`, but it is not wrong and the workflow does not call
+  `npm run dist`. Left alone.
+
+### The About panel
+
+`app.setAboutPanelOptions()`, wired in `boot()`. The reported complaint was
+literally *"it doesn't have any data"*, so it carries the version plus the
+identity a user can read back in a support conversation:
+
+```
+Version 3.30.0
+Electron 43.5.0   ·   Chromium 140.0.0.0
+Node 22.20.0   ·   V8 14.0.x
+macOS 15.6 (arm64)
+```
+
+Nothing there is invented. Three things are **deliberately absent** —
+`applicationName`, `copyright` and the parenthesised build field — because all
+three already exist authoritatively in the bundle (`CFBundleName`,
+`NSHumanReadableCopyright`, `CFBundleVersion`), and a second copy of a fact is
+the class of defect this whole section is about.
+
+The OS line says `macOS 15.6` only because Electron's
+`process.getSystemVersion()` returns the marketing version. Without it the
+fallback prints `darwin 24.6.0` — `os.release()` is the **Darwin kernel**
+version, and calling that number "macOS" would be a fabricated field.
+
+The implementation lives in `lib/app-version.js`, not in `main.js`, so
+`scripts/test-desktop-version-identity.js` can execute it against a stub `app`.
+`main.js` keeps one call site, which is source-scanned and labelled as such.
 
 ---
 
@@ -157,7 +271,11 @@ It builds and it runs. It is still not a shippable product.
 - **No first-launch adoption of an existing repo install.** A user with a
   checkout and a DMG would end up with two installs pointing at one
   `domains/` folder and no migration story.
-- **No app icon**, no About panel, no crash reporting.
+- **No crash reporting.**
+- **The About panel is not verified as RENDERED.** macOS draws it as a native
+  `NSPanel` with no read-back API, and driving the menu item needs assistive
+  access — attempted, refused (`-1719`). The suite proves the exact options
+  object handed to Electron, not what appears on screen.
 - **The menu is Electron's default**, dumped from a running Electron 43.5.0
   rather than recalled. ⌘Q is `role: quit` and reaches the write-status check;
   ⌘R / ⇧⌘R reload the renderer, which since v3.24.0 is not data loss but does
@@ -316,10 +434,8 @@ Full screen is deliberately **not** persisted. `maximized` is.
   untouched by this change. `install-mode.js` already names the capability
   (`canRebuildAppleScriptApp: false` in bundle mode); nothing enforces it in
   the script itself.
-- **The desktop manifest's version is `0.0.0`.** The DMG's version has to come
-  from somewhere; `.github/workflows/desktop-dmg.yml` injects the tag via
-  `--config.extraMetadata.version`. If that ever changes, the two manifests
-  need a real sync rule.
+(The version item that used to sit here is fixed — see *Version identity*
+above.)
 
 ---
 

@@ -9,7 +9,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --mac --config electron-builder.yml"
+    "dist": "node lib/dist.js"
   },
   "devDependencies": {
     "electron": "43.5.0",

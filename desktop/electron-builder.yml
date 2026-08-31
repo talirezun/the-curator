@@ -20,6 +20,47 @@ directories:
   output: dist
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  THE VERSION GUARD — do not remove this line without reading lib/app-version.js
+#
+#  The first packaged build shipped an About panel reading `0.0.0 (0.0.0)`,
+#  because electron-builder derives CFBundleShortVersionString and
+#  CFBundleVersion from the app manifest's `version`, and desktop/package.json
+#  is pinned at 0.0.0. The DMGs were then RENAMED BY HAND at upload time, so
+#  the filename said 3.30.0 and the app inside said 0.0.0.
+#
+#  The version now comes from the ROOT package.json — the field
+#  scripts/release.js already moves in lockstep with package-lock.json and
+#  CLAUDE.md — injected as `--config.extraMetadata.version` by
+#  `npm run dist` (lib/dist.js) and by .github/workflows/desktop-dmg.yml.
+#
+#  This hook is the part that makes a wrong version IMPOSSIBLE rather than
+#  merely unlikely. It runs after the .app is packed and before any .dmg
+#  exists, reads the REAL Info.plist off disk, and THROWS if either version key
+#  disagrees with the root manifest or is still the 0.0.0 sentinel. Verified
+#  against electron-builder 26.15.3's own source: `AsyncEventEmitter.emit`
+#  awaits user hooks with no try/catch, so the throw aborts the build.
+#
+#  It fires for `npm run dist`, for the CI workflow, and for a hand-typed
+#  `npx electron-builder --mac` — electron-builder auto-discovers this file in
+#  the working directory even with no `--config`. What it cannot cover is a
+#  DIFFERENT config file or an explicit `--config.afterPack=null`; those are
+#  deliberate acts. The path it closes is the one that actually shipped:
+#  forgetting the version entirely.
+#
+#  The path is relative to desktop/ (electron-builder resolves hook paths
+#  against its working directory, and refuses any that escape the workspace
+#  root).
+#
+#  SINCE THE SIGNING FIX the hook also applies and PROVES a valid ad-hoc
+#  signature — see lib/adhoc-sign.mjs. `identity: null` below stays exactly as
+#  it was, and the reason is measured rather than assumed: `identity: '-'` would
+#  re-open keychain auto-discovery, because electron-builder matches a qualifier
+#  as a bare SUBSTRING of each keychain line and `CSC_IDENTITY_AUTO_DISCOVERY`
+#  is not consulted on that branch.
+# ─────────────────────────────────────────────────────────────────────────────
+afterPack: ./lib/after-pack.mjs
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  asar: FALSE — a deliberate departure from the plan, argued rather than
 #  assumed. The plan frames asar as a thing to CONFIGURE, via
 #  `asarUnpack: mcp/**`. That addresses ONE of three independent hazards, and
