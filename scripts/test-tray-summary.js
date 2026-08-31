@@ -509,12 +509,33 @@ ok(failedCheck != null, 'a FAILED check is still an observation — the panel is
 eq(failedCheck.behindFiles, null, '…and behindFiles stays null, never 0');
 eq(failedCheck.checkedAt, '2026-08-31T10:00:00.000Z', '…and carries when we tried');
 
+// ── `ok` — THE THIRD STATE, WITHOUT WHICH THE FIRST TWO COLLAPSED ─────────
+//
+// This module always kept "could not ask" apart from "nothing waiting". Its
+// ONLY consumer, tray-model.js's remoteNotice(), branches on `remote.ok ===
+// false` — and nothing here ever emitted an `ok`, so a failed check reached
+// the menu as `{behindFiles: null, …}`, took the "no number to show" exit and
+// rendered as NOTHING: byte-identical to never having checked. The distinction
+// survived the store and died one layer up.
+//
+// Absence was honest while nothing ever triggered a check. It stops being
+// honest now the tray asks on its own, because then silence reads as an answer.
+eq(failedCheck.ok, false, 'a failed check now SAYS it failed, in the field the model actually branches on');
+noteRemoteStatus({ configured: true, remoteChecked: true, behindFiles: 0, behindCommits: 0, checkedAt: 'x' });
+eq((await getTraySummary()).remote.ok, true, 'a successful check reports ok:true, even when the answer is zero');
+// STRICT for failure, lenient otherwise: only an explicit `false` is an
+// accusation, so a payload of some other shape is not said to have failed.
+noteRemoteStatus({ configured: true, behindFiles: 1, behindCommits: 1, checkedAt: 'x' });
+eq((await getTraySummary()).remote.ok, true, 'a payload with no remoteChecked field is not ACCUSED of having failed');
+
 noteRemoteStatus({ configured: true, remoteChecked: true, behindFiles: 14, behindCommits: 2, checkedAt: '2026-08-31T10:05:00.000Z' });
 const good = (await getTraySummary()).remote;
 eq(good.behindFiles, 14, 'a successful check reports the file count');
 eq(good.behindCommits, 2, '…and the commit count');
 ok(!('files' in good) && !('remoteError' in good),
-  'the preview array and the error string are NOT forwarded — the panel gets three fields, not a sync payload');
+  'the preview array and the error string are NOT forwarded — the panel gets four small fields, not a sync payload');
+eq(Object.keys(good).sort().join(','), 'behindCommits,behindFiles,checkedAt,ok',
+  '…and it is exactly those four, so a future sync field cannot leak into a menubar payload by accident');
 
 // A truthy-but-wrong shape must not become a number.
 noteRemoteStatus({ configured: true, behindFiles: '14', behindCommits: 2.5, checkedAt: 99 });

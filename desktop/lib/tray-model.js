@@ -51,6 +51,36 @@
  * "changed 4 min ago", never as "4 min ago", because *written* is a claim
  * about the agent's clock and *changed* is a claim about this disk's.
  * A fact and its absence must never share a presentation.
+ *
+ * ── AGES ARE RE-DERIVED AT RENDER TIME, NOT READ OUT OF THE SNAPSHOT ───────
+ *
+ * `writtenAgeSeconds` in the summary is a number the DATA LAYER computed
+ * against the clock it held when it read the disk. This model is rendered far
+ * more often than the disk is read — `mouse-enter` re-renders from the
+ * in-memory snapshot precisely so a hover costs no I/O, and the one-shot glyph
+ * corrector re-renders with no read at all — so taking that number verbatim
+ * pins every age to the last read while `renderedAtText`, the absolute stamp
+ * beside it, moves.
+ *
+ * That inverts the purpose of the stamp. `tray-menu.js` justifies the absolute
+ * "Updated HH:MM" as the thing that makes a dead watch visible; a stale age
+ * sitting under a moving stamp says "fresh" about a reading that is not.
+ *
+ * So `effectiveAgeSeconds()` re-runs the producer's own arithmetic against the
+ * RENDER clock, over the absolute timestamp the snapshot already carries. It
+ * is the same expression working-state.js uses, character for character —
+ * `Math.max(0, Math.round((now - Date.parse(at)) / 1000))` — so this is not a
+ * second opinion about age, it is the first opinion evaluated later.
+ *
+ * WHAT IT MUST NOT DO IS INVENT PRECISION. `ageSource: 'file'` still has an
+ * absolute time to derive from (the store puts the mtime in `writtenAt` when
+ * it falls back to the file clock), so a `file` row is re-derived too and
+ * keeps its "changed …" wording — the clock it came from is unchanged by
+ * recomputing against a newer now. But a row with NO parseable timestamp is
+ * left exactly as it was: it falls back to the snapshot's number if there is
+ * one, and to null — "time unknown" — if there is not. An unknown age must
+ * stay unknown; re-deriving is a way to be more accurate about a fact, never
+ * a way to manufacture one.
  */
 
 // ── Caps ────────────────────────────────────────────────────────────────────
@@ -127,13 +157,54 @@ export function ageText(ageSeconds, ageSource) {
 }
 
 /**
+ * The age of one record AT THE RENDER CLOCK, in whole seconds.
+ *
+ * See "AGES ARE RE-DERIVED AT RENDER TIME" in this file's header for why this
+ * exists. In one line: the snapshot's `writtenAgeSeconds` was measured against
+ * a clock that has since moved, and this model is rendered from that snapshot
+ * on hover, on a glyph expiry and on a mode change without any new read.
+ *
+ * PRECEDENCE, and the order is the whole contract:
+ *
+ *  1. A parseable absolute `at` wins. The arithmetic is byte-for-byte the one
+ *     `working-state.js` uses to produce `writtenAgeSeconds` in the first
+ *     place, including the `Math.max(0, …)` clamp — so a clock skewed a few
+ *     seconds into the future (ordinary between two machines, which is the
+ *     scenario this widget was built for) reads "just now" rather than
+ *     collapsing to "time unknown".
+ *  2. Otherwise the snapshot's own number, unchanged. It is stale by however
+ *     long ago the read was, which is exactly as good as today's behaviour and
+ *     is the best available when there is no timestamp to do better with.
+ *  3. Otherwise null. NOT zero, NOT "just now" — see the header's one rule.
+ *
+ * @param {string|null} at        an absolute ISO timestamp, or anything else
+ * @param {number|null} fallback  the snapshot's precomputed age in seconds
+ * @param {number} nowMs          the render clock, in epoch ms
+ * @returns {number|null}
+ */
+export function effectiveAgeSeconds(at, fallback, nowMs) {
+  if (typeof at === 'string' && at) {
+    const ms = Date.parse(at);
+    if (Number.isFinite(ms) && Number.isFinite(nowMs)) {
+      return Math.max(0, Math.round((nowMs - ms) / 1000));
+    }
+  }
+  return typeof fallback === 'number' && Number.isFinite(fallback) && fallback >= 0
+    ? fallback
+    : null;
+}
+
+/**
  * The recency bucket. Discrete states on a log-ish scale, NOT a bar: age is
  * unbounded, so any bar maximum would be invented and the bar's fullness would
  * be a fiction.
  *
- * Keyed on the age the caller hands it, which the model always takes from
- * `writtenAgeSeconds` — the agent's clock — precisely so that a `git pull`
- * cannot turn every incoming scope Live.
+ * Keyed on the age the caller hands it, which the model always takes from the
+ * `writtenAt`/`writtenAgeSeconds` pair — the agent's clock wherever the store
+ * had one — precisely so that a `git pull` cannot turn every incoming scope
+ * Live. Re-deriving that age at render time (see `effectiveAgeSeconds`) does
+ * not weaken that: it changes WHEN the age is measured, never WHICH CLOCK it
+ * was measured from, and `ageSource` continues to say which that was.
  */
 export function ageBucket(ageSeconds) {
   if (typeof ageSeconds !== 'number' || !Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown';
@@ -269,6 +340,45 @@ export function remoteNotice(remote) {
   return { kind: 'remote', ok: true, text: n + ' ' + unit + ' waiting on GitHub' };
 }
 
+/** The data layer's warning codes this model has an opinion about. They are
+ *  the `code` field on `getTraySummary()`'s `warnings[]` entries, and they are
+ *  a CONTRACT — see `dedupeAgainstSuppliedWarnings` for why matching on the
+ *  message text instead is what this fix exists to undo. Pinned by the suite
+ *  against the real producer's own emissions. */
+export const WARNING_HARNESS_COLLISION = 'harness-collision';
+export const WARNING_SCOPES_TRUNCATED = 'scopes-truncated';
+
+/**
+ * Normalise `summary.warnings[]` into records that keep the STRUCTURE.
+ *
+ * The data layer emits `{code, message, project, scope, …}`. The previous
+ * version of this file flattened every warning to its message string at the
+ * top of `buildTrayModel`, which threw the code away before anything could use
+ * it — and the deduplication below then had nothing left to match on but
+ * prose. Defensive as ever: a bare string is accepted and simply carries no
+ * code, and anything unusable is dropped.
+ */
+function readWarnings(summary) {
+  const raw = summary && Array.isArray(summary.warnings) ? summary.warnings : [];
+  const out = [];
+  for (const w of raw) {
+    if (typeof w === 'string') {
+      if (w.trim()) out.push({ code: null, message: w.trim(), project: null, scope: null });
+      continue;
+    }
+    if (!w || typeof w !== 'object') continue;
+    const message = typeof w.message === 'string' && w.message.trim() ? w.message.trim() : null;
+    if (!message) continue;
+    out.push({
+      code: typeof w.code === 'string' && w.code ? w.code : null,
+      message,
+      project: str(w.project),
+      scope: str(w.scope),
+    });
+  }
+  return out;
+}
+
 /**
  * The collision warning: two harnesses on one machine resolve to the same
  * `<machine>` folder and silently overwrite each other's handoff.
@@ -279,23 +389,86 @@ export function remoteNotice(remote) {
  *
  * DERIVED HERE rather than taken from `warnings[]`, because `harnessShared` is
  * per-row data this module already holds and a per-row fact belongs with the
- * row. A supplied warning that already names the same scope suppresses the
- * derived one, so the two sources cannot both speak about one scope.
+ * row. `dedupeAgainstSuppliedWarnings` then removes whichever copy is
+ * redundant, so the two sources cannot both speak about one scope.
  */
-function collisionNotices(rows, suppliedWarnings) {
+function collisionNotices(rows) {
   const out = [];
   const seen = new Set();
   for (const r of rows) {
     if (r.harnessShared !== true) continue;
-    const key = r.project + ' ' + r.scope;
+    const key = r.project + ' ' + r.scope;
     if (seen.has(key)) continue;
     seen.add(key);
-    const already = suppliedWarnings.some((w) =>
-      /harness/i.test(w) && w.includes(r.project) && w.includes(r.scope));
-    if (already) continue;
-    out.push({ kind: 'collision', text: 'Two harnesses are writing ' + r.project + ' · ' + r.scope });
+    out.push({
+      kind: 'collision',
+      project: r.project,
+      scope: r.scope,
+      text: 'Two harnesses are writing ' + r.project + ' · ' + r.scope,
+    });
   }
   return out;
+}
+
+/**
+ * Drop the supplied warnings that something else in this menu already says.
+ *
+ * ── WHY THIS MATCHES ON `code` AND NEVER ON WORDING ────────────────────────
+ *
+ * The previous suppression was `/harness/i.test(w) && w.includes(project) &&
+ * w.includes(scope)` over the warning's MESSAGE. The only producer of that
+ * warning is `tray-summary.js`'s `harness-collision`, and its message reads
+ * "Two agent tools are writing alpha · main." — the word "harness" does not
+ * appear in it anywhere. So the suppression was dead against the sole case it
+ * was written for, and every collision emitted BOTH lines, burning two of the
+ * four notice slots to say one thing twice.
+ *
+ * It passed its own test because the fixture in the suite was a hand-written
+ * string that happened to contain "harnesses". A regex over user-facing copy
+ * is a coupling to a sentence nobody knows they must not reword; the `code`
+ * field exists precisely to be matched on, and is asserted against the real
+ * producer's emissions rather than against a fixture.
+ *
+ * TWO PAIRS ARE DEDUPED, and the second is the same shape one notch milder:
+ *
+ *  - `harness-collision` versus the derived collision line. The SUPPLIED one
+ *    wins, because the data layer saw the whole store and its message is the
+ *    better sentence; the derived line exists for a summary that reports
+ *    `harnessShared` on a row without emitting the warning.
+ *  - `scopes-truncated` versus `truncatedNote`. `truncatedNote` is already
+ *    rendered as its own menu item directly under the last row, where it
+ *    belongs; letting the warning through as well restates the cap in the
+ *    notices block a few lines below. The note wins for the same reason it
+ *    exists — it is attached to the list it is about.
+ *
+ * @param {Array} supplied   readWarnings() output
+ * @param {Array} derived    the collision notices this model computed
+ * @param {boolean} hasTruncatedNote  whether the cap is already disclosed
+ */
+function dedupeAgainstSuppliedWarnings(supplied, derived, hasTruncatedNote) {
+  const derivedKeys = new Set(derived.map((d) => d.project + ' ' + d.scope));
+  const keptSupplied = [];
+  const supersededDerived = new Set();
+
+  for (const w of supplied) {
+    if (w.code === WARNING_SCOPES_TRUNCATED && hasTruncatedNote) continue;
+    if (w.code === WARNING_HARNESS_COLLISION) {
+      // Matched on the warning's OWN project/scope fields, not by searching
+      // its prose for them — the same reason the code is matched rather than
+      // the wording. A collision warning that names a scope we did not derive
+      // (it was past the row cap, say) still gets through.
+      const key = (w.project || '') + ' ' + (w.scope || '');
+      if (derivedKeys.has(key)) supersededDerived.add(key);
+      keptSupplied.push(w);
+      continue;
+    }
+    keptSupplied.push(w);
+  }
+
+  return {
+    supplied: keptSupplied,
+    derived: derived.filter((d) => !supersededDerived.has(d.project + ' ' + d.scope)),
+  };
 }
 
 /**
@@ -313,6 +486,7 @@ export function buildTrayModel(summary, opts = {}) {
   const now = opts.now instanceof Date ? opts.now : new Date();
   const maxRows = Number.isInteger(opts.maxRows) && opts.maxRows > 0 ? opts.maxRows : MAX_ROWS;
 
+  const nowMs = now.getTime();
   const ok = !!(summary && summary.ok !== false);
   const all = readScopes(summary);
 
@@ -323,7 +497,14 @@ export function buildTrayModel(summary, opts = {}) {
   // recency bucket, one layer up. Rows with no age at all sort LAST: they
   // cannot be placed truthfully anywhere else, and putting an unknown at the
   // top would be asserting it is the newest.
-  const withAge = all.map((s, i) => ({ s, i, age: num(s.writtenAgeSeconds) }));
+  //
+  // The age is computed ONCE per row, here, and the same value is used for the
+  // sort, the bucket, the label and the glyph. Deriving it twice — once for
+  // the order and once for the text — is how a list comes to be sorted by one
+  // number and labelled with another.
+  const withAge = all.map((s, i) => ({
+    s, i, age: effectiveAgeSeconds(str(s.writtenAt), num(s.writtenAgeSeconds), nowMs),
+  }));
   withAge.sort((a, b) => {
     if (a.age === null && b.age === null) return a.i - b.i;
     if (a.age === null) return 1;
@@ -332,13 +513,13 @@ export function buildTrayModel(summary, opts = {}) {
     return a.i - b.i;
   });
 
-  const shown = withAge.slice(0, maxRows).map((x) => x.s);
+  const shownWithAge = withAge.slice(0, maxRows);
+  const shown = shownWithAge.map((x) => x.s);
   const machineLabels = shortMachineNames(shown.map((s) => s.machine));
 
-  const rows = shown.map((s, idx) => {
+  const rows = shownWithAge.map(({ s, age }, idx) => {
     const project = str(s.project) || '(unnamed)';
     const scope = str(s.scope) || '(unnamed)';
-    const age = num(s.writtenAgeSeconds);
     const source = s.ageSource === 'file' ? 'file' : (s.ageSource === 'agent' ? 'agent' : null);
     const isThisMachine = s.isThisMachine === true;
 
@@ -414,8 +595,13 @@ export function buildTrayModel(summary, opts = {}) {
   // the fallback, because a summary that lists scopes but no `lastSave` still
   // knows perfectly well when the newest one was written, and refusing to say
   // so would be manufacturing an absence rather than reporting one.
+  //
+  // This is the line the measured symptom was on: driving the real function
+  // over ONE snapshot with `now` forty minutes apart produced the identical
+  // "Last save · 4 min ago" both times while `renderedAtText` moved. It is
+  // re-derived from `lastSave.writtenAt` for the same reason the rows are.
   const ls = summary && typeof summary.lastSave === 'object' && summary.lastSave ? summary.lastSave : null;
-  const lsAge = ls ? num(ls.writtenAgeSeconds) : null;
+  const lsAge = ls ? effectiveAgeSeconds(str(ls.writtenAt), num(ls.writtenAgeSeconds), nowMs) : null;
   const lsSource = ls && ls.ageSource === 'file' ? 'file' : (ls && ls.ageSource === 'agent' ? 'agent' : null);
 
   let headline;
@@ -458,26 +644,53 @@ export function buildTrayModel(summary, opts = {}) {
     };
   }
 
-  const suppliedWarnings = (summary && Array.isArray(summary.warnings) ? summary.warnings : [])
-    .map((w) => (typeof w === 'string' ? w : (w && typeof w.message === 'string' ? w.message : null)))
-    .filter((w) => typeof w === 'string' && w.trim())
-    .map((w) => w.trim());
+  // A CAP IS DISCLOSED, NEVER PRESENTED AS A MEASUREMENT. `total` is the true
+  // count when the data layer supplies one; `all.length` is what we can see.
+  //
+  // Computed BEFORE the notices, because the notice block has to know whether
+  // the cap is already disclosed here in order not to disclose it twice.
+  const total = num(summary && summary.total);
+  const hidden = (total !== null ? total : all.length) - rows.length;
+  const truncatedNote = hidden > 0 ? '…and ' + hidden + ' more in Agent memory' : null;
+
+  const deduped = dedupeAgainstSuppliedWarnings(
+    readWarnings(summary), collisionNotices(rows), truncatedNote !== null);
 
   const notices = [];
   const remote = remoteNotice(summary && summary.remote);
   if (remote) notices.push(remote);
-  notices.push(...collisionNotices(rows, suppliedWarnings));
+  notices.push(...deduped.derived);
+  // A last-resort net on the TEXT, kept for warnings that carry no code at all
+  // (main.js pushes bare strings on its own failure paths). It is a backstop
+  // and never the mechanism — see dedupeAgainstSuppliedWarnings for why the
+  // mechanism must be structural.
   const seenText = new Set(notices.map((n) => n.text));
-  for (const w of suppliedWarnings) {
-    if (seenText.has(w)) continue;
-    seenText.add(w);
-    notices.push({ kind: 'warning', text: clip(w, 96) || w });
+  for (const w of deduped.supplied) {
+    if (seenText.has(w.message)) continue;
+    seenText.add(w.message);
+    notices.push({ kind: 'warning', code: w.code, text: clip(w.message, 96) || w.message });
   }
 
-  // A CAP IS DISCLOSED, NEVER PRESENTED AS A MEASUREMENT. `total` is the true
-  // count when the data layer supplies one; `all.length` is what we can see.
-  const total = num(summary && summary.total);
-  const hidden = (total !== null ? total : all.length) - rows.length;
+  // ── The standing brief — TIER C, and it lives in the tooltip ────────────
+  //
+  // The data layer pays one `stat` for this on every read. Nothing rendered
+  // it, which is the unwired-field shape this project has an allergy to; the
+  // choice was to stop computing it or to give it a surface, and the argument
+  // for a surface is in `trayToolTip`. Its age is re-derived from `updatedAt`
+  // for exactly the reason the rows' ages are.
+  const rawBrief = summary && typeof summary.brief === 'object' && summary.brief ? summary.brief : null;
+  const briefAge = rawBrief
+    ? effectiveAgeSeconds(str(rawBrief.updatedAt), num(rawBrief.ageSeconds), nowMs)
+    : null;
+  const brief = rawBrief ? {
+    project: str(rawBrief.project),
+    ageSeconds: briefAge,
+    // There is only ONE clock for a brief — it is hand-authored and no MCP
+    // tool writes it, so mtime is all there is and the store emits no
+    // `ageSource`. `ageText(age, null)` is therefore the unqualified form,
+    // which is correct: there is no second clock to be honest between.
+    ageText: ageText(briefAge, null),
+  } : null;
 
   return {
     ok,
@@ -486,7 +699,8 @@ export function buildTrayModel(summary, opts = {}) {
     rows,
     notices: notices.slice(0, MAX_NOTICES),
     noticesHidden: Math.max(0, notices.length - MAX_NOTICES),
-    truncatedNote: hidden > 0 ? '…and ' + hidden + ' more in Agent memory' : null,
+    truncatedNote,
+    brief,
     // ── THE GLYPH CARRIES AT MOST ONE BIT BEYOND PRESENCE ───────────────
     //
     // `live` = an agent has written ON THIS MACHINE in the last two minutes.

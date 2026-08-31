@@ -150,11 +150,29 @@ let _remoteObservation = null;   // { at: epochMs, remote: {...} }
  * by a filesystem watch a second later, with the panel still open — can
  * render it without asking again.
  *
- * `src/routes/sync.js` is the other natural feeder: it already calls
- * `getRemoteStatus()` on every `GET /api/sync/remote-status`, which the
- * shell's sync badge polls. One line there would keep this observation warm
- * for free, with no additional fetch anywhere. That wiring is NOT in this
- * change because this module does not own that file.
+ * TWO FEEDERS, AND THE SECOND ONE IS WHY THE FIRST WAS NOT ENOUGH.
+ *
+ *  1. `src/routes/sync.js` calls this on every `GET /api/sync/remote-status`,
+ *     which the shell's sync badge polls — keeping the observation warm for
+ *     free, with no additional fetch anywhere.
+ *  2. `desktop/main.js`'s `maybeCheckRemote()`, on a tray MENU OPEN.
+ *
+ * Feeder 1 alone left this field DEAD in the tray's normal state, and the
+ * paragraph above used to describe a fetch-on-open that did not exist. The
+ * frontend drives that endpoint from `refreshSyncRemoteBadgeIfVisible()`,
+ * which declines to fetch while `document.hidden` — correct on its own terms,
+ * and it means that with the window CLOSED, which is the only state the tray
+ * exists for, no observation ever arrived and any existing one expired after
+ * REMOTE_OBSERVATION_MAX_AGE_MS. The multi-machine signal was inert exactly
+ * where it was needed. Nothing rendered wrongly; the line simply never
+ * appeared.
+ *
+ * Feeder 2 closes that, and the argument for its shape — why a menu open and
+ * never a timer, and what was and was not verified about racing the user's
+ * own pull — is in `desktop/lib/tray-remote.js`. What matters HERE is only
+ * that this module still makes no network call and still imports no sync.js:
+ * the shell does the asking and hands the answer back through this function,
+ * which is the same contract feeder 1 already used.
  *
  * Until something calls this, `remote` is `null` — which is the honest answer
  * ("nobody has checked") and is exactly what the contract asks for in place
@@ -177,6 +195,29 @@ export function noteRemoteStatus(payload, now = Date.now()) {
   _remoteObservation = {
     at: Number.isFinite(now) ? now : Date.now(),
     remote: {
+      // `ok` IS THE THIRD STATE, AND WITHOUT IT THE FIRST TWO COLLAPSE.
+      //
+      // This module has always kept "we could not ask" apart from "there is
+      // nothing waiting" — that is the honesty rule, and the failed-check
+      // observation carries null counts and a real `checkedAt` to prove it.
+      // But the ONLY consumer, tray-model.js's `remoteNotice()`, branches on
+      // `remote.ok === false`, and nothing here ever emitted an `ok`. So a
+      // failed check reached the menu as `{behindFiles: null, …}`, took the
+      // "no number to show" exit, and rendered as NOTHING — byte-identical to
+      // never having checked. The distinction survived the store and died at
+      // the model.
+      //
+      // That was tolerable while nothing ever triggered a check: absence is
+      // honest when the normal state is "nobody asked". It stops being
+      // tolerable the moment the tray asks on its own (see the shell's
+      // on-open check), because then silence is read as an answer.
+      //
+      // `remoteChecked` is what sync.js's own `runRemoteCheck` sets on both
+      // arms, so it is the authoritative field. It is read STRICTLY for
+      // failure and leniently otherwise: only an explicit `false` becomes a
+      // reported failure, so a payload from some other shape that omits the
+      // field is not accused of having failed.
+      ok: payload.remoteChecked !== false,
       behindFiles: Number.isInteger(payload.behindFiles) ? payload.behindFiles : null,
       behindCommits: Number.isInteger(payload.behindCommits) ? payload.behindCommits : null,
       checkedAt: typeof payload.checkedAt === 'string' ? payload.checkedAt : null,
@@ -296,7 +337,7 @@ function machineIdentity(machine, self, host, hostRe) {
  *   total: <rows before the limit>, pairsOnDisk: <every pair seen>,
  *   truncated: <total > scopes.length>,
  *   brief:    {project, ageSeconds} | null,
- *   remote:   {behindFiles, behindCommits, checkedAt} | null,
+ *   remote:   {ok, behindFiles, behindCommits, checkedAt} | null,
  *   warnings: [{code, message, ...}]
  * }
  * ```
