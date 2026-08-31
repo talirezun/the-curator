@@ -24,6 +24,7 @@ import { hasActiveWrites, conflictResponse } from './brain/write-registry.js';
 import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
 import { describeInstall } from './brain/install-mode.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
+import { logInfo, logWarn, logError, getLogFilePath } from './brain/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
@@ -60,10 +61,16 @@ for (const { abs } of getCredentialFiles()) {
 recoverIngestQueueOnBoot()
   .then(({ recovered }) => {
     if (recovered > 0) {
-      console.error(`[ingest-queue] Recovered ${recovered} interrupted batch job(s) on boot — paused for review.`);
+      const msg = `Recovered ${recovered} interrupted batch job(s) on boot — paused for review.`;
+      console.error(`[ingest-queue] ${msg}`);
+      logWarn('ingest-queue', msg);
     }
   })
-  .catch(err => console.error(`[ingest-queue] Boot recovery failed (non-fatal): ${err && err.message}`));
+  .catch(err => {
+    const msg = `Boot recovery failed (non-fatal): ${err && err.message}`;
+    console.error(`[ingest-queue] ${msg}`);
+    logError('ingest-queue', msg);
+  });
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -214,6 +221,7 @@ app.post('/api/restart', (_req, res) => {
     const { status, body } = conflictResponse('restart the app');
     return res.status(status).json(body);
   }
+  logInfo('server', 'Restart requested — spawning a replacement process.');
   res.json({ ok: true, restarting: true });
 
   // Brief delay so the HTTP response can flush before we tear down.
@@ -351,9 +359,12 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
       const providerLabel = providerStartupLabel(provider);
       console.log(`The Curator v${version} running at http://localhost:${PORT}`);
       console.log(`LLM provider: ${providerLabel}  |  model: ${model}`);
+      console.log(`Log file: ${getLogFilePath()}`);
+      logInfo('server', `The Curator v${version} started at http://localhost:${PORT} — provider: ${provider} · model: ${model}`);
     } catch (err) {
       console.log(`The Curator running at http://localhost:${PORT}`);
       console.warn(`⚠️  ${err.message}`);
+      logWarn('server', `Started at http://localhost:${PORT}, but provider info could not be resolved: ${err.message}`);
     }
 
     // Auto-open the browser when server starts (skip during restart — frontend reloads itself)
@@ -384,26 +395,35 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
     // defers to any write in flight, it cannot throw, and a failed or empty
     // fetch leaves the existing catalogue completely intact.
     // The SKIP is logged, not just the run. Two reasons, both practical:
-    // a user asking "why is my OpenRouter model list short?" gets the answer in
-    // /tmp/the-curator.log ('no-key' / 'fresh' / 'writes-active'), and the call
-    // itself becomes observable, which is the only way to see that this line is
+    // a user asking "why is my OpenRouter model list short?" gets the answer
+    // in the app's own log file (getLogFilePath() — see src/brain/logger.js;
+    // this used to say /tmp/the-curator.log, which is a shell redirect the
+    // AppleScript wrapper sets up, not anything the app itself owns, and
+    // does not exist at all in a packaged bundle), and the call itself
+    // becomes observable, which is the only way to see that this line is
     // still wired without standing up a network fetch at boot.
     maybeAutoSyncOpenRouter()
       .then(r => {
-        if (r && !r.ran) console.error(`[config] OpenRouter catalogue auto-sync skipped (${r.reason})`);
+        if (r && !r.ran) {
+          console.error(`[config] OpenRouter catalogue auto-sync skipped (${r.reason})`);
+          logWarn('config', `OpenRouter catalogue auto-sync skipped (${r.reason})`);
+        }
       })
       .catch(() => {});
   });
 
   server.on('error', err => {
     if (err.code === 'EADDRINUSE' && retriesLeft > 0) {
-      // Port still held by the predecessor — wait briefly and retry.
-      // The remaining-retries count is logged so /tmp/the-curator.log shows
-      // how long the previous process held on.
+      // Port still held by the predecessor — wait briefly and retry. The
+      // remaining-retries count is logged so the app's own log file (see
+      // getLogFilePath() in src/brain/logger.js) shows how long the
+      // previous process held on.
       console.error(`[server] Port ${PORT} busy, retrying in ${BIND_RETRY_DELAY_MS}ms (${retriesLeft} retries left)`);
+      logWarn('server', `Port ${PORT} busy, retrying in ${BIND_RETRY_DELAY_MS}ms (${retriesLeft} retries left)`);
       setTimeout(() => startListen(retriesLeft - 1), BIND_RETRY_DELAY_MS);
     } else {
       console.error(`[server] Failed to bind port ${PORT}: ${err.code || ''} ${err.message}`);
+      logError('server', `Failed to bind port ${PORT}: ${err.code || ''} ${err.message}`);
       process.exit(1);
     }
   });

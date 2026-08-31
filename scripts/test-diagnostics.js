@@ -54,7 +54,7 @@ import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
-import { __setUserDataDirOverride } from '../src/brain/paths.js';
+import { __setUserDataDirOverride, __setLogDirOverride } from '../src/brain/paths.js';
 import { runQuickDiagnostics, runLiveApiCheck } from '../src/brain/diagnostics.js';
 
 let passed = 0, failed = 0;
@@ -122,7 +122,10 @@ const HARNESS_MANIFESTS = Object.freeze({
   },
   runLiveApiCheck: {
     extracted: ['hasAnyKeyConfigured', 'runLiveApiCheck'],
-    injected: ['getApiKeys', 'getEffectiveKey', 'getProviderInfo', 'getFallbackStatus', 'generateText'],
+    // logWarn joined this call's catch block when the log file landed
+    // (src/brain/logger.js) — injected as a no-op stub here, same as any
+    // other collaborator this harness does not want to exercise for real.
+    injected: ['getApiKeys', 'getEffectiveKey', 'getProviderInfo', 'getFallbackStatus', 'generateText', 'logWarn'],
   },
 });
 
@@ -393,16 +396,22 @@ try {
   // A. runQuickDiagnostics() CONTRACT (unchanged from the original suite)
   // ═══════════════════════════════════════════════════════════════════════
   section('runQuickDiagnostics contract');
+  // checkLogFile() (added alongside the log-file release) resolves via
+  // src/brain/logger.js's own getLogsDir(), a SEPARATE test seam from
+  // __setUserDataDirOverride — isolated here too so this suite never even
+  // READS the maintainer's real ~/Library/Logs/The Curator.
+  __setLogDirOverride(freshUserDataDir(work, 'contract-logs'));
   const writableDir = freshUserDataDir(work, 'contract-domains');
   __setDomainsDirOverride(writableDir);
   __setUserDataDirOverride(freshUserDataDir(work, 'contract-userdata'));
 
   const res = await runQuickDiagnostics();
   assert(res && Array.isArray(res.checks), 'returns { checks: [] }');
-  // 7 since the install-mode release: `install-mode` and `git` joined the five
-  // originals. The count is pinned deliberately rather than relaxed to `>= 5` —
+  // 8 since the log-file release: the `log` row joined the seven from the
+  // install-mode release (`install-mode` and `git` joined the five before
+  // that). The count is pinned deliberately rather than relaxed to `>= 5` —
   // a row silently disappearing is exactly what this assertion is for.
-  assert(res.checks.length === 7, `7 checks returned (got ${res.checks?.length})`);
+  assert(res.checks.length === 8, `8 checks returned (got ${res.checks?.length})`);
   assert(res.checks.every(c => c.id && c.label && VALID.has(c.status) && typeof c.detail === 'string'),
     'every check has id/label/valid-status/detail');
 
@@ -410,7 +419,7 @@ try {
   assert(summed === res.checks.length, `summary counts sum to checks.length (${summed} === ${res.checks.length})`);
 
   const ids = res.checks.map(c => c.id);
-  for (const id of ['version', 'install-mode', 'provider', 'domains', 'credentials', 'git', 'sync']) {
+  for (const id of ['version', 'install-mode', 'provider', 'domains', 'credentials', 'git', 'sync', 'log']) {
     assert(ids.includes(id), `includes "${id}" check`);
   }
 
@@ -659,6 +668,7 @@ try {
       () => { throw providerInfoError; },
       () => null,
       async () => { generateTextCalled = true; throw new Error('TEST FAILURE: generateText must never be reached when getProviderInfo() throws'); },
+      () => { throw new Error('TEST FAILURE: logWarn must never be reached when generateText is never called'); },
     );
     let threw = false, result;
     try {
@@ -721,6 +731,7 @@ try {
 } finally {
   __setDomainsDirOverride(null);
   __setUserDataDirOverride(null);
+  __setLogDirOverride(null);
   restoreEnv();
   rmSync(work, { recursive: true, force: true });
 }
