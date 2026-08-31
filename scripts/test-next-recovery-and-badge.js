@@ -14,6 +14,14 @@
  *     single most important assertion in this file: a badge that lies about
  *     unpushed work is worse than no badge.
  *   - syncBadgeMarkup() / syncBadgeTitle() over the same range.
+ *   - refreshSyncBadgeIfVisible() / refreshSyncRemoteBadgeIfVisible() / the
+ *     wake handler armSyncBadgeWakeHandler() installs (v3.30.0+, the
+ *     background/menubar hidden-window guard): the REAL functions are run
+ *     with a fake `document`/`window` and spies standing in for
+ *     refreshSyncBadge()/refreshSyncRemoteBadge(), so the assertion is
+ *     behavioural (the spy is or is not called), not a grep for the string
+ *     "document.hidden" — a check that is present but never consulted would
+ *     still pass a grep. See §4b.
  *
  * COVERED, as source-level assertions over the REAL recovery copy (the
  * strings are extracted from index.html and asserted on as text — that is
@@ -37,7 +45,12 @@
  * NOT COVERED here (stated rather than implied):
  *   - Rendering. applySyncBadge() and renderRail() need a DOM; they were
  *     verified in a real browser instead and that is not reproducible here.
- *   - The 60s interval actually firing, and the fetch itself.
+ *   - The 60s/10-minute intervals actually elapsing in a real event loop,
+ *     and the real fetch()/git-fetch behind refreshSyncBadge()/
+ *     refreshSyncRemoteBadge() themselves — §4b covers only the NEW
+ *     visibility gate sitting in front of them (whether they get CALLED),
+ *     via a spy; what they do once called is refreshSyncBadge's own
+ *     concern and test-sync-hygiene.js's for the remote half.
  *   - Whether /old serves the shipping app (that is scripts/test-cutover.js).
  */
 
@@ -341,8 +354,10 @@ const navigateFn = extractFunction(appCode, 'navigate', 'next/app.js');
 ok(/refreshSyncBadge\(\)/.test(navigateFn),
   'navigate() refreshes the badge (the /next equivalent of a tab click)');
 const bootFn = extractFunction(appCode, 'boot', 'next/app.js');
-ok(/setInterval\(refreshSyncBadge, SYNC_BADGE_REFRESH_MS\)/.test(bootFn),
-  'boot() arms the slow safety-net interval');
+// v3.30.0+: boot() arms the hidden-aware WRAPPER, not the raw refresher
+// directly — see §4b for the wrapper's own behaviour, executed.
+ok(/setInterval\(refreshSyncBadgeIfVisible, SYNC_BADGE_REFRESH_MS\)/.test(bootFn),
+  'boot() arms the slow safety-net interval, via the hidden-aware wrapper');
 ok(/SYNC_BADGE_REFRESH_MS = 60_000/.test(appCode),
   'the safety net is 60s — the same cadence the shipping app has used since v3.0.1-beta.5');
 const jobFn = extractFunction(appCode, '_checkActiveJobOnce', 'next/app.js');
@@ -367,6 +382,146 @@ ok(!/addEventListener/.test(applyFn), 'applySyncBadge() binds no listeners');
 ok(!/innerHTML/.test(applyFn), 'applySyncBadge() does not touch innerHTML');
 ok(/querySelector\('#rail \.rail-btn\[data-view="sync"\]'\)/.test(applyFn),
   'applySyncBadge() targets the sync rail button specifically');
+
+// ════════════════════════════════════════════════════════════════════════
+section('§4b  Hidden-window guard — executed, with spies, not grepped');
+// ════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THIS GUARDS AGAINST: the app now ships as a window a user may
+// leave running all day (and is about to gain a background/menubar mode).
+// Two shell-level setInterval timers kept firing regardless of visibility —
+// refreshSyncBadge (60s, local `git status`) and refreshSyncRemoteBadge
+// (10 minutes, a `git fetch` to GitHub). For a hidden/occluded window,
+// refreshSyncRemoteBadgeIfVisible/refreshSyncBadgeIfVisible must decline to
+// call the real refresher, and armSyncBadgeWakeHandler must resume promptly
+// (not wait out the rest of a skipped interval) the moment the window is
+// shown again — but must NOT fire on the *hide* half of a visibilitychange
+// pair, which the browser also delivers.
+//
+// A regex asserting the string "document.hidden" appears would pass on a
+// build where the check is present but never CONSULTED (e.g. an inverted
+// condition, or a check against the wrong variable). So this section
+// extracts the three REAL functions and runs them in a sandbox with a fake
+// `document`/`window` and two spies standing in for refreshSyncBadge() and
+// refreshSyncRemoteBadge() — the assertion is whether the SPY was called,
+// which only happens if the extracted source's own control flow reaches it.
+
+function makeVisibilitySandbox() {
+  const calls = { local: 0, remote: 0 };
+  const docListeners = {};
+  const winListeners = {};
+  const fakeDocument = {
+    hidden: false,
+    addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+  };
+  const fakeWindow = {
+    addEventListener(type, fn) { (winListeners[type] = winListeners[type] || []).push(fn); },
+  };
+  const body =
+    extractFunction(appCode, 'refreshSyncBadgeIfVisible', 'next/app.js') + '\n\n' +
+    extractFunction(appCode, 'refreshSyncRemoteBadgeIfVisible', 'next/app.js') + '\n\n' +
+    extractFunction(appCode, 'armSyncBadgeWakeHandler', 'next/app.js') + '\n' +
+    'return { refreshSyncBadgeIfVisible, refreshSyncRemoteBadgeIfVisible, armSyncBadgeWakeHandler };';
+  const factory = new Function('document', 'window', 'refreshSyncBadge', 'refreshSyncRemoteBadge', body);
+  const fns = factory(
+    fakeDocument, fakeWindow,
+    () => { calls.local++; },
+    () => { calls.remote++; },
+  );
+  return { fns, calls, fakeDocument, docListeners, winListeners };
+}
+
+// §4b-i — refreshSyncBadgeIfVisible: the LOCAL 60s tick.
+//
+// Each direction checks a DELTA FROM A RESET ZERO, not a running total. A
+// running total was tried first and had a real gap: for an INVERTED
+// condition ("skip when visible" instead of "skip when hidden"), the hidden
+// check wrongly increments the count to 1, and the visible check then
+// wrongly declines to increment it — leaving the total sitting at 1, which
+// equals what a CORRECT run's total would be at that point. The assertion
+// would read green for a coincidence of arithmetic, not because the call
+// happened. Resetting the counter before each fire closes that: every
+// assertion is "did this exact call increment it," which an inverted
+// condition cannot satisfy in both directions at once. (Verified live —
+// see this file's own mutation notes; not asserted from theory.)
+{
+  const { fns, calls, fakeDocument } = makeVisibilitySandbox();
+  fakeDocument.hidden = true;
+  fns.refreshSyncBadgeIfVisible();
+  eq(calls.local, 0, 'refreshSyncBadgeIfVisible: hidden window -> refreshSyncBadge is NOT called');
+  calls.local = 0;
+  fakeDocument.hidden = false;
+  fns.refreshSyncBadgeIfVisible();
+  eq(calls.local, 1, 'refreshSyncBadgeIfVisible: visible window -> refreshSyncBadge IS called');
+}
+
+// §4b-ii — refreshSyncRemoteBadgeIfVisible: the REMOTE 10-minute tick, the
+// one that performs the actual `git fetch` to GitHub. Same reset-before-each
+// discipline as §4b-i, for the same reason.
+{
+  const { fns, calls, fakeDocument } = makeVisibilitySandbox();
+  fakeDocument.hidden = true;
+  fns.refreshSyncRemoteBadgeIfVisible();
+  eq(calls.remote, 0, 'refreshSyncRemoteBadgeIfVisible: hidden window -> the GitHub-fetching refresher is NOT called');
+  calls.remote = 0;
+  fakeDocument.hidden = false;
+  fns.refreshSyncRemoteBadgeIfVisible();
+  eq(calls.remote, 1, 'refreshSyncRemoteBadgeIfVisible: visible window -> the GitHub-fetching refresher IS called');
+}
+
+// §4b-iii — armSyncBadgeWakeHandler: one listener on each of window "focus"
+// and document "visibilitychange"; resumes on the SHOW transition and stays
+// silent on the HIDE transition; "focus" carries the same guard. Same
+// reset-before-each discipline as §4b-i/ii, applied to both counters at
+// every step, so no step's read can be masked by a prior step's miscount.
+{
+  const { fns, calls, fakeDocument, docListeners, winListeners } = makeVisibilitySandbox();
+  fns.armSyncBadgeWakeHandler();
+  eq((winListeners.focus || []).length, 1, 'armSyncBadgeWakeHandler binds exactly one window "focus" listener');
+  eq((docListeners.visibilitychange || []).length, 1,
+    'armSyncBadgeWakeHandler binds exactly one document "visibilitychange" listener');
+
+  // Resolve both handlers ONCE, defensively — a missing registration must
+  // fail as a named assertion below (this project's own recorded lesson:
+  // "M16 reds by CRASHING rather than by a named assertion"), not throw and
+  // take the rest of this file's assertions (including §5) down with it.
+  const visHandler = (docListeners.visibilitychange || [])[0];
+  const focusHandler = (winListeners.focus || [])[0];
+  ok(typeof visHandler === 'function' && typeof focusHandler === 'function',
+    'both wake listeners resolved to callable handlers (prerequisite for the transition checks below)');
+
+  if (typeof visHandler === 'function' && typeof focusHandler === 'function') {
+    // The HIDE transition: document.hidden is true when the handler fires.
+    fakeDocument.hidden = true;
+    visHandler();
+    eq(calls.local, 0, 'wake handler on the HIDE transition calls neither refresher (local)');
+    eq(calls.remote, 0, 'wake handler on the HIDE transition calls neither refresher (remote)');
+    calls.local = 0; calls.remote = 0;
+
+    // The SHOW transition: document.hidden is false when the handler fires —
+    // both refreshers run immediately, not on a debounce (see armSyncBadge-
+    // WakeHandler's own comment for why an immediate refresh is safe here).
+    fakeDocument.hidden = false;
+    visHandler();
+    eq(calls.local, 1, 'wake handler on the SHOW transition refreshes the local badge immediately');
+    eq(calls.remote, 1, 'wake handler on the SHOW transition refreshes the remote badge immediately');
+    calls.local = 0; calls.remote = 0;
+
+    // `focus` is wired to the identical handler and obeys the identical guard.
+    focusHandler();
+    eq(calls.local, 1, 'the "focus" listener carries the same wake behaviour (local)');
+    eq(calls.remote, 1, 'the "focus" listener carries the same wake behaviour (remote)');
+  } else {
+    // Keep the assertion COUNT stable regardless of which branch runs, so a
+    // missing-listener mutation cannot be disguised as "fewer assertions ran"
+    // — it must show up as failures, not as a shorter, quieter report.
+    for (let i = 0; i < 6; i++) ok(false, 'skipped: a wake listener above did not resolve');
+  }
+}
+
+// §4b-iv — boot() actually arms the wake handler (the interval wiring for
+// both timers is checked above in §4 and in test-sync-hygiene.js §18b).
+ok(/armSyncBadgeWakeHandler\(\)/.test(bootFn), 'boot() arms the visibility wake handler');
 
 // ════════════════════════════════════════════════════════════════════════
 section('§5  server.js cutover block names the release it shipped in');

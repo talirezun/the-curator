@@ -2252,8 +2252,13 @@ try {
     assertTrue(/refreshSyncBadge\(\)/.test(navFn),
       'navigate() still refreshes the free, local-only badge half');
     const bootFn = extractFn(appSrc, 'boot', 'next/app.js');
-    assertTrue(/setInterval\(refreshSyncRemoteBadge, SYNC_REMOTE_REFRESH_MS\)/.test(bootFn),
-      'boot() arms the slow remote interval');
+    // v3.30.0+: boot() arms the hidden-aware WRAPPER, not the raw refresher
+    // directly — the app now ships as a window a user may leave running all
+    // day, and this is a `git fetch` to GitHub, so a hidden/occluded window
+    // must not keep firing it every 10 minutes. The wrapper's own behaviour
+    // (spied, not grepped) is covered in test-next-recovery-and-badge.js §4b.
+    assertTrue(/setInterval\(refreshSyncRemoteBadgeIfVisible, SYNC_REMOTE_REFRESH_MS\)/.test(bootFn),
+      'boot() arms the slow remote interval, via the hidden-aware wrapper');
     assertTrue(/SYNC_REMOTE_REFRESH_MS = 10 \* 60_000/.test(appSrc),
       'the remote cadence is 10 minutes — an order of magnitude slower than the local one');
     const remoteFn = extractFn(appSrc, 'refreshSyncRemoteBadge', 'next/app.js');
