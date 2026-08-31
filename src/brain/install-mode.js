@@ -62,17 +62,51 @@
  * That throw is deterministic (it reads a literal in this file, no I/O), so it
  * is a red test on the first `npm test`, never a runtime surprise in the field.
  *
- * ── What is NOT wired yet, stated plainly ───────────────────────────────────
+ * ── Which keys have a branch, and which are DECLARED-ONLY ───────────────────
  *
- * `mcpLaunchStyle` and `restartStyle` have no consumer that BRANCHES on them
- * in this release — they are surfaced (in `GET /api/version` and System Check)
- * and otherwise descriptive. This repo has a standing allergy to shipping
- * unwired fields, so the exception is argued rather than assumed: both are
- * decisions the packaging release must make, both are cheap to state now while
- * the bundle arm is provably dead code, and paths.js set exactly this
- * precedent with `getUserDataDirState()` ("nothing in v3.1.0 calls this yet").
- * If the packaging work concludes a different vocabulary is right, changing a
- * string with no branch behind it costs nothing.
+ * `mcpLaunchStyle` and `restartStyle` shipped with NO branch behind them, on
+ * an argument recorded here at the time: both were decisions the packaging
+ * release had to make, and both were cheap to state while the bundle arm was
+ * provably dead code. Both now have one. The table below is the whole truth,
+ * measured off the tree rather than remembered — `scripts/test-install-mode.js`
+ * §4 enumerates the readers FROM DISK and fails if this list drifts from them:
+ *
+ *   BRANCHED
+ *     canSelfUpdateViaGit      src/routes/config.js (update, update-check)
+ *                              src/brain/diagnostics.js (skips the git row)
+ *     canRunNpmInstall         src/brain/diagnostics.js (same row)
+ *     mcpLaunchStyle           src/routes/mcp.js, src/brain/mcp-launcher.js
+ *     restartStyle             src/brain/restart.js   (POST /api/restart)
+ *     folderPickerStyle        src/routes/config.js   (pick-folder)
+ *
+ *   DECLARED-ONLY, with the reason — and this half was previously MIS-STATED
+ *   here, which is why it is now a list rather than a sentence. The old text
+ *   named mcpLaunchStyle and restartStyle as the unwired pair; in fact these
+ *   two were unread as well, and nothing said so:
+ *
+ *     canRebuildAppleScriptApp  SUBSUMED. `scripts/build-app.sh` is run at
+ *       exactly one place — inside `updateHandler`, below its
+ *       `canSelfUpdateViaGit` early return. A build that cannot reach the
+ *       updater cannot reach the rebuild, so a second check there would be
+ *       unreachable code, and unreachable code is not a guard. It stays as a
+ *       named FACT because the day anything else wants to run that script —
+ *       a repair action, a menu item — the answer must already be written
+ *       down, not re-derived from "well, we're not a bundle".
+ *
+ *     canWriteBesideCode        SUBSUMED, and deliberately so.
+ *       `src/brain/mcp-launcher.js` writes the shim into the USER DATA DIR
+ *       precisely so it never writes beside the code, and `paths.js` is what
+ *       decides where that is. Branching on this would invite the opposite
+ *       reading — that writing beside the code is a supported mode as long as
+ *       the flag is true. It is the statement of an invariant, not a switch.
+ *
+ * Two of the branched forks need an action this process cannot take by
+ * itself — showing a native directory chooser, and relaunching the
+ * application. Both resolve through `src/brain/desktop-host.js`, whose header
+ * explains why an in-process registry is a real channel rather than a wish.
+ * The rule that matters here: a bundle arm with nothing registered REFUSES.
+ * It never falls back to the repo behaviour, because a route that claims one
+ * contract and honours another is worse than one that says no.
  *
  * This module performs NO filesystem writes and never writes to stdout (it is
  * reachable from the MCP child process's import graph via paths.js's rules).
@@ -114,6 +148,28 @@ export const CAPABILITY_KEYS = Object.freeze([
   //   'app-relaunch' — the desktop shell relaunches itself; killing the node
   //                    process alone would leave a windowless app.
   'restartStyle',
+  // How `POST /api/config/pick-folder` asks the user for a directory.
+  //   'osascript'     — shell out to `osascript … choose folder` (today)
+  //   'native-dialog' — the desktop shell's own directory chooser, installed
+  //                     as the `pickFolder` hook in src/brain/desktop-host.js
+  //
+  // THIS IS NOT COSMETIC, and it is not the same question as "which dialog is
+  // prettier". Notarization requires the HARDENED RUNTIME, under which the
+  // osascript path is exposed to TWO INDEPENDENT mechanisms, neither of which
+  // covers the other:
+  //
+  //   1. Driving another app via Apple events needs
+  //      `com.apple.security.automation.apple-events`. Without it the call is
+  //      DENIED — an error the route can report.
+  //   2. Reading a folder under Documents / Desktop / Downloads needs the
+  //      matching `NS*FolderUsageDescription` string in Info.plist. Without
+  //      it macOS does not deny the read, it KILLS THE PROCESS.
+  //
+  // A capability that can end the process is not one to leave implicit, and
+  // this is the ONE action an existing user must complete on their first
+  // screen — pointing the app at a wiki they already have. Getting it wrong
+  // does not degrade the app, it makes an existing second brain invisible.
+  'folderPickerStyle',
 ]);
 
 /**
@@ -147,6 +203,7 @@ const CAPABILITIES = Object.freeze({
     canWriteBesideCode: true,
     mcpLaunchStyle: 'node-script',
     restartStyle: 'respawn-node',
+    folderPickerStyle: 'osascript',
   }),
   // A positively-identified packaged app: signed, read-only, no .git, no npm.
   // Unreachable in production today — `scripts/build-app.sh` builds an
@@ -160,6 +217,7 @@ const CAPABILITIES = Object.freeze({
     canWriteBesideCode: false,
     mcpLaunchStyle: 'launcher-script',
     restartStyle: 'app-relaunch',
+    folderPickerStyle: 'native-dialog',
   }),
 });
 

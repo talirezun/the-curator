@@ -24,6 +24,7 @@ import {
 } from '../brain/write-registry.js';
 import { APP_ROOT } from '../brain/paths.js';
 import { getCapabilities, capabilityRefusal } from '../brain/install-mode.js';
+import { getDesktopHook } from '../brain/desktop-host.js';
 import { scrubPaths } from '../brain/scrub-paths.js';
 import { wikiPath } from '../brain/files.js';
 import { stat as fsStat } from 'node:fs/promises';
@@ -516,20 +517,58 @@ router.post('/domains-path', guardConcurrent('change the knowledge folder'), (re
   }
 });
 
-/** POST /api/config/pick-folder — opens native macOS folder picker via osascript.
- *  Guarded because this route does NOT merely return a path for the client to
- *  submit to /domains-path — it calls setDomainsDir() itself (below), so it is
- *  a mutation in its own right and needs the same protection.
+/**
+ * POST /api/config/pick-folder — ask the user for their knowledge folder.
+ *
+ * Guarded because this route does NOT merely return a path for the client to
+ * submit to /domains-path — it calls setDomainsDir() itself (below), so it is
+ * a mutation in its own right and needs the same protection.
+ *
+ * ── FORKED on `folderPickerStyle` (see src/brain/install-mode.js) ───────────
+ *
+ * REPO ARM ('osascript') — byte-identical to every version that has shipped.
+ * `osascript … choose folder` on the server's own machine.
+ *
+ * BUNDLE ARM ('native-dialog') — the desktop shell's `pickFolder` hook, from
+ * `src/brain/desktop-host.js`. The route can reach Electron's own dialog
+ * because `desktop/main.js` imports `src/server.js` INTO THE ELECTRON MAIN
+ * PROCESS — one realm, no child, no IPC — which is the fact that makes this a
+ * branch rather than a refusal. Read that module's header before changing it.
+ *
+ * WHY THE BUNDLE ARM DOES NOT KEEP osascript AS A FALLBACK, which is the whole
+ * point of forking rather than adding a try/catch: under the hardened runtime
+ * notarization requires, a missing `NS*FolderUsageDescription` does not deny
+ * the read, it KILLS THE PROCESS. There is no error to catch and fall back
+ * from — the app is simply gone, mid-first-run, on the one action an existing
+ * user must complete to see a wiki they already have. A refusal that names the
+ * typed-path route is recoverable; a dead process is not.
+ *
+ * ── WHAT BOTH ARMS SHARE, and why that is structural ───────────────────────
+ *
+ * Everything after a path comes back — existence, the concurrency re-check,
+ * the mutation, the response shape — lives in ONE closure below, so the bundle
+ * arm cannot acquire a different set of post-pick rules by being written
+ * separately. The hook's whole contract is "return a path or null"; it
+ * validates nothing and decides nothing.
+ *
+ * `deps` is the test-only seam: null in production. It is the only way an
+ * offline suite can drive this handler without opening a real Finder dialog
+ * on the developer's screen or repointing their real knowledge folder.
  */
-router.post('/pick-folder', guardConcurrent('change the knowledge folder'), async (_req, res) => {
-  try {
-    const { stdout } = await execAsync(
-      `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
-      { timeout: 60000, env: SUBPROCESS_ENV }
-    );
-    const picked = stdout.trim();
+export async function pickFolderHandler(_req, res, deps = null) {
+  const caps = (deps && deps.caps) || getCapabilities();
+  const execAsync = (deps && deps.execAsync) || defaultExec;
+  const pathExists = (deps && deps.existsSync) || existsSync;
+  const busy = (deps && deps.hasActiveWrites) || hasActiveWrites;
+  const applyDomainsDir = (deps && deps.setDomainsDir) || setDomainsDir;
+  const pickHook = (deps && Object.hasOwn(deps, 'pickFolderHook'))
+    ? deps.pickFolderHook
+    : getDesktopHook('pickFolder');
+
+  // The ONE set of post-pick rules. Shared by both arms — see the docblock.
+  const accept = (picked) => {
     if (picked) {
-      if (!existsSync(picked)) {
+      if (!pathExists(picked)) {
         return res.status(400).json({ error: `Folder does not exist: ${picked}` });
       }
       // Re-check immediately before the mutation. The middleware above only
@@ -539,15 +578,55 @@ router.post('/pick-folder', guardConcurrent('change the knowledge folder'), asyn
       // user is still browsing for a folder. Deliberately NOT merged into the
       // `cancelled` branch: the shipping frontend checks `data.cancelled`
       // BEFORE `res.ok`, so a refusal must never carry that field.
-      if (hasActiveWrites()) {
+      if (busy()) {
         const { status, body } = conflictResponse('change the knowledge folder');
         return res.status(status).json(body);
       }
-      setDomainsDir(picked);
+      applyDomainsDir(picked);
       res.json({ ok: true, path: picked });
     } else {
       res.json({ cancelled: true });
     }
+  };
+
+  if (caps.folderPickerStyle === 'native-dialog') {
+    if (typeof pickHook !== 'function') {
+      // NOT a fallback to osascript — see the docblock. The hint names the
+      // route that has always existed and needs no dialog at all, so the
+      // user's first-run task is still completable.
+      const { status, body } = capabilityRefusal('folderPickerStyle', 'open a folder picker', {
+        folderPickerStyle: caps.folderPickerStyle,
+        hint: 'Type or paste the full path to your knowledge folder instead — ' +
+              'the Knowledge base field in Settings accepts one directly.',
+      });
+      return res.status(status).json(body);
+    }
+    let picked;
+    try {
+      picked = await pickHook({ prompt: 'Select your Knowledge Base folder:' });
+    } catch (err) {
+      // Deliberately NOT routed through the osascript classifier below: an
+      // exit code and an AppleScript -128 mean nothing here, and reading a
+      // shell error's vocabulary onto a native dialog is exactly the
+      // mis-reporting that classifier exists to stop.
+      return res.status(500).json({
+        error: (err && err.message) || 'The folder picker failed.',
+        hint: 'The Curator asked the desktop app to show a folder chooser and it ' +
+              'reported an error. You can type or paste the full path instead.',
+      });
+    }
+    // A hook that returns null/'' cancelled. Anything else is a path, and goes
+    // through exactly the same rules the osascript arm's output does.
+    return accept(typeof picked === 'string' ? picked.trim() : '');
+  }
+
+  try {
+    const { stdout } = await execAsync(
+      `osascript -e 'POSIX path of (choose folder with prompt "Select your Knowledge Base folder:")'`,
+      { timeout: 60000, env: SUBPROCESS_ENV }
+    );
+    const picked = stdout.trim();
+    accept(picked);
   } catch (err) {
     // A REAL cancel is AppleScript error -128. `osascript` exits 1 on ANY
     // script error, so treating a bare exit-1 as Cancel reports a PERMISSION
@@ -577,7 +656,11 @@ router.post('/pick-folder', guardConcurrent('change the knowledge folder'), asyn
       });
     }
   }
-});
+}
+
+// Registered by reference and with NO deps — the seam is null in production.
+router.post('/pick-folder', guardConcurrent('change the knowledge folder'),
+  (req, res) => pickFolderHandler(req, res));
 
 // ── API Keys ────────────────────────────────────────────────────────────────
 

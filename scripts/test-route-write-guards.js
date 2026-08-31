@@ -361,6 +361,21 @@ function dumbCountDirectCalls(stripped, routerVar) {
  * `body` here is the brace-matched ARGUMENT LIST of the registration —
  * `('/update', (req, res) => updateHandler(req, res))` — not just the
  * callback, which is why the match is not anchored to the start.
+ *
+ * ── IT APPENDS, IT DOES NOT REPLACE, and that was a real hole ───────────────
+ *
+ * The first version RETURNED the handler body in place of the registration.
+ * That silently discarded any MIDDLEWARE on the registration line, so a route
+ * guarded the way most of config.js is —
+ *
+ *   router.post('/pick-folder', guardConcurrent('…'), (req, res) => h(req, res));
+ *
+ * — measured as the handler alone, saw no `guardConcurrent`, and reported a
+ * correctly-guarded route as unguarded. It happened not to bite while the one
+ * delegating route also carried `hasActiveWrites()` inside its handler; the
+ * second delegating route made it visible immediately. Concatenating keeps
+ * both windows, so a guard in EITHER place counts and deleting it from BOTH
+ * is still the only way to go green.
  */
 function resolveDelegatedBody(body, fileSrc) {
   if (body.includes('{')) return body;
@@ -375,7 +390,7 @@ function resolveDelegatedBody(body, fileSrc) {
   let depth = 0;
   for (let i = open; i < fileSrc.length; i++) {
     if (fileSrc[i] === '{') depth++;
-    else if (fileSrc[i] === '}') { depth--; if (depth === 0) return fileSrc.slice(open, i + 1); }
+    else if (fileSrc[i] === '}') { depth--; if (depth === 0) return body + '\n' + fileSrc.slice(open, i + 1); }
   }
   return body;
 }
@@ -829,18 +844,67 @@ console.log('\n=== 6. Source guards — shape of the fix ===');
     'no hand-rolled 409 in config.js — all refusals go through conflictResponse()');
 
   // pick-folder's post-dialog re-check. The middleware only proves the state
-  // when the dialog OPENED; osascript blocks for up to 60 s. This cannot be
+  // when the dialog OPENED; the dialog blocks for up to 60 s. This cannot be
   // exercised over HTTP without opening a real Finder dialog, so it is pinned
   // at the source level.
-  const pickStart = src.indexOf(`router.post('/pick-folder'`);
-  const pickEnd = src.indexOf(`router.post('/api-keys'`, pickStart);
-  assert(pickStart !== -1 && pickEnd > pickStart, 'located the /pick-folder handler');
-  const pickBody = src.slice(pickStart, pickEnd);
-  const recheck = pickBody.indexOf('hasActiveWrites()');
-  const setCall = pickBody.indexOf('setDomainsDir(picked)');
-  assert(recheck !== -1, '/pick-folder re-checks hasActiveWrites() after the dialog returns');
+  //
+  // ── THE WINDOW FOLLOWS THE DELEGATION; IT WAS NOT WIDENED ─────────────────
+  //
+  // This used to slice from `router.post('/pick-folder'` to the next
+  // registration. The handler has since moved out to an exported
+  // `pickFolderHandler` (the folderPickerStyle fork — see
+  // src/brain/install-mode.js), so that window is now two lines long and this
+  // check would have gone green over an empty region. Same call, same answer
+  // as `/update` below: FOLLOW the move. Widening the window to "somewhere in
+  // config.js" would also go green on the guard's DELETION, which is worse.
+  //
+  // ── AND IT NO LONGER PINS A BARE CALL, because a bare call is now wrong ───
+  //
+  // The handler resolves both collaborators through the test seam
+  // (`deps.hasActiveWrites || hasActiveWrites`), so the literal
+  // `hasActiveWrites()` and `setDomainsDir(picked)` are gone by design — an
+  // offline suite cannot drive this handler without them, and the alternative
+  // is a test that repoints the developer's real knowledge folder. What is
+  // asserted instead is strictly MORE: that the seam's DEFAULT is the real
+  // function (so production behaviour is unchanged), and that the re-check
+  // still runs before the mutation.
+  const pickDecl = src.search(/export\s+async\s+function\s+pickFolderHandler\s*\(/);
+  assert(pickDecl !== -1, 'located the exported /pick-folder handler');
+  let pickBody = '';
+  {
+    const open = src.indexOf('{', src.indexOf(')', pickDecl));
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') { depth--; if (depth === 0) { pickBody = src.slice(open, i + 1); break; } }
+    }
+  }
+  assert(pickBody.length > 200, `brace-matched the handler body (${pickBody.length} chars — a desynced matcher would be tiny)`);
+  assert(/\|\|\s*hasActiveWrites\b/.test(pickBody),
+    '/pick-folder\'s concurrency seam DEFAULTS to the real hasActiveWrites (production is unguarded otherwise)');
+  assert(/\|\|\s*setDomainsDir\b/.test(pickBody),
+    '/pick-folder\'s mutation seam DEFAULTS to the real setDomainsDir');
+  const recheck = pickBody.indexOf('if (busy())');
+  const setCall = pickBody.indexOf('applyDomainsDir(picked)');
+  assert(recheck !== -1, '/pick-folder re-checks for active writes after the dialog returns');
+  assert(setCall !== -1, '/pick-folder applies the picked path through the seam');
   assert(recheck !== -1 && setCall !== -1 && recheck < setCall,
-    '/pick-folder re-check happens BEFORE setDomainsDir(picked), not after');
+    '/pick-folder re-check happens BEFORE the domains-dir mutation, not after');
+  // The re-check must be SHARED by both arms of the folderPickerStyle fork. If
+  // the native-dialog arm ever grew its own copy of the post-pick rules, this
+  // is where the drift would start — so there must be exactly one of each.
+  //
+  // COUNTED BY CALL SITE, NOT BY ARGUMENT NAME. The first version of this
+  // assertion matched `applyDomainsDir(picked)` literally and a mutation that
+  // gave the bundle arm its own unguarded mutation — `applyDomainsDir(chosen)`
+  // — sailed straight past it while three behavioural assertions in
+  // test-install-mode.js §5b went red. Matching the call, whatever it is
+  // handed, is what makes this a second, independent layer rather than a
+  // spelling check.
+  assert((pickBody.match(/\bbusy\s*\(\s*\)/g) || []).length === 1,
+    'there is exactly ONE concurrency re-check call in the handler — both arms share it');
+  assert((pickBody.match(/\bapplyDomainsDir\s*\(/g) || []).length === 1,
+    'and exactly ONE mutation call site, whatever it is passed');
 
   // /update must keep its own guard -- this change must not have disturbed it.
   //
@@ -2077,6 +2141,46 @@ console.log('\n=== 14. MUTATION-PROOF: findings 9a (single exemption list) & 9b 
   const realWritabilityCountAfter = HEALTH_GUARD_CLASSES.find(c => c.name === 'writability').exemptions.length;
   eq(realWritabilityCountAfter, realWritabilityCountBefore,
     `  (re-confirm iii) building the bogus copy above did not mutate the real, shared HEALTH_GUARD_CLASSES (still ${realWritabilityCountBefore} writability exemptions, derived from a before-snapshot rather than a hardcoded number)`);
+}
+
+console.log('\n=== 14c. resolveDelegatedBody APPENDS, so a middleware guard survives the follow ===');
+{
+  // The bug this control exists for, reproduced against synthetic input:
+  // a route whose guard is MIDDLEWARE and whose handler is DELEGATED was
+  // measured as the handler alone, and reported unguarded. It went unnoticed
+  // while the only delegating route also guarded inside its handler.
+  const fileSrc =
+    "export async function h(_req, res, deps = null) {\n" +
+    "  return res.json({ ok: true });\n" +
+    "}\n";
+  const registration = "('/thing', guardConcurrent('do the thing'), (req, res) => h(req, res))";
+  const resolved = resolveDelegatedBody(registration, fileSrc);
+  assert(resolved.includes('guardConcurrent'),
+    '14c: the middleware guard from the REGISTRATION survives the delegation-follow');
+  assert(resolved.includes('res.json'),
+    '14c: and the delegated HANDLER body is present too — it appends, it does not choose');
+  assert(bodyIsGuarded(resolved, ['guardConcurrent', 'hasActiveWrites'], 'any'),
+    '14c: so the classifier sees a guard where one really is');
+
+  // CONTROL i: with the middleware removed there is genuinely no guard in
+  // either window, and the classifier must still say so. Otherwise this fix
+  // would be a way of making every delegating route pass.
+  const unguarded = resolveDelegatedBody("('/thing', (req, res) => h(req, res))", fileSrc);
+  assert(!bodyIsGuarded(unguarded, ['guardConcurrent', 'hasActiveWrites'], 'any'),
+    '14c CONTROL: a delegating route with NO guard anywhere is still reported unguarded');
+
+  // CONTROL ii: a guard in the HANDLER alone still counts — the /update shape,
+  // which must not regress while fixing the /pick-folder shape.
+  const inHandler = resolveDelegatedBody("('/thing', (req, res) => h(req, res))",
+    "export async function h(_req, res) {\n  if (hasActiveWrites()) return;\n}\n");
+  assert(bodyIsGuarded(inHandler, ['guardConcurrent', 'hasActiveWrites'], 'any'),
+    '14c CONTROL: a guard inside the delegated handler alone still counts (the /update shape)');
+
+  // CONTROL iii: an INLINE handler is never rewritten — the narrowness the
+  // docblock claims, asserted rather than assumed.
+  const inline = "('/thing', (req, res) => { res.json({ ok: true }); })";
+  assert(resolveDelegatedBody(inline, fileSrc) === inline,
+    '14c CONTROL: a registration containing a brace is returned untouched');
 }
 
 console.log('\n=== 15. MUTATION-PROOF (finding 7): source-scan cannot tell a live concurrency guard from a dead-code-shaped one, a live registry poll can ===');

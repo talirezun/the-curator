@@ -55,7 +55,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { __setDomainsDirOverride } from '../src/brain/config.js';
 import { __setUserDataDirOverride, __setLogDirOverride } from '../src/brain/paths.js';
-import { runQuickDiagnostics, runLiveApiCheck } from '../src/brain/diagnostics.js';
+import { runQuickDiagnostics, runLiveApiCheck, checkGit } from '../src/brain/diagnostics.js';
 
 let passed = 0, failed = 0;
 const fails = [];
@@ -725,6 +725,71 @@ try {
     assert(!r.generateTextCalled, 'harness empty-message: generateText never invoked');
     assert(r.result.ok === false, `harness empty-message: ok:false (got ${JSON.stringify(r.result)})`);
     assert(r.result.error === '', `harness empty-message: error is the empty string, not swallowed or replaced (got: "${r.result.error}")`);
+  }
+  // ═══════════════════════════════════════════════════════════════════════
+  // F. checkGit() FORKS ON A CAPABILITY — both arms, driven behaviourally
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // WHY THIS SECTION EXISTS: `scripts/test-install-mode.js` §4 enumerates
+  // capability fork sites FROM DISK and requires each to name an owning suite
+  // that mentions every capability it reads. `src/brain/diagnostics.js` was a
+  // fork site with NO owning suite — it was invisible for three releases
+  // because that scan only walked `src/routes/`. This is the coverage the
+  // mapping now claims; adding the mapping without this section would be
+  // exactly the "waving a new fork through" the Map replaced a Set to prevent.
+  //
+  // The two capabilities read are `canSelfUpdateViaGit` and `canRunNpmInstall`.
+  section('checkGit forks on canSelfUpdateViaGit + canRunNpmInstall');
+  {
+    const SKIP_DETAIL = 'Not required by this build.';
+
+    // BUNDLE arm: a build that can neither update via git nor npm install has
+    // no use for git, so the row is INFO and no subprocess is attempted.
+    const bundleRow = await checkGit({ canSelfUpdateViaGit: false, canRunNpmInstall: false });
+    assert(bundleRow.id === 'git', 'bundle arm: still emits the "git" row (never a missing check)');
+    assert(bundleRow.status === 'info', `bundle arm: status is info, not fail (got ${bundleRow.status})`);
+    assert(bundleRow.detail === SKIP_DETAIL, `bundle arm: detail is the skip line (got "${bundleRow.detail}")`);
+
+    // REPO arm: the real probe runs. Its VERDICT depends on the machine, so
+    // the assertion is on the thing that is machine-independent — it is not
+    // the skip row — rather than on ok/fail, which would make this suite
+    // depend on whether the runner happens to have git.
+    const repoRow = await checkGit({ canSelfUpdateViaGit: true, canRunNpmInstall: true });
+    assert(repoRow.id === 'git', 'repo arm: emits the "git" row');
+    assert(repoRow.detail !== SKIP_DETAIL, 'repo arm: does NOT take the skip branch');
+    assert(['ok', 'warn', 'fail'].includes(repoRow.status),
+      `repo arm: reports a real probe verdict (got ${repoRow.status})`);
+
+    // EITHER capability alone is enough to keep the probe. This is the part a
+    // naive `!caps.canSelfUpdateViaGit` check would get wrong: a git-less but
+    // npm-capable install (a tarball drop, a cask staging dir) still needs git
+    // for Personal Sync, which is half of what the row is about.
+    const gitOnly = await checkGit({ canSelfUpdateViaGit: true, canRunNpmInstall: false });
+    assert(gitOnly.detail !== SKIP_DETAIL, 'canSelfUpdateViaGit alone keeps the probe');
+    const npmOnly = await checkGit({ canSelfUpdateViaGit: false, canRunNpmInstall: true });
+    assert(npmOnly.detail !== SKIP_DETAIL, 'canRunNpmInstall alone keeps the probe');
+
+    // An unreadable capability table must FAIL OPEN — probe rather than skip.
+    // install-mode.js's asymmetry: a build wrongly told it needs git shows one
+    // extra row; a build wrongly told it does not hides a real failure.
+    const nullCaps = await checkGit(null);
+    assert(nullCaps.detail !== SKIP_DETAIL, 'null caps falls back to probing, never to skipping');
+
+    // CONTROL: the skip detail this section keys on is the string the module
+    // really emits, not one this suite invented. If it is reworded, the
+    // assertions above would all pass vacuously — so prove it appears in the
+    // source exactly once.
+    const diagSrc = readFileSync(path.join(__dirname, '..', 'src/brain/diagnostics.js'), 'utf8');
+    const skipOccurrences = diagSrc.split(SKIP_DETAIL).length - 1;
+    assert(skipOccurrences === 1,
+      `CONTROL: the skip detail appears exactly once in diagnostics.js (found ${skipOccurrences})`);
+
+    // CONTROL: the default parameter still resolves live capabilities, so the
+    // production call site (`await checkGit()`) is genuinely unchanged. On this
+    // checkout that is repo mode, so the default must NOT be the skip row.
+    const defaulted = await checkGit();
+    assert(defaulted.detail !== SKIP_DETAIL,
+      'CONTROL: checkGit() with NO argument resolves real capabilities (repo here) and probes');
   }
 } catch (err) {
   bad('unexpected throw aborted the suite', `${err.message}\n${err.stack || ''}`);

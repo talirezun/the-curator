@@ -207,13 +207,21 @@ function checkInstallMode() {
 //
 // SKIPPED entirely on a build that needs neither — reporting a missing tool a
 // packaged app never invokes would be a warning about nothing.
-async function checkGit() {
-  let caps;
+//
+// FORKED on `canSelfUpdateViaGit` + `canRunNpmInstall`. `caps` is a defaulted
+// parameter rather than a lookup in the body ONLY so a suite can drive both
+// arms; the default is evaluated per call, so the production call site
+// (`await checkGit()`) and its behaviour are unchanged. A capability lookup
+// that throws still resolves to null and still takes the git-probing arm —
+// the permissive direction, matching install-mode.js's own asymmetry.
+function capabilitiesOrNull() {
   try {
-    caps = getCapabilities();
+    return getCapabilities();
   } catch {
-    caps = null;
+    return null;
   }
+}
+export async function checkGit(caps = capabilitiesOrNull()) {
   if (caps && !caps.canSelfUpdateViaGit && !caps.canRunNpmInstall) {
     return check('git', 'Git', 'info', 'Not required by this build.');
   }
