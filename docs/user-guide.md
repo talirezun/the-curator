@@ -2671,6 +2671,10 @@ This means the AI already did its work and your pages are safely written to disk
 
 Check the log for the exact error:
 ```bash
+cat "$HOME/Library/Logs/The Curator/curator.log"
+
+# If the app never started at all, nothing could write that file yet —
+# check the launcher's raw output instead:
 cat /tmp/the-curator.log
 ```
 

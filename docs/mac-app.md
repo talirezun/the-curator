@@ -64,7 +64,7 @@ After installation:
 | Start the app | Click the Dock icon |
 | Reopen after closing the tab | Click the Dock icon again |
 | Fully quit | Right-click the Dock icon → **Quit** |
-| View logs (if something goes wrong) | `cat /tmp/the-curator.log` |
+| View logs (if something goes wrong) | `cat "$HOME/Library/Logs/The Curator/curator.log"` |
 
 > **Closing the browser tab does not stop the server.** The server continues running in the background using virtually no CPU. This is normal and intentional — click the Dock icon to reopen.
 
@@ -91,7 +91,7 @@ The build script also runs automatically during updates (via the **Settings** vi
 
 Check the log first:
 ```bash
-cat /tmp/the-curator.log
+cat "$HOME/Library/Logs/The Curator/curator.log"
 ```
 
 The most common causes:
@@ -104,7 +104,13 @@ The most common causes:
 
 **The Dock icon bounces but nothing happens**
 
-The app is waiting for the server to start (up to 20 seconds). If the server can't start, a dialog appears after the timeout. Check `/tmp/the-curator.log` for the error.
+The app is waiting for the server to start (up to 20 seconds). If the server can't start, a dialog appears after the timeout.
+
+**Two logs exist and they answer different questions.** The app writes its own log at
+`~/Library/Logs/The Curator/curator.log` — startup facts, provider and model, update outcomes,
+and errors it could catch. But a failure that happens *before* the server is running
+never reaches it, because nothing is there to write it yet. For that case check
+`/tmp/the-curator.log`, which is the launcher's raw stdout capture.
 
 **I moved the project folder**
 
