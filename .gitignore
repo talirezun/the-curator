@@ -121,3 +121,41 @@ docs/apple-developer-enrolment.md
 # committed file. The MASTER lives outside this repository — see
 # docs/design-system-source.md. Never edit this copy expecting it to survive.
 the_curator_design_system/
+
+# ── Desktop packaging: build output and signing material ─────────────────────
+# Added in the SAME change that created `desktop/`, which is what the
+# .curator-install-id block above asks for: "If you add another runtime
+# artefact, add it here in the same change, not in the release that discovers
+# it." This is the SEVENTH instance of that class — and the first one where
+# the artefact is not merely noise but a CREDENTIAL.
+#
+# Two categories, and the second is the one that matters:
+#
+#   1. Build output. `desktop/` has its own package.json (Electron must never
+#      reach the root manifest — the auto-updater runs `npm install` on every
+#      user's machine), so it grows its own node_modules and its own lockfile,
+#      and electron-builder writes into desktop/dist/.
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+desktop/release/
+#
+#   2. Apple signing and notarization material. THIS REPOSITORY IS PUBLIC.
+#      A Developer ID certificate, an App Store Connect key or an
+#      app-specific password committed here is a credential leak that cannot
+#      be undone by a later commit — it has to be revoked at Apple. These
+#      patterns are deliberately UNANCHORED so they match at any depth,
+#      including in a scratch folder someone makes while debugging a build,
+#      and they are here BEFORE any signing work exists so no such file can
+#      ever be produced into an unguarded tree.
+#
+#      Verified when added: no tracked file matches any of these patterns.
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+.notarize.json
+.env.notarize

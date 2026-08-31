@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hardened-runtime entitlements for The Curator.
+
+  ╔═══════════════════════════════════════════════════════════════════════════╗
+  ║  INERT TODAY. Entitlements are applied at CODE-SIGNING time, and this     ║
+  ║  build is deliberately unsigned (`mac.identity: null`). This file exists  ║
+  ║  so the reasoning is on record BEFORE the first signed build, not after   ║
+  ║  someone spends an afternoon on a picker that silently does nothing.      ║
+  ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Notarization requires the hardened runtime, and the hardened runtime turns
+  several things that work fine today into hard failures. The four below are
+  the ones this app actually needs.
+
+  ── The three Electron ones ─────────────────────────────────────────────────
+  V8 compiles JavaScript at runtime. Under the hardened runtime that is a
+  code-injection violation unless allow-jit is granted, and Electron's own
+  documentation pairs it with allow-unsigned-executable-memory. The dyld one
+  is needed because Electron's helper processes are launched with
+  ELECTRON_RUN_AS_NODE and friends in the environment.
+
+  ── The AppleEvents one, and the honest uncertainty about it ────────────────
+  INFERRED, NOT MEASURED — nothing here has been built, so this could not be
+  tested. State of the reasoning:
+
+    `src/routes/config.js`'s POST /api/config/pick-folder — the folder picker
+    an EXISTING USER hits on their very first screen, to point the app at a
+    knowledge folder they already have — shells out to:
+
+        osascript -e 'POSIX path of (choose folder with prompt "…")'
+
+    `choose folder` is a StandardAdditions command, and my reading is that it
+    is handled IN the osascript process rather than sent as an Apple Event to
+    another application. On that reading, com.apple.security.automation.apple-
+    events is NOT strictly required. I am not confident enough in that to bet
+    the first-run experience on it, and the asymmetry is not close: granting
+    the entitlement costs one key and one usage string, while being wrong
+    about it costs the single most important action an existing user takes.
+
+    IT IS GRANTED HERE DEFENSIVELY. That is a hedge, and it is labelled as
+    one. It is not a substitute for measuring it on a real signed build.
+
+  ── The sharper hazard, which this file CANNOT fix ──────────────────────────
+  Whatever grants the picker, the app then READS the chosen folder. If that
+  folder is under ~/Documents, ~/Desktop or ~/Downloads — where a "second
+  brain" folder very plausibly lives — macOS TCC gates it, and a hardened,
+  notarized app with no usage-description string in Info.plist is KILLED
+  rather than gracefully denied. The NS*FolderUsageDescription strings are set
+  in electron-builder.yml's `mac.extendInfo` for that reason; they are a
+  DIFFERENT mechanism from the entitlements in this file and neither covers
+  the other.
+
+  ── And the failure would not even look like a failure ──────────────────────
+  Read the picker route's catch block: it treats `err.code === 1` as "the user
+  pressed Cancel" and answers `{cancelled: true}`. `osascript` exits 1 on a
+  script error too — including a permission refusal. So a TCC or entitlement
+  denial is not merely silent, it is MISREPORTED to the frontend as a
+  deliberate user cancellation, which is the hardest possible thing to
+  diagnose from a support conversation. That is a defect in `src/`, outside
+  this change's scope, and it is reported rather than patched.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+</dict>
+</plist>

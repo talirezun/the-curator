@@ -1,0 +1,164 @@
+name: Desktop DMG
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  TAG-GATED. Never `main`, never a pull request, never `workflow_dispatch`.
+#  Every one of those absences is load-bearing — read this block before adding
+#  a trigger.
+#
+#  ── 1. An ordinary push must never reach here ────────────────────────────
+#  macOS runners bill at 10x the Linux rate, and this workflow is the one
+#  that will eventually hold Developer ID signing secrets. Neither belongs on
+#  every commit. Tag-only also inherits the property `.github/workflows/
+#  test.yml` relies on for its own live job: GitHub withholds secrets from
+#  fork pull requests, and a fork cannot push a tag to this repository at all.
+#
+#  ── 2. It must not be able to join the release gate ──────────────────────
+#  `scripts/release.js` gates a release on CI, and it finds the run to read
+#  like this (watchCi):
+#
+#      gh run list --branch <branch> --limit 10 --json databaseId,headSha,…
+#      runs.find((r) => r.headSha === sha)
+#
+#  That `find` is filtered by BRANCH and by SHA — it is NOT filtered by
+#  workflow. So any second workflow producing a run on the same branch at the
+#  same SHA is a coin flip for which run the gate reads, and the gate would
+#  then report THIS workflow's job conclusions as if they were the test
+#  suite's. That is precisely the "a gate that passes on nothing" failure
+#  v3.29.0's `ci-not-reachable` check exists to prevent, arriving through a
+#  different door.
+#
+#  Two absences keep this workflow out of that query:
+#
+#    · no `branches:` and no bare `push:` — a tag push produces a run whose
+#      `head_branch` is the TAG name, not `main`, so `--branch main` and
+#      `--branch release/vX.Y.Z` both exclude it.
+#
+#    · no `workflow_dispatch` — and this one is the non-obvious half. A
+#      manual dispatch runs against a BRANCH, so its run WOULD carry
+#      `head_branch: main` and could collide on SHA with the very run
+#      `release.js --watch-main` is waiting for. Convenience is not worth
+#      re-opening that. To exercise this workflow, push a throwaway tag and
+#      delete it afterwards.
+#
+#  `scripts/test-desktop-packaging.js` asserts all of the above against this
+#  file. If you add a trigger, that suite goes red and it is right to.
+#
+#  THE DURABLE FIX BELONGS IN release.js, NOT HERE: `gh run list` accepts
+#  `--workflow`, and passing `--workflow test.yml` would make the gate immune
+#  to any second workflow forever. That file is outside this change's scope;
+#  it is reported rather than edited.
+# ═══════════════════════════════════════════════════════════════════════════
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Read-only token. This workflow builds an artifact; it publishes nothing,
+# creates no release, and writes nothing back to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-dmg-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Cheap gate, on Linux, so a macOS runner is only started when there is
+  #    actually something to build. Today there never is: `desktop/` is a
+  #    committed SCAFFOLD with no lockfile and nothing installed, so this job
+  #    reports that in one line and the build job skips. It is deliberately a
+  #    PASS rather than a failure — a permanently red workflow on every tag
+  #    trains people to ignore red, and there is no defect here to report.
+  gate:
+    name: Desktop build gate
+    runs-on: ubuntu-latest
+    outputs:
+      buildable: ${{ steps.check.outputs.buildable }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        run: |
+          if [ -f desktop/package-lock.json ]; then
+            echo "buildable=true" >> "$GITHUB_OUTPUT"
+            echo "desktop/package-lock.json present — proceeding to build." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "buildable=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Desktop build skipped"
+              echo
+              echo "\`desktop/package-lock.json\` does not exist, so \`desktop/\` has never had"
+              echo "\`npm install\` run in it. It is a committed scaffold — see \`desktop/README.md\`."
+              echo
+              echo "This is expected and is not a failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  dmg:
+    name: Build unsigned DMG (macOS)
+    needs: gate
+    if: needs.gate.outputs.buildable == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # The app's OWN runtime dependencies, production only. electron-builder.yml
+      # copies this tree into the packaged app rather than installing a second
+      # one under desktop/, because the runtime deps belong to the app, not to
+      # the shell. `--omit=dev` is belt-and-braces: the root manifest has no
+      # devDependencies, and scripts/test-desktop-packaging.js asserts that.
+      - name: Install app runtime dependencies (repo root)
+        run: npm ci --omit=dev
+
+      # Electron + electron-builder, isolated in desktop/. This is the whole
+      # reason for the second manifest: nothing here can ever reach the root
+      # package.json that every user's auto-updater runs `npm install` against.
+      - name: Install Electron toolchain (desktop/)
+        working-directory: desktop
+        run: npm ci
+
+      # ── UNSIGNED, and forced to stay that way ─────────────────────────────
+      # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder finding an
+      # identity in a runner keychain and quietly producing a signed artifact
+      # nobody configured. It pairs with `mac.identity: null` in
+      # electron-builder.yml — belt and braces, because the failure mode is
+      # silent.
+      #
+      # NO SIGNING OR NOTARIZATION CREDENTIALS APPEAR IN THIS FILE, and none
+      # may ever be written here as a literal — this repository is PUBLIC.
+      # When signing lands it arrives as GitHub Actions secrets consumed by
+      # electron-builder's own environment variables, referenced by NAME only:
+      #
+      #     CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+      #     CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #
+      # Those secrets do not exist yet, and adding them is a decision for the
+      # packaging release, not a step someone copies out of a comment.
+      #
+      # The version comes from the git tag: desktop/package.json is pinned at
+      # 0.0.0 on purpose so no one can ship a DMG whose version was hand-typed
+      # and drifted from the release it claims to be.
+      - name: Build DMG (unsigned)
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          npx --no-install electron-builder \
+            --mac \
+            --config electron-builder.yml \
+            --config.extraMetadata.version="$VERSION" \
+            --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: the-curator-dmg-${{ github.ref_name }}
+          path: desktop/dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14

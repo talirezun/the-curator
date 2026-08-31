@@ -1,0 +1,208 @@
+#  electron-builder configuration — The Curator desktop shell
+#
+#  ╔═════════════════════════════════════════════════════════════════════════╗
+#  ║  NEVER RUN. electron-builder is declared in desktop/package.json and    ║
+#  ║  has never been installed, so no value below has been validated against ║
+#  ║  the real tool. The `files` mapping in particular is the first thing to ║
+#  ║  break and the first thing to fix. See desktop/README.md.               ║
+#  ╚═════════════════════════════════════════════════════════════════════════╝
+
+appId: com.talirezun.the-curator
+productName: The Curator
+copyright: Copyright © Tali Rezun
+
+directories:
+  # electron-builder runs from `desktop/`, so output lands in desktop/dist/.
+  # .gitignore covers it — see the "desktop build output" block there.
+  output: dist
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  asar: FALSE — a deliberate departure from the plan, argued rather than
+#  assumed. The plan frames asar as a thing to CONFIGURE, via
+#  `asarUnpack: mcp/**`. That addresses ONE of three independent hazards, and
+#  not the worst one.
+#
+#  (a) EVERY Personal Sync git call fails. VERIFIED IN THE SOURCE, not assumed:
+#
+#          src/brain/sync.js:21   const ROOT = APP_ROOT;
+#          src/brain/sync.js:125  cwd: ROOT,  // "Explicit cwd prevents
+#                                             //  getcwd: Operation not
+#                                             //  permitted on macOS"
+#          src/brain/paths.js:194 export const APP_ROOT =
+#                                   path.resolve(__dirname, '../..')
+#
+#      Inside an archive, `__dirname` for src/brain/sync.js is
+#      …/Resources/app.asar/src/brain, so APP_ROOT resolves to
+#      …/Resources/app.asar — which is a FILE on the real filesystem. Electron
+#      patches `fs` inside its own process; it does NOT patch the kernel. A
+#      child process gets its cwd from a real chdir, so `execAsync(... {cwd})`
+#      fails before git is even reached. `src/routes/config.js:2322` uses the
+#      identical `cwd: PROJECT_ROOT` (also APP_ROOT) for the updater's git
+#      calls, so the same defect hits both.
+#
+#      `asarUnpack` does not help. Unpacking moves the BYTES to
+#      app.asar.unpacked/, but the module is still resolved through the
+#      app.asar path, so `__dirname` — and therefore APP_ROOT, and therefore
+#      the cwd handed to a child process — is unchanged. Fixing it inside asar
+#      means teaching APP_ROOT to rewrite `.asar` → `.asar.unpacked`, i.e. a
+#      change in `src/brain/paths.js`, which this change does not own and
+#      which would be a poor first move: it makes a path constant that every
+#      other module depends on conditional on packaging.
+#
+#  (b) `appPath('mcp', 'server.js')` is written into Claude Desktop's own
+#      config file. Claude Desktop is an EXTERNAL process with no asar
+#      support, so it would be handed a path inside an archive it cannot open.
+#      `asarUnpack: mcp/**` moves the bytes but not the emitted path string,
+#      so this too needs a code change to be correct under asar.
+#
+#  (c) `src/brain/ingest.js:268` does
+#      `await import('pdf-parse/lib/pdf-parse.js')` — a DYNAMIC ESM import.
+#      Electron's asar support is built around CommonJS `require`; the ESM
+#      loader is a separate path and dynamic import of a file inside an
+#      archive is not a road worth being on for a first build.
+#
+#  `asar: false` removes all three AT ONCE, for some startup milliseconds and
+#  a larger bundle. The source is MIT in a public repository, so "readable
+#  inside the app" costs nothing that is not already true of `git clone`.
+#
+#  WHEN TO REVISIT: once (a) and (b) have real fixes in `src/` with their own
+#  guards. Not before, and not as a size optimisation.
+# ─────────────────────────────────────────────────────────────────────────────
+asar: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  files — UNVERIFIED. This is the mapping most likely to be wrong.
+#
+#  The packaged app root must end up FLAT, like this:
+#
+#      Contents/Resources/app/
+#        package.json        ← this project's (main: "main.js")
+#        main.js  preload.js  lib/
+#        src/**  mcp/**  node_modules/**
+#
+#  because two independent derivations have to agree on where the app root is:
+#  `desktop/main.js` probes for `src/server.js` beside itself, and
+#  `src/brain/paths.js` computes `path.resolve(__dirname, '../..')`. In the
+#  layout above both land on `app/`. Nest `src/` one level deeper and they
+#  disagree, which presents as an empty wiki rather than as an error.
+#
+#  node_modules is copied from the REPO ROOT rather than installed here,
+#  because `desktop/package.json` has no `dependencies` — the runtime deps
+#  belong to the app, not to the shell. This is safe in a way it usually is
+#  not: the root manifest has EIGHT dependencies and ZERO devDependencies, so
+#  there is no dev tree to accidentally ship. That property is asserted by
+#  scripts/test-desktop-packaging.js; if it ever stops being true, this line
+#  starts shipping a dev tree to users.
+# ─────────────────────────────────────────────────────────────────────────────
+files:
+  - package.json
+  - main.js
+  - preload.js
+  - lib/**/*
+  - from: ..
+    to: .
+    filter:
+      - src/**/*
+      - mcp/**/*
+      - node_modules/**/*
+      - LICENSE
+      - LICENSES/**/*
+      # NOT the repo root's package.json — the packaged app must keep THIS
+      # project's manifest, whose `main` points at main.js. Copying the root
+      # one over it produces an app whose entry point is src/server.js, i.e.
+      # a headless server with no window and no explanation.
+      - '!package.json'
+      - '!package-lock.json'
+      # Never ship the maintainer's data, credentials, or git history.
+      - '!domains/**/*'
+      - '!.git/**/*'
+      - '!**/.env'
+      - '!**/.curator-config.json'
+      - '!**/.sync-config.json'
+      - '!**/.sharedbrain-config.json'
+      - '!**/.knowledge-git/**/*'
+
+mac:
+  category: public.app-category.productivity
+  # Both architectures as SEPARATE artifacts, not a universal binary: a
+  # universal build doubles the download for every user to serve the other
+  # half's chip.
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # ── SIGNING IS NOT CONFIGURED, AND THAT IS THE POINT ──────────────────────
+  # Apple Developer enrolment, the Developer ID certificate, the hardened
+  # runtime, the entitlements file and notarization are ALL out of scope for
+  # this scaffold. Nothing here references a certificate, a team, an Apple ID
+  # or an app-specific password, and NO SUCH VALUE MAY EVER BE WRITTEN INTO
+  # THIS FILE — the repository is public.
+  #
+  # When signing does land, it arrives as GitHub Actions secrets consumed by
+  # electron-builder's own environment variables (CSC_LINK, CSC_KEY_PASSWORD,
+  # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) — set in the
+  # workflow from `secrets.*`, never committed, and never echoed.
+  #
+  # Until then the build is explicitly UNSIGNED. Without the line below,
+  # electron-builder auto-discovers any identity in the developer's own
+  # keychain and silently produces a locally-signed artifact that works on
+  # exactly one Mac — the most misleading possible outcome.
+  identity: null
+
+  # ── Hardened runtime + entitlements: WRITTEN NOW, INERT UNTIL SIGNING ─────
+  # Entitlements are applied at codesign time, and `identity: null` above means
+  # nothing is signed, so none of this has any effect today. It is here because
+  # the entitlement that matters is one whose absence fails SILENTLY on the
+  # first screen an existing user sees — see the long note in
+  # build/entitlements.mac.plist. Deciding it after the first signed build is
+  # how it gets missed.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+  # ── TCC usage descriptions — a DIFFERENT mechanism from entitlements ──────
+  # A hardened, notarized app that touches ~/Documents, ~/Desktop or
+  # ~/Downloads without the matching NS*UsageDescription string is KILLED by
+  # TCC, not gracefully denied. A "second brain" folder plausibly lives in
+  # exactly those places, and the app reads it on every ingest, chat and sync.
+  # NSAppleEventsUsageDescription pairs with the apple-events entitlement: the
+  # entitlement makes it POSSIBLE, this string is what the consent prompt says.
+  extendInfo:
+    NSAppleEventsUsageDescription: >-
+      The Curator uses a macOS folder picker so you can choose where your
+      knowledge base is stored.
+    NSDocumentsFolderUsageDescription: >-
+      The Curator reads and writes your knowledge base. Allow access if your
+      knowledge folder is in Documents.
+    NSDesktopFolderUsageDescription: >-
+      The Curator reads and writes your knowledge base. Allow access if your
+      knowledge folder is on the Desktop.
+    NSDownloadsFolderUsageDescription: >-
+      The Curator reads documents you ingest. Allow access if you ingest files
+      from Downloads.
+
+dmg:
+  # The /Applications symlink is not decoration. It is the first mitigation
+  # for App Translocation: an app run from the DMG or from ~/Downloads is
+  # executed from a randomised read-only mount under /private/var/folders,
+  # and `process.execPath` then points somewhere that will not exist next
+  # launch — which is exactly the path written into Claude Desktop's config.
+  contents:
+    - x: 130
+      y: 220
+      type: file
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+# ── NOT CONFIGURED, deliberately ─────────────────────────────────────────────
+# publish:        no GitHub Releases upload. The first DMG is a local artifact.
+# electron-updater: not installed, not wired. The plan's own advice is to ship
+#                   the first .dmg with auto-update DISABLED so "does the signed
+#                   bundle work on other Macs" and "does Squirrel.Mac work" are
+#                   two debugging sessions rather than one interleaved one.
+# afterSign:      no notarization hook. Requires paid enrolment.
+# win / linux:    out of scope.
+publish: null
