@@ -170,6 +170,13 @@ extraResources:
 
 mac:
   category: public.app-category.productivity
+  # Without this, electron-builder falls back to build/icon.icns (absent here)
+  # and then to its own default Electron icon — every packaged .app would ship
+  # the generic Electron mark rather than The Curator's. `images/applet.icns`
+  # is a REPO-ROOT asset shared with the AppleScript build (scripts/build-app.sh),
+  # not desktop-specific, so it is referenced relative to this file (desktop/)
+  # rather than copied into desktop/build/.
+  icon: ../images/applet.icns
   # Both architectures as SEPARATE artifacts, not a universal binary: a
   # universal build doubles the download for every user to serve the other
   # half's chip.
