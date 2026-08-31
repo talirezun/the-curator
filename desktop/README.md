@@ -157,7 +157,18 @@ It builds and it runs. It is still not a shippable product.
 - **No first-launch adoption of an existing repo install.** A user with a
   checkout and a DMG would end up with two installs pointing at one
   `domains/` folder and no migration story.
-- **No app icon**, no menu, no About panel, no crash reporting.
+- **No app icon**, no About panel, no crash reporting.
+- **The menu is Electron's default**, dumped from a running Electron 43.5.0
+  rather than recalled. ⌘Q is `role: quit` and reaches the write-status check;
+  ⌘R / ⇧⌘R reload the renderer, which since v3.24.0 is not data loss but does
+  discard an in-flight streamed chat; ⌘W is `role: close` and **nothing in the
+  entire menu creates a window**. That last one is why a close on macOS now
+  hides rather than destroys — see `main.js`. Removing ⌘R means building a
+  custom View menu, which is a bigger change than it looks.
+- **No keystroke in this repo is pressed by a test.** The menu was read, not
+  driven, and nothing proves the window drags — a native title bar is dragged
+  by the OS rather than by app code, which is the argument for choosing it, but
+  it is an argument and not a measurement.
 - **No Windows, no Linux.**
 
 ### The existing-user first run, and the one thing that fails silently
@@ -208,7 +219,83 @@ folderPickerStyle: 'osascript' | 'native-dialog'
 not a boolean" convention. `src/routes/config.js` and `src/brain/install-mode.js`
 are outside this change's scope, so this is a recommendation.
 
+---
+
+## The window: why there is a real title bar
+
+The first packaged build shipped `titleBarStyle: 'hiddenInset'` and produced
+three defects at once, all reported from real use on the very first install:
+the traffic lights were drawn **on top of** the rail's logo, the window could
+not be **dragged**, and it was hard to **grab to resize**.
+
+They are one defect. `hiddenInset` removes the title bar and hands the app the
+job of replacing it — and the app never took the job. Measured in the running
+renderer: a sweep of every element for `-webkit-app-region: drag` returned
+**zero**, and the rail is `(0, 0, 60x860)` with its logo mark at
+`(17, 12, 26x26)` — the exact rectangle macOS puts the buttons in.
+
+**Every frameless option was ruled out on evidence, not taste:**
+
+| Option | Why not |
+|---|---|
+| `trafficLightPosition` | Fixes the overlap only if there is somewhere free to put the buttons. The Curator's nav is a **vertical rail** spanning the full height; there is no empty horizontal strip. Move them down → the rail's own buttons; right → the view header. And it fixes neither dragging nor resizing. |
+| `titleBarStyle: 'hidden'` + `titleBarOverlay` | Checked against the installed Electron's typings, not from memory: `TitleBarOverlay.color` / `.symbolColor` are `@platform win32,linux`. On macOS the option only enables the Window Controls Overlay **CSS env vars** and JS API. It paints nothing and creates no drag region. |
+| `webContents.insertCSS` from `main.js` | Stays inside this folder, and was still rejected. It must key on `src/public/next` selectors that this change does not own, and a guard could only ever assert a **string was inserted** — never that the selector **matched**. `-webkit-app-region: drag` also makes every descendant unclickable unless individually walked back with `no-drag`, and the zone contains the app's whole primary nav. It would not fix the overlap either, which needs the app's content pushed down. |
+
+So the title bar does all three jobs immediately and for free, and
+`nativeTheme.themeSource = 'dark'` pays its one real cost — a light grey strip
+above a near-black app on a light-mode Mac. That is safe for the app's own
+theming because the `/next` stylesheets carry an explicit **prohibition** on
+`prefers-color-scheme` and stamp `data-theme` instead.
+
+**A frameless design is the right long-term answer** and belongs with the app
+CSS that has to carry it. See the `src/` recommendation below.
+
+### Remembered geometry
+
+`lib/window-state.js` — pure, Electron-free, and **executed** by
+`scripts/test-desktop-packaging.js` §12. The file lives at
+`app.getPath('userData')/window-state.json`, i.e.
+`~/Library/Application Support/The Curator/`. Not in `desktop/` (read-only in an
+installed `.app`, and a git working tree in repo mode) and not under
+`src/brain/paths.js` (Personal Sync travels that tree; this is shell chrome).
+
+The rule that matters is not the size — it is that a saved **position** is
+adopted only when the rectangle still overlaps a real display. Close the app on
+a second monitor, unplug it, relaunch: a naive restore puts the window
+off-screen with no menu item, keystroke or Dock gesture that recovers it.
+Verified against a real window: a poisoned state at `x=99000` relaunches with
+the size kept and the position discarded.
+
+Full screen is deliberately **not** persisted. `maximized` is.
+
+---
+
 ### Known changes needed in `src/` (not made here — out of this change's scope)
+
+- **The app's CSS should declare a drag region, so the frameless design can
+  come back.** Two rules in `src/public/next/shell.css`, plus a top inset so
+  the traffic lights do not land on the logo:
+
+  ```css
+  /* the strip macOS draws the traffic lights into */
+  #rail { -webkit-app-region: drag; padding-top: 34px; }
+  /* MANDATORY: without this every rail button stops receiving clicks */
+  #rail button, #rail a, #rail input, #rail [role="button"] { -webkit-app-region: no-drag; }
+  ```
+
+  Both rules are **inert in a browser**, so they are safe to ship to the web
+  app unchanged. Only once they exist should `desktop/main.js` go back to
+  `titleBarStyle: 'hiddenInset'` — and the assertion in
+  `scripts/test-desktop-packaging.js` §10 that currently forbids it is written
+  to be the place that gets revisited. A drag region without the `no-drag`
+  companion is worse than no drag region at all.
+
+- **A `<meta name="theme-color">` that `applyTheme()` updates** would let the
+  native title bar track the app's own light/dark choice, through
+  `webContents`' standard `did-change-theme-color` event rather than through a
+  private selector. Today `main.js` forces dark unconditionally, so a user who
+  switches the app to its light theme keeps a dark title bar.
 
 - **`POST /api/config/pick-folder` misclassifies permission errors as Cancel**,
   and should branch on a `folderPickerStyle` capability — see above.
