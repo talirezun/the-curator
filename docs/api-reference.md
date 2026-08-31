@@ -2522,7 +2522,8 @@ an integrator against the store (or against that tool) would otherwise have to i
   matching every other write surface in the app — see the Health-endpoint mirror refusals above.
 - A save into a name that is **not a real domain** is refused (`reason: 'unknown-project'`) rather
   than creating the folder. A directory with no `CLAUDE.md` is `rm -rf`'d by `sync.pull()`'s
-  ghost-domain prune, so state written there would be silently deleted on the next pull.
+  `listDomains()` filter, so state written there would be invisible to the app and to every
+  tool that lists domains.
 - An **over-budget save is never refused.** Trailing list items are dropped, and the drop is
   recorded in the document itself, in the result's `notes`/`truncated`, and in the journal line.
 - **A `note` is not necessarily a rejection, and the result says which kind it is.** The store
