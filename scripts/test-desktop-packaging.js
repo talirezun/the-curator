@@ -5,10 +5,16 @@
  *
  * ── What this suite CAN and CANNOT do, stated first ─────────────────────────
  *
- * Electron is deliberately NOT installed (see desktop/README.md), so
- * `desktop/main.js` cannot be imported, let alone run. A suite that could only
- * grep main.js would be the exact defect `test-source-scan-helpers.js` was
- * written to close: "a positive source scan a // comment satisfies".
+ * `npm test` must stay free, fast and offline, so this suite never installs
+ * Electron and never builds. `desktop/main.js` therefore cannot be imported
+ * here, let alone run. A suite that could only grep main.js would be the exact
+ * defect `test-source-scan-helpers.js` was written to close: "a positive
+ * source scan a // comment satisfies".
+ *
+ * As of 2026-08-31 the scaffold HAS been installed, built and launched by
+ * hand — see the VERIFIED block at the end of §10 for exactly what that
+ * established, and the NOT ENFORCED block beside it for why almost none of it
+ * is reachable from here.
  *
  * So the scaffold was SHAPED so that the parts worth proving are provable.
  * `desktop/lib/{quit-decision,write-status,port}.js` import nothing from
@@ -37,8 +43,12 @@
  *   §7  pickFreePort() / appUrl() — EXECUTED against the real OS
  *   §8  the DMG workflow triggers on TAGS and cannot join the release gate
  *   §9  credential hygiene: .gitignore coverage + no credential-shaped literal
- *   §10 main.js source scan (weak by nature), anti-vacuity controls, and an
- *       explicit NOT ENFORCED block
+ *   §11 the `files` / `extraResources` mapping — the defect that shipped an
+ *       .app which worked only inside the checkout
+ *   §10 main.js source scan (weak by nature), anti-vacuity controls, a
+ *       VERIFIED-BY-HAND block and an explicit NOT ENFORCED block
+ *
+ * §11 runs before §10 so the NOT ENFORCED block stays last in the output.
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -138,8 +148,27 @@ section('§1  Real user data is untouched');
     ? { size: statSync(cfg).size, sha: createHash('sha256').update(readFileSync(cfg)).digest('hex') }
     : null;
   eq(after, before, 'the real .curator-config.json is byte-identical (or absent in both readings)');
-  ok(!existsSync(path.join(DESKTOP, 'node_modules')),
-     'desktop/node_modules does NOT exist — nothing has been installed here');
+
+  // ── INVERTED 2026-08-31, and the replacement is a DIFFERENT KIND of claim ──
+  // This used to read:
+  //
+  //     ok(!existsSync(path.join(DESKTOP, 'node_modules')),
+  //        'desktop/node_modules does NOT exist — nothing has been installed here');
+  //
+  // `npm install` has now been run in desktop/, so it is false on a developer
+  // machine. It is still TRUE on CI, which only installs at the root — so the
+  // old assertion was environment-dependent and was never an invariant at all:
+  // it would have passed on CI forever while being wrong locally.
+  //
+  // The real invariant is that this tree can never be COMMITTED, whether or
+  // not it exists. That holds in both environments and is what protects the
+  // repository. Existence itself is deliberately not asserted in either
+  // direction.
+  {
+    const gi = read(path.join(ROOT, '.gitignore'));
+    ok(gi.split('\n').some((l) => l.trim() === 'desktop/node_modules/'),
+       'desktop/node_modules is gitignored — present or absent, it can never be committed');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -208,6 +237,48 @@ section('§3  desktop/ is a separate, self-contained project');
   const dd = deskPkg.devDependencies || {};
   ok(Object.hasOwn(dd, 'electron'), 'desktop declares electron as a devDependency');
   ok(Object.hasOwn(dd, 'electron-builder'), 'desktop declares electron-builder as a devDependency');
+
+  // ── THE VERSIONS ARE PINNED EXACTLY, BECAUSE THESE ONES WERE MEASURED ─────
+  // The scaffold declared `^43.0.0` / `^26.0.0`, taken from a plan rather than
+  // from a resolution. They now name the versions that were actually installed
+  // and that actually produced a working, relocatable .app and two .dmgs on
+  // 2026-08-31. A caret range would let a future `npm install` silently move
+  // to an Electron major nobody has run this app on — and the failure mode
+  // that cost this scaffold its first build (an app that works only inside the
+  // checkout) is exactly the kind that a green `npm test` cannot see.
+  //
+  // These are values, not shapes: bumping them is a deliberate act that should
+  // come with a fresh build and a fresh relocation test, which is why the
+  // assertion names them.
+  eq(dd.electron, '43.5.0', 'electron is pinned EXACTLY to the version that was built and launched');
+  eq(dd['electron-builder'], '26.15.3', 'electron-builder is pinned EXACTLY to the version that produced the DMGs');
+  for (const [name, range] of Object.entries(dd)) {
+    ok(/^\d+\.\d+\.\d+$/.test(range),
+       `desktop devDependency ${name} is an exact pin, not a range (got "${range}")`);
+  }
+
+  // The lockfile must agree, or `npm ci` installs something the manifest does
+  // not name — the same class as §2's root manifest/lockfile cross-check.
+  const deskLockPath = path.join(DESKTOP, 'package-lock.json');
+  ok(existsSync(deskLockPath), 'desktop/package-lock.json exists — `npm ci` in the workflow has something to read');
+  if (existsSync(deskLockPath)) {
+    const deskLock = JSON.parse(read(deskLockPath));
+    const pkgs = deskLock.packages || {};
+    eq(pkgs['node_modules/electron']?.version, dd.electron,
+       'desktop/package-lock.json resolves electron to the pinned version');
+    eq(pkgs['node_modules/electron-builder']?.version, dd['electron-builder'],
+       'desktop/package-lock.json resolves electron-builder to the pinned version');
+    // A runtime dependency reaching this lockfile means someone duplicated the
+    // app's deps into the shell manifest — see §11 for why that is refused.
+    const dupes = [...rootDeps].filter((n) => Object.hasOwn(pkgs, `node_modules/${n}`) &&
+                                              Object.hasOwn(deskLock.packages[''] ?.dependencies || {}, n));
+    eq(dupes, [], 'no root runtime dependency is declared in the desktop lockfile\'s own dependency map');
+  }
+
+  // The DMG's version comes from the git tag via --config.extraMetadata.version.
+  // A hand-typed version here would drift from the release it claims to be.
+  eq(deskPkg.version, '0.0.0',
+     'desktop/package.json stays at 0.0.0 — the DMG version is injected from the tag');
 
   // Root must not have adopted desktop/ as an npm workspace — that would make
   // `npm install` at the root install Electron after all, defeating §2 while
@@ -497,9 +568,22 @@ section('§8  The DMG workflow triggers on TAGS and cannot join the release gate
 
   // Nothing may be built out of a scaffold that was never installed.
   ok(/desktop\/package-lock\.json/.test(yml),
-     'the build is gated on desktop/package-lock.json existing (it does not yet)');
-  ok(!existsSync(path.join(DESKTOP, 'package-lock.json')),
-     'desktop/package-lock.json does NOT exist — the gate is honest about the scaffold being unbuilt');
+     'the build is gated on desktop/package-lock.json existing');
+
+  // ── INVERTED 2026-08-31 ────────────────────────────────────────────────────
+  // This used to read:
+  //
+  //     ok(!existsSync(path.join(DESKTOP, 'package-lock.json')),
+  //        'desktop/package-lock.json does NOT exist — the gate is honest
+  //         about the scaffold being unbuilt');
+  //
+  // The lockfile now exists and is COMMITTED, which is what flips the gate's
+  // `buildable` output to true and turns the DMG job on. That is intended:
+  // the build has been run and the artifacts verified, so the gate should no
+  // longer skip. Unlike node_modules this is a tracked file, so the assertion
+  // is environment-independent — it holds on CI and on a fresh clone.
+  ok(existsSync(path.join(DESKTOP, 'package-lock.json')),
+     'desktop/package-lock.json EXISTS and is committed — the gate now resolves to buildable');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -581,6 +665,119 @@ section('§9  Credential hygiene');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§11 The `files` mapping — the defect that shipped a broken .app');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── THE BUG THIS SECTION EXISTS FOR, AND WHY IT WAS INVISIBLE ──────────────
+//
+// The scaffold's `files` block listed `node_modules/**/*` in a `from: ..`
+// filter. That line DID NOTHING. electron-builder does not treat node_modules
+// as ordinary files: it computes the PRODUCTION DEPENDENCY TREE from the app
+// manifest's `dependencies` and copies that, ignoring a user glob.
+// `desktop/package.json` deliberately declares no `dependencies`, so the
+// computed tree is empty, the build logs
+//
+//     no node modules returned while searching directories
+//
+// and ships `Contents/Resources/app/` with no node_modules at all.
+//
+// MEASURED, 2026-08-31: that build LAUNCHES FINE while it sits inside the
+// checkout, because Node resolves a bare specifier by walking UP the directory
+// tree — out of the bundle, out of dist/, out of desktop/ — and finds the REPO
+// ROOT's node_modules. Copy the same .app to /Applications and it dies with
+// `ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`, which main.js catches
+// and shows through `fatal()`'s error dialog. So "I built it and it ran" is
+// NOT evidence here, and this guard exists because the obvious test passes.
+//
+// ── WHAT THIS SECTION CAN AND CANNOT DO ────────────────────────────────────
+//
+// It is a CONFIG scan, not a build. `npm test` cannot run electron-builder —
+// that is a 130 MB toolchain download and several minutes. What it can do is
+// refuse the two shapes that are known to be wrong, in both directions:
+//
+//   · `node_modules` must NOT appear in `files`, because listing it there is
+//     a no-op that reads like a fix.
+//   · `extraResources` MUST place `../node_modules` at `app/node_modules`,
+//     because that is the one path where both APP_ROOT derivations find it.
+{
+  const rawBuilder = read(path.join(DESKTOP, 'electron-builder.yml'));
+  const builderNoComments = stripYamlComments(rawBuilder);
+
+  ok(builderNoComments.length > 400 && builderNoComments.length < rawBuilder.length,
+     `CONTROL — YAML comment stripping left real config (${builderNoComments.length} of ${rawBuilder.length} chars)`);
+  ok(/^files:/m.test(builderNoComments), 'CONTROL — the files: key survives comment stripping');
+
+  /** The lines of one top-level YAML block, comments already removed. */
+  function blockLines(src, key) {
+    const lines = src.split('\n');
+    const start = lines.findIndex((l) => l.trimEnd() === `${key}:`);
+    if (start === -1) return null;
+    const out = [];
+    for (let i = start + 1; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.trim() === '') continue;
+      if (/^\S/.test(l)) break;           // next top-level key ends the block
+      out.push(l);
+    }
+    return out;
+  }
+
+  const filesBlock = blockLines(builderNoComments, 'files');
+  ok(Array.isArray(filesBlock) && filesBlock.length >= 4,
+     `CONTROL — the files: block parsed into ${filesBlock ? filesBlock.length : 0} entries (anti-vacuity)`);
+
+  // THE REGRESSION GUARD. Comments are stripped first, so the long explanation
+  // ABOVE `files:` — which necessarily contains the word node_modules — cannot
+  // satisfy or defeat this.
+  const filesText = (filesBlock || []).join('\n');
+  ok(!/node_modules/.test(filesText),
+     '`files` does NOT list node_modules — listing it there is a silent no-op (see the note above this section)');
+
+  // Everything the flat layout DOES need from the parent must still be listed,
+  // or the packaged app root loses src/ or mcp/ instead.
+  for (const needed of ['src/**/*', 'mcp/**/*']) {
+    ok(filesText.includes(needed), `\`files\` still copies ${needed} from the parent`);
+  }
+  ok(/from:\s*\.\.\s*$/m.test(filesText) || /from:\s*\.\./.test(filesText),
+     '`files` still has a `from: ..` entry — src/ and mcp/ come from the repo root');
+  ok(/to:\s*\.\s*$/m.test(filesText) || /to:\s*\./.test(filesText),
+     '`files` maps the parent content to `.` — the app root stays FLAT, so both APP_ROOT derivations agree');
+
+  // The positive half. Without this, removing the node_modules line from
+  // `files` would be satisfiable by shipping nothing at all.
+  const extra = blockLines(builderNoComments, 'extraResources');
+  ok(Array.isArray(extra) && extra.length >= 2,
+     `extraResources exists and parsed into ${extra ? extra.length : 0} entries`);
+  const extraText = (extra || []).join('\n');
+  ok(/from:\s*\.\.\/node_modules\s*$/m.test(extraText),
+     'extraResources copies the REPO ROOT node_modules (not a second install under desktop/)');
+  // `to: app/node_modules` is asserted EXACTLY, and the reason is subtle
+  // enough to be worth writing down: a bare `to: node_modules` would land the
+  // tree at Contents/Resources/node_modules, which Node's walk-up resolver
+  // WOULD ALSO FIND from Contents/Resources/app/src/server.js. It would work —
+  // by exactly the accident that made the broken build look fine inside the
+  // checkout. The app root must be self-contained rather than rely on a parent
+  // directory happening to be on the resolution path, so the strict form is
+  // the assertion.
+  ok(/to:\s*app\/node_modules\s*$/m.test(extraText),
+     'extraResources lands it at app/node_modules — `to` is relative to Contents/Resources, so this is the app root');
+
+  // The safety property the whole "copy the root tree" decision rests on: the
+  // root has NO devDependencies, so there is no dev tree to ship to users.
+  // §2 asserts that too; it is repeated here because THIS is the line that
+  // would start shipping one.
+  ok(!Object.hasOwn(rootPkg, 'devDependencies') ||
+     Object.keys(rootPkg.devDependencies || {}).length === 0,
+     'the root manifest still has ZERO devDependencies — extraResources cannot ship a dev tree');
+
+  // asar must stay off. With asar on, `to: app/node_modules` would land the
+  // tree beside the archive rather than inside it, and every argument in the
+  // electron-builder.yml header applies again.
+  ok(/^asar:\s*false\s*$/m.test(builderNoComments),
+     'asar is still false — extraResources into app/ only makes sense on an unpacked app root');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§10 main.js source scan, and what is NOT enforced');
 // ═══════════════════════════════════════════════════════════════════════════
 // EVERYTHING IN THIS SECTION IS A SOURCE SCAN AND IS THEREFORE WEAK. Electron
@@ -651,16 +848,43 @@ section('§10 main.js source scan, and what is NOT enforced');
      'the dynamic pdf-parse import is still there — hazard (c) for asar is live');
 
   console.log(`
+  VERIFIED BY HAND ON 2026-08-31 — none of it re-checked by \`npm test\`:
+    · electron 43.5.0 + electron-builder 26.15.3 installed and pinned.
+    · \`electron .\` launched a real window; the app's own UI rendered a real
+      domain, and a POST from the renderer returned 201 while the same POST
+      with a foreign Origin returned 403.
+    · A .app and two .dmgs were built. APP_ROOT resolved to
+      Contents/Resources/app in the packaged app, and the .app ran from
+      /Applications.
+    · The layout is flat and both APP_ROOT derivations agree.
+
   NOT ENFORCED — read this before trusting the numbers above:
-    · NOTHING IN desktop/ HAS EVER BEEN BUILT OR RUN. Electron is not
-      installed. main.js has never been evaluated by any runtime, and the
-      declared versions (electron ^43, electron-builder ^26) have never been
-      resolved — the first \`npm install\` may have to move them.
+    · \`npm test\` STILL CANNOT BUILD. Everything in the list above was
+      established once, by hand, on one machine, on one macOS version. This
+      suite scans configuration; it does not run electron-builder, does not
+      produce a package, and does not launch anything. A change that keeps
+      every assertion green can still ship a broken .app.
+    · §11 IS A CONFIG SCAN, AND ITS CENTRAL LESSON IS THAT BUILDING IS NOT
+      ENOUGH EITHER. The node_modules defect produced an app that launched
+      and worked perfectly while it sat inside the checkout, because Node's
+      resolver walked up out of the bundle. The only test that catches it is
+      launching a COPY of the .app from outside the repo — which nothing
+      automated does today. If you change the files/extraResources mapping,
+      build it, copy it somewhere with no node_modules above it, and run it.
     · §10 is a SOURCE SCAN. It proves a call was written, not that it runs,
       not that it runs in the right order beyond the two import-ordering
       checks, and not that the resulting app launches.
-    · The \`files\` mapping in electron-builder.yml is unverified and is the
-      most likely thing to be wrong. Nothing here can check it.
+    · THE PACKAGED APP IS NOT COVERED BY THE PROJECT'S USUAL TEST ISOLATION.
+      \`CURATOR_TEST_USER_DATA_DIR\` does NOT redirect the MCP launcher —
+      \`getMcpLauncherDir()\` has its own seam, \`CURATOR_TEST_MCP_LAUNCHER_DIR\`,
+      and without it a bundle-mode run writes into the real
+      ~/Library/Application Support/The Curator/bin. Electron's own Chromium
+      profile goes to ~/Library/Application Support/<productName> regardless
+      and cannot be redirected by any Curator seam.
+    · The single-instance dialog, the quit decision reaching a real dialog,
+      and the restart interceptor were exercised by hand and are not
+      reproducible offline. The BUSY quit path in particular has never been
+      run against a real in-flight write.
     · The claim that a tag-triggered run carries head_branch = the TAG (which
       is what keeps this workflow out of \`gh run list --branch main\`) is
       GitHub behaviour, asserted from documentation rather than measured. The
@@ -671,8 +895,12 @@ section('§10 main.js source scan, and what is NOT enforced');
       entitlement is granted defensively.
     · Signing, notarization, electron-updater, the app icon, and first-launch
       adoption of an existing repo install are all out of scope and absent.
-    · This suite does not assert anything about the CONTENT of the packaged
-      app, because no package has ever been produced.
+      The built .app carries only the linker's ad-hoc signature
+      (TeamIdentifier not set), so \`spctl\` rejects it and another Mac needs
+      right-click -> Open. That is the intended state of \`identity: null\`.
+    · This suite does not assert anything about the CONTENT of a packaged
+      app, because it never produces one. §11 asserts the RECIPE, not the
+      result.
 `);
 }
 

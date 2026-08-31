@@ -3,7 +3,7 @@
   "productName": "The Curator",
   "version": "0.0.0",
   "private": true,
-  "description": "Electron shell for The Curator. SCAFFOLD ONLY — never installed, never built. See desktop/README.md.",
+  "description": "Electron shell for The Curator. Hosts src/server.js in-process and opens one window. See desktop/README.md.",
   "license": "MIT",
   "type": "module",
   "main": "main.js",
@@ -12,7 +12,7 @@
     "dist": "electron-builder --mac --config electron-builder.yml"
   },
   "devDependencies": {
-    "electron": "^43.0.0",
-    "electron-builder": "^26.0.0"
+    "electron": "43.5.0",
+    "electron-builder": "26.15.3"
   }
 }

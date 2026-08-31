@@ -1,11 +1,16 @@
 /**
- * The Curator — Electron main process (SCAFFOLD).
+ * The Curator — Electron main process.
  *
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║  THIS HAS NEVER BEEN RUN. Electron is not installed and `desktop/` has no ║
- * ║  node_modules and no lockfile. Every claim below was verified by READING  ║
- * ║  the app's source, not by executing this file. Treat the reasoning as     ║
- * ║  load-bearing and the code as a first draft. See desktop/README.md.       ║
+ * ║  RUN FOR THE FIRST TIME ON 2026-08-31, on one machine (macOS 15, arm64).  ║
+ * ║  Every claim in this file was originally written from READING the app's   ║
+ * ║  source; all of it then held when the file was actually executed. What    ║
+ * ║  was measured, and what still is not, is in desktop/README.md.            ║
+ * ║                                                                           ║
+ * ║  `npm test` cannot run this file — Electron is not an offline-suite       ║
+ * ║  dependency — so scripts/test-desktop-packaging.js source-scans it and    ║
+ * ║  says so in its own NOT ENFORCED block. Treat a green suite as proof      ║
+ * ║  about the CONFIG, never about the app.                                   ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
  * ── The shape ───────────────────────────────────────────────────────────────

@@ -1,10 +1,13 @@
 #  electron-builder configuration — The Curator desktop shell
 #
 #  ╔═════════════════════════════════════════════════════════════════════════╗
-#  ║  NEVER RUN. electron-builder is declared in desktop/package.json and    ║
-#  ║  has never been installed, so no value below has been validated against ║
-#  ║  the real tool. The `files` mapping in particular is the first thing to ║
-#  ║  break and the first thing to fix. See desktop/README.md.               ║
+#  ║  RUN FOR REAL on 2026-08-31 with electron-builder 26.15.3 / electron    ║
+#  ║  43.5.0. It produced one .app and two .dmgs, and the .app runs from     ║
+#  ║  /Applications.                                                          ║
+#  ║                                                                          ║
+#  ║  The `files` mapping WAS the thing that broke, exactly as this banner    ║
+#  ║  predicted — and it broke in a way that still LAUNCHED. Read the long    ║
+#  ║  note above `files:` before touching it. See desktop/README.md.          ║
 #  ╚═════════════════════════════════════════════════════════════════════════╝
 
 appId: com.talirezun.the-curator
@@ -71,7 +74,7 @@ directories:
 asar: false
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  files — UNVERIFIED. This is the mapping most likely to be wrong.
+#  files — VERIFIED BY BUILDING, 2026-08-31, electron-builder 26.15.3.
 #
 #  The packaged app root must end up FLAT, like this:
 #
@@ -86,11 +89,44 @@ asar: false
 #  layout above both land on `app/`. Nest `src/` one level deeper and they
 #  disagree, which presents as an empty wiki rather than as an error.
 #
-#  node_modules is copied from the REPO ROOT rather than installed here,
-#  because `desktop/package.json` has no `dependencies` — the runtime deps
-#  belong to the app, not to the shell. This is safe in a way it usually is
-#  not: the root manifest has EIGHT dependencies and ZERO devDependencies, so
-#  there is no dev tree to accidentally ship. That property is asserted by
+#  MEASURED: the flat layout below is what a real build produces. `src/`,
+#  `mcp/`, `LICENSE` and `LICENSES/` all arrive as siblings of `main.js`, and
+#  the app root is `Contents/Resources/app`, exactly as intended.
+#
+#  ── node_modules IS NOT LISTED HERE, AND THAT IS THE FIX ────────────────────
+#
+#  It used to carry a `node_modules/**/*` line in the filter below. That line
+#  DID NOTHING, and the failure it produced is the worst shape available:
+#
+#    electron-builder does not treat node_modules as ordinary files. It
+#    computes the PRODUCTION DEPENDENCY TREE from the app manifest's
+#    `dependencies` and copies that, ignoring a user glob. `desktop/package.json`
+#    deliberately has no `dependencies`, so the computed tree is EMPTY — the
+#    build logs `no node modules returned while searching directories` and
+#    ships an app root with no node_modules at all.
+#
+#  The reason this was not caught by simply launching the built app is worth
+#  writing down, because it will fool the next person too:
+#
+#    THE BROKEN BUILD LAUNCHES FINE AS LONG AS IT SITS INSIDE THE CHECKOUT.
+#    Node resolves a bare specifier by walking UP the directory tree, so from
+#    …/desktop/dist/mac-arm64/The Curator.app/Contents/Resources/app/src/server.js
+#    it climbs out of the bundle, out of dist/, out of desktop/, and finds the
+#    REPO ROOT's node_modules. The app starts, serves, and renders. Copy the
+#    same bundle to /Applications and it dies on
+#    `ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'` — which `main.js`
+#    catches and reports through `fatal()`'s error dialog. Verified both ways.
+#
+#  So the tree is copied EXPLICITLY, as a resource, to the exact path the flat
+#  layout needs. `extraResources.to` is relative to `Contents/Resources`, so
+#  `app/node_modules` lands beside `src/` and `main.js`.
+#
+#  It still comes from the REPO ROOT rather than a second install under
+#  `desktop/`, because the runtime deps belong to the app, not to the shell —
+#  duplicating the eight dependency ranges into a second manifest is how the
+#  two drift. This is safe in a way it usually is not: the root manifest has
+#  EIGHT dependencies and ZERO devDependencies, so there is no dev tree to
+#  accidentally ship. That property is asserted by
 #  scripts/test-desktop-packaging.js; if it ever stops being true, this line
 #  starts shipping a dev tree to users.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +140,6 @@ files:
     filter:
       - src/**/*
       - mcp/**/*
-      - node_modules/**/*
       - LICENSE
       - LICENSES/**/*
       # NOT the repo root's package.json — the packaged app must keep THIS
@@ -121,6 +156,17 @@ files:
       - '!**/.sync-config.json'
       - '!**/.sharedbrain-config.json'
       - '!**/.knowledge-git/**/*'
+
+# The app's runtime dependency tree, placed at the one path the flat layout
+# needs. See the long note above `files` for why a `files` glob cannot do this.
+# `from` is relative to desktop/; `to` is relative to Contents/Resources.
+extraResources:
+  - from: ../node_modules
+    to: app/node_modules
+    filter:
+      - '**/*'
+      # A stray .env inside a dependency would be shipped verbatim otherwise.
+      - '!**/.env'
 
 mac:
   category: public.app-category.productivity
