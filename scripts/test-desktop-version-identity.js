@@ -116,6 +116,100 @@ function stripYamlComments(src) {
 
 const SCRATCH = path.join(tmpdir(), `curator-version-identity-${process.pid}`);
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  THE LAUNCH GATE
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `assertLoadable` runs the app's own Mach-O with ELECTRON_RUN_AS_NODE=1. Its
+// docblock calls that headless, and for a bundle that LOADS it is: no window,
+// no Dock icon, main.js never runs.
+//
+// But this suite's whole reason for existing is the bundle that does NOT load —
+// and when a Mach-O dies at dyld time, macOS's crash reporter puts
+// "The Curator cannot be opened because of a problem" on the desktop of
+// whoever is sitting at the machine. Nothing in ELECTRON_RUN_AS_NODE suppresses
+// that: the process really did start and really was killed. So the probe is
+// dialog-free exactly when it finds nothing, and dialog-popping exactly when it
+// finds something — and §12b's hardened-runtime CONTROL builds a bundle that is
+// GUARANTEED not to load, so it fired one on every single run. Seven reached
+// the maintainer, one of them during an ordinary `npm test`.
+//
+// A suite in the OFFLINE array must not do that on a contributor's machine, so
+// every path that EXECUTES a real bundle's binary is now opt-in. What is NOT
+// gated, because none of it launches anything:
+//
+//   · §5's structural refusals (no Mach-O is ever reached),
+//   · §12a's codesign round trip (the /bin/echo copy is deliberately never run),
+//   · and the REAL bundle's signature flags, read statically with
+//     `codesign -dv` and parsed — which is the check that catches the
+//     hardened-runtime defect on its own, with no launch at all.
+//
+// Turning it on is one variable, the same shape as CURATOR_TEST_USER_DATA_DIR
+// and CURATOR_TEST_DOMAINS_DIR:  CURATOR_TEST_LAUNCH_APP=1 npm test
+const LAUNCH_ENV = 'CURATOR_TEST_LAUNCH_APP';
+const LAUNCH_ALLOWED = process.env[LAUNCH_ENV] === '1';
+
+/**
+ * Find a locally built .app, and say whether it belongs to THIS commit.
+ *
+ * `desktop/dist/` is build output: gitignored, uncommitted, not a property of
+ * the tree under test. A bundle left there from an older version is evidence
+ * about the developer's disk, not about the code — see the staleness note at
+ * §12b for why that is a SKIP and not a failure.
+ */
+/**
+ * Does this artifact belong to THIS version? The skip predicate, isolated so it
+ * can be driven on fabricated inputs — see the control in §5.
+ *
+ * A skip that nothing tests is indistinguishable from a check that stopped
+ * running, so the discriminator is exercised on every platform, with or
+ * without a dist/ on disk.
+ */
+function isFreshBundle(short, bundle, expected) {
+  if (typeof expected !== 'string' || expected.length === 0) return false;
+  return short === expected && bundle === expected;
+}
+
+function findBuiltApp() {
+  const roots = ['mac-arm64', 'mac', 'mac-universal', 'mac-x64']
+    .map((d) => path.join(DESKTOP, 'dist', d))
+    .filter((d) => existsSync(d));
+  for (const d of roots) {
+    const entry = readdirSync(d).find((e) => e.endsWith('.app'));
+    if (!entry) continue;
+    const app = path.join(d, entry);
+    let versions = { short: null, bundle: null };
+    try { versions = parseInfoPlistVersions(read(path.join(app, 'Contents', 'Info.plist'))); } catch {}
+    return {
+      app,
+      ...versions,
+      fresh: isFreshBundle(versions.short, versions.bundle, rootVersion),
+    };
+  }
+  return null;
+}
+
+/** Read a real bundle's signature the way `codesign` reports it — no launch. */
+function readSignature(appPath) {
+  const r = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', appPath], { encoding: 'utf8' });
+  return parseSignatureInfo(`${r.stdout || ''}${r.stderr || ''}`);
+}
+
+/** One place that explains a skip, so a skipped check never looks like a passed one. */
+function reportBuiltAppSkip(built, label) {
+  if (!built) {
+    console.log(`  ⊘ ${label} SKIPPED — no built app under desktop/dist/. Run \`npm run dist\` in`);
+    console.log('    desktop/ first; the hook itself runs this same probe on every build,');
+    console.log('    so a real build cannot skip it.');
+    return;
+  }
+  console.log(`  ⊘ ${label} SKIPPED — the built app under desktop/dist/ is STALE:`);
+  console.log(`    ${path.basename(path.dirname(built.app))}/${path.basename(built.app)} carries ` +
+    `${built.short}/${built.bundle}, this tree is ${rootVersion}.`);
+  console.log('    dist/ is gitignored build output, so an old bundle says nothing about this');
+  console.log('    commit. Rebuild with `npm run dist` in desktop/ to exercise these checks.');
+}
+
 /**
  * Write a minimal but REAL `.app` on disk: `<dir>/<name>.app/Contents/Info.plist`,
  * XML, in the shape electron-builder's plist serialiser emits.
@@ -526,6 +620,22 @@ ok(deadRun.threw, 'assertLoadable REFUSES a bundle whose executable cannot start
 ok(deadRun.threw && /FAILS TO LOAD/.test(deadRun.message),
    'and it says FAILS TO LOAD — the failure a signature check cannot see');
 
+// THE SKIP DISCRIMINATOR, driven on fabricated inputs. §12b skips a STALE
+// bundle instead of failing on it, and a skip nothing tests is
+// indistinguishable from a check that quietly stopped running — so the
+// predicate that decides it is exercised here, on every platform, whether or
+// not a dist/ exists. Both directions, or "skip" could just mean "always".
+ok(isFreshBundle('3.30.0', '3.30.0', '3.30.0') === true,
+   'isFreshBundle ACCEPTS a bundle matching the root manifest — the skip is not unconditional');
+ok(isFreshBundle('0.0.0', '0.0.0', '3.30.0') === false,
+   'and REFUSES the un-injected sentinel — the exact artifact that read as a code defect');
+ok(isFreshBundle('3.31.0', '3.31.0', '3.30.0') === false,
+   'and REFUSES a bundle from a NEWER tree — staleness is disagreement, not age');
+ok(isFreshBundle('3.30.0', '0.0.0', '3.30.0') === false,
+   'and REFUSES a HALF-matching bundle — both plist keys must agree');
+ok(isFreshBundle('3.30.0', '3.30.0', '') === false,
+   'and REFUSES when the expected version is unreadable, rather than treating absent as equal');
+
 // electronFuses is the one thing electron-builder does BETWEEN this hook and
 // the finished bundle, and it rewrites the main binary. A signature applied
 // here would be silently invalidated, so this THROWS rather than skipping.
@@ -678,17 +788,21 @@ ok(!existsSync(path.join(skipDir, 'The Curator.app', 'Contents', '_CodeSignature
 // (re-signing is idempotent). If the signing call is removed from the composer
 // this goes red, because the step simply does not happen.
 {
-  const builtRoots = ['mac-arm64', 'mac', 'mac-universal', 'mac-x64']
-    .map((d) => path.join(DESKTOP, 'dist', d)).filter((d) => existsSync(d));
-  let realApp = null;
-  for (const d of builtRoots) {
-    const app = readdirSync(d).find((e) => e.endsWith('.app'));
-    if (app) { realApp = path.join(d, app); break; }
-  }
-  if (process.platform !== 'darwin' || !realApp) {
+  const built = process.platform === 'darwin' ? findBuiltApp() : null;
+  if (process.platform !== 'darwin') {
     console.log('  ⊘ the composer\'s SIGNING half needs a real built app on macOS — skipped here.');
     console.log('    Every real build exercises it; §9-§10 cover the decision and the refusal.');
+  } else if (!built || !built.fresh) {
+    reportBuiltAppSkip(built, 'the composer\'s SIGNING half');
+    console.log('    Every real build exercises it; §9-§10 cover the decision and the refusal.');
+  } else if (!LAUNCH_ALLOWED) {
+    // The composer signs, and adhocSign's last act is the load probe — so
+    // driving it here EXECUTES the bundle. Gated; see the launch-gate box.
+    console.log('  ⊘ the composer\'s SIGNING half LAUNCHES the built app (adhocSign ends in the');
+    console.log(`    load probe), so it is opt-in. Re-run with ${LAUNCH_ENV}=1 to exercise it.`);
+    console.log('    §9-§10 cover the signing DECISION and the refusal without launching.');
   } else {
+    const realApp = built.app;
     const said = [];
     const realLog = console.log;
     console.log = (...a) => said.push(a.join(' '));
@@ -768,54 +882,102 @@ if (process.platform !== 'darwin') {
   // verify clean and still die at dyld time. It needs a real Electron bundle,
   // so it runs only after a local build. dist/ is gitignored, so on a clean
   // checkout this reports SKIPPED rather than pretending.
-  const distRoots = ['mac-arm64', 'mac', 'mac-universal', 'mac-x64']
-    .map((d) => path.join(DESKTOP, 'dist', d))
-    .filter((d) => existsSync(d));
-  let builtApp = null;
-  for (const d of distRoots) {
-    const app = readdirSync(d).find((e) => e.endsWith('.app'));
-    if (app) { builtApp = path.join(d, app); break; }
-  }
+  // ── STALENESS IS A SKIP, AND FAILURE IS RESERVED FOR THE CODE ────────────
+  //
+  // A bundle whose Info.plist disagrees with the root package.json is skipped,
+  // not failed, and the argument is that it CANNOT be evidence of a defect
+  // here. The afterPack hook refuses a version-mismatched build at build time
+  // and produces no artifact — so the only ways a mismatched bundle can be
+  // lying in dist/ are that it predates the hook, or that someone bypassed it
+  // deliberately (`--config.afterPack=null`, packaging by hand), both of which
+  // are listed below as known bypasses. Neither is a live regression, and
+  // dist/ is gitignored build output that is not a property of this commit.
+  //
+  // What makes the skip safe rather than convenient is that it costs NO
+  // coverage: the version refusal is already driven non-vacuously, on every
+  // platform and with no dist/ at all, by the fabricated 9.9.9 bundle in the
+  // composer section above. This arm adds confirmation on a real artifact, not
+  // the only proof.
+  //
+  // The line is deliberately narrow: it keys on "does this artifact belong to
+  // this version", never on "did an assertion fail". A bundle that IS current
+  // is held to every check below and is allowed to go red.
+  const built = findBuiltApp();
 
-  if (!builtApp) {
-    console.log('  ⊘ §12b SKIPPED — no built app under desktop/dist/. Run `npm run dist` in');
-    console.log('    desktop/ first; the hook itself runs this same probe on every build,');
-    console.log('    so a real build cannot skip it.');
+  if (!built || !built.fresh) {
+    reportBuiltAppSkip(built, '§12b');
   } else {
-    // Re-signing an already-signed bundle is idempotent, so this is safe to run
-    // against the real artifact.
-    const real = adhocSign({ appPath: builtApp, identity: null, env: {} });
-    eq(real.signed, true, `the REAL adhocSign() signs the built app (${path.basename(builtApp)})`);
-    eq(real.info.adhoc, true, 'the built app is ad-hoc signed');
-    eq(real.info.hasSealedResources, true, 'its resources are SEALED — the shipped defect is gone');
-    eq(real.info.teamIdentifier, 'not set', 'it carries no TeamIdentifier — no keychain identity leaked');
-    ok(!real.info.flags.includes('runtime'),
-       'and the hardened runtime is NOT enabled — that is the shape that fails to launch');
-    ok(!threw(() => assertLoadable(builtApp)).threw,
-       'THE LOAD PROBE PASSES: dyld maps the embedded Electron Framework');
+    const builtApp = built.app;
 
-    // Non-vacuity, on a COPY, by changing exactly one variable: the hardened
-    // runtime. `--deep` is present in BOTH arms, which is what exonerates it.
-    const badCopy = path.join(SCRATCH, 'Runtime.app');
-    const cp = spawnSync('cp', ['-R', builtApp, badCopy], { encoding: 'utf8' });
-    if (cp.status === 0) {
-      const rs = spawnSync('/usr/bin/codesign',
-        ['--force', '--deep', '--options', 'runtime', '--sign', '-', badCopy], { encoding: 'utf8' });
-      if (rs.status === 0) {
-        const badVerify = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', badCopy], { encoding: 'utf8' });
-        eq(badVerify.status, 0,
-           'CONTROL — the hardened-runtime copy PASSES `codesign --verify --deep --strict`…');
-        ok(threw(() => assertLoadable(badCopy)).threw,
-           '…and STILL fails the load probe. Static checks cannot see this; the probe can.');
-        const badInfo = parseSignatureInfo(
-          (() => { const r = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', badCopy], { encoding: 'utf8' }); return `${r.stdout}${r.stderr}`; })());
-        ok(threw(() => assertAdhocOnly(badInfo)).threw,
-           'and assertAdhocOnly refuses it too, on the runtime flag alone');
-      } else {
-        console.log('  ⊘ the hardened-runtime control could not be produced (codesign refused)');
+    // ── The STATIC half. No launch, so it runs unconditionally. ────────────
+    //
+    // Read as-built rather than as-re-signed: the original called adhocSign()
+    // first and inspected what IT produced, which quietly tested the test's own
+    // re-sign. `codesign -dv` reports what is on disk, which is the artifact a
+    // user would actually run.
+    //
+    // The last of these is the whole hardened-runtime finding, and it needs no
+    // launch at all — which is why it is on this side of the gate.
+    const info = readSignature(builtApp);
+    eq(info.adhoc, true, `the built app is ad-hoc signed (${path.basename(builtApp)}, read statically)`);
+    eq(info.hasSealedResources, true, 'its resources are SEALED — the shipped defect is gone');
+    eq(info.teamIdentifier, 'not set', 'it carries no TeamIdentifier — no keychain identity leaked');
+    ok(!info.flags.includes('runtime'),
+       'and the hardened runtime is NOT enabled — that is the shape that fails to launch');
+    // assertAdhocOnly THROWS on a bad signature rather than returning false, so
+    // this must go through `threw` — otherwise the one case it exists to catch
+    // kills the run instead of failing it. (Caught by mutation: a real
+    // hardened-runtime bundle crashed this line before it was guarded.)
+    const adhocRun = threw(() => assertAdhocOnly(info));
+    ok(!adhocRun.threw,
+       'and assertAdhocOnly ACCEPTS the real built app — static, no launch' +
+       (adhocRun.threw ? ` — REFUSED: ${adhocRun.message.split('\n').filter(Boolean).slice(-1)[0].trim()}` : ''));
+
+    // ── The LAUNCHING half. Opt-in. ────────────────────────────────────────
+    if (!LAUNCH_ALLOWED) {
+      console.log('  ⊘ §12b LOAD PROBE SKIPPED — it executes the bundle, and a bundle that fails');
+      console.log('    to load puts a macOS crash dialog on the desktop of whoever is sitting');
+      console.log('    here. The hardened-runtime CONTROL below builds a bundle that is');
+      console.log('    guaranteed not to load, so it fired one every run.');
+      console.log(`    Re-run with ${LAUNCH_ENV}=1 to exercise it. Every real build runs this`);
+      console.log('    same probe in the afterPack hook, so a release cannot skip it.');
+    } else {
+      // Re-signing an already-signed bundle is idempotent, so this is safe to
+      // run against the real artifact.
+      const real = adhocSign({ appPath: builtApp, identity: null, env: {} });
+      eq(real.signed, true, `the REAL adhocSign() signs the built app (${path.basename(builtApp)})`);
+      ok(!threw(() => assertLoadable(builtApp)).threw,
+         'THE LOAD PROBE PASSES: dyld maps the embedded Electron Framework');
+
+      // Non-vacuity, on a COPY, by changing exactly one variable: the hardened
+      // runtime. `--deep` is present in BOTH arms, which is what exonerates it.
+      const badCopy = path.join(SCRATCH, 'Runtime.app');
+      const cp = spawnSync('cp', ['-R', builtApp, badCopy], { encoding: 'utf8' });
+      if (cp.status === 0) {
+        const rs = spawnSync('/usr/bin/codesign',
+          ['--force', '--deep', '--options', 'runtime', '--sign', '-', badCopy], { encoding: 'utf8' });
+        if (rs.status === 0) {
+          const badVerify = spawnSync('/usr/bin/codesign', ['--verify', '--deep', '--strict', badCopy], { encoding: 'utf8' });
+          eq(badVerify.status, 0,
+             'CONTROL — the hardened-runtime copy PASSES `codesign --verify --deep --strict`…');
+          ok(threw(() => assertLoadable(badCopy)).threw,
+             '…and STILL fails the load probe. Static checks cannot see this; the probe can.');
+        } else {
+          console.log('  ⊘ the hardened-runtime control could not be produced (codesign refused)');
+        }
+        // The parser/refusal half of the control needs no launch, so it stays
+        // on the unconditional side — it is only inside this block because the
+        // hardened copy itself is.
+        rmSync(badCopy, { recursive: true, force: true });
       }
-      rmSync(badCopy, { recursive: true, force: true });
     }
+
+    // The refusal half of the hardened-runtime control, WITHOUT launching:
+    // fabricate the flags rather than the bundle. `assertAdhocOnly` must refuse
+    // on the runtime flag alone — which is what makes the static check above a
+    // real guard and not a formality.
+    ok(threw(() => assertAdhocOnly({ ...info, flags: [...info.flags, 'runtime'] })).threw,
+       'and assertAdhocOnly REFUSES the same signature with the runtime flag set — no launch needed');
   }
 }
 
@@ -842,6 +1004,25 @@ console.log(`
     without injection the build was REFUSED at afterPack and produced no DMG;
     with \`npm run dist\` the Info.plist read 3.30.0 for both keys; and an
     injected 9.9.9 was refused with the mismatch named.
+
+  · SIGNING: THE LOAD PROBE IS OPT-IN, AND OFF BY DEFAULT. It executes the
+    bundle's own Mach-O. For a bundle that loads that is invisible; for one
+    that does NOT — which is the case it exists to catch, and which §12b's
+    hardened-runtime control MANUFACTURES on every run — macOS puts a crash
+    dialog on the desktop of whoever is at the machine. Seven reached the
+    maintainer, one during an ordinary 'npm test'. Set
+    CURATOR_TEST_LAUNCH_APP=1 to run it. What still runs unconditionally is
+    every check that needs no launch, including the signature FLAGS on the
+    real bundle — the hardened-runtime defect is visible there statically.
+    And the afterPack hook runs the probe on every real build regardless, so
+    a release cannot ship without it.
+
+  · SIGNING: A STALE dist/ IS SKIPPED, NOT FAILED. desktop/dist/ is gitignored
+    build output. A bundle whose Info.plist disagrees with the root
+    package.json cannot have come from a hook-enforced build (the hook refuses
+    that build and emits nothing), so it is evidence about the developer's
+    disk, not about this commit. The version refusal itself is still proven
+    non-vacuously, on a fabricated bundle, on every platform.
 
   · SIGNING: THE LOAD PROBE IS NOT A LAUNCH. 'assertLoadable' proves dyld maps
     the embedded Electron Framework — the thing that was silently failing — by
