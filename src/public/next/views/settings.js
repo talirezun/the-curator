@@ -2579,6 +2579,12 @@ function renderProviderRow(p, k, crossBusy) {
 
   const stateText = isActive ? 'active' : (hasKey ? 'configured' : 'not set');
   const stateClass = isActive ? 'provider-state-active' : 'provider-state-muted';
+  // The colour reinforcement for "active" — see the CSS comment on
+  // .provider-state-icon for why this is an ICON next to the word rather
+  // than the word's own colour. Icon-only so a colour-blind reader still
+  // has the word "active" itself (unchanged, never removed) as the primary
+  // signal; the icon is reinforcement, not a replacement.
+  const stateIcon = isActive ? '<span class="provider-state-icon" aria-hidden="true">' + icon('checkAlt', 11) + '</span>' : '';
 
   // `isBusy` is THIS row's own in-flight request (already disables + shows
   // its own "Saving…"/etc label — not a conflict with itself). `crossBusy`
@@ -2794,7 +2800,7 @@ function renderProviderRow(p, k, crossBusy) {
   } else {
     fieldHtml = (
       '<code class="provider-key-field mono' + (hasKeyField ? '' : ' provider-key-empty') + '">' + escapeHtml(hasKeyField || 'Not set') + '</code>' +
-      '<span class="mono provider-state ' + stateClass + '">' + stateText + '</span>' +
+      '<span class="mono provider-state ' + stateClass + '">' + stateIcon + stateText + '</span>' +
       '<div class="provider-row-actions">' +
         extraActions.join('') +
         // This button only opens the input row locally — no network call — so it's deliberately NOT gated (see file-header comment).
@@ -5036,6 +5042,64 @@ function renderModelOption(m, index, defaultId, ctx) {
 
 // ── MCP bridge ────────────────────────────────────────────────────────────
 
+/**
+ * Pure derivation of the connection pill from GET /api/mcp/config's payload.
+ * Split out of renderMcp() so it can be extracted and driven standalone by
+ * scripts/test-next-ui-polish.js — same reasoning as PROVIDER_ROWS/
+ * renderProviderRow living apart from the DOM-touching code around them.
+ *
+ * A corrupt claude_desktop_config.json is its OWN state, not "not
+ * connected": src/routes/mcp.js computes installed/stale inside its
+ * `!parseError` branch, so both come back false for a file it could not
+ * parse — reporting that as "Not connected" would be asserting something we
+ * do not know. The wizard's blocked panel is where this is explained and
+ * where the whole-file payload is withheld; here it only has to stop
+ * claiming a status it cannot have.
+ */
+function deriveMcpStatus(m) {
+  const unreadable = m.claude_config_parse_error === true;
+  const connected = !unreadable && m.installed === true && m.stale !== true;
+  const pillClass = connected ? 'status-pill status-pill-ok' : 'status-pill status-pill-muted';
+  const pillLabel = unreadable
+    ? 'Config unreadable'
+    : (connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected'));
+  const wizardLabel = unreadable
+    ? 'Fix the config file'
+    : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
+  return { unreadable, connected, pillClass, pillLabel, wizardLabel };
+}
+
+/**
+ * Defect 2 fix — the pill and the self-test result answer DIFFERENT
+ * questions, and nothing on screen used to say so.
+ *
+ * `stale` (src/routes/mcp.js) is a strict equality check on the launch
+ * command Claude Desktop actually has SAVED on disk, in its own config
+ * file, against the command The Curator would generate today. It goes true
+ * when the knowledge folder moved, when the app itself moved, or when the
+ * Node binary path changed (an nvm/Homebrew upgrade) — none of which touch
+ * anything the self-test spawns.
+ *
+ * The self-test (POST /api/mcp/self-test, see that handler's own comment)
+ * never reads Claude Desktop's saved file at all. It always spawns
+ * `buildCuratorEntry(getDomainsDir())` — the CORRECT, freshly computed
+ * command — on purpose, so a self-test failure can never be "your saved
+ * file happens to be wrong" (that was the pre-v3.6.1 bug: spawning a
+ * path-less command gave a green pass against the wrong folder). That
+ * means a self-test can be green — the bridge software genuinely works
+ * with today's settings — while the pill is still "Needs re-connect" —
+ * Claude Desktop is still launching the OLD command until the user re-runs
+ * setup. Both are true; they are not in tension. Only the combination is
+ * worth a note, so this returns false in the far more common case where
+ * the two already agree (including: no self-test run yet, or the self-test
+ * itself failed — that failure gets its own card and no note here would
+ * add anything but noise).
+ */
+function shouldShowMcpStaleNote(status, m, selfTest) {
+  return !status.unreadable && m.installed === true && m.stale === true &&
+    !!selfTest && selfTest.ok === true;
+}
+
 function renderMcp() {
   if (state.mcpError) {
     return '<div class="settings-inline-error">' + escapeHtml(state.mcpError) + '</div>';
@@ -5044,26 +5108,23 @@ function renderMcp() {
     return gatedLoader(loadGate, 'Loading MCP status…');
   }
   const m = state.mcp;
-  // A corrupt claude_desktop_config.json is its OWN state, not "not
-  // connected": src/routes/mcp.js computes installed/stale inside its
-  // `!parseError` branch, so both come back false for a file it could not
-  // parse — reporting that as "Not connected" would be asserting something
-  // we do not know. The wizard's blocked panel is where this is explained
-  // and where the whole-file payload is withheld; here it only has to stop
-  // claiming a status it cannot have.
-  const unreadable = m.claude_config_parse_error === true;
-  const connected = !unreadable && m.installed && !m.stale;
-  const pillClass = connected ? 'status-pill status-pill-ok' : 'status-pill status-pill-muted';
-  const pillLabel = unreadable
-    ? 'Config unreadable'
-    : (connected ? 'Connected' : (m.installed ? 'Needs re-connect' : 'Not connected'));
-  const wizardLabel = unreadable
-    ? 'Fix the config file'
-    : (connected ? 'Re-run setup' : (m.installed ? 'Re-connect' : 'Set up Claude Desktop'));
+  const status = deriveMcpStatus(m);
+  const { pillClass, pillLabel, wizardLabel } = status;
 
   const selfTestHtml = state.selfTest ? renderSelfTestResult() : '';
   const snippetHtml = state.configSnippetOpen && state.configSnippet
     ? '<pre class="mcp-config-snippet mono">' + escapeHtml(JSON.stringify(state.configSnippet, null, 2)) + '</pre>'
+    : '';
+  const staleNoteHtml = shouldShowMcpStaleNote(status, m, state.selfTest)
+    ? '<div class="settings-mcp-stale-note" role="status">' +
+        icon('alertTriangle', 15) +
+        '<span>This confirms the bridge software itself works with your current ' +
+        'settings — it does not check what Claude Desktop has saved. That saved ' +
+        'copy is out of date (your knowledge folder, the app, or Node itself has ' +
+        'moved since you last connected), so Claude Desktop is still launching the ' +
+        'old one. Click <strong>' + escapeHtml(wizardLabel) + '</strong> above to ' +
+        'update it — nothing else here needs fixing.</span>' +
+      '</div>'
     : '';
 
   const domains = (state.defaultDomainInfo && state.defaultDomainInfo.domains) || [];
@@ -5109,6 +5170,7 @@ function renderMcp() {
       '<button type="button" class="btn btn-ghost" id="btn-mcp-copy-snippet">' + icon('copy', 13) + ' Copy snippet' + (state.copyFeedback ? ' — ' + escapeHtml(state.copyFeedback) : '') + '</button>' +
     '</div>' +
     selfTestHtml +
+    staleNoteHtml +
     snippetHtml +
     '<div class="settings-field-block" style="margin-top:22px">' +
       '<span class="settings-field-label">Default domain for MCP writes</span>' +

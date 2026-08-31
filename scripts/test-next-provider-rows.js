@@ -291,10 +291,19 @@ const stubState = { replacing: null, keysBusy: null };
 // place the reason is written anywhere on that row.
 const ROW_CONSTS = ['PROVIDER_ROWS', 'TX_INFO_GLYPH'];
 const ROW_FN_NAMES = ['infoMark', 'renderProviderRow'];
+// A minimal stand-in for app.js's real icon() (Defect 1 fix: renderProviderRow
+// now calls it for the "active" row's checkAlt reinforcement icon). Real
+// enough for substring assertions: it echoes the requested name so a test can
+// tell WHICH icon rendered, the same way escapeHtmlStub above is real enough
+// to prove renderProviderRow's own branching rather than an escaping quirk.
+function iconStub(name, size) {
+  return `<svg data-icon="${name}" data-size="${size}"></svg>`;
+}
 const ROW_INJECTED = {
   escapeHtml: escapeHtmlStub,
   crossWriteTitle: (msg) => 'cross-write: ' + msg,
   state: stubState,
+  icon: iconStub,
 };
 const ROW_INJECTED_NAMES = Object.keys(ROW_INJECTED);
 
