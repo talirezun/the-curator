@@ -1,16 +1,24 @@
-# Roadmap — menubar widget: background running + a live view of agent memory (planned, not yet implemented)
+# Roadmap — menubar widget: background running + a live view of agent memory (Phase 1 SHIPPED; Phases 2–3 not built)
 
-> **Nothing in this file describes shipped behaviour.** As of v3.30.0 the Mac app
-> is a single `BrowserWindow` with a Dock icon and no status-bar presence at all.
-> This is design context plus a resource baseline, written so the work can start
-> immediately after v3.31.0 without re-deriving anything. Update it in place as
-> decisions firm up. Same convention as
-> [roadmap-chat-modes.md](roadmap-chat-modes.md).
+> **This file is no longer entirely a plan, and the split is exact.** **Phase 1 —
+> the menu bar icon and its native menu — is built and is in the code.** Phases 2
+> (the rendered popover panel and the per-scope popup) and 3 (the bucketed event
+> strip) are **not built**, and every word about them below is still design
+> context rather than a description of behaviour. §0a is the boundary; read it
+> before trusting any other section in the present tense.
+>
+> **Nothing in the rest of this file was rewritten to match what shipped**, on
+> purpose. Where the build deviated from the plan, §0a names the deviation and
+> points at the section it deviated from. A roadmap edited into agreement with
+> its own outcome stops being able to explain why a decision was made — which is
+> the only thing it is still for.
 >
 > **Written against a measurement session on 2026-08-31**, macOS 15 / arm64,
 > against the running v3.30.0 build installed in `/Applications`. Every number in
 > §2 is tagged MEASURED or INFERRED. The ones tagged INFERRED are the ones a
-> future session should measure rather than inherit.
+> future session should measure rather than inherit. **§2's numbers were not
+> re-measured against the shipped tray** — the cost model in §2.6 is what the
+> implementation was built to, not a reading taken from it.
 
 ### Revision note — SECOND PASS, against v3.33.0
 
@@ -46,6 +54,116 @@ invisible background process into an observable one, and — because the MCP ser
 and the memory layer are useful with the window closed — it also makes "closing
 the window" stop meaning "stopping the product". The widget is an **observer**:
 the app is read-only over working state by design, and it must stay that way.
+
+---
+
+## 0a. STATUS — what shipped, what deviated, what is still a plan
+
+*Added when Phase 1 landed. Everything after this section is the design pass, unedited.*
+
+### What is in the code
+
+| Thing | Where | Status |
+|---|---|---|
+| `backgroundMode` — `window` · `tray` · `tray-only`, top-level in `.curator-config.json` | `src/brain/config.js` | **Built.** Default `window`, per §1.10 and §7 |
+| `GET /api/config` carries `backgroundMode` + `backgroundModes`; `POST /api/config/background-mode` writes it | `src/routes/config.js` | **Built** |
+| The Settings control (Off / On / On, and hide the Dock icon) with the three-ways-it-vanishes warning in its own copy | `src/public/next/views/settings.js` | **Built**, per §7 and §3.10 |
+| One cheap projection over the store — `getTraySummary()` | `src/brain/tray-summary.js` | **Built** |
+| Row model, age formatting, recency buckets, glyph state | `desktop/lib/tray-model.js` | **Built** |
+| The native `Menu` template — Phase 1's whole surface | `desktop/lib/tray-menu.js` | **Built**, per §1.4 |
+| The generated template-image glyph (ring / filled) | `desktop/lib/tray-icon.js` | **Built** |
+| Recursive `fs.watch`, 150 ms debounce, 5-minute fallback, one-shot glyph expiry | `desktop/lib/state-watch.js` | **Built**, per §1.6 and §2.4 |
+| The 3×3 live mode transition, so the setting takes effect without a restart | `desktop/lib/background-mode.js` | **Built** |
+| Phase 0 — the agent's own clock beside the file's, and harness-collision detection | `src/brain/working-state.js` | **Shipped separately in v3.34.0**, on its own merits, exactly as §6 asked |
+
+### What deviated from the plan, and why
+
+Five deviations. Each one is a decision taken at build time against a section
+below, and the section below is left as it was written.
+
+1. **`tray-only` does not hide the Dock icon.** §1.8 argued for
+   `app.setActivationPolicy('accessory')` and verified the API. The build
+   **recognises** the mode but treats it as `tray`, because the *return*
+   transition — accessory back to regular, which is what happens the moment
+   someone opens the window from the menu — is community-reported buggy in
+   exactly the direction the feature depends on, and it cannot be tested from
+   here. `resolveTrayPlan()` returns `hedged: true` with a reason rather than
+   silently collapsing the mode. **§1.8 is therefore unbuilt design, not a
+   description.**
+
+2. **The remote count is an OBSERVATION, not a check on menu open.** §2.9 and §7
+   both say the unpulled-remote count is fetched *at the moment the menu opens*.
+   It is not, and the reason is one `brain/sync.js` exposes no way around:
+   `getRemoteStatus()` is *cache hit ? return : `git fetch`* with no peek, and a
+   second fetch site is the recorded v3.9.1 incident where the user's own pull
+   aborted in 11 runs out of 12 over a ref lock. So `noteRemoteStatus()` records
+   whatever a completed check last reported — fed from
+   `GET /api/sync/remote-status`, which the sync badge already polls — and the
+   line is simply absent when there is none. **This has a consequence §2.9 did
+   not anticipate and it is stated in full below.**
+
+3. **No in-app offer.** §7 recommends offering the setting *once*, quietly, in
+   the Agent memory screen at the moment a project has accumulated work, with a
+   `ui.*` dismissal field. Neither the offer nor the field exists. Discovery is
+   **Settings → General → Menu bar and nothing else**, which means a user who
+   never opens Settings never learns the feature is there.
+
+4. **Clicking a row lands on the project, not the scope.** §1.7's Phase 1
+   sentence — *"a row's click simply opens the app on that scope"* — overstates
+   what the shell can address. `data-view` and `data-mem-project` are the app's
+   own dispatch attributes; the scope picker inside the memory view has no
+   routing attribute, so the click lands on **Agent memory, on that project**,
+   and stops there.
+
+5. **The budget bar and the recency pip are not drawn.** §1.5 accepts both. An
+   `NSMenu` item is a label, a sublabel and a tooltip — it cannot draw a rule or
+   a coloured dot. The recency *bucket* is computed (`ageBucket()`, the exact
+   five states of §1.5's table) and today drives only the glyph; the bar has no
+   surface at all until Phase 2. **Both survive as Phase 2 work, unbuilt.**
+
+### The consequence of deviation 2, stated because it is the widget's weakest point
+
+The remote line is fed by a poll that is **deliberately suppressed exactly when
+the widget is the surface in use.** `refreshSyncRemoteBadgeIfVisible()` declines
+to fetch while `document.hidden` is true — correct on its own terms, since a
+window nobody is looking at should not phone GitHub every ten minutes — and the
+observation expires after five. So with the window closed, which is the state
+the tray exists for, **no new observation arrives and the existing one goes
+stale within five minutes.** In practice the remote line appears only for a few
+minutes after the window has been open.
+
+Nothing renders wrongly: absence renders as absence, and "0 waiting" is never
+shown for "not checked". But the multi-machine signal §2.9 priced is, in the
+tray's normal operating state, **effectively inert**. Closing it needs either a
+non-fetching accessor in `brain/sync.js` or a deliberate on-open fetch that
+serialises against `pull()` — both real work, neither in this change.
+
+### Still a plan, in the order §6 put them
+
+| Phase | State |
+|---|---|
+| **0** — two fields on the store's index row | **Shipped** in v3.34.0 |
+| **1** — tray + native menu, `window` default | **Shipped** |
+| **2** — popover panel + per-scope popup + budget bar + recency pips | **Not built.** §1.7's tier rule (*the widget renders the journal; the app renders the handoff*) and §1.7's hard constraint are the contract it must be built to |
+| **3** — bucketed event strip | **Not built**, and §6 still calls it the first thing to cut |
+
+Two items §6 raised that are **not** part of the widget and are still open:
+gating the two shell `setInterval`s on `document.hidden` (§2.7 rec 1) — **now
+done for the sync badges**, which is what deviation 2 above turns on — and
+measuring the GPU process (§2.7 rec 2), **still not measured**.
+
+### What has never been rendered, and this is the honest limit
+
+**No tray icon has ever appeared on any machine.** `new Tray()` has never been
+called. What is proven is data: the row model, the menu template, the 3×3 mode
+transitions and the glyph's actual decoded pixels are executed and asserted by
+`scripts/test-tray-shell.js`, `scripts/test-tray-summary.js` and
+`scripts/test-background-mode.js`. What is **not** proven is everything that
+needs macOS: that Electron accepts these menu values, that `sublabel` renders as
+a second line, that the template image tints correctly in a light bar, a dark
+bar and the inverted open-menu state, that `mouse-enter` fires at all, and that
+the icon is visible rather than pushed behind the notch. Treat a green suite as
+proof about the **model**, never about the **menu bar**.
 
 ---
 
@@ -414,6 +532,8 @@ install this is the only thing it can ever show.
 
 ### 1.4 NSMenu versus a rendered popover — argued, then decided
 
+> **BUILT AS DECIDED.** Phase 1 ships a native `Menu`. See [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
+
 The maintainer's reference is the Stats / iStat Menus class: a compact glyph in
 the bar, and on click a **popover panel** with titled sections, sparklines and
 labelled bars. A plain `NSMenu` cannot draw that.
@@ -489,6 +609,11 @@ rather than a single call — and §3's research moved one input (the HIG says
   is pushed to it (§1.6), so a closed panel has nothing to do.
 
 ### 1.5 Visual encodings — re-derived for two harnesses and three machines
+
+> **PARTLY BUILT.** The recency buckets are computed and keyed on the true save
+> time as this section requires, and the *"changed 4 min ago"* wording is what
+> shipped. **Neither the budget bar nor the pip is drawn** — a menu item cannot
+> draw either. Deviation 5 in [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
 The brief asks whether, with several harnesses and several machines in play,
 there is now **a genuinely continuous quantity worth drawing**. Re-derived from
@@ -722,6 +847,11 @@ alive anyway.
 
 ### 1.7 Click a scope, see it — REVERSED IN PART, and here is the safe version
 
+> **NOT BUILT.** There is no popup. A row click opens the app on Agent memory at
+> that **project** — not that scope; deviation 4 in
+> [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan). The tier rule
+> and the hard constraint in this section are the contract Phase 2 must be built to.
+
 The maintainer asked for this specifically: *click a scope to see it, without
 having to open the whole app*. The first pass refused, on the grounds that a
 handoff runs to 13–16 KB in real use (48 KB cap) and that a second reader of the
@@ -816,6 +946,10 @@ card. The popup arrives with Phase 2, which is when there is something to draw i
 in. So the sequencing is unchanged; only the Phase 2 content is.
 
 ### 1.8 The Dock icon, and how the window comes back
+
+> **NOT BUILT.** `tray-only` is recognised and behaves as `tray`; the Dock icon is
+> left alone and the plan reports `hedged: true`. Deviation 1 in
+> [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
 This is the decision with the most consequences and the least room to be clever.
 
@@ -1334,6 +1468,12 @@ property for free, because the main process already holds the current snapshot.
 ---
 
 ### 2.9 The multi-machine signal — measured, and then priced to zero
+
+> **BUILT DIFFERENTLY, AND WEAKER.** There is no fetch on menu open. The widget
+> renders whatever a completed check last reported, and that check is suppressed
+> while the window is hidden — which is the tray’s normal state. Deviation 2 in
+> [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan) states the
+> consequence in full.
 
 Added this pass. The first pass's cost model covered only **local** signals, and
 Scenario B's headline question is not local.
@@ -1915,6 +2055,11 @@ in prose, with the answer beside them, so nobody re-opens a closed one.
 
 ## 6. Sequencing — updated for v3.33.0
 
+> **Phase 0 and Phase 1 have both shipped**; Phases 2 and 3 have not. The table in
+> [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan) carries the
+> current state. The risk analysis below is why the phases were split this way and
+> is unchanged.
+
 **The first pass scoped this for "a release after v3.31.0", and that release has
 shipped**, along with v3.32.0 and v3.33.0. The reasoning behind the deferral is
 still the reasoning that should govern it:
@@ -1950,6 +2095,12 @@ one launch. Both improve the app whether or not the widget is ever built.
 ---
 
 ## 7. RECOMMENDATION — in plain language
+
+> **The first two of the three recommendations below are built; the third — the
+> pop-up card — is not.** Two other things in this section did not survive the
+> build: the once-only in-app offer to turn the setting on (deviation 3) and the
+> check-on-open of the remote count (deviation 2). Both are in
+> [§0a](#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
 
 *Written to be read aloud. No jargon, no file names.*
 

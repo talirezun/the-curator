@@ -805,11 +805,35 @@ that its standing instructions are the user's own rather than an earlier session
 Adding a second writer to `state/project.md` would take that away — see
 [§4](#tier-1-is-not-tier-2-the-brief-is-hand-authored-by-the-owner).
 
+### A second read surface: the menu bar widget (Mac app, off by default)
+
+The Mac app can put a small icon in the macOS menu bar that shows the same store — the last
+save, the most recent work-streams, and how stale the standing brief is — without opening the
+window. **It is off unless you turn it on** (Settings → General → Menu bar), and it is a
+*reader*, under exactly the same rule as the in-app view: it never writes, and there is still
+one writer.
+
+It is also deliberately **not a second reader of the handoff**. It shows rows, ages and the
+agent's own one-line headline; clicking a row opens the app. The document itself is rendered in
+one place only. The full behaviour is in
+[user-guide.md § 6b](user-guide.md#6b-the-menu-bar-icon-mac-app).
+
+Two facts it surfaces are ones nothing else on the screen would show you:
+
+- **Which clock an age came from.** A handoff that arrived over Personal Sync carries the
+  moment of the *pull* as its file timestamp, because git rewrites mtime on checkout. The
+  widget shows the agent's own clock where the journal recorded one, and where it cannot it
+  says *"changed 4 min ago"* rather than presenting the file's time as a written time.
+- **Two agent tools writing one work-stream**, which is [§2](#why-machine-is-in-the-path)'s
+  collision. It names the scope and stops there; the remedy — a separate scope per tool — is
+  yours.
+
 Recorded plainly, so nothing else here is read as a promise:
 
 - **No rollups.** Nothing composes Done/Decided/Blocked views across scopes or projects.
 - **No hooks.** Nothing forces a save at the end of a session. Capture is guided by the
   skill layer and is therefore **advisory**.
+- **The menu bar widget is a reader, not a writer**, and it never renders `current.md`.
 
 That last one has a consequence worth being direct about: **if a session ends without
 saving, the next read returns the previous state.** That is a stale handoff, not a

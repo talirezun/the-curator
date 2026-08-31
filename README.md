@@ -91,6 +91,9 @@ Read that as the shape of the effect at N=4 per condition, not a constant —
          ↓
 7. (optional) Point an agent at a domain over MCP → it saves where the
    work stands at the end of a session and reads it back at the start of the next
+         ↓
+8. (optional, Mac app) Turn on the menu bar icon → glance at what your agents
+   have just saved without opening the app
 ```
 
 Everything is a plain markdown file on your computer. No subscriptions, no database, no cloud
@@ -226,6 +229,12 @@ appears. Eject the disk image afterwards.
 
 **What this Mac release is, plainly.** It is not signed with an Apple identity and not
 notarised, so the **one-time** Open Anyway step above applies to this first manual install.
+
+**One optional extra the browser install has no equivalent for:** a **menu bar icon** showing
+what your coding agents have just saved, so you can check your state is written without leaving
+what you are doing. It is **off by default** — a fresh install has no agent memory, so an
+on-by-default icon would have nothing to show — and lives in **Settings → General → Menu bar**.
+See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
 
 **After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)
 downloads the new version, verifies it against the sha256 GitHub publishes on the asset, and
@@ -400,7 +409,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [User Guide](docs/user-guide.md) | Full setup + usage — install, ingest, chat, costs, MCP, Health, sync, troubleshooting |
 | [Knowledge Immortality (essay)](research/articles/knowledge-immortality-second-brain.md) | The why — what a second brain is, why markdown matters, what compounding looks like in practice |
 | [My Curator MCP Guide](docs/mcp-user-guide.md) | Connect your wiki to any MCP client for frontier-model research over the graph |
-| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; what belongs in state vs. on a wiki page |
+| [Working state](docs/working-state.md) | Carry build context between sessions, agents, models and machines; what belongs in state vs. on a wiki page; the optional Mac menu bar icon over it |
 | [AI Wiki Health](docs/ai-health.md) | AI-assisted broken-link / orphan / semantic-duplicate cleanup — what each phase does and its tradeoffs |
 | [Domains](docs/domains.md) | Managing domains, the schema, how domains relate to each other, custom templates, terminology |
 | [Sync Guide](docs/sync.md) | Personal Sync — GitHub backup across your own computers (wizard, token permissions, what syncs, troubleshooting) |
@@ -409,7 +418,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Shared Brain — Monetization](docs/shared-brain-monetization.md) | Charging for brain access today using no-code payment platforms |
 | [Use Cases](docs/use-cases.md) | Detailed workflows for every profile, including cohort, team and monetization scenarios |
 | [System Check](docs/system-check.md) | Confirm the app itself is set up correctly (key, folder, credentials, sync), plus an optional AI connection test |
-| [Mac App Setup](docs/mac-app.md) | Both Mac shapes — the downloadable `.dmg` app (first install, Gatekeeper, how it updates itself) and the Dock launcher the shell installer builds |
+| [Mac App Setup](docs/mac-app.md) | Both Mac shapes — the downloadable `.dmg` app (first install, Gatekeeper, how it updates itself, the optional menu bar icon) and the Dock launcher the shell installer builds |
 | [Skills](skills/README.md) | The two agent skills, what they enforce, and how portable they actually are |
 
 **For developers**

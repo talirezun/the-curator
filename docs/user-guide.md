@@ -14,6 +14,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 4. [Get your API key (Gemini, Claude or OpenRouter)](#4-get-your-api-key-gemini-claude-or-openrouter)
 5. [First run — the Getting started panel](#5-first-run--the-getting-started-panel)
 6. [Starting and quitting](#6-starting-and-quitting)
+6b. [The menu bar icon (Mac app)](#6b-the-menu-bar-icon-mac-app)
 7. [Finding your way around](#7-finding-your-way-around)
 8. [Ingest a source](#8-ingest-a-source)
 9. [Chat with your brain](#9-chat-with-your-brain)
@@ -530,6 +531,12 @@ during a paid, multi-minute write just because a check came back unclear.
 
 > The window remembers its size and position between launches.
 
+> **The app can also live in your menu bar.** Optional, off by default, and switched on in
+> **Settings → General → Menu bar** — a small icon that shows what your agents have just saved
+> without you opening the window. See [§6b](#6b-the-menu-bar-icon-mac-app). Turning it on does
+> not change any of the quit behaviour above: **Quit** in the menu bar runs the same
+> work-in-progress check that ⌘Q does.
+
 ### The browser install — macOS Dock launcher
 
 Click **The Curator** icon in your Dock. It starts the local server and opens in your browser automatically.
@@ -563,6 +570,268 @@ It is a **local web app** — a small Express server runs on your machine and re
 > **There is no "Stop server" button in the UI.** It was deliberately removed in v2.1 because AppleScript's reopen handler is broken on modern macOS. Use the Dock right-click menu instead.
 
 > ⚠️ **Quitting the browser install does not warn you about work in progress.** That check exists only in the Mac app. So if you ingest a 200-page PDF here, **don't quit until you see the success banner** — the ingest stream lives inside the server process, and killing it mid-run loses the rest of a document you have already paid to have read.
+
+---
+
+## 6b. The menu bar icon (Mac app)
+
+*Mac app only. The browser install has no menu bar presence — the setting is still shown there, and says so, rather than leaving you hunting for a control that does not apply.*
+
+### The one question it answers
+
+You are deep in a coding session, your context window is filling up, and you want to know — in about a second, without leaving what you are doing — **whether your agent has actually written the handoff, and how long ago.**
+
+That is the whole feature. Everything below follows from it.
+
+```mermaid
+flowchart LR
+    A["Your agent saves<br/>over MCP"] --> B[("domains/&lt;project&gt;/state/")]
+    B -->|"a file changed"| C["The Curator notices<br/>~150 ms later"]
+    C --> D["The menu bar icon<br/>and its menu update"]
+    D --> E["You glance up.<br/>No window, no clicking."]
+```
+
+> **It is off by default, and that is not caution.** A brand-new install has no agent memory at all, so an on-by-default icon's only possible content is *"No agent memory yet"* — the worst first impression the feature can make, and one that teaches you the icon is not worth clicking.
+
+### Turning it on
+
+**Settings → General → Menu bar.** It takes effect immediately; there is nothing to restart, and you can switch it back off the same way.
+
+| Choice | What you get |
+|---|---|
+| **Off** | No menu bar icon. The Dock icon and the window behave exactly as they always have. **This is the default.** |
+| **On** | A menu bar icon, alongside your Dock icon |
+| **On, hide the Dock icon** | Remembered, but **the Dock icon is not actually hidden yet** — this behaves as **On** today. [Why](#what-is-not-finished-and-what-has-never-been-seen) |
+
+### What you see when you click it
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Last save · 4 min ago                                     │  ① the answer, first
+│      notes · main                                          │  ② where
+├────────────────────────────────────────────────────────────┤
+│  notes · main — claude-code · 4 min ago                    │
+│      wired the remote observation and its 5-minute window  │  ③ up to 8 rows,
+│  notes · drafting — opencode · 22 min ago                  │     newest first
+│      pulled the three measurements into one table          │
+│  research · api-rewrite — studio · changed 3 hr ago        │
+│      ruled out the polling design; watch it is             │
+│  …and 4 more in Agent memory                               │  ④ a cap, disclosed
+├────────────────────────────────────────────────────────────┤
+│  Two harnesses are writing notes · drafting                │  ⑤ notices, only
+│  14 handoffs waiting on GitHub                             │     when true
+├────────────────────────────────────────────────────────────┤
+│  Open Agent Memory…                                        │
+│  Open The Curator                                          │  ⑥ always here,
+│  Settings…                                                 │     in every state
+├────────────────────────────────────────────────────────────┤
+│  Updated 14:32                                             │  ⑦ how fresh this
+├────────────────────────────────────────────────────────────┤     reading is
+│  Quit The Curator                                          │
+└────────────────────────────────────────────────────────────┘
+```
+
+*Abbreviated: the real menu lists up to eight work-streams, and the notice lines appear only when
+they apply. Everything else is always in that order.*
+
+| | What it is | Why it is where it is |
+|---|---|---|
+| ① | The last save, anywhere across all your projects | It is the question you came to ask, so it is answerable without reading past the first line. Clicking it opens Agent memory |
+| ② | Which project and work-stream that save was | A statement about the line above, not a second action |
+| ③ | Up to **eight** work-streams, newest first, **flat — not grouped by project** | You are watching an agent, and an agent works in one work-stream at a time. *"What just happened"* is a recency question. The project name rides on every row, so nothing is lost but the grouping |
+| ④ | *"…and N more"* — how many work-streams did **not** fit | A cap is never allowed to look like a measurement. A list that shows eight when you have twelve, and says nothing about the other four, is the one case where you most need telling. (The exact figures — *"the 8 most recent of 12"* — arrive as a notice line, ⑤) |
+| ⑤ | Notices | They appear **only when they have something to say**. Up to four. Today some of them **double up** — see the note below |
+| ⑥ | The three ways back into the app | Always present, in every state, whatever the data above them does. That is what makes the icon safe to switch on |
+| ⑦ | *"Updated HH:MM"* — an **absolute** time | The rows' ages are relative; this one is not, deliberately. They answer different questions — *how old is this event* versus *how old is this reading*. **It is meant to make a stale reading visible as stale, and today it under-reports** — see the note under [How to read a row](#how-to-read-a-row) |
+
+**Quit is always last, and it is the system's own Quit.** It is not a shortcut that skips anything: quitting from the menu bar runs the same check as ⌘Q, so if an ingest or a compile is in flight you still get the *"Quit now?"* dialog described in [§6](#6-starting-and-quitting). That matters more here, not less — an app that keeps running with no window on screen is more likely to be alive while something is being written.
+
+### How to read a row
+
+Every row is the same shape:
+
+```
+notes · main — claude-code · 4 min ago
+    wired the remote observation and its 5-minute window
+```
+`project · work-stream — who · when`, and underneath, **the agent's own one-line summary of what it did**.
+
+**The `who` column changes meaning depending on where the save came from, and that is deliberate.**
+
+| The save came from… | `who` shows | Why |
+|---|---|---|
+| **This computer** | the **agent tool** — `claude-code`, `opencode`, `cursor` | The machine name would be the same on every row, so it tells you nothing. Which *tool* wrote it is exactly what differs when two are running side by side |
+| **Another computer** | the **machine** — `studio`, `laptop` | Now it inverts completely. *"The other computer did this"* is the news; which tool is running over there is not your problem right now |
+
+**And the `when` column tells you which clock it came from.**
+
+| You see | It means |
+|---|---|
+| **`4 min ago`** | The **agent's own clock**, recorded in the journal when it saved. This is the real answer |
+| **`changed 4 min ago`** | The **file's timestamp on this disk**. For a handoff that arrived over Personal Sync, that is when it *landed here*, not when it was written — git rewrites file times when it checks a file out |
+| **`time unknown`** | No save time was recorded for this work-stream. It is never shown as *"just now"*, and a row with no known age sorts to the **bottom**, never the top — putting an unknown first would be asserting it is the newest |
+
+> This is the one place the widget could most easily have lied to you. On a second computer, *every* handoff you pull would read as *"just now"* if it used file times — and the strongest signal in the whole design would be wrong in exactly the situation it was built for.
+
+**Hovering the icon** shows the same headline in a tooltip, without clicking.
+
+> ⚠️ **How current are the ages, really?** They are recalculated **when a save happens**, and
+> otherwise **every five minutes**. They are *not* recalculated by hovering, and clicking
+> re-reads the store for the *next* time you open the menu rather than the one appearing in
+> front of you. So an age can be up to about five minutes behind — which is fine for *"did it
+> save in the last few minutes or the last few hours?"*, and not fine if you are watching the
+> seconds tick. **`Updated 14:32` currently tells you when the menu was last drawn, not when the
+> store was last read**, so it can look fresher than the rows above it. This is a known defect
+> rather than a design choice, and it is recorded as one in
+> [architecture.md](architecture.md#the-menu-bar-widget-desktoplibtray-js--srcbraintray-summaryjs).
+
+### The icon itself
+
+It carries exactly one bit beyond *"The Curator is running"*.
+
+| Icon | Meaning |
+|---|---|
+| **○** — a hollow ring | The Curator is running. Nothing has been written here very recently |
+| **●** — a filled centre | An agent has written **on this computer** within the last **2 minutes** |
+
+Three things it deliberately is **not**: there is no number badge (*a count of what?*), no animation (an animated menu bar icon is the thing people uninstall apps over), and **no text beside it**. A relative age in the menu bar is either stale or it has to wake the app every minute forever to stay honest, and every extra pixel of width makes an icon more likely to vanish behind the notch on a narrow screen. The headline lives at the top of the menu and in the hover tooltip instead.
+
+The filled state is a **local** instrument: a handoff pulled from another machine never lights it, because that is not an agent working *here*.
+
+---
+
+### Ways to use it
+
+Three situations the widget was actually designed around. They are not illustrations — each one is the reason a specific decision in it was made the way it was.
+
+#### Scenario 1 — Two agent tools on one computer
+
+*You run Claude Code in one window and opencode in another, on the same project.*
+
+The widget shows you **which tool wrote last**, because on a local row that is what the `who` column carries. So *"did Claude Code save, or was that opencode twenty minutes ago?"* is answerable at a glance.
+
+It also warns you about something that is otherwise completely silent:
+
+```
+Two harnesses are writing notes · drafting
+```
+
+**Here is why that matters.** Working state is stored per *project · work-stream · computer* — there is **no slot in that path for the tool**. So two agent tools on one machine, told to use the same work-stream, write to the **same handoff file**, and each save **replaces** the other's. Nothing errors. Nothing warns. The screen looks calm. You come back the next day, resume, and the handoff you are reading is whichever tool happened to save last.
+
+```mermaid
+flowchart TD
+    subgraph BAD["Both tools, one work-stream — they overwrite each other"]
+        H1["Claude Code"] --> F1[("state/main/&lt;this computer&gt;/current.md")]
+        H2["opencode"] --> F1
+    end
+    subgraph GOOD["A work-stream each — they never collide"]
+        H3["Claude Code"] --> F2[("state/main/&lt;this computer&gt;/")]
+        H4["opencode"] --> F3[("state/drafting/&lt;this computer&gt;/")]
+    end
+```
+
+**The remedy is yours, and it is one sentence: give each tool its own work-stream name.** Tell each agent which scope it owns — `main` for one, `drafting` for the other — and they never touch the same file again. The widget names the collision and stops there, on purpose; a menu bar line has no business proposing a fix in six words.
+
+> **What is not lost, and it is worth knowing.** The append-only journal survives a collision — every save writes a line carrying its own tool name, so the record of *what happened* is intact even when the *current handoff* only holds whichever tool saved last. That is how the collision is detected in the first place, and you can read the whole trail in **Agent memory → Journal**.
+
+#### Scenario 2 — Two or three computers, one private GitHub repo
+
+*A laptop and a desktop, each with its own agent, syncing working state through [Personal Sync](#15-sync-across-computers).*
+
+Two things the widget gives you here:
+
+| | |
+|---|---|
+| **You can see at a glance that a work-stream was written somewhere else** | A remote row shows the **machine** instead of the tool, so `research · api-rewrite — studio · 3 hr ago` reads as *"the other computer did this, three hours ago"* without you opening anything |
+| **You are told which clock the age came from** | A handoff that arrived over sync carries the moment it *landed*, not the moment it was written — so the widget says **`changed 3 hr ago`** rather than `3 hr ago` when the agent's own time is not available. A day-old handoff can never present itself as fresh |
+
+The practical use: **before you resume a work-stream, glance at the icon.** If the newest row for it names another machine, that machine wrote it more recently than you did, and pulling before you start is the difference between continuing and diverging.
+
+> **Honest limit — the *"14 handoffs waiting on GitHub"* line is not a live check, and in the state you will actually use the widget in, it is usually absent.**
+>
+> The count comes from the same GitHub check that drives the Sync badge in the app, and that check **stops running while the app window is hidden** — correct on its own terms, since a window nobody is looking at should not phone GitHub every ten minutes, but it means that with the window closed no fresh answer arrives. The widget refuses to show an answer older than five minutes, because a line saying *"14 waiting"* reads as current and there is no room beside it to say it is not.
+>
+> So: **treat the line as a bonus when it appears, never as an all-clear when it does not.** Absence means *nobody has checked*, and it is deliberately never rendered as "you are up to date". **Pulling is still a deliberate act you take in the Sync view.** [Automatic sync is researched and not built](#automatic-sync-is-not-built).
+
+#### Scenario 3 — Running low on context
+
+*The one this feature exists for.* You are near the end of a context window, about to ask the agent to save and stop, and the thing you want to know is whether the save actually happened.
+
+**Move the pointer to the icon. Do not even click.** The tooltip is the answer:
+
+```
+The Curator — Last save · just now (notes · main)
+```
+
+**`just now` means "within the last minute"** — anything under sixty seconds reads the same way,
+because a menu bar is not a stopwatch. Above that it steps through *N min · N hr · N days · N
+weeks*. So what you are actually reading is a **band**, and the band is what the question needs:
+if it says *just now* your save landed, and if it says *2 hr ago* it did not.
+
+Read it with the five-minute caveat from [How to read a row](#how-to-read-a-row) in mind — the
+figure may be a reading taken up to five minutes back. That is precise enough to separate *just
+saved* from *this morning*, and not precise enough to time a save to the second.
+
+**The other half of that worry — *"is my standing brief still describing this project?"* — the
+menu does not answer.** That is deliberate for now: a brief is up to 32 KB of prose that changes
+on the order of weeks, so the design puts its one line in the richer panel that has not been
+built yet, not in the menu. Today the answer is one click away instead of zero — **Open Agent
+Memory…** lands you on the save-status strip, whose last line is
+*"Standing brief — 6 weeks ago"* ([§7](#the-save-status-strip)).
+
+> **What the widget can never tell you: whether you are saved *now*.** It knows when the last save happened, not whether anything has changed since. That is why the line reads **Last save**, and not *"you are saved"*.
+
+#### Scenarios this does not serve
+
+Named so you do not go looking:
+
+- **Reading the handoff.** Clicking a row opens **the app**, on Agent memory, at that project — it does not render the document in the menu, and there is deliberately no second reader. A handoff runs to fifteen thousand characters or more; there is no honest way to put that in a menu bar. (It lands on the *project*, not the individual work-stream — pick the work-stream from the picker once you are there.)
+- **Watching progress.** A save is not partly done; it has happened or it has not. There is no progress bar and there will not be one.
+- <a id="automatic-sync-is-not-built"></a>**Syncing by itself.** The widget observes; it never pushes or pulls. Automatic sync has been researched and **is not built** — the finding was that automatic *push* is safe and automatic *pull* is not (a pull rewrites files under you and prefers the remote on a conflict), so the recommendation is automatic push by explicit opt-in, with pull staying a decision you make. Until any of that exists, syncing is a button you press in the [Sync view](#15-sync-across-computers).
+- **A richer panel** — a card per work-stream, how full a handoff is getting, a strip of recent activity per tool. All designed, **none built.** See [the roadmap](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan).
+
+---
+
+### What it costs to leave on
+
+Roughly **0.025% of one core** — which is inside the noise of what the app already uses sitting idle.
+
+It works by **watching** the folder your state lives in and doing nothing at all until something changes. There is no timer counting down behind a closed menu, and nothing is re-read on a schedule while you are not looking.
+
+| While the menu is closed | Cost |
+|---|---|
+| Watching the folder | 0.0044% of a core |
+| One safety check every 5 minutes, in case the watch dies quietly | 0.02% |
+| Reading the index when a save actually happens | A few milliseconds, a few times an hour |
+| Anything else | **Nothing.** No timers are running |
+
+The alternative — checking every twenty seconds so the menu feels instant — was measured at **70× the cost** and rejected. It is not needed: because the app is *told* when a file changes, it is already holding the answer when you click.
+
+### If the icon does not appear
+
+There are **three** separate ways a new menu bar icon silently fails to show up on a modern Mac, and **macOS gives an app no way to find out which one happened** — so The Curator cannot tell you, and neither can this page. Check all three:
+
+| | Look here |
+|---|---|
+| **Pushed off the edge** behind the notch, on a narrow screen or with many icons | Quit some other menu bar apps and see if it appears |
+| **Filed away by a menu bar organiser** — Bartender, Ice, and similar | Open the organiser and look in its hidden section |
+| **Withheld by macOS** — there is now a permission for menu bar items | **System Settings → Privacy & Security** |
+
+The setting's own text in Settings says the same thing, for the same reason: a feature that looks broken with no explanation is worse than one that names its own failure mode up front.
+
+### What is not finished, and what has never been seen
+
+Stated plainly rather than left for you to discover.
+
+| | |
+|---|---|
+| **No menu bar icon has ever been rendered, on any machine.** | The rows, the menu, the switching between modes and the icon's own pixels are all produced and checked by the automated tests — but nothing has yet put one in a real menu bar. How macOS tints the icon in a light bar, whether the second line of each row draws at all, and whether the tooltip appears on hover are **unproven**. Treat your first launch with it on as the first real test, and please [report](https://github.com/talirezun/the-curator/issues) anything that looks wrong |
+| **"On, hide the Dock icon" does not hide the Dock icon.** | The macOS call that hides it has a *return* transition — coming back when you open the window from the menu bar — that is reported broken in exactly the way this would depend on, and it could not be tested here. So the app keeps your setting and does the safe half: menu bar icon on, Dock icon left alone. Shipping the untested half risks no Dock icon, no menu bar icon and no window all at once |
+| **The standing brief's age is not in the menu.** | By design for now — it belongs in the richer panel that has not been built. Open Agent memory to see it, one click from the menu |
+| **The only way to discover it is Settings.** | The app does not offer it to you when your agent memory starts filling up. That was designed and not built |
+| **Some notices appear twice.** | A two-tools collision is currently announced on **two** lines in two different wordings (*"Two harnesses are writing…"* and *"Two agent tools are writing…"*), because the line meant to suppress the duplicate looks for a word the other line does not use. A truncated list likewise says *"…and 4 more in Agent memory"* and *"Showing the 8 most recent of 12…"*. Both are true and neither contradicts the other — but they eat notice slots, and only four notices are shown. A known defect, not a design choice |
+| **The GitHub-waiting line is usually absent** | See [Scenario 2](#scenario-2--two-or-three-computers-one-private-github-repo) |
+| **The ages can be up to five minutes behind**, and the *Updated* stamp does not currently say so | See [How to read a row](#how-to-read-a-row) |
 
 ---
 
@@ -666,6 +935,35 @@ each other. Everything on it is **read-only**: agents write this over MCP, and t
   it rarely changes, the journal because it is history rather than state. The brief opens by
   default when there is no handoff yet, since then it is the only content there is.
 
+#### The save-status strip
+
+Across the top of the handoff sits a short strip that answers the question people actually arrive
+with: *"is this saved, and is it any good?"* It is one line on a healthy day.
+
+```
+● Last saved  4 min ago · main · claude-code
+```
+
+The dot is the pre-attentive half and the words are the exact half. Underneath it, **only when
+each has something to say**, up to five qualifying lines:
+
+| Line | When it appears | What to do |
+|---|---|---|
+| **`incomplete`** badge on the reading, plus *"part of it was trimmed"* | The save did not fit the size budget, so the end of it was dropped. The app knows because the store recorded the trim | Ask the agent to save again, shorter. The handoff you are reading is **missing** what the note names |
+| *"deliberately replaced a larger handoff"* | The agent overrode the guard that normally refuses a small save over a much larger one | Nothing was lost from what it sent — but the longer document it overwrote is not recoverable |
+| *"the reading above is the file's own timestamp"* | No journal entry carried a save time, so the age is the file's, not the agent's | On a computer that syncs, that is when the file **arrived**, not when it was written |
+| *"This file arrived on this computer N ago"* | Both clocks are known and disagree by more than two minutes | Nothing — it is telling you the handoff was written elsewhere and pulled in later |
+| *"Newer state in this project: `<work-stream>`"* | Some **other** work-stream in this project holds something more recent than the one on screen | Check it. An agent told to *"reuse an existing scope"* can be saving beside you into one you are not watching, and this screen would otherwise look calm |
+| *"Two tools are writing `<work-stream>`"* | Two agent tools have both saved into the same handoff file and are overwriting each other | Give each tool its own work-stream name — the same collision, and the same remedy, as [§6b Scenario 1](#scenario-1--two-agent-tools-on-one-computer) |
+| **Standing brief — `<age>`** | Always | Nothing, usually. The brief is on a much slower clock than a handoff and an old brief is not a stale one, which is why it deliberately gets no freshness dot |
+
+> **It says "Last saved", never "you are saved".** It knows when the last save happened; it cannot
+> know whether anything has changed since. That inference is left where it belongs — with you.
+
+> ⚠️ **This strip has never been rendered in a browser.** Its logic is covered by the automated
+> tests, but nobody has yet looked at it on a screen. If a line reads wrongly, that is worth
+> [reporting](https://github.com/talirezun/the-curator/issues).
+
 Your agent — Claude Code, Claude Desktop, Cursor, or any other local MCP client — is what
 saves and reads this. It survives across sessions, agents, models and machines. It is plain
 markdown under `domains/<project>/state/`, so you can also open it in any editor, and it travels
@@ -680,6 +978,11 @@ brief by hand, open `state/project.md` in Obsidian.
 > **[Curator Continuity skill](mcp-user-guide.md#the-curator-continuity-claude-skill--session-handoff-v3170)**
 > is what teaches it: resume from state at the start of a session, save early and often, and what
 > belongs in a handoff. Install it alongside the My Curator skill.
+
+> 💡 **On a Mac you can watch this without opening the app.** The optional
+> **[menu bar icon](#6b-the-menu-bar-icon-mac-app)** shows the same store — the last save, recent
+> work-streams, and how stale the standing brief is — from the menu bar. It is off by default and
+> it is a reader too: nothing in it writes.
 
 Full detail — the layout, what goes in state versus what belongs on a wiki page, and the safety
 rules — is in **[working-state.md](working-state.md)**.
@@ -2203,10 +2506,11 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 ### Appearance and the setup guide
 
-**Settings → General** holds four things:
+**Settings → General** holds five things:
 
 - **Appearance** — a **Dark** / **Light** pair. The same switch is the ☀/☾ button in the rail footer; either one works and they stay in step.
 - **Text size** — four steps from compact to largest, sitting directly under Appearance because it is the same kind of choice. It applies across the whole app and is remembered in this browser.
+- **Menu bar** — **Off** / **On** / **On, and hide the Dock icon**. Puts a small icon in the macOS menu bar showing what your coding agents have just saved. **Off by default**, and it applies to the Mac app only — a browser install has no menu bar presence, and the control says so rather than hiding itself. Everything it does, and the three ways a new menu bar icon can silently fail to appear, is [§6b](#6b-the-menu-bar-icon-mac-app).
 - **System check** — below.
 
 > **Text size now reaches the controls too.** Buttons, text boxes and dropdowns are the one place a browser does *not* pass your font settings down on its own — left alone, they fall back to the browser's built-in face at a fixed size. Until now a handful of them did exactly that, so a few labels sat in a different typeface from every word around them and ignored this setting entirely. They now take the app's own typeface and follow the scale like everything else. Control heights and icons still deliberately stay put, so nothing grows into anything else.
@@ -3107,6 +3411,22 @@ shortcut for exactly this), then quit and reopen it, then re-run
 **Settings → MCP bridge**. Running the app straight out of `~/Downloads` has the same
 problem, for the same reason.
 
+**I turned on the menu bar icon and nothing appeared**
+
+Three separate things can swallow a new menu bar icon on a modern Mac, and macOS gives the app
+no way to find out which one happened — so it cannot tell you. Check all three: it may be
+**pushed off the edge** behind the notch (quit some other menu bar apps and look again), a
+**menu bar organiser** such as Bartender or Ice may have filed it into a hidden section, or the
+**menu bar items permission** in System Settings → Privacy & Security may be withholding it.
+[§6b](#if-the-icon-does-not-appear) has the same list with what to do about each.
+
+**I chose "On, hide the Dock icon" and the Dock icon is still there**
+
+That is current behaviour, not a fault. The setting is remembered, and the app deliberately
+does the safe half of it — menu bar icon on, Dock icon left alone — because the macOS call that
+hides the Dock icon has a return path that is reported broken and could not be tested. See
+[§6b](#what-is-not-finished-and-what-has-never-been-seen).
+
 **Personal Sync fails in the app with a git error**
 
 Personal Sync uses `git`, and the app does not bundle one. On a Mac that has never had
@@ -3264,6 +3584,7 @@ The cost figures throughout this section are for **Gemini and Claude**, the two 
 | **Wiki health — Semantic duplicate scan** (Phase 3, opt-in & cost-gated) | **Settings**, **API key management**, **updates** |
 | **Compile to Wiki** — turning a conversation into wiki pages (opt-in & cost-gated since v3.27.0) | **All three cost estimates** — batch ingest, semantic-dupe scan and Compile to Wiki. Each is computed locally with no AI call and no network request |
 | | **My Curator MCP server** (local bridge — free; the *frontier model* you connect to it bills you separately on its own plan) |
+| | **Agent memory** and the **menu bar icon** — both read plain files on your own disk. No AI call, no network request, no cost |
 
 So when you see a bill, the dominant line item is **ingest**. Chat, Compile and Health Ask-AI are negligible by comparison; everything else is genuinely free.
 
@@ -3408,7 +3729,8 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |
 | 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained, plus the full measured catalogue behind [§16b](#16b-choosing-your-ai-model) |
-| 🍎 [The Mac app](mac-app.md) | Installing, launching and running the packaged macOS application |
+| 🍎 [The Mac app](mac-app.md) | Installing, launching and running the packaged macOS application, including the optional menu bar icon |
+| 📊 [Menu bar widget — the design pass](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan) | Why the menu bar icon is shaped the way it is, what shipped, and the parts that were designed and not built (for developers) |
 | 🧭 [Mac app decisions](desktop-app-decisions.md) | Every decision behind the Mac app, with its reasoning and whether code exists for it yet |
 | 🛠 [API Reference](api-reference.md) | REST API endpoints (for developers) |
 | 🏗 [Architecture](architecture.md) | System design (for developers) |
