@@ -4,6 +4,9 @@
  *   GET  /api/mcp/config              → status + resolved paths
  *   GET  /api/mcp/claude-config       → JSON snippet to paste into claude_desktop_config.json
  *   GET  /api/mcp/claude-full-config  → merged preview (current file + the curator entry)
+ *   POST /api/mcp/write-config        → the wizard's "do it for me" step: writes ONLY
+ *                                       mcpServers["my-curator"], keeps a .bak, refuses
+ *                                       on a config it cannot parse
  *   POST /api/mcp/self-test           → spawns mcp/server.js locally, runs list_domains, reports
  *   POST /api/mcp/reveal-config       → opens Claude Desktop's config file in Finder
  *
@@ -19,10 +22,13 @@
 import express from 'express';
 import path from 'path';
 import os from 'os';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { spawn, execFile } from 'child_process';
 import { getDomainsDir } from '../brain/config.js';
 import { appPath } from '../brain/paths.js';
+import { getCapabilities } from '../brain/install-mode.js';
+import { getMcpLauncherPath } from '../brain/mcp-launcher.js';
+import { writeFileAtomicSync } from '../brain/atomic-write.js';
 
 const router = express.Router();
 
@@ -46,8 +52,45 @@ const CLAUDE_CONFIG_PATH = path.join(
  * is deliberately no second copy of the command/args anywhere in this file: a
  * self-test that constructs its own launch line can drift from the prescribed
  * one, which is precisely the bug this consolidation fixes.
+ *
+ * ── TWO ARMS, forked on the CAPABILITY and never on the install form ────────
+ *
+ * `mcpLaunchStyle` shipped in v3.26.0 with no branch behind it. This is the
+ * branch. It reads the capability, not `getInstallMode()`, per the rule
+ * `scripts/test-install-mode.js` §4 enforces over every route file.
+ *
+ * REPO ARM ('node-script') — byte-identical to every version since v3.6.1.
+ * `process.execPath` is the user's node, and mcp/server.js is a plain file.
+ *
+ * BUNDLE ARM ('launcher-script') — the command is a shell launcher this app
+ * rewrites at every startup (see src/brain/mcp-launcher.js for why launch time
+ * is the only correct moment), and it takes NO ARGUMENTS. Two reasons the
+ * domains-path argument is dropped, and only in this arm:
+ *
+ *   1. It is a SNAPSHOT of getDomainsDir() taken when the wizard generated the
+ *      snippet, and it sits at rung 2 of mcp/storage/local.js's ladder —
+ *      ABOVE .curator-config.json at rung 3. So it OUTRANKS the user's live
+ *      Settings choice: move your knowledge base and the MCP keeps reading the
+ *      old one until you re-run the wizard. Omitting it lets the child resolve
+ *      through config, which is what the app itself reads, so the two agree by
+ *      construction and moving the folder needs no config edit at all.
+ *   2. It is what makes the entry go STALE. With a stable launcher path and no
+ *      arguments there is nothing left in the entry that a folder move can
+ *      invalidate — see the `stale` computation in GET /config.
+ *
+ * The repo arm KEEPS it, deliberately. Dropping it there would make every
+ * existing user's claude_desktop_config.json compare unequal against a freshly
+ * generated entry and light up as `stale` overnight, for no benefit — and
+ * v3.6.1 added it because a self-test that did not pass it gave a green pass
+ * against a folder the user was not configured for.
  */
 export function buildCuratorEntry(domainsDir) {
+  if (getCapabilities().mcpLaunchStyle === 'launcher-script') {
+    return {
+      command: getMcpLauncherPath(),
+      args: [],
+    };
+  }
   return {
     command: process.execPath,
     args: [MCP_SERVER_PATH, '--domains-path', domainsDir],
@@ -163,6 +206,13 @@ router.get('/config', (_req, res) => {
   const existingConfig = readClaudeConfig();
   const hasConfigFile = existingConfig !== null;
   const parseError = hasConfigFile && existingConfig.__parseError === true;
+  const launchStyle = getCapabilities().mcpLaunchStyle;
+  // Reported so the wizard can explain a launcher that could not be written
+  // (a translocated or Downloads-resident app refuses — see mcp-launcher.js).
+  // In repo mode there is no launcher, and both fields are null/false rather
+  // than a misleading "missing".
+  const launcherPath = launchStyle === 'launcher-script' ? getMcpLauncherPath() : null;
+  const launcherExists = launcherPath ? existsSync(launcherPath) : false;
 
   // Check whether the existing config already contains a matching curator entry
   let installed = false;
@@ -189,6 +239,10 @@ router.get('/config', (_req, res) => {
     claude_config_parse_error: parseError,
     installed,
     stale,
+    // Additive since the launcher seam. Existing consumers ignore them.
+    mcp_launch_style: launchStyle,
+    launcher_path: launcherPath,
+    launcher_exists: launcherExists,
   });
 });
 
@@ -204,6 +258,177 @@ router.get('/claude-config', (_req, res) => {
 router.get('/claude-full-config', (_req, res) => {
   res.json(buildFullConfigPayload(readClaudeConfig(), getDomainsDir()));
 });
+
+/**
+ * Decide what POST /write-config should do, WITHOUT touching the filesystem.
+ *
+ * Split out for the same reason parseClaudeConfigText is: CLAUDE_CONFIG_PATH
+ * is a module constant with no override seam and points at the user's REAL
+ * Claude Desktop config, so the decision has to be reachable from a suite
+ * that never goes near that file.
+ *
+ * Returns `{ok:true, next}` or `{ok:false, status, refused, message}`.
+ * `next` is the FULL document to write — never a fragment — so the caller
+ * cannot assemble a merge of its own and get it wrong.
+ *
+ * THE THREE INPUT STATES, and the third is the one that matters:
+ *
+ *   absent   → create `{mcpServers:{'my-curator': entry}}`. Nothing to lose.
+ *   readable → clone and set exactly ONE key. Every other top-level field and
+ *              every other MCP server is carried through by reference.
+ *   corrupt  → REFUSE, and write nothing.
+ *
+ * The refusal is not politeness. buildFullConfigPayload's docblock already
+ * spells out the harm: a user with three other MCP servers and one stray
+ * comma has a file we cannot read, and "merging" into it means emitting a
+ * document containing only our entry — which deletes them. That analysis was
+ * done when the PREVIEW was fixed; this is the same rule applied to the
+ * WRITER, which is the surface where getting it wrong is unrecoverable.
+ *
+ * The launcher check is the second refusal, and it exists because this write
+ * is the one place a missing shim becomes silently destructive: pointing
+ * Claude Desktop at a launcher that was refused (translocation, Downloads)
+ * replaces a working entry with a broken one.
+ */
+export function planConfigWrite(existing, domainsDir, launcherState = null) {
+  if (existing && existing.__parseError === true) {
+    return {
+      ok: false,
+      status: 409,
+      refused: 'claude_config_parse_error',
+      message:
+        'Your claude_desktop_config.json contains invalid JSON, so The Curator cannot read it. ' +
+        'It will not be overwritten: rewriting a file we cannot parse would silently delete any ' +
+        'other MCP servers configured in it. Fix the syntax error in that file first, then run ' +
+        'this again — or paste the snippet in by hand.',
+    };
+  }
+
+  if (launcherState && launcherState.required && !launcherState.present) {
+    return {
+      ok: false,
+      status: 409,
+      refused: 'launcher_missing',
+      message:
+        (launcherState.message ||
+          'The Curator could not create the launcher that Claude Desktop needs to start the bridge.') +
+        ' Nothing was written to your Claude Desktop config.',
+    };
+  }
+
+  const entry = buildCuratorEntry(domainsDir);
+  const next = existing
+    ? { ...existing, mcpServers: { ...(existing.mcpServers || {}), [MCP_SERVER_NAME]: entry } }
+    : { mcpServers: { [MCP_SERVER_NAME]: entry } };
+
+  return { ok: true, entry, next, created: !existing };
+}
+
+/**
+ * POST /write-config — the wizard's "do it for me" step.
+ *
+ * This is NOT a background repair and must never become one. It writes ANOTHER
+ * APPLICATION'S configuration file, which is a category of action this app has
+ * never taken before, so it is reachable only from an explicit user action in
+ * the MCP wizard and is never invoked on a poll, a page load or a status
+ * refresh. `stale` (GET /config) is what tells the user to come here; it does
+ * not bring them here on its own.
+ *
+ * Exported and registered by reference so the contract suite can drive the
+ * real handler with an injected filesystem rather than asserting on a regex.
+ *
+ * A `.bak` is kept whenever a file was replaced. It is the ORIGINAL BYTES, not
+ * a re-serialisation: comments-shaped whitespace, key order and formatting the
+ * user cares about all survive, and a re-serialised "backup" of a document we
+ * only half understood would be a worse copy than the one it replaced.
+ */
+export async function writeConfigHandler(_req, res, deps = {}) {
+  const io = {
+    exists: deps.exists || ((p) => existsSync(p)),
+    read: deps.read || ((p) => readFileSync(p, 'utf8')),
+    write: deps.write || ((p, c) => writeFileAtomicSync(p, c, { encoding: 'utf8', mode: 0o600 })),
+    mkdir: deps.mkdir || ((p) => mkdirSync(p, { recursive: true })),
+    configPath: deps.configPath || CLAUDE_CONFIG_PATH,
+    launcherState: deps.launcherState || currentLauncherState(),
+  };
+
+  const domainsDir = getDomainsDir();
+  let raw = null;
+  let existing = null;
+  try {
+    if (io.exists(io.configPath)) {
+      raw = io.read(io.configPath);
+      existing = parseClaudeConfigText(raw);
+    }
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      refused: 'read_failed',
+      error: `Could not read ${io.configPath}: ${err.message}`,
+      written: false,
+    });
+  }
+
+  const plan = planConfigWrite(existing, domainsDir, io.launcherState);
+  if (!plan.ok) {
+    return res.status(plan.status).json({
+      ok: false,
+      refused: plan.refused,
+      error: plan.message,
+      written: false,
+      claude_config_path: io.configPath,
+    });
+  }
+
+  const backupPath = io.configPath + '.bak';
+  try {
+    io.mkdir(path.dirname(io.configPath));
+    // Back up FIRST. If this throws, nothing has been replaced yet.
+    if (raw !== null) io.write(backupPath, raw);
+    io.write(io.configPath, JSON.stringify(plan.next, null, 2) + '\n');
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      refused: 'write_failed',
+      error: `Could not write ${io.configPath}: ${err.message}`,
+      written: false,
+      claude_config_path: io.configPath,
+    });
+  }
+
+  res.json({
+    ok: true,
+    written: true,
+    created: plan.created,
+    backup_path: raw !== null ? backupPath : null,
+    claude_config_path: io.configPath,
+    entry: plan.entry,
+    // Every OTHER server that was in the file and still is. Reported so the
+    // wizard can say "your 3 other servers are untouched" rather than asking
+    // the user to take that on trust.
+    preserved_servers: Object.keys(plan.next.mcpServers || {}).filter(k => k !== MCP_SERVER_NAME),
+    restart_required: true,
+  });
+}
+
+/** What the launcher looks like right now — null-shaped in repo mode. */
+function currentLauncherState() {
+  const required = getCapabilities().mcpLaunchStyle === 'launcher-script';
+  if (!required) return { required: false, present: true, path: null, message: null };
+  const p = getMcpLauncherPath();
+  const present = existsSync(p);
+  return {
+    required: true,
+    present,
+    path: p,
+    message: present
+      ? null
+      : `The Claude Desktop launcher is missing at ${p}. If The Curator is running from your ` +
+        `Downloads folder or from a temporary copy, move it to /Applications and reopen it.`,
+  };
+}
+
+router.post('/write-config', (req, res) => writeConfigHandler(req, res));
 
 /**
  * Classify the outcome of the self-test's list_domains call.

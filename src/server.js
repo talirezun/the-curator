@@ -25,6 +25,7 @@ import { APP_ROOT, getCredentialFiles } from './brain/paths.js';
 import { describeInstall } from './brain/install-mode.js';
 import { recoverOnBoot as recoverIngestQueueOnBoot } from './brain/ingest-queue.js';
 import { logInfo, logWarn, logError, getLogFilePath } from './brain/logger.js';
+import { ensureMcpLauncherShim } from './brain/mcp-launcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // APP_ROOT is the CODE root (read-only in a packaged .app). Used for the
@@ -365,6 +366,29 @@ function startListen(retriesLeft = MAX_BIND_RETRIES) {
       console.log(`The Curator running at http://localhost:${PORT}`);
       console.warn(`⚠️  ${err.message}`);
       logWarn('server', `Started at http://localhost:${PORT}, but provider info could not be resolved: ${err.message}`);
+    }
+
+    // ── Keep the Claude Desktop launcher current ────────────────────────────
+    //
+    // A NO-OP IN REPO MODE — the capability says 'node-script', so this
+    // returns `not-needed` having touched no filesystem path at all. In bundle
+    // mode it rewrites a small shell shim naming the CURRENT app binary,
+    // because the app is the only process that knows where it is and launch is
+    // the only moment it is guaranteed to be running (src/brain/mcp-launcher.js
+    // carries the full argument, including why shipping the shim and why
+    // having the wizard write it are both wrong).
+    //
+    // It never throws — a failure here must never take the server down — and a
+    // refusal (translocated app, Downloads) writes nothing and says why.
+    try {
+      const shim = ensureMcpLauncherShim();
+      if (shim.reason === 'written') {
+        logInfo('server', `MCP launcher written at ${shim.path}`);
+      } else if (!shim.ok) {
+        logWarn('server', `MCP launcher not written (${shim.reason}): ${shim.message}`);
+      }
+    } catch (err) {
+      logWarn('server', `MCP launcher generation failed unexpectedly: ${err.message}`);
     }
 
     // Auto-open the browser when server starts (skip during restart — frontend reloads itself)

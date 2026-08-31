@@ -322,13 +322,45 @@ ok(MODE_BRANCH.test('if (isRepoInstall()) {}'),
 ok(!MODE_BRANCH.test('const caps = getCapabilities(); if (caps.canSelfUpdateViaGit) {}'),
   'CONTROL: the detector does NOT fire on correct capability-branching');
 
-// Every DISCOVERED fork site must be behaviourally covered below. A new fork
-// added to a new route file, with no entry here, goes RED — which is the whole
-// point of enumerating from disk rather than listing.
-const BEHAVIOURALLY_COVERED = new Set(['config.js']);
+// Every DISCOVERED fork site must be behaviourally covered by a SUITE THAT
+// ACTUALLY RUNS. A new fork added to a new route file, with no entry here,
+// goes RED — which is the whole point of enumerating from disk rather than
+// listing.
+//
+// This was a bare Set of filenames until a second fork site appeared
+// (src/routes/mcp.js, whose launcher-style arm is owned by
+// scripts/test-mcp-launcher.js). A Set could only be widened by adding a
+// name, which is indistinguishable from waving the new fork through. Naming
+// the OWNING SUITE instead is checkable three ways, all of which are enforced
+// below: the file exists, it is registered in run-tests.js so it is not a
+// suite nobody runs, and it mentions every capability key the fork reads.
+// That is strictly stronger than the Set it replaces.
+const BEHAVIOURALLY_COVERED = new Map([
+  ['config.js', 'test-install-mode.js'],      // §5 of THIS file
+  ['mcp.js',    'test-mcp-launcher.js'],      // the launcher seam
+]);
+const runnerSrc = read('scripts/run-tests.js');
 for (const d of discovered) {
-  ok(BEHAVIOURALLY_COVERED.has(d.file),
-    `${d.file} has behavioural both-arm coverage in §5 (add it there, not to a list, if this fails)`);
+  const owner = BEHAVIOURALLY_COVERED.get(d.file);
+  ok(!!owner,
+    `${d.file} names an owning suite with behavioural both-arm coverage (add the suite, then the mapping — not just the mapping)`);
+  if (!owner) continue;
+  ok(fs.existsSync(path.join(ROOT, 'scripts', owner)),
+    `${d.file}'s owning suite ${owner} EXISTS on disk`);
+  ok(new RegExp(`'${owner.replace('.', '\\.')}'`).test(runnerSrc),
+    `${d.file}'s owning suite ${owner} is REGISTERED in run-tests.js (a suite nobody runs is not coverage)`);
+  const ownerSrc = fs.existsSync(path.join(ROOT, 'scripts', owner))
+    ? read(path.join('scripts', owner)) : '';
+  for (const k of d.caps) {
+    ok(new RegExp(`\\b${k}\\b`).test(ownerSrc),
+      `${owner} names ${d.file}'s forked capability "${k}"`);
+  }
+}
+// Anti-vacuity: the mapping must not have grown a name for a file that no
+// longer forks — a stale entry reads as coverage of nothing.
+for (const f of BEHAVIOURALLY_COVERED.keys()) {
+  ok(discovered.some(d => d.file === f),
+    `CONTROL: ${f} is still a real fork site (a stale mapping entry is not coverage)`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
