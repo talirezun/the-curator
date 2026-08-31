@@ -1322,11 +1322,29 @@ export function resolveInsideState(project, relPath) {
 
 /**
  * Validate the project for a WRITE.
+ *
  * Refuses a name that is not a real domain — an invented one creates a
- * directory with no CLAUDE.md, which listDomains() filters out AND which
- * sync.pull()'s pruneGhostDomainDirs() actively `rm -rf`s, so the state
- * would be silently deleted on the next pull. Refuses a read-only Shared
- * Brain mirror, matching every other in-app write surface.
+ * directory with no CLAUDE.md, which `listDomains()` filters out, so the
+ * state would sit on disk unseen by the app, the wiki reader and every tool
+ * that lists domains. Refuses a read-only Shared Brain mirror, matching every
+ * other in-app write surface.
+ *
+ * ── THE REASON CHANGED IN v3.34.0; THE REFUSAL DID NOT ────────────────────
+ * This block used to say the folder would additionally be `rm -rf`'d by
+ * `sync.pull()`'s `pruneGhostDomainDirs()`, and that stopped being true.
+ * The prune now removes a directory only when ALL FOUR of its rules hold, and
+ * the first is that THIS pull's merge actually deleted tracked files under
+ * that path (`preMergeHead..HEAD`, diff-filter=D). A folder git has never
+ * heard of cannot appear in a deletion diff, so an invented project is
+ * unreachable by the prune — it lingers instead.
+ *
+ * Do not read that as the prune having gone away: a folder that WAS a real
+ * domain, was pushed, and was then deleted on another machine is still
+ * cleaned up. That is the case the function exists for.
+ *
+ * The refusal is unchanged because the invisibility alone justifies it, and
+ * always did. Silent deletion was the louder half of the argument, not the
+ * load-bearing half.
  */
 async function checkProjectWritable(project) {
   if (!isSafeSegment(project)) {
@@ -1339,8 +1357,9 @@ async function checkProjectWritable(project) {
       ok: false, reason: 'unknown-project',
       message:
         `"${project}" is not a domain in this Curator. Working state lives inside a domain ` +
-        `(domains/<project>/state/), and a folder with no CLAUDE.md is pruned by the next ` +
-        `sync pull — so state saved there would be silently deleted. ` +
+        `(domains/<project>/state/), and a folder with no CLAUDE.md is invisible to listDomains() ` +
+        `— hidden from the app, the wiki reader, and every tool that lists domains — so state ` +
+        `saved there would go unseen. ` +
         `Known projects: ${domains.slice(0, 20).join(', ') || '(none)'}.`,
     };
   }

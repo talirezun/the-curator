@@ -432,8 +432,26 @@ section('7. Project validation — ghost domains and read-only mirrors');
 {
   const g = await saveWorkingState(GHOST, { scope: 'main', machine: M, headline: 'x' });
   assert(!g.ok && g.reason === 'unknown-project',
-    'a directory with no CLAUDE.md is REFUSED (sync.pull would rm -rf it)', JSON.stringify(g));
-  assert(/pruned by the next sync pull/.test(g.message), 'the refusal explains WHY, not just that');
+    'a directory with no CLAUDE.md is REFUSED (listDomains() hides it, so the state would go unseen)',
+    JSON.stringify(g));
+  // PINNED AS TWO DISTINCTIVE FRAGMENTS, not the sentence verbatim: the
+  // MECHANISM (listDomains() hides the folder) and the CONSEQUENCE (the state
+  // goes unseen). Strip either half and this reds, so the label's intent —
+  // "explains WHY, not just that" — is preserved, while the connective prose
+  // stays rewordable without a test edit.
+  //
+  // The negated clause IS the v3.34.0 regression. This assertion used to pin
+  // "pruned by the next sync pull", which was true when it was written and is
+  // not any more: pruneGhostDomainDirs() now requires this pull's merge to
+  // have actually deleted TRACKED files under that path, and a folder git has
+  // never heard of cannot appear in a deletion diff. Re-introducing the old
+  // sentence must therefore FAIL rather than quietly pass. (The refusal itself
+  // is unchanged and still correct — invisibility alone justifies it.)
+  assert(/listDomains\(\)/.test(g.message)
+         && /would go unseen/.test(g.message)
+         && !/pruned by the next sync pull/.test(g.message),
+    'the refusal explains WHY — invisible to listDomains(), so the state goes unseen — not just that',
+    g.message);
   assert(!existsSync(path.join(DOMAINS, GHOST, 'state')), 'no state folder was created for a ghost');
 
   const inv = await saveWorkingState('nope-not-a-domain', { headline: 'x' });

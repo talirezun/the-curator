@@ -1020,10 +1020,20 @@ function freshState() {
     maxPairsInput: '',
 
     // Knowledge base
-    config: null,            // { domainsPath, domainsPathSource }
+    // NOTE: `config` is shared with General — GET /api/config carries the
+    // domains path AND `backgroundMode`/`backgroundModes`. One endpoint, one
+    // cache, so the two sections cannot render different values for it.
+    config: null,            // { domainsPath, domainsPathSource, backgroundMode, backgroundModes }
     configError: null,
     pickingFolder: false,
     pathCopyFeedback: null,
+
+    // General → Menu bar. Kept apart from `configError` on purpose: that
+    // field means "the section could not load"; these mean "this one save
+    // failed", and the control stays on screen showing the mode still in
+    // force rather than being replaced by an error.
+    backgroundModeSaving: false,
+    backgroundModeError: null,
   };
 }
 
@@ -1373,7 +1383,11 @@ async function ensureSectionData(section, token) {
   if (section === 'providers' && state.keys === null) load = loadKeys;
   else if (section === 'mcp' && state.mcp === null) load = loadMcp;
   else if (section === 'health' && state.aiHealth === null) load = loadAiHealth;
+  // General reads the SAME `GET /api/config` Knowledge base does — one
+  // endpoint, one cached `state.config`, so entering one section warms the
+  // other and neither can render a value the other has already moved past.
   else if (section === 'storage' && state.config === null) load = loadConfig;
+  else if (section === 'general' && state.config === null) load = loadConfig;
   if (!load) return;
 
   // The ONE chokepoint every section's entry load passes through, which is
@@ -1634,6 +1648,11 @@ function renderGeneral() {
       // be a second thing to read that says less than the real one.
       renderTextSize() +
 
+      // Menu bar. Sits with Appearance and Text size because it is the same
+      // KIND of setting — where the app puts itself on this machine — and it
+      // uses the same segmented control for the same reason.
+      renderBackgroundMode() +
+
       // System check
       '<div class="settings-field-block">' +
         '<span class="settings-field-label">System check</span>' +
@@ -1732,6 +1751,109 @@ function renderTextSize() {
       'density for legibility rather than zooming the whole window — your browser’s own zoom still ' +
       'does that. Saved in this browser, and it applies straight away.</p>' +
       '<div class="theme-segmented fs-segmented" role="group" aria-label="Text size">' + buttons + '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * Menu bar — the app's background mode.
+ *
+ * ── LABELLED AROUND THE USER'S QUESTION, NOT THE CONFIG KEY'S ─────────────
+ * The stored field is `backgroundMode` and its values are `window` / `tray` /
+ * `tray-only`, because that is what the desktop shell has to decide. The
+ * thing the user is looking for in Settings is *"do I get a menu bar icon"*,
+ * so the control says Off / On / On, and hide the Dock icon. Same field, and
+ * the label answers the question that brought them here.
+ *
+ * ── THE OPTIONS COME FROM THE SERVER, THE LABELS FROM HERE ────────────────
+ * `backgroundModes` rides along on `GET /api/config`, so this control offers
+ * exactly what this build's `BACKGROUND_MODES` table defines and can never
+ * present an option the POST would refuse. The labels are local because they
+ * are copy, not data — and a mode this build has no copy for renders under
+ * its own id rather than being dropped, so a newer server can never make an
+ * option silently disappear from the picker.
+ *
+ * ── THE WARNING IS IN THE COPY DELIBERATELY ───────────────────────────────
+ * There are three separate ways a new menu bar icon silently fails to appear
+ * on a modern Mac — pushed off the edge behind the notch, filed away by a
+ * menu bar organiser, or withheld by the OS menu-bar-items permission — and
+ * macOS gives an app NO way to find out which happened. So the setting says
+ * so itself. A feature that looks broken with no explanation is worse than
+ * one that names its own failure mode up front.
+ *
+ * ── IT SAYS WHERE IT APPLIES, RATHER THAN HIDING ITSELF ───────────────────
+ * A browser install has no menu bar presence at all. The control is still
+ * rendered, and says so: gating it would mean picking a proxy signal for
+ * "packaged" — `updateStyle` is the only one this view has — and using an
+ * UPDATE capability to decide a MENU BAR question is a category error that
+ * would read as fact to the next person. Honest copy costs one sentence.
+ *
+ * ── NO `title=` ON THE SEGMENTS, AND A RATCHET IS WHY ─────────────────────
+ * The first draft put each option's consequence in a `title=` tooltip, the
+ * same shape renderTextSize() uses. `scripts/test-next-title-affordances.js`
+ * went red on it — settings.js was already AT its hover-only ceiling — and
+ * the ratchet was right rather than merely in the way: a tooltip is hover-only
+ * and reaches nobody on a keyboard or a touch screen, and the consequence
+ * being described here ("The Curator leaves the Dock") is the one a user most
+ * needs to read BEFORE clicking.
+ *
+ * So the ACTIVE mode's consequence is rendered as visible text under the
+ * control instead. That is strictly better than the tooltip it replaced: it
+ * is reachable by everyone, and it puts the sentence in front of the user at
+ * the moment it applies to them rather than only when they hover the option
+ * they have not chosen.
+ */
+const BACKGROUND_MODE_LABELS = {
+  window:      ['Off',                    'No menu bar icon. The Dock icon and the window behave exactly as they do now.'],
+  tray:        ['On',                     'A menu bar icon showing what your agents have just saved, alongside the Dock icon.'],
+  'tray-only': ['On, hide the Dock icon', 'Menu bar only. The Curator leaves the Dock — reopen the window from the menu bar icon.'],
+};
+
+function renderBackgroundMode() {
+  const cfg = state.config;
+  const modes = (cfg && Array.isArray(cfg.backgroundModes) && cfg.backgroundModes.length)
+    ? cfg.backgroundModes
+    : null;
+  // Before the one GET lands there is nothing honest to mark as active, so the
+  // block renders its label and hint with no control rather than a control
+  // with a guessed selection.
+  const active = cfg && typeof cfg.backgroundMode === 'string' ? cfg.backgroundMode : null;
+
+  const buttons = modes ? modes.map((id) => {
+    const [label] = BACKGROUND_MODE_LABELS[id] || [id];
+    const on = id === active;
+    return (
+      '<button type="button" class="theme-seg-btn bgmode-seg-btn' + (on ? ' active' : '') + '"' +
+        ' data-background-mode="' + escapeHtml(id) + '"' +
+        ' aria-pressed="' + (on ? 'true' : 'false') + '"' +
+        (state.backgroundModeSaving ? ' disabled' : '') + '>' + escapeHtml(label) + '</button>'
+    );
+  }).join('') : '';
+
+  // What the CHOSEN option actually does, in visible text. A mode this build
+  // has no copy for contributes nothing rather than an empty paragraph.
+  const chosen = active && BACKGROUND_MODE_LABELS[active] ? BACKGROUND_MODE_LABELS[active][1] : null;
+
+  return (
+    '<div class="settings-field-block" id="block-background-mode">' +
+      '<span class="settings-field-label">Menu bar</span>' +
+      '<p class="settings-hint-text">Puts a small icon in the Mac menu bar showing what your coding ' +
+      'agents have just saved, so you can glance at it without opening the app. Off by default — ' +
+      'until an agent has written something there is nothing for it to show. This applies to the Mac ' +
+      'app; a browser install has no menu bar presence.</p>' +
+      (buttons
+        ? '<div class="theme-segmented bgmode-segmented" role="group" aria-label="Menu bar">' + buttons + '</div>'
+        : '') +
+      (state.backgroundModeError
+        ? '<div class="settings-inline-error">' + escapeHtml(state.backgroundModeError) + '</div>'
+        : '') +
+      (chosen ? '<p class="settings-hint-text">' + escapeHtml(chosen) + '</p>' : '') +
+      (active && active !== 'window'
+        ? '<p class="settings-hint-text">If the icon does not appear: it can be pushed off the edge ' +
+          'behind the notch on a narrow screen, filed into a hidden section by a menu bar organiser ' +
+          'such as Bartender or Ice, or withheld by the menu bar items permission in System Settings ' +
+          '→ Privacy &amp; Security. macOS gives an app no way to tell which, so check all three.</p>'
+        : '') +
     '</div>'
   );
 }
@@ -5725,6 +5847,14 @@ function wireGeneralListeners() {
       render(myMountToken);
     });
   });
+  // Menu bar. Scoped by the presence of data-background-mode for the same
+  // reason the two above are: these buttons reuse .theme-seg-btn for its look.
+  document.querySelectorAll('[data-background-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      onSetBackgroundMode(btn.dataset.backgroundMode, myMountToken).catch(reportAsyncActionFailure);
+    });
+  });
+
   const runBtn = document.getElementById('btn-run-quick-check');
   if (runBtn) runBtn.addEventListener('click', () => onRunQuickCheck(myMountToken));
   const verifyBtn = document.getElementById('btn-verify-ai');
@@ -7327,6 +7457,46 @@ async function onMcpCopySnippet(token) {
   if (!isCurrentMount(token)) return;
   render(token);
   setTimeout(() => { if (isCurrentMount(token)) { state.copyFeedback = null; render(token); } }, 2000);
+}
+
+/**
+ * Menu bar — record the mode.
+ *
+ * THE STATE ALWAYS COMES BACK FROM THE SERVER, never from the button that was
+ * clicked. The server is the only thing that knows what is in the file, and
+ * `setBackgroundMode()` REFUSES an unrecognised value rather than coercing it
+ * — so optimistically marking the clicked button active would be exactly how
+ * this screen comes to assert something false about the user's own choice.
+ * On both the success and the refusal path the body carries the mode still in
+ * force, and that is what gets rendered.
+ */
+async function onSetBackgroundMode(mode, token) {
+  const cfg = state.config;
+  if (!cfg || cfg.backgroundMode === mode) return;   // already there — nothing to save
+  state.backgroundModeSaving = true;
+  state.backgroundModeError = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/background-mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ backgroundMode: mode }),
+    });
+    const data = await res.json();
+    if (!isCurrentMount(token)) return;
+    // Present on BOTH the 200 and the 400, deliberately (see the route).
+    if (state.config && typeof data.backgroundMode === 'string') {
+      state.config.backgroundMode = data.backgroundMode;
+      if (Array.isArray(data.backgroundModes)) state.config.backgroundModes = data.backgroundModes;
+    }
+    if (!res.ok) state.backgroundModeError = data.error || 'Could not change the menu bar setting.';
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.backgroundModeError = err.message || 'Could not change the menu bar setting.';
+  }
+  if (!isCurrentMount(token)) return;
+  state.backgroundModeSaving = false;
+  render(token);
 }
 
 async function onSaveDefaultDomain(value, token) {
