@@ -100,6 +100,9 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.join(__dirname, '..');
 
+// The workflow the CI gate reads. Must match the filename in .github/workflows/.
+export const CI_WORKFLOW = 'test.yml';
+
 // ── Constants the checks are built from ───────────────────────────────────
 
 /**
@@ -1259,7 +1262,16 @@ export async function watchCi(sha, { exec, out, sleep, branch = 'main', maxWaitM
   let runId = null, url = null;
 
   for (let attempt = 0; attempt < appearAttempts && runId === null; attempt++) {
-    const list = exec(['gh', 'run', 'list', '--branch', branch, '--limit', '10',
+    // PINNED TO ONE WORKFLOW. `gh run list` filters by branch and SHA but NOT
+    // by workflow, so with a second workflow in the repo this lookup can match
+    // the WRONG run on the same commit and read its conclusions as the test
+    // suite's. Today that cannot happen — a tag-push run's `head_branch` is the
+    // tag name, so `--branch main` excludes the DMG workflow — but that is an
+    // accident of GitHub's model, not a property this gate chose. `--workflow`
+    // makes it immune to every future workflow, including one added by someone
+    // who never reads this file.
+    const list = exec(['gh', 'run', 'list', '--branch', branch, '--workflow', CI_WORKFLOW,
+                       '--limit', '10',
                        '--json', 'databaseId,headSha,status,conclusion,url']);
     if (list.status !== 0) {
       return { state: 'unknown', reason: `gh run list failed: ${(list.stderr || '').trim()}`, advisoryFailed, skipped, failed: [] };

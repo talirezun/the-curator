@@ -549,11 +549,32 @@ router.post('/pick-folder', guardConcurrent('change the knowledge folder'), asyn
       res.json({ cancelled: true });
     }
   } catch (err) {
-    // User pressed Cancel in the picker (exit code 1, error -128)
-    if (err.killed || err.code === 1 || String(err.stderr).includes('-128')) {
+    // A REAL cancel is AppleScript error -128. `osascript` exits 1 on ANY
+    // script error, so treating a bare exit-1 as Cancel reports a PERMISSION
+    // FAILURE as "the user changed their mind" — the hardest thing to diagnose
+    // from a support conversation, and it lands on the one action an existing
+    // user must complete on their first screen: pointing the app at their
+    // knowledge folder. Under a hardened runtime (which notarization requires)
+    // this becomes likely rather than theoretical: a TCC refusal, a missing
+    // NSDesktopFolderUsageDescription, or a denied automation prompt all exit 1.
+    //
+    // So: -128 is a cancel, a timeout is a cancel (the dialog was left open),
+    // and an exit-1 carrying any OTHER stderr is an ERROR the user gets to see.
+    const stderr = String(err.stderr || '');
+    const userCancelled = stderr.includes('-128') || err.killed === true;
+    if (userCancelled) {
       res.json({ cancelled: true });
+    } else if (err.code === 1 && !stderr.trim()) {
+      // Exit 1 with nothing on stderr: no evidence either way. Treat as a
+      // cancel rather than inventing an error message, but say which it was.
+      res.json({ cancelled: true, inferred: true });
     } else {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({
+        error: stderr.trim() || err.message,
+        hint: 'The folder picker could not run. If The Curator was recently ' +
+              'installed or moved, macOS may be blocking folder access — check ' +
+              'System Settings > Privacy & Security > Files and Folders.',
+      });
     }
   }
 });
