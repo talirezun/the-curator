@@ -132,6 +132,45 @@ hunk never arises in the first place. Nothing has to be resolved, because nothin
 collides. This was proven against real git before the layout was fixed. **Do not
 collapse this segment.**
 
+### What the per-machine path does *not* protect against
+
+**It is a guarantee about MERGES, and only about merges.** That is narrower than it
+reads, and the gap was found the hard way: in August 2026 four handoffs written
+between 09:36 and 11:33 UTC were destroyed on a real machine, and `journal.jsonl` — an
+append-only file — lost its appended lines wholesale, with the per-machine layout
+working exactly as designed the whole time.
+
+The mechanism was not a merge at all. Connecting Personal Sync in *"Pull an existing
+wiki"* mode ends in a **checkout of the remote tree over the work tree**, and the
+fallback ladder behind it ended in `git reset --hard`. `reset --hard` is the one
+tree-writing git command with **no** untracked-file safety check: it replaces whatever
+is at those paths. A machine's own `state/<scope>/<machine>/` folder is at a path the
+remote also has, so it was checked out over **itself** from an older revision. No other
+machine was involved; nothing collided; there was no hunk to resolve.
+
+So, precisely:
+
+| Threat | Does `<machine>` help? |
+|---|---|
+| Two machines writing the same `current.md`, resolved by `-X theirs` | **Yes.** They never write the same file |
+| A three-way merge splicing one machine's sections into another's file | **Yes.** Same reason |
+| Two machines editing `state/project.md` (no machine segment) | **No** — see the carve-out above |
+| A checkout or `reset --hard` replacing this machine's own folder from an older revision | **No.** Path uniqueness is irrelevant; the file is simply overwritten |
+| Two independent sync repositories over one domains folder | **No.** Both write the same paths from different histories |
+
+The last two are addressed in `src/brain/sync.js`, not by the layout: a first connect
+now measures what a checkout would overwrite and **refuses** unless the user is shown the
+count and confirms, offers a non-destructive merge instead, and joins an existing sync
+repository rather than creating a second one over the same folder. See
+[sync.md](sync.md).
+
+**Nothing in this section should be read as "working state is safe from sync".** It is
+safe from the specific merge hazard it was designed against. Anything that rewrites the
+work tree wholesale still reaches it, and the reason it hurts more here than in the wiki
+is the store's own design: the wiki **accumulates**, so a stale pull loses at worst the
+newest bullets, while `current.md` is **overwritten** on every save and `journal.jsonl`
+is appended to — so an older revision of either is a straight loss of everything since.
+
 **That argument covers tiers 2 and 3 only.** `state/project.md` has **no** machine segment — one
 file per project, deliberately, because the brief belongs to the project rather than to any one
 machine. So two machines that both edit the brief between syncs *do* produce exactly the
@@ -723,9 +762,10 @@ scope's handoff and journal).
 
 **Both are read-only, and that is a design decision, not an unfinished write path.** The
 store has exactly one writer — an agent, through `save_working_state` — and that
-single-writer property is what makes the whole per-machine layout in §2 safe: two
-machines never touch the same file, so a sync pull never has a conflicting hunk to
-resolve away. A browser write path would make the app a *second* writer to the same
+single-writer property is what makes the per-machine layout in §2 hold: two
+machines never touch the same file, so a sync **merge** never has a conflicting hunk to
+resolve away. (Read that as narrowly as it is written — §2's own carve-out, *"What the
+per-machine path does not protect against"*, lists what it does not cover.) A browser write path would make the app a *second* writer to the same
 files, and it would also break the honesty of the surface: the value of a handoff is that
 it records what an *agent* observed, with the harness and model that observed it. A human
 edit through the app would arrive wearing the last agent's provenance line. If you want to

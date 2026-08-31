@@ -149,6 +149,59 @@
 }
 .sync-setup-input:focus { outline: none; border-color: var(--border-focus); box-shadow: var(--ring-focus); }
 
+/* One-line explanation of the selected Starting direction. It sits under the
+   toggle rather than in a tooltip because it is the sentence that tells the
+   user whether the option they picked REPLACES their files, and a warning
+   behind a hover is not a warning (the v3.18.0 class). */
+.sync-mode-hint { margin: 0; }
+
+/* ── Connect-time decision panel (v3.32.0) ──────────────────────────────
+   The connect flow's second screen. It exists because a refusal that leaves
+   only a destructive door open is not a guard: the guard fired, correctly,
+   and a user still lost four hours of working state because the only control
+   left on the screen overwrote his files.
+
+   It is styled as an inset block inside the setup card rather than as a
+   modal, deliberately. A modal would need its own focus trap and would hide
+   the form the user just filled in; this stays in place, keeps the repo URL
+   and the chosen direction visible above it, and keeps the file list it is
+   arguing about on screen while the user decides. */
+.sync-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 15px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+}
+.sync-decision-info   { border-color: var(--border); }
+.sync-decision-warn   { border-color: var(--attention); }
+/* The danger variant carries a border and a tint, never a filled panel: the
+   file list inside it has to stay at body contrast, and a tinted surface
+   under body text is how a legibility failure gets shipped. */
+.sync-decision-danger { border-color: var(--danger); background: var(--danger-tint); }
+.sync-decision-title  { font: var(--type-h3); color: var(--text); }
+.sync-decision-body   { margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--text-2); }
+.sync-decision-files {
+  margin: 0;
+  padding: 8px 10px;
+  list-style: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  /* The list is the evidence for the count above it, so it must never be the
+     thing that makes the page scroll sideways — same rule the change-record
+     panels follow. */
+  max-height: 168px;
+  overflow: auto;
+}
+.sync-decision-files li { padding: 1px 0; word-break: break-all; }
+.sync-decision-more { color: var(--text-3); }
+.sync-decision-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
 /* ── Status card (configured) ───────────────────────────────────────── */
 
 .sync-status-card {
