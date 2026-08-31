@@ -699,6 +699,136 @@ export function setSharedBrainEnabled(enabled) {
   return getSharedBrainEnabled();
 }
 
+// ── Release channel ─────────────────────────────────────────────────────────
+//
+// ── WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT ──────────────────────────
+// The recorded gap is "rollback is forward-only, a revert reaching users only
+// as another update" (v3.18.0, v3.19.0, v3.20.0, all still open). A release
+// CHANNEL does not fix that. It buys CONTAINMENT — a bad release is found by
+// users on a pre-release ref and never reaches the ref everyone else tracks —
+// and containment is worth nothing to a user who is ALREADY on the bad
+// release. The recovery half of the problem is a manual tag checkout; it is
+// documented behind the Software-update info mark in views/settings.js, and
+// the exact commands there were verified end to end against a clone made the
+// way install.sh makes one.
+//
+// ── ONE CHANNEL IS DEFINED, ON PURPOSE ─────────────────────────────────────
+// `origin` has no pre-release branch (verified with `git ls-remote --heads`:
+// main, four release/* snapshots and five dated topic branches, none of them a
+// channel). Shipping `beta` as a selectable value before that branch exists
+// gives the user a setting that breaks their updater, and creating the branch
+// as an alias of main gives a channel whose two values point at the same
+// commit — containment of nothing, wearing the label of containment. This
+// project has been burned by exactly that shape twice (v3.9.1 found "anything
+// can be reverted from the Sync tab" at eight sites for a feature that has
+// never existed; v3.24.0 cut a "so nothing is lost" line that was false twice
+// over). So the table below has ONE entry and there is deliberately no setter:
+// what ships today is the RESOLVER and its fail-safe, not a feature.
+//
+// ── THE TRAP THE SECOND ENTRY WILL WALK INTO — READ BEFORE ADDING ONE ──────
+// A second entry is NOT just a row in this table. install.sh clones with
+// `git clone --depth 1`, and `--depth 1` implies `--single-branch`, so every
+// standard install's refspec is exactly:
+//     +refs/heads/main:refs/remotes/origin/main
+// MEASURED on a clone made that way: 1 commit, 0 tags, and `refs/remotes`
+// containing only origin/HEAD and origin/main. The consequence is that the
+// obvious implementation — swapping the branch name into the two commands
+// updateHandler already runs — is BROKEN ON EVERY STANDARD INSTALL even when
+// the branch really does exist. Measured against a throwaway origin that HAD a
+// `beta` branch:
+//     git fetch origin beta          ->  " * branch  beta -> FETCH_HEAD"   (looks fine)
+//     git reset --hard origin/beta   ->  fatal: ambiguous argument 'origin/beta'
+// The fetch REPORTS SUCCESS and the reset then fails, which is the shape that
+// convinces an implementer the fetch line proved it worked. A non-`main`
+// channel must therefore fetch with an explicit refspec —
+//     git fetch origin +refs/heads/<b>:refs/remotes/origin/<b>
+// — which was measured creating the tracking ref and letting the reset
+// resolve. That command shape is NOT written here, because nothing can reach
+// it today and an unwired half is the thing this repo keeps having to delete.
+//
+// ── THE FAIL-SAFE ASYMMETRY ────────────────────────────────────────────────
+// Absent or unrecognised resolves to `stable`, the same direction as
+// paths.js's install-mode detection: the failure that is safe. A config
+// written by a NEWER build (or by hand) that names a channel this build has
+// never heard of must keep updating from the ref it has always used, never
+// refuse and never guess. That property only has value if it ships BEFORE the
+// second channel does, which is the whole argument for landing this now.
+//
+// Null-prototype AND Object.hasOwn: an object literal inherits from
+// Object.prototype, so `CHANNELS['constructor']` is truthy and a truthiness
+// gate would resolve '__proto__' and 'toString' to a channel. That is the
+// v3.0.9 normalizeResponseStyle bug; it is closed here by construction as well
+// as by the guard.
+const RELEASE_CHANNELS = Object.freeze(Object.assign(Object.create(null), {
+  stable: Object.freeze({ branch: 'main' }),
+}));
+
+const DEFAULT_RELEASE_CHANNEL = 'stable';
+
+// Module-load invariant, the same DESIGNED LOUD FAILURE install-mode.js uses for
+// its capability records. `getReleaseRef` indexes the table with the resolved
+// name, so a DEFAULT naming a channel the table does not define would throw
+// `Cannot read properties of undefined (reading 'branch')` — at a call site, at
+// runtime, with a stack that names neither the constant nor the table. Found by
+// mutating the default to 'beta': the guard suite reddened correctly and then
+// CRASHED, which is the "crash instead of a named assertion" shape this repo has
+// recorded twice. This can only fire on a source edit — the default is a
+// build-time constant and never user input — so failing at import is right: it
+// reds `npm test` on the spot instead of surfacing in an update path.
+if (!Object.hasOwn(RELEASE_CHANNELS, DEFAULT_RELEASE_CHANNEL)) {
+  throw new Error(
+    `DEFAULT_RELEASE_CHANNEL is "${DEFAULT_RELEASE_CHANNEL}", which RELEASE_CHANNELS does not define ` +
+    `(defined: ${Object.keys(RELEASE_CHANNELS).join(', ') || 'none'}). ` +
+    'Every channel name must have a branch, or getReleaseRef() throws at its call site.'
+  );
+}
+
+/** The channel names this build understands. Sole source of truth for callers. */
+export function releaseChannelNames() {
+  return Object.keys(RELEASE_CHANNELS);
+}
+
+/**
+ * Fail-safe resolver. Anything that is not a defined channel name — absent,
+ * null, a number, an object, a prototype key, a channel a newer build wrote —
+ * resolves to `stable`. Exported separately from the getter so the asymmetry
+ * can be tested without touching the filesystem.
+ */
+export function resolveReleaseChannel(raw) {
+  return (typeof raw === 'string' && Object.hasOwn(RELEASE_CHANNELS, raw))
+    ? raw
+    : DEFAULT_RELEASE_CHANNEL;
+}
+
+/** The resolved channel name for this install. Never throws, never returns null. */
+export function getReleaseChannel() {
+  return resolveReleaseChannel(readRaw().releaseChannel);
+}
+
+/**
+ * `{ channel, branch }` for the update paths in src/routes/config.js.
+ *
+ * On `stable` the branch is `main`, so every command string and every GitHub
+ * URL built from this is byte-identical to the hardcoded ones it replaced —
+ * which is the acceptance criterion for this change, pinned by
+ * scripts/test-release-channel.js rather than argued for here.
+ */
+export function getReleaseRef() {
+  // Resolved AGAIN rather than trusting getReleaseChannel's contract. Resolution
+  // is idempotent, so this is a no-op on every input the shipped code produces —
+  // but it makes the table lookup TOTAL BY CONSTRUCTION, and the lookup is what
+  // builds a git command. The same discipline v3.23.1 applied to
+  // `.curator-machine-id`: the value originates in a file, so it is re-validated
+  // at the point of use, not merely where it was read.
+  //
+  // Found by mutation: breaking getReleaseChannel to return the raw file value
+  // made this line throw `Cannot read properties of undefined (reading 'branch')`
+  // at its call site — inside the update path, with a stack naming neither the
+  // config key nor the table.
+  const channel = resolveReleaseChannel(getReleaseChannel());
+  return { channel, branch: RELEASE_CHANNELS[channel].branch };
+}
+
 // ── Durable UI state (v3.28.0) ───────────────────────────────────────────────
 //
 // ── WHY THIS EXISTS: THE PARTITION, NOT THE NAME ────────────────────────────

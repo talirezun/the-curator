@@ -1014,6 +1014,54 @@ function infoMark(id, label, info) {
   };
 }
 
+/**
+ * The escape hatch, behind the Software-update info mark.
+ *
+ * ── EVERY SENTENCE HERE WAS RUN BEFORE IT WAS WRITTEN ──────────────────────
+ * This project has a recorded history of shipping revert promises nobody
+ * checked: v3.9.1 found "anything can be reverted from the Sync tab" at EIGHT
+ * sites for a feature that has never existed, and v3.24.0 cut a "so nothing is
+ * lost" line that was false twice over. So each clause below maps to something
+ * measured against a clone made the way install.sh makes one
+ * (`git clone --depth 1`):
+ *
+ *   "updating only moves forward"   — updateHandler runs fetch + reset --hard
+ *                                     and nothing else; no route in this app
+ *                                     exposes a revert.
+ *   "the tags are not on disk"      — that clone has 1 commit and 0 tags, and
+ *                                     `git checkout <tag>` fails with
+ *                                     "pathspec did not match". `git fetch
+ *                                     origin main` does NOT deepen it or bring
+ *                                     tags, so this step is REQUIRED, not
+ *                                     belt-and-braces.
+ *   the two commands                — `git fetch --depth 1 origin tag X` then
+ *                                     `git checkout X` landed the real
+ *                                     historical tree (package.json version
+ *                                     matched the tag).
+ *   "your data is untouched"        — domains/*, .curator-config.json and
+ *                                     .sync-config.json are all in .gitignore,
+ *                                     so neither command can reach them.
+ *   "checking again brings you back"— from that detached HEAD, the app's OWN
+ *                                     two update commands returned the tree to
+ *                                     the published version.
+ *
+ * ── WHY NO VERSION NUMBER APPEARS IN THIS STRING ───────────────────────────
+ * Not every release is tagged. When this was written the newest tag on origin
+ * was FOUR releases behind the running version, so "go back to the previous
+ * version" would have been simply false, and any example tag baked in here
+ * goes stale the moment one is pushed. The GitHub tag list is named as the
+ * authority instead, which cannot rot.
+ */
+const UPDATE_RECOVERY_INFO =
+  'Updating only moves forward — it replaces this copy with the published version, and there is no ' +
+  'in-app way to undo a release. Going back is a Terminal step and it does work. The installer clones ' +
+  'with --depth 1, so the version tags are not on disk yet: from the app folder (~/the-curator by ' +
+  'default) run "git fetch --depth 1 origin tag VERSION", then "git checkout VERSION", then ' +
+  '"npm install", where VERSION is a tag name from github.com/talirezun/the-curator/tags. That page is ' +
+  'the authority on what can be recovered — not every build is tagged, so the newest tag can be ' +
+  'several releases behind this copy. Your knowledge base, API keys and sync settings are ignored by ' +
+  'git and are not touched. Checking for updates again puts this copy back on the published version.';
+
 // ── Data loading (fetch-on-first-visit-to-section, cached in state) ─────
 
 async function ensureSectionData(section, token) {
@@ -1245,6 +1293,7 @@ function renderGeneral() {
   const dark = currentTheme() === 'dark';
   // Re-checking mid-install would race the very process being replaced.
   const updatesBusy = state.updateChecking || state.updatePhase === 'applying' || state.updatePhase === 'restarting';
+  const recovery = infoMark('settings-update-recovery-info', 'How to go back to an earlier version', UPDATE_RECOVERY_INFO);
   const quick = state.quick;
   const summary = quick && !quick.error
     ? quick.summary
@@ -1298,9 +1347,10 @@ function renderGeneral() {
       // and a restart progress line, and the flow needs a surface that
       // stays put while the server is restarting under it.
       '<div class="settings-field-block" id="block-updates">' +
-        '<span class="settings-field-label">Software update</span>' +
+        '<span class="settings-field-label settings-label-row">Software update' + recovery.btn + '</span>' +
         '<p class="settings-hint-text">Compares this copy with the published version. Installing replaces The Curator’s own ' +
         'program files and restarts it — your knowledge base, API keys and sync settings are never touched.</p>' +
+        recovery.panel +
         '<div class="settings-btn-row">' +
           '<button type="button" class="btn btn-secondary" id="btn-check-updates"' + (updatesBusy ? ' disabled' : '') + '>' +
             (state.updateChecking ? 'Checking…' : 'Check for updates') +

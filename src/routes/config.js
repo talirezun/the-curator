@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -396,9 +396,15 @@ function guardConcurrent(action) {
   };
 }
 
-/** GET /api/config — returns current app configuration */
+/** GET /api/config — returns current app configuration
+ *
+ * `releaseChannel` is the RESOLVED name, never the raw file value: an absent
+ * or unrecognised key reads as `stable` here exactly as it does in the update
+ * paths, so this endpoint can never disagree with the ref those actually use.
+ * Additive — every pre-existing field keeps its name and meaning.
+ */
 router.get('/', (_req, res) => {
-  res.json({ ...getConfig(), defaultDomain: getDefaultDomain() });
+  res.json({ ...getConfig(), defaultDomain: getDefaultDomain(), releaseChannel: getReleaseChannel() });
 });
 
 /**
@@ -2198,6 +2204,14 @@ export async function updateCheckHandler(_req, res, deps = null) {
   }
   const execAsync = (deps && deps.execAsync) || defaultExec;
   const fetch = (deps && deps.fetch) || defaultFetch;
+  // The ref this install tracks. `stable` resolves to `main`, so both URLs
+  // below are byte-identical to the hardcoded ones they replaced — the
+  // acceptance criterion for the release-channel change, pinned by
+  // scripts/test-release-channel.js against the literals recorded from the
+  // pre-change handler. An absent or unrecognised channel resolves to
+  // `stable` inside getReleaseRef, so this line cannot yield an empty or
+  // attacker-chosen path segment.
+  const { channel, branch } = (deps && deps.releaseRef) || getReleaseRef();
   try {
     const pkg = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
     const current = pkg.version;
@@ -2211,7 +2225,7 @@ export async function updateCheckHandler(_req, res, deps = null) {
 
     // Get remote version from GitHub
     const response = await fetch(
-      'https://raw.githubusercontent.com/talirezun/the-curator/main/package.json'
+      'https://raw.githubusercontent.com/talirezun/the-curator/' + branch + '/package.json'
     );
     if (!response.ok) throw new Error('Could not reach GitHub');
     const remote = await response.json();
@@ -2221,7 +2235,7 @@ export async function updateCheckHandler(_req, res, deps = null) {
     let remoteCommit = null;
     try {
       const commitRes = await fetch(
-        'https://api.github.com/repos/talirezun/the-curator/commits/main',
+        'https://api.github.com/repos/talirezun/the-curator/commits/' + branch,
         { headers: { 'Accept': 'application/vnd.github.v3.sha' } }
       );
       if (commitRes.ok) {
@@ -2232,6 +2246,14 @@ export async function updateCheckHandler(_req, res, deps = null) {
 
     const verdict = decideUpdateAvailable({ current, latest, localCommit, remoteCommit });
 
+    // `channel` and `branch` are ADDITIVE — every field above keeps its name,
+    // type and meaning, so a client written before this release reads the same
+    // payload it always did. They are here so the resolved channel is
+    // INSPECTABLE (a support answer, and the only way to tell "resolved to
+    // stable because the key is absent" from "resolved to stable because the
+    // key said something this build has never heard of" is to see the resolved
+    // value beside the raw file). There is deliberately no control that writes
+    // it — see the release-channel block in src/brain/config.js.
     res.json({
       current,
       latest,
@@ -2239,6 +2261,8 @@ export async function updateCheckHandler(_req, res, deps = null) {
       remoteCommit,
       updateAvailable: verdict.updateAvailable,
       localAhead: verdict.localAhead,
+      channel,
+      branch,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2298,6 +2322,17 @@ export async function updateHandler(_req, res, deps = null) {
   const execOpts = (extra = {}) => ({ cwd: PROJECT_ROOT, env: SUBPROCESS_ENV, ...extra });
   let beforeSha = null, afterSha = null;
 
+  // The ref this install tracks. On `stable` the branch is `main`, so the two
+  // commands built from it below are the byte-identical strings this handler
+  // has always run — proved differentially against the pre-change handler on
+  // the same seam, and pinned as literals by scripts/test-release-channel.js.
+  //
+  // DO NOT extend this to a second channel by swapping the name into these two
+  // commands: `git reset --hard origin/<b>` cannot resolve on a standard
+  // install, which is a single-branch shallow clone. The measurement and the
+  // command shape that does work are recorded in src/brain/config.js.
+  const { branch } = (deps && deps.releaseRef) || getReleaseRef();
+
   // Flag this domain-global operation so an ingest that arrives during the
   // git-reset / npm-install window is refused with a clear 409 (see the
   // matching check in src/routes/ingest.js). Cleared in `finally`.
@@ -2321,7 +2356,7 @@ export async function updateHandler(_req, res, deps = null) {
     }
 
     // 1. Fetch before resetting so we never hard-reset to a stale ref if the remote is unreachable.
-    await execAsync('git fetch origin main', execOpts({ timeout: 30000 }));
+    await execAsync('git fetch origin ' + branch, execOpts({ timeout: 30000 }));
 
     // 2. Record before/after SHAs so the response explains what changed.
     const before = await execAsync('git rev-parse HEAD', execOpts({ timeout: 5000 }));
@@ -2329,7 +2364,7 @@ export async function updateHandler(_req, res, deps = null) {
 
     // 3. Hard-sync to origin/main. Discards any local modifications to tracked files
     //    (including the common `package-lock.json` regeneration) without touching gitignored data.
-    await execAsync('git reset --hard origin/main', execOpts({ timeout: 10000 }));
+    await execAsync('git reset --hard origin/' + branch, execOpts({ timeout: 10000 }));
     const after = await execAsync('git rev-parse HEAD', execOpts({ timeout: 5000 }));
     afterSha = after.stdout.trim().slice(0, 7);
 

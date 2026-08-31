@@ -157,6 +157,17 @@
   font: var(--type-label);
   color: var(--text-2);
 }
+/* A field label that carries an info mark beside it.
+   ADDITIVE and opt-in: `.settings-field-label` is used by many blocks and is
+   deliberately not changed. It is already a flex ITEM of the column
+   `.settings-field-block`, so without this it lays its children out inline and
+   the 24px round button sits on the text baseline rather than centred on it.
+   `flex: none` on `.tx-vh-info` keeps the button from stretching. */
+.settings-label-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 /* ── THE INERT-COPY DEFECT ────────────────────────────────────────────────
    `.settings-hint-text` is declared THREE times — views/shared.css, views/sync.css
    and here — at IDENTICAL specificity, and index.html links settings.css AFTER
