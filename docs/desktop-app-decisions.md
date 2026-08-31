@@ -69,7 +69,7 @@ licenses a doc elsewhere to describe a planned thing in the present tense.
 | [D11](#d11--credentials-do-not-migrate) | Credentials do **not** migrate | `DECIDED` |
 | [D12](#d12--the-one-must-have-is-that-existing-wikis-appear--and-it-needs-no-new-code) | Existing wikis must appear — and that needs no new code | `SHIPPED` |
 | [D13](#d13--the-existing-users-path-is-three-steps-that-already-exist) | The existing user's path is three steps that already exist | `SHIPPED` |
-| [D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch) | The MCP launcher shim is generated at every app launch | `DECIDED` |
+| [D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch) | The MCP launcher shim is generated at every app launch | `SHIPPED` |
 | [D15](#d15----domains-path-is-dropped-in-bundle-mode) | `--domains-path` is dropped in bundle mode | `DECIDED` |
 
 ---
@@ -276,7 +276,7 @@ artifact.
 > **Measured, because the obvious summary of this is wrong.** GitHub Releases for
 > this repository are **not** empty — `gh release list` returns four
 > (`v2.1.0`, `v3.0.0-beta.1`, `v3.8.0`, `v3.9.0`), and `git ls-remote --tags`
-> shows tags through `v3.9.2`. What is true is narrower and is the part that
+> shows 42 tags, from `v2.1.0` through `v3.24.2` and then `v3.29.0`. What is true is narrower and is the part that
 > matters: those are **hand-made, source-only** releases carrying no binary, the
 > newest is many versions behind the running one, and **no workflow creates or
 > uploads to a Release.** So the mechanism is available and unused, not absent.
@@ -320,11 +320,17 @@ tag, specifically so a future `electron-updater` has something to depend on,
 while explicitly declining to wire a release workflow before anything consumes
 it.
 
-> **The tag history is not yet continuous, and a trigger would need to know
-> that.** Measured on origin: tags run to `v3.9.2` and then stop — nothing
-> between `v3.10.0` and `v3.29.0`, because the release gate that creates them is
-> new and every release in that gap predates it. A `v*` trigger only ever fires
-> on tags created from here on.
+> **The tag history is not continuous, and a trigger would need to know that.**
+> Measured on origin: **42 tags**, running from `v2.1.0` to `v3.24.2`, then a
+> four-release gap, then `v3.29.0`. `v3.25.0` through `v3.28.0` have **no tag** —
+> they were cut before the tag step existed, which is precisely the gap `v3.29.0`
+> closed. Also missing: `v3.16.x` and `v3.17.x`. A `v*` trigger only ever fires
+> on tags created from here on, so the gap costs nothing going forward.
+>
+> *(An earlier draft of this file said tags "run to `v3.9.2` and then stop" at
+> three separate places. That was false — it was written from a worktree whose
+> view was stale, and the orchestrator's first correction of it was wrong too,
+> in the other direction. The number above is measured, not remembered.)*
 
 ---
 
@@ -414,7 +420,7 @@ sites** for a feature that has never existed):
   shallow tag fetch, then a checkout, then the app's own update commands to
   return from detached `HEAD`.
 - **And most versions have no tag to fetch.** Measured against origin:
-  `git ls-remote --tags` returns tags up to **`v3.9.2`**, and nothing between
+  `git ls-remote --tags` returns **42** tags ending at `v3.29.0`, but with `v3.25.0`-`v3.28.0` missing — nothing between
   `v3.10.0` and `v3.29.0`. `scripts/release.js` does create *and push* an
   annotated tag, but the gate that does so is new — every release in that gap
   predates it. So "check out the previous version" is not a procedure a user can
@@ -564,6 +570,21 @@ under the app it is the same wizard reaching a different launcher
 ## 5. The MCP bridge under the app
 
 ### D14 — The MCP launcher shim is generated at every app launch
+
+> **Status corrected after this record was written.** It was drafted in a
+> worktree branched from `v3.29.0`, which predates the code below, so the first
+> draft recorded this as `DECIDED` and stated that `POST /api/mcp/write-config`
+> and the `mcp_launch_style` / `launcher_path` / `launcher_exists` fields did
+> not exist. They do: `src/routes/mcp.js:328` and `:243-245`, shipped in
+> v3.30.0, along with `src/brain/mcp-launcher.js` and `getMcpLauncherDir()`.
+>
+> The method was right and the baseline was stale — the third time in one
+> session that a worktree's base produced a confident, wrong correction. When
+> an agent reports that something does not exist, **check what its worktree was
+> branched from before believing it.**
+>
+> What remains genuinely unbuilt here is the *button*: the endpoint exists and
+> is proven, but the wizard control that calls it is not wired.
 
 **Decision.** In bundle mode the Claude Desktop entry points at a **launcher
 script that the app rewrites every time it starts**. It is neither shipped inside
