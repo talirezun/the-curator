@@ -29,6 +29,7 @@ import { appPath, getCredentialFiles } from './paths.js';
 import { getProviderInfo, generateText, getFallbackStatus } from './llm.js';
 import { isConfigured as syncConfigured, getStatus as syncGetStatus } from './sync.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { getLogFilePath, getLogFileStats, logWarn } from './logger.js';
 
 // Files that should be owner-only (0600). getCredentialFiles() in paths.js is
 // the SINGLE source of truth, shared with the startup chmod sweep in
@@ -228,6 +229,26 @@ async function checkGit() {
   }
 }
 
+// ── 8. Application log file ──────────────────────────────────────────────────
+//
+// Purely informational — there is no "wrong" state, only "exists" or "not
+// yet". A fresh install that has never hit an error or restarted the server
+// has legitimately never written a line. `detail` carries the resolved path
+// so a user can find it without knowing the OS convention, and — since this
+// is the one row a user might actually act on — enough to know whether
+// there's anything worth opening. The route for a Finder/Explorer "reveal"
+// action lives beside this file's sibling (POST /api/diagnostics/reveal-log,
+// same execFile('open', ['-R', ...]) pattern as /api/mcp/reveal-config); no
+// frontend button consumes it yet.
+function checkLogFile() {
+  const stats = getLogFileStats();
+  if (!stats) {
+    return check('log', 'Application log', 'info', `Not written yet: ${getLogFilePath()}`);
+  }
+  const kb = (stats.bytes / 1024).toFixed(1);
+  return check('log', 'Application log', 'info', `${stats.path} (${kb} KB)`);
+}
+
 /**
  * Run all FREE, local checks. No network, no API call, no cost. Returns
  * { checks: [...], summary: {ok, warn, fail, info} }.
@@ -241,6 +262,7 @@ export async function runQuickDiagnostics() {
     checkCredentialPerms(),
     await checkGit(),
     await checkSync(),
+    checkLogFile(),
   ];
   const summary = { ok: 0, warn: 0, fail: 0, info: 0 };
   for (const c of checks) summary[c.status] = (summary[c.status] || 0) + 1;
@@ -284,6 +306,10 @@ export async function runLiveApiCheck() {
       fallback: fb ? { model: fb.usingModel } : null,
     };
   } catch (err) {
+    // Opt-in and rare (a user-initiated click, never a poll), so a failure
+    // here is exactly the low-frequency/high-signal case the log exists for
+    // — see the "what is logged" note in src/brain/logger.js.
+    logWarn('diagnostics', `Live API check failed (${provider} · ${model}): ${err.message}`);
     return {
       ok: false,
       provider,

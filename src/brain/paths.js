@@ -197,6 +197,12 @@ export const APP_ROOT = path.resolve(__dirname, '../..');
 export const APP_SUPPORT_DIR_NAME = 'The Curator';
 
 /**
+ * Directory name used under ~/Library/Logs. Deliberately the SAME string as
+ * APP_SUPPORT_DIR_NAME — one app, one name, wherever macOS convention puts it.
+ */
+export const APP_LOGS_DIR_NAME = APP_SUPPORT_DIR_NAME;
+
+/**
  * Written by the PACKAGER into a shipped bundle. Nothing in this repo creates
  * it — see the "NOTE for whoever does the packaging work" in the docblock.
  * Its presence is a positive declaration: "the code around me is read-only".
@@ -257,6 +263,51 @@ export function isRepoInstall() {
  */
 export function getAppSupportDir() {
   return path.join(os.homedir(), 'Library', 'Application Support', APP_SUPPORT_DIR_NAME);
+}
+
+// Test-only override for the log directory. Separate from
+// _userDataDirOverride on purpose — a suite exercising the logger needs to
+// isolate ONLY where log lines land, independent of whatever domains/config
+// dir a surrounding fixture already redirected, and a real run must never be
+// able to write a log into the maintainer's actual ~/Library/Logs.
+let _logDirOverride = null;
+
+/** Test seam — force the log directory (e.g. a tempdir). Pass null to clear. */
+export function __setLogDirOverride(p) {
+  _logDirOverride = p ? path.resolve(p) : null;
+}
+
+/**
+ * Absolute path to the directory the app's own log file lives in.
+ *
+ * Unlike getUserDataDir(), this does NOT fork on install mode. A repo
+ * checkout is still a live git working tree — writing a growing log file
+ * inside it would show up in every `git status`, and it's exactly the kind
+ * of machine-local operational file (`.DS_Store` in v3.0.16, `.write-lock`
+ * in v3.0.15) this project has already shipped inside a synced/tracked tree
+ * by mistake more than once. The log is diagnostic exhaust, not user data —
+ * ~/Library/Logs is the OS-conventional home for it in EITHER install mode,
+ * exactly like Application Support is for user data.
+ *
+ * Not TCC-protected (same reasoning as getAppSupportDir() above), so an MCP
+ * child spawned headlessly by Claude Desktop can also write here without
+ * risking a permission prompt with nowhere to render.
+ *
+ *   __setLogDirOverride  → that (test seam)
+ *   CURATOR_TEST_LOG_DIR → that (test seam, crosses process boundaries)
+ *   otherwise            → ~/Library/Logs/The Curator
+ *
+ * Pure resolver — never creates the directory. The logger module owns that,
+ * lazily and best-effort, at write time (see its own docblock for why: a
+ * failed mkdir here must never be allowed to throw through a caller that
+ * only wanted to log an error).
+ */
+export function getLogsDir() {
+  if (_logDirOverride) return _logDirOverride;
+  if (process.env.CURATOR_TEST_LOG_DIR) {
+    return path.resolve(process.env.CURATOR_TEST_LOG_DIR);
+  }
+  return path.join(os.homedir(), 'Library', 'Logs', APP_LOGS_DIR_NAME);
 }
 
 /**
