@@ -166,6 +166,24 @@ flowchart TD
 
 ## Quick start
 
+The Curator runs as a **local server you open in your browser**. That is how you
+install it on every platform today, and it is the only way on Windows and Linux.
+
+> **On a Mac, is there an app to download?** Not yet. The Mac installer builds a
+> Dock launcher on your machine — a small AppleScript wrapper around the same
+> server — so you never need the Terminal, but **there is no signed `.dmg`.**
+>
+> A properly packaged Mac app is being worked on. It is the **same codebase and
+> the same release** as the browser app, not a separate product: one shell around
+> `src/`, not a fork. The browser install is **not** a legacy path and stays
+> fully supported.
+>
+> The decisions taken so far — and, for each one, whether code exists yet —
+> are recorded in
+> [docs/desktop-app-decisions.md](docs/desktop-app-decisions.md).
+> Short answer for existing users: **your wiki is plain markdown and comes across
+> untouched**; you re-paste your API key and re-run the MCP wizard.
+
 ### Option A — One-command installer (Mac, recommended)
 
 ```bash
@@ -326,7 +344,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Shared Brain — Monetization](docs/shared-brain-monetization.md) | Charging for brain access today using no-code payment platforms |
 | [Use Cases](docs/use-cases.md) | Detailed workflows for every profile, including cohort, team and monetization scenarios |
 | [System Check](docs/system-check.md) | Confirm the app itself is set up correctly (key, folder, credentials, sync), plus an optional AI connection test |
-| [Mac App Setup](docs/mac-app.md) | The Dock launcher — how it's built, how to use it, rebuilding, troubleshooting |
+| [Mac App Setup](docs/mac-app.md) | The Dock launcher that ships today — how it's built, how to use it, rebuilding, troubleshooting |
 | [Skills](skills/README.md) | The two agent skills, what they enforce, and how portable they actually are |
 
 **For developers**
@@ -336,6 +354,7 @@ ago · anyone coding with agents across sessions, tools and machines.
 | [Contributing](CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [Ingestion Pipeline](docs/ingestion-pipeline.md) | **The deep dive on the most important code path in The Curator** — every safeguard, every failure mode, the quality contract |
 | [Architecture](docs/architecture.md) | System design — directory structure, the model router, where user data lives |
+| [Native Mac app — decision record](docs/desktop-app-decisions.md) | **Decisions, not features.** One codebase / two shells, packaging, the release gate, migration and the MCP launcher — each with its reasoning, its evidence, and whether code exists for it yet |
 | [Chat Streaming](docs/chat-streaming.md) | How a chat turn streams end to end — the wire format, reasoning vs. answer, and why a streamed attempt is never retried |
 | [API Reference](docs/api-reference.md) | REST API documentation |
 | [Model Lifecycle](docs/model-lifecycle.md) | Provider/model fallback policy, retiring deprecated models |

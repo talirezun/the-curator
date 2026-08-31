@@ -412,6 +412,8 @@ See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-use
 
 `paths.js` answers **where does user data live**. `install-mode.js` answers a different question — **what may this copy of The Curator do to its own code** — and the two are deliberately separate modules.
 
+> **The `bundle` mode below has no bundle.** Every `bundle` arm in the codebase is currently unreachable, because nothing packages The Curator into one — there is no `desktop/` directory, no Electron dependency and no DMG build in this repository. What exists is the *fork points*, built ahead of the shell that will use them. The decisions that shape that shell — and, for each, whether code exists yet — are recorded in [desktop-app-decisions.md](desktop-app-decisions.md).
+
 The dependency runs one way only: `install-mode.js` imports `isBundleInstall` from `paths.js`, and `getInstallMode()` is literally `isBundleInstall() ? 'bundle' : 'repo'`. `paths.js` knows nothing about `install-mode.js`.
 
 ### Why a capability, not an install form

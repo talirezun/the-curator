@@ -1,6 +1,21 @@
 # Mac App — The Curator
 
-The Curator includes a native macOS app wrapper that lives in your Dock. Double-click to launch — no Terminal needed.
+The Curator includes a macOS app wrapper that lives in your Dock. Double-click to launch — no Terminal needed.
+
+> **What this page describes is what ships today: an AppleScript wrapper around a
+> normal checkout**, built on your own machine by the installer. It is not a
+> downloadable, signed application, and **there is no `.dmg` to download.**
+>
+> A properly packaged Mac app is being worked on. Nothing on this page describes
+> it, and nothing here is deprecated by it — the decisions taken so far, and
+> exactly which of them have code behind them, are recorded in
+> [desktop-app-decisions.md](desktop-app-decisions.md). If you want to know what
+> will change for *you*, that is
+> [§ Migration](desktop-app-decisions.md#4-migration-for-existing-users).
+
+**In one line:** the thing in your Dock is a small launcher. Your knowledge lives
+in the `domains/` folder as plain markdown, completely independent of it — which
+is why replacing the launcher later costs you nothing.
 
 ---
 
@@ -79,9 +94,40 @@ cd ~/the-curator
 bash scripts/build-app.sh
 ```
 
-This regenerates the AppleScript with the correct project path and node path, compiles it, applies the icon, and code-signs the bundle.
+This regenerates the AppleScript with the correct project path and node path, compiles it, applies the icon, and signs the bundle **ad-hoc** (`codesign --sign -`, an identity-less signature that satisfies macOS locally). It is **not** a Developer ID signature, which is why a rebuild is safe here and would be destructive in a properly signed app.
 
 The build script also runs automatically during updates (via the **Settings** view).
+
+---
+
+## What changes when the packaged app arrives
+
+**Not yet — none of this exists today.** It is here so the answer to "will I lose
+my wiki?" is written down rather than guessed at. The reasoning behind each row
+is in [desktop-app-decisions.md](desktop-app-decisions.md).
+
+| | Today (this page) | Packaged app (planned) |
+|---|---|---|
+| **What you install** | The installer clones the repo and builds a `.app` **on your machine** | A signed application you download |
+| **Where your knowledge lives** | Inside the checkout, at `~/the-curator/domains/` | Anywhere you point it — the app cannot write inside itself |
+| **Updates** | Settings → Check for updates runs `git` against the checkout | The app's own updater; the git route refuses with a `501` |
+| **Rebuilding the `.app`** | `bash scripts/build-app.sh`, as above | Never — the ad-hoc `codesign` above would destroy a real signature |
+| **Your files** | Plain markdown in `domains/` | **Identical.** Same files, same folder, same Obsidian vault |
+
+**What you would have to redo, and what you would not:**
+
+| ✅ Comes across untouched | ⚠️ You redo it once |
+|---|---|
+| Every wiki page, domain and summary | Paste your API key again |
+| Chat history and working state | Reconnect Personal Sync, if you use it |
+| Your Obsidian vault and graph settings | Re-run the MCP wizard, if you use it |
+
+The one thing that must work is that **your existing wiki appears**, and that
+needs no new code at all — the wiki is plain markdown, and Settings → Knowledge
+base folder already points the app at any folder you choose. **Credentials are
+deliberately not migrated**; that decision, and why re-typing a key beats writing
+a one-shot importer for three secret files, is
+[D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
 
 ---
 

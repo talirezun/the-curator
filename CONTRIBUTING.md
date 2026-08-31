@@ -31,6 +31,33 @@ Node.js 18+ is required (the code uses native `fetch`, `node:test`-era APIs, and
 ESM). The app is loopback-only by design — see the Security note in
 [README.md](README.md).
 
+### The root manifest has zero `devDependencies`, and that is a rule
+
+`package.json` carries eight runtime dependencies and **no `devDependencies`
+key at all**. Keep it that way.
+
+The reason is not tidiness. `POST /api/config/update` runs
+`npm install --silent --no-audit --no-fund` **on every user's machine** as step 4
+of an update, so anything in the root manifest — a `devDependency` included — is
+downloaded by every user, for every update, whether or not they can use it. This
+project has already refused Playwright on exactly this ground, and the
+browser-driven visual harness talks to an already-installed Chrome over the
+DevTools Protocol specifically so that `git diff package.json` stays **0 lines**.
+
+Practically:
+
+- **Tooling you need for one investigation** (a Mermaid parser, a link checker, a
+  DOM shim) is installed in a scratchpad **outside the repository**. Several
+  releases record this and re-verify the 0-line diff afterwards.
+- **A packaging toolchain gets its own manifest.** When the desktop shell is
+  built it lives in `desktop/` with a separate `package.json`, so Electron never
+  reaches a browser-install user — see
+  [docs/desktop-app-decisions.md § D2](docs/desktop-app-decisions.md#d2--desktop-gets-its-own-packagejson).
+
+**Nothing automated enforces this.** No suite asserts the root manifest is free
+of `devDependencies`; it rests on this rule plus the per-release diff check. A
+guard would close it.
+
 ### Git hooks (v3.17.2)
 
 This is a public repo, so the hooks guard the two mistakes that cannot be undone
@@ -838,6 +865,13 @@ where the fix goes.
 
 ### What it refuses, and why each one is there
 
+**This table is the notable subset, not the full list.** `scripts/release.js`
+declares its refusal ids in one frozen `REFUSALS` object — **derive the list from
+there, never from prose.** The only automated check on it is an anti-vacuity
+floor in `scripts/test-release-preconditions.js` (`declared.length >= 20`), so
+nothing goes red when a number written down somewhere drifts, and at least one
+already has: `CLAUDE.md`'s v3.29.0 row says 25, and the object declares 30.
+
 | Refusal | Fires when |
 |---|---|
 | `bad-version` | not plain `X.Y.Z` — the `-beta` line was retired in v3.0.2 after 27 "previews" shipped straight to production |
@@ -886,9 +920,22 @@ where the fix goes.
 The gate catches anything `npm test` can see, so this is now the narrower case:
 a defect CI cannot detect that reached `main` anyway.
 
-**Rollback is forward-only.** There is no release channel, no downgrade path,
-and no `releaseChannel` setting; clients pull `origin/main` and hard-reset to
-it. So the answer is always another release, never an undo:
+**Rollback is forward-only.** There is no downgrade path and no second release
+channel; clients pull `origin/main` and hard-reset to it. So the answer is
+always another release, never an undo:
+
+> **Corrected.** This paragraph previously read *"no release channel … and no
+> `releaseChannel` setting"*. A `releaseChannel` key **does** exist as of
+> v3.29.0 — `resolveReleaseChannel()` / `getReleaseRef()` in
+> `src/brain/config.js`, surfaced on `GET /api/config` and as `channel` /
+> `branch` on `GET /api/config/update-check`. What is true is that **`stable` is
+> its only valid value**, anything else resolves to `stable`, and nothing writes
+> it. A second channel is not a config edit: `install.sh` clones with
+> `--depth 1`, which implies `--single-branch`, so on a real install
+> `git fetch origin beta` **reports success** and the following
+> `git reset --hard origin/beta` dies with `fatal: ambiguous argument` — the
+> fetch succeeds and the reset kills the update. Measured; see
+> [docs/desktop-app-decisions.md § D10](docs/desktop-app-decisions.md#d10--releasechannel-ships-with-stable-as-its-only-valid-value).
 
 ```bash
 # 1. Revert the release commit. A NEW commit — never a force-push, and never
