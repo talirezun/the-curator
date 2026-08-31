@@ -3147,9 +3147,25 @@ refused **by name**, pointing at that surface, rather than silently doing nothin
 
 ## GET /api/config/update-check
 
-Compare the local version and commit against `main` on GitHub. Network read only; changes nothing.
+Ask whether a newer version exists. Network read only; changes nothing.
 
-**Forked on `canSelfUpdateViaGit`** — see [architecture § Install modes](architecture.md#install-modes-srcbraininstall-modejs).
+**Forked on `updateStyle` first, then on `canSelfUpdateViaGit`** — see
+[architecture § Install modes](architecture.md#install-modes-srcbraininstall-modejs). The two forks
+answer different questions and are checked in that order:
+
+| `updateStyle` | `canSelfUpdateViaGit` | Arm |
+|---|---|---|
+| `git-pull` (a checkout) | `true` | reads `package.json` on the tracked branch + the branch head SHA — **unchanged, byte for byte, from every prior version** |
+| `download-installer` (a packaged app) | `false` | reads GitHub's public **release list** and reports the newest release carrying an installer |
+| anything else | `false` | `501` — this build has no update route at all |
+
+`updateStyle` is checked first because it is the question that has an answer for every install form;
+`canSelfUpdateViaGit` only says what one of them cannot do. **No field was added to the git arm's
+response**, so an absent `updateStyle` on the wire means the git flow — which is what every existing
+client already assumes. The install's real capability is separately observable on
+[`GET /api/version`](#get-apiversion) as `capabilities.updateStyle`.
+
+### Arm 1 — `git-pull`
 
 **Success response** `200 OK` (a build that can self-update)
 
@@ -3214,7 +3230,78 @@ correctly shows nothing. That is the one user-visible difference in this endpoin
 *you are current* and *you are ahead of what is published* — and a client that cannot tell them
 apart would report the second as the first.
 
-**Refusal response** `501 Not Implemented` (a build that cannot self-update via git)
+**Error response** `500` — `{ "error": "…" }`. Reachable on the common failure
+(`Could not reach GitHub`) and on an unparseable local `package.json`.
+
+### Arm 2 — `download-installer`
+
+One unauthenticated `GET https://api.github.com/repos/talirezun/the-curator/releases?per_page=30`,
+with a fixed `User-Agent` and an 8-second `AbortSignal.timeout`. **No credential, no query parameter
+other than the page size, and nothing derived from the user or the machine ever leaves the process.**
+No subprocess runs on this arm — `git` is never invoked.
+
+The packaged app cannot replace its own files, so this arm's job ends at *telling the user and giving
+them a link*. Automatic download and install are deliberately not implemented; see
+[`docs/mac-app.md` § Updates in the packaged app](mac-app.md#updates-in-the-packaged-app).
+
+**Success response** `200 OK`
+
+```json
+{
+  "current": "3.30.0",
+  "latest": "3.31.0",
+  "updateAvailable": true,
+  "localAhead": false,
+  "comparable": true,
+  "noInstallableRelease": false,
+  "updateStyle": "download-installer",
+  "channel": "stable",
+  "releaseUrl": "https://github.com/talirezun/the-curator/releases/tag/v3.31.0",
+  "releasesPageUrl": "https://github.com/talirezun/the-curator/releases",
+  "releaseName": "v3.31.0 — …",
+  "releaseTag": "v3.31.0",
+  "prerelease": true,
+  "publishedAt": "2026-09-14T08:45:24Z",
+  "localCommit": null,
+  "remoteCommit": null
+}
+```
+
+**Which release is `latest`.** Not `/releases/latest` — that endpoint means *newest non-draft,
+non-pre-release*, and measured against this repository on 2026-08-31 it answers `v3.9.0`, whose asset
+list is **empty**, while the only release carrying a `.dmg` is `v3.30.0`, flagged `prerelease: true`.
+Filtering pre-releases out would therefore have reported every packaged user as *ahead of the
+published version*, permanently. The rule is **the newest non-draft release carrying an installer
+asset** (`.dmg` today), selected by semver over the page rather than by trusting its order, with
+`prerelease` reported so the UI can disclose it.
+
+**The four non-update outcomes, which never share wording.** `updateAvailable: false` alone is
+ambiguous, so each carries its own flag:
+
+| Situation | Fields |
+|---|---|
+| you are on the newest installable build | `updateAvailable: false`, `localAhead: false`, `comparable: true` |
+| you are newer than anything published | `localAhead: true` |
+| the published tag is not a comparable version | `comparable: false`, `latest` = the raw tag |
+| nothing installable has been published at all | `noInstallableRelease: true`, `latest: null` |
+
+**Failure responses** `502 Bad Gateway` — an upstream problem, never a local one. Every failure body
+carries an `error` string and a `reason` code, and **carries no `updateAvailable` field at all**, so
+nothing downstream can read a failed check as a reassuring "you are up to date".
+
+| `reason` | Cause |
+|---|---|
+| `unreachable` | the fetch threw or timed out. The raw transport error is never echoed. |
+| `rate-limited` | `403`/`429` **with** `x-ratelimit-remaining: 0`. The header is what separates it from an ordinary refusal. |
+| `http-error` | any other non-`2xx` |
+| `unexpected-response` | the body was not a JSON array |
+
+`500` with `reason: "local-version-unreadable"` is the one local failure: this install's own
+`package.json` could not be read.
+
+### Arm 3 — refusal
+
+`501 Not Implemented`, for a build that has neither update route.
 
 ```json
 {
@@ -3227,8 +3314,10 @@ apart would report the second as the first.
 }
 ```
 
-**Error response** `500` — `{ "error": "…" }`. Reachable on the common failure
-(`Could not reach GitHub`) and on an unparseable local `package.json`.
+Note this is **no longer what a packaged macOS build answers** — it takes arm 2. Until this release
+it was, and a user who installed the DMG saw that `error` string rendered as a red *"Couldn't check
+for updates"* box naming an internal capability identifier. The arm survives for an install form that
+is neither: a git-less tarball drop, a package-manager cask.
 
 ---
 

@@ -2203,15 +2203,45 @@ router.post('/api-keys/validate', async (req, res) => {
  * Only the numeric core is compared, so a pre-release suffix (the retired
  * `3.0.1-beta.27` line) makes the cores equal and returns 0.
  */
+/**
+ * The parse half of `compareSemver`, LIFTED OUT rather than copied.
+ *
+ * It was an inner arrow function until the installer update path needed to ask
+ * a question `compareSemver` structurally cannot answer: *is this version
+ * string comparable at all?* The comparator collapses UNPARSEABLE and EQUAL to
+ * the same `0` — deliberately, and the reasoning is directly below — so a
+ * caller that needs "we cannot compare these" as a distinct outcome from "they
+ * are the same" has to see the parse itself. That is this repo's own rule that
+ * a fact and its ABSENCE are never the same value (v3.15.0), applied to the
+ * comparator rather than around it.
+ *
+ * Lifted, NOT duplicated: a second copy of a version parser is the shape that
+ * produced the two-copies-of-a-money-constant finding in v3.27.0.
+ * `compareSemver`'s BEHAVIOUR is unchanged by the extraction, and that is
+ * proven rather than asserted — `scripts/test-update-installer.js` §2 runs
+ * HEAD's comparator and this one over the same matrix and requires every cell
+ * to agree.
+ *
+ * Returns `number[]` (1–4 numeric segments) or `null`.
+ */
+export function parseVersionCore(v) {
+  if (typeof v !== 'string') return null;
+  const core = v.trim().split('-')[0].split('+')[0];
+  const parts = core.split('.');
+  if (parts.length === 0 || parts.length > 4) return null;
+  const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
+  return nums.some(Number.isNaN) ? null : nums;
+}
+
+/** True when `parseVersionCore` can read this string — i.e. when a comparison
+ *  against it MEANS something. The only honest way to tell `compareSemver`'s
+ *  "equal" apart from its "I could not parse that". */
+export function isComparableVersion(v) {
+  return parseVersionCore(v) !== null;
+}
+
 export function compareSemver(a, b) {
-  const parse = (v) => {
-    if (typeof v !== 'string') return null;
-    const core = v.trim().split('-')[0].split('+')[0];
-    const parts = core.split('.');
-    if (parts.length === 0 || parts.length > 4) return null;
-    const nums = parts.map((p) => (/^\d+$/.test(p) ? Number(p) : NaN));
-    return nums.some(Number.isNaN) ? null : nums;
-  };
+  const parse = parseVersionCore;
   const av = parse(a), bv = parse(b);
   if (!av || !bv) return 0;
   const len = Math.max(av.length, bv.length);
@@ -2285,6 +2315,345 @@ export function decideUpdateAvailable({ current, latest, localCommit, remoteComm
   };
 }
 
+// ── The download-installer update path (bundle installs) ───────────────────
+//
+// ── THE DEFECT THIS EXISTS FOR ─────────────────────────────────────────────
+//
+// A user who installed the DMG clicked Settings → "Check for updates" and got
+// a RED status box reading:
+//
+//     Couldn’t check for updates
+//     Cannot check for updates in this build of The Curator (Packaged app).
+//     This install does not have the "canSelfUpdateViaGit" capability.
+//
+// — because `updateCheckHandler` refused on the capability and `/next`'s
+// `classifyUpdate` maps any `error` field to its failure box. So the app both
+// looked broken and named an internal identifier at the user. That is the
+// whole reason this arm is written; it is not a new feature so much as the
+// missing other half of the v3.26.0 fork.
+//
+// ── WHAT IT DELIBERATELY DOES NOT DO ───────────────────────────────────────
+//
+// It does not download and it does not install. electron-updater / Squirrel.Mac
+// need the paid Apple Developer enrolment and a signed, notarized app, and
+// neither exists — the first DMGs ship with auto-update DISABLED by decision.
+// There is therefore no half-wired field here for a downloader to fill in
+// later: the contract is "tell the user, and open the page".
+//
+// ── WHY THE `latest` RELEASE IS NOT `/releases/latest` ─────────────────────
+//
+// GitHub's `/releases/latest` returns the newest release that is neither a
+// draft nor a PRE-RELEASE. Measured against the live API on 2026-08-31:
+//
+//     GET /releases/latest   ->  v3.9.0   prerelease:false   assets: []
+//     GET /releases          ->  5 releases; exactly ONE carries a .dmg:
+//                                v3.30.0  prerelease:TRUE    2 assets
+//
+// So `/releases/latest` would have (a) compared a v3.30.0 DMG user against
+// v3.9.0 and told them they were AHEAD of the published version, forever, and
+// (b) if it had ever offered anything, pointed them at a release page with
+// nothing to download. The feature would have been dead on arrival, and dead
+// in the silent direction.
+//
+// The selection rule is therefore: **the newest release that actually carries
+// an installer asset**, pre-release or not. That is the question the user is
+// asking — *what is the newest version I can install?* — and the pre-release
+// status is DISCLOSED in the UI rather than hidden, because today the only way
+// to have the Mac app at all is an unsigned preview build. When signed stable
+// DMGs start shipping they become the newest installable release on their own,
+// with no code change here.
+//
+// A release with no installer asset is skipped rather than reported: there is
+// nothing for the user to do with it. Drafts are filtered defensively — an
+// unauthenticated request cannot see them anyway.
+//
+// ── THE RELEASE CHANNEL ────────────────────────────────────────────────────
+//
+// `stable` is the only channel this build defines and it maps to a git BRANCH,
+// which means nothing to a release listing. The resolved channel name is
+// carried on the wire so the answer stays inspectable, and `getReleaseRef()`
+// is called for the same fail-safe resolution the git arm gets — but the
+// selection rule above is channel-independent today. THE DAY A SECOND CHANNEL
+// EXISTS, THIS IS ONE OF THE TWO SITES THAT MUST GAIN A BRANCH (the other is
+// the `git fetch` refspec, whose trap is written up in src/brain/config.js).
+// `scripts/test-update-installer.js` §7 fails if `releaseChannelNames()` ever
+// returns more than one name without this site changing.
+
+/** Where the release listing is read from. One call, unauthenticated, no user
+ *  data of any kind — not in a header, not in a query string. `per_page=30` is
+ *  GitHub's default page size and comfortably covers a repo with five
+ *  releases; the newest installable one is selected by SEMVER over the page
+ *  rather than by trusting the listing's order. */
+export const RELEASES_API_URL =
+  'https://api.github.com/repos/talirezun/the-curator/releases?per_page=30';
+
+/** Where the user is sent when there is nothing more specific to open. */
+export const RELEASES_PAGE_URL = 'https://github.com/talirezun/the-curator/releases';
+
+/** A fixed, content-free User-Agent. GitHub's API requires one; this carries no
+ *  version, no hostname and nothing else that could identify an install. */
+export const RELEASES_USER_AGENT = 'the-curator-update-check';
+
+/** How long to wait before calling it unreachable. */
+export const RELEASES_TIMEOUT_MS = 8000;
+
+/** What counts as "you can install this". macOS-only today, which is also the
+ *  only platform the packaged app ships for; a Windows/Linux installer would
+ *  add its own extension here AND need a platform argument, so this is
+ *  deliberately a list rather than a single literal. */
+export const INSTALLER_ASSET_EXTENSIONS = Object.freeze(['.dmg']);
+
+function hasInstallerAsset(release) {
+  const assets = release && Array.isArray(release.assets) ? release.assets : [];
+  return assets.some((a) => {
+    const name = a && typeof a.name === 'string' ? a.name.toLowerCase() : '';
+    return INSTALLER_ASSET_EXTENSIONS.some((ext) => name.endsWith(ext));
+  });
+}
+
+/** `v3.30.0` → `3.30.0`. A leading `v` is the only thing stripped; anything
+ *  else is handed to the comparator as-is so an odd tag surfaces as
+ *  "not comparable" rather than being silently coerced. */
+export function versionFromTag(tagName) {
+  if (typeof tagName !== 'string') return null;
+  const t = tagName.trim();
+  if (!t) return null;
+  return /^v\d/.test(t) ? t.slice(1) : t;
+}
+
+/**
+ * Pure. Given whatever GitHub returned, pick the newest release the user could
+ * actually install, or `null`.
+ *
+ * Defensive about the shape at every step (rule: an unexpected response
+ * degrades, it never throws): a non-array, a member that is not an object, a
+ * missing `assets`, a missing `tag_name` and a missing `html_url` are all just
+ * "not a candidate".
+ *
+ * Ordering is by SEMVER, not by the listing's order or by `published_at`.
+ * GitHub does return newest-first, but a re-published or back-dated release
+ * would then decide which version the user is offered, and the listing's order
+ * is not part of any contract worth depending on. Ties (identical comparable
+ * cores) keep the earlier entry, i.e. GitHub's own newest-first order.
+ * A release whose tag is not comparable can still WIN if nothing comparable
+ * exists — the caller reports that as a distinct "cannot compare" outcome
+ * rather than as "up to date".
+ */
+export function pickInstallableRelease(releases) {
+  if (!Array.isArray(releases)) return null;
+  const candidates = [];
+  for (const r of releases) {
+    if (!r || typeof r !== 'object') continue;
+    if (r.draft === true) continue;
+    if (!hasInstallerAsset(r)) continue;
+    const version = versionFromTag(r.tag_name);
+    if (!version) continue;
+    candidates.push({
+      version,
+      tagName: String(r.tag_name),
+      prerelease: r.prerelease === true,
+      name: typeof r.name === 'string' && r.name ? r.name : String(r.tag_name),
+      url: typeof r.html_url === 'string' && /^https:\/\/github\.com\//.test(r.html_url)
+        ? r.html_url
+        : RELEASES_PAGE_URL,
+      publishedAt: typeof r.published_at === 'string' ? r.published_at : null,
+    });
+  }
+  if (candidates.length === 0) return null;
+  const comparable = candidates.filter((c) => isComparableVersion(c.version));
+  const pool = comparable.length ? comparable : candidates;
+  let best = pool[0];
+  for (const c of pool.slice(1)) {
+    if (compareSemver(c.version, best.version) > 0) best = c;
+  }
+  return best;
+}
+
+/**
+ * Pure. The verdict for the installer path.
+ *
+ * NOT `decideUpdateAvailable`, and the difference is the point. That function
+ * has a commit dimension and a deliberate STRING-INEQUALITY fallback for
+ * uncomparable versions, because on the git path an uncomparable pair still
+ * has `commitsDiffer` to fall back on and suppressing the offer would hide a
+ * real update. Here there are no commits and the offer is a DOWNLOAD LINK, so
+ * a string inequality would happily present a sideways move (`3.30.0` vs
+ * `3.30.0-rc1`, equal cores, different strings) as an update.
+ *
+ * So this path has THREE outcomes rather than two, and they never share
+ * wording downstream:
+ *
+ *   comparable:false          we cannot tell — a release exists, its version
+ *                             cannot be read
+ *   updateAvailable:true      a newer installable version exists
+ *   localAhead:true           you are running something newer than anything
+ *                             published; nothing to install
+ *   otherwise                 you are on the newest installable version
+ */
+export function decideInstallerUpdate({ current, latest }) {
+  const comparable = isComparableVersion(current) && isComparableVersion(latest);
+  if (!comparable) {
+    return { comparable: false, updateAvailable: false, localAhead: false };
+  }
+  const cmp = compareSemver(current, latest);
+  return { comparable: true, updateAvailable: cmp < 0, localAhead: cmp > 0 };
+}
+
+/**
+ * Pure. Turn an upstream failure into `{ status, body }`.
+ *
+ * Every arm here carries a `reason` code AND a sentence the user can act on,
+ * and NONE of them can be mistaken for "you are up to date": the body has an
+ * `error` field, which is what both frontends key their failure box on, and
+ * carries no `updateAvailable` at all rather than a reassuring `false`.
+ */
+export function classifyReleaseFailure(kind, statusCode, headers) {
+  const get = (h) => {
+    if (!headers) return null;
+    if (typeof headers.get === 'function') return headers.get(h);
+    return headers[h] ?? null;
+  };
+  if (kind === 'network') {
+    return {
+      status: 502,
+      body: {
+        error: 'Could not reach GitHub to check for a new version. Check your internet connection and try again.',
+        reason: 'unreachable',
+      },
+    };
+  }
+  if (kind === 'http') {
+    // GitHub answers an exhausted unauthenticated quota with 403 (older) or
+    // 429 (newer) AND `x-ratelimit-remaining: 0`. The remaining header is what
+    // separates it from an ordinary refusal, so it is read rather than assumed
+    // from the status code alone.
+    const remaining = get('x-ratelimit-remaining');
+    if ((statusCode === 403 || statusCode === 429) && String(remaining) === '0') {
+      return {
+        status: 502,
+        body: {
+          error: 'GitHub is rate-limiting update checks from this network. It clears within an hour — ' +
+                 'try again later, or check the releases page directly.',
+          reason: 'rate-limited',
+          releasesPageUrl: RELEASES_PAGE_URL,
+        },
+      };
+    }
+    return {
+      status: 502,
+      body: {
+        error: `GitHub answered ${statusCode} when asked for the release list. Try again later, ` +
+               'or check the releases page directly.',
+        reason: 'http-error',
+        releasesPageUrl: RELEASES_PAGE_URL,
+      },
+    };
+  }
+  return {
+    status: 502,
+    body: {
+      error: 'GitHub’s release list could not be read — the response was not in the expected form. ' +
+             'Check the releases page directly.',
+      reason: 'unexpected-response',
+      releasesPageUrl: RELEASES_PAGE_URL,
+    },
+  };
+}
+
+/**
+ * The `updateStyle: 'download-installer'` arm of `GET /api/config/update-check`.
+ *
+ * Read-only, one unauthenticated network call, no subprocess, no write. Split
+ * out as its own function rather than inlined so the guard suite can drive it
+ * without going anywhere near the git arm.
+ */
+async function installerUpdateCheck(res, deps) {
+  const fetchImpl = (deps && deps.fetch) || defaultFetch;
+  const { channel } = (deps && deps.releaseRef) || getReleaseRef();
+
+  let current;
+  try {
+    current = JSON.parse(readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8')).version;
+  } catch (err) {
+    return res.status(500).json({ error: err.message, reason: 'local-version-unreadable' });
+  }
+
+  let response;
+  try {
+    response = await fetchImpl(RELEASES_API_URL, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': RELEASES_USER_AGENT },
+      signal: AbortSignal.timeout(RELEASES_TIMEOUT_MS),
+    });
+  } catch {
+    // The caught error is deliberately not read, let alone echoed: it carries
+    // nothing a user can act on beyond "we couldn't reach it", and not
+    // touching it is the strongest guarantee nothing derived from the request
+    // reaches the response. Same rule as the OpenRouter key validator above.
+    const f = classifyReleaseFailure('network');
+    return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
+  }
+
+  if (!response || !response.ok) {
+    const f = classifyReleaseFailure('http', response && response.status, response && response.headers);
+    return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
+  }
+
+  let payload;
+  try { payload = await response.json(); } catch { payload = undefined; }
+  if (!Array.isArray(payload)) {
+    const f = classifyReleaseFailure('shape');
+    return res.status(f.status).json({ ...f.body, current, updateStyle: 'download-installer', channel });
+  }
+
+  const release = pickInstallableRelease(payload);
+
+  // NOT an error, and NOT "you are up to date": no installable build has been
+  // published at all. Three different facts, three different answers.
+  if (!release) {
+    return res.json({
+      current,
+      latest: null,
+      updateAvailable: false,
+      localAhead: false,
+      comparable: false,
+      noInstallableRelease: true,
+      updateStyle: 'download-installer',
+      channel,
+      releaseUrl: RELEASES_PAGE_URL,
+      releasesPageUrl: RELEASES_PAGE_URL,
+      releaseName: null,
+      prerelease: false,
+      publishedAt: null,
+      localCommit: null,
+      remoteCommit: null,
+    });
+  }
+
+  const verdict = decideInstallerUpdate({ current, latest: release.version });
+  return res.json({
+    current,
+    latest: release.version,
+    updateAvailable: verdict.updateAvailable,
+    localAhead: verdict.localAhead,
+    comparable: verdict.comparable,
+    noInstallableRelease: false,
+    updateStyle: 'download-installer',
+    channel,
+    releaseUrl: release.url,
+    releasesPageUrl: RELEASES_PAGE_URL,
+    releaseName: release.name,
+    releaseTag: release.tagName,
+    prerelease: release.prerelease,
+    publishedAt: release.publishedAt,
+    // Explicitly null rather than absent: `/next` renders a commit pair when
+    // the versions match, and an ABSENT field and a null one read the same to
+    // it — but a future client should see that this path has no commit
+    // dimension at all, rather than infer it from a missing key.
+    localCommit: null,
+    remoteCommit: null,
+  });
+}
+
 /** GET /api/config/update-check — compare local vs remote version AND git commit
  *
  * FORKED on `canSelfUpdateViaGit` (see src/brain/install-mode.js). The repo arm
@@ -2299,6 +2668,18 @@ export function decideUpdateAvailable({ current, latest, localCommit, remoteComm
  */
 export async function updateCheckHandler(_req, res, deps = null) {
   const caps = (deps && deps.caps) || getCapabilities();
+  // FORK ONE — `updateStyle`: how does this install RECEIVE a new version?
+  // Checked FIRST, and above the git capability, because it is the question
+  // that has an answer for every install form; `canSelfUpdateViaGit` only says
+  // what one of them cannot do. In repo mode `updateStyle` is 'git-pull', so
+  // control falls straight through and every line below is reached with the
+  // same inputs it always was.
+  if (caps.updateStyle === 'download-installer') {
+    return installerUpdateCheck(res, deps);
+  }
+  // FORK TWO — unchanged. Still reachable, and still the right answer for an
+  // install that can neither pull nor be replaced by an installer (the
+  // git-less tarball drop this table exists to make someone decide about).
   if (!caps.canSelfUpdateViaGit) {
     const { status, body } = capabilityRefusal('canSelfUpdateViaGit', 'check for updates', {
       updateAvailable: false,

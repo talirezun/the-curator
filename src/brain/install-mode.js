@@ -77,6 +77,9 @@
  *     canRunNpmInstall         src/brain/diagnostics.js (same row)
  *     mcpLaunchStyle           src/routes/mcp.js, src/brain/mcp-launcher.js
  *     restartStyle             src/brain/restart.js   (POST /api/restart)
+ *     updateStyle              src/routes/config.js (update-check picks its
+ *                              MECHANISM from this; the response carries it so
+ *                              the Settings view renders the right action)
  *     folderPickerStyle        src/routes/config.js   (pick-folder)
  *
  *   DECLARED-ONLY, with the reason — and this half was previously MIS-STATED
@@ -148,6 +151,29 @@ export const CAPABILITY_KEYS = Object.freeze([
   //   'app-relaunch' — the desktop shell relaunches itself; killing the node
   //                    process alone would leave a windowless app.
   'restartStyle',
+  // How this install RECEIVES a new version — the question the Settings
+  // "Software update" block is actually asking, and a different one from
+  // `canSelfUpdateViaGit`.
+  //   'git-pull'           — `git fetch` + `git reset --hard`, then npm and a
+  //                          respawn. The app replaces its own files.
+  //   'download-installer' — the app can only TELL the user a newer version
+  //                          exists and open its download page; a human runs
+  //                          the installer.
+  //
+  // WHY THIS IS NOT `!canSelfUpdateViaGit`. That boolean says what this build
+  // cannot do; it does not say what it should do INSTEAD, and the refusal it
+  // produced was the whole defect: a packaged user clicked "Check for updates"
+  // and got a red box naming an internal capability string. The two questions
+  // also come apart the moment a third install form exists — a Homebrew cask
+  // cannot self-update via git either, but its answer is `brew upgrade`, not
+  // "download a DMG". Making that a row in this table forces the decision to
+  // be written down rather than inherited from a negation.
+  //
+  // AUTO-UPDATE IS DELIBERATELY NOT A VALUE HERE. electron-updater / Squirrel
+  // need the paid Apple Developer enrolment and a signed, notarized app, and
+  // neither exists. A third value with no branch behind it is exactly the
+  // unwired-field shape this module's header apologises for.
+  'updateStyle',
   // How `POST /api/config/pick-folder` asks the user for a directory.
   //   'osascript'     — shell out to `osascript … choose folder` (today)
   //   'native-dialog' — the desktop shell's own directory chooser, installed
@@ -203,6 +229,7 @@ const CAPABILITIES = Object.freeze({
     canWriteBesideCode: true,
     mcpLaunchStyle: 'node-script',
     restartStyle: 'respawn-node',
+    updateStyle: 'git-pull',
     folderPickerStyle: 'osascript',
   }),
   // A positively-identified packaged app: signed, read-only, no .git, no npm.
@@ -217,6 +244,7 @@ const CAPABILITIES = Object.freeze({
     canWriteBesideCode: false,
     mcpLaunchStyle: 'launcher-script',
     restartStyle: 'app-relaunch',
+    updateStyle: 'download-installer',
     folderPickerStyle: 'native-dialog',
   }),
 });

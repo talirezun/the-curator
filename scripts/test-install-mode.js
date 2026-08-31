@@ -143,6 +143,7 @@ const EXPECTED_CAPABILITY_KEYS = [
   'canWriteBesideCode',
   'mcpLaunchStyle',
   'restartStyle',
+  'updateStyle',
   'folderPickerStyle',
 ];
 const EXPECTED_MODES = ['repo', 'bundle'];
@@ -174,13 +175,16 @@ eq(installMode.getCapabilities('bundle').canRunNpmInstall, false, 'bundle CANNOT
 eq(installMode.getCapabilities('bundle').canRebuildAppleScriptApp, false,
   'bundle CANNOT rebuild the .app (build-app.sh ends in `codesign --force --deep --sign -`)');
 eq(installMode.getCapabilities('bundle').canWriteBesideCode, false, 'bundle CANNOT write beside its code');
-// The three NAMED-STRING capabilities. Transcribed, never read back off the
+// The four NAMED-STRING capabilities. Transcribed, never read back off the
 // module — a fork below branches on the exact spelling of each of these, so a
 // silent rename would move behaviour with nothing going red.
 eq(installMode.getCapabilities('repo').mcpLaunchStyle, 'node-script', 'repo launches the MCP as a node script');
 eq(installMode.getCapabilities('bundle').mcpLaunchStyle, 'launcher-script', 'bundle launches the MCP through a launcher shim');
 eq(installMode.getCapabilities('repo').restartStyle, 'respawn-node', 'repo restarts by respawning node');
 eq(installMode.getCapabilities('bundle').restartStyle, 'app-relaunch', 'bundle restarts by relaunching the application');
+eq(installMode.getCapabilities('repo').updateStyle, 'git-pull', 'repo receives updates by pulling its own source');
+eq(installMode.getCapabilities('bundle').updateStyle, 'download-installer',
+  'bundle receives updates by the user downloading and running an installer');
 eq(installMode.getCapabilities('repo').folderPickerStyle, 'osascript', 'repo picks a folder with osascript');
 eq(installMode.getCapabilities('bundle').folderPickerStyle, 'native-dialog', 'bundle picks a folder with the shell’s native dialog');
 
@@ -487,16 +491,53 @@ function recordingExec(responses = {}) {
 
 // ── GET /update-check ──────────────────────────────────────────────────────
 {
+  // THE BUNDLE ARM NO LONGER REFUSES — it forks on `updateStyle` and asks
+  // GitHub's RELEASE list instead of the git branch. Full behavioural coverage
+  // of that arm (release selection, every failure shape, the repo-arm
+  // equivalence proof) lives in scripts/test-update-installer.js; what is
+  // asserted HERE is only what this file owns: the fork happens, it runs no
+  // subprocess, and it never touches the git flow.
   const rec = recordingExec({ 'git rev-parse --short HEAD': { stdout: 'aaaaaaa\n' } });
+  const urls = [];
   const res = fakeRes();
   await configRoute.updateCheckHandler({}, res, {
-    caps: BUNDLE_CAPS, execAsync: rec.exec, fetch: async () => { throw new Error('network must not be reached'); },
+    caps: BUNDLE_CAPS,
+    execAsync: rec.exec,
+    fetch: async (url) => {
+      urls.push(String(url));
+      return { ok: true, status: 200, headers: new Map(), json: async () => [] };
+    },
   });
-  eq(res.statusCode, 501, 'update-check BUNDLE arm answers 501');
-  eq(res.body.refused, 'capability_unavailable', 'update-check bundle arm names the refusal code');
-  eq(res.body.capability, 'canSelfUpdateViaGit', 'update-check bundle arm names the capability');
-  eq(res.body.updateAvailable, false, 'update-check bundle arm reports updateAvailable:false, not silence');
-  eq(rec.calls.length, 0, 'update-check bundle arm runs ZERO subprocesses — it returns before any of them');
+  eq(res.statusCode, 200, 'update-check BUNDLE arm ANSWERS (it used to 501 with a capability string in the user’s face)');
+  eq(res.body.updateStyle, 'download-installer', 'and reports the mechanism it used');
+  eq(res.body.noInstallableRelease, true, 'and, given an empty release list, says so as its own fact');
+  ok(res.body.error === undefined, 'and does NOT set an `error` field (which both frontends render as a failure box)');
+  eq(rec.calls.length, 0, 'update-check bundle arm runs ZERO subprocesses — no git, ever');
+  eq(urls.length, 1, 'and makes exactly one network call');
+  // Guarded: a fork that stops reaching the installer arm leaves `urls` empty,
+  // and a bare `urls[0].startsWith` then CRASHES the run after the honest reds
+  // above — the v3.24.1 shape. Found by mutations M1/M2 in
+  // scripts/test-update-installer.js.
+  const firstUrl = urls[0] || '(no request was made)';
+  ok(firstUrl.startsWith('https://api.github.com/repos/talirezun/the-curator/releases'),
+    'to the RELEASE list, not to the branch package.json the git arm reads');
+  ok(!firstUrl.includes('raw.githubusercontent.com'), 'and never to the git arm’s URL');
+}
+{
+  // FORK TWO is still reachable and still refuses: an install that can neither
+  // pull nor be replaced by an installer. Not a mode that exists today, which
+  // is precisely why the arm needs a test rather than an assumption.
+  const rec = recordingExec();
+  const res = fakeRes();
+  const NEITHER = { ...installMode.getCapabilities('bundle'), updateStyle: 'no-such-style' };
+  await configRoute.updateCheckHandler({}, res, {
+    caps: NEITHER, execAsync: rec.exec, fetch: async () => { throw new Error('network must not be reached'); },
+  });
+  eq(res.statusCode, 501, 'an install with neither update route still answers 501');
+  eq(res.body.refused, 'capability_unavailable', 'and names the refusal code');
+  eq(res.body.capability, 'canSelfUpdateViaGit', 'and names the capability');
+  eq(res.body.updateAvailable, false, 'and reports updateAvailable:false, not silence');
+  eq(rec.calls.length, 0, 'and runs ZERO subprocesses');
 }
 {
   const rec = recordingExec({ 'git rev-parse --short HEAD': { stdout: 'aaaaaaa\n' } });

@@ -111,6 +111,8 @@ const chatCode = assertStrippedSane(stripComments(chatSrc), 'chat.js', [
 const settingsCode = assertStrippedSane(stripComments(settingsSrc), 'settings.js', [
   'function classifyUpdate(check, versionInfo)',
   'function compareSemver(a, b)',
+  'function updateStyleOf(check)',
+  'function classifyInstallerUpdate(check)',
   'async function runUpdate(token)',
 ]);
 
@@ -671,11 +673,28 @@ function makeDeleteHarness(confirmBehaviour) {
 section('§5  Updates: the decision, including local-ahead-of-remote');
 // ═════════════════════════════════════════════════════════════════════════
 
+// `classifyUpdate` now delegates two things it used to not have: which update
+// MECHANISM a payload describes, and the verdicts for the download-installer
+// path. Both are pulled in so the assertions below still exercise the REAL
+// function rather than a version of it that never took the fork. Behavioural
+// coverage of the installer verdicts themselves is NOT here — it belongs to
+// scripts/test-update-installer.js, which owns that feature. What this file
+// keeps proving is that the GIT path is untouched, which is exactly what every
+// payload below (none of which carries `updateStyle`) exercises.
 const updateSandbox = new Function(
   extractFunction(settingsSrc, 'compareSemver', 'settings.js') + '\n' +
+  extractFunction(settingsSrc, 'updateStyleOf', 'settings.js') + '\n' +
+  extractFunction(settingsSrc, 'classifyInstallerUpdate', 'settings.js') + '\n' +
   extractFunction(settingsSrc, 'classifyUpdate', 'settings.js') + '\n' +
-  'return { compareSemver, classifyUpdate };')();
-const { compareSemver, classifyUpdate } = updateSandbox;
+  'return { compareSemver, classifyUpdate, updateStyleOf };')();
+const { compareSemver, classifyUpdate, updateStyleOf } = updateSandbox;
+
+// The default that keeps every payload below on the unchanged path: a check
+// result with no `updateStyle` is the git flow, which is what the repo arm has
+// always returned and still returns byte-identically.
+eq(updateStyleOf(undefined), 'git-pull', 'an absent check resolves to the git flow');
+eq(updateStyleOf({}), 'git-pull', 'a payload with no updateStyle resolves to the git flow');
+eq(updateStyleOf({ updateStyle: 'download-installer' }), 'download-installer', 'and the installer flow is opt-in by an explicit field');
 
 eq(compareSemver('3.9.0', '3.8.0'), 1, 'compareSemver: 3.9.0 is newer than 3.8.0');
 eq(compareSemver('3.8.0', '3.9.0'), -1, 'compareSemver: 3.8.0 is older than 3.9.0');
