@@ -766,6 +766,146 @@ export function setSharedBrainEnabled(enabled) {
   return getSharedBrainEnabled();
 }
 
+// ── Background mode (the menubar widget) ────────────────────────────────────
+//
+// ── WHY THIS IS A TOP-LEVEL FIELD AND NOT A `ui.*` ONE ─────────────────────
+// The obvious home is v3.28.0's UI_STATE_SPEC allow-list, three hundred lines
+// below. It does not fit, and the reason is structural rather than stylistic:
+// EVERY field in that table is `monotonic`, `writeOnce`, or a single one-way
+// `clearable` dismissal, because the whole point of that mechanism is that a
+// CONSENT cannot be silently downgraded. `setUiState` enforces exactly that —
+// `current !== null && (spec.monotonic || spec.writeOnce)` refuses the second
+// write, and a `null` clear is refused unless the field is `clearable`.
+//
+// A background-mode preference is a two-way toggle a user may flip as often
+// as they like. There is no shape in that spec that expresses it: made
+// monotonic it could be turned on once and never off; made clearable it would
+// have two values where it needs three. So it goes where the other freely
+// re-writable preferences already live — beside `sharedBrainEnabled`,
+// `defaultDomain` and `releaseChannel`, in the same file, written by the same
+// single owner.
+//
+// The DISMISSAL of the in-app offer to turn this on IS a `ui.*` field, and
+// that is not a contradiction: "I have been asked, do not ask again" is
+// one-way, which is precisely the shape that table exists for. Two fields,
+// two mechanisms.
+//
+// ── A NAMED STRING, NOT A BOOLEAN ──────────────────────────────────────────
+// Following install-mode.js and releaseChannel: a fourth mode is a row in a
+// table rather than a second field. It also makes the illegal combination
+// unrepresentable — two booleans ("show a tray" / "hide the Dock") admit
+// `no tray, no Dock`, which is an app with no way to reach it.
+//
+// ── DEFAULT IS `window`, AND THE REASON IS NOT CAUTION ─────────────────────
+// A fresh install has no agent traffic, so an on-by-default menubar icon's
+// only possible content is its empty state. That is the worst first
+// impression the feature can make, and it teaches the user the icon is not
+// worth clicking. Apple's HIG says the same from the other side: let people,
+// not the app, decide what goes in the menu bar. It is also what makes this
+// a no-op for every existing install — one code path, no `installOrigin`
+// cleverness.
+//
+// ── LENIENT READ, STRICT WRITE, AND THE ASYMMETRY IS DELIBERATE ────────────
+// `resolveBackgroundMode` is fail-safe: absent, unrecognised, or written by a
+// NEWER build all resolve to `window`, the same direction paths.js takes for
+// install-mode detection and releaseChannel takes for its channel. An install
+// must keep launching whatever is in that file.
+//
+// `setBackgroundMode` REFUSES an unrecognised value instead of coercing it.
+// Coercing would let the Settings UI report "tray-only saved" while the file
+// holds `window` — a screen asserting something false about the user's own
+// choice, which is the failure this repo names most often. A refusal the
+// caller can see is the correct answer to a value we will not store.
+//
+// Null-prototype table + Object.hasOwn, exactly as RELEASE_CHANNELS does:
+// an object literal inherits from Object.prototype, so a truthiness gate
+// would resolve '__proto__' and 'constructor' to a mode.
+//
+// THE TWO GUARDS ARE REDUNDANT WITH EACH OTHER, AND THAT IS MEASURED RATHER
+// THAN ASSUMED — do not delete one as dead weight. Mutating EITHER alone runs
+// GREEN across the whole suite: `Object.create(null)` makes the prototype keys
+// absent, so `hasOwn` has nothing left to reject; `hasOwn` rejects them anyway,
+// so the null prototype has nothing left to prevent. Removing BOTH reds five
+// assertions and makes 'constructor', 'toString', 'valueOf', 'hasOwnProperty'
+// and '__proto__' resolve to a mode. So this is defence in depth with an
+// observable failure only at the pair — the same shape journalFacts records for
+// `harnessShared`, and the same shape RELEASE_CHANNELS already ships.
+const BACKGROUND_MODES = Object.freeze(Object.assign(Object.create(null), {
+  // No menubar presence at all. The Dock icon and the window behave exactly
+  // as they did before this field existed.
+  window: Object.freeze({ tray: false, dock: true }),
+  // Menubar icon AND Dock icon.
+  tray: Object.freeze({ tray: true, dock: true }),
+  // Menubar icon only — the Dock icon is hidden.
+  'tray-only': Object.freeze({ tray: true, dock: false }),
+}));
+
+const DEFAULT_BACKGROUND_MODE = 'window';
+
+// Module-load invariant, the same DESIGNED LOUD FAILURE releaseChannel uses
+// below and install-mode.js uses for its capability records. `backgroundModeCaps`
+// indexes the table with the resolved name, so a DEFAULT the table does not
+// define would throw at a call site — in the desktop shell's startup path,
+// before a window exists to show the error in. This can only fire on a source
+// edit, so failing at import reds `npm test` on the spot.
+if (!Object.hasOwn(BACKGROUND_MODES, DEFAULT_BACKGROUND_MODE)) {
+  throw new Error(
+    `DEFAULT_BACKGROUND_MODE is "${DEFAULT_BACKGROUND_MODE}", which BACKGROUND_MODES does not define ` +
+    `(defined: ${Object.keys(BACKGROUND_MODES).join(', ') || 'none'}).`
+  );
+}
+
+/** The mode names this build understands. Sole source of truth for callers. */
+export function backgroundModeNames() {
+  return Object.keys(BACKGROUND_MODES);
+}
+
+/**
+ * Fail-safe resolver. Anything that is not a defined mode name — absent,
+ * null, a number, an object, a prototype key, a mode a newer build wrote —
+ * resolves to `window`. Exported separately from the getter so the asymmetry
+ * can be tested without touching the filesystem.
+ */
+export function resolveBackgroundMode(raw) {
+  return (typeof raw === 'string' && Object.hasOwn(BACKGROUND_MODES, raw))
+    ? raw
+    : DEFAULT_BACKGROUND_MODE;
+}
+
+/** The resolved mode for this install. Never throws, never returns null. */
+export function getBackgroundMode() {
+  return resolveBackgroundMode(readRaw().backgroundMode);
+}
+
+/**
+ * `{ mode, tray, dock }` — what the desktop shell has to decide before it
+ * creates anything. Resolved AGAIN rather than trusting the getter's
+ * contract, so the table lookup is TOTAL BY CONSTRUCTION; the same discipline
+ * getReleaseRef() applies for the same reason.
+ */
+export function getBackgroundModeCaps() {
+  const mode = resolveBackgroundMode(getBackgroundMode());
+  const caps = BACKGROUND_MODES[mode];
+  return { mode, tray: caps.tray, dock: caps.dock };
+}
+
+/**
+ * Records the mode. Returns `{ ok, mode, reason }`.
+ *
+ * On refusal `mode` is the mode still in force, NOT the one that was asked
+ * for — so a caller that renders the returned value shows the truth even if
+ * it ignores `ok`. `reason` is `'invalid_value'` and nothing else today.
+ */
+export function setBackgroundMode(mode) {
+  if (typeof mode !== 'string' || !Object.hasOwn(BACKGROUND_MODES, mode)) {
+    return { ok: false, mode: getBackgroundMode(), reason: 'invalid_value' };
+  }
+  const cfg = readRaw();
+  cfg.backgroundMode = mode;
+  writeRaw(cfg);
+  return { ok: true, mode: getBackgroundMode(), reason: null };
+}
+
 // ── Release channel ─────────────────────────────────────────────────────────
 //
 // ── WHAT THIS IS, AND WHAT IT DELIBERATELY IS NOT ──────────────────────────

@@ -1240,7 +1240,12 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
     // carries `guardConcurrent('restart to finish the update')` on the
     // REGISTRATION and re-checks `hasActiveWrites()` inside the handler, and it
     // needs no exemption. The bump IS the human look this comment demands.
-    expectedMutatingCount: 14,
+    // 14 -> 15: POST /background-mode — the app's menubar/background mode
+    // ('window' | 'tray' | 'tray-only'), read by the desktop shell before it
+    // creates the tray or the window. This tripwire fired on it, which is the
+    // tripwire working: the bump IS the human look, and the exemption below
+    // carries the reason.
+    expectedMutatingCount: 15,
     guardClasses: [{
       name: 'concurrency',
       // /update guards itself with a direct hasActiveWrites() check (it also
@@ -1253,6 +1258,8 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
           'selects which domain MCP write tools assume when the caller does not name one; an in-flight write already carries an explicit domain captured at request time, so changing this default cannot affect it (see CLAUDE.md section 5 of this same file\'s own docblock).' },
         { method: 'POST', path: '/ui-state', reason:
           'records "the user has already been told this" — a privacy consent, two one-time dismissals and the install-origin verdict. Nothing on any WRITE path reads these four fields: they are consumed only by views/onboarding.js, views/cutover-notice.js and views/domains.js when deciding whether to put a panel on screen, so an in-flight ingest, sync or update cannot observe the change. Guarding it would be actively HARMFUL for the same reason api-keys/validate is exempt above and GET /api/ingest/activity is unguarded: a 409 would fire precisely while a long ingest is running, i.e. exactly when the user dismisses a panel — and the failure it would cause is the app re-showing something the user already dismissed, which is the symptom this endpoint exists to prevent. The write itself is bounded to five literal strings by setUiState()\'s allow-list (src/brain/config.js), so an unguarded POST cannot put attacker-chosen content into .curator-config.json.' },
+        { method: 'POST', path: '/background-mode', reason:
+          'records whether this install shows a menu bar icon, and whether it keeps its Dock icon — a three-value enum read by the desktop shell before it creates the tray or the window, and again when the user flips it. NOTHING on any write path reads it: unlike domainsPath (which getDomainsDir() re-resolves per call, mid-ingest included) and the provider/model fields (which getProviderInfo() and resolveProviderDefault() re-resolve per LLM call), this value is consumed only by desktop/ at startup and on change, so an in-flight ingest, sync or update cannot observe it. Guarding it would be actively HARMFUL for the same reason /ui-state is exempt above: a 409 would fire precisely while a long ingest is running, refusing to let the user turn OFF a menu bar icon because the app is busy doing something the icon has no bearing on. The write itself is bounded to three literal strings by setBackgroundMode()\'s allow-list (src/brain/config.js), which REFUSES rather than coercing, so an unguarded POST cannot put attacker-chosen content into .curator-config.json and cannot leave the UI reporting a mode the file does not hold.' },
         { method: 'POST', path: '/api-keys/validate', reason:
           'read-only key check — one zero-token GET to the provider, writes no state; POST only so the cross-origin guard applies. Precedent: sharedbrain /validate-pat, diagnostics /live. Guarding it would be actively HARMFUL, not merely redundant: a 409 here fires precisely while a multi-phase ingest is running, i.e. exactly when a user is asking "is my key the problem?" — it would refuse the diagnostic at the moment it is needed. This is the same reasoning the writability axis on health.js uses for its six read-only POSTs (/ai-suggest, /semantic-dupes/scan, /semantic-dupes/preview, /broken-links/plan, /orphans/plan): the verb says mutate, the body does not.' },
       ],

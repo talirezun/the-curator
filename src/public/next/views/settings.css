@@ -387,6 +387,36 @@
 .fs-segmented { flex-wrap: wrap; }
 .fs-seg-btn { padding: 0 11px; }
 
+/* ── General: menu bar (background mode) ─────────────────────────────────
+   Reuses .theme-segmented / .theme-seg-btn wholesale, for the same reason
+   Text size does: same kind of control, same kind of choice.
+
+   Only one addition, and it is the same one the text-size row needed. The
+   third option's label is a sentence ("On, hide the Dock icon"), so at the
+   larger text scales three segments cannot sit on one line inside the
+   272px-constrained main column. Wrapping is the right answer here rather
+   than truncation: the labels ARE the explanation of what each mode does,
+   and an ellipsis on the one option with consequences (leaving the Dock)
+   would hide exactly the half the user needs to read before choosing.
+
+   No :active rule — the base .theme-seg-btn press already applies from this
+   same file, and a second copy would be the drift this file documents above.
+
+   The DISABLED rule is NOT optional here, and the first draft of this comment
+   got it wrong by assuming it was. `--opacity-disabled` is applied app-wide by
+   `.btn[disabled]` in shell.css, and .theme-seg-btn is NOT a .btn — so while
+   these segments are disabled during a save they would have looked fully
+   live and silently ignored clicks. Scoped to .bgmode-seg-btn rather than
+   .theme-seg-btn because this is the only segmented control in the app that
+   has a disabled state at all; widening it would style something no screen
+   can currently produce.
+
+   Not nested inside anything carrying its own opacity — .settings-field-block
+   has none — so this composites once and cannot multiply, which is the
+   compound-dimming defect v3.26.0 measured on the provider rows. */
+.bgmode-segmented { flex-wrap: wrap; }
+.bgmode-seg-btn:disabled { opacity: var(--opacity-disabled); cursor: not-allowed; }
+
 /* ── System check results (shared by quick check + live check) ─────── */
 
 .settings-check-results {

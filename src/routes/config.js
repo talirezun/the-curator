@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef } from '../brain/config.js';
+import { getConfig, setDomainsDir, getApiKeys, setApiKeys, clearApiKey, setActiveProvider, getActiveProvider, getDefaultDomain, setDefaultDomain, getSelectedModel, setSelectedModel, getEffectiveKey, getUiState, setUiState, getReleaseChannel, getReleaseRef, getBackgroundMode, setBackgroundMode, backgroundModeNames } from '../brain/config.js';
 import { listDomains } from '../brain/files.js';
 import { getProviderInfo, getFallbackStatus, getDefaultModel } from '../brain/llm.js';
 // Namespace import (NOT a named `{ OFFERABLE_MODELS }` import) is deliberate:
@@ -404,9 +404,79 @@ function guardConcurrent(action) {
  * or unrecognised key reads as `stable` here exactly as it does in the update
  * paths, so this endpoint can never disagree with the ref those actually use.
  * Additive — every pre-existing field keeps its name and meaning.
+ *
+ * `backgroundMode` is resolved the same way and for the same reason: absent or
+ * unrecognised reads as `window`, which is what the desktop shell will
+ * actually do, so this endpoint cannot tell the Settings screen one thing
+ * while the app does another.
+ *
+ * `backgroundModes` is the list of legal names, shipped BESIDE the value so
+ * the Settings control renders whatever this build understands rather than a
+ * hardcoded triple. Same discipline as the text-size presets: adding a mode is
+ * one edit in one file and can never leave a control offering an option the
+ * server would refuse.
  */
 router.get('/', (_req, res) => {
-  res.json({ ...getConfig(), defaultDomain: getDefaultDomain(), releaseChannel: getReleaseChannel() });
+  res.json({
+    ...getConfig(),
+    defaultDomain: getDefaultDomain(),
+    releaseChannel: getReleaseChannel(),
+    backgroundMode: getBackgroundMode(),
+    backgroundModes: backgroundModeNames(),
+  });
+});
+
+/**
+ * POST /api/config/background-mode — set the app's background/menubar mode.
+ * Body: { backgroundMode: 'window' | 'tray' | 'tray-only' }
+ *
+ * ── DELIBERATELY NOT BEHIND guardConcurrent ────────────────────────────────
+ * Following POST /ui-state directly above, and for the same reason rather than
+ * by symmetry. The routes in this file that guard do so because they change
+ * something an in-flight ingest, sync or update could be READING mid-run —
+ * `getDomainsDir()` and `getProviderInfo()` both resolve fresh per call, so a
+ * change landing mid-ingest splits a document across two roots or finishes it
+ * on a different model.
+ *
+ * Nothing on any write path reads `backgroundMode`. Its only consumer is the
+ * desktop shell, which reads it once before it creates the tray or the window
+ * and again when the user flips it. A 409 here would fire precisely while a
+ * long ingest is running — i.e. it would refuse to let the user turn off a
+ * menu bar icon because the app is busy doing something the icon has no
+ * bearing on.
+ *
+ * Not registered as a write with the write-registry, for the same reason: it
+ * would make a Settings save or a Sync refuse while a preference is recorded.
+ *
+ * ── WHAT BOUNDS THE WRITE ──────────────────────────────────────────────────
+ * `setBackgroundMode()`'s allow-list. The value lands in `.curator-config.json`,
+ * which holds the user's API keys, so the endpoint accepts three literal
+ * strings and refuses everything else — no attacker-chosen string can reach
+ * that file through here. Mutating requests also pass server.js's
+ * cross-origin guard.
+ *
+ * A refused value is a 400 that NAMES the legal set, and the body still
+ * carries the mode still in force — so a client that renders the response
+ * shows the truth even if it ignores the status.
+ */
+router.post('/background-mode', (req, res) => {
+  try {
+    const requested = (req.body && typeof req.body === 'object' && !Array.isArray(req.body))
+      ? req.body.backgroundMode
+      : undefined;
+    const result = setBackgroundMode(requested);
+    if (!result.ok) {
+      return res.status(400).json({
+        error: `Unknown background mode. Expected one of: ${backgroundModeNames().join(', ')}.`,
+        reason: result.reason,
+        backgroundMode: result.mode,
+        backgroundModes: backgroundModeNames(),
+      });
+    }
+    res.json({ ok: true, backgroundMode: result.mode, backgroundModes: backgroundModeNames() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /**
