@@ -226,27 +226,44 @@ mac:
       arch:
         - arm64
         - x64
-  # ── SIGNING IS NOT CONFIGURED, AND THAT IS THE POINT ──────────────────────
+  # ── CERTIFICATE SIGNING IS NOT CONFIGURED, AND THAT IS THE POINT ──────────
   # Apple Developer enrolment, the Developer ID certificate, the hardened
-  # runtime, the entitlements file and notarization are ALL out of scope for
-  # this scaffold. Nothing here references a certificate, a team, an Apple ID
-  # or an app-specific password, and NO SUCH VALUE MAY EVER BE WRITTEN INTO
-  # THIS FILE — the repository is public.
+  # runtime, the entitlements file and notarization are ALL out of scope here.
+  # Nothing in this file references a certificate, a team, an Apple ID or an
+  # app-specific password, and NO SUCH VALUE MAY EVER BE WRITTEN INTO THIS
+  # FILE — the repository is public.
   #
   # When signing does land, it arrives as GitHub Actions secrets consumed by
   # electron-builder's own environment variables (CSC_LINK, CSC_KEY_PASSWORD,
   # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) — set in the
   # workflow from `secrets.*`, never committed, and never echoed.
   #
-  # Until then the build is explicitly UNSIGNED. Without the line below,
-  # electron-builder auto-discovers any identity in the developer's own
-  # keychain and silently produces a locally-signed artifact that works on
-  # exactly one Mac — the most misleading possible outcome.
+  # THE BUILD IS NOT UNSIGNED, AND THAT WORD USED TO SIT HERE. What ships is
+  # AD-HOC signed, by the `afterPack` hook at the top of this file: an Electron
+  # bundle straight out of the packer carries only a linker-signed stub and is
+  # rejected by `codesign --verify --deep --strict`, so lib/adhoc-sign.mjs
+  # re-seals it and PROVES the result — and refuses the build if a real
+  # certificate ever turns up on it. Ad hoc means no certificate, no team and
+  # no notarization; it is not the absence of a signature.
+  #
+  # `identity: null` is what keeps electron-builder itself out of that. Without
+  # it, it auto-discovers any identity in the developer's own keychain and
+  # silently produces a certificate-signed artifact that works on exactly one
+  # Mac — the most misleading possible outcome. `identity: '-'` would NOT be
+  # an equivalent way to ask for ad hoc: electron-builder matches a qualifier
+  # as a bare substring of each keychain line, which re-opens exactly that
+  # discovery. Measured, not assumed — see the afterPack block above.
   identity: null
 
   # ── Hardened runtime + entitlements: WRITTEN NOW, INERT UNTIL SIGNING ─────
-  # Entitlements are applied at codesign time, and `identity: null` above means
-  # nothing is signed, so none of this has any effect today. It is here because
+  # STILL INERT, BUT NOT FOR THE REASON THIS COMMENT USED TO GIVE. It said
+  # "`identity: null` above means nothing is signed"; something IS signed now.
+  # Entitlements and the hardened runtime are applied at codesign time, and the
+  # ad-hoc `codesign` call in lib/adhoc-sign.mjs deliberately passes NEITHER —
+  # no entitlements file, and no `--options runtime`, because the hardened
+  # runtime without `disable-library-validation` stops an ad-hoc bundle loading
+  # its own frameworks at all. So these three keys still have no effect on what
+  # ships, and gain one the day a Developer ID lands. It is here because
   # the entitlement that matters is one whose absence fails SILENTLY on the
   # first screen an existing user sees — see the long note in
   # build/entitlements.mac.plist. Deciding it after the first signed build is
@@ -292,11 +309,22 @@ dmg:
       path: /Applications
 
 # ── NOT CONFIGURED, deliberately ─────────────────────────────────────────────
-# publish:        no GitHub Releases upload. The first DMG is a local artifact.
-# electron-updater: not installed, not wired. The plan's own advice is to ship
-#                   the first .dmg with auto-update DISABLED so "does the signed
-#                   bundle work on other Macs" and "does Squirrel.Mac work" are
-#                   two debugging sessions rather than one interleaved one.
+# publish:        no GitHub Releases upload. The DMGs are built here and
+#                 uploaded to the release separately.
+# electron-updater: not installed, not wired — and it never can be for this
+#                   build. THE APP IS NOT WITHOUT AUTO-UPDATE; it updates
+#                   itself, through its own engine in desktop/lib/, and that is
+#                   a REPLACEMENT for electron-updater rather than a stopgap.
+#                   Squirrel.Mac validates every download against the RUNNING
+#                   app's designated requirement, and an ad-hoc signature has
+#                   no certificate and no team, so that requirement is the
+#                   cdhash of one exact build — which every genuine update
+#                   changes by definition. It fails 100% of the time, inside
+#                   Electron's own binary where no config reaches it. Two more
+#                   blockers, each sufficient alone: Squirrel installs from a
+#                   ZIP while releases publish .dmg, and electron-updater reads
+#                   `latest-mac.yml`, which electron-builder emits only when
+#                   `publish` is set — and ours is `null`, below.
 # afterSign:      no notarization hook. Requires paid enrolment.
 # win / linux:    out of scope.
 publish: null

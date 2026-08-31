@@ -2881,12 +2881,19 @@ function usesInstallerUpdates(caps) {
  *
  * ── THE ENGINE OWNS ITS OWN COPY, AND THIS TABLE DELIBERATELY DOES NOT ─────
  *
- * `prepareUpdate` resolves `{ok:false, reason, message}` across 34 named
- * reasons, and `message` is ALREADY a user-facing sentence written by the side
- * that knows what actually happened. This route relays it verbatim. Writing a
- * second sentence per reason here would be a second copy of the same fact,
- * free to drift from the first — the shape this project has paid for twice
- * (five private copies of one scrim value; two copies of a money constant).
+ * `prepareUpdate` resolves `{ok:false, reason, message}` across the reasons
+ * enumerated in `UPDATE_FAILURES` in `desktop/lib/update-plan.js`, and
+ * `message` is ALREADY a user-facing sentence written by the side that knows
+ * what actually happened. This route relays it verbatim. Writing a second
+ * sentence per reason here would be a second copy of the same fact, free to
+ * drift from the first — the shape this project has paid for twice (five
+ * private copies of one scrim value; two copies of a money constant).
+ *
+ * COUNT THAT TABLE, DO NOT TRUST A NUMBER IN PROSE. This block said "34 named
+ * reasons" while it held 36, and so did `test-update-in-app.js`; a figure in a
+ * comment is exactly the thing nothing can fail on. What IS enforced is the
+ * rule the figure was standing in for — that suite executes both tables and
+ * reds if a single reason appears in both.
  *
  * What is left is only what the engine cannot say because it was never
  * reached: the refusals this route makes on its own. Plus one total fallback,

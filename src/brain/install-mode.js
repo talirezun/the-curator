@@ -156,9 +156,15 @@ export const CAPABILITY_KEYS = Object.freeze([
   // `canSelfUpdateViaGit`.
   //   'git-pull'           — `git fetch` + `git reset --hard`, then npm and a
   //                          respawn. The app replaces its own files.
-  //   'download-installer' — the app can only TELL the user a newer version
-  //                          exists and open its download page; a human runs
-  //                          the installer.
+  //   'download-installer' — the new version arrives as a published build the
+  //                          app downloads. Since v3.33.0 the app does that
+  //                          for itself: it fetches the .dmg, verifies it
+  //                          against the digest GitHub publishes, stages the
+  //                          bundle beside the running one and swaps them —
+  //                          see desktop/lib/update-engine.js. The download
+  //                          page is now the FALLBACK, taken when no updater
+  //                          engine is registered (any build whose shell did
+  //                          not install the hooks) or when the install fails.
   //
   // WHY THIS IS NOT `!canSelfUpdateViaGit`. That boolean says what this build
   // cannot do; it does not say what it should do INSTEAD, and the refusal it

@@ -43,10 +43,12 @@ name: Desktop DMG
 #  `scripts/test-desktop-packaging.js` asserts all of the above against this
 #  file. If you add a trigger, that suite goes red and it is right to.
 #
-#  THE DURABLE FIX BELONGS IN release.js, NOT HERE: `gh run list` accepts
-#  `--workflow`, and passing `--workflow test.yml` would make the gate immune
-#  to any second workflow forever. That file is outside this change's scope;
-#  it is reported rather than edited.
+#  THE DURABLE FIX HAS SINCE LANDED IN release.js, and it did not make the
+#  absences above redundant. `watchCi` now passes `--workflow`, so the gate
+#  reads test.yml's run by name and no second workflow can be mistaken for it.
+#  Keep the two triggers absent anyway: that pin protects the gate, while these
+#  absences are also what keep a macOS runner off every commit and out of reach
+#  of a fork.
 # ═══════════════════════════════════════════════════════════════════════════
 on:
   push:
@@ -64,11 +66,22 @@ concurrency:
 
 jobs:
   # ── Cheap gate, on Linux, so a macOS runner is only started when there is
-  #    actually something to build. Today there never is: `desktop/` is a
-  #    committed SCAFFOLD with no lockfile and nothing installed, so this job
-  #    reports that in one line and the build job skips. It is deliberately a
-  #    PASS rather than a failure — a permanently red workflow on every tag
-  #    trains people to ignore red, and there is no defect here to report.
+  #    actually something to build.
+  #
+  #    IT IS NOW OPEN, AND THAT IS THE COST TO KNOW ABOUT. This job was written
+  #    while `desktop/` was an uninstalled scaffold, when the lockfile it keys
+  #    on did not exist and the build job therefore always skipped. That is no
+  #    longer the shape of the tree: `desktop/package-lock.json` is COMMITTED,
+  #    so `buildable` resolves to true and EVERY `v*` tag starts a real macOS
+  #    runner, billed at 10x the Linux rate, for as long as the tag push takes
+  #    to build a DMG. Intended — the build works and its artifacts have been
+  #    verified — but it is a real per-release charge rather than the ~40s of
+  #    Linux the skip used to cost.
+  #
+  #    The skip arm below is kept, not dead: it is what stops a tag pushed from
+  #    a tree where the lockfile was removed from failing on a macOS runner.
+  #    It is deliberately a PASS rather than a failure — a permanently red
+  #    workflow on every tag trains people to ignore red.
   gate:
     name: Desktop build gate
     runs-on: ubuntu-latest
@@ -94,7 +107,7 @@ jobs:
           fi
 
   dmg:
-    name: Build unsigned DMG (macOS)
+    name: Build ad-hoc signed DMG (macOS)
     needs: gate
     if: needs.gate.outputs.buildable == 'true'
     runs-on: macos-latest
@@ -120,11 +133,19 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      # ── UNSIGNED, and forced to stay that way ─────────────────────────────
+      # ── NO CERTIFICATE, and forced to stay that way ───────────────────────
+      # "Unsigned" is the wrong word for what comes out of here, and the
+      # distinction matters. The bundle IS signed — ad hoc, by the `afterPack`
+      # hook in desktop/lib/adhoc-sign.mjs, which also REFUSES the build if a
+      # real certificate ever appears on it. What it carries is no Developer ID
+      # and no notarization, which is what a user sees as the Gatekeeper
+      # detour, and what makes Squirrel-based auto-update impossible (the app
+      # ships its own updater instead — see desktop/lib/update-engine.js).
+      #
       # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder finding an
-      # identity in a runner keychain and quietly producing a signed artifact
-      # nobody configured. It pairs with `mac.identity: null` in
-      # electron-builder.yml — belt and braces, because the failure mode is
+      # identity in a runner keychain and quietly producing a certificate-
+      # signed artifact nobody configured. It pairs with `mac.identity: null`
+      # in electron-builder.yml — belt and braces, because the failure mode is
       # silent.
       #
       # NO SIGNING OR NOTARIZATION CREDENTIALS APPEAR IN THIS FILE, and none
@@ -144,7 +165,7 @@ jobs:
       # The version comes from the git tag: desktop/package.json is pinned at
       # 0.0.0 on purpose so no one can ship a DMG whose version was hand-typed
       # and drifted from the release it claims to be.
-      - name: Build DMG (unsigned)
+      - name: Build DMG (ad-hoc signed, no Developer ID)
         working-directory: desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

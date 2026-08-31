@@ -88,12 +88,19 @@ function fingerprint() {
 const fpBefore = fingerprint();
 ok(fpBefore.length > 0, 'real credential files fingerprinted before the run');
 
-let configRoute, installMode, desktopHost, writeRegistry;
+// `planMod` and `launcherMod` are the ENGINE side of the seam §16 drives. They
+// are imported here, with everything else, so the count of the engine's named
+// reasons can be DERIVED below rather than typed — a literal "34" was written
+// into this file and into config.js when the table held 36, and a number in a
+// comment cannot be made to fail.
+let configRoute, installMode, desktopHost, writeRegistry, planMod, launcherMod;
 try {
   configRoute = await import(path.join(ROOT, 'src/routes/config.js'));
   installMode = await import(path.join(ROOT, 'src/brain/install-mode.js'));
   desktopHost = await import(path.join(ROOT, 'src/brain/desktop-host.js'));
   writeRegistry = await import(path.join(ROOT, 'src/brain/write-registry.js'));
+  planMod = await import(path.join(ROOT, 'desktop/lib/update-plan.js'));
+  launcherMod = await import(path.join(ROOT, 'src/brain/mcp-launcher.js'));
   ok(true, 'the modules under test load');
 } catch (err) {
   // A module-load throw would otherwise kill the run with a raw stack, naming
@@ -175,15 +182,25 @@ ok(desktopHost.getDesktopHook(configRoute.UPDATE_STAGE_HOOK) === null,
 }
 
 // ── THE FAILURE MAPPER IS TOTAL, AND THE ENGINE OWNS ITS OWN COPY ─────────
-// `prepareUpdate` resolves `{ok:false, reason, message}` across 34 named
-// reasons and `message` is already written for a user, so the route RELAYS it.
-// This table holds only the refusals the route makes itself, plus a fallback.
-// A second sentence per engine reason here would be a second copy of one fact,
-// free to drift — the shape this project has paid for twice.
+// `prepareUpdate` resolves `{ok:false, reason, message}` across the reasons in
+// `UPDATE_FAILURES`, and `message` is already written for a user, so the route
+// RELAYS it. This table holds only the refusals the route makes itself, plus a
+// fallback. A second sentence per engine reason here would be a second copy of
+// one fact, free to drift — the shape this project has paid for twice.
+//
+// THE COUNT IS DERIVED FROM THE TABLE, NEVER TYPED. This comment and the one
+// in config.js both said "34 named reasons" while the table held 36; the
+// no-duplication rule below is the same claim in a form that can go RED.
 {
+  const engineReasons = Object.keys(planMod.UPDATE_FAILURES);
   const codes = Object.keys(configRoute.UPDATE_FAILURE_COPY);
+  ok(engineReasons.length >= 20,
+    `the engine really does own a large named-reason table (${engineReasons.length} reasons) — otherwise the rule below is vacuous`);
+  const dupes = codes.filter(c => engineReasons.includes(c));
+  eq(dupes.join(','), '',
+    `NO ENGINE REASON IS RE-WORDED HERE — the route's table (${codes.join(', ')}) and the engine's ${engineReasons.length} do not overlap, so there is one sentence per failure and nothing to drift`);
   ok(codes.length >= 1 && codes.length <= 4,
-    `the table holds only ROUTE-owned refusals (${codes.length}: ${codes.join(', ')}) — the engine's 34 reasons are not duplicated here`);
+    `the table holds only ROUTE-owned refusals (${codes.length}: ${codes.join(', ')})`);
   for (const c of codes) {
     const copy = configRoute.updateFailureCopy(c);
     eq(copy.reason, c, `"${c}" round-trips its own reason code`);
@@ -1295,6 +1312,99 @@ const HAPPY_FRAMES = [
   const f = mkFlow(async () => { posts++; return { ok: true, json: async () => ({ ok: true }) }; });
   await f.finishInAppUpdate();
   eq(posts, 0, '§15 the finish step does nothing when there is nothing staged — it never POSTs on spec');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§16  THE WARNING CROSSES THE SEAM — engine value, route, wire, panel');
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT THIS SECTION EXISTS FOR ─────────────────────────────────────
+//
+// v3.33.0 shipped a safety warning for the case most likely to go strangely —
+// an app updating itself from ~/Downloads or a translocated copy — and the
+// user never saw it. `classifyInstallTarget` returned `{reason, message}`; the
+// route tested `typeof result.warning === 'string'`; so `warning` was ALWAYS
+// null, in every build, for the entire release.
+//
+// ── WHY NEITHER SUITE CAUGHT IT, WHICH IS THE INSTRUCTIVE PART ─────────────
+//
+// `test-desktop-update.js` asserted the OBJECT. This file asserted a STRING —
+// §4 hands the route `warning: 'This is a pre-release build.'`, a value no
+// engine has ever produced. Each side tested its own assumption and both were
+// green while the feature was dead. A hand-made string here would reproduce
+// that blindness exactly, so this section makes NO value of its own: the
+// warning is computed by the REAL origin classifier and the REAL install-target
+// classifier, and that value — whatever it is — is what the route is handed.
+//
+// The two modules are imported, not read as text: a source-level assertion
+// that the two shapes "look compatible" is the thing that could not have
+// failed here either.
+
+ok(!!(planMod && launcherMod && typeof planMod.classifyInstallTarget === 'function'
+  && typeof launcherMod.classifyLaunchOrigin === 'function'),
+  '§16 the engine-side plan module and the real origin classifier are both loaded, as MODULES rather than as text');
+
+{
+  const DL_EXEC = '/Users/x/Downloads/The Curator.app/Contents/MacOS/The Curator';
+  const dlOrigin = launcherMod.classifyLaunchOrigin(DL_EXEC, '/Users/x', 'darwin');
+  ok(dlOrigin.ephemeral && dlOrigin.reason === 'downloads-folder',
+    '§16 CONTROL — the real classifier still flags a Downloads install, so the case below is real');
+  const dlTarget = planMod.classifyInstallTarget({ execPath: DL_EXEC, launchOrigin: dlOrigin });
+  ok(dlTarget.ok, '§16 CONTROL — and it PROCEEDS, so a warning is the only thing that can tell the user');
+  ok(!!dlTarget.warning, '§16 the engine really does produce a warning for it');
+
+  // ── THE SEAM ITSELF. The engine's value, unaltered, into the real route. ──
+  const res = await drive({
+    hasActiveWrites: () => false,
+    // Exactly what `prepareUpdate` returns: `warning: target.warning`.
+    prepareUpdateHook: async () => ({
+      ok: true, version: '3.34.0', token: 'OPAQUE-TOKEN-seam', warning: dlTarget.warning,
+    }),
+  });
+  const staged = parseFrames(res.written).find(f => f.type === 'staged') || {};
+  eq(staged.warning, dlTarget.warning,
+    '§16 THE ENGINE’S OWN WARNING REACHES THE WIRE UNCHANGED — this is the assertion that was missing, and it fails on either side of the seam moving alone');
+  ok(typeof staged.warning === 'string' && staged.warning.trim().length > 0,
+    '§16 …as a non-empty sentence, not `null` and not "[object Object]"');
+  ok(!/\[object|"reason"|undefined/.test(String(staged.warning)),
+    '§16 …with no shape leaking through as text');
+
+  // ── AND WHAT IT SAYS. A sentence can reach the user and still be useless. ─
+  ok(/Downloads/.test(staged.warning), '§16 it names the condition the user is actually in');
+  ok(/Applications/.test(staged.warning), '§16 and what to do about it');
+  ok(!/Claude Desktop|launcher/i.test(staged.warning),
+    '§16 and it is NOT the origin classifier’s own sentence — that one is about the Claude Desktop launcher, which is true where it was written and false in front of someone updating an app');
+
+  // ── ANTI-VACUITY. A route that stamped a warning on every staged update ───
+  //    would satisfy everything above.
+  const goodExec = '/Applications/The Curator.app/Contents/MacOS/The Curator';
+  const goodOrigin = launcherMod.classifyLaunchOrigin(goodExec, '/Users/x', 'darwin');
+  const goodTarget = planMod.classifyInstallTarget({ execPath: goodExec, launchOrigin: goodOrigin });
+  eq(goodTarget.warning, null, '§16 CONTROL — a normal /Applications install produces NO warning');
+  const res2 = await drive({
+    hasActiveWrites: () => false,
+    prepareUpdateHook: async () => ({ ok: true, version: '3.34.0', token: 't', warning: goodTarget.warning }),
+  });
+  const staged2 = parseFrames(res2.written).find(f => f.type === 'staged') || {};
+  eq(staged2.warning, null, '§16 …and the wire says null, so the warning above is carried and not manufactured');
+
+  // ── THE LAST HOP: the panel the user actually looks at. ──────────────────
+  // Driven through the same client flow §15 uses, from the same frame the
+  // route just wrote — so the value is still the engine's, four hops on.
+  const flow = mkFlow(async (u) => (String(u) === '/api/config/update'
+    ? { ok: true, body: sseStream([
+        { type: 'progress', phase: 'downloading', receivedBytes: 1, totalBytes: 2, percent: 50 },
+        staged,
+      ]) }
+    // The swap is refused so the flow PARKS at `staged`, which is the only
+    // state whose panel renders a warning — auto-continuing would carry it
+    // straight past the thing under test.
+    : { ok: false, status: 409, json: async () => ({ error: 'busy', reason: 'write-in-flight' }) }));
+  await flow.runInAppUpdate();
+  const client = flow.read().inAppUpdate;
+  eq(client.phase, 'staged', '§16 the client parks at staged, which is the state whose panel shows a warning');
+  eq(client.warning, dlTarget.warning,
+    '§16 AND THE CLIENT HOLDS THE ENGINE’S SENTENCE — computed in desktop/lib, rendered in Settings, with nothing in between rewriting it');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
