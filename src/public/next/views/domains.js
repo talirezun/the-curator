@@ -295,6 +295,19 @@ const state = {
   // same reason semanticScan is — see activeBrowse().
   //   { slug, loading, error, entries, truncated, total, filter, folder }
   browse: null,
+
+  // ── Knowledge folder (GET /api/config) ─────────────────────────────────
+  // { domainsPath, domainsPathSource } or null before the first read. Read
+  // here, in the view an EXISTING user lands on, rather than only in
+  // Settings — see the "Where is my knowledge base" section below.
+  kb: null,
+  kbBusy: false,          // a picker is open, or a switch is being applied
+  // The outcome of the LAST folder switch this session, or null.
+  //   { state: 'success'|'attention'|'danger', title, detail,
+  //     undoPath?: string }
+  // `undoPath` is the folder we were pointed at BEFORE the switch, present
+  // only when there is somewhere to go back to and going back is useful.
+  kbNotice: null,
 };
 
 // `state` above is DELIBERATELY module-scoped and NOT reset on every
@@ -634,6 +647,316 @@ async function loadDomainsList(token) {
       keepHealth: shouldKeepHealthOnReload(state.health, state.healthSlug, state.activeSlug),
     });
   } else render(token);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// "WHERE IS MY KNOWLEDGE BASE?" — the existing user's route into this view
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// ── THE DEFECT, reported from a real packaged-app install ─────────────────
+// In bundle mode getDomainsDir() resolves under ~/Library/Application Support,
+// and the app now CREATES that folder on first launch. So a long-time user
+// with six domains somewhere else opens the app to a correctly-working,
+// genuinely empty install: nothing broken, nothing lost, and NO VISIBLE ROUTE
+// from the screen they are standing on to the folder they already have. The
+// maintainer's words were "there is no way to open existing domains", and the
+// conclusion an ordinary user reaches from an empty Domains screen is not
+// "wrong folder" — it is "my knowledge base is gone".
+//
+// ── THIS ADDS NO SERVER CAPABILITY, AND THAT IS THE POINT ─────────────────
+// Both endpoints predate this change and are UNMODIFIED:
+//   POST /api/config/pick-folder  — opens a folder picker AND, if a path
+//                                   comes back, calls setDomainsDir() itself.
+//                                   It is a mutation, not a query; there is
+//                                   no second call to "apply" the choice.
+//   POST /api/config/domains-path — sets a path directly. Used ONLY by the
+//                                   undo below.
+// This was a discoverability gap, not a capability gap, so the fix is a
+// route to an existing control — not a new one, and not a weaker one.
+//
+// ── WHY A SECOND CALL SITE FOR pick-folder IS NOT THE "TWO COPIES" TRAP ───
+// views/settings.js already calls it. That looked, at first, like the shape
+// this project has a standing allergy to — the duplicate-create-path
+// collision v3.7.0 deleted, which is why views/domains.js holds the ONLY
+// `POST /api/domains` call site in the tree. It is not the same shape. That
+// rule exists because domain CREATION carries client-side FORM STATE —
+// validation, a template list, a slug the server generates — so a second
+// caller is a second copy of rules that then drift. `pick-folder` takes NO
+// body and returns a settled outcome: every rule (existence, the concurrency
+// re-check, the mutation itself) lives server-side, in ONE closure that the
+// route's own docblock calls "the ONE set of post-pick rules". A second
+// caller of a no-argument endpoint cannot hold a diverging copy of anything,
+// because it holds nothing.
+//
+// ── WHAT IS AND IS NOT MEASURED HERE ─────────────────────────────────────
+// MEASURED, not assumed (see scripts/test-next-existing-knowledge-folder.js
+// §1, which drives the REAL src/brain/config.js and src/brain/files.js):
+// setDomainsDir() takes effect IMMEDIATELY, in the same process, with no
+// restart and no reload. getDomainsDir() re-reads .curator-config.json on
+// every call, listDomains() calls it on every call, and a tree-wide scan
+// found NO module-level capture of either. So the correct client behaviour
+// after a successful pick is simply to re-fetch the list.
+//
+// ALSO MEASURED, and it is the reason describeSwitchOutcome() exists: a
+// folder with no domains and a folder that is not a knowledge base AT ALL
+// (someone's Pictures folder) both return exactly `[]`, indistinguishably,
+// and so does a folder that has been unmounted. The read layer is right to
+// collapse them — an absent collection is empty, not broken — but a UI that
+// merely repaints an empty list after a pick tells the user NOTHING, and is
+// strictly worse than before the pick, because now they have also moved
+// their config and believe the feature is broken. So the outcome is
+// REPORTED, with the path in it and a way back.
+
+/**
+ * PURE. What POST /api/config/pick-folder just told us.
+ *
+ * CANCELLED IS CHECKED FIRST, and that ordering is a contract with the route
+ * rather than a preference: its `accept()` closure notes that a refusal "must
+ * never carry that field" precisely because the shipping frontend reads
+ * `cancelled` before `res.ok`. Mirroring that order here means the two sides
+ * agree about which reply is a cancel, and a future refusal that wrongly grew
+ * a `cancelled` field would be a route bug rather than a silent divergence.
+ *
+ * 409 and 501 are separated from the generic error case because they are the
+ * two the user can DO something about, and because 501 is the honest-
+ * difference case: a packaged app whose desktop host exposes no picker hook
+ * refuses rather than falling back, and carries its own `hint` naming the
+ * typed-path route. Surfacing that hint is what keeps the first-run task
+ * completable instead of dead-ended.
+ *
+ * @param {number} status  HTTP status
+ * @param {object|null} body  parsed JSON body, or null
+ * @returns {{kind:'cancelled'|'switched'|'refused'|'unsupported'|'error',
+ *            path?:string, title?:string, detail?:string}}
+ */
+function classifyPickResponse(status, body) {
+  const b = (body && typeof body === 'object') ? body : {};
+  // See the docblock: FIRST, unconditionally.
+  if (b.cancelled === true) return { kind: 'cancelled' };
+
+  const serverMsg = (typeof b.error === 'string' && b.error.trim()) ? b.error.trim() : '';
+  const hint = (typeof b.hint === 'string' && b.hint.trim()) ? b.hint.trim() : '';
+
+  if (status === 409) {
+    return {
+      kind: 'refused',
+      title: 'Something is still writing',
+      // The server's OWN sentence, never a paraphrase — it names the domain
+      // and the operation, which our copy cannot.
+      detail: serverMsg || 'A write is in progress. Wait for it to finish, then try again.',
+    };
+  }
+  if (status === 501) {
+    return {
+      kind: 'unsupported',
+      title: 'This build cannot open a folder picker',
+      detail: [serverMsg, hint].filter(Boolean).join(' ') ||
+        'Set the folder from Settings → Knowledge base instead.',
+    };
+  }
+  if (status >= 400 || serverMsg) {
+    return {
+      kind: 'error',
+      title: 'The folder picker did not finish',
+      detail: [serverMsg, hint].filter(Boolean).join(' ') || 'Request failed (' + status + ')',
+    };
+  }
+  if (typeof b.path === 'string' && b.path.trim()) {
+    return { kind: 'switched', path: b.path.trim() };
+  }
+  // A 200 carrying neither a path nor a cancel. Nothing was changed, but we
+  // cannot claim success either — saying so is better than a blank screen.
+  return {
+    kind: 'error',
+    title: 'The folder picker did not finish',
+    detail: 'The picker returned no folder and no reason.',
+  };
+}
+
+/**
+ * PURE. What the user is told AFTER the folder has already been switched.
+ *
+ * The switch has HAPPENED by the time this runs — pick-folder mutates before
+ * it replies — so this is a report, never a question. The zero case is
+ * therefore `attention` rather than `danger`: nothing failed, and dressing a
+ * successful-but-empty pick as an error would be the mirror of the defect
+ * this whole section fixes (an empty install reported as a broken one).
+ *
+ * The detail names WHAT WAS LOOKED FOR, because the read layer cannot tell an
+ * empty knowledge folder from a folder of holiday photos and neither can we.
+ * Naming the shape ("a folder per domain, each with a CLAUDE.md") is the only
+ * honest way to let the user decide which of the two they just did — and it
+ * covers the likeliest mistake by far, picking one domain instead of the
+ * folder that contains them.
+ *
+ * @param {string} path      the folder now in use
+ * @param {number} count     how many domains were found in it
+ * @param {string|null} previousPath  where we were pointed before
+ */
+function describeSwitchOutcome(path, count, previousPath) {
+  const n = Number(count);
+  const where = (typeof path === 'string' && path.trim()) ? path.trim() : 'that folder';
+  if (Number.isFinite(n) && n > 0) {
+    return {
+      state: 'success',
+      title: 'Opened ' + pluralize(n, 'domain'),
+      detail: 'The Curator is now reading ' + where + '. Nothing was copied or converted — ' +
+              'your pages, links and history are exactly as they were.',
+      undoPath: null,
+    };
+  }
+  // A folder we can no longer distinguish from any other empty folder.
+  const back = (typeof previousPath === 'string' && previousPath.trim() && previousPath.trim() !== where)
+    ? previousPath.trim() : null;
+  return {
+    state: 'attention',
+    title: 'No domains found there',
+    detail: 'The Curator is now reading ' + where + ' and found nothing in it. A knowledge folder ' +
+            'holds one folder per domain, each containing a CLAUDE.md file — so pick the folder ' +
+            'that CONTAINS your domains, not one of the domains itself.',
+    undoPath: back,
+  };
+}
+
+/** Load the current knowledge-folder path. Free, local, no LLM, no network. */
+async function loadKnowledgeBase(token) {
+  try {
+    const cfg = await fetchJSON('/api/config');
+    if (!isCurrentMount(token)) return;
+    state.kb = { domainsPath: cfg.domainsPath || '', domainsPathSource: cfg.domainsPathSource || '' };
+  } catch {
+    // Non-fatal by design. This read only makes the copy MORE specific (it
+    // supplies the path we say we looked in); every control below works
+    // without it, so a failure here must not block or blank the view.
+    if (!isCurrentMount(token)) return;
+    state.kb = null;
+  }
+}
+
+/**
+ * Open the folder picker, then report what actually happened.
+ *
+ * Entered synchronously from a click, so reading myMountToken at the call
+ * site is safe; the token is captured ONCE here and threaded through every
+ * resumption, per this file's H1 discipline.
+ */
+async function onChooseKnowledgeFolder(token) {
+  if (state.kbBusy) return;
+  // Fail OPEN if the shell gate itself throws — the server carries the real
+  // guard (guardConcurrent) and will 409, which classifyPickResponse renders
+  // as a visible refusal. A broken client-side predicate must not be able to
+  // lock a user out of the one action that makes their wiki visible.
+  let busyElsewhere = false;
+  try { busyElsewhere = shell.isAnyWriteBusy(); }
+  catch (err) { console.warn('[domains] isAnyWriteBusy() failed — deferring to the server guard', err); }
+  if (busyElsewhere) {
+    state.kbNotice = {
+      state: 'attention',
+      title: 'Something is still writing',
+      detail: 'Changing the knowledge folder while pages are being written can scatter that ' +
+              'write’s remaining pages into the new folder. Wait for it to finish, then try again.',
+      undoPath: null,
+    };
+    render(token);
+    return;
+  }
+
+  const previousPath = (state.kb && state.kb.domainsPath) || null;
+  state.kbBusy = true;
+  state.kbNotice = null;
+  render(token);
+  try {
+    const res = await fetch('/api/config/pick-folder', { method: 'POST' });
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON error page */ }
+    if (!isCurrentMount(token)) return;
+    const verdict = classifyPickResponse(res.status, body);
+    if (verdict.kind === 'cancelled') return;      // the user changed their mind
+    if (verdict.kind !== 'switched') {
+      state.kbNotice = {
+        state: verdict.kind === 'refused' ? 'attention' : 'danger',
+        title: verdict.title,
+        detail: verdict.detail,
+        undoPath: null,
+      };
+      return;
+    }
+    // SWITCHED. The mutation already happened server-side; from here we are
+    // only re-reading and reporting.
+    await applySwitchedFolder(verdict.path, previousPath, token);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.kbNotice = { state: 'danger', title: 'The folder picker did not finish', detail: err.message, undoPath: null };
+  } finally {
+    if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
+  }
+}
+
+/**
+ * Re-read everything the folder decides, then report the outcome.
+ *
+ * The full loadDomainsList() is deliberately re-run rather than a narrower
+ * refresh: the folder switch invalidates the domain list, the active slug,
+ * every health report and every per-domain cache in this module's state at
+ * once, and that function is the ONE place that rebuilds all of them
+ * consistently. It also re-points state.activeSlug at a domain that exists in
+ * the NEW folder (or null), which is what stops the main pane rendering a
+ * heading for a domain that is no longer there.
+ */
+async function applySwitchedFolder(newPath, previousPath, token) {
+  state.kb = { domainsPath: newPath, domainsPathSource: 'ui' };
+  // A report, a scan and a browse listing from the OLD folder are all
+  // meaningless now, and two of them are stamped with a slug that may exist
+  // in BOTH folders — which is precisely how a stale report gets rendered
+  // under a heading it was never scanned for.
+  state.health = null;
+  state.healthSlug = null;
+  state.healthSummary = {};
+  state.semanticScan = null;
+  state.browse = null;
+  state.activeSlug = null;
+  await loadDomainsList(token);
+  if (!isCurrentMount(token)) return;
+  const found = state.loadError ? 0 : state.domains.length;
+  state.kbNotice = state.loadError
+    ? { state: 'danger', title: 'That folder could not be read', detail: state.loadError, undoPath: previousPath || null }
+    : describeSwitchOutcome(newPath, found, previousPath);
+}
+
+/**
+ * Go back to the folder we were pointed at before the last switch.
+ *
+ * Uses POST /api/config/domains-path — which REFUSES a path that does not
+ * exist, and that refusal is kept rather than pre-empted client-side: the
+ * previous folder can genuinely have gone away (an ejected drive is the whole
+ * reason someone lands here), and the server's sentence names it.
+ */
+async function onUndoKnowledgeFolder(targetPath, token) {
+  if (state.kbBusy || !targetPath) return;
+  const cameFrom = (state.kb && state.kb.domainsPath) || null;
+  state.kbBusy = true;
+  render(token);
+  try {
+    const res = await fetch('/api/config/domains-path', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: targetPath }),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON error page */ }
+    if (!isCurrentMount(token)) return;
+    if (!res.ok) {
+      const msg = (body && body.error) || ('Request failed (' + res.status + ')');
+      state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: msg, undoPath: null };
+      return;
+    }
+    await applySwitchedFolder((body && body.domainsPath) || targetPath, cameFrom, token);
+  } catch (err) {
+    if (!isCurrentMount(token)) return;
+    state.kbNotice = { state: 'danger', title: 'Could not go back to that folder', detail: err.message, undoPath: null };
+  } finally {
+    if (isCurrentMount(token)) { state.kbBusy = false; render(token); }
+  }
 }
 
 // LAYER 1 of the two-layer domain-scoping guard (LAYER 2 is
@@ -1327,14 +1650,95 @@ function toWirePair(p) {
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
 
+/**
+ * The durable route to an existing knowledge base.
+ *
+ * IT LIVES IN THE SIDEBAR, ON EVERY STATE, and that placement is the load-
+ * bearing half of this fix rather than a nicety. If this affordance existed
+ * ONLY on the empty-domains card, then the single most likely wrong click —
+ * an existing user pressing "New domain" — would create one junk domain in
+ * the wrong folder, which makes the domain list non-empty, which DESTROYS THE
+ * EMPTY CARD, which takes the only route to their real wiki with it. They
+ * would end up worse off than before, with no way back and no error to
+ * search for. Here, the route survives every state the view can reach —
+ * including the load-error state, where "your configured folder cannot be
+ * read" is exactly the condition repointing fixes.
+ */
+function knowledgeFolderBtn() {
+  return (
+    '<button class="btn btn-secondary dm-kb-btn" id="dm-kb-choose-btn"' +
+      (state.kbBusy ? ' disabled' : '') + '>' +
+      icon('folder', 13) + ' ' + (state.kbBusy ? 'Waiting for the folder picker…' : 'Use existing folder') +
+    '</button>'
+  );
+}
+
+/**
+ * The outcome of the last switch, rendered wherever the user is looking.
+ *
+ * v3.6.0's finding 7 is the reason this is never silent: a refused action
+ * that renders NOTHING reads as "my click didn't register", and the user
+ * repeats it. Every non-cancel outcome — success, empty folder, refusal,
+ * capability refusal, transport failure — reaches a visible surface.
+ */
+function renderKnowledgeNotice() {
+  const n = state.kbNotice;
+  if (!n) return '';
+  const undo = n.undoPath
+    ? '<div class="dm-kb-undo">' +
+        '<button class="btn btn-secondary" id="dm-kb-undo-btn"' + (state.kbBusy ? ' disabled' : '') + '>' +
+          'Go back to the previous folder' +
+        '</button>' +
+        '<code class="mono dm-kb-path">' + escapeHtml(n.undoPath) + '</code>' +
+      '</div>'
+    : '';
+  return '<div class="dm-kb-notice">' +
+    renderStatus({ state: n.state, title: n.title, detail: n.detail }) + undo +
+  '</div>';
+}
+
+/**
+ * "We looked here." One line, and it is the most useful line on an empty
+ * screen — it converts "my knowledge base is gone" into "wrong folder",
+ * which is a problem a person can act on. Renders nothing when the config
+ * read failed, because an invented path would be worse than none.
+ */
+function renderLookedInLine() {
+  const p = state.kb && state.kb.domainsPath;
+  if (!p) return '';
+  return '<div class="dm-kb-lookedin">Looking in <code class="mono dm-kb-path">' +
+    escapeHtml(p) + '</code></div>';
+}
+
+// Wired after every render that emits either control, for the same reason
+// every other binder in this file is: setSidebar/setMain replace the DOM
+// wholesale, so a listener attached last time is attached to a node that no
+// longer exists.
+function bindKnowledgeListeners() {
+  document.getElementById('dm-empty-kb-btn')
+    ?.addEventListener('click', () => onChooseKnowledgeFolder(myMountToken).catch(reportAsyncActionFailure));
+  const undo = document.getElementById('dm-kb-undo-btn');
+  if (undo && state.kbNotice && state.kbNotice.undoPath) {
+    // The target is captured HERE, from the notice that produced this button,
+    // rather than read out of state when the click lands. state.kbNotice is
+    // replaced by every subsequent outcome, and an undo that resolves its own
+    // destination late would send the user to whichever folder the LATEST
+    // notice happens to name — the same stale-target class as the compile
+    // card's captured conversation id.
+    const target = state.kbNotice.undoPath;
+    undo.addEventListener('click', () => onUndoKnowledgeFolder(target, myMountToken).catch(reportAsyncActionFailure));
+  }
+}
+
 function renderSidebar(token) {
   if (!isCurrentMount(token)) return;
   const newBtn =
-    '<button class="btn btn-primary dm-new-btn" id="dm-new-domain-btn">' + icon('grid', 13) + ' New domain</button>';
+    '<button class="btn btn-primary dm-new-btn" id="dm-new-domain-btn">' + icon('grid', 13) + ' New domain</button>' +
+    knowledgeFolderBtn();
 
   if (!state.loaded) {
     setSidebar('<div class="sidebar-title">Domains</div>' + newBtn + gatedLoader(loadGate, 'Loading…', 'sidebar-hint'), token);
-    bindNewDomainBtn();
+    bindSidebarButtons();
     return;
   }
   if (state.loadError) {
@@ -1366,7 +1770,7 @@ function renderSidebar(token) {
       '</div>',
       token
     );
-    bindNewDomainBtn();
+    bindSidebarButtons();
     return;
   }
   if (state.domains.length === 0) {
@@ -1376,7 +1780,7 @@ function renderSidebar(token) {
       '<div class="sidebar-note">No domains yet. A domain is one compounding wiki — create your first one above.</div>',
       token
     );
-    bindNewDomainBtn();
+    bindSidebarButtons();
     return;
   }
 
@@ -1438,15 +1842,20 @@ function renderSidebar(token) {
     token
   );
 
-  bindNewDomainBtn();
+  bindSidebarButtons();
   document.querySelectorAll('.dm-row[data-domain-slug]').forEach((btn) => {
     btn.addEventListener('click', () => selectDomain(btn.dataset.domainSlug));
   });
 }
 
-function bindNewDomainBtn() {
+// Both sidebar actions, in one place, because both are emitted by all four
+// of renderSidebar's branches and a binder that covered only one of them
+// would leave a live-looking button dead in three of them.
+function bindSidebarButtons() {
   const btn = document.getElementById('dm-new-domain-btn');
   if (btn) btn.addEventListener('click', () => openLifecycle('create'));
+  const kb = document.getElementById('dm-kb-choose-btn');
+  if (kb) kb.addEventListener('click', () => onChooseKnowledgeFolder(myMountToken).catch(reportAsyncActionFailure));
 }
 
 // Entered synchronously by a click handler — reading myMountToken here is
@@ -1496,23 +1905,66 @@ function renderMain(token) {
   if (state.loadError) {
     setMain(
       domainsHeader() +
-      emptyCard({ title: 'Could not load domains', body: escapeHtml(state.loadError) }),
+      renderKnowledgeNotice() +
+      emptyCard({
+        title: 'Could not load domains',
+        // The path is part of the diagnosis, not decoration: this branch is
+        // reached by EACCES, ENOTDIR and an unmounted volume, and every one
+        // of those is a statement about a specific folder.
+        body: escapeHtml(state.loadError) + renderLookedInLine(),
+        actionHtml: knowledgeFolderBtn(),
+      }),
       token
     );
+    bindKnowledgeListeners();
     return;
   }
   if (state.domains.length === 0) {
     setMain(
       domainsHeader() +
+      renderKnowledgeNotice() +
       renderLifecycleCard() +
       emptyCard({
-        title: 'No domains yet',
-        body: 'Name it, pick a starting schema, and it is ready to ingest into. Nothing is written until you confirm.',
-        actionHtml: '<button class="btn btn-primary" id="dm-empty-new-btn">' + icon('grid', 13) + ' New domain</button>',
+        title: 'No domains here yet',
+        // ── WHY THE EXISTING USER IS ADDRESSED FIRST ──────────────────────
+        // The two readers of this screen are a brand-new user and a
+        // long-time user whose wiki is in another folder, and NOTHING on
+        // this screen can tell them apart — the read layer returns the same
+        // empty list for a fresh install, an unmounted drive and someone's
+        // Pictures folder (measured; see the section header above). So the
+        // choice is made on the COST OF BEING WRONG, and it is wildly
+        // asymmetric: the new user who reads one extra sentence loses a few
+        // seconds, while the existing user who does not see this sentence
+        // concludes that years of work are gone. That is the failure this
+        // release exists to close, so it is the one the copy is aimed at.
+        //
+        // Both routes are present and neither is hidden behind a
+        // disclosure. "Use existing folder" takes the card's primary
+        // styling; "New domain" keeps a primary-styled button of its own in
+        // the sidebar, three inches away and visible in this exact state, so
+        // the create path is not demoted anywhere on the screen — it simply
+        // stops being the only thing the eye lands on.
+        body:
+          '<div class="dm-empty-lines">' +
+            '<div>Already have a knowledge base? If you have used The Curator before — on this Mac, ' +
+            'another machine, or a synced folder — point it at that folder and every domain, page and ' +
+            'link comes back exactly as it was. Nothing is copied, moved or converted.</div>' +
+            '<div>Starting fresh? Create a domain: name it, pick a starting schema, and it is ready to ' +
+            'ingest into. Nothing is written until you confirm.</div>' +
+          '</div>' + renderLookedInLine(),
+        actionHtml:
+          '<div class="dm-empty-actions">' +
+            '<button class="btn btn-primary" id="dm-empty-kb-btn"' + (state.kbBusy ? ' disabled' : '') + '>' +
+              icon('folder', 13) + ' ' +
+              (state.kbBusy ? 'Waiting for the folder picker…' : 'Use existing folder') +
+            '</button>' +
+            '<button class="btn btn-secondary" id="dm-empty-new-btn">' + icon('grid', 13) + ' New domain</button>' +
+          '</div>',
       }),
       token
     );
     document.getElementById('dm-empty-new-btn')?.addEventListener('click', () => openLifecycle('create'));
+    bindKnowledgeListeners();
     bindLifecycleListeners();
     return;
   }
@@ -1545,6 +1997,11 @@ function renderMain(token) {
   // routing it through the header's eyebrow slot would render it in the sans
   // face. It is a location, not prose, so it is not what this change is about.
   const html =
+    // A SUCCESSFUL switch lands here, not on the empty card — the whole point
+    // is that the list is no longer empty. If the confirmation only rendered
+    // in the empty state, the one outcome worth confirming would be the one
+    // outcome nobody ever saw.
+    renderKnowledgeNotice() +
     '<div class="dm-path-eyebrow mono">domains/' + escapeHtml(domain.slug) + '/</div>' +
     renderViewHeader({
       title: domain.displayName || domain.slug,
@@ -1569,6 +2026,7 @@ function renderMain(token) {
   document.getElementById('dm-rename-btn')?.addEventListener('click', () => openLifecycle('rename', domain));
   document.getElementById('dm-delete-btn')?.addEventListener('click', () => openLifecycle('delete', domain));
   bindLifecycleListeners();
+  bindKnowledgeListeners();
   bindHealthListeners(domain, readonly);
   bindBrowseListeners();
 }
@@ -3713,6 +4171,14 @@ registerView('domains', {
     loadGate.begin();
     loadDomainsList(mountToken).catch((err) => reportAsyncMountFailure(mountToken, err));
 
+    // The knowledge-folder path, for "Looking in <path>". Deliberately NOT
+    // awaited and deliberately NOT a mount failure: it only makes the copy
+    // more specific, and gating the whole view on a cosmetic read would turn
+    // a nice-to-have into a way to blank the screen. Free, local, no network.
+    loadKnowledgeBase(mountToken)
+      .then(() => { if (isCurrentMount(mountToken)) render(mountToken); })
+      .catch(reportAsyncActionFailure);
+
     // Prime the durable UI-state record (shared/ui-state.js) so
     // aiDisclosureSeen(), which is SYNCHRONOUS and runs from a click, has the
     // server's answer in hand by the time a ✨ button can be pressed.
@@ -3760,6 +4226,15 @@ registerView('domains', {
       // above whatever domain happens to be selected then.
       state.lifecycle = null;
       state.busyKey = null;
+      // Same two reasons the fields above are cleared. `kbBusy` would
+      // otherwise leave both folder buttons disabled on the next mount
+      // because a picker was open when the user navigated away, and
+      // `kbNotice` is a report about something that has already finished —
+      // stale news on re-entry, and it carries a live undo button whose
+      // target the user has had time to forget. `state.kb` (the path) is
+      // NOT cleared: it is a fact about this install, not an event.
+      state.kbBusy = false;
+      state.kbNotice = null;
     state.aiProgress = null;
       // Timer hygiene (load-bearing): an armed delay timer that survives
       // this teardown would paint a loader into whatever view comes next.
