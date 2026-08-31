@@ -140,10 +140,41 @@ section('§2  parseVersionCore was LIFTED, not copied — comparator unchanged')
 // needs to distinguish UNPARSEABLE from EQUAL, which the comparator collapses
 // to the same 0, so the parse was hoisted to an exported function. A hoist is
 // invisible to `git diff -w` as a behaviour claim, so it is proven the only way
-// that means anything: HEAD's comparator and the working tree's, over one
-// matrix, every cell required to agree.
+// that means anything: the PRE-CHANGE comparator and the working tree's, over
+// one matrix, every cell required to agree.
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  THE BASELINE IS A PINNED SHA, NEVER `HEAD`. This suite originally read   ║
+// ║  `HEAD:src/routes/config.js`, which meant "the tree before this change"   ║
+// ║  only while the change was uncommitted. The moment it MERGED, `HEAD`      ║
+// ║  became a commit that already contains the lift — so the "before" text    ║
+// ║  was byte-identical to the "after" text, it referenced `parseVersionCore` ║
+// ║  like the after text does, and the before-sandbox (which deliberately     ║
+// ║  supplies nothing, because the pre-lift comparator was self-contained)    ║
+// ║  died with `ReferenceError: parseVersionCore is not defined`. The suite    ║
+// ║  passed 277/0 in its own worktree and went red on the merge commit with   ║
+// ║  NOTHING in `src/` changed. Even had it not thrown, it would have been    ║
+// ║  comparing a function against ITSELF across 484 cells — green, and        ║
+// ║  proving nothing.                                                        ║
+// ║                                                                          ║
+// ║  `scripts/test-build-model.js` already records this exact lesson at its   ║
+// ║  own `BASELINE_REF`, and `.github/workflows/test.yml` sets `fetch-depth:  ║
+// ║  0` precisely so a pinned blob stays reachable on CI. Same method here.   ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// The commit this change was cut from — the parent of the commit that lifted
+// the parse. Named, not resolved from HEAD/HEAD~n, so it keeps meaning the
+// same tree however many commits land on top of it.
+const BASELINE_REF = 'ca8e60e';
 
-const headConfigSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/routes/config.js'], { encoding: 'utf8' });
+let baselineConfigSrc = null, baselineErr = null;
+try {
+  baselineConfigSrc = execFileSync('git', ['-C', ROOT, 'show', `${BASELINE_REF}:src/routes/config.js`],
+    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+} catch (err) { baselineErr = err && err.message; }
+ok(!!baselineConfigSrc,
+  `§2 the pinned baseline ${BASELINE_REF}:src/routes/config.js is reachable` +
+  (baselineConfigSrc ? '' : ` — ${baselineErr}. A shallow clone cannot see it; CI uses fetch-depth: 0.`));
 const workConfigSrc = read('src/routes/config.js');
 
 function braceSlice(src, fromIdx) {
@@ -163,14 +194,46 @@ function extractExportedFn(src, name, { async: isAsync = false } = {}) {
   return whole ? whole.replace(/^export /, '') : null;
 }
 
-const headCompareSrc = extractExportedFn(headConfigSrc, 'compareSemver');
+const headCompareSrc = extractExportedFn(baselineConfigSrc || '', 'compareSemver');
 const workCompareSrc = extractExportedFn(workConfigSrc, 'compareSemver');
 ok(!!headCompareSrc && !!workCompareSrc, '§2 extracted compareSemver from BOTH revisions');
-// HEAD's is self-contained; the working tree's needs the lifted parse supplied
-// by name, exactly as the module supplies it.
-const headCompare = new Function(`${headCompareSrc}; return compareSemver;`)();
-const workCompare = new Function('parseVersionCore',
-  `${workCompareSrc}; return compareSemver;`)(configRoute.parseVersionCore);
+
+// NON-VACUITY. If these two texts are equal the 484-cell matrix below is
+// comparing a function against itself and cannot fail. That is exactly what
+// pinning to `HEAD` produced, and it is the assertion that would have caught
+// it silently rather than by ReferenceError.
+ok(headCompareSrc !== workCompareSrc,
+  '§2 CONTROL: the baseline comparator and the working-tree one are DIFFERENT text — the matrix compares two revisions, not one');
+ok(!/parseVersionCore/.test(headCompareSrc || ''),
+  '§2 CONTROL: the baseline really is the PRE-lift shape (its parse is inline, not called by name)');
+ok(/parseVersionCore/.test(workCompareSrc || ''),
+  '§2 CONTROL: and the working tree really is the POST-lift shape');
+
+// ONE compiler for both revisions, and every EXPORT of the module under test is
+// supplied by name. The baseline's comparator is self-contained and ignores
+// them all; the working tree's picks up `parseVersionCore`. Injecting the whole
+// export surface rather than one hand-listed name is what stops the next edit
+// near `compareSemver` — a second lifted helper, a renamed one — from
+// reproducing this failure: a new dependency on any export of config.js now
+// resolves without touching this file.
+const CONFIG_EXPORT_NAMES = Object.keys(configRoute).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k) && k !== 'default');
+function compileComparator(fnSrc, label) {
+  // eslint-disable-next-line no-new-func
+  const make = new Function(...CONFIG_EXPORT_NAMES, `${fnSrc}; return compareSemver;`);
+  const fn = make(...CONFIG_EXPORT_NAMES.map((k) => configRoute[k]));
+  // A free variable that is NOT an export of config.js still throws — but at
+  // CALL time, deep inside the matrix, where it reads as a crashed suite with a
+  // wrong tally rather than a named expectation. Probe it once, here, so the
+  // failure has a name and a section.
+  try { fn('1.0.0', '1.0.0'); } catch (err) {
+    ok(false, `§2 the ${label} comparator could not run in its sandbox — ${err && err.message}. ` +
+      'It references something config.js does not export; supply it in compileComparator.');
+    return () => 0;
+  }
+  return fn;
+}
+const headCompare = compileComparator(headCompareSrc || 'function compareSemver(){return 0;}', `baseline (${BASELINE_REF})`);
+const workCompare = compileComparator(workCompareSrc || 'function compareSemver(){return 0;}', 'working tree');
 
 const VERSION_SAMPLES = [
   '3.30.0', '3.29.0', '3.9.0', '3.10.0', '3.0.1', '3.0.1-beta.27', '3.0.1+build.5',
@@ -185,10 +248,10 @@ for (const a of VERSION_SAMPLES) {
     const w = Math.sign(workCompare(a, b));
     cmpDistinct.add(h);
     if (h === w) cmpAgree++;
-    else ok(false, `§2 comparator DISAGREEMENT on (${JSON.stringify(a)}, ${JSON.stringify(b)}): head=${h} work=${w}`);
+    else ok(false, `§2 comparator DISAGREEMENT on (${JSON.stringify(a)}, ${JSON.stringify(b)}): baseline=${h} work=${w}`);
   }
 }
-eq(cmpAgree, cmpCells, `§2 HEAD and HEAD+change agree on all ${cmpCells} comparator cells`);
+eq(cmpAgree, cmpCells, `§2 baseline (${BASELINE_REF}) and the working tree agree on all ${cmpCells} comparator cells`);
 // Non-string inputs too — the parse's typeof guard is load-bearing.
 for (const v of [null, undefined, 42, {}, [], NaN]) {
   eq(Math.sign(headCompare(v, '3.0.0')), Math.sign(workCompare(v, '3.0.0')),
@@ -424,7 +487,7 @@ section('§6  REPO MODE IS UNCHANGED — proven by running both revisions');
 // packaged build, or the agreement above is satisfied by a branch that does
 // nothing.
 
-const headCheck = extractExportedFn(headConfigSrc, 'updateCheckHandler', { async: true });
+const headCheck = extractExportedFn(baselineConfigSrc || '', 'updateCheckHandler', { async: true });
 const workCheck = extractExportedFn(workConfigSrc, 'updateCheckHandler', { async: true });
 ok(!!headCheck && !!workCheck, '§6 extracted updateCheckHandler from BOTH revisions');
 ok(/^async function updateCheckHandler/.test(headCheck || '') &&
@@ -513,7 +576,7 @@ for (const input of CHECK_INPUTS) {
   if (JSON.stringify(a) !== JSON.stringify(b)) { checkSame = false; checkDiffs.push(input.name); }
 }
 ok(checkSame,
-  `§6 HEAD and HEAD+change agree on ALL ${CHECK_INPUTS.length} inputs in repo mode — same status, same response body, ` +
+  `§6 baseline (${BASELINE_REF}) and the working tree agree on ALL ${CHECK_INPUTS.length} inputs in repo mode — same status, same response body, ` +
   `same git commands, same URLs, in order` + (checkSame ? '' : ` — differed on: ${checkDiffs.join('; ')}`));
 
 // THE CONTROL. Agreement in BOTH modes would mean the branch does nothing.
@@ -670,7 +733,11 @@ const okJson = (payload, extra = {}) => async () => ({
 section('§8  The Settings view — the old failure, the new verdicts, the copy');
 // ═══════════════════════════════════════════════════════════════════════════
 
-const headSettingsSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/public/next/views/settings.js'], { encoding: 'utf8' });
+// Same pinned baseline as §2 — the SAME commit changed settings.js and
+// config.js, so `HEAD` here had the identical "compares against itself once it
+// merges" defect. See the box above BASELINE_REF.
+const headSettingsSrc = execFileSync('git', ['-C', ROOT, 'show', `${BASELINE_REF}:src/public/next/views/settings.js`],
+  { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const workSettingsSrc = read('src/public/next/views/settings.js');
 function extractLocalFn(src, name) {
   const at = src.search(new RegExp(`(^|\\n)function ${name}\\s*\\(`));
@@ -702,8 +769,20 @@ const escapeHtml = (s) => String(s)
     updateCheck: { error: refusal.error },
     version: { version: '3.30.0', onDiskVersion: '3.30.0', restartRequired: false },
   };
-  const s = headSandbox(escapeHtml, state, () => false);
-  const html = s.renderUpdateStatus();
+  // A sandbox built from extracted sources fails at CALL time when the source
+  // references a collaborator nobody supplied — deep inside a section, as a
+  // crashed process with a wrong tally and no expectation named. §2 hit exactly
+  // that. Convert it into a named assertion instead, so a future edit to
+  // settings.js reds this suite legibly rather than killing it.
+  let s = null, html = null, sandboxErr = null;
+  try {
+    s = headSandbox(escapeHtml, state, () => false);
+    html = s.renderUpdateStatus();
+  } catch (err) { sandboxErr = err && err.message; }
+  ok(sandboxErr === null,
+    `§8a the baseline renderer runs in its sandbox${sandboxErr ? ` — it does not: ${sandboxErr}. ` +
+      'It references something headSandbox does not supply; add it there.' : ''}`);
+  if (sandboxErr) { s = { classifyUpdate: () => ({ kind: null }), renderUpdateStatus: () => '' }; html = ''; }
   eq(s.classifyUpdate(state.updateCheck, state.version).kind, 'error',
     '§8a BEFORE: a packaged build\'s 501 classified as a failed check');
   ok(/upd-bad/.test(html), '§8a BEFORE: rendered in the DANGER variant — the app looked broken');
@@ -995,8 +1074,8 @@ ok((headCheck || '').length > 800 && (workCheck || '').length > 800,
 ok((extractLocalFn(headSettingsSrc, 'renderUpdateStatus') || '').length > 500,
   '§10 CONTROL: HEAD\'s renderUpdateStatus extracted (§8a would be vacuous otherwise)');
 ok(headSettingsSrc !== workSettingsSrc, '§10 CONTROL: the two settings.js revisions genuinely differ');
-ok(!headConfigSrc.includes('pickInstallableRelease'),
-  '§10 CONTROL: HEAD really predates this change, so §6\'s pre/post comparison is meaningful');
+ok(!(baselineConfigSrc || '').includes('pickInstallableRelease'),
+  `§10 CONTROL: the pinned baseline ${BASELINE_REF} really predates this change, so §6's pre/post comparison is meaningful`);
 
 // ── WHAT THIS SUITE DOES NOT PROVE. Named, not implied away. ───────────────
 //

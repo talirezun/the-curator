@@ -103,8 +103,7 @@ Escape hatch, rarely the right answer: `git commit --no-verify`.
 
 ## Running the tests
 
-The Curator has an extensive battle-test suite (158 suites total — 138 OFFLINE
-+ 14 LIVE_CI + 6 LIVE_LOCAL — thousands of assertions). One command runs them
+The Curator has an extensive battle-test suite (161 suites total — 141 OFFLINE
 + 14 LIVE_CI + 6 LIVE_LOCAL — thousands of assertions). One command runs them
 all and prints a single pass/fail report. **This count is CHECKED, not hand-maintained.**
 `scripts/check-doc-suite-counts.js` (an OFFLINE suite) parses the
@@ -558,6 +557,55 @@ if any of their CONTENT changed — a permanent regression guard in case isolati
 ever silently broken later (e.g. a future module re-deriving a config path
 without going through `paths.js`). Copy this shape for any new test that
 spawns a server.
+
+### `CURATOR_TEST_LAUNCH_APP` — the opt-in launch gate
+
+Not an isolation seam. The two above answer *which files may this test touch*;
+this one answers *may this test start a real macOS `.app`*, and the default is
+no.
+
+`scripts/test-desktop-version-identity.js` carries a load probe that runs a
+packaged bundle's own Mach-O with `ELECTRON_RUN_AS_NODE=1`. It is the only
+check in the repo that catches the **hardened-runtime-over-ad-hoc** failure —
+a bundle that passes `codesign --verify --deep --strict`, passes `spctl`, and
+still dies at dyld time with a library-validation error before a line of app
+code runs. Every static check goes green on an app that is dead on arrival, so
+the probe genuinely earns its place and must not be deleted.
+
+But `ELECTRON_RUN_AS_NODE` only suppresses the app's *own* window. When the
+binary fails to load, the process really did start and really was killed, and
+macOS's crash reporter puts **"The Curator cannot be opened because of a
+problem"** on the desktop of whoever is sitting at the machine. The probe is
+therefore dialog-free exactly when it finds nothing and dialog-popping exactly
+when it finds something — and the hardened-runtime *control* manufactures a
+bundle that is guaranteed not to load, so it fired one on every run, including
+during an ordinary `npm test`. A suite in the `OFFLINE` array must not do that
+on a contributor's machine; that is how a check gets disabled instead of fixed.
+
+```bash
+npm test                              # no bundle is ever launched (default)
+CURATOR_TEST_LAUNCH_APP=1 npm test    # …and now the load probe runs
+```
+
+Two properties keep the default honest:
+
+- **A skip always says so, and names the variable.** A silent skip is how a
+  check quietly stops existing.
+- **Everything that does not launch still runs unconditionally** — including
+  the real bundle's signature flags, read with `codesign -dv` and parsed. The
+  hardened-runtime defect is visible in `flags=0x10002(adhoc,runtime)` with no
+  launch at all, so the gate does not blind the suite to the bug it was
+  written for. The `afterPack` hook also runs the same probe on every real
+  build, so a release cannot ship without it.
+
+The suite additionally **skips rather than fails** when the bundle in
+`desktop/dist/` is stale — its `Info.plist` version disagreeing with the root
+`package.json`. `dist/` is gitignored build output and not a property of the
+commit under test, and a version-mismatched bundle cannot have come from a
+hook-enforced build (the hook refuses that build and emits nothing). The skip
+costs no coverage: the version refusal is proven non-vacuously on a fabricated
+bundle, on every platform. A bundle that *is* current is held to every check
+and is allowed to go red.
 
 Both `CURATOR_TEST_DOMAINS_DIR` and `CURATOR_TEST_USER_DATA_DIR` beat
 `.curator-config.json`'s `domainsPath`/config values respectively (that's the
