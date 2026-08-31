@@ -141,10 +141,53 @@ Paste whichever token you created into the **Personal access token** field.
 
 Under **Starting direction**, pick one:
 
-- **Push my wiki** — if this is the first computer you're setting up (this sends your existing knowledge up to GitHub)
-- **Pull an existing wiki** — if you've already set up another computer and want to download its knowledge
+| Option | Use it when | What it does to the folder on this computer |
+|---|---|---|
+| **Push my wiki** | This is the first computer you're setting up, and the repository is empty | **Nothing.** It sends this folder up to GitHub |
+| **Merge — keep both** | Both sides have content — a second computer that has already been used, or a folder another install has been syncing | **Adds** what's in the repository. Nothing here is deleted |
+| **Pull an existing wiki** | This computer is new or empty and you want to download an existing wiki | **Replaces** files that exist on both sides with the repository's version |
 
-Click **Connect**. The app initialises the repository and performs the first sync, then the card is replaced by the connected view showing your repository, when you last synced, and how many local changes are waiting.
+Click **Connect**.
+
+Before it changes anything, The Curator checks the repository against your folder
+and tells you what it found. If **Pull** would replace files that are here with a
+different version, it stops and says **how many, and which ones**, and offers
+**Merge — keep both** instead. You can still choose to overwrite — it is your
+folder — but you will see the count first, and you have to say so.
+
+> **Why this exists.** Before v3.32.0 there was no third option and no count. A
+> user connected a second install to a folder that already had a morning's work
+> in it, was correctly told that "Push my wiki" could not proceed, and the only
+> other control on the screen checked the repository out over his folder. Four
+> working-state handoffs and an append-only journal were destroyed. The count and
+> the Merge option are the fix.
+
+**One thing Merge does that is worth knowing:** because the two sides have no
+shared history yet, every file in the repository looks new to it. So a page you
+**deleted** on this computer since its last push **comes back**. That is the
+direction chosen on purpose — a page reappearing is visible and one click to
+remove, a page vanishing is not. Delete it again after the first sync.
+
+### If another install already syncs this folder
+
+If you point a second install of The Curator — say the Mac app — at a domains
+folder that another install is already syncing, The Curator notices, and **joins
+the existing sync history instead of starting a second one**. Nothing in your
+folder is changed, and you'll see a note saying so before you click Connect.
+
+This matters more than it sounds. Two sync setups over one folder means two
+independent histories over the same files: each one's changes reach the other as
+a *merge*, and merges can silently replace an edited page. One folder should have
+exactly one sync history.
+
+If the other install is connected to a **different** repository, The Curator
+refuses rather than creating that situation. Disconnect sync in the other install
+first, or point this one at a different folder.
+
+**If you are already in that state** — you connected both before v3.32.0 — the
+Sync view shows a banner saying so. The fix is two clicks: **Disconnect**, then
+**Connect** again with the same repository. The reconnect joins the existing
+history, and nothing in your folder is touched.
 
 ---
 
@@ -155,7 +198,7 @@ Once sync is working on your first computer, adding a second one takes about 2 m
 1. Install the The Curator app on the second computer (follow the [User Guide](user-guide.md) steps 1–6)
 2. Open `http://localhost:3333` and go to **Sync**
 3. Fill in the setup card — same repo URL, same PAT (or create a new one if you lost the original)
-4. At Step 3, choose **Pull** to download the knowledge from GitHub
+4. At Step 5, choose **Pull an existing wiki** to download the knowledge from GitHub — or **Merge — keep both** if this computer's domains folder already has anything in it
 
 Once it connects, all your wiki pages and conversations will appear on the new computer.
 
@@ -310,6 +353,28 @@ Someone pushed new changes to GitHub (from another computer) that you haven't pu
 - Click **Sync now** — it pulls remote changes first, then pushes yours.
 
 (If you previously used *Push only* and got this error, that's why. **Sync now** handles both directions and avoids the problem entirely.)
+
+### "That repository already has a wiki in it" — while connecting
+
+You chose **Push my wiki**, but the repository is not empty. That is not an
+error in your setup; it just means the repository already holds a wiki, so
+sending this folder up on top of it would throw that wiki away.
+
+- If both sides have content you want, choose **Merge — keep both**.
+- If this computer is the one you want to start from, choose **Pull an existing
+  wiki** — and read the count it shows you first.
+
+### "Pulling would overwrite N files in your domains folder"
+
+Exactly what it says: those files are here with different content from the
+repository's version, and Pull replaces them. The versions currently on this
+machine are **not recoverable** afterwards — they have never been committed
+anywhere.
+
+- **Merge — keep both** is almost always what you want. It combines the two
+  sides and commits this folder first, so nothing is lost either way.
+- **Overwrite my local files** is there if you genuinely mean it — for example
+  this computer's folder is a stale copy you want to discard.
 
 ### "Another sync check was running at the same time, so this one stopped early"
 

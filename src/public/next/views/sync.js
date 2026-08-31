@@ -107,7 +107,16 @@ function freshState() {
     actionMessage: null,
     actionError: null,
     disconnectConfirmOpen: false,
-    setupForm: { repoUrl: '', token: '', mode: 'push', submitting: false, error: null },
+    // `decision` is the connect flow's second screen, and it exists because
+    // of the v3.32.0 incident: a refusal that leaves only a destructive door
+    // open is not a guard. Shapes: null (no decision pending),
+    // {kind:'overwrite', count, sample, createCount}, {kind:'adopt', originUrl},
+    // {kind:'foreign', originUrl}, {kind:'remote-empty'|'remote-not-empty'}.
+    // Every one of them offers at least one NON-destructive way forward.
+    setupForm: {
+      repoUrl: '', token: '', mode: 'push', submitting: false, error: null,
+      checking: false, decision: null,
+    },
   };
 }
 
@@ -424,13 +433,118 @@ function renderUnconfigured() {
         '<span class="sync-setup-label">Starting direction</span>' +
         '<div class="theme-segmented">' +
           '<button type="button" class="theme-seg-btn' + (f.mode === 'push' ? ' active' : '') + '" data-mode="push">Push my wiki</button>' +
+          // THE THIRD OPTION IS THE POINT OF THIS RELEASE. Before it there
+          // were exactly two doors out of a first connect — send this folder
+          // up, or check the repository out over this folder — and when the
+          // first was refused (the repository already had commits) the second
+          // was the only one left, and it destroyed four hours of work. Merge
+          // is the door that was missing.
+          '<button type="button" class="theme-seg-btn' + (f.mode === 'merge' ? ' active' : '') + '" data-mode="merge">Merge — keep both</button>' +
           '<button type="button" class="theme-seg-btn' + (f.mode === 'pull' ? ' active' : '') + '" data-mode="pull">Pull an existing wiki</button>' +
         '</div>' +
+        '<p class="settings-hint-text sync-mode-hint">' + escapeHtml(MODE_HINTS[f.mode] || '') + '</p>' +
       '</div>' +
       (f.error ? '<div class="settings-inline-error">' + escapeHtml(f.error) + '</div>' : '') +
-      '<button type="button" class="btn btn-primary" id="btn-sync-connect"' + (f.submitting ? ' disabled' : '') + '>' +
-        (f.submitting ? 'Connecting…' : 'Connect') +
-      '</button>' +
+      renderSetupDecision(f) +
+      (f.decision ? '' :
+        '<button type="button" class="btn btn-primary" id="btn-sync-connect"' + (f.submitting || f.checking ? ' disabled' : '') + '>' +
+          (f.checking ? 'Checking…' : f.submitting ? 'Connecting…' : 'Connect') +
+        '</button>') +
+    '</div>'
+  );
+}
+
+// One sentence per mode, shown under the toggle. The destructive one says
+// what it does in the plainest words available; "Pull an existing wiki" on
+// its own reads like a download.
+const MODE_HINTS = {
+  push:  'Sends this machine\u2019s domains folder up as the first version. Nothing here is changed.',
+  merge: 'Combines what is in this folder with what is in the repository. Nothing here is deleted, and files you deleted locally may come back.',
+  pull:  'Replaces the contents of this folder with the repository\u2019s version. Local-only files are kept; files that exist in both are overwritten.',
+};
+
+/**
+ * The decision panel — the connect flow's answer to "the guard fired and the
+ * user still lost data".
+ *
+ * EVERY BRANCH OFFERS A NON-DESTRUCTIVE ROUTE, and the destructive one is
+ * never the primary button, never preselected, and never rendered without a
+ * COUNT and a sample of the actual paths beside it. That last part is the
+ * difference between a warning and a fact: "this may overwrite files" is
+ * something people click through; "this replaces these 4 files, here they
+ * are" is not.
+ */
+function renderSetupDecision(f) {
+  const d = f.decision;
+  if (!d) return '';
+  const busy = f.submitting;
+  const dis = busy ? ' disabled' : '';
+
+  if (d.kind === 'adopt') {
+    return (
+      '<div class="sync-decision sync-decision-info">' +
+        '<div class="sync-decision-title">This folder is already synced</div>' +
+        '<p class="sync-decision-body">Another Curator install on this Mac already syncs this domains folder ' +
+        'to the same repository. This install will use that same sync history instead of starting a second ' +
+        'one \u2014 nothing in your folder is changed.</p>' +
+        '<div class="sync-decision-actions">' +
+          '<button type="button" class="btn btn-primary" id="btn-decide-go"' + dis + '>' +
+            (busy ? 'Connecting\u2026' : 'Connect') + '</button>' +
+          '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  if (d.kind === 'foreign') {
+    return (
+      '<div class="sync-decision sync-decision-warn">' +
+        '<div class="sync-decision-title">Another install already syncs this folder</div>' +
+        '<p class="sync-decision-body">It is connected to a different repository' +
+        (d.originUrl ? ' (' + escapeHtml(d.originUrl) + ')' : '') + '. Connecting this one too would put two ' +
+        'independent sync histories over the same files, which is how pages get silently replaced. ' +
+        'Disconnect sync in the other install first, or point this install at a different domains folder.</p>' +
+        '<div class="sync-decision-actions">' +
+          '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">OK</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  if (d.kind === 'overwrite') {
+    const n = d.count;
+    return (
+      '<div class="sync-decision sync-decision-danger">' +
+        '<div class="sync-decision-title">Pulling would overwrite ' + n + ' file' + (n === 1 ? '' : 's') + '</div>' +
+        '<p class="sync-decision-body">These files are in your domains folder with different content from the ' +
+        'repository\u2019s version. Pulling replaces them, and the version currently on this machine is not ' +
+        'recoverable afterwards.</p>' +
+        (d.sample && d.sample.length
+          ? '<ul class="sync-decision-files mono">' +
+              d.sample.map((x) => '<li>' + escapeHtml(x) + '</li>').join('') +
+              (n > d.sample.length ? '<li class="sync-decision-more">\u2026and ' + (n - d.sample.length) + ' more</li>' : '') +
+            '</ul>'
+          : '') +
+        '<div class="sync-decision-actions">' +
+          '<button type="button" class="btn btn-primary" id="btn-decide-merge"' + dis + '>' +
+            (busy && f.mode === 'merge' ? 'Merging\u2026' : 'Merge \u2014 keep both') + '</button>' +
+          '<button type="button" class="btn btn-danger" id="btn-decide-overwrite"' + dis + '>' +
+            (busy && f.mode === 'pull' ? 'Overwriting\u2026' : 'Overwrite my local files') + '</button>' +
+          '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">Cancel</button>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  // remote-empty / remote-not-empty and anything else setup() refuses with a
+  // written sentence. Rendered as text plus a way back, never as a dead end.
+  return (
+    '<div class="sync-decision sync-decision-warn">' +
+      '<div class="sync-decision-title">Cannot connect that way</div>' +
+      '<p class="sync-decision-body">' + escapeHtml(d.message || '') + '</p>' +
+      '<div class="sync-decision-actions">' +
+        '<button type="button" class="btn btn-secondary" id="btn-decide-cancel">OK</button>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -472,6 +586,28 @@ function renderConfigured(s) {
         '<span class="mono sync-last">last synced ' + escapeHtml(lastSyncLabel) + '</span>' +
       '</div>' +
       (state.statusError ? '<div class="settings-inline-error">' + escapeHtml(state.statusError) + '</div>' : '') +
+      // THE ALREADY-SPLIT INSTALL. setup()'s adoption closes the split for a
+      // connect made from now on and does nothing for an install that is
+      // already in it — and one exists, because the incident that produced
+      // this work left one. Self-healing it silently would switch a working
+      // install onto a different repository behind the user's back and
+      // orphan whatever its own repo already holds; that is the same class
+      // of unrequested decision that lost the data. So the app SAYS so, in
+      // the one place the user goes to think about sync, and names the two
+      // clicks that fix it. `adoptedSyncRepo` suppresses it: an adopted
+      // install shares the other install's repo by design and is not split.
+      (s.splitSyncRepo && !s.adoptedSyncRepo
+        ? renderStatus({
+            state: 'attention',
+            title: 'Two sync histories over one folder',
+            detail: 'Another Curator install on this Mac also syncs this domains folder, through its own ' +
+                    'separate sync history. Both push to the same repository, so each one\u2019s changes ' +
+                    'arrive at the other as a merge \u2014 which can silently replace edited pages. ' +
+                    'To fix it: Disconnect below, then Connect again with the same repository. The ' +
+                    'reconnect will join the existing history instead of starting a second one, and ' +
+                    'nothing in your folder is changed.',
+          })
+        : '') +
       crossNote +
       '<div class="sync-status-actions">' +
         // The icon SPINS only while `acting === 'sync'` (this button's own
@@ -591,6 +727,22 @@ function wireListeners() {
     });
     const connectBtn = document.getElementById('btn-sync-connect');
     if (connectBtn) connectBtn.addEventListener('click', () => onConnect(myMountToken));
+
+    // Decision-panel buttons. `confirmOverwrite` is passed as a literal
+    // `true` from exactly ONE of them and nowhere else in this file — the
+    // one the user reaches only after seeing the count and the file list.
+    const dMerge = document.getElementById('btn-decide-merge');
+    if (dMerge) dMerge.addEventListener('click', () => runSetup('merge', false, myMountToken));
+    const dOver = document.getElementById('btn-decide-overwrite');
+    if (dOver) dOver.addEventListener('click', () => runSetup('pull', true, myMountToken));
+    const dGo = document.getElementById('btn-decide-go');
+    if (dGo) dGo.addEventListener('click', () => runSetup(state.setupForm.mode, false, myMountToken));
+    const dCancel = document.getElementById('btn-decide-cancel');
+    if (dCancel) dCancel.addEventListener('click', () => {
+      state.setupForm.decision = null;
+      state.setupForm.error = null;
+      render(myMountToken);
+    });
     return;
   }
 
@@ -633,6 +785,78 @@ async function onConnect(token) {
     render(token);
     return;
   }
+  // ── PREFLIGHT FIRST, ALWAYS ──────────────────────────────────────────
+  // The whole defect this replaces is that Connect went straight to an
+  // operation that could replace files, with no number in front of it. The
+  // preflight writes nothing outside a tempdir (see preflightSetup in
+  // brain/sync.js) and its only cost is one fetch, paid once per install.
+  //
+  // A preflight that FAILS does not block the connect: it is an
+  // improvement to the information, not a new gate, and a user whose
+  // preflight failed for a transient reason must still be able to connect.
+  // The server-side refusal in setup() is the real guard, and it cannot be
+  // skipped — this is the half that turns that refusal into a choice.
+  state.setupForm.checking = true;
+  state.setupForm.error = null;
+  state.setupForm.decision = null;
+  render(token);
+  let pre = null;
+  try {
+    const res = await fetch('/api/sync/preflight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoUrl: repoUrl.trim(), token: pat.trim() }),
+    });
+    const data = await res.json();
+    if (res.ok && data && data.ok) pre = data;
+    else if (!res.ok) {
+      if (!isCurrentMount(token)) return;
+      state.setupForm.checking = false;
+      state.setupForm.error = data && data.error ? data.error : 'Could not reach that repository.';
+      render(token);
+      return;
+    }
+  } catch { /* transient — fall through to the connect, which has its own guard */ }
+  if (!isCurrentMount(token)) return;
+  state.setupForm.checking = false;
+
+  if (pre) {
+    if (pre.foreignSyncRepo && !pre.foreignSyncRepo.matchesRequestedRepo) {
+      state.setupForm.decision = { kind: 'foreign', originUrl: pre.foreignSyncRepo.originUrl };
+      render(token);
+      return;
+    }
+    if (pre.foreignSyncRepo) {
+      state.setupForm.decision = { kind: 'adopt', originUrl: pre.foreignSyncRepo.originUrl };
+      render(token);
+      return;
+    }
+    if (state.setupForm.mode === 'pull' && pre.overwriteCount > 0) {
+      state.setupForm.decision = {
+        kind: 'overwrite',
+        count: pre.overwriteCount,
+        sample: pre.overwriteSample || [],
+        createCount: pre.createCount || 0,
+      };
+      render(token);
+      return;
+    }
+  }
+
+  await runSetup(state.setupForm.mode, false, token);
+}
+
+/**
+ * POST /api/sync/setup and render whatever comes back.
+ *
+ * `confirmOverwrite` is threaded explicitly rather than read off state, so
+ * that grepping this file for the literal `true` at its call sites shows
+ * every path that can authorise an overwrite. There is one.
+ */
+async function runSetup(mode, confirmOverwrite, token) {
+  const repoUrl = (state.setupForm.repoUrl || '').trim();
+  const pat = (state.setupForm.token || '').trim();
+  state.setupForm.mode = mode;
   state.setupForm.submitting = true;
   state.setupForm.error = null;
   render(token);
@@ -640,16 +864,43 @@ async function onConnect(token) {
     const res = await fetch('/api/sync/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repoUrl: repoUrl.trim(), token: pat.trim(), mode: state.setupForm.mode }),
+      body: JSON.stringify({ repoUrl, token: pat, mode, confirmOverwrite: confirmOverwrite === true }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not connect.');
+    if (!res.ok) {
+      // A 409 carries setup()'s own refusal code and numbers. Render it as
+      // the same decision panel the preflight would have produced — so the
+      // route's guard is not merely an error, it is the same offer of a
+      // non-destructive route. This is the path a client that skipped the
+      // preflight lands on, which is why it must render a CHOICE and not a
+      // red box.
+      if (!isCurrentMount(token)) return;
+      if (res.status === 409 && data && data.code === 'pull-would-overwrite') {
+        const det = data.details || {};
+        state.setupForm.decision = {
+          kind: 'overwrite',
+          count: det.overwriteCount || 0,
+          sample: det.overwriteSample || [],
+          createCount: det.createCount || 0,
+        };
+      } else if (res.status === 409 && data && data.code === 'foreign-sync-repo') {
+        state.setupForm.decision = { kind: 'foreign', originUrl: (data.details || {}).otherOriginUrl };
+      } else if (res.status === 409 && data && data.code) {
+        state.setupForm.decision = { kind: data.code, message: data.error };
+      } else {
+        throw new Error(data.error || 'Could not connect.');
+      }
+      state.setupForm.submitting = false;
+      render(token);
+      return;
+    }
     if (!isCurrentMount(token)) return;
     await loadStatus(token);
     if (!isCurrentMount(token)) return;
     state.setupForm = freshState().setupForm;
   } catch (err) {
     if (!isCurrentMount(token)) return;
+    state.setupForm.decision = null;
     state.setupForm.error = err.message;
   } finally {
     // Unlike domains.js's busyKey (a SINGLE persistent `state` object that
@@ -661,7 +912,14 @@ async function onConnect(token) {
     // reach through the `state` closure variable into whatever the CURRENT
     // (possibly already-mid-connect) mount's state object is and wrongly
     // clear ITS OWN in-flight submitting flag.
-    if (isCurrentMount(token)) { state.setupForm.submitting = false; render(token); }
+    // `checking` is cleared here too: onConnect sets it, and a throw
+    // between that and runSetup's own reset would otherwise leave the
+    // Connect button reading "Checking…" and disabled with nothing running.
+    if (isCurrentMount(token)) {
+      state.setupForm.submitting = false;
+      state.setupForm.checking = false;
+      render(token);
+    }
   }
 }
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
-  isConfigured, getStatus, getRemoteStatus, remoteErrorMessage, setup, push, pull, sync, disconnect, friendlyError,
+  isConfigured, getStatus, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
+  SETUP_MODES, push, pull, sync, disconnect, friendlyError,
 } from '../brain/sync.js';
 import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
 
@@ -88,6 +89,35 @@ router.get('/remote-status', async (req, res) => {
   }
 });
 
+/**
+ * NON-DESTRUCTIVE preview of what connecting would do — the count that has
+ * to reach the user BEFORE they click Connect.
+ *
+ * A POST, not a GET, and that is not a style choice: it carries a GitHub PAT
+ * in the body. A GET would put the token in a URL, where it lands in the
+ * server's own request handling, in browser history, and in anything that
+ * logs a path. It is also POST so the cross-origin guard in server.js
+ * applies — the guard covers mutating METHODS, and while this route mutates
+ * nothing, a page in another tab must not be able to drive an authenticated
+ * GitHub fetch on the user's token.
+ *
+ * Guarded on the same grounds as /setup: it reads the whole domains work-tree
+ * to produce its number, so an ingest landing mid-assessment would make that
+ * number describe a folder that no longer exists. A 409 the user can retry is
+ * better than a wrong count on the screen that decides whether files are
+ * overwritten.
+ */
+router.post('/preflight', guardConcurrent('check sync'), async (req, res) => {
+  try {
+    const { repoUrl, token } = req.body;
+    if (!repoUrl) return res.status(400).json({ error: 'repoUrl is required' });
+    if (!token)   return res.status(400).json({ error: 'token is required' });
+    res.json(await preflightSetup(repoUrl, token));
+  } catch (err) {
+    res.status(500).json({ ok: false, error: friendlyError(err) || err.message });
+  }
+});
+
 // Guarded on the same grounds as its four siblings below: setup() runs
 // `git add -A` + commit + push across the domains work-tree, so running it
 // mid-ingest snapshots a half-written document — "half of a source's pages on
@@ -96,15 +126,30 @@ router.get('/remote-status', async (req, res) => {
 // without the middleware.
 router.post('/setup', guardConcurrent('set up sync'), async (req, res) => {
   try {
-    const { repoUrl, token, mode } = req.body;
+    const { repoUrl, token, mode, confirmOverwrite } = req.body;
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl is required' });
     if (!token)   return res.status(400).json({ error: 'token is required' });
-    if (!['push', 'pull'].includes(mode))
-      return res.status(400).json({ error: 'mode must be "push" or "pull"' });
+    if (!SETUP_MODES.includes(mode))
+      return res.status(400).json({ error: `mode must be one of ${SETUP_MODES.join(', ')}` });
 
-    await setup(repoUrl, token, mode);
-    res.json({ success: true, ...(await getStatus()) });
+    // `confirmOverwrite` is the ONLY way to reach setup()'s destructive
+    // branch, and it is compared with === true rather than coerced. A
+    // truthy-string check would let `"false"` through, which is exactly the
+    // shape v3.30.0 refused for `safeToQuit`. A client that does not send
+    // the field — /old, curl, an older frontend — therefore CANNOT overwrite
+    // anything; it gets the refusal instead. That is the point: /old's
+    // connect form is frozen and cannot be taught the new dialog, so the
+    // safety has to live on this side of the wire.
+    const result = await setup(repoUrl, token, mode, { confirmOverwrite: confirmOverwrite === true });
+    res.json({ success: true, ...result, ...(await getStatus()) });
   } catch (err) {
+    // A REFUSAL IS NOT A CRASH. setup()'s guards raise a written sentence
+    // plus a machine-readable code and the numbers behind it; answering 409
+    // with all three lets the UI render a decision panel instead of a red
+    // error box, which is the difference between "you cannot do that" and
+    // "here is what to do instead". 500 stays for everything unrecognised.
+    const refusal = syncRefusalOf(err);
+    if (refusal) return res.status(409).json({ error: refusal.message, ...refusal });
     res.status(500).json({ error: friendlyError(err) || err.message });
   }
 });

@@ -1,8 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
-import { mkdir, readFile, readdir, unlink, rm } from 'fs/promises';
-import { existsSync } from 'fs';
+import { mkdir, mkdtemp, readFile, readdir, unlink, rm, chmod } from 'fs/promises';
+import { existsSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { getDomainsDir } from './config.js';
 import { writeFileAtomic } from './atomic-write.js';
 import { clearStaleLock } from './write-registry.js';
@@ -38,8 +39,68 @@ export function __setSyncTestOverrides({ gitDir, configFile } = {}) {
   _gitDirOverride = gitDir || null;
   _configFileOverride = configFile || null;
 }
-function currentGitDir()     { return _gitDirOverride || getSyncGitDir(); }
 function currentConfigFile() { return _configFileOverride || getSyncConfigFile(); }
+
+/**
+ * The git dir THIS install's Personal Sync operates through.
+ *
+ *   test override           → that
+ *   .sync-config.json gitDir → that   ← v3.32.0: ADOPTION (see setup())
+ *   otherwise                → getSyncGitDir()   (unchanged for every
+ *                              install that has never adopted)
+ *
+ * WHY A STORED PATH RATHER THAN A RECOMPUTED HEURISTIC. Adoption is decided
+ * ONCE, at connect time, by detectForeignSyncRepo() — a filesystem probe. If
+ * this resolver re-ran that probe on every call, the answer would change
+ * under the app whenever the user moved their domains folder, and this
+ * project has already shipped exactly that shape once (v3.25.0's
+ * getUserDataDir() caching a failed mkdir, and the machine-id resolver that
+ * returned two folder names in one session). A value written to
+ * .sync-config.json is a FACT about this install, not a re-derivation.
+ *
+ * NOT MEMOISED, deliberately. It reads a <300-byte 0600 JSON file; every
+ * caller of it is about to spawn a `git` subprocess costing ~1000x more. A
+ * cache here would reintroduce the time-dependence the paragraph above
+ * exists to avoid — most concretely, disconnect() writes this field away and
+ * the very next isConfigured() must see that.
+ *
+ * FAILS BACK, NEVER FAILS OVER. A gitDir that is absent, relative, or no
+ * longer a git dir on disk (the other install was deleted) resolves to the
+ * default rather than throwing. The worst case is that this install starts
+ * a fresh repo of its own — which is exactly the pre-v3.32.0 behaviour, and
+ * is recoverable; refusing to sync at all is not.
+ */
+function configuredGitDir() {
+  const f = currentConfigFile();
+  if (!existsSync(f)) return null;
+  let cfg;
+  try { cfg = JSON.parse(readFileSync(f, 'utf8')); } catch { return null; }
+  const d = cfg && cfg.gitDir;
+  if (typeof d !== 'string' || !d || !path.isAbsolute(d)) return null;
+  return looksLikeGitDir(d) ? d : null;
+}
+
+/**
+ * Where this install would put a sync repo if it had not adopted one. The
+ * test seam overrides THIS, not currentGitDir(), so adoption can be
+ * exercised end to end: a suite points the install default at a tempdir and
+ * the adopted path still wins, exactly as it does in production.
+ */
+function installDefaultGitDir() { return _gitDirOverride || getSyncGitDir(); }
+
+function currentGitDir() { return configuredGitDir() || installDefaultGitDir(); }
+
+/**
+ * Is `dir` a git directory? Checked by SHAPE on disk rather than by spawning
+ * `git rev-parse`, because configuredGitDir() above is synchronous and on
+ * every git() call. Both entries are created by `git init` and neither is
+ * created by anything else we write.
+ */
+function looksLikeGitDir(dir) {
+  try {
+    return existsSync(path.join(dir, 'HEAD')) && existsSync(path.join(dir, 'objects'));
+  } catch { return false; }
+}
 
 // AppleScript's `do shell script` launches us with a minimal PATH. Prepend the
 // usual locations for git/node/npm so subprocesses resolve them reliably.
@@ -118,12 +179,22 @@ function sanitize(str) {
 }
 
 async function git(cmd, opts = {}) {
-  const full = `git --git-dir="${currentGitDir()}" --work-tree="${getDomainsDir()}" ${cmd}`;
+  // opts.gitDir — operate on a git dir OTHER than this install's own. Used by
+  // two callers and only two: setup(), which must run against the dir it is
+  // about to adopt BEFORE that choice is written to config, and
+  // preflightSetup(), which runs entirely inside a throwaway tempdir repo.
+  // Defaulting to currentGitDir() keeps every existing call site byte-
+  // identical in behaviour.
+  //
+  // opts.env — extra environment for ONE call. Only GIT_INDEX_FILE uses it,
+  // so that assessPullOverwrite() can load a tree into a SCRATCH index and
+  // never touch the real one.
+  const full = `git --git-dir="${opts.gitDir || currentGitDir()}" --work-tree="${getDomainsDir()}" ${cmd}`;
   try {
     const { stdout, stderr } = await execAsync(full, {
       timeout: opts.timeout || 30000,
       cwd: ROOT,              // Explicit cwd prevents "getcwd: Operation not permitted" on macOS
-      env: SUBPROCESS_ENV,    // Ensure git is findable under the .app wrapper's minimal PATH
+      env: opts.env ? { ...SUBPROCESS_ENV, ...opts.env } : SUBPROCESS_ENV,
     });
     return { stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (err) {
@@ -139,6 +210,23 @@ async function git(cmd, opts = {}) {
 
 function buildRemoteUrl(repoUrl, token) {
   let url = repoUrl.trim();
+  // A `file://` remote is passed through UNCHANGED, with no token appended.
+  //
+  // Two reasons, and the second is why it is here rather than in a test
+  // helper. (1) Correctness: git supports the file transport, and the code
+  // below — which strips the scheme and re-prefixes `https://<token>@` —
+  // turns `file:///srv/wiki.git` into `https:///srv/wiki.git`, a URL with no
+  // host, so a user who typed one got "URL rejected: No host part in the
+  // URL" instead of either working or being told the format is unsupported.
+  // (2) setup() had ZERO test coverage before v3.32.0, and the reason is
+  // visible in scripts/test-sync-hygiene.js: every fixture in it hand-builds
+  // a repo with `git remote add` because setup() could not be pointed at a
+  // local bare repo. The function that destroyed a user's working state was
+  // untestable offline. It is not any more.
+  //
+  // No token is appended and none can leak: the file transport has no
+  // credential to carry.
+  if (/^file:\/\//i.test(url)) return url;
   // SSH → HTTPS
   if (url.startsWith('git@')) {
     url = url.replace(/^git@github\.com:/, 'https://github.com/');
@@ -231,7 +319,17 @@ function friendlyError(err) {
     return 'Cannot reach GitHub. Check your internet connection and try again.';
   }
   if (msg.includes('non-fast-forward') || msg.includes('rejected')) {
-    return 'GitHub has changes you don\'t have locally. Click "Pull only" first (under Advanced), then sync again.';
+    // NAMES AN ACTION, NOT A PLACE. The previous wording was 'Click "Pull
+    // only" first (under Advanced), then sync again' and that was its own
+    // defect, found by a user who followed it into a data loss. "(under
+    // Advanced)" describes /old's layout — /next puts Push only / Pull only
+    // at the top level of the Sync view — and on the CONNECT screen neither
+    // control exists at all, so a user reading it there reached for the only
+    // other thing on the screen, which overwrote their files. setup() now
+    // raises its own connect-specific refusal ('remote-not-empty') before
+    // this branch can be reached from that screen; this wording is for the
+    // configured screen, where "pull first" is genuinely the next step.
+    return 'GitHub has changes you don\'t have locally. Pull first, then sync again.';
   }
   if (msg.includes('nothing to commit')) {
     return null; // Not an error
@@ -241,10 +339,17 @@ function friendlyError(err) {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-async function saveConfig(repoUrl, token) {
+async function saveConfig(repoUrl, token, gitDir = null) {
   // v3.0.1-beta.20: atomic + 0600 — .sync-config.json holds the GitHub PAT, so
   // it must not be world-readable, and a kill mid-write must not lose the token.
-  await writeFileAtomic(currentConfigFile(), JSON.stringify({ repoUrl, token }, null, 2), { mode: 0o600 });
+  //
+  // v3.32.0: `gitDir` is written ONLY when this install adopted another
+  // install's sync repo (see setup()). It is OMITTED — not written as null —
+  // in the ordinary case, so a config file produced by this version against a
+  // normal install is byte-identical to one produced by every version before
+  // it, and configuredGitDir() reads absent and null identically anyway.
+  const payload = gitDir ? { repoUrl, token, gitDir } : { repoUrl, token };
+  await writeFileAtomic(currentConfigFile(), JSON.stringify(payload, null, 2), { mode: 0o600 });
 }
 
 async function loadConfig() {
@@ -588,6 +693,339 @@ async function cleanupStaleLocalLocks() {
   return cleared;
 }
 
+// ── Connect-time safety: one sync repo per folder, and no silent overwrite ───
+//
+// THE INCIDENT THIS SECTION EXISTS FOR (v3.32.0). A user installed the Mac
+// app, pointed it at the domains folder his existing browser install was
+// already syncing, and connected GitHub sync. Four working-state handoffs
+// written that morning were destroyed, and `journal.jsonl` — an APPEND-ONLY
+// file — came back one line long. Two independent defects combined:
+//
+//  (1) TWO GIT REPOSITORIES OVER ONE WORK TREE. getSyncGitDir() resolves
+//      through getUserDataDir(), which forks on install mode; the work tree
+//      does NOT fork — it is getDomainsDir(), which both installs were
+//      pointed at. So the app created `<appSupport>/.knowledge-git` beside
+//      the checkout's existing `<checkout>/.knowledge-git`, two histories
+//      over one set of files, sharing a common remote commit and diverging
+//      after it.
+//
+//  (2) THE REFUSAL LEFT ONLY THE DESTRUCTIVE DOOR OPEN. Connecting in
+//      "Push my wiki" mode was correctly refused (non-fast-forward: the
+//      remote had commits this brand-new repo did not). The only other
+//      control was "Pull an existing wiki", and setup()'s pull arm ended in
+//      an unconditional `git reset --hard origin/main`.
+//
+// `git reset --hard` is the one tree-writing command with NO untracked-file
+// safety check. Reproduced against real git: `checkout -b main origin/main`
+// REFUSED, naming all three colliding files; `checkout main` REFUSED;
+// `reset --hard origin/main` then replaced every one of them with the older
+// remote revision and exited 0. Git said no twice and the fallback ladder
+// said yes anyway.
+//
+// The three functions below are the fix's measurement half. setup() is its
+// decision half.
+
+/**
+ * Normalise a repository URL to a comparable identity — `host/owner/repo`,
+ * lowercased, credentials and `.git` stripped, both the HTTPS and the
+ * `git@host:owner/repo` forms accepted.
+ *
+ * Used ONLY to decide whether a sync repo already sitting beside the user's
+ * domains folder points at the same GitHub repository they are connecting
+ * to. Deliberately lossy and deliberately NOT used for anything that talks
+ * to the network: a false match here adopts a repo, and a false mismatch
+ * refuses a connect, so both directions are visible to the user rather than
+ * silent. Returns null for anything unparseable, and null never matches
+ * null (see the call site) — "we could not tell" is not "they are the same".
+ */
+function repoIdentity(url) {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  let u = url.trim();
+  u = u.replace(/^git@([^:]+):/, 'https://$1/');
+  u = u.replace(/^ssh:\/\//, 'https://');
+  u = u.replace(/^https?:\/\//, '');
+  u = u.replace(/^[^@/]*@/, '');           // strip user:token@
+  u = u.replace(/\.git$/, '').replace(/\/+$/, '');
+  return u.toLowerCase() || null;
+}
+
+/**
+ * The directory a DIFFERENT Curator install would have put its sync repo in
+ * for this same domains folder.
+ *
+ * ONE candidate, and it is not a guess in the loose sense: in repo mode
+ * getUserDataDir() IS the checkout, and the default domains folder is
+ * `<checkout>/domains`, so a repo-mode install's `.knowledge-git` is
+ * necessarily the SIBLING of the domains folder. That is the shape of every
+ * install that existed before the Mac app, which is precisely the population
+ * that can hit the split. A user who relocated `domainsPath` away from its
+ * default is not covered — stated as a limit rather than papered over with
+ * a directory walk, which would be both slow and far more likely to adopt
+ * something unrelated.
+ */
+function foreignSyncGitDirCandidate() {
+  const parent = path.dirname(getDomainsDir());
+  if (!parent || parent === getDomainsDir()) return null;   // domains at filesystem root
+  // The directory NAME comes from paths.js's own getter rather than being
+  // written out here. Two reasons, and only one of them is the guard in
+  // test-paths.js §(b) that fails on a hardcoded user-data filename outside
+  // paths.js: the other is that if that directory is ever renamed, a literal
+  // here would silently stop detecting anything — a detector that quietly
+  // finds nothing is worse than no detector, because the split it exists to
+  // catch is itself silent.
+  return path.join(parent, path.basename(getSyncGitDir()));
+}
+
+/**
+ * The cheap half of detectForeignSyncRepo: is a foreign sync repo PRESENT?
+ * Two stat calls, no subprocess — see getStatus()'s call site for why that
+ * matters. Says nothing about which remote it points at.
+ */
+function foreignSyncRepoPresent() {
+  const candidate = foreignSyncGitDirCandidate();
+  if (!candidate) return false;
+  if (candidate === installDefaultGitDir() || candidate === currentGitDir()) return false;
+  return looksLikeGitDir(candidate);
+}
+
+/**
+ * Detect a sync repo that already governs this domains folder but is not
+ * ours. Returns `{path, originUrl, matchesRequestedRepo}` or null.
+ *
+ * Reads the candidate's `origin` URL through git itself rather than by
+ * parsing its config file by hand — the ini format has include directives,
+ * conditional includes and continuation lines, and a hand-rolled parser
+ * getting this wrong decides whether we ADOPT a repository.
+ *
+ * `originUrl` is sanitize()d before it leaves this function: the config of a
+ * configured install embeds the PAT in the remote URL, and this value is
+ * surfaced to the UI.
+ */
+async function detectForeignSyncRepo(requestedRepoUrl) {
+  const candidate = foreignSyncGitDirCandidate();
+  if (!candidate) return null;
+  // Ours (default OR already adopted) is by definition not foreign.
+  if (candidate === installDefaultGitDir() || candidate === currentGitDir()) return null;
+  if (!looksLikeGitDir(candidate)) return null;
+
+  let originUrl = null;
+  try {
+    const { stdout } = await git('config --get remote.origin.url', { gitDir: candidate });
+    originUrl = stdout.trim() || null;
+  } catch { /* no origin configured — still a real repo governing this tree */ }
+
+  const a = repoIdentity(originUrl);
+  const b = repoIdentity(requestedRepoUrl);
+  return {
+    path: candidate,
+    originUrl: originUrl ? sanitize(originUrl) : null,
+    // null never matches null: an unreadable origin is "we could not tell",
+    // and adopting on that basis would be adopting on no evidence.
+    matchesRequestedRepo: !!(a && b && a === b),
+  };
+}
+
+/**
+ * Which files under the domains folder would a checkout of `origin/main`
+ * OVERWRITE, and which would it merely create?
+ *
+ * READS THE WORK TREE, WRITES NOTHING TO IT. Every step is either a git-dir
+ * write or a scratch-index write:
+ *
+ *   read-tree origin/main    → loads the remote tree into GIT_INDEX_FILE
+ *   update-index --refresh   → hashes work-tree files whose stat data does
+ *                              not match, and updates the SCRATCH index
+ *   diff-files --name-status → compares that index to the work tree
+ *
+ * THE REFRESH IS LOAD-BEARING AND WAS MEASURED. A freshly `read-tree`d index
+ * carries zeroed stat data, so without it `diff-files` reports every file as
+ * modified on stat grounds alone — in the probe that built this function, an
+ * identical `same.md` came back `M`. Quoting a user an overwrite count that
+ * includes every unchanged file would make this guard fire on every connect,
+ * and a guard that always fires is one people learn to click through.
+ * `update-index --refresh` exits NON-ZERO when anything genuinely differs,
+ * which is the normal case here, so its throw is expected and swallowed.
+ *
+ *   'M' → the path exists on disk with DIFFERENT content. A checkout
+ *         replaces it. This is the destructive set.
+ *   'D' → the path is in the remote tree and absent on disk. A checkout
+ *         creates it. Harmless, counted separately.
+ *
+ * A scratch index file is used rather than the repo's own, so this is safe
+ * to run against a LIVE configured repo (setup() does exactly that) without
+ * disturbing a staged state the user may be in the middle of.
+ */
+async function assessPullOverwrite(gitDir) {
+  const scratch = await mkdtemp(path.join(tmpdir(), 'curator-sync-idx-'));
+  const env = { GIT_INDEX_FILE: path.join(scratch, 'index') };
+  try {
+    await git('read-tree origin/main', { gitDir, env });
+    try {
+      await git('update-index --refresh', { gitDir, env });
+    } catch { /* non-zero whenever anything differs — that IS the answer */ }
+    const { stdout } = await git('diff-files --name-status -z', { gitDir, env });
+    // `status\0path\0status\0path\0…` — `-z` is never C-quoted, so a
+    // non-ASCII domain name survives intact (the v3.0.16 lesson, applied
+    // here from the start rather than after it bit someone).
+    const parts = stdout.split('\0').filter((x) => x !== '');
+    const overwrite = [];
+    let createCount = 0;
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const status = parts[i];
+      const file = parts[i + 1];
+      if (status === 'D') createCount++;
+      else overwrite.push(file);
+    }
+    overwrite.sort();
+    return { overwrite, overwriteCount: overwrite.length, createCount };
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
+ * A refusal the UI can render as something other than a wall of git text.
+ * `code` is the contract; `message` is the sentence; `details` carries the
+ * numbers the user needs to decide.
+ */
+function refusal(code, message, details = {}) {
+  const err = new Error(message);
+  err.curatorSyncCode = code;
+  err.curatorSyncDetails = details;
+  return err;
+}
+
+/**
+ * WHY THESE MESSAGES NAME AN ACTION AND A SCREEN, NEVER A BUTTON LABEL.
+ *
+ * The wording that caused the incident was `Click "Pull only" first (under
+ * Advanced)` — a sentence describing controls that were not in front of the
+ * user. `/next` renders these refusals as its own decision panel with its own
+ * button copy, so the strings here are only ever SEEN by `/old` and by
+ * anything driving the API directly. `/old`'s connect form is frozen and has
+ * only Push and Pull; telling a user on that screen to click "Merge — keep
+ * both" would reproduce the exact defect one screen over. So they say what to
+ * do and where the option lives, and leave the label to whichever surface is
+ * actually rendering a button.
+ */
+export function syncRefusalOf(err) {
+  if (!err || !err.curatorSyncCode) return null;
+  return { code: err.curatorSyncCode, message: err.message, details: err.curatorSyncDetails || {} };
+}
+
+/**
+ * `git init` + identity + remote + one fetch, against an explicitly-named
+ * git dir.
+ *
+ * THE FILE'S ONLY SETUP-SIDE FETCH LIVES HERE, and that is structural rather
+ * than tidy: test-sync-hygiene.js asserts a CLASS invariant — exactly one
+ * raw `git('fetch …')` in this module, and a fixed number of gitFetch()
+ * callers. preflightSetup() and setup() both need a fetch and both reach it
+ * through this one function, so the connect path cannot grow a second
+ * ungated fetch site without going red. See gitFetch()'s own docblock for
+ * why an ungated fetch is not merely untidy: two concurrent fetches are a
+ * compare-and-swap race on refs/remotes/origin/main, and the loser used to
+ * be the user's pull.
+ *
+ * Returns true if `origin/main` now exists locally, false if the remote has
+ * no `main` yet (an empty repo — the ordinary first-connect case, and NOT an
+ * error). Anything else throws.
+ */
+async function prepareRemote(gitDir, remoteUrl, timeout) {
+  await mkdir(gitDir, { recursive: true });
+  // Idempotent on an existing repo — `git init` re-initialises without
+  // touching refs, objects or the work tree, which is what makes it safe on
+  // the ADOPT path where gitDir is another install's live repository.
+  await git('init', { gitDir });
+  await git('config user.email "thecurator@local"', { gitDir });
+  await git('config user.name "The Curator"', { gitDir });
+  await git('config push.autoSetupRemote true', { gitDir });
+  try {
+    await git(`remote add origin "${remoteUrl}"`, { gitDir });
+  } catch {
+    await git(`remote set-url origin "${remoteUrl}"`, { gitDir });
+  }
+  try {
+    await gitFetch('origin main', { gitDir, timeout });
+    return true;
+  } catch (err) {
+    // An empty repository, or one with no `main`. `couldn't find remote ref`
+    // is git's wording for both. Everything else — auth, network, missing
+    // repo — must surface.
+    if (/couldn't find remote ref|could not find remote ref/i.test(err.message)) return false;
+    throw err;
+  }
+}
+
+/**
+ * NON-DESTRUCTIVE ASSESSMENT of what connecting would do. Writes nothing
+ * outside a tempdir; touches the user's domains folder READ-ONLY.
+ *
+ * This exists because of the second half of the incident at the top of this
+ * section: the guard fired, and the user still lost data, because a refusal
+ * that leaves only a destructive door open is not a guard. A number has to
+ * reach the user BEFORE the click, and the only way to produce that number
+ * honestly is to fetch the remote and compare it to what is on disk.
+ *
+ * WHY A THROWAWAY GIT DIR. Running this against getSyncGitDir() would
+ * CREATE that directory, which is what isConfigured() tests — so a user who
+ * previewed a connect and then cancelled would be left looking at a
+ * half-configured install. A tempdir has no such side effect, and it is
+ * removed in a finally.
+ *
+ * The one cost, stated: the fetch is a real network round trip and downloads
+ * the remote's objects into the tempdir, then discards them, so a large wiki
+ * costs its download twice on a connect that proceeds. That is paid once per
+ * install, against a class of loss that is unrecoverable.
+ */
+export async function preflightSetup(repoUrl, token) {
+  const remoteUrl = buildRemoteUrl(repoUrl, token);
+  const foreign = await detectForeignSyncRepo(repoUrl);
+  const tmpRoot = await mkdtemp(path.join(tmpdir(), 'curator-sync-preflight-'));
+  const tmpGitDir = path.join(tmpRoot, 'probe.git');
+  try {
+    const remoteHasMain = await prepareRemote(tmpGitDir, remoteUrl, 120000);
+    let overwriteCount = 0;
+    let overwriteSample = [];
+    let createCount = 0;
+    if (remoteHasMain) {
+      const a = await assessPullOverwrite(tmpGitDir);
+      overwriteCount = a.overwriteCount;
+      overwriteSample = a.overwrite.slice(0, 10);
+      createCount = a.createCount;
+    }
+    return {
+      ok: true,
+      remoteHasMain,
+      localHasContent: await domainsFolderHasContent(),
+      overwriteCount,
+      overwriteSample,
+      createCount,
+      foreignSyncRepo: foreign
+        ? { originUrl: foreign.originUrl, matchesRequestedRepo: foreign.matchesRequestedRepo }
+        : null,
+      // What the UI should preselect. Never 'pull' when pulling would
+      // destroy something: the whole point is that the destructive option
+      // stops being the default AND stops being the only one.
+      recommendedMode:
+        foreign ? 'adopt'
+        : !remoteHasMain ? 'push'
+        : overwriteCount > 0 ? 'merge'
+        : 'pull',
+    };
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Does the domains folder hold at least one domain directory? */
+async function domainsFolderHasContent() {
+  try {
+    const entries = await readdir(getDomainsDir(), { withFileTypes: true });
+    return entries.some((e) => e.isDirectory() && !e.name.startsWith('.'));
+  } catch { return false; }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function isConfigured() {
@@ -613,6 +1051,28 @@ export async function getStatus() {
       changesCount,
       lastSync,
       repoUrl: config ? displayUrl(config.repoUrl) : null,
+      // v3.32.0: is this install ALREADY in the split state — a second sync
+      // repo governing a folder another install's repo also governs?
+      //
+      // setup()'s adoption closes the split for a connect made from now on.
+      // It does NOTHING for an install that is already split, because setup()
+      // does not run again. Those installs exist — the incident that produced
+      // this work left one on the reporter's machine — so the app has to be
+      // able to SAY so. It is not self-healed silently: switching a working
+      // install onto a different git dir behind the user's back would orphan
+      // whatever commits its own repo already holds, and doing that without
+      // being asked is the same class of decision as the one that lost the
+      // data. The Sync view renders the remedy (Disconnect, then Connect
+      // again — the reconnect adopts) and the user chooses when.
+      //
+      // TWO existsSync calls and NO subprocess, deliberately: getStatus() is
+      // on the rail badge's 60s hot path and every consumer depends on it
+      // being instant. That is also why this reports only "a foreign repo is
+      // present", not "and it points at the same remote" — the latter needs
+      // `git config --get`, which is a process spawn. The stronger check runs
+      // at connect time, where one extra process is free.
+      splitSyncRepo: foreignSyncRepoPresent(),
+      adoptedSyncRepo: !!configuredGitDir(),
     };
   } catch (err) {
     return { configured: true, error: sanitize(err.message) };
@@ -827,50 +1287,279 @@ async function runRemoteCheck(now, repoKey) {
   return payload;
 }
 
-export async function setup(repoUrl, token, mode) {
+export const SETUP_MODES = ['push', 'pull', 'merge'];
+
+/**
+ * Connect Personal Sync.
+ *
+ * READ THE INCIDENT WRITEUP at "Connect-time safety" above before changing
+ * anything here. This function destroyed a user's working state, and the
+ * shape of the fix is: nothing in it may overwrite a file under the domains
+ * folder unless the caller has been told how many files and said yes.
+ *
+ * MODES
+ *   'push'  — this folder is the truth. Commit it and push. Never writes the
+ *             work tree. Unchanged from every prior version.
+ *   'pull'  — the repo is the truth. Checks out over the folder. DESTRUCTIVE,
+ *             and now refused when it would overwrite anything unless
+ *             opts.confirmOverwrite is explicitly true.
+ *   'merge' — NEW. Neither side is the truth. Commit the folder as this
+ *             repo's first commit, then merge the remote into it. Nothing is
+ *             overwritten irrecoverably, because the local side is committed
+ *             BEFORE the merge and stays reachable from the merge's first
+ *             parent.
+ *
+ * ADOPTION. If another Curator install's sync repo already governs this
+ * domains folder and points at the same GitHub repository, this install uses
+ * THAT repo instead of creating a second one. `mode` is then irrelevant —
+ * the adopted repo already contains this folder's history, so there is
+ * nothing to push up or pull down and, critically, NOTHING IS WRITTEN TO THE
+ * WORK TREE AT ALL. That is the whole point: the split is closed without a
+ * single file being replaced.
+ *
+ * If a foreign repo is found pointing at a DIFFERENT remote, this refuses.
+ * Two sync repos over one folder pushing to two different GitHub
+ * repositories is not a configuration anyone means, and silently creating it
+ * is how the incident happened. The refusal names the other remote and the
+ * escape hatch (disconnect the other install, or move/rename its
+ * `.knowledge-git`).
+ */
+export async function setup(repoUrl, token, mode, opts = {}) {
+  if (!SETUP_MODES.includes(mode)) {
+    throw refusal('invalid-mode', `mode must be one of ${SETUP_MODES.join(', ')}`);
+  }
   await ensureDomainsGitignore();
-  await mkdir(currentGitDir(), { recursive: true });
 
   const remoteUrl = buildRemoteUrl(repoUrl, token);
+  const foreign = await detectForeignSyncRepo(repoUrl);
 
-  // Init and configure git identity + auto-upstream for push
-  await git('init');
-  await git('config user.email "thecurator@local"');
-  await git('config user.name "The Curator"');
-  await git('config push.autoSetupRemote true');
-
-  // Set remote (add or update)
-  try {
-    await git(`remote add origin "${remoteUrl}"`);
-  } catch {
-    await git(`remote set-url origin "${remoteUrl}"`);
+  if (foreign && !foreign.matchesRequestedRepo) {
+    throw refusal(
+      'foreign-sync-repo',
+      'Another Curator install already syncs this domains folder, and it is connected to a ' +
+      'different repository. Connecting a second one would put two independent sync histories ' +
+      'over the same files. Disconnect sync in the other install first, or point this install ' +
+      'at a different domains folder.',
+      { otherOriginUrl: foreign.originUrl },
+    );
   }
 
+  if (foreign) {
+    // ── ADOPT ────────────────────────────────────────────────────────────
+    // Point this install at the existing repo. prepareRemote() re-inits it
+    // (a documented no-op on an existing repo), refreshes the origin URL
+    // with THIS install's token, and fetches. It does not check anything
+    // out, does not reset, does not merge — the work tree is not touched by
+    // this branch at all, which is the property that makes adoption safe to
+    // do automatically.
+    await prepareRemote(foreign.path, remoteUrl, 120000);
+    await saveConfig(repoUrl, token, foreign.path);
+    // The adopted repo's config now carries our PAT in the remote URL.
+    // getCredentialFiles()'s 0600 startup sweep is anchored on
+    // getSyncGitDir(), not on the adopted path, so harden it here rather
+    // than leave a token at whatever umask `git init` produced. Best-effort:
+    // a failed chmod must not fail a connect that otherwise succeeded.
+    await chmod(path.join(foreign.path, 'config'), 0o600).catch(() => {});
+    return { adopted: true, gitDir: foreign.path };
+  }
+
+  // currentGitDir(), NOT getSyncGitDir(). Two things depend on it: the
+  // __setSyncTestOverrides seam (without which none of this is testable —
+  // and setup() shipped untested for its whole life, which is how the
+  // incident happened), and a RE-connect on an install that already adopted
+  // another install's repo, which must keep using that repo rather than
+  // quietly starting a second one beside it.
+  const gitDir = currentGitDir();
+  // Non-null only when this install has adopted. Carried through every
+  // saveConfig() below, because saveConfig writes the whole file: dropping
+  // the field would silently un-adopt on the next connect and re-open the
+  // split.
+  const adoptedDir = configuredGitDir();
+  // Did this directory exist before we touched it? Decides whether a refusal
+  // below is allowed to clean up after itself — see the rollback note.
+  const preexisting = looksLikeGitDir(gitDir);
+
   if (mode === 'push') {
-    await git('add -A');
+    await prepareRemote(gitDir, remoteUrl, 120000);
+    await git('add -A', { gitDir });
     try {
-      await git('commit -m "Initial The Curator sync"');
+      await git('commit -m "Initial The Curator sync"', { gitDir });
     } catch (err) {
       if (!err.message.includes('nothing to commit')) throw err;
     }
-    await git('branch -M main');
-    await git('push -u origin main', { timeout: 120000 });
-
-  } else { // pull
-    await gitFetch('origin', { timeout: 120000 });
+    await git('branch -M main', { gitDir });
     try {
-      await git('checkout -b main origin/main');
-    } catch {
-      try {
-        await git('checkout main');
-        await git('reset --hard origin/main');
-      } catch {
-        await git('reset --hard origin/main');
+      await git('push -u origin main', { gitDir, timeout: 120000 });
+    } catch (err) {
+      // THE REFUSAL THE USER ACTUALLY HIT, and the reason its old wording
+      // was its own defect. friendlyError() maps non-fast-forward to
+      // 'Click "Pull only" first (under Advanced), then sync again' — a
+      // sentence written for the CONFIGURED screen, where those controls
+      // exist. On the connect screen there is no "Pull only" and no
+      // "Advanced"; there is a Push/Pull toggle. Naming a control that is
+      // not on the screen is what left the user reaching for the only other
+      // thing that was.
+      if (/non-fast-forward|\brejected\b|fetch first/i.test(err.message)) {
+        throw refusal(
+          'remote-not-empty',
+          'That repository already has a wiki in it, so pushing this folder on top of it was ' +
+          'refused. To combine the two, connect using the merge option on the app\u2019s main Sync ' +
+          'view. To start from the repository instead, connect with the pull option \u2014 it will ' +
+          'tell you first if that would replace anything here.',
+          {},
+        );
       }
+      throw err;
     }
+    await saveConfig(repoUrl, token, adoptedDir);
+    return { adopted: !!adoptedDir, mode: 'push' };
   }
 
-  await saveConfig(repoUrl, token);
+  // Both remaining modes need the remote's history.
+  const remoteHasMain = await prepareRemote(gitDir, remoteUrl, 120000);
+
+  if (!remoteHasMain) {
+    // Nothing to pull or merge FROM. Falling through to a checkout here
+    // would throw raw git text at a user whose only mistake was picking the
+    // wrong radio button against an empty repo.
+    throw refusal(
+      'remote-empty',
+      'That repository is empty, so there is nothing to pull or merge. Choose “Push my wiki” to ' +
+      'send this folder up as the first version.',
+    );
+  }
+
+  if (mode === 'merge') {
+    // ── MERGE — the non-destructive route ────────────────────────────────
+    // Commit the folder FIRST. That single ordering is what makes this
+    // recoverable: whatever the merge decides, the pre-merge state of every
+    // local file is reachable from the merge commit's first parent, so the
+    // worst case is a `git checkout <sha> -- path`, not a loss.
+    await git('add -A', { gitDir });
+    let haveLocalCommit = true;
+    try {
+      await git('commit -m "Local wiki, before connecting sync"', { gitDir });
+    } catch (err) {
+      if (!err.message.includes('nothing to commit')) throw err;
+      haveLocalCommit = false;
+    }
+    if (!haveLocalCommit) {
+      // Empty folder: there is nothing to merge WITH, and a merge from an
+      // unborn HEAD fails. Degrade to the pull path, which is safe here
+      // precisely because there is nothing to overwrite.
+      await git('checkout -b main origin/main', { gitDir });
+      await saveConfig(repoUrl, token, adoptedDir);
+      return { adopted: !!adoptedDir, mode: 'merge', degradedToPull: true };
+    }
+    await git('branch -M main', { gitDir });
+    // `--allow-unrelated-histories` is required and is not a warning sign
+    // here: this repo was created seconds ago by `git init`, so it shares no
+    // commit with the remote by construction.
+    //
+    // `-X ours` PREFERS THE LOCAL SIDE, and that is a DIFFERENT decision
+    // from pull()'s `-X theirs`, argued rather than inherited. pull()'s
+    // `-X theirs` is the STEADY-STATE rule: origin is the shared truth, and
+    // a machine reaching a pull is expected to have pushed its own work
+    // already, so preferring origin on a contested hunk prefers the version
+    // both machines have seen. On a FIRST CONNECT none of that holds — the
+    // local side has, by construction, never been pushed anywhere, so there
+    // is no sense in which origin has "seen" it. Preferring origin here
+    // means preferring a revision that provably does not contain the user's
+    // most recent work over one that does. That is the exact substitution
+    // the incident made. pull() is untouched.
+    //
+    // Neither side is lost either way: both are committed parents of the
+    // merge. The preference only decides which one is sitting in the folder
+    // afterwards.
+    //
+    // KNOWN AND DISCLOSED: with no merge base, every remote path is an ADD,
+    // so a file the user DELETED locally since the last push comes back.
+    // Measured. That is the fail-safe direction for a one-time adoption
+    // merge — a page reappearing is visible and fixable, a page vanishing is
+    // the thing this whole section exists to prevent — and docs/sync.md says
+    // so where the user can read it.
+    await git('merge --allow-unrelated-histories --no-edit -X ours FETCH_HEAD',
+              { gitDir, timeout: 120000 });
+    await saveConfig(repoUrl, token, adoptedDir);
+    invalidateRemoteCache();
+    return { adopted: !!adoptedDir, mode: 'merge' };
+  }
+
+  // ── PULL — the destructive route, now gated ───────────────────────────
+  const assessment = await assessPullOverwrite(gitDir);
+  if (assessment.overwriteCount > 0 && opts.confirmOverwrite !== true) {
+    // ROLLBACK. A refusal must not leave a half-configured install behind:
+    // isConfigured() tests for the git dir, so a directory left here would
+    // make the app claim sync is set up when no config was ever saved. Only
+    // remove what THIS call created — never a repo that was already there.
+    // `!adoptedDir` as well as `!preexisting`: an adopted dir belongs to
+      // another install and a rollback must never delete it (same rule as
+      // disconnect()). Both conditions are already true on the only path that
+      // creates a repo here, so this is belt and braces, not a live branch.
+      if (!preexisting && !adoptedDir) await rm(gitDir, { recursive: true, force: true }).catch(() => {});
+    throw refusal(
+      'pull-would-overwrite',
+      `Pulling would replace ${assessment.overwriteCount} file` +
+      `${assessment.overwriteCount === 1 ? '' : 's'} in your domains folder with the version in ` +
+      'the repository. Those local versions are not recoverable afterwards. To combine the two ' +
+      'instead, connect using the merge option on the app\u2019s main Sync view.',
+      {
+        // WHICH LAYER REFUSED. There are two, and a mutation proved they are
+        // redundant on the ordinary fixture: deleting this one entirely left
+        // the suite green, because `git checkout -b` below refuses on the
+        // same collision and the catch turns that into the same refusal.
+        // Recorded rather than presented as one guard doing the work — the
+        // v3.4.0 pairing rule. They are NOT interchangeable: only this layer
+        // produces a COUNT and a FILE LIST before anything is attempted, and
+        // it is the only one preflightSetup() can use at all, because a
+        // preview has no checkout to be refused. The other is the backstop
+        // for the case where this measurement is wrong.
+        source: 'measured',
+        overwriteCount: assessment.overwriteCount,
+        overwriteSample: assessment.overwrite.slice(0, 10),
+        createCount: assessment.createCount,
+      },
+    );
+  }
+
+  // Safe, or explicitly confirmed. `checkout -b` is preferred over the old
+  // `reset --hard` ladder because it carries git's OWN untracked-overwrite
+  // refusal — a second, independent guard behind the measurement above. The
+  // reset is reached only when the caller confirmed, and its comment says
+  // what it does.
+  try {
+    await git('checkout -b main origin/main', { gitDir });
+  } catch (err) {
+    if (opts.confirmOverwrite !== true) {
+      // NO SILENT ESCALATION. This is where the old code fell through to
+      // `reset --hard` and destroyed the user's files. If git refused and
+      // nobody confirmed an overwrite, the answer is the refusal, not a
+      // bigger hammer.
+      // `!adoptedDir` as well as `!preexisting`: an adopted dir belongs to
+      // another install and a rollback must never delete it (same rule as
+      // disconnect()). Both conditions are already true on the only path that
+      // creates a repo here, so this is belt and braces, not a live branch.
+      if (!preexisting && !adoptedDir) await rm(gitDir, { recursive: true, force: true }).catch(() => {});
+      throw refusal(
+        'pull-would-overwrite',
+        'Pulling would overwrite files in your domains folder that are not in the repository. ' +
+        'To combine the two instead, connect using the merge option on the app\u2019s main Sync view.',
+        {
+          source: 'checkout-refused',
+          overwriteCount: assessment.overwriteCount,
+          overwriteSample: assessment.overwrite.slice(0, 10),
+        },
+      );
+    }
+    // Confirmed overwrite. `reset --hard` is the only command that will do
+    // this, and it will do it to any file: the caller has been shown the
+    // count and said yes.
+    await git('reset --hard origin/main', { gitDir });
+  }
+
+  await saveConfig(repoUrl, token, adoptedDir);
+  invalidateRemoteCache();
+  return { adopted: !!adoptedDir, mode: 'pull', overwrote: assessment.overwriteCount };
 }
 
 export async function push() {
@@ -1357,7 +2046,21 @@ export async function sync() {
 }
 
 export async function disconnect() {
-  if (existsSync(currentGitDir()))    await rm(currentGitDir(), { recursive: true, force: true });
+  // AN ADOPTED GIT DIR BELONGS TO ANOTHER INSTALL AND MUST NEVER BE DELETED
+  // HERE. Without this branch, adoption (see setup()) would have created a
+  // brand-new destructive path: the Mac app's Disconnect button would
+  // `rm -rf` the browser install's `.knowledge-git`, taking that install's
+  // entire sync history and its stored remote with it — a strictly worse
+  // outcome than the split adoption exists to close. Disconnecting an
+  // adopted install removes only THIS install's own credential file, which
+  // is the whole of what this install owns.
+  //
+  // The check reads the config rather than comparing against
+  // getSyncGitDir(), because a test seam or a future relocation could make
+  // those two agree for reasons that have nothing to do with adoption.
+  const adopted = configuredGitDir();
+  const dir = currentGitDir();
+  if (!adopted && existsSync(dir)) await rm(dir, { recursive: true, force: true });
   if (existsSync(currentConfigFile())) await unlink(currentConfigFile());
 }
 
@@ -1367,6 +2070,16 @@ export { friendlyError };
 // point. Production code never imports this. Mirrors the __testing pattern
 // already used by atomic-write.js and write-registry.js.
 export const __testing = {
+  repoIdentity,
+  foreignSyncGitDirCandidate,
+  detectForeignSyncRepo,
+  foreignSyncRepoPresent,
+  assessPullOverwrite,
+  prepareRemote,
+  looksLikeGitDir,
+  configuredGitDir,
+  currentGitDir,
+  installDefaultGitDir,
   // Real `git fetch` subprocesses this module has issued. Read by the
   // concurrency assertions — see _fetchCount's declaration for why the
   // invariant is measured here and not inferred from a duration.

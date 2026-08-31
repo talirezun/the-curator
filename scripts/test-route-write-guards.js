@@ -1142,7 +1142,26 @@ console.log('\n=== 6b. INVARIANT: every mutating route in these four files is gu
 
   auditRouteGuards('src/routes/sync.js', {
     label: 'sync.js',
-    expectedMutatingCount: 5,
+    // 6th (POST /preflight, v3.32.0): the non-destructive connect preview.
+    // The count moved 5 -> 6 and this tripwire fired on it, which is the
+    // tripwire working — it does not assert "five is correct", it asserts
+    // that nobody added a route to this file without a human reading the
+    // exemption list.
+    //
+    // It MUTATES NOTHING — it fetches into a tempdir git repo and reads the
+    // work tree — so it could have been argued onto the exemption list. It
+    // is not, and carries guardConcurrent instead, because its whole output
+    // is a COUNT of files that would be overwritten, taken by comparing the
+    // remote tree to the domains folder. An ingest landing mid-assessment
+    // makes that count describe a folder that no longer exists, and that
+    // number is what the user reads before deciding whether to authorise an
+    // overwrite. A 409 they can retry is the right answer; a stale count on
+    // the screen that decides whether files are destroyed is not.
+    //
+    // It is a POST rather than a GET — so it lands in the mutating set at
+    // all — because it carries a GitHub PAT in its body. A GET would put the
+    // token in a URL.
+    expectedMutatingCount: 6,
     guardClasses: [{
       name: 'concurrency',
       guardTokens: ['guardConcurrent'],
