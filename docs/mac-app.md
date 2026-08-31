@@ -7,6 +7,7 @@ There are **two** Mac shapes, both current, and this page covers both.
 | What you get | A real macOS application you download and drag to Applications | A compiled AppleScript applet in `~/the-curator/` that starts a Node server and opens your browser |
 | Needs Node.js? | **No** — it carries its own runtime | Yes; the installer puts it there for you |
 | Where the interface appears | Its own window | A browser tab at `http://localhost:3333` |
+| Menu bar icon | **Optional** — off by default, switched on in Settings ([§ The menu bar icon](#the-menu-bar-icon-packaged-app-only)) | None. A browser install has no menu bar presence |
 | How it updates | **In the app** — Settings → General → *Check for updates* → **Download and install** ([§ Updating](#updating-the-packaged-app)) | Settings → General → *Check for updates*, which runs `git` against the checkout |
 | Install mode reported by System Check | *Packaged app* | *Source install (git checkout)* |
 
@@ -71,6 +72,61 @@ itself — you should not need the Releases page again. See
 > Gatekeeper class than "unidentified developer", and the only escape is
 > `xattr -dr com.apple.quarantine "/Applications/The Curator.app"` in Terminal.
 > The fix is to download a build from `v3.31.0` or later; that class is gone.
+
+---
+
+## The menu bar icon (packaged app only)
+
+The app can put a small icon in the macOS menu bar that answers one question without you
+opening anything: **has my agent actually saved, and how long ago?** Click it and you get the
+last save, up to eight recent work-streams newest first, and *Open Agent Memory · Open The
+Curator · Settings · Quit*.
+
+**It is off by default, and that is not caution.** A fresh install has no agent memory, so an
+on-by-default icon's only possible content is *"No agent memory yet"* — the worst first
+impression the feature can make. Turn it on in **Settings → General → Menu bar**.
+
+| Setting | What you get |
+|---|---|
+| **Off** | No menu bar icon. The Dock icon and the window behave exactly as they always have. **Default.** |
+| **On** | A menu bar icon alongside the Dock icon |
+| **On, hide the Dock icon** | Accepted and remembered — but **the Dock icon is not actually hidden yet.** It behaves as **On**. See the limit below |
+
+The change takes effect immediately; there is nothing to restart. It applies to the packaged
+app only — the browser install has no menu bar presence, and the setting is still shown there
+rather than hidden, so it says so instead of leaving you hunting for it.
+
+**What the icon itself shows** is presence plus one bit: a hollow ring means The Curator is
+running, and a filled centre means an agent has written **on this machine** in the last two
+minutes. There is no count, no animation, and deliberately no text beside it — a relative age
+in the menu bar is either stale or it needs waking every minute forever, and extra width is
+what makes an icon vanish behind the notch on a narrow screen.
+
+Everything the widget does is described from the user's side, with the scenarios it was built
+for, in **[user-guide.md § 6b](user-guide.md#6b-the-menu-bar-icon-mac-app)**. The engineering
+is in [architecture.md § The menu bar widget](architecture.md#the-menu-bar-widget-desktoplibtray-js--srcbraintray-summaryjs).
+
+> **If the icon does not appear.** There are three separate ways a new menu bar icon silently
+> fails to show up on a modern Mac, and **macOS gives an app no way to find out which
+> happened** — so the app cannot tell you, and neither can this page. Check all three: it can
+> be pushed off the edge behind the notch on a narrow screen; a menu bar organiser such as
+> Bartender or Ice can file it into a hidden section; and macOS has a menu bar items
+> permission in **System Settings → Privacy & Security**.
+
+> **Two limits, stated rather than glossed.**
+>
+> **No tray icon has ever been rendered on any machine.** The rows, the menu, the mode
+> switching and the icon's own pixels are all produced and checked by the test suite, but
+> nothing has yet put one in a real menu bar — so how macOS tints the icon, whether the second
+> line of each row draws, and whether hovering updates the ages are all unproven. Treat the
+> first real launch with it switched on as the first real test.
+>
+> **"On, hide the Dock icon" does not hide the Dock icon.** The macOS call that hides it has a
+> return transition — coming *back* when you open the window from the menu bar — that is
+> reported broken in exactly the way this would depend on, and it could not be tested here.
+> The app therefore recognises the setting, keeps it, and does the safe half: menu bar icon on,
+> Dock icon left alone. Shipping the other half untested risks no Dock icon, no menu bar icon
+> and no window at once.
 
 ---
 

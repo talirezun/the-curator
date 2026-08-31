@@ -2559,10 +2559,107 @@ Full contract: [working-state.md](working-state.md) and
 
 ---
 
+### `getTraySummary()` — not an endpoint, and deliberately so
+
+The macOS menu bar widget reads working state through **one in-process function**,
+`getTraySummary()` in `src/brain/tray-summary.js`. It is documented here because it is a public
+contract with a consumer outside the module — but it is **not reachable over HTTP**, and nothing
+should add a route for it. The desktop shell imports `src/server.js` into its own process, so the
+shell and the server share one Node realm and the call is a plain function call with no HTTP hop
+and no IPC. A route would be a second surface over the same store, gaining nothing and costing a
+second thing to keep in step.
+
+It is a **projection**, not a second inventory: it calls the same `listWorkingScopes()` that
+`GET /api/memory` calls, so the widget and the Agent memory view cannot disagree about what is on
+disk. It costs what `GET /api/memory` costs. It makes **no** network call — it does not import
+`src/brain/sync.js` at all, so no edit to it can reach a `git fetch` without adding an import a
+reviewer will see.
+
+```js
+getTraySummary({ limit = 8, now = Date.now() })   // limit is clamped to [1, 40]
+```
+
+```json
+{
+  "ok": true,
+  "lastSave": {
+    "project": "curator", "scope": "main", "machine": "laptop-a1b2c3",
+    "harness": "claude-code", "writtenAt": "2026-08-31T18:04:11.000Z",
+    "writtenAgeSeconds": 240, "ageSource": "agent",
+    "kind": null, "isThisMachine": true
+  },
+  "scopes": [
+    {
+      "project": "curator", "scope": "main", "machine": "laptop-a1b2c3",
+      "harness": "claude-code", "headline": "wired the remote observation",
+      "kind": null, "bytes": 14208,
+      "harnessShared": false, "harnesses": ["claude-code"],
+      "agentWrittenAt": "2026-08-31T18:04:11.000Z", "agentWrittenAgeSeconds": 240,
+      "fileChangedAt": "2026-08-31T18:04:11.000Z", "fileChangedAgeSeconds": 240,
+      "writtenAt": "2026-08-31T18:04:11.000Z", "writtenAgeSeconds": 240,
+      "ageSource": "agent",
+      "isThisMachine": true, "isThisHost": true
+    }
+  ],
+  "total": 12,
+  "pairsOnDisk": 12,
+  "truncated": true,
+  "brief": { "project": "curator", "updatedAt": "2026-08-19T09:22:00.000Z", "ageSeconds": 1067531 },
+  "remote": { "behindFiles": 14, "behindCommits": 2, "checkedAt": "2026-08-31T18:00:02.000Z" },
+  "warnings": [
+    { "code": "scopes-truncated", "message": "Showing the 8 most recent of 12 saved work-streams.",
+      "shown": 8, "total": 12, "pairsOnDisk": 12 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok` | Always `true`. **The function never throws** — a store that cannot be read yields empty arrays and a warning, because a menu bar panel that renders an exception is one a user reads as "the app is broken" |
+| `lastSave` | `scopes[0]` re-projected **from the same object**, so the headline and the first row can never name different saves. `null` when there are no rows |
+| `scopes[]` | **Arrives ordered, newest first, on the chosen clock. A consumer must not re-sort it.** A row with no usable clock sorts **last**, never first — putting an unknown at the top asserts it is the newest |
+| `total` | How many rows `scopes` was sliced **from** — counted before the slice |
+| `pairsOnDisk` | Every `(scope, machine)` pair the store saw, including pairs past a project's own `MAX_INDEX_ENTRIES`. `>= total`, and the gap is truncation inside the store rather than here. Two different facts, two names; neither derived from the other |
+| `truncated` | `total > scopes.length` |
+| `brief` | The standing brief's age for the project of the **newest** save — one `stat`, never a read. `null` when there is no brief, which is the normal case rather than an error. No `ageSource`: a brief has no journal, so mtime is the only clock and there is nothing to be honest between. **Nothing consumes this today** — the menu does not render it, per the design's Tier-C ranking; it is Phase 2 material |
+| `remote` | See below. `null` means **nobody has checked** |
+| `warnings[]` | `{code, message, …}`. Codes: `domains-unreadable` · `projects-truncated` · `scopes-truncated` · `harness-collision` · `harness-collisions-truncated` · `unlisted-entries` |
+
+**Per-row fields worth reading carefully**
+
+| Field | Meaning |
+|---|---|
+| `ageSource` | `'agent'` or `'file'`. `writtenAt`/`writtenAgeSeconds` carry whichever clock was chosen, and this says which. **`'file'` is `st.mtime`, which git rewrites on checkout** — so a handoff that arrived over Personal Sync carries the moment of the *pull*, not the moment of the save. A renderer must qualify a `'file'` age in words (*"changed 4 min ago"*) rather than present it as a written time |
+| `agentWrittenAt` / `fileChangedAt` (+ their `…AgeSeconds`) | Both raw clocks, always emitted under names that can only mean one thing, so a consumer wanting *"written 3 hr ago · arrived just now"* re-derives nothing |
+| `isThisMachine` | Exact match on this installation's machine id — identity. **Read it strictly**: anything but `true` should be treated as remote |
+| `isThisHost` | The weaker fact: the folder shares this host's *name*. A folder can share a hostname and belong to a different installation, which is the entire reason the installation id exists |
+| `harness` / `harnessShared` / `harnesses[]` | Which agent tool wrote last, whether **two** tools are alternating in this one folder, and which ones. A collision silently overwrites handoffs; the remedy — a separate scope per tool — is the user's |
+| `kind` | The store's own verdict on the last save (`lastSaveKind`), e.g. `trimmed`. **`null` means there is no journal line, so we do not know — not "complete"** |
+| `bytes` | Size of the handoff, against the store's 48 KB cap |
+
+**`remote` is an OBSERVATION, not a live check.** `getTraySummary()` never fetches. `brain/sync.js`
+exposes no non-fetching accessor — `getRemoteStatus()` is *cache hit ? return : `git fetch`*, and
+`maxAgeMs: 0` does not help because the TTL returns 0 for a successful payload — and a second fetch
+site is the recorded v3.9.1 incident where the user's own pull aborted in 11 runs out of 12 over a
+ref lock. So `noteRemoteStatus(payload)` records whatever a completed check last reported;
+[`GET /api/sync/remote-status`](#personal-sync-endpoints-apisync) calls it with no fetch of its own.
+
+- An **unconfigured** install records nothing. That is not an observation of "0 waiting".
+- A **failed** check keeps `behindFiles: null` — *"we could not ask"* and *"there is nothing
+  waiting"* are different facts.
+- An observation older than **5 minutes** is dropped, not shown with an age: a line reading
+  *"2 waiting"* is read as current and there is no room beside it to say it is not.
+- **`null` is the normal state of this field, not an error.** The only feed is the sync badge's
+  poll, which the renderer suppresses while the window is hidden — so with the window closed the
+  observation goes stale within five minutes and nothing refreshes it.
+
+---
+
 ## GET /api/config
 
 The app's own configuration — where the knowledge folder is, how that was decided, the default
-domain for MCP writes, and the resolved release channel. No body, no side effects.
+domain for MCP writes, the resolved release channel, and the resolved menu bar mode. No body, no
+side effects.
 
 **Success response** `200 OK`
 
@@ -2571,7 +2668,9 @@ domain for MCP writes, and the resolved release channel. No body, no side effect
   "domainsPath": "/Users/you/the-curator/domains",
   "domainsPathSource": "ui",
   "defaultDomain": "articles",
-  "releaseChannel": "stable"
+  "releaseChannel": "stable",
+  "backgroundMode": "window",
+  "backgroundModes": ["window", "tray", "tray-only"]
 }
 ```
 
@@ -2581,6 +2680,18 @@ domain for MCP writes, and the resolved release channel. No body, no side effect
 | `domainsPathSource` | Which rung of the resolution ladder won: `cli` · `ui` · `env` · `default` |
 | `defaultDomain` | The domain MCP write tools use when the user says "my wiki" without naming one. `null` if unset |
 | `releaseChannel` | The **resolved** channel name (v3.29.0). Always `stable` in this build |
+| `backgroundMode` | The **resolved** menu bar mode: `window` (no menu bar icon — the default) · `tray` · `tray-only`. Absent or unrecognised in the config file reads as `window` |
+| `backgroundModes` | Every mode name **this build** understands, in order. Shipped beside the value so a client renders what the server would accept rather than a hardcoded triple |
+
+`backgroundMode` is resolved for the same reason `releaseChannel` is: an absent or unrecognised key
+reads as `window` here exactly as it does in the desktop shell, so this endpoint cannot tell the
+Settings screen one thing while the app does another. It is written by
+[`POST /api/config/background-mode`](#post-apiconfigbackground-mode).
+
+`backgroundModes` exists so adding a mode is one edit in one file and can never leave a control
+offering an option the server would refuse. A client should render an unknown id under its own
+name rather than dropping it — a newer server must not be able to make an option silently
+disappear from a picker.
 
 `domainsPathSource` mirrors `getDomainsDir()`'s rungs in the same order, so this endpoint can never
 report a source that disagrees with the folder reported beside it. The `cli` arm is unreachable in
@@ -2589,6 +2700,55 @@ the app — only the MCP child process installs that override — and exists so 
 `releaseChannel` is the **resolved** name, never the raw file value: an absent or unrecognised key
 reads as `stable` here exactly as it does in the update paths, so this endpoint can never disagree
 with the ref those actually use. There is no endpoint that writes it.
+
+---
+
+## POST /api/config/background-mode
+
+Sets the app's menu bar mode. Mac-app only in effect — a browser install has no menu bar presence,
+and the field is stored and returned identically there.
+
+**Request**
+
+```json
+{ "backgroundMode": "tray" }
+```
+
+| Value | Meaning |
+|---|---|
+| `window` | No menu bar icon. The Dock icon and the window behave exactly as they did before the field existed. **The default.** |
+| `tray` | A menu bar icon alongside the Dock icon |
+| `tray-only` | Menu bar icon, Dock icon hidden — **accepted and recorded, but the Dock icon is not actually hidden today.** The shell treats it as `tray` and reports the hedge; see [the roadmap's §0a](roadmap-menubar-widget.md#0a-status--what-shipped-what-deviated-what-is-still-a-plan) |
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "backgroundMode": "tray", "backgroundModes": ["window", "tray", "tray-only"] }
+```
+
+**Refusal** `400 Bad Request` — an unrecognised value is **refused, never coerced**. Coercing would
+let a client report *"tray-only saved"* while the file holds `window`.
+
+```json
+{
+  "error": "Unknown background mode. Expected one of: window, tray, tray-only.",
+  "reason": "invalid_value",
+  "backgroundMode": "window",
+  "backgroundModes": ["window", "tray", "tray-only"]
+}
+```
+
+`backgroundMode` in a refusal is **the mode still in force**, not the one that was asked for, so a
+client that renders the response shows the truth even if it ignores the status code.
+
+**Not behind `guardConcurrent`, and not registered as a write.** Nothing on any write path reads
+this field — its only consumer is the desktop shell, which reads it before it creates the tray or
+the window and again when the user flips it. A 409 here would fire precisely while a long ingest
+was running, i.e. it would refuse to let someone turn off a menu bar icon because the app is busy
+doing something the icon has no bearing on. What bounds the write instead is the allow-list: the
+value lands in `.curator-config.json`, which holds the user's API keys, so exactly three literal
+strings are accepted and everything else is refused. Mutating requests also pass the server's
+cross-origin guard.
 
 ---
 

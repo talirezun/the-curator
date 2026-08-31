@@ -618,6 +618,7 @@ That works with no change in `src/` because `src/server.js` builds `ALLOWED_ORIG
 | Remembered window size and position | `lib/window-state.js` → `<userData>/window-state.json` | A saved **position** is adopted only if the rectangle still overlaps a real display. Full screen is deliberately not persisted; `maximized` is. |
 | Native folder chooser | `pickFolder` hook → `folderPickerStyle` | Replaces the `osascript` shell-out that a hardened runtime can kill. |
 | Restart | `relaunch` hook → `restartStyle` | Killing the node process alone would leave a windowless app. |
+| A menu bar icon over agent memory | `lib/tray-model.js`, `lib/tray-menu.js`, `lib/tray-icon.js`, `lib/state-watch.js`, `lib/background-mode.js`, over `src/brain/tray-summary.js` | **Off by default** (`backgroundMode: 'window'`). See [§ The menu bar widget](#the-menu-bar-widget-desktoplibtray-js--srcbraintray-summaryjs). |
 | Replacing the application itself | `prepareUpdate` / `installUpdate` hooks → `lib/update-plan.js`, `lib/update-release.js`, `lib/update-engine.js` | `electron-updater` is unusable while the app is ad-hoc signed — Squirrel.Mac validates against the *running* build's cdhash, so every real update fails. `installUpdate` takes an **opaque token, never a path**: its caller is a renderer, and a hook taking `{stagedPath, targetPath}` would be a replace-any-directory primitive reachable from a page. |
 
 `lib/quit-decision.js` is the one worth reading. `GET /api/write-status` answers `safeToQuit: null` when the write registry throws, and that third state is kept as its own case rather than collapsed, because **both collapses are wrong**: treating `null` as safe truncates a paid, multi-minute ingest; treating it as busy makes the app permanently un-quittable, because a throwing registry does not heal — and the user then reaches for Force Quit, which truncates the write anyway *and* skips every other shutdown step. So `null` returns `ask`. There is deliberately no `block` action at all; what changes between cases is the sentence and which button is the default, and **both defaults point at the safe option**, because a dialog that defaults to the destructive button turns "⌘Q, Return" into data loss.
@@ -689,6 +690,95 @@ The state here changed twice in one day, so read it as three separate facts rath
 
 The DMG workflow (`.github/workflows/desktop-dmg.yml`) is **tag-gated** — never `main`, never a pull request, and deliberately **no `workflow_dispatch`**. That last absence is the non-obvious one: `scripts/release.js`'s CI gate finds its run by branch and SHA, and a manual dispatch runs against a *branch*, so its run would carry `head_branch: main` and could collide on SHA with the very run the gate is waiting for. A tag push produces a run whose `head_branch` is the tag name, which every `--branch` query excludes.
 
+### The menu bar widget (`desktop/lib/tray-*.js` + `src/brain/tray-summary.js`)
+
+**Off by default.** `backgroundMode` in `.curator-config.json` is `window` unless the user changes it, and a `window` install creates no `Tray`, starts no watch and reads nothing. What follows describes what happens when someone turns it on.
+
+> **Nothing here has ever been rendered.** `new Tray()` has never been called on any machine. The row model, the menu template, the mode transitions and the glyph's decoded pixels are *executed* by `scripts/test-tray-shell.js`, `scripts/test-tray-summary.js` and `scripts/test-background-mode.js`; that Electron accepts these menu values, that macOS tints the template image correctly, and that `mouse-enter` fires are all unproven. `desktop/main.js` and `desktop/README.md` carry the same statement.
+
+#### One data call, one model, one template
+
+```mermaid
+flowchart LR
+    W["fs.watch on domainsDir<br/>recursive"] -->|"path contains /state/<br/>no dot-prefixed segment"| DB["debounce 150 ms"]
+    FB["fallback interval<br/>5 min"] --> RF
+    DB --> RF["refreshTraySummary()"]
+    CLICK["tray click"] --> RF
+    RF -->|"plain function call,<br/>same Node realm"| TS["src/brain/tray-summary.js<br/>getTraySummary({limit:8})"]
+    TS --> LWS["listWorkingScopes()<br/>— the same function<br/>the app view and the MCP call"]
+    RF --> SNAP[("traySnapshot<br/>in memory")]
+    HOVER["mouse-enter"] --> REN
+    SNAP --> REN["buildTrayModel()<br/>desktop/lib/tray-model.js"]
+    REN --> TPL["buildTrayMenuTemplate()<br/>desktop/lib/tray-menu.js"]
+    REN --> GLY["trayIconPngs()<br/>desktop/lib/tray-icon.js"]
+    TPL --> MENU["Menu.buildFromTemplate"]
+```
+
+**Hover renders from memory; a click re-reads the index.** There is no *menu will open* event on an Electron `Tray`, so the menu has to be kept current from outside. A click is a deliberate act, so that is where the one disk read belongs; `mouse-enter` costs no I/O because it only re-renders the snapshot already held.
+
+> **A defect in that split, found while documenting it and stated rather than written up as intent.** `buildTrayModel()` reads `writtenAgeSeconds` **out of the snapshot** — it does not re-derive an age from `writtenAt` against the render clock. So re-rendering the same snapshot cannot make the ages more exact, which is what `main.js`'s comment on the `mouse-enter` handler claims it does. Driving the real function over one snapshot with `now` forty minutes apart gives the identical `"Last save · 4 min ago"` both times — **and a `renderedAtText` that moves**. That inverts what the absolute stamp is for: `tray-menu.js` justifies it as the thing that makes a silently-dead filesystem watch visible, and hovering resets it to the current minute over rows that did not move.
+>
+> The exposure is bounded by the 5-minute fallback poll, which does re-read and does recompute, so an age is at most about five minutes stale — but the stamp under-reports even that. Two candidate fixes, neither taken here: recompute each row's age from `writtenAt` against the model's `now` (the field is already on every row), or drive `renderedAtText` from the snapshot's read time rather than the render time. Until one of them lands, the honest reading of *"Updated 14:32"* is **when this menu was last drawn**, not when the store was last read.
+
+**`getTraySummary()` is a projection, not a second inventory.** It calls `listWorkingScopes()`, the same function `GET /api/memory` and the MCP's `get_working_state` call, so the tray and the Agent memory view cannot disagree about what is on disk. It is its own module rather than part of `working-state.js` for three reasons stated in its docblock, of which the load-bearing one is import-graph hygiene: `remote` is a Personal Sync fact, and dragging `sync.js` into a module the MCP child loads on every spawn would put a `git fetch` inside the stdout-discipline graph.
+
+#### Why it is a `Menu` and not a panel
+
+Electron's `Tray` exposes no way to attach a rendered view — it can show a `Menu` and nothing else — and Apple's HIG says a menu bar extra should display a menu unless the functionality is too complex for one. So the whole surface is a `Menu.buildFromTemplate` template, which is **ordinary data**: labels, ordering, which items are actionable and which are statements are all asserted offline. `main.js` keeps only the two Electron calls it cannot give away. Same split, and the same reason, as `lib/menu.js` and `lib/quit-decision.js`.
+
+`tray.setTitle()` is deliberately left empty. A relative age in the bar is either stale or it ticks — a wake-up every minute for the life of the process, for a number nobody reads to the minute — and menu bar width is the scarcest resource on a Mac: items past the notch vanish with no notification and no overflow. The headline rides in the tooltip and at the top of the menu instead.
+
+#### Two rules the model exists to enforce
+
+**A null age is never a zero.** An unknown age renders as *"time unknown"*, never *"just now"*. An age that came from a filesystem timestamp renders as *"changed 4 min ago"*, never *"4 min ago"*, because `written` is a claim about the agent's clock and `changed` is a claim about this disk's — and git rewrites mtime on checkout, so on a second machine every pulled handoff would otherwise read as brand new. `ageSource` (`'agent' | 'file'`) is what carries that distinction from the store to the label. Sorting uses the same chosen clock, and a row with no usable clock sorts **last**: putting an unknown first asserts it is the newest.
+
+**One slot, two meanings.** A row shows `project · scope — provenance · age`. On a row this machine wrote, `provenance` is the **harness**; on a row another machine wrote, it is the **machine**. On a local row the machine name is constant across every row and carries no information, while the harness is exactly what differs when two agent tools run side by side; the moment a row is remote that inverts. `isThisMachine` is read strictly — anything but a literal `true` shows the machine name, because a machine name is only ever redundant whereas a harness label on a remote row implies that harness is running here.
+
+#### Quit is `role: 'quit'`, and that is a safety property
+
+Not a `click` handler. The role goes through Electron's normal shutdown, which fires `before-quit`, which is where `main.js` asks `GET /api/write-status` and runs `lib/quit-decision.js` over the answer. A hand-rolled handler could call `app.exit()` and walk straight past that guard — the single most likely way to break it while adding a tray. The suite asserts the item carries the role and **no** click handler at all, so no code path exists that could skip the check. That guard also becomes more load-bearing here, not less: an app that keeps running with no window is more likely to be alive when a write is in flight.
+
+#### What it costs while nobody is looking
+
+The MCP writes state in a **separate process**, so there is no in-process event to subscribe to. That leaves polling or a watch, and the research measured both against synthetic trees mirroring the real layout: one recursive `fs.watch` over a 10,000-file tree idles at **0.0044% of a core**, a 20-second poll over the same tree costs **0.31%** — 70×.
+
+| While the menu is closed | Cost |
+|---|---|
+| Recursive `fs.watch` on the domains folder | 0.0044% of a core |
+| Fallback interval, 5 minutes | 0.02% |
+| Debounce timer | Zero when idle — armed only after an event |
+| Glyph expiry timer | Zero when idle — armed only while the glyph is `live` |
+| Index read per real save | 1.4–61 ms, a few times an hour |
+| **Total** | **~0.025% of one core, no additional memory** |
+
+Three details make that hold. The **debounce** is 150 ms because one save produces three events in the same millisecond (the `.tmp-…` file, `current.md`, `journal.jsonl`). The **filter** requires a `state` path segment and rejects any dot-prefixed segment, which removes the atomic write's temp file, `.DS_Store`, `.git/**` and the write lock in one rule — 30 wiki writes produced 32 events and none of them matched. The **glyph expiry** is a one-shot `setTimeout` armed at exactly the live-window boundary, not a tick: `live` has to become `idle` two minutes after the last local save even though nothing happens on disk at that moment, and when the glyph is `idle` there is no timer at all. Nothing branches on the event **type** — on the recursive macOS path every event arrives as `rename`.
+
+The design that would ruin this, refused explicitly: re-reading the index on a short interval so the menu is "instant" when opened. Push-on-change already gives instant opening, because the main process is holding the snapshot when the click arrives.
+
+#### `remote` is an observation, and its feed is suppressed exactly when it matters
+
+`getTraySummary()` **does not import `src/brain/sync.js`** — not the constants, nothing — so no edit to that file can reach `getRemoteStatus()` without adding an import a reviewer will see. That is a stronger guarantee than "we only call it when the cache is warm", and it is the only one available: `getRemoteStatus()` is *cache hit ? return : `git fetch`* with no peek, and `maxAgeMs: 0` does not help because `remoteCacheTtl` returns 0 for a successful payload. A second fetch site is not theoretical — v3.9.1 put one behind the sync badge and it aborted the user's own pull in 11 runs out of 12 over a ref lock.
+
+So `noteRemoteStatus()` records whatever a completed check last reported, fed by one line in `GET /api/sync/remote-status` — the endpoint the sync badge already polls, adding no fetch of its own. The observation expires after 5 minutes, and a stale one is **dropped** rather than shown with an age, because a menu line saying *"2 waiting"* is read as current and there is no room beside it to say it is not. `null` renders as nothing, never as "up to date".
+
+**The composition is the weak point, and it is worth knowing before relying on the line.** `refreshSyncRemoteBadgeIfVisible()` in `src/public/next/app.js` declines to fetch while `document.hidden` is true — correct on its own terms, since a window nobody is looking at should not phone GitHub every ten minutes — so with the window closed, which is the state the tray exists for, no new observation arrives and the existing one expires within five minutes. Nothing renders wrongly; the line is simply usually absent. Closing that needs either a non-fetching accessor in `brain/sync.js` or a deliberate on-open fetch serialised against `pull()`.
+
+#### The mode, and turning it on and off without a restart
+
+`backgroundMode` is a **named string, not two booleans** — `window` · `tray` · `tray-only` — following `install-mode.js` and `releaseChannel`, which makes the illegal fourth combination (no tray *and* no Dock, an app with no affordance at all) unrepresentable. It sits top-level in `.curator-config.json` beside `sharedBrainEnabled` and deliberately **not** in v3.28.0's `ui.*` allow-list: every field in that table is `monotonic`, `writeOnce` or a one-way `clearable` dismissal, because its purpose is that a **consent** cannot be silently downgraded, and a preference the user may flip repeatedly has no shape there.
+
+The read is lenient and the write is strict, and the asymmetry is deliberate. `resolveBackgroundMode()` answers `window` for absent, unrecognised, or a value a newer build wrote — the same fail-safe direction `paths.js` takes for install-mode detection. `setBackgroundMode()` **refuses** an unrecognised value rather than coercing it, because coercing would let Settings report *"tray-only saved"* while the file holds `window`.
+
+`tray-only` is recognised and **does not hide the Dock icon.** `resolveTrayPlan()` returns `hedged: true` with a reason. Hiding the Dock means `app.setActivationPolicy('accessory')`, and the *return* transition — accessory back to regular, which is what happens the moment the user opens the window from the tray — is community-reported buggy in exactly the direction this depends on, and cannot be tested without Electron and a launch. Shipping it would risk no Dock icon, no menu bar, no window, for a mode nobody has asked for yet.
+
+Flipping the setting takes effect without a restart, so every pair of modes is a live transition and there are nine of them. `planModeTransition()` is a pure function over two strings — the suite drives the whole 3×3 matrix — and `main.js` applies the difference. **Idempotence is the property that matters**: a config file watch fires more than once for a single save (an atomic write is a create plus a rename), so `from === to` must produce no action, or one Settings click destroys and recreates the tray icon, which on macOS moves it to a new position and, with a menu bar manager installed, can file it somewhere the user cannot see.
+
+The shell notices the flip by watching the config file's **directory**, not the file: `writeFileAtomic` renames over the inode, and a watch on an inode that gets renamed over stops delivering events silently. It runs in **every** mode, including `window`, because it is what notices the mode being turned on. A channel would be better and is not available — `registerDesktopHost()` throws on an unknown hook name and its frozen list is `pickFolder, relaunch, prepareUpdate, installUpdate`; adding a fifth is a change in `src/`, which the shell does not own.
+
+#### The click, and its honest limit
+
+There is deliberately **no second reader in the widget**. A row click reveals the window on the Agent memory view and on that **project** — it does *not* select the scope. `data-view` and `data-mem-project` are the app's own dispatch attributes; the scope picker inside the memory view has no routing attribute to address. The coupling is the same one `lib/menu.js` already accepts for Settings, with the same property that makes it acceptable: `executeJavaScript` resolves with a value, so the shell learns when the coupling has rotted and shows an error naming the rail button, instead of offering a menu item that silently does nothing. The project name is passed as a JSON string and compared against `dataset.memProject` — never interpolated into a selector, because a project name is user-supplied text and building a CSS selector from it would be an injection into the app's own origin.
+
 ### Known gaps in the shell itself
 
 Beyond signing, and beyond the "run once on one machine" caveat at the top of this section:
@@ -700,6 +790,12 @@ Beyond signing, and beyond the "run once on one machine" caveat at the top of th
 - **The busy-quit path has never run against a real write.** The `quit` branch was exercised end to end; the `ask` branches have only ever been exercised as pure functions.
 - **The MCP launcher escapes the usual test isolation.** `getMcpLauncherDir()` has its own seam, `CURATOR_TEST_MCP_LAUNCHER_DIR`; the documented pair (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`) does **not** cover it, so a bundle-mode test run writes into the real user-data `bin/` directory unless all three are set.
 - **No first-launch adoption of an existing repo install.** The app starts empty and waits to be pointed at a folder; the affordance for that is Domains → **Use existing folder**. What v3.32.0 *did* add is one level down: `setup()` **adopts** a sibling sync repository governing the same domains folder rather than creating a second one over it. Two servers writing that folder at once is still unguarded — `requestSingleInstanceLock()` covers desktop-vs-desktop only.
+- **No tray icon has ever been rendered.** `new Tray()` has never been called on any machine, so nothing about how macOS actually treats the glyph, the `sublabel`, the tooltip or `mouse-enter` is proven — only the data those calls would be handed. `tray-only` recognises the mode and deliberately does **not** hide the Dock icon, because the accessory→regular return transition is reported buggy and cannot be tested here.
+- **`brief` is computed on every read and never rendered.** `getTraySummary()` stats the standing brief and returns `{project, updatedAt, ageSeconds}`; `buildTrayModel()` never reads the field — it appears in `tray-model.js` only inside a docblock. The *omission from the menu* follows the design pass, which ranks the brief Tier C and puts its one line in the Phase 2 scope popup rather than the menu. What does not follow is paying for the `stat` in the meantime with no consumer, which is the unwired-field shape this repo has an allergy to. The user-visible consequence is that the menu answers *"did it save?"* but not *"is my brief still current?"* — that second half lives one click away, on the Agent memory save-status strip.
+- **A harness collision is announced twice.** `collisionNotices()` suppresses a supplied warning only when it matches `/harness/i`, and the only producer of that warning — `tray-summary.js`'s `harness-collision` — words it *"Two agent tools are writing …"*, which contains no such word. Driving the real functions over one collision row plus that exact warning yields both `[collision] Two harnesses are writing notes · drafting` and `[warning] Two agent tools are writing notes · drafting.` The suppression is dead against the only case it exists for, and each collision costs two of the four notice slots. A milder instance of the same shape: a truncated list emits both `truncatedNote` and the store's `scopes-truncated` warning.
+- **The tray's freshness stamp can read fresher than its rows.** `mouse-enter` re-renders from the held snapshot, which moves `renderedAtText` but cannot change an age, because ages are carried in the snapshot rather than derived at render time. Measured above; bounded by the 5-minute fallback poll.
+- **The tray's `remote` line is usually absent in the state the tray exists for.** Its only feed is `GET /api/sync/remote-status`, which the renderer stops polling while the window is hidden; the observation expires after five minutes. Each half is correct and the composition makes the line inert. See [§ The menu bar widget](#the-menu-bar-widget-desktoplibtray-js--srcbraintray-summaryjs).
+- **The menu bar setting is discoverable only in Settings.** The design pass recommended offering it once, in the Agent memory view, at the moment a project has accumulated work, with a `ui.*` dismissal field. Neither the offer nor the field exists, so a user who never opens Settings never learns the feature is there.
 - No crash reporting, no Windows and no Linux. An About panel now exists (`lib/app-version.js`).
 
 ---
@@ -1742,6 +1838,11 @@ Persistent app configuration stored in `.curator-config.json` in the user-data d
 | `getSelectedModel(provider)` | The user's stored model choice for a provider, or `null`. Read **fresh per call**; sanitised, and deliberately **not** validated against the catalogue here (that happens on the read side in `llm.js` — see [Model selection](#model-selection-the-router-v3120--v3130)) |
 | `setApiKeys(keys, opts)` / `setActiveProvider(provider, opts)` | The two activation mutators. Both take an **injected** `opts.canActivate` predicate and activate nothing without it — see [LLM provider selection](#llm-provider-selection-srcbrainllmjs). The predicate itself lives in `src/routes/config.js`, because answering it needs `llm.js`, which imports this file |
 | `setSelectedModel(provider, modelId)` | Persists the choice, or clears it on empty/null. Deletes the key entirely when nothing is selected, so a user who never picks keeps a byte-identical config file |
+| `backgroundModeNames()` | `['window', 'tray', 'tray-only']` — the modes **this build** understands, and the sole source of truth for the Settings control and the route's refusal message |
+| `resolveBackgroundMode(raw)` | Fail-safe resolver. Absent, null, a non-string, a prototype key, or a mode a newer build wrote all resolve to `window`. Exported separately from the getter so the asymmetry is testable without touching the filesystem |
+| `getBackgroundMode()` | The resolved mode for this install. Never throws, never returns null |
+| `getBackgroundModeCaps()` | `{ mode, tray, dock }` — what the desktop shell has to decide before it creates anything. Resolves again rather than trusting the getter, so the table lookup is total by construction |
+| `setBackgroundMode(mode)` | `{ ok, mode, reason }`. **Refuses** an unrecognised value rather than coercing it, and on refusal `mode` is the mode still **in force** — so a caller that renders the returned value shows the truth even if it ignores `ok` |
 
 ### `src/brain/llm.js`
 
@@ -1952,6 +2053,25 @@ It is **a store**, in the sense that it exposes plain functions, renders no prom
 
 **Refusal reasons** are returned, not thrown. The full set is enumerated once, in [api-reference.md](api-reference.md) under "The store's own contract" — deliberately not restated here, because a second hand-maintained copy of that list is what let this section run one reason short of the code for a release. Two of them exist for architectural reasons rather than input validation, and belong here: `unknown-project` refuses a name that is not a real domain, because a folder with no `CLAUDE.md` is invisible to `listDomains()` — hidden from the app, the wiki reader, Health, chat retrieval and every MCP tool — so state written there would go unseen (until v3.34.0 the reason given was that `sync.pull()`'s prune would `rm -rf` it, which stopped being true when the prune was narrowed to folders a pull actually deleted); and `would-replace-larger-state` refuses a near-empty save aimed at a scope already holding a substantially larger handoff, which is the shape of a context-starved agent about to erase good state (`replace: true` is the deliberate override — the refusal costs one retry, the overwritten document is not recoverable).
 
+### `src/brain/tray-summary.js`
+
+One cheap call behind the menu bar widget — `getTraySummary({limit, now})` — and the whole data surface of the tray: the shell calls it, renders what comes back, and asks nothing else.
+
+It is a **projection over the working-state store, not a second inventory of it.** It calls `listWorkingScopes()`, the same function `GET /api/memory` and the MCP call, so the tray and the Agent memory view can never disagree about what is on disk. It costs exactly what `GET /api/memory` costs — one `readdir` plus a stat per candidate, then per project one stat per `(scope, machine)` pair and one 16 KB journal-tail read per pair returned. No LLM, no network, no subprocess, and no write to the store.
+
+It is its own module rather than a function inside `working-state.js` for three reasons, of which two are structural: the store has no notion of *how many projects* and deliberately never has (`MAX_PROJECTS` is the consumer's bound, in `src/routes/memory.js`), and this row carries facts the store does not own — `remote` is a Personal Sync fact, and importing `sync.js` here would drag a `git fetch` into the import graph the MCP child loads on every spawn, which is exactly the graph the stdout-discipline rule is stated over. **It imports nothing from `sync.js`**, so no edit to this file can reach `getRemoteStatus()` without adding an import a reviewer will see.
+
+| Export | Description |
+|--------|-------------|
+| `getTraySummary(opts)` | `{ok, lastSave, scopes[], total, pairsOnDisk, truncated, brief, remote, warnings[]}`. **Never throws** — a store that cannot be read yields empty arrays and a warning, because a menu that renders an exception is one the user reads as "the app is broken". Rows arrive **ordered, newest first**, on the chosen clock; a consumer must not re-sort |
+| `noteRemoteStatus(payload, now)` | Records the result of a remote check somebody **else** performed. An unconfigured install records nothing — that is not an observation of "0 waiting". A failed check keeps `behindFiles: null` rather than collapsing "we could not ask" into "nothing is waiting" |
+| `__resetRemoteObservation()` | Test seam |
+| `TRAY_DEFAULT_LIMIT` (8) · `TRAY_MAX_LIMIT` (40) · `TRAY_MAX_PROJECTS` (200) · `REMOTE_OBSERVATION_MAX_AGE_MS` (5 min) | `TRAY_MAX_PROJECTS` is deliberately the same number as `MAX_PROJECTS` in `src/routes/memory.js` and deliberately **not imported** from it (`src/brain/` must not import from `src/routes/`). Matching matters more than the value: a tighter cap here would make the tray say "nothing saved" about a project the Agent memory view lists happily. If one moves, move both |
+
+**Every number is a measurement or a `null`.** An age that is not known arrives as `null`, never `0` and never a string. `total` is counted **before** the slice and `pairsOnDisk` counts every pair the store saw, so a cap can never be read as a measurement — without those a consumer cannot tell "capped at 8" from "there are exactly 8", and the one case where a user most needs telling there is more is the case that renders as a complete list. `lastSave` is `scopes[0]` re-projected from the **same object**, so the headline and the first row can never name different saves.
+
+`ageSource` (`'agent' | 'file'`) is the field the widget's honesty rests on: `writtenAt` is the agent's own clock from the journal line, `lastWriteAt` is this disk's mtime, which git rewrites on checkout. The tray shows one age, so it chooses — and having chosen, it says which. Both raw facts are emitted too, under names that can only mean one thing.
+
 ### `src/brain/wiki-read.js` (v3.2.0+)
 
 Single-page read plus backlinks for the reader panel — see `GET /api/wiki/:domain/page` in [api-reference.md](api-reference.md). Deliberately does not import from or get imported by `mcp/` (the MCP is a stdio JSON-RPC child process; see the module's own docblock). `resolveInsideWiki`, its path-containment chokepoint, is also imported by `health.js` and `raw-store.js` — one hardened implementation, not three.
@@ -1993,7 +2113,11 @@ deleteConversation(domain, id) → Promise<void>
 Settings and configuration endpoints.
 
 ```
-GET  /api/config               → current app configuration
+GET  /api/config               → current app configuration, including the resolved `backgroundMode`
+                                 and `backgroundModes` (the legal set this build understands)
+POST /api/config/background-mode → set 'window' | 'tray' | 'tray-only'. NOT guardConcurrent'd — nothing
+                                 on any write path reads it, so a 409 would only refuse to let a user
+                                 turn off a menu bar icon while the app is busy with something else
 POST /api/config/domains-path  → set domains folder path
 POST /api/config/pick-folder   → macOS native folder picker (osascript)
 GET  /api/config/api-keys      → masked keys + active provider info, plus (v3.12.0+) `offerable`

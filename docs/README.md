@@ -54,7 +54,7 @@ From researcher Andrej Karpathy and educator Nick Spisak: **one general-purpose 
 - **Ingest** any PDF, article, or note — the AI reads it and automatically writes interlinked wiki pages: summaries, entity pages (people, tools, companies), and concept pages (ideas, frameworks, techniques)
 - **Chat** with your knowledge base in a full multi-turn conversation — ask follow-up questions, connect ideas across sources, and get cited answers from your own wiki. Answers stream in as the model writes them rather than landing all at once, and on OpenRouter you can watch a reasoning model think first. Conversations are saved and survive server restarts
 - **Explore** your knowledge visually as an interactive graph in Obsidian — see how ideas, people, and tools connect across everything you've read
-- **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines
+- **Carry your work forward** — an agent saves the handoff at the end of a session and reads it at the start of the next one, across sessions, agents, models, harnesses and machines. On a Mac you can also put an optional **menu bar icon** there (off by default) that answers *"is my state actually saved, and how long ago?"* without opening the app
 - **Sync** your entire wiki, chat history and working state across computers using a free private GitHub repository — one 3-minute setup, then a single **Sync now** button (with Push only / Pull only alongside it) for daily use
 - **Build** a personal library that gets smarter over time — the more you add, the richer the connections
 
@@ -89,7 +89,7 @@ first group applies to all three.
 | [sync.md](sync.md) | Personal Sync — GitHub backup of your wiki, chat history and working state across your own computers (wizard, token permissions, troubleshooting) |
 | [sync-via-coding-agent.md](sync-via-coding-agent.md) | Set up sync automatically with a coding agent (Claude Code, Cursor, opencode…) — one copy-paste prompt |
 | [system-check.md](system-check.md) | Settings → System Check — confirm the app setup (API key, knowledge folder, credential permissions, sync) + an optional AI connection test |
-| [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, and how it downloads and installs its own updates) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
+| [mac-app.md](mac-app.md) | Both Mac shapes: the downloadable `.dmg` app (first install, Gatekeeper, how it downloads and installs its own updates, and the optional menu bar icon) and the AppleScript Dock launcher the one-line installer builds — plus what moving between them costs you |
 
 **Layer 1 — your brain** (the personal wiki; knowledge accumulates)
 
@@ -112,7 +112,7 @@ first group applies to all three.
 
 | Document | What's inside |
 |----------|---------------|
-| [working-state.md](working-state.md) | Carry build context across sessions, agents, models, harnesses and machines through MCP. What the store holds, why state supersedes while knowledge accumulates, how to treat what comes back, and what is deliberately not built |
+| [working-state.md](working-state.md) | Carry build context across sessions, agents, models, harnesses and machines through MCP. What the store holds, why state supersedes while knowledge accumulates, how to treat what comes back, the two read surfaces (the in-app view and the Mac menu bar icon), and what is deliberately not built |
 | [project-brief-template.md](project-brief-template.md) | A copyable `state/project.md` — the standing brief you write by hand. Carries the `## Operating directives` convention, the capability-fallback pattern, and the limit on what a directive may ask for |
 
 **For developers**
@@ -122,6 +122,8 @@ first group applies to all three.
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Developer setup, running the tests (`npm test` / `npm run test:live`), adding a test, cutting a release |
 | [../CHANGELOG-ARCHIVE.md](../CHANGELOG-ARCHIVE.md) | **This project's memory.** Every release row older than the newest five, moved out of `CLAUDE.md` **byte-for-byte** — the measurements, traps and "KNOWN AND UNFIXED" items that explain why the code is shaped the way it is. `CLAUDE.md` keeps the newest five in full plus a one-line index of every entry here. Read the full row before changing anything with a history. It lives at the repo **root**, not in `docs/`, and that is load-bearing — the preserved rows carry root-relative links; see the note at the top of the file |
 | [roadmap-chat-modes.md](roadmap-chat-modes.md) | Design context for Chat Modes 3 (**Dictate**) and 4 (**Curate**) — **designed but never built**. Nothing in it describes shipped behaviour; read it before implementing either mode |
+| [roadmap-menubar-widget.md](roadmap-menubar-widget.md) | The design pass behind the Mac menu bar icon. **Phase 1 shipped; Phases 2–3 did not.** §0a is the exact boundary — what is built, the five places the build deviated from the plan and why, and what has never been rendered. The rest is the reasoning, deliberately left as written |
+| [roadmap-automatic-sync.md](roadmap-automatic-sync.md) | Whether Personal Sync should run by itself. **Researched, not built** — automatic push is structurally incapable of destroying a local file, automatic pull is not, so the recommendation is opt-in push with pull left as a decision. Read it before proposing any background sync |
 | [ingestion-pipeline.md](ingestion-pipeline.md) | **The technical deep dive on the most critical code path in The Curator** — every stage, every safeguard, the quality contract, Mermaid diagrams. Read this before debugging or extending the ingest code. |
 | [architecture.md](architecture.md) | System design, data flow, module reference |
 | [desktop-app-decisions.md](desktop-app-decisions.md) | **The native Mac app — decisions, not features.** One codebase / two shells, why `desktop/` gets its own manifest, why the first DMG turns `asar` off, the release gate, what migrates and what deliberately does not, and the MCP launcher. Also why `electron-updater` cannot be the update mechanism while the app is ad-hoc signed. Every entry carries its reasoning, its evidence, and a status saying whether code exists for it yet. Read it before proposing anything about packaging |
