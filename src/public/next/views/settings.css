@@ -249,6 +249,30 @@
    provider instead of a single run-on paragraph. */
 .settings-activation-note-body { display: flex; flex-direction: column; gap: 5px; }
 
+/* Defect 2 fix — "Needs re-connect" pill above a green self-test result read
+   as a contradiction (they answer different questions; see renderMcp()'s own
+   comment for which). Same attention-tinted icon+sentence pattern as
+   .settings-write-busy-note / .settings-activation-note above — ATTENTION,
+   never DANGER: the self-test genuinely passed, nothing is broken, the user
+   just has one more click to make Claude Desktop's saved copy match. Declared
+   separately per the views/README "own your own CSS file" rule; this note
+   says something neither of those two says and only ever appears beside the
+   self-test result. */
+.settings-mcp-stale-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px 13px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--attention-text);
+  background: var(--attention-tint);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  margin-top: 10px;
+}
+.settings-mcp-stale-note svg { flex: none; margin-top: 1px; color: var(--attention-text); }
+
 .settings-note-row {
   display: flex;
   align-items: center;
@@ -540,14 +564,33 @@
 /* "not set" — words, and --text-faint measured 2.29 dark / 2.18 light on
    --surface-inset, under half the floor. */
 .provider-key-empty { color: var(--text-2); }
-.provider-state { width: 92px; text-align: right; flex: none; font-size: var(--text-xs); }
-/* "Active" / "Idle". No tint and no border here for a status colour to retreat
-   into, so the pair is carried by the neutral ramp instead: --success-text was
-   4.05 light on the row, and the bright/dim step it was buying is exactly what
-   --text over --text-2 gives, legibly, in both themes. The provider DOT beside
-   them still carries hue. */
+.provider-state {
+  width: 92px;
+  flex: none;
+  font-size: var(--text-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+/* "active" / "configured" / "not set". The WORD stays on the neutral ramp —
+   --success-text measured 4.05 light on this row (10.37 dark), which FAILS
+   the 4.5:1 text floor in light theme, so it cannot paint the word itself;
+   --text over --text-2 gives the bright/dim step legibly in both themes.
+   That is the whole reason this pair had no colour at all before this
+   comment: the maintainer reported (from the pre-/next browser app) that
+   "active" used to read at a glance via colour, and it does not here.
+   Fix: a checkAlt icon, --success-text, ICON-ONLY (never the word) — the
+   same icon+word split this file already uses at .settings-saved-note.
+   --success-text on --surface clears the 3:1 NON-TEXT floor with margin in
+   both themes (3.59-4.05 light-family, 10.07+ dark; see the file-header
+   contrast table), so the icon is safe where the word is not. The word
+   "active" is unchanged and unremoved — colour is reinforcement, not the
+   only signal, for a colour-blind reader. */
 .provider-state-active { color: var(--text); }
 .provider-state-muted { color: var(--text-2); }
+.provider-state-icon { display: inline-flex; color: var(--success-text); }
+.provider-state-icon svg { display: block; }
 .provider-row-actions { display: flex; gap: 6px; flex: none; }
 
 /* ── "Test this key" verdict (v3.15.0) ────────────────────────────────────
