@@ -238,7 +238,7 @@ See [docs/user-guide.md § 6b](docs/user-guide.md#6b-the-menu-bar-icon-mac-app).
 
 **After that it updates itself.** **The Curator → Check for Updates…** (or Settings → General)
 downloads the new version, verifies it against the sha256 GitHub publishes on the asset, and
-swaps it in with a progress bar. You do not come back to this page for updates — the Releases
+swaps it in, showing progress as it goes. You do not come back to this page for updates — the Releases
 page is for a first install. And an update installed this way carries **no Gatekeeper prompt at
 all**: macOS flags a file your *browser* downloads, but not one the app fetched itself, so the
 Open Anyway step never recurs. That difference is measured, with the browser download kept as
