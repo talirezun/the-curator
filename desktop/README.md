@@ -1,15 +1,63 @@
-# `desktop/` — Electron packaging scaffold
+# `desktop/` — Electron shell
 
-**Nothing in this folder has ever been installed, built, or run.**
+**Installed, built and launched on 2026-08-31.** Before that date nothing in
+this folder had ever been run, and the file said so; that sentence is gone
+because it is no longer true.
 
-There is no `node_modules/`, no `package-lock.json`, and Electron is not on
-this machine. Every claim in these files was established by **reading the
-app's source**, not by executing anything. Read that sentence again before
-trusting a line of it.
+What was actually done, and on one machine only (macOS 15, arm64):
 
-This is the *structure and configuration* for a future desktop build. It is
-committed unbuilt on purpose, so the reasoning is reviewable before anyone
-downloads 200 MB of toolchain.
+| | |
+|---|---|
+| `npm install` in `desktop/` | electron **43.5.0**, electron-builder **26.15.3**, both now pinned EXACTLY |
+| `electron .` | a real window, the app's own UI, a real domain rendered |
+| a mutating `POST` from the renderer | **201** — the server's origin guards accept a `BrowserWindow` on a dynamic loopback port |
+| `electron-builder --mac` | one `.app` and two `.dmg`s (arm64 and x64), unsigned |
+| the `.app` run from `/Applications` | works |
+
+**One thing was wrong, and it is the thing this file predicted would be
+wrong:** the `files` mapping. See *The `files` bug* below — it is worth reading
+even if you never touch this folder, because the broken build **passed every
+obvious test**.
+
+Still true: `git diff package.json package-lock.json` at the repo root is
+**0 lines**. The root manifest gained nothing.
+
+---
+
+## The `files` bug, and why building it was not enough to catch it
+
+The scaffold listed `node_modules/**/*` in the `files` filter. **That line did
+nothing.** electron-builder does not treat `node_modules` as ordinary files —
+it computes the production dependency tree from the app manifest's
+`dependencies` and copies that, ignoring the glob. `desktop/package.json`
+deliberately declares no `dependencies`, so the computed tree was empty, the
+build logged
+
+```
+no node modules returned while searching directories
+```
+
+and shipped `Contents/Resources/app/` **with no `node_modules` at all**.
+
+Here is the part that matters. **That build launched perfectly.** Node resolves
+a bare specifier by walking *up* the directory tree, so from
+
+```
+desktop/dist/mac-arm64/The Curator.app/Contents/Resources/app/src/server.js
+```
+
+it climbed out of the bundle, out of `dist/`, out of `desktop/`, and found the
+**repo root's** `node_modules`. The app started, served, rendered the wiki and
+accepted writes. Copy the same bundle to `/Applications` and it dies on
+`ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'`.
+
+So: **"I built it and it ran" is not evidence.** The only test that catches
+this class is launching a *copy* of the `.app` from a directory with no
+`node_modules` above it. Nothing automated does that today.
+
+The fix is an explicit `extraResources` entry placing `../node_modules` at
+`app/node_modules`; `scripts/test-desktop-packaging.js` §11 refuses both the
+old shape and its absence.
 
 ---
 
@@ -43,9 +91,9 @@ names out of both files rather than from a hardcoded list.
 
 The three `lib/` modules import **nothing** from Electron and nothing from
 `src/`, which is what lets `scripts/test-desktop-packaging.js` run them for
-real. `main.js` itself can only be source-scanned — Electron is not installed —
-and the suite says so in its own NOT ENFORCED block rather than implying
-otherwise.
+real. `main.js` itself can only be source-scanned from the offline suite —
+Electron is not an offline-suite dependency and never will be — and the suite
+says so in its own NOT ENFORCED block rather than implying otherwise.
 
 ---
 
@@ -82,15 +130,23 @@ All four were verified against the source in this repo.
 
 ## What is NOT done
 
-Do not read this folder as "nearly a DMG".
+It builds and it runs. It is still not a shippable product.
 
-- **Nothing is installed.** No `npm install` has been run here. The declared
-  versions (`electron ^43`, `electron-builder ^26`) are **unverified** — they
-  come from the plan, not from a resolution. The first install may need to move
-  them.
-- **Nothing has been built or launched.** `main.js` has never been executed by
-  Electron. The `files` mapping in `electron-builder.yml` is the most likely
-  thing to be wrong.
+- **It has been built and launched exactly once, by hand, on one machine.**
+  macOS 15, arm64, Node 22. The x64 DMG was produced but **never executed** —
+  no Intel Mac was available. Nothing about the build is covered by
+  `npm test`, which cannot install a 130 MB toolchain.
+- **The MCP launcher escapes the usual test isolation.** `getMcpLauncherDir()`
+  has its own seam, `CURATOR_TEST_MCP_LAUNCHER_DIR`; the documented pair
+  (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`) does **not**
+  cover it, so a bundle-mode test run writes into the real
+  `~/Library/Application Support/The Curator/bin`. Set all three. Electron's
+  own Chromium profile goes to `~/Library/Application Support/<productName>`
+  regardless and no Curator seam can move it.
+- **The busy-quit path has never run against a real write.** `decideQuit`'s
+  `quit` branch was exercised end to end (⌘Q with `safeToQuit: true` exits
+  cleanly); the `ask` branches have only ever been exercised as pure
+  functions.
 - **No signing.** No Apple Developer enrolment, no Developer ID certificate, no
   hardened runtime, no entitlements. `mac.identity: null` forces an explicitly
   unsigned build so electron-builder cannot silently produce a locally-signed
