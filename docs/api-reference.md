@@ -2394,6 +2394,175 @@ Full contract: [working-state.md](working-state.md) and
 
 ---
 
+## GET /api/config
+
+The app's own configuration — where the knowledge folder is, how that was decided, the default
+domain for MCP writes, and the resolved release channel. No body, no side effects.
+
+**Success response** `200 OK`
+
+```json
+{
+  "domainsPath": "/Users/you/the-curator/domains",
+  "domainsPathSource": "ui",
+  "defaultDomain": "articles",
+  "releaseChannel": "stable"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `domainsPath` | The **resolved** absolute path, never the raw config value |
+| `domainsPathSource` | Which rung of the resolution ladder won: `cli` · `ui` · `env` · `default` |
+| `defaultDomain` | The domain MCP write tools use when the user says "my wiki" without naming one. `null` if unset |
+| `releaseChannel` | The **resolved** channel name (v3.29.0). Always `stable` in this build |
+
+`domainsPathSource` mirrors `getDomainsDir()`'s rungs in the same order, so this endpoint can never
+report a source that disagrees with the folder reported beside it. The `cli` arm is unreachable in
+the app — only the MCP child process installs that override — and exists so the two cannot drift.
+
+`releaseChannel` is the **resolved** name, never the raw file value: an absent or unrecognised key
+reads as `stable` here exactly as it does in the update paths, so this endpoint can never disagree
+with the ref those actually use. There is no endpoint that writes it.
+
+---
+
+## GET /api/config/ui-state
+
+Durable UI state (v3.28.0) — the handful of `/next` fields whose loss is a **correctness or trust
+failure** rather than a per-device inconvenience, so they live in `.curator-config.json` instead of
+browser storage. No body.
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "ui": {
+    "aiHealthDisclosureSeen": "yes",
+    "onboardingDismissed": null,
+    "cutoverNoticeDismissed": "1",
+    "installOrigin": "pre"
+  }
+}
+```
+
+**Every field is always present.** `null` means *not recorded* — and a field and its absence are
+different facts that must not collapse into one value. For `installOrigin`, `null` ("nobody has
+decided yet, decide now") is a completely different instruction from `"post"`.
+
+Anything unrecognised on disk — a value from a future version, a half-written string, a key some
+other tool squatted on — reads as `null` rather than being trusted.
+
+**This endpoint never returns a non-200 status.** A read error comes back as
+`200 {"ok": false, "error": "..."}` with no `ui` key, so every consumer falls back to its own
+documented fail-safe direction. Answering `500` to a read the client uses to decide whether to
+re-ask for a consent would be the wrong failure.
+
+---
+
+## POST /api/config/ui-state
+
+Record durable UI state. Body is a **partial** map of `{ field: value }`.
+
+| Field | Accepted values | Rule |
+|---|---|---|
+| `aiHealthDisclosureSeen` | `"yes"` | monotonic — cannot be un-set |
+| `onboardingDismissed` | `"1"`, or `null` to clear | clearable |
+| `cutoverNoticeDismissed` | `"1"` | monotonic |
+| `installOrigin` | `"pre"` \| `"post"` | write-once |
+
+**Success response** `200 OK`
+
+```json
+{
+  "ok": true,
+  "ui": { "onboardingDismissed": "1", "aiHealthDisclosureSeen": "yes", "cutoverNoticeDismissed": null, "installOrigin": "pre" },
+  "refused": [{ "field": "aiHealthDisclosureSeen", "reason": "not_clearable" }]
+}
+```
+
+`refused` names **every field that was asked for and not written**, with a reason:
+`unknown_field` · `not_clearable` · `invalid_value` · `already_recorded` · `monotonic`. A refusal
+that is merely un-written is invisible to the caller, and this project has a specific record of that
+shape, so it is reported instead.
+
+Values are stored as the same strings the browser held (`'yes'`, `'1'`, `'pre'`), not as booleans —
+which makes the client adapter an identity map, with no encoding to get wrong.
+
+⚠️ **Only `onboardingDismissed` is clearable, and that is a real distinction rather than a
+relaxation.** An un-*dismiss* is a thing the product offers (Settings → "Show setup guide"); an
+un-*consent* is not. A `null` aimed at a consent field is refused **by name** rather than silently
+no-op'd.
+
+> Both `ui-state` routes are deliberately **not** behind `guardConcurrent` and are **not** registered
+> with the write registry. Nothing on any write path reads these fields — they exist only so the app
+> can remember what the user has already been told. A `409` here would fire precisely when the user
+> is mid-ingest and the app is trying to record that they dismissed a panel, re-creating the "the
+> app forgot me" symptom the endpoint exists to prevent.
+
+---
+
+## POST /api/config/domains-path
+
+Point The Curator at a different knowledge folder. This is what makes an existing wiki appear in a
+fresh install — the wiki is plain markdown on disk, so naming the folder *is* the migration.
+
+**Body**
+
+| Parameter | Description |
+|---|---|
+| `path` | Absolute path to an **existing** folder. Required, non-empty |
+
+**Success response** `200 OK`
+
+```json
+{ "ok": true, "domainsPath": "/Users/you/Documents/curator-domains" }
+```
+
+**Error response** `400` — `{"error": "path is required"}`, or
+`{"error": "Folder does not exist: /nope"}`. The folder must already exist; this route does not
+create one.
+
+**Refusal response** `409` — behind `guardConcurrent('change the knowledge folder')`, so it refuses
+while an ingest, sync or update is in flight. Moving the knowledge folder out from under a running
+write is exactly the case that guard exists for.
+
+---
+
+## POST /api/config/pick-folder
+
+Open the native macOS folder picker (`osascript`) and, if the user chooses a folder, persist it.
+**macOS only** — on Windows and Linux use [`POST /api/config/domains-path`](#post-apiconfigdomains-path)
+with a path you obtained some other way. No body.
+
+**Success response** `200 OK` — a folder was chosen
+
+```json
+{ "ok": true, "path": "/Users/you/Documents/curator-domains" }
+```
+
+**Success response** `200 OK` — the user pressed Cancel
+
+```json
+{ "cancelled": true }
+```
+
+**Error response** `400` — `{"error": "Folder does not exist: ..."}` ·
+**Refusal response** `409` — an in-flight write.
+
+⚠️ **This route is a mutation, not a path-returning helper.** It calls `setDomainsDir()` itself; it
+does not hand a path back for the client to submit to `/domains-path`.
+
+⚠️ **Integration hazard — check `cancelled` before `res.ok`.** The dialog blocks for up to 60
+seconds, so `hasActiveWrites()` is re-checked **after** it closes: the middleware only proved the
+state at the moment the dialog opened, which is long enough for the batch queue to start its next
+item. That means a `409` refusal is possible on a request that was accepted at entry — and because
+the shipping frontend tests `data.cancelled` before `res.ok`, a refusal must never carry that field.
+The two outcomes are deliberately kept distinct.
+
+---
+
 ## GET /api/config/api-keys
 
 Returns masked API key status, the active provider, and the model-picker catalogue. No body.
@@ -2989,9 +3158,24 @@ Compare the local version and commit against `main` on GitHub. Network read only
   "localCommit": "a1b2c3d",
   "remoteCommit": "e4f5a6b",
   "updateAvailable": true,
-  "localAhead": false
+  "localAhead": false,
+  "channel": "stable",
+  "branch": "main"
 }
 ```
+
+`channel` and `branch` (v3.29.0) are **additive** — every field above them keeps its name, type and
+meaning, so a client written before that release reads the payload it always did. They report the
+**resolved** release channel and the git ref this install tracks, so the channel is inspectable
+rather than inferred: given a support report, seeing the resolved value beside the raw config file
+is the only way to tell *"resolved to `stable` because the key is absent"* from *"resolved to
+`stable` because the key holds something this build has never heard of"*.
+
+`stable` is the only channel this build defines, and `branch` is therefore always `main`. There is
+deliberately no control that writes the channel, and adding a second one is not a config change —
+see [`GET /api/config`](#get-apiconfig) and
+[desktop-app-decisions.md § D10](desktop-app-decisions.md#d10--releasechannel-ships-with-stable-as-its-only-valid-value)
+for the measurement that stops it.
 
 `updateAvailable` is **not** a plain version inequality. It used to be — `latest !== current`, which is
 true in *both* directions, so a checkout whose local version was **ahead** of the published one (a

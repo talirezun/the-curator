@@ -10,6 +10,7 @@ This guide covers everything from first-time setup to daily use. No technical ba
 1c. [Nothing here is locked to one AI, one tool, or one company](#1c-nothing-here-is-locked-to-one-ai-one-tool-or-one-company)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
+3b. ["Is there an app to download?"](#3b-is-there-an-app-to-download)
 4. [Get your API key (Gemini, Claude or OpenRouter)](#4-get-your-api-key-gemini-claude-or-openrouter)
 5. [First run — the Getting started panel](#5-first-run--the-getting-started-panel)
 6. [Start the server (and how lifecycle works)](#6-start-the-server-and-how-lifecycle-works)
@@ -219,6 +220,102 @@ Open **http://localhost:3333** in your browser. The Getting started panel will g
 - Updating the app on Linux/Windows: run `git pull && npm install` from the `the-curator` directory, then restart `node src/server.js`. See [§16 → Version and updates](#version-and-updates) for how updating works on macOS, where it is a button in Settings.
 
 > For the Mac Dock app (double-click to launch, no Terminal needed), see **[docs/mac-app.md](mac-app.md)**.
+
+---
+
+## 3b. "Is there an app to download?"
+
+Short answer: **not yet.** What you installed above is the real thing and is fully
+supported. This section exists because it is the question everyone asks, and
+because the answer for *existing users* — what happens to your wiki when a
+packaged app does arrive — deserves a straight answer rather than a shrug.
+
+### What you are actually running
+
+The Curator is a **local server**. Everything you see is a web page served from
+your own machine, at `http://localhost:3333`.
+
+```mermaid
+flowchart LR
+    subgraph YOU["Your Mac"]
+        L["Dock launcher<br/>(a small wrapper)"] -->|starts| S["The Curator server<br/>node src/server.js"]
+        S --> B["Your browser<br/>localhost:3333"]
+        S --> D[("domains/<br/>plain markdown")]
+        O["Obsidian"] --> D
+        M["Claude Desktop<br/>Claude Code · Cursor"] -->|MCP| D
+    end
+```
+
+Notice where your knowledge sits. **`domains/` is a folder of ordinary markdown
+files, and nothing in that picture owns it.** The launcher, the server, Obsidian
+and your MCP client are four separate things reading the same folder. That single
+fact is why every question below has a reassuring answer.
+
+### The three ways to run it, today
+
+| | What it is | Who it's for |
+|---|---|---|
+| **Dock launcher** *(macOS)* | The one-line installer builds a small `.app` that starts the server and opens your browser. **Not a downloadable, signed application — there is no `.dmg`.** | Mac users who never want the Terminal |
+| **Run the server yourself** | `node src/server.js`, then open `localhost:3333` | Windows and Linux — **the only option there** — and anyone who prefers it |
+| **Packaged Mac app** | A real signed application | **Does not exist yet.** Being worked on |
+
+### What is being built, and what is not
+
+A properly packaged Mac app is in progress. Two things are worth knowing:
+
+- **It is the same app, not a different one.** Same codebase, same release, same
+  files on disk. The packaged app is a *shell* around the identical server you
+  are running now — deliberately not a fork, so a fix lands in one place.
+- **The browser install is not being retired.** It stays fully supported, and it
+  remains the only option on Windows and Linux.
+
+Every decision behind it — with its reasoning, its evidence, and a status saying
+whether code exists for it yet — is recorded in
+[desktop-app-decisions.md](desktop-app-decisions.md). Most rows say `DECIDED`,
+which means *agreed, not built.*
+
+### If a packaged app arrives, what happens to my wiki?
+
+```mermaid
+flowchart TD
+    A["Your wiki today<br/>domains/ — plain markdown"] --> B["Install the packaged app"]
+    B --> C["Settings → Knowledge base folder<br/>point it at your existing domains/"]
+    C --> D["Settings → API keys<br/>paste your key again"]
+    D --> E["Settings → My Curator MCP<br/>re-run the wizard"]
+    E --> F["Everything back:<br/>same pages, same graph, same history"]
+    A -.->|"never copied, never converted,<br/>never moved"| F
+```
+
+Three steps, all of which are buttons that **already exist** in Settings today.
+There is no import, no conversion and no database rebuild, because there is no
+database — pointing the app at the folder *is* the migration.
+
+| ✅ Comes across untouched | ⚠️ You redo once | ❌ Does not happen |
+|---|---|---|
+| Every wiki page, entity, concept and summary | Paste your API key again | Nothing is copied to a new location |
+| All your domains | Reconnect Personal Sync, if you use it | Nothing is converted to another format |
+| Chat history and conversations | Re-run the MCP wizard, if you use it | No file is deleted or rewritten |
+| Working state (agent handoffs) | | |
+| Your Obsidian vault and graph colours | | |
+
+**Why credentials do not come across, deliberately.** Copying API keys and sync
+tokens automatically would mean new code that reads three secret files from one
+place and writes them to another — code that runs exactly once per user, is very
+hard to test in the shapes that matter, and fails in the direction where a secret
+ends up somewhere nobody intended. Re-pasting a key takes about thirty seconds
+and uses a screen you have already used. That trade was made on purpose, and it
+is [D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
+
+**Why the MCP wizard has to be re-run.** The Claude Desktop entry contains
+absolute paths pointing at wherever your MCP bridge lives. Move the app and that
+entry goes stale — which is why the wizard already detects a stale entry and
+shows you a banner. See [mcp-user-guide.md](mcp-user-guide.md).
+
+> **The honest reassurance, and it is a structural one rather than a promise:**
+> The Curator has no lock-in to break. Your knowledge is markdown in a folder you
+> chose, synced to a GitHub repository you own. If the packaged app never ships,
+> nothing you have is worth less. If it ships and you dislike it, the browser
+> install still opens the same folder.
 
 ---
 
