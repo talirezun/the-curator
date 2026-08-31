@@ -96,6 +96,7 @@ names out of both files rather than from a hardcoded list.
 | `lib/update-plan.js` | Every DECISION the in-app updater makes, and no I/O. Includes the swap script's text. |
 | `lib/update-release.js` | "Which release, which .dmg?" — delegates every version question to `src/routes/config.js`. |
 | `lib/update-engine.js` | Download, verify, stage, swap, relaunch. Every effect injected. |
+| `lib/update-client.js` | The shell as a CLIENT of the app's own update route — the menu's download/install path, the SSE reader, and the menu label. Never touches the engine hooks. |
 | `lib/tray-model.js` | The menubar widget's ROW MODEL: order, ages, the harness-vs-machine slot, caps, notices, the glyph state. Pure. |
 | `lib/tray-menu.js` | Row model → `Menu.buildFromTemplate` template. Pure. |
 | `lib/tray-icon.js` | Generates the template-image glyph as PNG bytes. No binary is checked in. Pure. |
@@ -554,6 +555,80 @@ rendered), which is a race across a re-render rather than one click.
 **Rejected: both.** Two things happening from one click is how a menu item
 comes to feel unpredictable.
 
+### …and then it installs the update. What that rejected, and why (v3.36.0)
+
+**The defect first, because it is the reason this section exists.** v3.33.0
+shipped the in-app updater and this menu in the same release, built by two
+agents. The engine worked. The menu went on saying, in a native dialog,
+
+> This build does not install updates by itself. Download opens the release
+> page in your browser; you then replace The Curator in your Applications
+> folder.
+
+That was true of v3.31.0, when it was written, and false from the moment the
+engine landed beside it. Nobody rewired the menu; the maintainer hit it on the
+shipped v3.35.0, having already updated 3.33.0 → 3.34.0 through Settings.
+`scripts/test-desktop-menu.js` was green throughout and even asserted that
+sentence was **present** — which is the lesson: a guard on a string cannot tell
+you the string has become a lie.
+
+**Chosen: the shell becomes a second CLIENT of the app's own update route.**
+`lib/update-client.js` POSTs `/api/config/update` (SSE), reads the stream, and
+POSTs `/api/config/update/apply` when it reaches `staged` — the same two
+endpoints, in the same order, that Settings ▸ General posts.
+
+**Rejected: call the engine hooks directly.** `main.js` holds the engine — it
+built it — so `updater.prepareUpdate()` would have been two lines. It is wrong
+for reasons that are observable rather than stylistic:
+
+- `src/routes/config.js` owns the **job record**. A download that bypassed the
+  route would leave `GET /update-progress` reporting `job: null` while 140 MB
+  came down, so Settings ▸ General would say *no update running* during an
+  update. Two surfaces disagreeing is the same defect in a new place.
+- The route owns the refusals that come **before** the engine — a write in
+  flight, an update already running, no engine attached — in the app's shared
+  `conflictResponse` shape. A second entry point needs its own copies.
+- The route sets the `beginUpdate()` marker, which is what makes the shell's
+  own quit dialog say *an update is being applied*.
+
+And because the work is the server's job, **opening Settings ▸ General while a
+menu-started update downloads shows the five-phase ring already running** —
+`probeInAppUpdate()` there adopts the job. Nothing in the shell draws that; not
+starting a second, invisible updater is what allows it.
+
+### Where the download's progress goes
+
+| Option | Verdict |
+|---|---|
+| A native dialog that updates as it goes | **Rejected, and not on taste.** Electron has no API to change or close a `showMessageBox` once it is on screen. Faking it means closing and reopening a dialog per tick — flicker, and repeated focus theft. |
+| Switch the window to Settings ▸ General | **Rejected as the mechanism.** It needs a window (the menu is reachable with none) and the two ordered renderer couplings the check already rejected. And the auto-continue to the restart lives in the client that *started* the stream, so a panel that merely adopted the job would stop at "downloaded" and wait for a second click nobody mentioned. It happens anyway, for free, as a *view* — see above. |
+| The Dock icon's progress bar | **Rejected.** `setProgressBar` is a `BrowserWindow` method, so it needs a window, and it cannot say which phase is running or what failed. Two indicators that can disagree is worse than one that cannot. |
+| The menu item's own label | **Chosen.** The only surface that exists with no window open — the state ⌘W leaves behind — and the mechanism this shell already uses for the check. Determinate: `Downloading Update… 43%`. |
+
+`updateMenuLabel()` composes it from the server's own progress record; the label
+carries a **whole** percent, so the ~550 progress events of a 140 MB download
+produce **103 menu rebuilds**, measured by driving 550 real events.
+
+### What the dialog says now, and what it must never claim
+
+`INSTALL_EXPLAINER` in `lib/update-verdict.js` is **byte-identical** to the
+sentence `onInstallInApp()` in `src/public/next/views/settings.js` puts in front
+of the same decision, and `scripts/test-desktop-menu.js` pins the two by reading
+that file. Duplicated rather than imported because every module in `desktop/lib`
+is `src`-free so the suite can execute it — the same trade `RELEASES_URL` makes.
+
+It says the genuinely good news: **no security warning to click through.** That
+is a statement about *quarantine*, measured with a control — a DMG carrying
+`com.apple.quarantine` (what a browser download stamps) yields a quarantined
+app; the same DMG fetched by the app's own `fetch()` does not. It is **not** a
+claim that Apple vouched for anything, and the suite asserts the string never
+mentions notarization or Apple approval. The pre-release sentence beside it says
+the opposite out loud: the build is *not yet signed by Apple*.
+
+The old sentence was **not deleted**. It is conditioned on the server's own
+`updaterAttached`, because it remains exactly true for a build with no engine
+attached.
+
 ### One source of truth, stated precisely
 
 `GET /api/config/update-check` is the only side that read the release list, and
@@ -572,9 +647,12 @@ that ignores everything and always says the same thing.
 
 **What IS duplicated, named rather than hidden:** four short headline sentences
 that also exist in `src/public/next/views/settings.js`
-(`classifyInstallerUpdate`). Every failure sentence comes from the route
-verbatim, because `classifyReleaseFailure()` already authored one per failure
-mode and those are the four a user only ever reads when something is wrong.
+(`classifyInstallerUpdate`), plus `INSTALL_EXPLAINER`, which is pinned to its
+other copy by a cross-file assertion. Every failure sentence comes from the
+route verbatim — `classifyReleaseFailure()` already authored one per check
+failure, and the engine's `UPDATE_FAILURES` table authors one per install
+failure. Those are the sentences a user only ever reads when something is
+wrong, and the ones it would be worst to have two versions of.
 
 **One divergence from Settings ▸ General:** the menu does not fetch
 `GET /api/version`, so it cannot report `restart-required` (files on disk newer
@@ -585,18 +663,25 @@ click was not worth it.
 
 ### "Really fluent", as a UX requirement
 
-Not auto-install. That needs a signed, notarized app and paid Apple enrolment,
-and is deferred by decision — the dialog says so in plain words rather than
-implying a capability the build does not have. `scripts/test-desktop-menu.js`
-asserts the menu never issues a POST.
+Auto-install without asking is still not done, and that is a decision: an
+update that restarts the app on its own timetable can truncate a paid ingest,
+and the user has to be able to say *later*. But **an update the user has agreed
+to is now performed by the app**, which is the half v3.31.0's copy said was
+impossible and v3.33.0 quietly made possible.
+
+`scripts/test-desktop-menu.js` used to assert *the menu never issues a POST* —
+an invariant that encoded the bug. It now asserts the property actually worth
+having: `main.js` builds no URL and issues no request itself, so every call site
+lives in `desktop/lib/`, where the suite executes it.
 
 What "fluent" was taken to mean, and how each part is met:
 
 | Requirement | How |
 |---|---|
 | Something happens *immediately* | The item relabels to "Checking for Updates…" and disables. The menu bar **is** the progress indicator — no window needed, nothing painted by the renderer. The check is a live GitHub call with a 12-second ceiling; an item that looked unchanged for ten seconds is the "nothing happens, then suddenly something happens" complaint of v3.11.0. |
-| One click to the thing | When an update exists, **Download is the default button** and opens the release page the route chose. Every other dialog defaults to dismiss. |
-| Never two dialogs | An in-flight check refuses a second one, same shape as `quitCheckInFlight`. |
+| One click to the thing | When an update exists **and this build can install it**, the default button is **Download and Install** and it does exactly that. Where no engine is attached it is **Download…** and opens the release page the route chose. Every other dialog defaults to dismiss. |
+| Progress on a long operation | The same menu item carries `Downloading Update… 43%` through five named phases, then `Installing Update…`. |
+| Never two dialogs | An in-flight check refuses a second one, same shape as `quitCheckInFlight`. An in-flight **install** refuses one too, and refuses a second download with it. |
 | Never an invisible dialog | The message box is window-modal **only when the window is actually on screen**. ⌘W leaves a hidden window behind; a sheet attached to it would be invisible and the app would look frozen with a permanently disabled menu item. |
 | A dead end is never a dead end | Every failure carries the route's own actionable sentence plus an *Open Releases Page* button. |
 | It works before the app is ready | The menu goes up before the port scan. `baseUrl` is still null, and `fetchUpdateCheck(null)` resolves to "wait a moment and try again" — which is exactly true. |

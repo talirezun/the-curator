@@ -283,6 +283,36 @@ section('§3 the in-flight state drives the item, so the menu IS the progress in
   ok(all.length === 1, 'exactly ONE item checks for updates — not one per menu');
 }
 
+// ── v3.36.0: the THIRD state, an update actually being installed ────────────
+// The label is composed by lib/update-client.js from the server's own progress
+// record and handed in whole. This section is about PRECEDENCE and refusal,
+// which is what this module decides.
+{
+  const item = (opts) => menu.flattenMenu(menu.buildMenuTemplate({ platform: 'darwin', ...HANDLERS, ...opts }))
+    .find((i) => i.id === menu.ID_CHECK_FOR_UPDATES);
+
+  const installing = item({ updateStatus: 'Downloading Update… 43%' });
+  eq(installing.label, 'Downloading Update… 43%', 'installing: the item shows the whole label the client composed');
+  eq(installing.enabled, false, 'installing: the item is DISABLED, so a second click cannot start a second 140 MB download');
+
+  // PRECEDENCE, driven with BOTH flags set. An install runs for minutes and a
+  // check runs for seconds, so a menu that let `checking` win would read
+  // "Checking for Updates…" for the whole of a download.
+  const both = item({ checking: true, updateStatus: 'Installing Update…' });
+  eq(both.label, 'Installing Update…', 'installing WINS over checking when both are set');
+  eq(both.enabled, false, 'and the item is still disabled');
+  ok(both.label !== menu.CHECK_LABEL_BUSY,
+     'CONTROL — the two states genuinely produce different labels, so the precedence assertion is not vacuous');
+
+  // A non-string, or an empty one, is the ABSENCE of a status and must never
+  // render as a blank row a user cannot read.
+  for (const junk of [null, undefined, '', '   ', 0, false, {}, []]) {
+    const back = item({ updateStatus: junk });
+    eq(back.label, menu.CHECK_LABEL_IDLE, `updateStatus=${JSON.stringify(junk)} falls back to the idle label rather than blanking the item`);
+    eq(back.enabled, true, `  and leaves the item clickable`);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 section('§4 a missing handler is refused at BUILD time, not at click time');
 // A menu item wired to `undefined` throws when the USER clicks it — in front
@@ -433,6 +463,219 @@ const D = verdict.describeUpdate;
   }
   ok(!/undefined|null|\bNaN\b|\bv\s*$/.test(D({}).detail),
      'a payload with no version number never renders "vundefined" or a bare "v"');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§7a THE MENU INSTALLS THE UPDATE — the v3.36.0 defect, at the dialog');
+// ═══════════════════════════════════════════════════════════════════════════
+// THE DEFECT: v3.33.0 shipped the in-app updater and this menu in the same
+// release, built by two agents, and the menu was never rewired. Its dialog
+// went on saying "This build does not install updates by itself" — true of
+// v3.31.0, false from v3.33.0 — while Settings ▸ General downloaded and
+// installed the update in place. The maintainer met it on v3.35.0.
+//
+// EVERY ASSERTION BELOW IS ABOUT WHAT THE DIALOG *OFFERS*, not about what it
+// says. A guard that only checked for the presence of a sentence is exactly
+// what failed here: the sentence was present, correct-looking, and describing
+// behaviour that did not exist.
+{
+  const AVAIL = {
+    current: '3.34.0', latest: '3.35.0', comparable: true, updateAvailable: true,
+    localAhead: false, noInstallableRelease: false, updateStyle: 'download-installer',
+    releaseUrl: 'https://github.com/talirezun/the-curator/releases/tag/v3.35.0',
+    releasesPageUrl: 'https://github.com/talirezun/the-curator/releases',
+  };
+
+  const attached = D(AVAIL, { attached: true, jobState: null, jobVersion: null });
+  eq(attached.kind, 'install', 'an updater-attached build reaches the INSTALL kind, not the open-a-web-page one');
+  eq(attached.action, { type: 'install' },
+     'THE FIX, AS AN ACTION: the button performs an install rather than opening a URL — this is the assertion the old design could not satisfy');
+  ok(!attached.action.url, 'the install action carries no URL at all, so it cannot degrade to opening a page');
+  eq(attached.defaultId, verdict.ACTION_ID, 'and it is the default button — the user asked for an update and this gets it');
+  ok(/Download and Install/.test(attached.buttons.join(' ')), 'the button says what it does');
+
+  // ── The old sentence must be GONE from this arm, and PRESENT in the other.
+  // Both halves, because deleting it everywhere would break the build that
+  // genuinely cannot install anything, and keeping it everywhere is the bug.
+  ok(!/does not install updates by itself/i.test(attached.detail),
+     'the false sentence is GONE when the app can in fact install the update');
+  ok(!/replace The Curator in your Applications folder/i.test(attached.detail),
+     'and so is the instruction to replace the app by hand, which is no longer what happens');
+
+  const detached = D(AVAIL, { attached: false, jobState: null, jobVersion: null });
+  eq(detached.kind, 'available', 'a build with NO updater attached still reaches the old kind');
+  eq(detached.action, { type: 'open-url', url: AVAIL.releaseUrl },
+     '  and still opens the release page, because that is genuinely all it can do');
+  ok(/does not install updates by itself/i.test(detached.detail),
+     '  and still says so — the sentence was not deleted, it was CONDITIONED');
+
+  // `attached: null` is "we could not ask", a third value, and it must not be
+  // read as "yes". The fail-safe direction is the page, which is true of every
+  // build; offering an install a build cannot perform is the failure that
+  // matters.
+  for (const unknown of [{ attached: null }, {}, undefined, { attached: 'true' }, { attached: 1 }]) {
+    const v2 = D(AVAIL, unknown);
+    eq(v2.kind, 'available', `an unknown/odd probe (${JSON.stringify(unknown)}) falls back to the page, never to an install it cannot do`);
+  }
+
+  // ── The already-running and already-staged states, both read off the
+  //    SERVER's job record — the only thing that can know about a download
+  //    started from the other surface.
+  for (const state of ['running', 'applying']) {
+    const busy = D(AVAIL, { attached: true, jobState: state, jobVersion: '3.35.0' });
+    eq(busy.kind, 'install-running', `jobState="${state}" is reported as an update already in progress`);
+    eq(busy.action, null, '  and offers no action — starting a second one is the thing being prevented');
+    ok(/already/i.test(busy.message), '  and says so in the headline');
+  }
+  const staged = D(AVAIL, { attached: true, jobState: 'staged', jobVersion: '3.35.0' });
+  eq(staged.kind, 'install-staged', 'a staged job is reported as downloaded and ready');
+  eq(staged.action, { type: 'install-staged' },
+     '  and its action SKIPS the download — offering a plain install would start a second 140 MB transfer for a build already verified on disk');
+  ok(/v3\.35\.0/.test(staged.message), '  and it names the version, taken from the job record');
+
+  // ANTI-VACUITY across the whole set: four different job states must reach
+  // four different kinds, or the switch above is not being read at all.
+  const kinds = new Set(['running', 'staged', null].map((s) => D(AVAIL, { attached: true, jobState: s }).kind));
+  ok(kinds.size === 3, `CONTROL — three job states reach three DIFFERENT kinds (${[...kinds].join(', ')})`);
+
+  // The check's other five kinds must be untouched by the probe: an install
+  // capability is not an answer to "is there an update".
+  for (const [payload, expected] of [
+    [{ current: '3.35.0', latest: '3.35.0', comparable: true, updateAvailable: false, updateStyle: 'download-installer' }, 'current'],
+    [{ current: '3.36.0', latest: '3.35.0', comparable: true, updateAvailable: false, localAhead: true, updateStyle: 'download-installer' }, 'local-ahead'],
+    [{ error: 'GitHub is rate-limiting update checks from this network.', updateStyle: 'download-installer' }, 'error'],
+    [{ current: '3.35.0', noInstallableRelease: true, updateStyle: 'download-installer' }, 'no-release'],
+    [{ current: '3.35.0', latest: 'nightly', comparable: false, updateStyle: 'download-installer' }, 'unknown-version'],
+  ]) {
+    eq(D(payload, { attached: true, jobState: null }).kind, expected,
+       `"${expected}" is unchanged by an attached updater — the commonest answers still answer`);
+    eq(D(payload, { attached: true, jobState: null }).kind, D(payload).kind,
+       `  and is byte-for-byte the same kind with and without the probe`);
+  }
+  // The dialogs too, not just the kinds — a headline that quietly changed
+  // would be a regression the kind check cannot see.
+  for (const payload of [
+    { current: '3.35.0', latest: '3.35.0', comparable: true, updateAvailable: false, updateStyle: 'download-installer' },
+    { error: 'nope', updateStyle: 'download-installer' },
+  ]) {
+    eq(D(payload, { attached: true }), D(payload),
+       'the whole dialog descriptor is identical with and without an attached updater on a non-available payload');
+  }
+
+  // git-pull is untouched. A source checkout has no installer to run, and
+  // POST /api/config/update there is `git reset --hard` behind a typed confirm
+  // in Settings — reproducing that gate in a native dialog would be a second
+  // consent surface for the most destructive button in the app.
+  const git = D({ current: '3.34.0', latest: '3.35.0', updateAvailable: true }, { attached: true, jobState: null });
+  eq(git.style, 'git-pull', 'a git-pull payload is still git-pull');
+  eq(git.action, { type: 'open-settings' }, 'and an attached updater does NOT make the git arm install anything');
+}
+
+// ── The explainer is ONE sentence in TWO files, pinned ──────────────────────
+// Duplicated rather than imported, because every module in desktop/lib is
+// src-free so the suite can EXECUTE it — the same trade lib/menu.js makes for
+// RELEASES_URL. What makes the duplication safe is this assertion: the two
+// copies cannot drift without reddening here.
+{
+  const settingsSrc = read(path.join(ROOT, 'src', 'public', 'next', 'views', 'settings.js'));
+  // Undo JS string concatenation (`'a ' + 'b'`) so a sentence broken across
+  // source lines is matched as the one string it becomes at runtime.
+  const joined = settingsSrc.replace(/'\s*\+\s*'/g, '');
+  ok(joined.length > 100000, `CONTROL — the settings source really loaded (${joined.length} chars)`);
+  ok(joined.includes(verdict.INSTALL_EXPLAINER),
+     'INSTALL_EXPLAINER is byte-identical to the sentence Settings ▸ General shows before the SAME operation — one description of one thing, in two places that cannot drift');
+  ok(!joined.includes(verdict.INSTALL_EXPLAINER + 'x'),
+     'CONTROL — the containment check is not satisfied by any string, so the pin means something');
+
+  // And what it must never claim. "No security warning" is a statement about
+  // QUARANTINE (measured: the app's own fetch produces an unquarantined
+  // bundle where a browser download does not). It is NOT a claim that Apple
+  // checked anything — the build is ad-hoc signed and notarized by nobody.
+  for (const forbidden of [/notariz/i, /Apple has (verified|checked|approved)/i, /verified by Apple/i, /signed by Apple\b(?!.*not)/i]) {
+    ok(!forbidden.test(verdict.INSTALL_EXPLAINER),
+       `the explainer never claims Apple vouched for the bytes (${forbidden})`);
+  }
+  ok(/no security warning to click through/i.test(verdict.INSTALL_EXPLAINER),
+     'it DOES say the genuinely good news — an app-installed update carries no Gatekeeper prompt');
+  ok(/Nothing is replaced until that check passes/i.test(verdict.INSTALL_EXPLAINER),
+     'and it says a failed download leaves this copy working, which is what makes the offer safe to accept');
+
+  // The pre-release sentence is the one that DOES mention Apple, and it says
+  // the opposite — that the build is not signed by Apple. The two must be able
+  // to sit in one dialog without contradicting each other.
+  const pre = D({
+    current: '3.34.0', latest: '3.35.0', comparable: true, updateAvailable: true,
+    updateStyle: 'download-installer', prerelease: true,
+  }, { attached: true });
+  ok(/not yet signed by Apple/i.test(pre.detail), 'a pre-release install dialog still discloses that the build is unsigned');
+  ok(pre.detail.includes(verdict.INSTALL_EXPLAINER), '  alongside the explainer, in the same dialog');
+  ok(!/not yet signed by Apple/i.test(
+      D({ current: '3.34.0', latest: '3.35.0', comparable: true, updateAvailable: true, updateStyle: 'download-installer', prerelease: false }, { attached: true }).detail),
+     'CONTROL — a non-pre-release install dialog does not carry it, so the disclosure tracks the payload');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+section('§7b describeInstallOutcome — what the user is told when it did not work');
+// ═══════════════════════════════════════════════════════════════════════════
+// Every sentence here is the SERVER's, relayed. This function picks a headline,
+// an icon and a button. The assertions are about the OFFER and about what is
+// never shown, because that is what a user can act on.
+{
+  const DO = verdict.describeInstallOutcome;
+
+  // A staged bundle is not a failure. The overwhelmingly common case is
+  // `writes-in-progress` — an ingest started during the download and the
+  // server refusing to restart on top of it, which is the guard WORKING.
+  const blocked = DO({
+    ok: false, staged: true, version: '3.35.0',
+    reason: 'writes-in-progress',
+    error: 'The Curator is writing to your knowledge base right now. Wait for it to finish, then install the update.',
+    hint: null, releasesPageUrl: 'https://github.com/talirezun/the-curator/releases',
+  });
+  eq(blocked.kind, 'install-blocked', 'a staged-but-not-installed outcome is its own kind, not "failed"');
+  eq(blocked.action, { type: 'install-staged' }, '  and the offer is to FINISH it, not to start again — the verified bundle is still on disk');
+  eq(blocked.defaultId, verdict.DISMISS_ID,
+     '  and the default is dismiss, because the commonest reason to be here is that the app is mid-write and Return should not fire a retry that will be refused again');
+  ok(blocked.detail.includes('writing to your knowledge base'), '  the server\'s own sentence is relayed verbatim');
+  ok(/still running normally/i.test(blocked.detail), '  and the dialog says nothing was replaced, which the running app is itself the proof of');
+  ok(!/failed|error/i.test(blocked.message), '  the headline does not call a successful download a failure');
+
+  const failed = DO({
+    ok: false, staged: false,
+    reason: 'digest-mismatch',
+    error: 'The downloaded file does not match the checksum GitHub publishes for it, so it was discarded rather than installed.',
+    hint: null, releasesPageUrl: 'https://github.com/talirezun/the-curator/releases',
+  });
+  eq(failed.kind, 'install-failed', 'a genuine failure is its own kind');
+  eq(failed.type, 'error', '  and renders as an error dialog');
+  eq(failed.action, { type: 'open-url', url: 'https://github.com/talirezun/the-curator/releases' },
+     '  offering the way that has always worked rather than leaving a dead end');
+  eq(failed.defaultId, verdict.DISMISS_ID, '  defaulting to dismiss, because nothing here is what the user came for');
+  ok(failed.detail.includes('does not match the checksum'), '  with the engine\'s own sentence, which already names what happened');
+
+  ok(blocked.message !== failed.message, 'CONTROL — the two outcomes reach different headlines');
+
+  // The reason code is a slug for logs and branching. Putting one in front of
+  // a person is the v3.31.0 defect the whole in-app updater exists to undo.
+  for (const v2 of [blocked, failed]) {
+    ok(!/digest-mismatch|writes-in-progress/.test(`${v2.message} ${v2.detail}`),
+       'the internal reason code is never shown to the user, only its sentence');
+  }
+
+  // A hint, when the server sends one, is shown — it is the actionable half.
+  const hinted = DO({ ok: false, staged: false, reason: 'no-updater', error: 'This build has no built-in updater.', hint: 'Download the installer from the release page and run it.' });
+  ok(hinted.detail.includes('Download the installer from the release page'), 'the server\'s hint is shown, not dropped');
+  ok(!DO({ ok: false, staged: false, reason: 'x', error: 'y' }).detail.includes('undefined'),
+     'CONTROL — and an absent hint never renders as "undefined"');
+
+  // Degradation. This is fed the result of a network call.
+  for (const junk of [null, undefined, {}, { ok: false }, { ok: false, error: 42 }, []]) {
+    let v2 = null, threw = false;
+    try { v2 = DO(junk); } catch { threw = true; }
+    ok(!threw && v2 && typeof v2.message === 'string' && v2.message.length > 0 && typeof v2.detail === 'string' && v2.detail.length > 0,
+       `a junk outcome (${JSON.stringify(junk)}) degrades to a real dialog instead of throwing or rendering an empty body`);
+  }
+  ok(!/undefined|null|\bNaN\b/.test(DO({ ok: false }).detail), 'a bare failure never renders "undefined" in its body');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -617,8 +860,14 @@ section('§11 main.js source scan — WEAK BY NATURE, and what is NOT enforced')
   ok((main.match(/applyMenu\(\)/g) || []).length >= 3,
      'applyMenu() is called on boot, when the check starts, and when it ends');
 
-  ok(/if\s*\(updateCheckInFlight\)\s*return;/.test(main),
-     'a second click while a check is in flight is refused — one dialog, never two (same shape as quitCheckInFlight)');
+  // RE-BASED in v3.36.0. It used to read `if (updateCheckInFlight) return;`.
+  // There are now TWO things a second click must not stack — a second dialog
+  // AND a second 140 MB download — so the guard reads both flags, and this
+  // asserts both are consulted rather than just matching the old literal.
+  ok(/if\s*\(updateCheckInFlight\s*\|\|\s*updateInstallLabel\s*!==\s*null\)\s*return;/.test(main),
+     'a second click is refused while EITHER a check or an install is in flight — one dialog, never two, and never a second download');
+  ok(/function runMenuInstall[\s\S]{0,200}if\s*\(updateInstallLabel\s*!==\s*null\)\s*return;/.test(main),
+     'runMenuInstall refuses re-entry on its own too, so the guard does not depend on the only caller that exists today');
 
   ok(/SETTINGS_NAV_SELECTOR/.test(main) && !/data-view="settings"/.test(main),
      'main.js uses the IMPORTED selector rather than re-typing it — two copies of a coupling is how they drift apart');
@@ -639,10 +888,70 @@ section('§11 main.js source scan — WEAK BY NATURE, and what is NOT enforced')
      'the log folder comes from the app\'s own getLogsDir(), not from a second copy of the path typed here');
   ok(/describeUpdate\(/.test(main) && /fetchUpdateCheck\(/.test(main),
      'the update dialog routes through the two modules the suite executes');
-  ok(!/api\/config\/update-check/.test(main),
-     'main.js does not build the update URL itself — lib/update-check.js owns the one call site');
-  ok(!/POST|method:\s*'POST'/.test(main),
-     'the menu never POSTs anything: it cannot apply an update, and auto-install stays deferred until the app is signed and notarized');
+  ok(/describeInstallOutcome\(/.test(main) && /runInstall\(/.test(main) && /fetchUpdaterProbe\(/.test(main),
+     'the INSTALL routes through lib/update-client.js and lib/update-verdict.js too — the decisions live where the suite can execute them');
+
+  // ── RE-BASED IN v3.36.0, AND THE OLD ASSERTION IS QUOTED SO THE CHANGE IS
+  //    VISIBLE RATHER THAN QUIET ────────────────────────────────────────────
+  // It used to read:
+  //     ok(!/POST|method:'POST'/.test(main),
+  //        'the menu never POSTs anything: it cannot apply an update, and
+  //         auto-install stays deferred until the app is signed and notarized')
+  // That encoded v3.31.0's check-and-tell design as an INVARIANT of the shell,
+  // and it went on passing for three releases after the in-app updater shipped
+  // — a guard cannot notice that the thing it protects has become the bug.
+  //
+  // What survives is the property that was actually worth having: main.js
+  // still builds no URL and issues no request itself. Every call site is in
+  // lib/, which the suite executes.
+  for (const literal of ['api/config/update-check', 'api/config/update-progress', "'/api/config/update'", 'api/config/update/apply']) {
+    ok(!main.includes(literal),
+       `main.js does not build the update URL "${literal}" itself — lib/ owns every call site`);
+  }
+  ok(!/\bmethod:\s*'POST'/.test(main) && !/globalThis\.fetch\s*\(/.test(main),
+     'main.js issues no HTTP request of its own — it hands baseUrl to modules the suite drives against a fake fetch');
+  ok(/runInstall\(baseUrl,/.test(main),
+     'and the ONE thing it does hand over is baseUrl, so there is a single place the update endpoints are known');
+  // Found by mutation: with `applyOnly` written as a literal in the retry loop,
+  // flipping it to re-download an already-verified 140 MB bundle was GREEN.
+  // The decision moved into lib/update-client.js, where the suite drives it.
+  ok(/applyOnly:\s*applyOnlyForAction\(/.test(main) && !/applyOnly:\s*(true|false)\b/.test(main),
+     'main.js never decides applyOnly with a literal — it asks applyOnlyForAction(), which lib/update-client.js exports and the install suite EXECUTES');
+
+  // ── EVERY EXIT FROM THE INSTALL LOOP IS CONDITIONAL AND NAMED ────────────
+  // Found by mutation: inserting a bare `return;` above the failure dialog —
+  // so a failed update tells the user nothing at all — was GREEN. Nothing in
+  // main.js can be executed, so this is a scan and says so; but the property
+  // it checks is exactly the one that mutation broke. Every `return` inside
+  // `runMenuInstall` today sits on a line with its own condition, so a bare
+  // one is by construction something that was inserted.
+  {
+    const i = main.indexOf('async function runMenuInstall');
+    ok(i > 0, 'CONTROL — runMenuInstall was found in main.js');
+    const body = main.slice(i, main.indexOf('\n}\n', i));
+    ok(body.length > 400, `CONTROL — the extracted body is real code (${body.length} chars)`);
+    const bare = body.split('\n').filter((l) => l.trim() === 'return;');
+    eq(bare.length, 0,
+       'no UNCONDITIONAL `return;` exists inside runMenuInstall — every exit carries its own condition, so a failure cannot be silently swallowed on the way to its dialog');
+    // Ordered landmarks: the success short-circuit, then the dialog, then the
+    // retry decision. Out of order, any one of them means something else.
+    const order = ['outcome.ok === true', 'describeInstallOutcome(outcome)', 'showUpdateDialog(verdict)', 'applyOnlyForAction(verdict.action)'];
+    let at = -1;
+    for (const mark of order) {
+      const next = body.indexOf(mark, at + 1);
+      ok(next > at, `runMenuInstall reaches "${mark}" in order`);
+      at = next;
+    }
+    ok(body.indexOf('describeInstallOutcome') > body.indexOf('outcome.ok === true'),
+       'and the failure dialog is built only AFTER the success case has returned — a success must never open a dialog, because the app is quitting');
+  }
+
+  // The menu-label state machine has to be released on EVERY path or the item
+  // stays disabled and stuck on "Downloading Update…" forever.
+  ok((main.match(/updateInstallLabel\s*=\s*null;/g) || []).length >= 2,
+     'updateInstallLabel is cleared on more than one path — the failure path and the throw path both release the menu item');
+  ok(/updateStatus:\s*updateInstallLabel/.test(main),
+     'the install label is passed to buildMenuTemplate, which is the module that decides precedence over the check label');
 }
 
 console.log(`\n  ────────────────────────────────────────`);

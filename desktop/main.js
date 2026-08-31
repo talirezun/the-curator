@@ -57,7 +57,8 @@ import { decideQuit } from './lib/quit-decision.js';
 import { applyAboutPanel } from './lib/app-version.js';
 import { buildMenuTemplate, SETTINGS_NAV_SELECTOR } from './lib/menu.js';
 import { fetchUpdateCheck } from './lib/update-check.js';
-import { describeUpdate, ACTION_ID } from './lib/update-verdict.js';
+import { describeUpdate, describeInstallOutcome, ACTION_ID } from './lib/update-verdict.js';
+import { fetchUpdaterProbe, runInstall, applyOnlyForAction, UPDATE_LABEL_PENDING } from './lib/update-client.js';
 import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
@@ -123,6 +124,14 @@ let quitCheckInFlight = false;
 /** Same shape, for the update check: one dialog, never two. Also drives the
  *  menu item's label and enabled state — see applyMenu(). */
 let updateCheckInFlight = false;
+/** The whole menu label while an update is being installed, or null. Composed
+ *  by `updateMenuLabel()` in lib/update-client.js from the SERVER's own
+ *  progress record — never assembled here, because the phase vocabulary
+ *  belongs to the update route and a second copy of it would drift.
+ *
+ *  Non-null is ALSO the "an install is running" flag: it takes precedence over
+ *  `updateCheckInFlight` in the menu, and it is what refuses a second click. */
+let updateInstallLabel = null;
 /** Resolved in boot() from the app's OWN path resolver, not re-derived here. */
 let logsDir = null;
 
@@ -516,6 +525,7 @@ function applyMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate({
     appName: app.name,
     checking: updateCheckInFlight,
+    updateStatus: updateInstallLabel,
     // Every click handler is wrapped so no promise escapes into Electron's
     // menu dispatcher. A floating rejection there is an unhandled rejection in
     // the main process, which in a packaged app is an invisible failure.
@@ -609,6 +619,36 @@ async function showLogs() {
 }
 
 /**
+ * Show one update dialog and return the button index. The two update dialogs
+ * are built the same way, so they are shown by one function rather than two.
+ */
+async function showUpdateDialog(verdict) {
+  const opts = {
+    type: verdict.type,
+    buttons: verdict.buttons,
+    defaultId: verdict.defaultId,
+    cancelId: verdict.cancelId,
+    title: 'Software Update',
+    message: verdict.message,
+    detail: verdict.detail,
+    // Stop macOS pulling a button out of the row and rendering it as a link
+    // because its label happens to look like one.
+    noLink: true,
+  };
+
+  // Window-modal ONLY when the window is actually on screen. A sheet attached
+  // to a hidden window (⌘W leaves one behind — see the close handler) or a
+  // minimised one is invisible, so the app would appear frozen with a
+  // permanently disabled menu item and no way to dismiss anything.
+  const attachable = mainWindow && !mainWindow.isDestroyed()
+    && mainWindow.isVisible() && !mainWindow.isMinimized();
+  const { response } = attachable
+    ? await dialog.showMessageBox(mainWindow, opts)
+    : await dialog.showMessageBox(opts);
+  return response;
+}
+
+/**
  * ── "Check for Updates…", and why it answers HERE rather than navigating ────
  *
  * The three options, and what each one costs:
@@ -629,19 +669,27 @@ async function showLogs() {
  *   (c) Both. Rejected — two things happening from one click is how a menu
  *       item comes to feel unpredictable.
  *
+ * THAT DECISION IS ABOUT THE CHECK AND IT STILL STANDS. Where the DOWNLOAD's
+ * progress goes is a separate question, decided separately, in
+ * `runMenuInstall()` below.
+ *
  * WHAT IS NOT DUPLICATED, which is the constraint this had to satisfy: which
  * release is newest, whether it is newer than this build, whether the versions
- * can be compared at all, whether anything is published, the release URL, and
- * every failure sentence. All of those arrive on the wire from
- * GET /api/config/update-check, which is the only side that read the release
- * list. lib/update-verdict.js contains no version comparator, and the suite
- * asserts that.
+ * can be compared at all, whether anything is published, whether this build
+ * can install its own updates, whether an update is already running, the
+ * release URL, and every failure sentence. All of those arrive on the wire
+ * from GET /api/config/update-check and GET /api/config/update-progress, which
+ * are the only sides that read the release list and the job record.
+ * lib/update-verdict.js contains no version comparator, and the suite asserts
+ * that.
  *
- * WHAT IS: four short headline sentences that also exist in Settings ▸ General.
- * Bounded, named in desktop/README.md, and accepted.
+ * WHAT IS: four short headline sentences that also exist in Settings ▸ General,
+ * plus `INSTALL_EXPLAINER` — byte-identical to the Settings confirm dialog's
+ * and pinned to it by a cross-file assertion. Bounded, named in
+ * desktop/README.md, and accepted.
  */
 async function checkForUpdates() {
-  if (updateCheckInFlight) return;
+  if (updateCheckInFlight || updateInstallLabel !== null) return;
   updateCheckInFlight = true;
   // The menu bar IS the progress indicator: the item relabels to "Checking for
   // Updates…" and disables. This costs nothing, needs no window, and closes
@@ -649,48 +697,145 @@ async function checkForUpdates() {
   // 12-second ceiling behind a menu item that looked unchanged.
   applyMenu();
 
+  // Chosen inside the try, acted on after the `finally` — so the check's busy
+  // label is cleared before a multi-minute install claims the same menu item.
+  let next = null;
   try {
-    const verdict = describeUpdate(await fetchUpdateCheck(baseUrl));
-
-    const opts = {
-      type: verdict.type,
-      buttons: verdict.buttons,
-      defaultId: verdict.defaultId,
-      cancelId: verdict.cancelId,
-      title: 'Software Update',
-      message: verdict.message,
-      detail: verdict.detail,
-      // Stop macOS pulling a button out of the row and rendering it as a link
-      // because its label happens to look like one.
-      noLink: true,
-    };
-
-    // Window-modal ONLY when the window is actually on screen. A sheet
-    // attached to a hidden window (⌘W leaves one behind — see the close
-    // handler) or a minimised one is invisible, so the app would appear frozen
-    // with a permanently disabled menu item and no way to dismiss anything.
-    const attachable = mainWindow && !mainWindow.isDestroyed()
-      && mainWindow.isVisible() && !mainWindow.isMinimized();
-    const { response } = attachable
-      ? await dialog.showMessageBox(mainWindow, opts)
-      : await dialog.showMessageBox(opts);
-
-    if (response !== ACTION_ID || !verdict.action) return;
-    if (verdict.action.type === 'open-url') {
-      await shell.openExternal(verdict.action.url);
-    } else if (verdict.action.type === 'open-settings') {
-      await openSettingsView();
-    }
+    // BOTH questions at once, and both answered by the server. The second one
+    // is what this release is for: `updaterAttached` says whether this build
+    // can install its own update, and the job record says whether one is
+    // already going. Asking rather than assuming is the point — Settings reads
+    // the same field, so the two surfaces cannot disagree.
+    const [payload, installer] = await Promise.all([
+      fetchUpdateCheck(baseUrl),
+      fetchUpdaterProbe(baseUrl),
+    ]);
+    const verdict = describeUpdate(payload, installer);
+    const response = await showUpdateDialog(verdict);
+    if (response === ACTION_ID && verdict.action) next = verdict.action;
   } catch (err) {
-    // fetchUpdateCheck never rejects and describeUpdate is pure, so reaching
-    // here means Electron's own dialog or shell call failed. Say so rather
-    // than leaving a menu item that appears to do nothing.
+    // fetchUpdateCheck and fetchUpdaterProbe never reject and describeUpdate is
+    // pure, so reaching here means Electron's own dialog call failed. Say so
+    // rather than leaving a menu item that appears to do nothing.
     dialog.showErrorBox(
       'Could not check for updates',
       (err && err.message) ? err.message : String(err)
     );
   } finally {
     updateCheckInFlight = false;
+    applyMenu();
+  }
+
+  if (!next) return;
+  try {
+    if (next.type === 'open-url') await shell.openExternal(next.url);
+    else if (next.type === 'open-settings') await openSettingsView();
+    else if (next.type === 'install' || next.type === 'install-staged') await runMenuInstall(next);
+  } catch (err) {
+    dialog.showErrorBox(
+      'Could not update The Curator',
+      (err && err.message) ? err.message : String(err)
+    );
+  }
+}
+
+/**
+ * ── THE UPDATE ITSELF, AND WHERE ITS PROGRESS GOES ─────────────────────────
+ *
+ * The whole of the decision-making is in lib/update-client.js, which the suite
+ * EXECUTES. What is here is the two things it cannot be given: the Electron
+ * dialogs, and holding the label in a variable.
+ *
+ * `runInstall` POSTs the app's OWN update route — the same two endpoints, in
+ * the same order, that Settings ▸ General POSTs. It does NOT reach for the
+ * engine hooks this file registered, and the reasons are in that module's
+ * header. The shortest one: the route owns the job record, so a download
+ * started here shows up in Settings, and one started in Settings is seen here.
+ *
+ * ── WHERE PROGRESS IS SHOWN, AND WHAT WAS REJECTED ─────────────────────────
+ *
+ *   (a) A native dialog that updates as it goes. REJECTED, and not on taste:
+ *       Electron has no API to change or close a `showMessageBox` once it is
+ *       on screen. The only way to fake it is to close and reopen a dialog per
+ *       tick, which flickers, steals focus repeatedly, and would have to be
+ *       throttled to be bearable at all.
+ *
+ *   (b) Switch the window to Settings ▸ General so the five-phase ring shows
+ *       it. REJECTED AS THE MECHANISM, though it happens anyway — see below.
+ *       It needs a window (the menu is reachable with none), it needs the two
+ *       ordered renderer couplings the check rejected, and its auto-continue
+ *       to the restart lives in the client that STARTED the stream, so a panel
+ *       that merely adopted the job would stop at "downloaded" and wait for a
+ *       second click the user was never told about.
+ *
+ *   (c) The Dock icon's progress bar (`setProgressBar`). REJECTED: it is a
+ *       BrowserWindow method, so it needs a window, and it cannot say what
+ *       phase is running or what failed. Two indicators that can disagree is
+ *       worse than one that cannot.
+ *
+ *   (d) The menu item's own label. CHOSEN. It is the only surface that exists
+ *       with no window open — which is the state ⌘W leaves behind and the
+ *       state this menu is reachable from — and it is the mechanism this shell
+ *       ALREADY uses for the check, so it extends one pattern instead of
+ *       adding a second. It is determinate: "Downloading Update… 43%".
+ *
+ * AND (b) HAPPENS ANYWAY, FOR FREE, which is the property that made this
+ * choice cheap: because the work is the server's job record, opening
+ * Settings ▸ General mid-download finds it — `probeInAppUpdate()` there adopts
+ * a running job and polls it. Nothing here draws that; not starting a second,
+ * invisible updater is what allows it.
+ */
+async function runMenuInstall(action) {
+  if (updateInstallLabel !== null) return;
+  updateInstallLabel = UPDATE_LABEL_PENDING;
+  applyMenu();
+
+  // A staged-but-not-installed outcome is OFFERED AGAIN rather than reported
+  // as a dead end — the verified bundle is still on disk and still installable.
+  // Written as a LOOP and not as recursion, so a user who keeps clicking
+  // Install Now cannot grow the stack.
+  //
+  // WHETHER TO SKIP THE DOWNLOAD IS DECIDED BY applyOnlyForAction(), NOT BY A
+  // LITERAL HERE. A mutation flipping a literal in this loop came back green,
+  // because nothing in this file can be executed by the suite. The decision
+  // therefore lives in lib/update-client.js, where it is driven for real.
+  let next = action;
+  for (;;) {
+    let outcome;
+    try {
+      outcome = await runInstall(baseUrl, {
+        applyOnly: applyOnlyForAction(next),
+        // Called ONLY when the label actually changes — the throttling lives in
+        // the client and is asserted there, so the menu is rebuilt about a
+        // hundred times over a 140 MB download rather than five hundred.
+        onLabel: (label) => { updateInstallLabel = label; applyMenu(); },
+      });
+    } catch (err) {
+      // `runInstall` has its own total catch and does not reject, so this is
+      // belt and braces. It exists so that no path can leave the menu item
+      // stuck on "Downloading Update…" and permanently disabled.
+      updateInstallLabel = null;
+      applyMenu();
+      throw err;
+    }
+
+    // SUCCESS ENDS WITH THIS PROCESS GONE. There is nobody to show a dialog to,
+    // and the new app must not open one nobody asked for. The label is
+    // deliberately left saying "Installing Update…" — it is the last true thing
+    // the menu can say, and rebuilding a menu during shutdown buys nothing.
+    if (!outcome || outcome.ok === true) return;
+
+    updateInstallLabel = null;
+    applyMenu();
+
+    const verdict = describeInstallOutcome(outcome);
+    const response = await showUpdateDialog(verdict);
+    if (response !== ACTION_ID || !verdict.action) return;
+    if (verdict.action.type === 'open-url') { await shell.openExternal(verdict.action.url); return; }
+    if (!applyOnlyForAction(verdict.action)) return;
+
+    next = verdict.action;
+    updateInstallLabel = UPDATE_LABEL_PENDING;
     applyMenu();
   }
 }
