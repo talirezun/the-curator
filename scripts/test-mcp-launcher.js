@@ -386,8 +386,19 @@ const DOWNLOADS_CASE = path.join(fakeHome, 'downloads', 'The Curator.app', 'Cont
 
 eq(launcher.classifyLaunchOrigin(TRANSLOCATED, fakeHome).reason, 'app-translocation', 'App Translocation is detected');
 eq(launcher.classifyLaunchOrigin(DOWNLOADED, fakeHome).reason, 'downloads-folder', '~/Downloads is detected');
-eq(launcher.classifyLaunchOrigin(DOWNLOADS_CASE, fakeHome).reason, 'downloads-folder',
-  '~/downloads is detected too — APFS is case-insensitive by default, so a case-sensitive check could be walked past');
+// PLATFORM IS DRIVEN, NOT OBSERVED. This assertion read `process.platform`
+// through the module and so asserted only whatever host it ran on: GREEN on the
+// maintainer's Mac, RED on ubuntu CI — which is how v3.30.0's first release
+// attempt was refused by the gate. Both behaviours are now asserted explicitly,
+// on every host, and each is CORRECT for its filesystem.
+eq(launcher.classifyLaunchOrigin(DOWNLOADS_CASE, fakeHome, 'darwin').reason, 'downloads-folder',
+  'on darwin ~/downloads is detected too — APFS is case-insensitive by default, so a case-sensitive check could be walked past');
+eq(launcher.classifyLaunchOrigin(DOWNLOADS_CASE, fakeHome, 'win32').reason, 'downloads-folder',
+  'on win32 ~/downloads is detected too — NTFS is case-insensitive by default');
+ok(launcher.classifyLaunchOrigin(DOWNLOADS_CASE, fakeHome, 'linux').reason !== 'downloads-folder',
+  'on linux ~/downloads is NOT ~/Downloads — the filesystem genuinely distinguishes them, and folding case there would make the refusal over-broad');
+eq(launcher.classifyLaunchOrigin(DOWNLOADED, fakeHome, 'linux').reason, 'downloads-folder',
+  'on linux the correctly-cased ~/Downloads is still detected — the case fix did not weaken the real check');
 eq(launcher.classifyLaunchOrigin('', fakeHome).reason, 'no-exec-path', 'an empty execPath is refused rather than assumed fine');
 eq(launcher.classifyLaunchOrigin(BUNDLE_EXEC, fakeHome).ephemeral, false, '/Applications is NOT ephemeral');
 eq(launcher.classifyLaunchOrigin(path.join(fakeHome, 'Documents', 'x.app', 'Contents', 'MacOS', 'x'), fakeHome).ephemeral, false,

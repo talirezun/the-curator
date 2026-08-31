@@ -128,13 +128,24 @@ export function getMcpServerPath() {
  * Case-insensitive on darwin, because APFS and HFS+ are case-insensitive by
  * default: a check that treats `/Users/x/Downloads` and `/users/x/downloads`
  * as different directories would let the refusal be walked past by a path the
- * filesystem itself considers identical.
+ * filesystem itself considers identical. Case-SENSITIVE on Linux, where the
+ * filesystem genuinely distinguishes them and folding case would make the
+ * refusal over-broad.
+ *
+ * `platform` IS A PARAMETER, and that is not decoration. Reading
+ * `process.platform` inside made this function's behaviour depend on the host,
+ * so the suite asserted the darwin branch unconditionally and went GREEN on
+ * macOS and RED on ubuntu CI — which is exactly how v3.30.0's first release
+ * attempt was refused by the gate. A behaviour that differs by platform must be
+ * DRIVEN by the test on both platforms, not observed on whichever one happens
+ * to be running.
  */
-export function isInside(child, parent) {
+export function isInside(child, parent, platform = process.platform) {
   if (!child || !parent) return false;
+  const foldsCase = platform === 'darwin' || platform === 'win32';
   const norm = (p) => {
     const r = path.resolve(p);
-    return process.platform === 'darwin' || process.platform === 'win32' ? r.toLowerCase() : r;
+    return foldsCase ? r.toLowerCase() : r;
   };
   const c = norm(child);
   const p = norm(parent);
@@ -150,7 +161,7 @@ export function isInside(child, parent) {
  * when the location is fine, and otherwise NAMES THE FIX rather than only the
  * problem — a user told "refused: translocated" learns nothing actionable.
  */
-export function classifyLaunchOrigin(execPath, homeDir) {
+export function classifyLaunchOrigin(execPath, homeDir, platform = process.platform) {
   const p = typeof execPath === 'string' ? execPath : '';
   if (!p) {
     return {
@@ -175,7 +186,7 @@ export function classifyLaunchOrigin(execPath, homeDir) {
         'will be set up automatically.',
     };
   }
-  if (homeDir && isInside(p, path.join(homeDir, 'Downloads'))) {
+  if (homeDir && isInside(p, path.join(homeDir, 'Downloads'), platform)) {
     return {
       ephemeral: true,
       reason: 'downloads-folder',
