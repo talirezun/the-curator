@@ -45,6 +45,8 @@
  *   §9  credential hygiene: .gitignore coverage + no credential-shaped literal
  *   §11 the `files` / `extraResources` mapping — the defect that shipped an
  *       .app which worked only inside the checkout
+ *   §12 window-state.js — EXECUTED: the remembered size/position, and the
+ *       refusal that stops a restored window landing off-screen
  *   §10 main.js source scan (weak by nature), anti-vacuity controls, a
  *       VERIFIED-BY-HAND block and an explicit NOT ENFORCED block
  *
@@ -59,6 +61,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { decideQuit, MAX_DIALOG_OPERATIONS } from '../desktop/lib/quit-decision.js';
 import { fetchWriteStatus } from '../desktop/lib/write-status.js';
 import { pickFreePort, appUrl } from '../desktop/lib/port.js';
+import {
+  sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState, isOnScreen,
+  DEFAULT_WIDTH, DEFAULT_HEIGHT, MIN_WIDTH, MIN_HEIGHT, MIN_ONSCREEN_PX, WINDOW_STATE_FILE,
+} from '../desktop/lib/window-state.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -109,6 +115,34 @@ function stripYamlComments(src) {
     }
     return out;
   }).join('\n');
+}
+
+/**
+ * Strip JS comments from a source file, so a rule can never be satisfied by a
+ * line of prose ABOUT the rule.
+ *
+ * ── LINE COMMENTS FIRST, AND THAT ORDER IS LOAD-BEARING ────────────────────
+ *
+ * This function existed inline in §10 with the two replaces the other way
+ * round, and it was silently BROKEN by an ordinary sentence. A `//` comment
+ * mentioning a glob path — `src/public/next/**` — contains the sequence `/*`,
+ * so a block-comment regex run first OPENS a comment there and consumes
+ * everything up to the next `*​/`, which in main.js is hundreds of lines later.
+ *
+ * MEASURED, not reasoned: on the main.js at the time of writing, block-first
+ * left **2,637 of 23,687 chars** and lost `nodeIntegration` entirely;
+ * line-first leaves 6,091 and keeps it. Sixteen assertions that had nothing to
+ * do with the change went red at once, which is how it was noticed at all —
+ * had the new assertions merely been ADDED rather than also depending on this,
+ * it would have quietly turned §10 into a scan over an empty string, and an
+ * empty string satisfies every `!/.../.test()` in the section.
+ *
+ * The old CONTROL (`main.length > 1500`) PASSED at 2,637. It is replaced below
+ * by one that measures the SHARE of the file that survived, because "some code
+ * is left" is not the property that matters — "most of the code is left" is.
+ */
+function stripJsComments(src) {
+  return src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 /** Every .js/.mjs file under a directory, recursively, skipping node_modules. */
@@ -778,6 +812,168 @@ section('§11 The `files` mapping — the defect that shipped a broken .app');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+section('§12 window-state.js — EXECUTED');
+// ═══════════════════════════════════════════════════════════════════════════
+// The STRONG half of the window work. Everything below is a real call with a
+// real return value, because lib/window-state.js was deliberately built to
+// import nothing from Electron: the displays it has to reason about are passed
+// IN as work-area rectangles. The main.js WIRING of it is a source scan and
+// lives in §10 with the rest of the weak checks.
+//
+// THE ASSERTION THAT MATTERS is not "the size round-trips" — it is that a
+// saved POSITION which is no longer on any display is REFUSED. The failure
+// being prevented is a window restored at x=2400 on a laptop that ends at
+// 1512: unreachable by any menu item, keystroke or Dock gesture, and
+// indistinguishable from an app that failed to launch.
+{
+  // One 1512x944 laptop display with a menu bar, plus a second display to the
+  // right — the shape that produces the strand when the second is unplugged.
+  const laptop = { x: 0, y: 38, width: 1512, height: 944 };
+  const external = { x: 1512, y: 0, width: 1920, height: 1080 };
+  const both = [laptop, external];
+  const soloLaptop = [laptop];
+
+  // ── no state at all, and unusable state ──────────────────────────────────
+  eq(sanitizeWindowState(null, soloLaptop), { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT, maximized: false },
+     'no saved state -> the default size, and NO x/y (so the OS centres it)');
+  for (const junk of [undefined, 42, 'nope', [], [{ x: 1 }], true]) {
+    const r = sanitizeWindowState(junk, soloLaptop);
+    ok(r.width === DEFAULT_WIDTH && r.height === DEFAULT_HEIGHT && !('x' in r) && !('y' in r),
+       `unusable saved state (${JSON.stringify(junk)}) degrades to the default`);
+  }
+
+  // ── size: clamped UP to the floor, DOWN to the largest work area ─────────
+  {
+    const r = sanitizeWindowState({ width: 300, height: 200 }, soloLaptop);
+    eq([r.width, r.height], [MIN_WIDTH, MIN_HEIGHT],
+       `a saved size under the floor is raised to ${MIN_WIDTH}x${MIN_HEIGHT} — v3.16.1 recorded the shell COLLAPSING at 375px`);
+  }
+  {
+    // Saved on the 1920x1080 external, reopened with only the laptop attached.
+    const r = sanitizeWindowState({ width: 1900, height: 1050 }, soloLaptop);
+    ok(r.width <= laptop.width && r.height <= laptop.height,
+       `a size saved on a bigger display is clamped to the one that is left (${r.width}x${r.height})`);
+    const r2 = sanitizeWindowState({ width: 1900, height: 1050 }, both);
+    eq([r2.width, r2.height], [1900, 1050],
+       'the SAME saved size is kept untouched while the bigger display is still attached');
+  }
+  ok(sanitizeWindowState({ width: 1104.5, height: 742 }, soloLaptop).width === DEFAULT_WIDTH,
+     'a non-integer width is not coerced — it is ignored and the default used');
+  ok(sanitizeWindowState({ width: -400, height: 0 }, soloLaptop).width === DEFAULT_WIDTH,
+     'a negative or zero size is ignored rather than clamped into something plausible');
+
+  // ── position: the strand guard, in BOTH directions ───────────────────────
+  //
+  // The two cases below share a size and differ ONLY in the display list, so
+  // this cannot be satisfied by a function that always refuses (which is what
+  // an "off-screen is rejected" assertion alone would happily accept).
+  const savedOnExternal = { x: 1700, y: 200, width: 1104, height: 742 };
+  {
+    const withBoth = sanitizeWindowState(savedOnExternal, both);
+    eq([withBoth.x, withBoth.y], [1700, 200],
+       'CONTROL — with the external display attached the saved position IS adopted');
+    const laptopOnly = sanitizeWindowState(savedOnExternal, soloLaptop);
+    ok(!('x' in laptopOnly) && !('y' in laptopOnly),
+       'unplug that display and the position is DISCARDED — the window cannot be stranded off-screen');
+    eq([laptopOnly.width, laptopOnly.height], [1104, 742],
+       'and the SIZE survives the discarded position — size never strands a window, and it is the half the user notices');
+  }
+  ok(!('x' in sanitizeWindowState({ x: 40, width: 1104, height: 742 }, soloLaptop)),
+     'x without y is refused — a half-restored position pins one axis to a stale display');
+  ok(!('y' in sanitizeWindowState({ y: 40, width: 1104, height: 742 }, soloLaptop)),
+     'y without x is refused for the same reason');
+  ok(!('x' in sanitizeWindowState({ x: 100, y: 0, width: 1104, height: 742 }, soloLaptop)),
+     'a top edge ABOVE the work area is refused — the work area excludes the menu bar, so this is exactly "the title bar is grabbable"');
+
+  // ── the on-screen threshold, at its exact boundary ───────────────────────
+  {
+    const w = 1000, h = 700;
+    // Slide the window right until only MIN_ONSCREEN_PX of it overlaps.
+    const justOn = { x: laptop.x + laptop.width - MIN_ONSCREEN_PX, y: 100, width: w, height: h };
+    const justOff = { x: laptop.x + laptop.width - MIN_ONSCREEN_PX + 1, y: 100, width: w, height: h };
+    ok(isOnScreen(justOn, soloLaptop), `exactly ${MIN_ONSCREEN_PX}px of overlap still counts as reachable`);
+    ok(!isOnScreen(justOff, soloLaptop), `one pixel less than ${MIN_ONSCREEN_PX} does not`);
+  }
+  ok(!isOnScreen({ x: 0, y: 40, width: 1000, height: 700 }, []),
+     'with NO displays reported, nothing is on-screen — an empty list must not read as "anywhere is fine"');
+  ok(!isOnScreen({ x: 0, y: 40, width: 1000, height: 700 }, [{ x: 0, y: 0, width: 'wide', height: 900 }]),
+     'a malformed work area is skipped rather than coerced');
+
+  // ── maximized ────────────────────────────────────────────────────────────
+  ok(sanitizeWindowState({ maximized: true }, soloLaptop).maximized === true, 'maximized:true round-trips');
+  for (const v of ['true', 1, {}, null]) {
+    ok(sanitizeWindowState({ maximized: v }, soloLaptop).maximized === false,
+       `maximized:${JSON.stringify(v)} is NOT truthy-coerced — Boolean('false') is true, which is how this goes wrong`);
+  }
+
+  // ── serialize ────────────────────────────────────────────────────────────
+  eq(serializeWindowState({ x: 137, y: 96, width: 1104, height: 742 }, { maximized: false }),
+     { x: 137, y: 96, width: 1104, height: 742, maximized: false }, 'serializeWindowState passes real bounds through');
+  ok(serializeWindowState(null).width === DEFAULT_WIDTH, 'serializeWindowState survives null bounds');
+  ok(serializeWindowState({ width: 1, height: 1 }, { maximized: 'yes' }).maximized === false,
+     'a non-true maximized flag serialises as false');
+
+  // ── read / write, against a real temp directory ──────────────────────────
+  {
+    const dir = path.join(ROOT, 'scripts', '.tmp-window-state-' + process.pid);
+    try {
+      eq(readWindowState(dir), null, 'a missing state file reads as null, not an exception');
+      // (137, 96) rather than (1, 2): the laptop work area starts at y=38
+      // because the menu bar is excluded, so y=2 is ABOVE it and is correctly
+      // refused. The first draft of this fixture used (1,2) and went red —
+      // recorded because the fixture was wrong and the code was right.
+      const saved = serializeWindowState({ x: 137, y: 96, width: 1104, height: 742 }, { maximized: false });
+      ok(writeWindowState(dir, saved) === true, 'writeWindowState creates the directory and returns true');
+      ok(existsSync(path.join(dir, WINDOW_STATE_FILE)), `the file is named ${WINDOW_STATE_FILE}`);
+      eq(readWindowState(dir), { x: 137, y: 96, width: 1104, height: 742, maximized: false }, 'and reads back byte-for-byte');
+
+      // A full round trip through every stage, which is what main.js does.
+      const restored = sanitizeWindowState(readWindowState(dir), both);
+      eq([restored.x, restored.y, restored.width, restored.height], [137, 96, 1104, 742],
+         'ROUND TRIP — serialize -> write -> read -> sanitize returns the same geometry');
+
+      const { writeFileSync, rmSync, mkdirSync } = await import('node:fs');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, WINDOW_STATE_FILE), 'not json at all');
+      eq(readWindowState(dir), null, 'a corrupt file reads as null rather than throwing on the launch path');
+      writeFileSync(path.join(dir, WINDOW_STATE_FILE), '[1,2,3]');
+      eq(readWindowState(dir), null, 'a JSON ARRAY is refused — typeof [] === "object" is how this one gets through');
+      writeFileSync(path.join(dir, WINDOW_STATE_FILE), 'null');
+      eq(readWindowState(dir), null, 'the literal null is refused');
+      writeFileSync(path.join(dir, WINDOW_STATE_FILE), JSON.stringify({ pad: 'x'.repeat(70 * 1024) }));
+      eq(readWindowState(dir), null, 'a file far larger than the ~90-byte document is refused unparsed');
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      ok(false, `window-state read/write block threw: ${err.message}`);
+    }
+  }
+  // An unwritable location must be reported, never thrown — this runs from a
+  // window move/resize handler, where an exception is an unhandled rejection
+  // in the main process and the thing lost is a remembered window size.
+  // The try/catch here is NOT belt-and-braces — it is what makes this
+  // assertion FAIL rather than CRASH. Without it, a mutation removing the
+  // function's own catch kills the suite mid-run: no expectation is named and
+  // the tally is left wrong, which is the v3.24.1 shape this repo keeps
+  // re-learning. Measured: the mutation reds this line instead of crashing.
+  {
+    let result, threw = null;
+    try { result = writeWindowState('/dev/null/cannot-exist', { width: 1, height: 1 }); }
+    catch (err) { threw = err; }
+    ok(threw === null && result === false,
+       `writeWindowState returns false on an impossible path and does NOT throw${threw ? ` — it threw ${threw.code || threw.message}` : ''}`);
+  }
+
+  // ── the floor is DEFINED here, and main.js must not re-type it ───────────
+  {
+    const mainSrc = stripJsComments(read(path.join(DESKTOP, 'main.js')));
+    ok(/minWidth:\s*MIN_WIDTH/.test(mainSrc) && /minHeight:\s*MIN_HEIGHT/.test(mainSrc),
+       'main.js uses the IMPORTED floor rather than re-typing 960/600 — two copies of a limit is how they drift apart');
+    ok(!/minWidth:\s*\d/.test(mainSrc) && !/minHeight:\s*\d/.test(mainSrc),
+       'and no numeric literal floor survives anywhere in main.js');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 section('§10 main.js source scan, and what is NOT enforced');
 // ═══════════════════════════════════════════════════════════════════════════
 // EVERYTHING IN THIS SECTION IS A SOURCE SCAN AND IS THEREFORE WEAK. Electron
@@ -787,12 +983,30 @@ section('§10 main.js source scan, and what is NOT enforced');
 // first so a line of prose about a rule cannot satisfy the rule.
 {
   const rawMain = read(path.join(DESKTOP, 'main.js'));
-  // Strip block and line comments. Crude but sufficient: this file has no
-  // regex literals and no `//` inside strings.
-  const main = rawMain.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  ok(main.length > 1500 && main.length < rawMain.length,
-     `CONTROL — comment stripping left real code (${main.length} of ${rawMain.length} chars)`);
-  ok(main.includes('createWindow'), 'CONTROL — a known identifier survives comment stripping');
+  const main = stripJsComments(rawMain);
+
+  // ── CONTROLS ON THE STRIPPER ITSELF ──────────────────────────────────────
+  // Not decoration. A stripper that eats real code turns every `!/.../.test()`
+  // below into a vacuous pass, and the previous control (`> 1500 chars`) let
+  // exactly that through at 2,637 of 23,687 — see stripJsComments' docblock.
+  // These measure the SHARE that survived and name identifiers from the far
+  // END of the file, which is where an over-eager block match does its damage.
+  ok(main.length < rawMain.length, 'CONTROL — comment stripping removed something');
+  ok(main.length > rawMain.length * 0.15,
+     `CONTROL — most of the code survived stripping (${main.length} of ${rawMain.length} chars, ${(main.length / rawMain.length * 100).toFixed(1)}%)`);
+  ok(main.includes('createWindow'), 'CONTROL — an identifier near the middle survives stripping');
+  ok(main.includes('fatal') && main.includes('showErrorBox'),
+     'CONTROL — identifiers from the LAST function in the file survive, so no block match ran away');
+  ok(!main.includes('WHY NOT trafficLightPosition') && !main.includes('load-bearing'),
+     'CONTROL — prose from the comments really is gone, so a rule cannot be satisfied by a sentence about the rule');
+  {
+    // POSITIVE CONTROL, kept because it is the exact defect that occurred: a
+    // `//` line naming a glob path must not open a block comment.
+    const trap = "const a = 1;\n// see src/public/next/** for this\nconst b = 2;\nconst c = 3;";
+    const stripped = stripJsComments(trap);
+    ok(stripped.includes('const b') && stripped.includes('const c'),
+       'CONTROL — a `//` comment containing `/**` (a glob path) does NOT swallow the code after it');
+  }
 
   ok(/requestSingleInstanceLock\(\)/.test(main), 'main.js takes the single-instance lock');
   ok(/second-instance/.test(main), 'main.js focuses the existing window on a second launch');
@@ -837,6 +1051,83 @@ section('§10 main.js source scan, and what is NOT enforced');
   ok(/pickFolder\s*:/.test(main),
      'the registered hooks include pickFolder — without it the bundle arm of /api/config/pick-folder refuses, which is the fail-safe but not the feature');
 
+  // ── WINDOW CHROME — the three defects reported from the packaged app ─────
+  //
+  // v3.30.0 shipped `titleBarStyle: 'hiddenInset'`. macOS then drew the traffic
+  // lights over the web content (measured in the running app: the rail is
+  // (0,0,60x860) and its logo mark (17,12,26x26) — the exact rectangle the
+  // buttons land in), and REMOVED the title bar without the app replacing it,
+  // so there was nothing to drag and nothing obvious to grab to resize.
+  //
+  // A CDP sweep of every element in the live renderer found
+  // `-webkit-app-region: drag` on ZERO of them, so hiddenInset cannot come
+  // back until the app's own CSS carries a drag region. THIS ASSERTION IS THE
+  // GATE ON THAT: it is not "default is prettier", it is "the frameless styles
+  // are unsafe while the app declares no drag region", and the day the app
+  // does declare one this assertion is the place that has to be revisited.
+  ok(/titleBarStyle:\s*'default'/.test(main),
+     "the window uses titleBarStyle:'default' — a real title bar puts the traffic lights in their own strip AND is the drag handle the app's CSS does not yet provide");
+  ok(!/hiddenInset|'hidden'|customButtonsOnHover/.test(main),
+     'no frameless titleBarStyle is set anywhere — every one of them removes the title bar and hands the drag job to app CSS that does not exist yet');
+  ok(!/trafficLightPosition/.test(main),
+     'trafficLightPosition is NOT used — it would move the overlap rather than remove it (the rail spans the full height, so there is no free strip) and it fixes neither dragging nor resizing');
+  ok(!/titleBarOverlay/.test(main),
+     "titleBarOverlay is NOT used — checked against the installed Electron's own typings, its color/symbolColor are @platform win32,linux; on macOS it paints nothing and creates no drag region");
+  ok(!/insertCSS/.test(main),
+     "main.js does not inject CSS into the app — a drag region keyed on src/public/next selectors could not be guarded (a scan can prove the STRING was inserted, never that the selector MATCHED) and -webkit-app-region:drag would silently kill clicks on the rail's own nav buttons");
+  ok(!/resizable:\s*false/.test(main) && !/movable:\s*false/.test(main),
+     'nothing turns resizable or movable off — both default true and must stay that way');
+  ok(/nativeTheme\.themeSource\s*=\s*'dark'/.test(main),
+     "the native chrome is forced dark so a real title bar is not a light strip above a near-black app — SAFE because the /next stylesheets carry an explicit prohibition on prefers-color-scheme and stamp data-theme instead");
+
+  // ── ⌘W must not strand the app ───────────────────────────────────────────
+  // Dumped from a running Electron 43.5.0 rather than recalled: the default
+  // menu's File menu holds exactly one item, "Close Window" (⌘W, role
+  // `close`), and NOTHING in the whole menu creates a window. With
+  // window-all-closed correctly not quitting on darwin, ⌘W left a running,
+  // windowless app whose only route back was an undiscoverable Dock click.
+  ok(/mainWindow\.on\('close'/.test(main) && /mainWindow\.hide\(\)/.test(main),
+     'a close that is not part of a quit HIDES the window rather than destroying it, so ⌘W and the red button cannot strand the app');
+  ok(/if\s*\(quitAuthorised\s*\|\|\s*process\.platform\s*!==\s*'darwin'\)\s*return;/.test(main),
+     'that hide is bypassed during a real quit (quitAuthorised) and on non-darwin, where closing the last window SHOULD quit');
+  ok(/function revealWindow\(\)/.test(main),
+     'there is ONE named recovery path back to the window rather than a condition copied into two handlers');
+  ok(/app\.on\('activate',\s*\(\)\s*=>\s*\{\s*revealWindow\(\);?\s*\}\)/.test(main)
+     && /app\.on\('second-instance',\s*\(\)\s*=>\s*\{\s*revealWindow\(\);?\s*\}\)/.test(main),
+     'both the Dock click and a second launch go through it');
+  ok(/isMinimized\(\)/.test(main) && /isVisible\(\)/.test(main) && /isDestroyed\(\)/.test(main),
+     'revealWindow covers all THREE states — destroyed, hidden and minimised. The old handler tested getAllWindows().length === 0, which is FALSE for a hidden window, so the hide fix and this one are a pair and neither is correct alone');
+
+  // ── remembered geometry ──────────────────────────────────────────────────
+  ok(/sanitizeWindowState\(/.test(main) && /readWindowState\(/.test(main),
+     'the window is created from the sanitised saved state, never from the raw file');
+  ok(/writeWindowState\(/.test(main) && /serializeWindowState\(/.test(main), 'and the state is written back');
+  // BOTH sides, and that is a mutation result rather than thoroughness: an
+  // earlier draft asserted only that the string appeared somewhere, and stayed
+  // GREEN when the WRITE was repointed at __dirname — because the READ still
+  // matched. A write beside the code fails silently in a read-only .app.
+  ok(/sanitizeWindowState\(readWindowState\(app\.getPath\('userData'\)\)/.test(main),
+     "the state is READ from Electron's userData");
+  ok(/writeWindowState\(app\.getPath\('userData'\)/.test(main),
+     "and WRITTEN there too — NOT inside desktop/, which is read-only in an installed .app, and NOT under src/brain/paths.js, which Personal Sync travels");
+  ok(!/writeWindowState\(__dirname/.test(main) && !/writeWindowState\(APP_ROOT/.test(main),
+     'the state is never written beside the code');
+  ok(/getNormalBounds\(\)/.test(main) && !/writeWindowState\([^)]*getBounds\(\)/.test(main),
+     'it records getNormalBounds(), not getBounds() — while maximised the latter reports the SCREEN and would overwrite the size the user actually chose');
+  ok(/isFullScreen\(\)/.test(main),
+     'a full-screen sample is skipped rather than recorded — full screen is deliberately not persisted (relaunching into it hides the menu bar on a launch nobody asked for)');
+  ok(/setTimeout\(persist/.test(main) && /clearTimeout\(saveTimer\)/.test(main),
+     'the save is debounced rather than written on every pixel of a drag');
+  // The DEBOUNCE existing is not the property that matters — being WIRED TO
+  // THE EVENTS is. Deleting the wiring line left the debounce helper intact
+  // and this section green, so the events are now named individually.
+  for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) {
+    ok(new RegExp(`'${ev}'`).test(main) && /mainWindow\.on\(ev, persistSoon\)/.test(main),
+       `'${ev}' is wired to the debounced save — only-on-close loses everything to a Force Quit, which is exactly when a user is about to relaunch and look`);
+  }
+  ok(/mainWindow\.on\('close', \(\) => \{ clearTimeout\(saveTimer\); persist\(\); \}\)/.test(main),
+     "and 'close' saves immediately while the window still exists — 'closed' is too late to read bounds off it");
+
   ok(/nodeIntegration:\s*false/.test(main), 'the renderer has no Node integration');
   ok(/contextIsolation:\s*true/.test(main), 'the renderer is context-isolated');
   ok(/sandbox:\s*true/.test(main), 'the renderer is sandboxed');
@@ -874,6 +1165,45 @@ section('§10 main.js source scan, and what is NOT enforced');
       Contents/Resources/app in the packaged app, and the .app ran from
       /Applications.
     · The layout is flat and both APP_ROOT derivations agree.
+
+  VERIFIED IN A RUNNING WINDOW ON 2026-08-31 (window chrome) — also not
+  re-checked by \`npm test\`, and driven over CDP against the real shell on an
+  isolated --user-data-dir, never the maintainer's own app:
+    · THE DEFECT REPRODUCED. With titleBarStyle:'hiddenInset' a screen capture
+      shows the red and yellow traffic lights drawn ON the rail's logo mark and
+      the green one on the "Chat" heading. Measured in the live renderer: rail
+      (0,0,60x860), mark (17,12,26x26) — the exact rectangle macOS puts the
+      buttons in. A sweep of EVERY element for \`-webkit-app-region: drag\`
+      returned ZERO, so nothing was draggable either.
+    · FIXED. With 'default' the native title bar is 28px (outer 1280x860 ->
+      inner 1280x832), the buttons sit in their own strip and the mark is
+      unobstructed. nativeTheme.themeSource='dark' keeps that strip dark on a
+      light-mode Mac, and the app's own theme is unaffected because /next reads
+      data-theme, never prefers-color-scheme.
+    · RESIZE IS REAL AND THE FLOOR HOLDS. window.resizeTo(400,300) on the live
+      window settles at exactly 960x600. At that minimum the app still renders:
+      rail present, composer present, 7 rail buttons, and
+      documentElement.scrollWidth === clientWidth (no horizontal overflow).
+    · GEOMETRY PERSISTS. Resized+moved to 1104x742 @ (137,96) -> relaunched on
+      the same profile -> restored to 1104x742 @ (137,96) exactly.
+    · THE STRAND GUARD FIRES IN THE REAL APP. A window-state.json poisoned to
+      x=99000,y=99000 relaunches at 1104x742 with the POSITION discarded and
+      the OS centring the window — size kept, window reachable.
+    · ⌘W HIDES RATHER THAN DESTROYS, established on a throwaway Electron app
+      carrying these two close handlers verbatim, because TWO OBVIOUS PROXIES
+      FOR ⌘W ARE BOTH INVALID and each one lies in a different direction:
+        - \`menuItem.click()\` on a \`role:'close'\` item is a NO-OP. Zero close
+          handlers ran and the window stayed VISIBLE — which reads as "the fix
+          did nothing" when in fact nothing was invoked.
+        - the renderer's \`window.close()\` DESTROYS the window WITHOUT emitting
+          the BrowserWindow 'close' event at all. Zero handlers ran and the
+          window was destroyed — which reads as "preventDefault failed". A
+          first attempt used this and reported a FALSE FAILURE.
+      \`win.close()\` — the documented meaning of \`role:'close'\` — runs BOTH
+      handlers and leaves the window HIDDEN and still existing, so
+      revealWindow() has something to show; and with quitAuthorised=true it
+      DESTROYS, so ⌘Q still works. The renderer bypass is unreachable from this
+      app in any case: \`window.close()\` occurs ZERO times in src/public/.
 
   NOT ENFORCED — read this before trusting the numbers above:
     · \`npm test\` STILL CANNOT BUILD. Everything in the list above was
@@ -918,6 +1248,33 @@ section('§10 main.js source scan, and what is NOT enforced');
     · This suite does not assert anything about the CONTENT of a packaged
       app, because it never produces one. §11 asserts the RECIPE, not the
       result.
+    · NOTHING HERE PROVES THE WINDOW DRAGS. §12 executes the geometry logic
+      and §10 asserts the titleBarStyle string; neither can move a window.
+      The argument is that a NATIVE macOS title bar is dragged by the OS and
+      not by app code, which is precisely why it was chosen over a CSS drag
+      region — but it is an argument, not a measurement. It also could not be
+      measured here: this environment has no assistive-access permission, so
+      System Events and every synthetic-mouse route were unavailable, and the
+      resize/move evidence above comes from window.resizeTo/moveTo rather than
+      from a pointer on the frame.
+    · ⌘Q, ⌘W AND ⌘R WERE READ OFF A MENU, NOT PRESSED. The default menu was
+      dumped from a running Electron 43.5.0 (⌘W = role \`close\`, ⌘R = role
+      \`reload\`, ⌘Q = role \`quit\`, and NO item anywhere creates a window).
+      The hide-instead-of-close behaviour was exercised on a REPLICA of the two
+      handlers, not on main.js itself, and the last link — that macOS's
+      \`role:'close'\` really does call \`win.close()\` — is Electron's own
+      documented definition, asserted rather than measured. No test in this
+      repo presses a key.
+    · ⌘R IS LEFT AS IT IS, AND THAT IS A DECISION. It reloads the SPA from the
+      loopback server, which since v3.24.0 is not data loss (the ingest record
+      lives on the server) but does discard an in-flight streamed chat.
+      Removing it means building a custom View menu, i.e. the menu structure
+      this pass deliberately did not add.
+    · FULL SCREEN IS NOT PERSISTED and no assertion proves the app behaves
+      well if a user relaunches expecting it back.
+    · THE STATE FILE IS PER-PROFILE, NOT PER-DISPLAY-ARRANGEMENT. A user who
+      moves between two docks gets the last arrangement's geometry, clamped
+      to whatever is attached — correct, but not remembered per setup.
 `);
 }
 

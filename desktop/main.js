@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, dialog, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -51,6 +51,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pickFreePort, appUrl } from './lib/port.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
+import {
+  MIN_WIDTH, MIN_HEIGHT,
+  sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
+} from './lib/window-state.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -125,12 +129,7 @@ if (!app.requestSingleInstanceLock()) {
   // stops the rest of the file, so the remaining wiring is inside boot(),
   // which the `whenReady` below only reaches on the lock-holding instance.
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
+  app.on('second-instance', () => { revealWindow(); });
 
   app.whenReady().then(boot).catch(fatal);
 }
@@ -138,6 +137,32 @@ if (!app.requestSingleInstanceLock()) {
 // ── 2. Boot ──────────────────────────────────────────────────────────────────
 
 async function boot() {
+  // ── The title bar is native, so its COLOUR is a native setting ────────────
+  //
+  // A real title bar follows the Mac's appearance, and on a light-mode Mac
+  // that is a light grey strip directly above an app whose default theme is
+  // near-black — the one genuine cost of choosing 'default' over hiddenInset,
+  // and it is paid here instead of accepted.
+  //
+  // This is SAFE for the app's own theming, and that was verified rather than
+  // assumed. `nativeTheme.themeSource` drives `prefers-color-scheme` in the
+  // renderer — but the `/next` stylesheets do not use that query and are
+  // written not to: the shell stamps `data-theme` on <html> in app.js's
+  // applyTheme() (both ways, from localStorage, dark by default), and four
+  // /next stylesheets carry an explicit in-file PROHIBITION on ever adding a
+  // prefers-color-scheme block. So this moves the native chrome and cannot
+  // move the app.
+  //
+  // 'dark' rather than 'system' because it matches the app's default and most
+  // common state. The residue is honest and small: a user who switches the app
+  // to its LIGHT theme keeps a dark title bar. Making it track the app would
+  // need a channel out of the renderer, and the clean one is a
+  // `<meta name="theme-color">` that applyTheme() updates — which fires
+  // webContents' own `did-change-theme-color`, a standard web-platform event
+  // rather than a private selector. That is an app-CSS/app-JS change and is
+  // reported in desktop/README.md, not made here.
+  nativeTheme.themeSource = 'dark';
+
   const port = await pickFreePort();
   baseUrl = appUrl(port);
 
@@ -171,14 +196,88 @@ async function boot() {
   createWindow();
 }
 
+// ── 3. The window ────────────────────────────────────────────────────────────
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  WHY THERE IS A REAL TITLE BAR, AND WHY hiddenInset CANNOT COME BACK      ║
+// ║  UNTIL THE APP'S OWN CSS CARRIES A DRAG REGION.                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// v3.30.0 shipped `titleBarStyle: 'hiddenInset'` and it produced three defects
+// at once, all reported from the packaged app on first use:
+//
+//   1. macOS drew the traffic lights OVER the web content. Measured in the
+//      running app: the rail is (0,0,60x860) and its logo mark is
+//      (17,12,26x26) — the exact rectangle hiddenInset puts the close/
+//      minimise/zoom buttons in. The screenshot shows red and yellow sitting
+//      ON the mark and green escaped onto the "Chat" heading.
+//   2. Nothing was draggable. Measured, not assumed: a CDP sweep of every
+//      element in the live renderer found `-webkit-app-region: drag` on ZERO
+//      of them. hiddenInset removes the title bar and hands the app the job of
+//      replacing it; the app never took the job.
+//   3. The window was hard to grab to resize, which is the same wound — with
+//      no title bar and no drag region, the only handle on a 1280x860 window
+//      is a ~4px border the user has to hunt for.
+//
+// ── WHY NOT trafficLightPosition ────────────────────────────────────────────
+//
+// It fixes (1) only if there is somewhere free to put the buttons, and in this
+// shell there is not. The Curator's navigation is a VERTICAL rail spanning
+// y 0 -> 860 at x 0 -> 60; there is no empty horizontal strip anywhere along
+// the top. Move the lights down and they land on the rail's own nav buttons;
+// move them right and they land on the view header. Making room means adding a
+// top inset to the app's layout — a change in `src/public/next/**`, which is
+// not this file's to make. And it fixes neither (2) nor (3) at all.
+//
+// ── WHY NOT titleBarStyle:'hidden' + titleBarOverlay ────────────────────────
+//
+// Checked against the installed Electron's own typings rather than from
+// memory: `TitleBarOverlay.color` and `.symbolColor` are `@platform
+// win32,linux`. On macOS the option only switches ON the Window Controls
+// Overlay CSS environment variables and the `navigator.windowControlsOverlay`
+// API — it paints nothing and it creates no drag region. Consuming those env
+// vars is, again, app CSS.
+//
+// ── WHY NOT INJECT THE DRAG REGION WITH webContents.insertCSS ───────────────
+//
+// It is the one option that stays inside this file, and it was rejected on
+// three counts, not on taste:
+//   · It would have to be keyed on the app's own selectors (`#rail`, the
+//     header) while another agent is editing those files this wave. The day
+//     one is renamed the window silently stops being draggable, and the guard
+//     could only ever assert that a CSS STRING was inserted — it cannot assert
+//     the selector matched anything. That is precisely the vacuous source scan
+//     this repo keeps re-learning about.
+//   · `-webkit-app-region: drag` makes every descendant unclickable unless
+//     each is walked back with `no-drag`. The zone in question contains the
+//     logo and all seven rail buttons — the app's primary navigation. Getting
+//     one selector wrong trades a cosmetic defect for a dead nav.
+//   · It still would not fix (1). The overlap needs the app's content pushed
+//     down, which is a layout change, not an injected rule.
+//
+// A frameless design is the right long-term answer and it belongs with the app
+// CSS that has to carry it. Until then the title bar does all three jobs
+// correctly and immediately: the buttons get their own strip, the whole bar is
+// a drag handle a first-time user does not have to be taught, and the window
+// gains the standard double-click-to-zoom the previous build also lacked.
 function createWindow() {
+  const workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  const wanted = sanitizeWindowState(readWindowState(app.getPath('userData')), workAreas);
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 960,
-    minHeight: 600,
+    width: wanted.width,
+    height: wanted.height,
+    // Both or neither — sanitizeWindowState drops a position it cannot prove
+    // is still reachable, and an absent x/y makes the OS centre the window.
+    ...(Number.isInteger(wanted.x) && Number.isInteger(wanted.y) ? { x: wanted.x, y: wanted.y } : {}),
+    minWidth: MIN_WIDTH,
+    minHeight: MIN_HEIGHT,
     show: false,
-    titleBarStyle: 'hiddenInset',
+    // `titleBarStyle` is stated rather than omitted. 'default' IS the default,
+    // so this line changes no behaviour on its own — it exists so that the
+    // reasoning above has something to hang on, and so the guard suite can
+    // assert the value rather than assert an absence.
+    titleBarStyle: 'default',
     backgroundColor: '#12121a',
     webPreferences: {
       // The renderer is the app's OWN frontend, served over loopback. It has
@@ -191,8 +290,65 @@ function createWindow() {
     },
   });
 
+  if (wanted.maximized) mainWindow.maximize();
+
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // ── Remember size and position ───────────────────────────────────────────
+  //
+  // Saved on a debounce from move/resize rather than only on close, because
+  // only-on-close loses everything to a crash or a Force Quit — and Force Quit
+  // is exactly what a user reaches for when something has gone wrong, i.e. the
+  // moment they are most likely to relaunch and notice.
+  //
+  // getNormalBounds(), not getBounds(): while maximised the latter reports the
+  // screen, which would overwrite the size the user actually chose with one
+  // they never picked.
+  let saveTimer = null;
+  const persist = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // Full screen is not persisted (see lib/window-state.js) and its bounds
+    // are the display, so skip the sample entirely rather than record it.
+    if (mainWindow.isFullScreen()) return;
+    writeWindowState(app.getPath('userData'), serializeWindowState(
+      mainWindow.getNormalBounds(), { maximized: mainWindow.isMaximized() },
+    ));
+  };
+  const persistSoon = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persist, 400);
+  };
+  for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) mainWindow.on(ev, persistSoon);
+  // 'close' fires while the window still exists; 'closed' is too late to read
+  // bounds off it. Cancel the pending debounce so it cannot fire afterwards
+  // against a destroyed window.
+  mainWindow.on('close', () => { clearTimeout(saveTimer); persist(); });
+
+  // ── ⌘W must not strand the app ───────────────────────────────────────────
+  //
+  // The DEFAULT Electron menu was dumped from a running Electron 43.5.0 rather
+  // than recalled: File holds exactly one item, "Close Window" (⌘W, role
+  // `close`), and NOTHING in the whole menu creates a window. With
+  // `window-all-closed` correctly not quitting on darwin, ⌘W therefore left a
+  // running, windowless app whose only route back was a Dock click — a gesture
+  // that is real (`activate`, below) but undiscoverable, and an app whose
+  // window vanished reads as an app that quit.
+  //
+  // Fixed here rather than by rebuilding the menu, which this pass is not for:
+  // on macOS a close that is not part of a quit HIDES the window instead of
+  // destroying it. The Dock icon, ⌘Tab and a second launch all bring it back —
+  // and bring it back with the renderer's state intact, which destroying and
+  // re-creating would have thrown away. `quitAuthorised` is what keeps ⌘Q
+  // working: during a real quit the close is allowed through.
+  //
+  // Scoped to darwin because on Windows and Linux closing the last window
+  // SHOULD quit, which is what the window-all-closed handler below does.
+  mainWindow.on('close', (event) => {
+    if (quitAuthorised || process.platform !== 'darwin') return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
 
   // Anything the page tries to open in a new window goes to the real browser.
   // Without this, an external link opens a chrome-less Electron window with no
@@ -290,9 +446,35 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0 && baseUrl) createWindow();
-});
+app.on('activate', () => { revealWindow(); });
+
+/**
+ * Put the one window in front of the user, whatever state it is in.
+ *
+ * This is the single recovery path, reached from a Dock click (`activate`) and
+ * from a second launch (`second-instance`). It has to cover THREE states, and
+ * the pre-existing version covered only one of them:
+ *
+ *   destroyed   ⌘Q was never pressed but the window is gone     -> re-create
+ *   hidden      ⌘W or the red button, since this release        -> show
+ *   minimised   the yellow button or ⌘M                         -> restore
+ *
+ * The old handler tested `getAllWindows().length === 0`, which is FALSE for a
+ * hidden window — so with the ⌘W fix above and nothing here, the Dock click
+ * that used to re-create the window would have done nothing at all. The two
+ * changes are a pair; neither is correct alone.
+ */
+function revealWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // Only re-creatable once boot() has a URL to load. Before that there is
+    // nothing to show and creating a window would race the server import.
+    if (baseUrl) createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
 
 function fatal(err) {
   dialog.showErrorBox(
