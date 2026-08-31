@@ -10,10 +10,10 @@ This guide covers everything from first-time setup to daily use. No technical ba
 1c. [Nothing here is locked to one AI, one tool, or one company](#1c-nothing-here-is-locked-to-one-ai-one-tool-or-one-company)
 2. [What you need before you start](#2-what-you-need-before-you-start)
 3. [Installation](#3-installation)
-3b. ["Is there an app to download?"](#3b-is-there-an-app-to-download)
+3b. [The Mac app and the browser install](#3b-the-mac-app-and-the-browser-install)
 4. [Get your API key (Gemini, Claude or OpenRouter)](#4-get-your-api-key-gemini-claude-or-openrouter)
 5. [First run — the Getting started panel](#5-first-run--the-getting-started-panel)
-6. [Start the server (and how lifecycle works)](#6-start-the-server-and-how-lifecycle-works)
+6. [Starting and quitting](#6-starting-and-quitting)
 7. [Finding your way around](#7-finding-your-way-around)
 8. [Ingest a source](#8-ingest-a-source)
 9. [Chat with your brain](#9-chat-with-your-brain)
@@ -154,23 +154,70 @@ flowchart TD
 | A computer running macOS, Windows, or Linux | See the platform notes below | — |
 | An AI provider API key | Powers ingest, chat, and AI-assisted Wiki Health | [Google Gemini](https://aistudio.google.com/app/apikey) (free tier exists, paid is very cheap) **or** [Anthropic Claude](https://console.anthropic.com/) (paid only) |
 | Obsidian (optional) | Visualises the knowledge graph | Free at [obsidian.md](https://obsidian.md) |
-| Node.js 18+ | Runtime that powers the local server | Auto-installed on Mac by the one-line installer; on Windows/Linux install manually from [nodejs.org](https://nodejs.org) |
+| Node.js 18+ | Runtime that powers the local server | **Not needed for the Mac app** — it ships with its own. For the browser install: auto-installed on Mac by the one-line installer; on Windows/Linux install manually from [nodejs.org](https://nodejs.org) |
+
+### Two ways to run it — and they are the same program
+
+There is now a **Mac app** as well as the original **browser install**. They are not two products and not a fork: one codebase, one release, two shells. The Mac app is a window wrapped around the identical server the browser install runs, so **every screen in this guide looks the same in both**.
+
+Exactly four things genuinely differ — how it launches, how it updates, where its data lives, and how it starts the MCP bridge. Each is called out where it comes up, and there is a summary in [§3b](#3b-the-mac-app-and-the-browser-install).
+
+| | **The Mac app** | **The browser install** |
+|---|---|---|
+| What you get | A `.dmg` you drag to Applications | A folder on your disk running a local server |
+| Platforms | macOS only | macOS, Windows, Linux |
+| Node.js | Bundled — nothing to install | You install it |
+| Where the UI appears | Its own window, with its own title bar | A tab at `http://localhost:3333` |
+| Updating | Download the new version and replace the app | Applied in place from **Settings**, or `git pull` |
+| Your data lives in | `~/Library/Application Support/The Curator/` | Your install folder (default `~/the-curator/`) |
+| Status today | **Preview.** Unsigned, so macOS asks you to allow it once | Mature, fully supported, and **not** being retired |
 
 ### Platform support
 
-| Platform | One-line installer | Manual `npm install` | Dock launcher app | Auto-update / folder-picker |
-|---|---|---|---|---|
-| **macOS** | ✅ Recommended | ✅ Works | ✅ `.app` is built automatically | ✅ |
-| **Linux** | ❌ — script checks for Darwin | ✅ Works (`node src/server.js`) | ❌ — no `.app` bundle | ⚠️ Some UI buttons (auto-update, folder picker) are macOS-only; everything else (ingest, chat, wiki, MCP, sync, Health) works identically |
-| **Windows** | ❌ | ✅ Works (PowerShell or WSL2; set `CURATOR_NO_OPEN=1`) | ❌ | ⚠️ Same caveat as Linux |
+| Platform | Mac app (`.dmg`) | One-line installer | Manual `npm install` |
+|---|---|---|---|
+| **macOS** | ✅ Preview — see [§3](#the-mac-app-macos-only) | ✅ Recommended | ✅ Works |
+| **Linux** | ❌ | ❌ — script checks for Darwin | ✅ Works (`node src/server.js`) |
+| **Windows** | ❌ | ❌ | ✅ Works (PowerShell or WSL2; set `CURATOR_NO_OPEN=1`) |
 
-> The installer is currently macOS-only because it auto-builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users can clone the repo and run `node src/server.js` directly. Auto-update is also macOS-specific (it rebuilds the `.app`); on Windows/Linux, run `git pull && npm install` to update.
+> The one-line installer is macOS-only because it builds a `.app` Dock launcher. The Curator's *core* (Express + Node) is fully cross-platform — Windows and Linux users clone the repo and run `node src/server.js` directly. One button in the UI is macOS-only: the **Choose folder** picker in Settings → Knowledge base. On Linux and Windows, set your knowledge folder with the `DOMAINS_PATH` environment variable instead. Everything else — ingest, chat, wiki, MCP, sync, Health — works identically on every platform.
 
 > **Don't have a coding agent?** A Claude-Code-style CLI agent can do the install on any platform for you — see [§20 Install with a coding agent](#20-install-with-a-coding-agent).
 
 ---
 
 ## 3. Installation
+
+### The Mac app (macOS only)
+
+A packaged macOS application is published on the project's
+[**Releases page**](https://github.com/talirezun/the-curator/releases). Download the
+`.dmg` that matches your Mac — the file names say which is which (Apple Silicon for
+M-series Macs, Intel for older ones) — open it, and drag **The Curator** into
+**Applications**.
+
+> ⚠️ **It is a preview, and it is not code-signed yet.** An Apple Developer
+> certificate is in progress. Until it exists, macOS treats the app as coming from an
+> unidentified developer and will **refuse to open it the first time**. That is
+> expected, not a fault, and you allow it once:
+>
+> 1. Open the app. macOS says it cannot verify the developer — click **Done**.
+> 2. Go to **System Settings → Privacy & Security**, scroll down to **Security**, and
+>    click **Open Anyway** next to the message about The Curator.
+> 3. Confirm. It opens normally from then on.
+>
+> On macOS Ventura and Sonoma (13–14) the older right-click → **Open** → **Open** still
+> works. On Sequoia (15) and later it does not — use the steps above.
+>
+> The Intel build is produced by the same automated build but has not been run on Intel
+> hardware. If you are on an Intel Mac and something misbehaves, that is worth
+> [reporting](https://github.com/talirezun/the-curator/issues).
+
+The app **does not need Node.js** and does not need the Terminal. It keeps its data in
+`~/Library/Application Support/The Curator/`.
+
+**Already using the browser install?** Nothing is converted and nothing is moved — see
+[§3b → Moving an existing wiki into the app](#moving-an-existing-wiki-into-the-app).
 
 ### One-command installer (recommended)
 
@@ -223,99 +270,111 @@ Open **http://localhost:3333** in your browser. The Getting started panel will g
 
 ---
 
-## 3b. "Is there an app to download?"
+## 3b. The Mac app and the browser install
 
-Short answer: **not yet.** What you installed above is the real thing and is fully
-supported. This section exists because it is the question everyone asks, and
-because the answer for *existing users* — what happens to your wiki when a
-packaged app does arrive — deserves a straight answer rather than a shrug.
+Both are supported, both are current, and **neither is a legacy path**. This section
+is the map: what the two shells share, the four things that genuinely differ, and — if
+you already have a wiki — what happens to it.
 
-### What you are actually running
+### What you are actually running, either way
 
-The Curator is a **local server**. Everything you see is a web page served from
-your own machine, at `http://localhost:3333`.
-
-```mermaid
-flowchart LR
-    subgraph YOU["Your Mac"]
-        L["Dock launcher<br/>(a small wrapper)"] -->|starts| S["The Curator server<br/>node src/server.js"]
-        S --> B["Your browser<br/>localhost:3333"]
-        S --> D[("domains/<br/>plain markdown")]
-        O["Obsidian"] --> D
-        M["Claude Desktop<br/>Claude Code · Cursor"] -->|MCP| D
-    end
-```
-
-Notice where your knowledge sits. **`domains/` is a folder of ordinary markdown
-files, and nothing in that picture owns it.** The launcher, the server, Obsidian
-and your MCP client are four separate things reading the same folder. That single
-fact is why every question below has a reassuring answer.
-
-### The three ways to run it, today
-
-| | What it is | Who it's for |
-|---|---|---|
-| **Dock launcher** *(macOS)* | The one-line installer builds a small `.app` that starts the server and opens your browser. **Not a downloadable, signed application — there is no `.dmg`.** | Mac users who never want the Terminal |
-| **Run the server yourself** | `node src/server.js`, then open `localhost:3333` | Windows and Linux — **the only option there** — and anyone who prefers it |
-| **Packaged Mac app** | A real signed application | **Does not exist yet.** Being worked on |
-
-### What is being built, and what is not
-
-A properly packaged Mac app is in progress. Two things are worth knowing:
-
-- **It is the same app, not a different one.** Same codebase, same release, same
-  files on disk. The packaged app is a *shell* around the identical server you
-  are running now — deliberately not a fork, so a fix lands in one place.
-- **The browser install is not being retired.** It stays fully supported, and it
-  remains the only option on Windows and Linux.
-
-Every decision behind it — with its reasoning, its evidence, and a status saying
-whether code exists for it yet — is recorded in
-[desktop-app-decisions.md](desktop-app-decisions.md). Most rows say `DECIDED`,
-which means *agreed, not built.*
-
-### If a packaged app arrives, what happens to my wiki?
+The Curator is a **local server**. Everything you see is a web page served from your
+own machine. The Mac app puts that page in its own window; the browser install puts it
+in a browser tab at `http://localhost:3333`.
 
 ```mermaid
 flowchart TD
-    A["Your wiki today<br/>domains/ — plain markdown"] --> B["Install the packaged app"]
-    B --> C["Settings → Knowledge base folder<br/>point it at your existing domains/"]
-    C --> D["Settings → API keys<br/>paste your key again"]
-    D --> E["Settings → My Curator MCP<br/>re-run the wizard"]
+    subgraph A["The Mac app"]
+        A1["The Curator.app<br/>one window, one process"] --> A2["The Curator server<br/>running inside it"]
+    end
+    subgraph B["The browser install"]
+        B1["Dock launcher<br/>or a terminal"] -->|starts| B2["The Curator server<br/>node src/server.js"]
+        B2 --> B3["Your browser<br/>localhost:3333"]
+    end
+    A2 --> D[("domains/<br/>plain markdown")]
+    B2 --> D
+    O["Obsidian"] --> D
+    M["Claude Desktop<br/>Claude Code · Cursor"] -->|MCP| D
+```
+
+Notice where your knowledge sits. **`domains/` is a folder of ordinary markdown files,
+and nothing in that picture owns it.** The app, the server, Obsidian and your MCP
+client are separate things reading the same folder. That single fact is why every
+question below has a reassuring answer.
+
+### The four things that genuinely differ
+
+Everything else — every view, every button, every keyboard shortcut, the wiki format,
+Personal Sync, Shared Brain, Wiki Health, working state — is identical, because it is
+the same code.
+
+| | The Mac app | The browser install |
+|---|---|---|
+| **1 · How it launches** | Open it from Applications or the Dock. It opens **its own window**; no browser tab is opened, and the address it uses is chosen fresh each launch rather than being a fixed `localhost:3333`. | The Dock launcher (or `node src/server.js`) starts the server and opens your browser at `http://localhost:3333`. |
+| **2 · How it updates** | You download the new version and replace the app. The in-app "install it for me" update does **not** apply — see [§16 → Version and updates](#version-and-updates). | **Settings → General → Check for updates** downloads and installs in place, then restarts. |
+| **3 · Where its data lives** | `~/Library/Application Support/The Curator/` — settings, sync configuration, and the default `domains/` folder. | Your install folder, default `~/the-curator/`. |
+| **4 · How the MCP bridge starts** | Through a small launcher the app writes for itself on every start. Because of that, **moving your knowledge folder no longer makes the Claude Desktop entry go stale.** | Through a direct command naming your Node binary, the bridge script, and your knowledge folder path — so moving that folder *does* make it stale, and the wizard tells you. |
+
+Two things that follow from #3 and are worth knowing:
+
+- **The two installs do not share anything.** They have separate settings, separate API
+  keys and separate sync configuration. They only meet if you deliberately point them at
+  the same knowledge folder — which works, but **run one at a time**; two copies writing
+  one wiki at once is not something either of them guards against.
+- **The application log is in the same place for both:**
+  `~/Library/Logs/The Curator/curator.log`.
+
+### Moving an existing wiki into the app
+
+```mermaid
+flowchart TD
+    A["Your wiki today<br/>domains/ — plain markdown"] --> B["Install the Mac app"]
+    B --> C["Settings → Knowledge base<br/>point it at your existing domains/"]
+    C --> D["Settings → Providers & keys<br/>paste your key again"]
+    D --> E["Settings → MCP bridge<br/>re-run the wizard"]
     E --> F["Everything back:<br/>same pages, same graph, same history"]
     A -.->|"never copied, never converted,<br/>never moved"| F
 ```
 
-Three steps, all of which are buttons that **already exist** in Settings today.
-There is no import, no conversion and no database rebuild, because there is no
-database — pointing the app at the folder *is* the migration.
+Three steps, all of which are buttons that **already exist** in Settings. There is no
+import, no conversion and no database rebuild, because there is no database — pointing
+the app at the folder *is* the migration.
 
 | ✅ Comes across untouched | ⚠️ You redo once | ❌ Does not happen |
 |---|---|---|
 | Every wiki page, entity, concept and summary | Paste your API key again | Nothing is copied to a new location |
 | All your domains | Reconnect Personal Sync, if you use it | Nothing is converted to another format |
 | Chat history and conversations | Re-run the MCP wizard, if you use it | No file is deleted or rewritten |
-| Working state (agent handoffs) | | |
+| Working state (agent handoffs) | | Your browser install is not modified or removed |
 | Your Obsidian vault and graph colours | | |
 
-**Why credentials do not come across, deliberately.** Copying API keys and sync
-tokens automatically would mean new code that reads three secret files from one
-place and writes them to another — code that runs exactly once per user, is very
-hard to test in the shapes that matter, and fails in the direction where a secret
-ends up somewhere nobody intended. Re-pasting a key takes about thirty seconds
-and uses a screen you have already used. That trade was made on purpose, and it
-is [D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
+**There is no automatic first-launch import, deliberately.** The app does not go looking
+for an existing install; it starts empty and waits for you to point it somewhere. So on
+first launch you will see an empty app with no domains — that is the expected state, not
+a fault, and the fix is the first step above.
 
-**Why the MCP wizard has to be re-run.** The Claude Desktop entry contains
-absolute paths pointing at wherever your MCP bridge lives. Move the app and that
-entry goes stale — which is why the wizard already detects a stale entry and
-shows you a banner. See [mcp-user-guide.md](mcp-user-guide.md).
+**Why credentials do not come across, deliberately.** Copying API keys and sync tokens
+automatically would mean new code that reads three secret files from one place and
+writes them to another — code that runs exactly once per user, is very hard to test in
+the shapes that matter, and fails in the direction where a secret ends up somewhere
+nobody intended. Re-pasting a key takes about thirty seconds and uses a screen you have
+already used. That trade was made on purpose, and it is
+[D11](desktop-app-decisions.md#d11--credentials-do-not-migrate).
+
+**Why the MCP wizard has to be re-run.** The Claude Desktop entry names the bridge by an
+absolute path, and the app's bridge is somewhere different from your checkout's. Re-run
+**Settings → MCP bridge**; the wizard detects a stale entry and shows you a banner. See
+[mcp-user-guide.md](mcp-user-guide.md).
 
 > **The honest reassurance, and it is a structural one rather than a promise:**
 > The Curator has no lock-in to break. Your knowledge is markdown in a folder you
-> chose, synced to a GitHub repository you own. If the packaged app never ships,
-> nothing you have is worth less. If it ships and you dislike it, the browser
-> install still opens the same folder.
+> chose, synced to a GitHub repository you own. If you dislike the app, the browser
+> install still opens the same folder — and it remains the only option on Windows and
+> Linux.
+
+Every decision behind the Mac app — with its reasoning, its evidence, and a status
+saying whether code exists for it yet — is recorded in
+[desktop-app-decisions.md](desktop-app-decisions.md).
 
 ---
 
@@ -383,23 +442,73 @@ The first time you open The Curator there is nothing to talk to yet, so a small 
 
 Each item has a button that takes you straight to the right place. The panel tracks real state, not clicks: it reads *"2 of 3 done"* and ticks items off by itself as you actually complete them, and it stops appearing once all three are done.
 
-**It never blocks you.** It is a panel, not a modal — you can click past it, start typing, and ignore it entirely. Dismiss it with the **✕** in its corner. Dismissing is not permanent: **Settings → General → Show setup guide** brings it back at any time.
+![The Getting started panel, docked in the top-right corner of the app. It is headed "Getting started" with a close cross, reads "3 OF 3 DONE", and lists three completed items each with a green tick and the word Done: "Add an AI key — A key is saved, so The Curator can read and write"; "Create your first domain — You have somewhere for knowledge to land"; "Ingest your first source — Your wiki has pages in it, the loop is running". A closing line reads "Everything here is done — this guide will not come back on its own."](images/curator-getting-started.png)
+
+*The panel with all three steps completed. On a fresh install each row is unticked and reads "0 OF 3 DONE" instead, with an action button in place of the word "Done".*
+
+**It never blocks you.** It is a panel, not a modal — you can click past it, start typing, and ignore it entirely. Dismiss it with the **✕** in its corner. Dismissing is not permanent: **Settings → General → Show setup guide** brings it back at any time. The dismissal is remembered per *install*, not per browser, so it does not follow you from a browser install into the Mac app.
 
 > Step 1 is the only one you truly cannot skip in substance — without a key, ingest and chat have no model to call. Nothing stops you dismissing the panel first and adding the key later.
 
+> **An OpenRouter key alone does not tick off step 1.** The checklist looks for a Gemini or an Anthropic key specifically. If OpenRouter is your only provider the app works fine — you can ingest and chat — but this row keeps saying "Add an AI key" until you either add one of the other two or dismiss the panel. Dismissing it is the right move; nothing is wrong.
+
+### First run is the same in the Mac app — with one thing to expect
+
+The panel, the three steps and the order are identical, because it is the same
+interface. There is no separate installer wizard and nothing asks you for a key
+before the app will open.
+
+The one thing that differs is what an **existing** user sees. The app does not go
+looking for a wiki you already have, so it starts genuinely empty: no domains, and the
+Getting started panel offering to create your first one. That is the expected state.
+Point it at your existing folder — **Settings → Knowledge base** — and everything
+appears. [§3b](#moving-an-existing-wiki-into-the-app) has the full three-step path.
+
 > **For developers:** you can also configure API keys by creating a `.env` file manually (`cp .env.example .env`) and setting `GEMINI_API_KEY=your_key_here`. Keys saved in Settings take priority over `.env` when both are present. Note that a `.env`-only key does **not** tick off step 1 — the checklist reads keys saved through the app (`.curator-config.json`), so it will keep showing "Add an AI key" even though the app can already make calls.
+>
+> This `.env` route is for the browser install only. The Mac app's program files are inside the application bundle, which is read-only, so there is nowhere useful to put a `.env` — use Settings.
 
 ---
 
-## 6. Start the server (and how lifecycle works)
+## 6. Starting and quitting
 
-### macOS — using the Dock app
+### The Mac app
 
-Click **The Curator** icon in your Dock. The app starts the local server and opens in your browser automatically.
+Open **The Curator** from Applications, or click it in your Dock. It opens in its own
+window. **No browser tab opens**, and you do not need one — the interface is the window.
+
+> **There is no `localhost:3333` to bookmark in the app.** It picks a free address on
+> your own machine each time it starts, so the number changes between launches. This is
+> deliberate: it means the app and a browser install can never fight over the same port.
+> Everything you need is inside the window.
+
+| You do… | What happens |
+|---|---|
+| Close the window (red button or `⌘W`) | The window **hides**; the app keeps running, and anything in flight keeps going. |
+| Click the Dock icon again | The same window comes back — hidden, minimised or closed, it is restored. Nothing restarts. |
+| Open The Curator a second time | It refuses, with *"The Curator is already running"*, and brings the existing window forward instead. One copy, one wiki. |
+| Quit (`⌘Q`, or Dock icon → **Quit**) | The app **checks whether anything is writing to your wiki first** — see below. |
+| Reboot your computer | The app is gone; open it again from the Dock or Applications. |
+
+**Quitting asks first when it matters.** If an ingest, a compile or an update is in
+flight, the app does not just exit. You get a dialog headed **"Quit now?"** with two
+buttons — **Keep working** and **Quit anyway** — and a line naming what is running, for
+example *"A write to your wiki is in progress. Quitting now can lose work you have paid
+for."* **Keep working** is the highlighted default.
+
+You get the same question, worded differently, if the app *cannot tell* whether
+something is running. That is on purpose: the app never assumes it is safe to quit
+during a paid, multi-minute write just because a check came back unclear.
+
+> The window remembers its size and position between launches.
+
+### The browser install — macOS Dock launcher
+
+Click **The Curator** icon in your Dock. It starts the local server and opens in your browser automatically.
 
 > If The Curator is not yet in your Dock, open Finder → `~/the-curator/` → drag the app icon down into your Dock first (one-time step).
 
-### Manual / Linux / Windows
+### The browser install — manual / Linux / Windows
 
 Open a terminal in the project folder and run:
 
@@ -411,9 +520,9 @@ node src/server.js                            # macOS / Linux
 
 Then open **http://localhost:3333** in your browser.
 
-### How the lifecycle actually works
+### How the browser install's lifecycle works
 
-The Curator is a **local web app** — a small Express server runs on your machine and renders the UI inside whichever browser you have open. Three things to know:
+It is a **local web app** — a small Express server runs on your machine and renders the UI inside whichever browser you have open. Four things to know:
 
 | You do… | What happens |
 |---|---|
@@ -425,19 +534,23 @@ The Curator is a **local web app** — a small Express server runs on your machi
 
 > **There is no "Stop server" button in the UI.** It was deliberately removed in v2.1 because AppleScript's reopen handler is broken on modern macOS. Use the Dock right-click menu instead.
 
-> If you ingest a 200-page PDF, **don't quit until you see the success banner** — the ingest stream lives inside the server process.
+> ⚠️ **Quitting the browser install does not warn you about work in progress.** That check exists only in the Mac app. So if you ingest a 200-page PDF here, **don't quit until you see the success banner** — the ingest stream lives inside the server process, and killing it mid-run loses the rest of a document you have already paid to have read.
 
 ---
 
 ## 7. Finding your way around
 
-With the server running, open your web browser (Chrome, Safari, Firefox — any browser works) and go to:
+**In the Mac app**, the interface is simply the window — there is nothing to open.
+
+**In the browser install**, with the server running, open your web browser (Chrome, Safari, Firefox — any browser works) and go to:
 
 ```
 http://localhost:3333
 ```
 
 > `localhost:3333` means "a web page running on your own computer, on port 3333". It only works when your server is running and is not accessible to anyone else on the internet.
+
+> **Everything from here to the end of this guide is the same in both.** The rail, the views, the buttons, the keyboard shortcuts — same code, same screens. The remaining places where the Mac app differs are [§16 → Version and updates](#version-and-updates), [§16 → Knowledge base folder](#knowledge-base-folder), and a handful of [troubleshooting](#18-troubleshooting) entries.
 
 ### The layout
 
@@ -485,11 +598,13 @@ If you used The Curator before this release, this is the whole map:
 
 ### The previous interface is still there, at `/old`
 
-The redesign is the primary interface, but the old seven-tab app has not been removed. It is served at:
+The redesign is the primary interface, but the old seven-tab app has not been removed. In the browser install it is served at:
 
 ```
 http://localhost:3333/old
 ```
+
+It ships inside the Mac app too, but **in practice it is hard to reach there**: the app window has no address bar, so the only clickable route is the **Use the previous interface** link on the one-time notice below — and a brand-new app install never sees that notice, because it is shown only to people who used the old interface before. If you are on the Mac app, treat `/old` as unavailable and use the rail.
 
 Everything there works exactly as it did — same server, same files on disk, same wiki. Nothing was migrated or moved; the two interfaces are two views onto the same `domains/` folder, and you can use both.
 
@@ -589,9 +704,11 @@ flowchart TD
 
 ### How to ingest
 
+![The Ingest view. Down the left, an icon rail with Ingest highlighted. Beside it a panel headed "Ingest" with a "+ Choose files" button and a DESTINATION list of six domains — Articles, Business, Lectures, Posts, Projects, Research — each showing a page count and a last-write date, with Articles ticked as the current destination. The main column is headed "Ingest" over the eyebrow "THE WAY MATERIAL GETS IN", and holds a Domain dropdown set to Articles and a dashed drop zone reading "Drop a source here or browse your files", "Accepts .txt .md .pdf", "2 or more files at once starts a batch", above an Ingest button.](images/curator-ingest.png)
+
 1. Click **Ingest** in the rail
 2. Pick a **destination domain** — from the picker, or from the **destination list** in the panel beside the rail
-3. Drag your file onto the drop zone — *"Drop file(s) here or browse — 2 or more starts a batch"* — or click **browse** to pick one
+3. Drag your file onto the drop zone — *"Drop a source here / or browse your files"*, with *"2 or more files at once starts a batch"* underneath — or click **browse your files** to pick one
 4. Click **Ingest**
 5. Wait. A progress bar names the current step ("AI is analyzing the document…") with a percentage and a running timer beside it. This usually takes **15–60 seconds** depending on the document length. Do not close the browser or refresh the page. See *Understanding the progress bar* below if it looks like it's stuck.
 6. When it finishes you get a specific result, not a "Done!" — e.g. *"Wrote 7 new pages · updated 4 existing · +6.1 KB"* — followed by the full list of pages created or updated
@@ -965,7 +1082,9 @@ Chat is the app's default view — it's what you land on. It has three parts:
 - **A SCOPE bar across the top of the thread** — one pill per domain. **Chat talks to exactly one domain at a time**; click a pill to switch. On the right of that bar you'll see how much is in scope, e.g. *"3,336 pages in scope"* — and, once a conversation has a question in it, the **Compile to Wiki** button.
 - **The thread and the composer** below it.
 
-An empty thread opens with *"Ask <domain> anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation to open it.
+An empty thread opens with *"Ask &lt;domain&gt; anything"*, that domain's page count, and a reminder that answers cite the specific pages they draw from — click a citation to open it.
+
+![The Chat view. A left panel headed "Chat" holds a "New chat" button, a conversation search box and a list of past conversations under the heading EARLIER, each with a checkbox and a message count. Across the top of the main column runs a SCOPE row of coloured domain pills — Articles selected, then Business, Lectures, Posts, Projects, Research — followed by a "Compile to Wiki" button and the readout "3,416 pages in scope". Below it a user question sits in a bubble on the right; the answer beneath it is labelled "THE CURATOR · GLM 5.3 Flash · $0.0037" and renders as a Markdown table comparing five articles against their connections, with wiki concept links highlighted inline and page citations such as "summaries/…md" shown in small monospaced text. At the bottom the composer reads "Ask Articles…" with a model dropdown, a length dropdown reading "Detailed", the note "cost varies with response length", and a send button.](images/curator-chat.png)
 
 > Conversations belong to a domain. Switching the SCOPE pill switches which set of conversations the sidebar lists — and **starts you on a fresh, empty thread** rather than dropping you into that domain's most recent conversation. Switching scope is something you do because you want to ask something new; landing mid-conversation in an old thread read as though the switch hadn't worked.
 
@@ -1271,6 +1390,10 @@ Above the list is **New domain**. Click any row to open that domain in the main 
 - **Stat cards**: PAGES · ENTITIES · CONCEPTS · SUMMARIES (plus OTHER when non-zero)
 - The **Wiki health** panel — see [§17](#17-wiki-health)
 - **PAGES** — a **Browse pages** button that opens the full page list, see [§11](#11-read-a-wiki-page)
+
+![The Domains view. A left panel headed "Domains" with a "New domain" button and a KNOWLEDGE list of six domains, each with a coloured identity dot and a page count; Articles is selected and carries a small dot on the right marking open health issues. The main column is headed "Articles" under the path eyebrow "DOMAINS/ARTICLES/", with Rename and Delete buttons and an "Ask this domain" button. Four stat cards read PAGES 3,410 · ENTITIES 609 · CONCEPTS 2,713 · SUMMARIES 88. Below them a "Wiki health" panel shows "Open issues 20, scanned just now" beside Entities, Concepts, Summaries and Dismissed counts, then a row of category chips — Broken links 17, Orphan pages 3, Cross-folder duplicates 0, Hyphen variants 0, Folder-prefix links 0, Missing backlinks 0. A QUICK MAINTENANCE box offers "Fix 17 broken links $0.0030", "Rescue 3 orphans $0.0027" and "Find duplicate pages", above the sentence "Every AI action shows its cost before it runs. If you use GitHub Sync, changes can be undone with a git client — the app has no Undo button yet." Collapsed rows for Broken links, Orphan pages and Dismissed sit underneath, and a PAGES section at the bottom offers "Browse pages".](images/curator-domains.png)
+
+*A domain's page, with the **Wiki health** panel expanded — see [§17](#17-wiki-health). Every AI action in that panel names its price before it runs.*
 
 ### Creating, renaming, deleting
 
@@ -1778,7 +1901,7 @@ Here is the recommended way to use The Curator day-to-day:
 ### When you find something worth keeping
 
 1. Save the article/chapter/notes as a `.txt` or `.pdf` file
-2. Open The Curator (click the Dock icon, or go to `http://localhost:3333`)
+2. Open The Curator (the Mac app, or click the Dock icon / go to `http://localhost:3333`)
 3. Open **Ingest**, choose the right domain, drop the file in, click **Ingest**
 4. In Obsidian, press `Cmd/Ctrl + R` to see the new pages appear in the graph
 
@@ -2023,6 +2146,8 @@ Under each connected provider's row there is a collapsible **model list** — th
 You'll also see rows for **OpenAI** and **Local model** marked *"not available in this build"*. They are placeholders; there is nothing to configure and no model list under them. The providers The Curator can call today are **Gemini**, **Anthropic** and **OpenRouter** — all three can build your wiki, and [§16b](#openrouter--one-key-two-lanes-and-a-model-list-you-refresh) explains what makes OpenRouter different from the other two.
 
 > Keys are stored in `.curator-config.json` on this machine, with permissions locked to `0600`. Never committed, never sent anywhere except the provider you call. If you also have keys in `.env`, the Settings values take priority.
+>
+> **That file lives in a different place in each install** — in the Mac app it is under `~/Library/Application Support/The Curator/`, in the browser install it is in your install folder. So the two do **not** share keys: if you move from one to the other, you paste your key again once. That is deliberate, and the reasoning is in [§3b](#moving-an-existing-wiki-into-the-app).
 
 ### If a model gets retired underneath you
 
@@ -2081,14 +2206,26 @@ Full detail: [model-lifecycle.md](model-lifecycle.md).
 
 **Settings → General → System check** confirms the **app itself** is set up correctly. It's the fastest way to answer "is everything working?" — and, when something fails, whether the problem is your setup or your AI provider.
 
-- **Run system check** (free, instant) checks five things locally — no network call, no cost, and it never touches your wiki content: your installed version, whether an AI key is configured, that your knowledge folder is writable, that your credential files are locked down (`0600`), and your sync status. Each row shows OK, needs attention, failed, or info, with a one-line summary above them.
+- **Run system check** (free, instant) checks a short list of things locally — no network call, no cost, and it never touches your wiki content: your installed version; **which install you are running** and how updates reach it; whether an AI key is configured; that your knowledge folder is writable; that your credential files are locked down (`0600`); whether `git` is available; your sync status; and your application log file. Each row shows OK, needs attention, failed, or info, with a one-line summary above them.
+
+> The **Install mode** row is the quickest way to answer *"am I in the Mac app or the browser install?"*. It reads either **Source install (git checkout)** — *"Updates in place from GitHub"* — or **Packaged app** — *"Updates are installed by replacing the app, not from Settings"*. It is an information row, never a failure: neither install is wrong.
+>
+> One gap worth knowing about: in the Mac app the **Git** row reports *"Not required by this build"* and does not warn you if `git` is missing — but **Personal Sync still needs `git`**. If Sync fails in the app on a machine that has never had developer tools installed, that is the first thing to check. See [§18](#18-troubleshooting).
 - **Verify AI connection · $0.0001** makes one tiny request to your provider. It asks first — *"This makes one real API call to your active provider to confirm it responds. Estimated cost: $0.0001. Nothing else is read or written."* — and you click **Confirm — run it** or **Cancel**. On success it reports the provider, model, and response time; on failure, the exact error, so you can tell a bad key apart from a provider outage (e.g. an HTTP 503) in one click.
 
 > **System check** verifies the *app and your setup*. It's different from a domain's **Wiki health** panel ([§17](#17-wiki-health)), which scans your wiki *content* for broken links and duplicates. Rule of thumb: System check = is the app working? · Wiki health = is my wiki clean? Full details: [system-check.md](system-check.md).
 
 ### Version and updates
 
-The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** compares your version against the latest release on GitHub and tells you whether one is available.
+The version is shown at the bottom of the Settings section list, e.g. `The Curator v3.9.0`. Next to it, **Updates** takes you to the update controls.
+
+**How you update depends on which install you have**, and it is the second of the four
+real differences between them. If you are not sure which you are running,
+**Settings → General → Run system check** tells you in one line — the **Install mode**
+row reads either *"Source install (git checkout)"* or *"Packaged app"*, and says how
+updates reach that install.
+
+#### The browser install — updates are applied in place
 
 > **Updates are checked *and applied* right here.** (An earlier version of this guide said applying an update still required `/old`. That was written before the v3.9.0 cutover and is wrong.)
 >
@@ -2096,9 +2233,62 @@ The version is shown at the bottom of the Settings section list, e.g. `The Curat
 >
 > **If your local build is *newer* than the published one** — which happens if you're working on the code — no install button is offered at all. That is deliberate: applying the update would run `git reset --hard origin/main` and throw your newer commit away.
 >
-> **On Linux/Windows,** or if you prefer the terminal: `cd ~/the-curator && git pull && npm install`, then restart the server.
+> **This is not macOS-only.** The update runs `git` and `npm`, both of which work everywhere; the one macOS-specific step — rebuilding the Dock launcher — is skipped harmlessly on other platforms. If you prefer the terminal, or the button reports an error you want to see in full: `cd ~/the-curator && git pull && npm install`, then restart the server.
 >
 > If the version badge shows **restart** next to it, files were updated but the running process hasn't been relaunched yet. Quit The Curator (right-click the Dock icon → **Quit**) and start it again.
+
+#### The Mac app — you install the new version yourself
+
+The in-place update above **does not apply to the Mac app, by design.** That update works
+by pulling new source into the folder the app is running from and reinstalling its
+dependencies — and an installed application's own files are read-only, so doing that
+would break it. The app knows this about itself: internally it simply does not have the
+"can update itself from source" capability, and every code path that would have tried is
+switched off rather than allowed to fail halfway.
+
+So updating the Mac app is the ordinary macOS routine:
+
+1. Go to the [**Releases page**](https://github.com/talirezun/the-curator/releases).
+2. Download the newer `.dmg` for your Mac.
+3. Quit The Curator, open the `.dmg`, and drag the new copy into **Applications**,
+   replacing the old one.
+
+**Nothing of yours is touched.** Your wiki, your settings, your API keys and your sync
+configuration all live in `~/Library/Application Support/The Curator/` and in your
+knowledge folder — outside the application — so replacing the app leaves every one of
+them exactly where it was. There is no re-setup after an update; only after a *first*
+install, and only the three steps in [§3b](#moving-an-existing-wiki-into-the-app).
+
+> **This preview does not yet install updates for you, and does not update in the
+> background.** Watch the Releases page, or use its **Watch → Releases** option on GitHub
+> to be told when a new one appears.
+
+<!-- ─────────────────────────────────────────────────────────────────────────
+     MERGE NOTE (docs/user-guide.md, §16 "The Mac app — you install the new
+     version yourself").
+
+     The bundle-mode "check and tell" updates flow was being built in parallel
+     with this rewrite and is deliberately NOT described here in detail.
+
+     What is written above is only the part that is durable whichever shape
+     that flow lands in: the in-place git update does not apply to the app,
+     and the user installs a new .dmg by hand.
+
+     What is NOT written, and belongs here at merge time:
+       - what Settings -> General actually shows in the app (a version
+         comparison, the newer version's number, a button that opens the
+         download page)
+       - the wording of that panel
+       - whether it checks automatically or only on a click
+
+     Verified at ca8e60e, and true unless the parallel work changed it:
+     GET /api/config/update-check and POST /api/config/update both return
+     501 with `refused: "capability_unavailable"` in bundle mode
+     (src/routes/config.js:2302 and :2405), and NEITHER frontend has any
+     handling for that body — /next renders it as a red "Couldn't check for
+     updates" card and /old as "Update check failed: ...". So do not promise
+     the user a friendly panel in this section until the new flow has landed.
+     ───────────────────────────────────────────────────────────────────── -->
 
 ### Default domain for MCP writes (v2.5.2+)
 
@@ -2112,9 +2302,36 @@ The same section holds the MCP setup wizard (**Set up Claude Desktop** / **Re-co
 
 ### Knowledge base folder
 
-**Settings → Knowledge base** shows where your `domains/` folder lives and lets you move it — **Choose folder** (macOS only; it opens Finder) or **Copy** the path to paste into Obsidian's *Open folder as vault*. Moving the folder loses nothing: point The Curator at the new location and the graph is picked up as-is.
+**Settings → Knowledge base** shows where your `domains/` folder lives and lets you move it — **Choose folder** (macOS only) or **Copy** the path to paste into Obsidian's *Open folder as vault*. Moving the folder loses nothing: point The Curator at the new location and the graph is picked up as-is.
 
 The **Choose folder** button greys out while anything is writing to your wiki. That's deliberate — changing the folder mid-ingest would scatter the rest of that document's pages into the new location.
+
+**Where it starts out** is the third of the four differences between the two installs:
+
+| | Default knowledge folder |
+|---|---|
+| **The Mac app** | `~/Library/Application Support/The Curator/domains` |
+| **The browser install** | your install folder, e.g. `~/the-curator/domains` |
+
+Either way you can point it anywhere you like, and **this screen is how an existing user
+moves an established wiki into the Mac app** — it is step one of the three in
+[§3b](#moving-an-existing-wiki-into-the-app).
+
+> **Choose folder** is the only way to set this from the current interface — there is no
+> field to type a path into. On Linux and Windows, where the picker does not exist, set
+> the folder with the `DOMAINS_PATH` environment variable instead.
+
+> ⚠️ **Two installs, one folder: run one at a time.** Pointing both the Mac app and a
+> browser install at the same `domains/` folder works and is a reasonable thing to do
+> while you try the app. But nothing stops them running simultaneously, and two copies
+> writing one wiki at the same time is not a case either of them guards against. Quit one
+> before starting the other.
+
+> If you use the My Curator MCP, changing this folder in the **browser install** makes the
+> Claude Desktop entry stale, and the wizard shows you a banner — re-run it. In the **Mac
+> app** it does not: the app launches the bridge through a small launcher of its own that
+> reads your current setting each time, so the entry has no folder path baked into it to
+> go stale. This is the fourth and last of the four differences.
 
 ---
 
@@ -2295,6 +2512,10 @@ Below the markers, each row carries **one plain line** rather than a paragraph �
 > **Two labels were removed, and one rule behind them was not.** The old **caution** badge is gone — its reason now leads the plain line instead, where you actually read it. The old **chat only — not for ingest** badge is gone too, because it was true of nearly every row in a fetched catalogue and had become noise. **The rule it described is fully intact and is enforced on the server**, not merely displayed: a model that isn't fit for building still cannot become your build model, whatever any list looks like.
 
 **Settings and the chat composer deliberately show different amounts.** Settings is a screen you open to manage models and can afford a fuller row; the composer is a menu you open mid-conversation, so it keeps the warning and the speed and drops the rest. Both use the same words for the same facts, computed once in one place so the two cannot drift apart. That is intentional, not a discrepancy to fix.
+
+![Part of the build-lane model list in Settings → Providers & keys. Six collapsed rows, each with an expand arrow, a display name, the model id in monospace, a coloured provider chip and a "measured by The Curator" chip, and a "Use this" button on the right. Opus 4.5 also carries an "out-performed" badge and the warning line "Out-performed by Opus 5 at the identical price · plans 12-13 pages per source" above "$5.00 in · $25.00 out /1M tokens". MiniMax M3 (free) warns "Free models share an upstream pool — availability is real but not promised · plans about 21 pages per source" and is priced "free". Granite 4.0 H Micro warns "The thinnest outlines measured here — a less detailed wiki from the same source · plans about 9 pages per source" at $0.02 in / $0.11 out. Solar Pro 4 carries no warning and reads "plans about 23 pages per source · measured at about 48s per call" at $0.03 in / $0.12 out. GLM 5.3 Flash warns "Far slower than the default, and most of its output is hidden reasoning you never see · plans about 27 pages per source · measured at about 3m 8s per call" at $0.07 in / $0.25 out. Kimi K2 0905 warns "Runs away about once in nine documents, planning hundreds of pages instead of ~30 · plans about 30 pages per source · measured at about 33s per call" at $0.60 in / $2.50 out. Below the list a "Chat" heading explains that chat can use any model from any connected provider and that the model is chosen per message in the composer.](images/curator-model-picker.png)
+
+*Part of the build list. Each row's warning leads the plain line rather than hiding behind the expand arrow, and the price is always stated. The Chat section below the list is the other half of the two-lane split described above.*
 
 ### Rows are short by default now, and the note is one click away
 
@@ -2693,6 +2914,55 @@ The line under the panel's headline (*"Scanned 600 entities · 2,651 concepts ·
 
 ## 18. Troubleshooting
 
+### Mac app
+
+**macOS refuses to open it — *"Apple could not verify 'The Curator' is free of malware"***
+
+Expected on this preview: the app is not code-signed yet. Allow it once —
+**System Settings → Privacy & Security**, scroll to **Security**, **Open Anyway** next to
+the message about The Curator, then confirm. It opens normally from then on. Full steps
+and the Ventura/Sonoma variant are in [§3](#the-mac-app-macos-only). Nothing about this
+is specific to your machine and nothing is broken.
+
+**The app opens completely empty — no domains, no wiki**
+
+That is the expected first-launch state, not a fault. The app never goes looking for a
+wiki you already have; it starts empty and waits for you to say where yours is. Go to
+**Settings → Knowledge base** and point it at your existing `domains/` folder — everything
+appears at once. [§3b](#moving-an-existing-wiki-into-the-app) has the three-step path.
+
+**"The Curator is already running" when I open it**
+
+One copy at a time, on purpose. The existing window is brought forward — check your other
+Spaces or click the Dock icon. Note that closing the window with `⌘W` or the red button
+only **hides** it; the app is still running. To actually stop it, quit with `⌘Q`.
+
+**Claude Desktop can't see the MCP tools after setting up from the app**
+
+The most likely cause is **App Translocation**: macOS runs an unsigned app that is still
+sitting where it was downloaded from a randomised read-only location, and from there the
+app cannot write the small launcher that Claude Desktop needs to start the bridge. The fix
+is the ordinary one — **drag The Curator into `/Applications`** (the `.dmg` includes a
+shortcut for exactly this), then quit and reopen it, then re-run
+**Settings → MCP bridge**. Running the app straight out of `~/Downloads` has the same
+problem, for the same reason.
+
+**Personal Sync fails in the app with a git error**
+
+Personal Sync uses `git`, and the app does not bundle one. On a Mac that has never had
+developer tools installed there may not be one. Run `xcode-select --install` in Terminal
+once, then try Sync again. The **Git** row in System check does not warn you about this in
+the app — see [§16 → System check](#system-check).
+
+**Updates in the app**
+
+The Mac app does not install updates for itself. Download the newer `.dmg` from the
+[Releases page](https://github.com/talirezun/the-curator/releases) and replace the app in
+Applications — nothing of yours is touched. [§16 → Version and updates](#version-and-updates)
+explains why, and what does happen to your data.
+
+### Everything else
+
 **"command not found: node" when I type `node src/server.js`**
 
 Node.js is not installed, or the terminal can't find it. Download it from [nodejs.org](https://nodejs.org) (LTS version), install it, then close and reopen your terminal.
@@ -2725,18 +2995,21 @@ Rare, but it can happen after an update if a file didn't download completely. In
 
 **Your knowledge is not affected.** Every wiki page is a plain markdown file on your disk; a startup failure in the browser interface cannot touch them, and you can open your domains folder in Obsidian or a text editor while the app is broken.
 
-Reload the page first — a partly-downloaded file usually fixes itself. If that keeps happening, go to **`http://localhost:3333/old`**, which is a completely separate interface and will load even when this one won't. Then quit The Curator (right-click the Dock icon → **Quit**) and relaunch. If it still fails, reinstall — and please paste the technical detail from the panel into a [GitHub issue](https://github.com/talirezun/the-curator/issues) so it can be fixed for everyone.
+Reload the page first — a partly-downloaded file usually fixes itself. If that keeps happening, the panel points you at the previous interface: in the browser install, open **`http://localhost:3333/old`**, which is a completely separate interface and will load even when this one won't. Then quit The Curator and relaunch (browser install: right-click the Dock icon → **Quit**; Mac app: `⌘Q`).
+
+> **In the Mac app that escape hatch is not usable**, and the panel does not know it: the app window has no address bar to type `/old` into, and the panel names the address as text rather than offering a link. In the app, quit and reopen; if it keeps happening, reinstall from a fresh `.dmg`. Your markdown files are untouched either way — that is the part that matters, and it is true in both installs. If it still fails, reinstall — and please paste the technical detail from the panel into a [GitHub issue](https://github.com/talirezun/the-curator/issues) so it can be fixed for everyone.
 
 > The panel points you at `/old`, which is correct: it is a completely separate interface reading the same files, so it loads even when this one won't. (Earlier releases of that panel called itself "the preview shell" and sent you to `/` — the shell that had just failed. That was fixed in v3.9.0.)
 
 **"Updates" says there's a new version but no install button appears**
 
-Two different causes, and they look the same:
+Three different causes, and they look the same:
 
+- **You are running the Mac app.** It never offers to install an update — that is by design, not a failure. Download the new `.dmg` instead; see the Mac app entries above.
 - **Your local build is newer than the published one.** If you have pulled or committed ahead of `main`, no install button is offered on purpose — installing would run `git reset --hard origin/main` and discard your newer commit.
-- **You're not on macOS.** The in-app installer rebuilds the macOS Dock app. On Linux/Windows, run `git pull && npm install` in the project folder and restart the server.
+- **Something in the update itself failed** — a `git` or `npm` error, which the banner names. `cd` into the project folder and run `git pull && npm install` by hand to see the full message.
 
-Otherwise, **Settings → General → Check for updates** both checks and installs. Full explanation in [§16 → Version and updates](#version-and-updates).
+Otherwise, in the browser install, **Settings → General → Check for updates** both checks and installs, on every platform. Full explanation in [§16 → Version and updates](#version-and-updates).
 
 **Claude says "returned no text content … usually transient — try again", and retrying never helps**
 
@@ -2766,6 +3039,8 @@ This means the AI already did its work and your pages are safely written to disk
 
 **"The Curator could not start" dialog appears when clicking the Dock icon**
 
+*(Browser install, macOS Dock launcher. The Mac app does not use this launcher and cannot produce this dialog.)*
+
 Check the log for the exact error:
 ```bash
 cat "$HOME/Library/Logs/The Curator/curator.log"
@@ -2785,6 +3060,8 @@ Then click the Dock icon again. If the log shows a different error (e.g. a missi
 
 **"Port 3333 is already in use" error**
 
+*(Browser install only — the Mac app picks a free address for itself each launch and cannot hit this.)*
+
 Another process is using port 3333. Either close that process or change the port in your `.env` file:
 ```
 PORT=4000
@@ -2792,6 +3069,8 @@ PORT=4000
 Then restart the server and go to `http://localhost:4000` instead.
 
 **I closed the terminal — the app stopped working**
+
+*(Browser install only. The Mac app has no terminal behind it.)*
 
 If you are running the server manually from Terminal, the server stops when the terminal closes. To restart: open a new terminal, navigate to the project folder (`cd the-curator`), and run `node src/server.js`. If you use the Dock app instead, this is handled automatically — just double-click The Curator icon to relaunch.
 
@@ -2964,7 +3243,8 @@ and on macOS also run `bash scripts/build-app.sh`. Then restart the server.
 | 🔁 [Sync Guide](sync.md) | The full GitHub sync workflow — including team-shared brains and conflict recovery |
 | 📁 [Domains](domains.md) | The full reference — managing domains, the CLAUDE.md schema, how domains relate to each other (siloed by default), custom templates for specialised topics |
 | 🔄 [Model Lifecycle](model-lifecycle.md) | What happens when a provider retires a model — fallback chain explained, plus the full measured catalogue behind [§16b](#16b-choosing-your-ai-model) |
-| 🍎 [Mac App Setup](mac-app.md) | Detailed Mac Dock launcher instructions |
+| 🍎 [The Mac app](mac-app.md) | Installing, launching and running the packaged macOS application |
+| 🧭 [Mac app decisions](desktop-app-decisions.md) | Every decision behind the Mac app, with its reasoning and whether code exists for it yet |
 | 🛠 [API Reference](api-reference.md) | REST API endpoints (for developers) |
 | 🏗 [Architecture](architecture.md) | System design (for developers) |
 | ⚙ [Ingestion Pipeline](ingestion-pipeline.md) | The deep dive on the most critical code path — every safeguard, every failure mode, the quality contract, Mermaid diagrams (for developers) |
