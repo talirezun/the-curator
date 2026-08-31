@@ -211,7 +211,8 @@ Known leftovers of the pre-cutover era, recorded rather than implied away:
 ```
 the-curator/
 ├── src/
-│   ├── server.js               Express entry point (port 3333, auto-opens browser)
+│   ├── server.js               Express entry point (port 3333 unless PORT is set — the desktop shell
+│   │                           sets a dynamic one; auto-opens the browser unless CURATOR_NO_OPEN=1)
 │   ├── routes/
 │   │   ├── domains.js          GET/POST/PUT/DELETE /api/domains[/:domain]
 │   │   ├── ingest.js           POST /api/ingest (single file)
@@ -221,13 +222,19 @@ the-curator/
 │   │   ├── health.js           GET/POST /api/health[/:domain][/fix|/fix-all|/dismiss|/undismiss|/dismissed]
 │   │   ├── compile.js          POST /api/compile/conversation (v2.5.0)
 │   │   ├── diagnostics.js      GET /api/diagnostics/quick, POST /api/diagnostics/live (System Check)
-│   │   ├── write-status.js     GET /api/write-status — is it safe to quit? (v3.26.0; no repo-mode consumer yet)
+│   │   ├── write-status.js     GET /api/write-status — is it safe to quit? (v3.26.0; consumed by the
+│   │   │                       desktop shell's before-quit handler, not by any repo-mode caller)
 │   │   └── config.js           GET/POST /api/config (settings, API keys, updates)
 │   ├── brain/
 │   │   ├── paths.js            Where user data lives — repo vs (future) bundle install (v3.1.0)
 │   │   ├── install-mode.js     What this copy may do to its OWN code — getInstallMode() + a frozen
 │   │   │                       capability record. Imports isBundleInstall from paths.js; nothing
 │   │   │                       imports it back. Routes fork on a CAPABILITY, never on the mode (v3.26.0)
+│   │   ├── desktop-host.js     The hooks a DESKTOP SHELL may install into this process — pickFolder,
+│   │   │                       relaunch. A plain module registry, which is a real channel only because
+│   │   │                       the shell imports src/server.js into its OWN realm. Null hook ⇒ REFUSE,
+│   │   │                       never fall back (v3.30.0+)
+│   │   ├── restart.js          planRestart() — pure decision for POST /api/restart; forks on restartStyle
 │   │   ├── llm.js              LLM abstraction (Gemini + Claude)
 │   │   ├── files.js            Filesystem helpers (wiki + conversations)
 │   │   ├── ingest.js           Ingest pipeline (single-pass + multi-phase)
@@ -306,6 +313,15 @@ the-curator/
 │   ├── inject-summary-backlinks.js  Retroactively injects [[summaries/...]] backlinks into all entity pages
 │   ├── repair-wiki.js         Comprehensive wiki repair (cross-folder dedup, link normalization, backlinks)
 │   └── build-app.sh           Rebuild The Curator.app from the AppleScript template
+├── desktop/                    macOS Electron shell — see "The macOS desktop shell" below
+│   ├── package.json            SEPARATE manifest. private, no dependencies, Electron + electron-builder
+│   │                           as its own devDependencies. The root manifest must gain nothing.
+│   ├── main.js                 Electron main process. Imports src/server.js into THIS process.
+│   ├── preload.js              Deliberately exposes nothing (the reason is written in the file)
+│   ├── electron-builder.yml    Build config — asar: false, unsigned, publish: null
+│   ├── build/                  entitlements.mac.plist (written, inert until signing exists)
+│   └── lib/                    port.js · write-status.js · quit-decision.js · window-state.js
+│                               — Electron-free and src/-free, so the suite can EXECUTE them
 ├── package.json
 ├── .env                        API key — developer fallback (never committed)
 ├── .curator-config.json        API keys + settings from UI (never committed)
@@ -412,7 +428,7 @@ See [CONTRIBUTING.md § Test seams](../CONTRIBUTING.md#test-seams-domains-vs-use
 
 `paths.js` answers **where does user data live**. `install-mode.js` answers a different question — **what may this copy of The Curator do to its own code** — and the two are deliberately separate modules.
 
-> **The `bundle` mode below has no bundle.** Every `bundle` arm in the codebase is currently unreachable, because nothing packages The Curator into one — there is no `desktop/` directory, no Electron dependency and no DMG build in this repository. What exists is the *fork points*, built ahead of the shell that will use them. The decisions that shape that shell — and, for each, whether code exists yet — are recorded in [desktop-app-decisions.md](desktop-app-decisions.md).
+> **There is a bundle now, and this checkout is still not it.** `desktop/` exists, and an arm64 `.app` has been built and run from `/Applications` once (2026-08-31, one machine) — so the `bundle` arms are no longer unreachable *in principle*. They remain unreachable **here**: a git checkout is `repo` mode, and `scripts/test-install-mode.js` opens with a control asserting exactly that, so every fork below takes the unchanged arm when you run the suite. What is still true is that **no bundle arm has been proven end to end in a signed, notarized build** — the MCP launcher path in particular has never run. See [The macOS desktop shell](#the-macos-desktop-shell-desktop) below for what the shell is, and [desktop-app-decisions.md](desktop-app-decisions.md) for why each choice was made.
 
 The dependency runs one way only: `install-mode.js` imports `isBundleInstall` from `paths.js`, and `getInstallMode()` is literally `isBundleInstall() ? 'bundle' : 'repo'`. `paths.js` knows nothing about `install-mode.js`.
 
@@ -430,10 +446,14 @@ There is a sharper reason too. `isRepoInstall()` is literally `!isBundleInstall(
 | `canWriteBesideCode` | Can I drop a file next to my code and expect it to persist? | ✅ | ❌ |
 | `mcpLaunchStyle` | How Claude Desktop should launch the MCP child | `node-script` | `launcher-script` |
 | `restartStyle` | What "restart" means here | `respawn-node` | `app-relaunch` |
+| `folderPickerStyle` | How `POST /api/config/pick-folder` asks the user for a directory | `osascript` | `native-dialog` |
 
 **Stated honestly:** today all four booleans are perfectly correlated with `mode === 'repo'`. They are not four independent measurements — they are four distinct *questions* that happen to share an answer in the only two modes that exist. The value is the naming and the single table. `scripts/test-install-mode.js` enforces the half that is not aspirational: **no route may branch on the mode**, only on a capability.
 
-`mcpLaunchStyle` and `restartStyle` have **no branch behind them in this release**. They are surfaced and otherwise descriptive — the same posture `getUserDataDirState()` shipped with in v3.1.0, and argued rather than assumed, because this repo has a standing allergy to unwired fields.
+`mcpLaunchStyle` and `restartStyle` shipped with **no branch behind them**, as declared-only fields — the same posture `getUserDataDirState()` took in v3.1.0. Both now have one. Two keys remain deliberately declared-only, and the reason is that a check would be *unreachable*, not that one was forgotten:
+
+- **`canRebuildAppleScriptApp`** is subsumed. `scripts/build-app.sh` is invoked at exactly one place — inside `updateHandler`, below its `canSelfUpdateViaGit` early return — so a build that cannot reach the updater cannot reach the rebuild, and a second check there would be dead code. It stays as a named *fact* for the day something else wants to run that script.
+- **`canWriteBesideCode`** is subsumed and deliberately so. `src/brain/mcp-launcher.js` writes its shim into the user-data directory precisely so it never writes beside the code. Branching on the flag would invite the opposite reading — that writing beside the code is a supported mode when the flag is true. It states an invariant; it is not a switch.
 
 ### The asymmetry is inherited verbatim
 
@@ -443,12 +463,24 @@ Capability records are **exhaustive by construction**: `defineCapabilities()` th
 
 ### What forks on it today
 
-Exactly two routes, both in `src/routes/config.js`, both on `canSelfUpdateViaGit`:
+Five capabilities are read across six files. **The list below is not maintained by hand:** `scripts/test-install-mode.js` §4 enumerates every route file, every `src/brain/*.js` file and `src/server.js` **from disk**, treats any file that reads `getCapabilities()` as a fork site, and fails if a discovered site is not mapped to an owning suite that exists on disk, is registered in `run-tests.js`, and names every capability key that fork reads. A scan that cannot see a whole directory reports "all clear" over it forever — which is what happened before the scan was widened past `src/routes/`.
+
+| Capability | Read by |
+|---|---|
+| `canSelfUpdateViaGit` | `src/routes/config.js` (`update`, `update-check`), `src/brain/diagnostics.js` (skips the git row) |
+| `canRunNpmInstall` | `src/brain/diagnostics.js` (same row) |
+| `mcpLaunchStyle` | `src/routes/mcp.js`, `src/brain/mcp-launcher.js` |
+| `restartStyle` | `src/brain/restart.js` (`POST /api/restart`) |
+| `folderPickerStyle` | `src/routes/config.js` (`pick-folder`) |
+
+The two update routes are the original fork and remain the clearest illustration:
 
 - **`GET /api/config/update-check`** — the bundle arm returns 501 with `updateAvailable: false`. A build that cannot self-update must not report an update as available; the button behind that verdict cannot work.
 - **`POST /api/config/update`** — the bundle arm returns 501 and runs **zero** subprocesses. Every step of the repo arm (`git fetch`, `git reset --hard`, `npm install`, `bash scripts/build-app.sh`) is impossible or actively destructive in a signed bundle.
 
-In both, the capability check is an **early return above the pre-fork body**, which is otherwise unchanged — `git diff -w` on the forking commit shows five deleted lines, all of them route-registration wrappers, and zero lines of either body. The bodies were additionally sha256-compared before and after.
+Three later forks differ in shape, and the difference is worth noting: a capability arm is not always a refusal. `planRestart()` in `src/brain/restart.js` treats the bundle arm as a **success** — restarting is a legitimate action there — and refuses only when `restartStyle` says `app-relaunch` and no shell has registered a `relaunch` hook, which is a state in which the process genuinely cannot restart the application. `pickFolderHandler` in `src/routes/config.js` keeps **one** closure holding every post-pick rule (existence check, concurrency re-check, mutation, response shape) shared by both arms, so the bundle arm cannot acquire a different set of rules by being written separately. Both refuse rather than falling back — see [the desktop shell](#the-macos-desktop-shell-desktop) for why a silent fallback is worse than a 501.
+
+In both update routes, the capability check is an **early return above the pre-fork body**, which is otherwise unchanged — `git diff -w` on the forking commit shows five deleted lines, all of them route-registration wrappers, and zero lines of either body. The bodies were additionally sha256-compared before and after.
 
 Both handlers are exported as `updateCheckHandler(req, res, deps)` / `updateHandler(req, res, deps)`. `deps` is a **test-only seam, null in production** — the same shape as `compile.js`'s `opts.generateText` and `ingestMultiPhase`'s trailing `llm`. Inside each handler, function-scoped `const execAsync` / `const fetch` shadow the module binding and the global, so every call site in the moved body is byte-identical while an offline suite can still drive `POST /update` without running `git reset --hard` against the developer's own checkout.
 
@@ -469,7 +501,201 @@ Because there is no test seam, the only way into the bundle arm is to satisfy `p
 
 It is a plain `GET`, **deliberately not behind `guardConcurrent`** — a 409 there would fire precisely when something is asking whether a write is in progress — and it registers no write of its own, which would make it report itself. On a registry throw it answers `200` with `safeToQuit: null` rather than a 500, because a quit handler that cannot get an answer must be *told* so, not handed an exception it will read as "busy".
 
-**Nothing in repo mode consumes it.** It exists for a packaged build's `before-quit` handler, and ships one release ahead of its caller for the same reason `getUserDataDirState()` did. Full response shape: [api-reference.md](api-reference.md#get-apiwrite-status).
+**Nothing in repo mode consumes it** — a browser install has no quit to intercept. Its caller now exists: `desktop/main.js`'s `before-quit` handler, via `desktop/lib/write-status.js` and `desktop/lib/quit-decision.js`. See [The macOS desktop shell](#the-macos-desktop-shell-desktop) for why `safeToQuit: null` is kept as its own case there rather than collapsed into safe or busy. Full response shape: [api-reference.md](api-reference.md#get-apiwrite-status).
+
+---
+
+## The macOS desktop shell (`desktop/`)
+
+The Install modes section above describes a seam built a release ahead of its consumer. `desktop/` is that consumer: an Electron shell that wraps the *same* `src/server.js` a browser install runs, in one window, on one Mac.
+
+It is a **shell, not a second product**. The decisions that shaped it — and what was traded away for each — are the decision record in [desktop-app-decisions.md](desktop-app-decisions.md). This section is the other half: what the thing *is*, how it relates to `src/`, and what happens when you build it.
+
+> **What has actually been run, stated before anything else.** `desktop/` was installed, built and launched for the first time on 2026-08-31, on **one machine** — macOS 15, arm64, Node 22. The arm64 `.app` runs from `/Applications`. **The x64 DMG was produced but has never been executed** (no Intel Mac was available), and **the bundle-mode MCP launcher path has never run end to end**. Nothing in `desktop/` is exercised by `npm test`, which cannot install a ~130 MB toolchain — `scripts/test-desktop-packaging.js` executes the four pure `lib/` modules and *source-scans* `main.js`, and says so in its own NOT ENFORCED block. Treat a green suite as proof about the **config**, never about the app.
+
+### One codebase, two shells
+
+`src/` and `mcp/` are shared verbatim. There is no second copy of the server, no fork of a route, and no desktop-only business logic. The window is a `BrowserWindow` pointed at the app's own frontend over loopback, so it reaches the server through exactly the HTTP surface a browser tab does — and therefore through exactly the same guards.
+
+```mermaid
+flowchart TB
+    subgraph shared["Shared — one copy, serving both shells"]
+        SRV["src/server.js<br/>Express + every route"]
+        BRAIN["src/brain/**<br/>ingest · chat · health · sync"]
+        MCPSRV["mcp/**<br/>stdio MCP server"]
+    end
+
+    BROWSER["Browser install<br/>node src/server.js"] --> SRV
+    SHELL["desktop/main.js<br/>Electron main process"] -->|"await import()"| SRV
+    SHELL --> WIN["BrowserWindow"]
+    WIN -->|"HTTP on 127.0.0.1 — the same<br/>Origin and Host guards a tab passes"| SRV
+
+    SRV --> BRAIN
+    BRAIN --> CAPS["src/brain/install-mode.js"]
+    CAPS -->|"repo"| REPOARM["git self-update · osascript picker<br/>respawn node · node-script MCP"]
+    CAPS -->|"bundle"| BUNDARM["501 refusal · native dialog<br/>app relaunch · launcher-script MCP"]
+```
+
+What differs between the two shells is not code paths hand-written per shell — it is which arm of the **capability record** the shared code takes. A packaged `.app` satisfies `paths.js`'s bundle detection (its app root is `…/The Curator.app/Contents/Resources/app`, which carries a `.app` path component immediately followed by `Contents`), so it resolves to `bundle`; a checkout resolves to `repo`. Same routes, same modules, different capabilities.
+
+### Why `desktop/` has its own `package.json`
+
+This is measurable rather than stylistic, and it is the reason the shell is a subdirectory with its own manifest instead of two entries in the root one.
+
+The root manifest has **8 runtime dependencies and no `devDependencies` key at all** — verified by reading `package.json`, not by grep. That matters because step 4 of the in-app updater is:
+
+```js
+// src/routes/config.js — POST /api/config/update
+await execAsync('npm install --silent --no-audit --no-fund', execOpts({ timeout: 120000 }));
+```
+
+That runs **on every user's machine, on every update**. Anything in the root manifest — a `devDependency` included — is downloaded by every browser-install user. Electron and `electron-builder` are hundreds of megabytes, for a feature browser users do not have and cannot run. This project has already refused a browser driver on the same ground more than once; the standing rule is that `git diff package.json package-lock.json` stays **0 lines** for desktop and harness work.
+
+So `desktop/package.json` is `private: true`, declares **no `dependencies`** (see the build section — that emptiness has a consequence), and carries `electron` and `electron-builder` as its own pinned devDependencies. `scripts/test-desktop-packaging.js` §2 asserts the root manifest gained nothing, by enumerating dependency names out of **both** files rather than comparing against a hardcoded list.
+
+> The desktop manifest's `version` field and how a built DMG gets its version number are being reworked as of this writing; that mechanism belongs here and is deliberately left unstated rather than described wrongly.
+
+### The server is *imported*, not spawned — and that is load-bearing
+
+`desktop/main.js` does not fork a child process. It does:
+
+```js
+await import(pathToFileURL(SERVER_ENTRY).href);
+```
+
+`src/server.js` is a script with side effects — it calls `startListen()` at module scope (`src/server.js:504`), so **importing it is starting it**. There is one Node process, one realm, and no second runtime.
+
+Two consequences follow, and neither is obvious from the outside.
+
+**First, ordering is a correctness property, not a style choice.** `src/server.js` reads `process.env.PORT` (line 102) and `process.env.CURATOR_NO_OPEN` (line 443) at module scope. Anything the shell needs to tell the server has to be in `process.env` *before* the import, which is why those writes sit above `await import(...)` in `boot()` and not next to the window code. Move them down and the server binds 3333 and opens the user's browser beside the app window.
+
+**Second, a module registry becomes a real channel.** Node's ESM loader keys modules by resolved URL, so a shell that imports `src/brain/desktop-host.js` gets the very object the routes import. That is what makes `desktop-host.js` possible at all — no IPC, no port, no re-serialisation of a decision already made.
+
+```mermaid
+sequenceDiagram
+    participant M as desktop/main.js
+    participant S as src/server.js
+    participant H as src/brain/desktop-host.js
+    participant R as a route handler
+
+    M->>M: requestSingleInstanceLock()
+    M->>M: pickFreePort() — bind 127.0.0.1:0, read, close
+    M->>M: set process.env.PORT and CURATOR_NO_OPEN
+    Note over M,S: these writes MUST precede the import — server.js reads both at module scope
+    M->>S: await import(SERVER_ENTRY)
+    S->>S: startListen() runs at module scope — importing IS starting
+    M->>H: registerDesktopHost({ pickFolder, relaunch })
+    Note over H: same Node realm, so the registry is a real channel
+    M->>M: new BrowserWindow, loadURL(http://127.0.0.1:PORT)
+    R->>H: getDesktopHook('pickFolder')
+    H-->>R: the shell's dialog function, or null
+    Note over R: null means REFUSE with a 501 — never fall back
+```
+
+The rule `desktop-host.js` is built on, and the one that must not be traded away: **if a capability says `native-dialog` or `app-relaunch` and nothing is registered, the consumer refuses.** It does not quietly run `osascript`, and it does not quietly `spawn(process.execPath)`. Both fallbacks are the exact behaviour the bundle arm exists to prevent — an `osascript` a hardened runtime may kill outright, and a spawn of the app binary that opens a second *window* instead of a server. A refusal names what is missing and is recoverable; a wrong fallback is a route claiming one contract and honouring another.
+
+The registry also fails in the safe direction if the shape ever changes. Should a future packaging move the server into a `utilityProcess` or a real child, the shell's registration simply never reaches this realm, every hook reads `null`, and every consumer refuses with a named reason.
+
+### The port is dynamic, and the guards move with it
+
+The browser install binds a fixed 3333. The shell asks the OS for an ephemeral loopback port instead (`lib/port.js` binds `127.0.0.1:0`, reads the assigned port, closes) and sets `PORT` before the import.
+
+That works with no change in `src/` because `src/server.js` builds `ALLOWED_ORIGINS` and `ALLOWED_HOSTS` from the same `PORT` value it binds (lines 145–162). Overriding `PORT` moves the CSRF and DNS-rebinding guards with it; there is no second place to update.
+
+**Why not 3333:** the maintainer runs a repo checkout on 3333 permanently. The loser of that race today retries for ~6 s and exits 1, with the reason written only to a log — a desktop app whose window never appears and explains itself nowhere.
+
+**What that costs, because it is a reduction and not a neutral change:** port collision was accidentally doing a second job — stopping two copies of The Curator writing into one `domains/` folder. `requestSingleInstanceLock()` in `main.js` now guards that explicitly, and it is taken *before* the window and before the server import so the losing instance never binds a port, never touches the wiki and never paints. But that lock covers two copies of the **desktop app**; it does not cover "desktop app + `npm start` checkout", which are different executables holding different locks and will now coexist over one `domains/` folder.
+
+**Why the window must load `http://127.0.0.1:<port>` and never `file://` or a custom scheme:** a page loaded from `file://` or `curator://` sends `Origin: null`. The server's cross-origin guard tests `if (origin && !ALLOWED_ORIGINS.has(origin))`, and the **string** `"null"` is truthy — so `Origin: null` is not *absent*, it is *present and not allow-listed*, and every `POST`/`PUT`/`DELETE`/`PATCH` is refused with 403. Ingest, chat, compile, sync and settings would all break, presenting as "the UI loads and nothing works" rather than as a header problem.
+
+### What the shell adds that a browser tab has no equivalent for
+
+| Concern | Where it lives | Note |
+|---|---|---|
+| Quit while a paid write is in flight | `lib/write-status.js` + `lib/quit-decision.js`, wired to `before-quit` | Asks `GET /api/write-status`. This is the caller that endpoint was built for. |
+| Remembered window size and position | `lib/window-state.js` → `<userData>/window-state.json` | A saved **position** is adopted only if the rectangle still overlaps a real display. Full screen is deliberately not persisted; `maximized` is. |
+| Native folder chooser | `pickFolder` hook → `folderPickerStyle` | Replaces the `osascript` shell-out that a hardened runtime can kill. |
+| Restart | `relaunch` hook → `restartStyle` | Killing the node process alone would leave a windowless app. |
+
+`lib/quit-decision.js` is the one worth reading. `GET /api/write-status` answers `safeToQuit: null` when the write registry throws, and that third state is kept as its own case rather than collapsed, because **both collapses are wrong**: treating `null` as safe truncates a paid, multi-minute ingest; treating it as busy makes the app permanently un-quittable, because a throwing registry does not heal — and the user then reaches for Force Quit, which truncates the write anyway *and* skips every other shutdown step. So `null` returns `ask`. There is deliberately no `block` action at all; what changes between cases is the sentence and which button is the default, and **both defaults point at the safe option**, because a dialog that defaults to the destructive button turns "⌘Q, Return" into data loss.
+
+All four `lib/` modules import nothing from Electron and nothing from `src/` (`quit-decision.js` and `write-status.js` import nothing at all). That is a shape decision, not an accident: it is what lets `scripts/test-desktop-packaging.js` **execute** them offline rather than grep them.
+
+`preload.js` deliberately exposes nothing. The renderer is the app's own frontend over loopback and already has everything it needs; an IPC bridge would be a second way into the app's capabilities that bypasses the cross-origin guard, the Host guard, the write registry's 409s and every route-level validation, for no capability the HTTP API lacks. The window runs with `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true`.
+
+### The build
+
+`npm run dist` in `desktop/` runs `electron-builder --mac --config electron-builder.yml`. It produces one `.app` and **two `.dmg`s — arm64 and x64 as separate artifacts, not a universal binary**, because a universal build doubles every user's download to carry the other half's chip.
+
+#### The packaged layout must be flat
+
+```
+The Curator.app/Contents/Resources/app/
+  package.json        ← desktop/package.json  (main: "main.js")
+  main.js  preload.js  lib/
+  src/**  mcp/**  LICENSE  LICENSES/**
+  node_modules/**     ← placed by extraResources, not by the files glob
+```
+
+This is not cosmetic. **Two independent derivations have to land on the same directory**, and nothing forces them to agree except this layout:
+
+- `desktop/main.js` probes for `src/server.js` beside itself: `existsSync(path.join(__dirname, 'src', 'server.js')) ? __dirname : path.resolve(__dirname, '..')` — one answer in a dev checkout (`desktop/` is one level down), another when packaged (flat).
+- `src/brain/paths.js` computes `APP_ROOT = path.resolve(__dirname, '../..')` (line 194) with no knowledge of Electron at all.
+
+In the flat layout both resolve to `Contents/Resources/app`. **Nest `src/` one level deeper and they disagree — and that presents as an empty wiki, not as an error**, because `paths.js` would be resolving user data relative to a root the shell never uses. The root manifest is also explicitly excluded from the copy (`'!package.json'`): overwriting `desktop/package.json` with it would produce an app whose entry point is `src/server.js` — a headless server with no window and no explanation.
+
+#### Two things that will look like mistakes and are not
+
+**`asar: false`.** The obvious move is to enable asar and add `asarUnpack: mcp/**`. That addresses one of three hazards and not the worst one. Inside an archive, `__dirname` for `src/brain/sync.js` is `…/Resources/app.asar/src/brain`, so `APP_ROOT` resolves to `…/Resources/app.asar` — **a file on the real filesystem**. `sync.js:125` passes `cwd: ROOT` to every Personal Sync git call (its own comment says the explicit `cwd` prevents `getcwd: Operation not permitted`), and `src/routes/config.js` does the same for the updater's git calls (`cwd: PROJECT_ROOT`, itself `APP_ROOT`, at lines 2326 and 2426 — `electron-builder.yml`'s comment cites `:2322` for this, which has since rotted onto a blank line). Electron patches `fs` inside its own process; it does **not** patch the kernel, and a child process gets its cwd from a real `chdir`. So those calls fail before git is even reached.
+
+`asarUnpack` does not fix this. It moves the *bytes* to `app.asar.unpacked/`, but the module is still **resolved through the `app.asar` path**, so `__dirname` — and therefore `APP_ROOT`, and therefore the cwd handed to a child — is unchanged. Fixing it under asar means teaching `APP_ROOT` to rewrite `.asar` → `.asar.unpacked`, i.e. making the app's most depended-on path constant conditional on packaging. Two further hazards ride along: `appPath('mcp','server.js')` is written into Claude Desktop's config, and Claude Desktop is an external process with no asar support; and `src/brain/ingest.js:268` does a **dynamic ESM import** of `pdf-parse/lib/pdf-parse.js`, which Electron's CommonJS-oriented asar support does not cover. `asar: false` removes all three at once, for some startup milliseconds and a larger bundle — and the source is MIT in a public repository, so "readable inside the app" costs nothing that `git clone` does not already give away.
+
+**`node_modules` is copied via `extraResources`, not by the `files` glob.** This one produced a build that **launched perfectly while being broken**, and it is the failure mode most worth a reader's attention.
+
+The scaffold listed `node_modules/**/*` in the `files` filter. That line did nothing. electron-builder does not treat `node_modules` as ordinary files — it computes the **production dependency tree from the app manifest's `dependencies`** and copies that, ignoring the glob. `desktop/package.json` deliberately declares no `dependencies`, so the computed tree was empty, the build logged `no node modules returned while searching directories`, and shipped an app root with **no `node_modules` at all**.
+
+The app started anyway, served, rendered a real wiki and accepted writes:
+
+```mermaid
+flowchart TD
+    START["src/server.js inside the .app<br/>imports a bare specifier: 'dotenv'"] --> Q{"node_modules/dotenv<br/>present in the app root?"}
+    Q -->|"yes — extraResources copied it there"| OK["resolves inside the bundle<br/>works from any location"]
+    Q -->|"no — the shape that shipped"| WALK["Node resolves a bare specifier<br/>by walking UP the directory tree"]
+    WALK --> W1["…/Contents/Resources/"]
+    W1 --> W2["…/The Curator.app/"]
+    W2 --> W3["desktop/dist/mac-arm64/"]
+    W3 --> W4["the REPO ROOT's node_modules — found"]
+    W4 --> FOOL["LAUNCHES PERFECTLY<br/>but only while it sits inside the checkout"]
+    W3 -.->|"copy the same bundle to /Applications"| DIE["ERR_MODULE_NOT_FOUND: Cannot find package 'dotenv'"]
+```
+
+So **"I built it and it ran" is not evidence.** The only test that catches this class is launching a *copy* of the `.app` from a directory with no `node_modules` above it, and nothing automated does that today. The fix is an explicit `extraResources` entry placing `../node_modules` at `app/node_modules` (`to` is relative to `Contents/Resources`); `scripts/test-desktop-packaging.js` §11 refuses both the old shape and its absence.
+
+The tree comes from the **repo root** rather than a second install under `desktop/`, because the runtime deps belong to the app rather than to the shell, and duplicating eight dependency ranges into a second manifest is how the two drift. That is safe here only because the root manifest has zero `devDependencies` — there is no dev tree to ship by accident. The suite asserts that property; if it ever stops being true, this line starts shipping a dev tree to users.
+
+#### Signing, notarization and updates — none of it exists
+
+Stated plainly because a reader will otherwise assume the opposite from the presence of the config keys:
+
+- **Unsigned.** `mac.identity: null` is set *deliberately*. Without it, electron-builder auto-discovers any identity in the developer's own keychain and silently produces a locally-signed artifact that works on exactly one Mac — the most misleading possible outcome.
+- **`hardenedRuntime: true`, an entitlements file, and four `NS*UsageDescription` strings are written and are entirely inert**, because entitlements are applied at codesign time and nothing is signed. They are written now because the entitlement that matters is one whose absence fails *silently* on the first screen an existing user sees.
+- **No notarization.** Requires paid Apple Developer enrolment; there is no `afterSign` hook. An unnotarized DMG shows Gatekeeper's "unidentified developer" dialog.
+- **No auto-update.** `electron-updater` is not installed and not wired; `publish: null`. Deliberate for the first DMG, so that "does the bundle work on other Macs" and "does the update mechanism work" stay two debugging sessions rather than one interleaved one.
+- **No certificate, Apple ID, team ID or app-specific password may enter `desktop/`, the build config, the workflow or a comment — not even as an example value.** The repository is public. They are referenced by GitHub Actions secret name only, and `scripts/test-desktop-packaging.js` §9 scans for credential-shaped literals.
+
+The DMG workflow (`.github/workflows/desktop-dmg.yml`) is **tag-gated** — never `main`, never a pull request, and deliberately **no `workflow_dispatch`**. That last absence is the non-obvious one: `scripts/release.js`'s CI gate finds its run by branch and SHA, and a manual dispatch runs against a *branch*, so its run would carry `head_branch: main` and could collide on SHA with the very run the gate is waiting for. A tag push produces a run whose `head_branch` is the tag name, which every `--branch` query excludes.
+
+### Known gaps in the shell itself
+
+Beyond signing, and beyond the "run once on one machine" caveat at the top of this section:
+
+- **`scripts/build-app.sh` must be retired before any signed build ships.** It ends in an ad-hoc `codesign --force --deep --sign -` and `xattr -rd com.apple.quarantine`, which would destroy a Developer ID signature. It is load-bearing for repo mode today. `install-mode.js` names the capability (`canRebuildAppleScriptApp: false` in bundle mode); nothing enforces it in the script.
+- **The window has a native title bar, and a frameless design cannot return until the app's CSS carries a drag region.** An earlier build shipped `titleBarStyle: 'hiddenInset'` and produced three defects at once — the traffic lights drawn *over* the rail's logo, nothing draggable (a sweep of the live renderer found `-webkit-app-region: drag` on **zero** elements), and a window hard to grab to resize. They are one defect: `hiddenInset` hands the app the job of replacing the title bar and the app never took it. The fix belongs in `src/public/next/**`, not in `desktop/`.
+- **The native title bar is forced dark** (`nativeTheme.themeSource = 'dark'`), so a user who switches the app to its light theme keeps a dark strip. Making it track the app needs a `<meta name="theme-color">` that `applyTheme()` updates — an app-CSS/JS change.
+- **The menu is Electron's default.** ⌘Q reaches the write-status check; ⌘W is `role: close` and **nothing in the entire menu creates a window**, which is why a close on macOS now hides rather than destroys.
+- **The busy-quit path has never run against a real write.** The `quit` branch was exercised end to end; the `ask` branches have only ever been exercised as pure functions.
+- **The MCP launcher escapes the usual test isolation.** `getMcpLauncherDir()` has its own seam, `CURATOR_TEST_MCP_LAUNCHER_DIR`; the documented pair (`CURATOR_TEST_USER_DATA_DIR` + `CURATOR_TEST_DOMAINS_DIR`) does **not** cover it, so a bundle-mode test run writes into the real user-data `bin/` directory unless all three are set.
+- **No first-launch adoption of an existing repo install**, no About panel, no crash reporting, no Windows and no Linux.
 
 ---
 
@@ -1476,6 +1702,24 @@ What this copy of The Curator may do to its **own code**, as named capabilities 
 | `describeInstall(mode?)` | Wire-safe `{ installMode, installModeLabel, capabilities }`. Explicit allow-list, never a spread of internal state. |
 | `capabilityRefusal(capability, action, extra?)` | `{ status: 501, body }` for a forbidden arm. **501, not 403** — the server understood the request and this build genuinely cannot perform it; "forbidden" would send the user looking for a setting to flip. |
 | `INSTALL_MODE_LABELS` | Human-readable labels, for System Check and error text. Never for logic. |
+
+### `src/brain/desktop-host.js`
+
+The hooks a **desktop shell** may install into this process. Exists because two capabilities (`folderPickerStyle: 'native-dialog'`, `restartStyle: 'app-relaunch'`) name an action that lives in Electron's main process — and because `desktop/main.js` imports `src/server.js` into that **same Node realm**, so a module-level registry is a real channel rather than a metaphor. Performs no filesystem work, makes no network call, never writes to stdout, and deliberately does **not** read `install-mode.js`: registration and capability are independent facts, and the *consumer* joins them.
+
+| Export | Description |
+|--------|-------------|
+| `registerDesktopHost(hooks)` | Installs one or more hooks; partial by design. **Throws** on an unknown hook name or a non-function value — a typo'd `pickfolder` would otherwise register nothing, throw nothing, and leave the route refusing forever with the shell author certain they had wired it. Returns the names installed, so a caller can assert on it. |
+| `getDesktopHook(name)` | The hook, or `null`. **Consumers must treat `null` as "refuse", never as "fall back."** A silent fallback makes the capability a lie, and both available fallbacks are the exact behaviour the bundle arm exists to stop. Own-property lookup through the frozen name list, on a null-prototype object. |
+| `DESKTOP_HOOKS` | Frozen `['pickFolder', 'relaunch']`. |
+| `describeDesktopHost()` | Wire-safe `{hooks: {name: bool}, attached: bool}` — booleans only, never the functions. Nothing consumes it yet; it exists because "is a shell attached?" is the first question anyone debugging a refusal will ask. |
+| `__resetDesktopHost()` | **Test-only.** Exported rather than env-gated on purpose: an env-gated reset is a second way for production behaviour to depend on a test variable, and the worst this can do in production is cause a refusal — the fail-safe direction. |
+
+### `src/brain/restart.js`
+
+`planRestart(caps?, relaunchHook?)` — the pure decision behind `POST /api/restart`. No spawn, no exit, no I/O: `perform` is handed back for the caller to run *after* the HTTP response has flushed, so the whole decision is testable without a server and without killing the test runner. Both parameters default to the live values and are injectable so a suite can drive either arm.
+
+Returns `{ok: true, style: 'respawn-node', body, perform: null}` (the caller runs its existing spawn block; `body` is byte-identical to what this route has always sent — `restartStyle` is deliberately **not** added there, because `/old`'s updater flow polls this response and "byte-identical" is worth being able to claim without an asterisk), `{ok: true, style: 'app-relaunch', body, perform}`, or a 501 refusal when `restartStyle` is `app-relaunch` and no shell has registered a `relaunch` hook. It does **not** fall back to the spawn: under Electron `process.execPath` is the app binary, so that would open a second window instead of a server — silently, under a response saying everything was fine.
 
 ### `src/brain/config.js`
 
