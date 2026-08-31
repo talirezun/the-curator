@@ -1545,6 +1545,70 @@ export async function refreshSyncRemoteBadge() {
   try { applySyncBadge(); } catch { /* rail missing/detached — nothing to show */ }
 }
 
+// ── Don't poll a window nobody is looking at ────────────────────────────
+//
+// Both badges above are SHELL-level timers — armed once in boot() for the
+// life of the page, unlike a view's own poller, which has a mount/teardown
+// to hang a document.hidden check off. In a browser tab that cost nothing,
+// because people close tabs. The app now also ships as a window a user may
+// leave running all day, so a timer that keeps firing at full cadence while
+// that window is hidden is a standing cost paid for nobody: the local one is
+// cheap, but refreshSyncRemoteBadge() is a `git fetch` to GitHub — otherwise
+// a permanent background network call every 10 minutes for a window nobody
+// is looking at.
+//
+// SKIP the tick, don't stop/restart the interval: SYNC_BADGE_REFRESH_MS and
+// SYNC_REMOTE_REFRESH_MS stay exactly as documented above, and each tick
+// just declines to fetch while document.hidden is true — the same shape
+// views/ingest.js's scheduleActivityPoll() and views/memory.js's
+// schedulePoll() already use for their own per-view pollers ("A hidden tab
+// reschedules WITHOUT fetching"). Stopping and restarting the interval on
+// every visibility flap would mean either re-deriving how long was left
+// before the flap, or resetting the cadence outright — which is a change to
+// the interval in effect even though the constant is untouched — for no
+// benefit a plain skip does not already give.
+function refreshSyncBadgeIfVisible() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  refreshSyncBadge();
+}
+
+function refreshSyncRemoteBadgeIfVisible() {
+  if (typeof document !== 'undefined' && document.hidden) return;
+  refreshSyncRemoteBadge();
+}
+
+// RESUME PROMPTLY ON WAKE, not "whenever the next tick happens to land" —
+// same `focus` + `visibilitychange` wake-handler convention as
+// views/ingest.js's activityWakeHandler and views/memory.js's wakeHandler
+// ("REVALIDATE ON WAKE"). `focus` covers alt-tabbing back; `visibilitychange`
+// covers a background tab (or, for the app window, an occluded/minimized
+// window) being brought forward, which fires no focus event of its own.
+//
+// An IMMEDIATE refresh on every wake — not a debounced one — is deliberately
+// safe for both calls here, including under someone alt-tabbing repeatedly:
+//   - refreshSyncBadge() is a local `git status --porcelain`; cheap no
+//     matter how often it's asked.
+//   - refreshSyncRemoteBadge() calls GET /api/sync/remote-status, and
+//     brain/sync.js already puts a 5-minute server-side TTL cache in front
+//     of the actual GitHub network call specifically so "a second tab or a
+//     future caller that ignores this [10-minute client] cadence still
+//     cannot hammer GitHub" (see SYNC_REMOTE_REFRESH_MS's own comment
+//     above). Repeated alt-tabbing re-asks the LOCAL server, not GitHub, so
+//     it cannot turn into the network-hammering it looks like at a glance.
+//
+// Armed once, here, for the page's whole life — these are shell timers with
+// no mount/teardown to hang a listener removal off, unlike the per-view wake
+// handlers above.
+function armSyncBadgeWakeHandler() {
+  const wake = () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    refreshSyncBadge();
+    refreshSyncRemoteBadge();
+  };
+  if (typeof window !== 'undefined') window.addEventListener('focus', wake);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake);
+}
+
 // ── Sidebar + main render helpers shared by view stubs ─────────────────
 
 export function setSidebar(html, token) {
@@ -2229,14 +2293,23 @@ function boot() {
   // refresh for a user who lingers on a single screen without navigating —
   // the same cadence src/public/app.js has used since v3.0.1-beta.5. Both
   // are fire-and-forget for the same markBooted() reason documented below.
-  setInterval(refreshSyncBadge, SYNC_BADGE_REFRESH_MS);
+  // The interval calls the *IfVisible wrapper (see its own comment above
+  // refreshSyncRemoteBadgeIfVisible) so a hidden window skips the fetch.
+  setInterval(refreshSyncBadgeIfVisible, SYNC_BADGE_REFRESH_MS);
 
   // The remote half of the badge — one check now, then every 10 minutes.
   // Deliberately NOT wired into navigate(): see SYNC_REMOTE_REFRESH_MS for
   // why this one is not allowed on the hot path. Fire-and-forget, and the
   // function never throws, for the markBooted() reason documented below.
+  // Same *IfVisible wrapper as above, for the same reason — see the comment
+  // on refreshSyncBadgeIfVisible/refreshSyncRemoteBadgeIfVisible.
   refreshSyncRemoteBadge();
-  setInterval(refreshSyncRemoteBadge, SYNC_REMOTE_REFRESH_MS);
+  setInterval(refreshSyncRemoteBadgeIfVisible, SYNC_REMOTE_REFRESH_MS);
+
+  // Resume promptly on wake rather than waiting out the rest of a skipped
+  // interval — see armSyncBadgeWakeHandler's own comment for why an
+  // immediate refresh on every wake is safe here.
+  armSyncBadgeWakeHandler();
 
   // First-run guidance (ARCHITECTURE.md R7). Same fire-and-forget shape as
   // the line above, and for a much sharper reason: markBooted() runs
