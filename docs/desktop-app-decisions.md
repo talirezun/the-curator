@@ -1,12 +1,17 @@
 # The native Mac app — decision record
 
-> **STATUS: THIS DESCRIBES DECISIONS, NOT A SHIPPED FEATURE.**
+> **STATUS: THERE IS STILL NO DOWNLOADABLE MAC APP.**
 >
-> There is **no downloadable Mac app**. As of `v3.29.0` the repository contains
-> no `desktop/` directory, no Electron dependency, no DMG build, no notarization
-> step and no release workflow — verified by search, not assumed. Every decision
-> below is recorded so it is not re-litigated or quietly reversed; the **Status**
-> column on each says whether the code for it exists yet.
+> Since `v3.30.0` the repository does contain a `desktop/` directory, an Electron
+> shell, an `electron-builder` config and a tag-gated DMG workflow. It was built
+> and launched **once, by hand, on one machine** (macOS 15, arm64, 2026-08-31).
+> There is still **no signing, no notarization and no auto-update**, nothing
+> publishes an artifact to GitHub Releases, and the x64 DMG has never been
+> executed. Every decision below is recorded so it is not re-litigated or quietly
+> reversed; the **Status** column on each says whether the code for it exists yet.
+>
+> For what the shell *is* and how it is built, see
+> [architecture.md § The macOS desktop shell](architecture.md#the-macos-desktop-shell-desktop).
 >
 > The way to install The Curator today is the [browser install](../README.md#quick-start).
 > That is not a legacy path and it is not going away — see [D3](#d3--the-browser-install-is-not-a-legacy-path).
@@ -56,21 +61,21 @@ licenses a doc elsewhere to describe a planned thing in the present tense.
 
 | # | Decision | Status |
 |---|---|---|
-| [D1](#d1--one-codebase-one-release-two-shells) | One codebase, one release, two shells — do not fork | `PARTIAL` |
-| [D2](#d2--desktop-gets-its-own-packagejson) | `desktop/` gets its own `package.json` | `DECIDED` |
+| [D1](#d1--one-codebase-one-release-two-shells) | One codebase, one release, two shells — do not fork | `SHIPPED` |
+| [D2](#d2--desktop-gets-its-own-packagejson) | `desktop/` gets its own `package.json` | `SHIPPED` |
 | [D3](#d3--the-browser-install-is-not-a-legacy-path) | The browser install is not a legacy path | `SHIPPED` |
 | [D4](#d4--branch-on-capability-never-on-install-form) | Branch on capability, never on install form | `SHIPPED` |
-| [D5](#d5--asar-false-for-the-first-dmg) | `asar: false` for the first DMG | `DECIDED` |
+| [D5](#d5--asar-false-for-the-first-dmg) | `asar: false` for the first DMG | `SHIPPED` |
 | [D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo) | The DMG goes to GitHub Releases, never into the repo | `DECIDED` |
-| [D7](#d7--the-dmg-workflow-gates-on-a-tag-push-never-on-main) | The DMG workflow gates on a tag push, never on `main` | `DECIDED` |
+| [D7](#d7--the-dmg-workflow-gates-on-a-tag-push-never-on-main) | The DMG workflow gates on a tag push, never on `main` | `SHIPPED` |
 | [D8](#d8--release-through-a-gate-branch--ci--fast-forward--tag) | Release through a gate: branch → CI → fast-forward → tag | `SHIPPED` |
 | [D9](#d9--rollback-is-forward-only) | Rollback is forward-only | `SHIPPED` |
 | [D10](#d10--releasechannel-ships-with-stable-as-its-only-valid-value) | `releaseChannel` ships with `stable` as its only valid value | `SHIPPED` |
 | [D11](#d11--credentials-do-not-migrate) | Credentials do **not** migrate | `DECIDED` |
 | [D12](#d12--the-one-must-have-is-that-existing-wikis-appear--and-it-needs-no-new-code) | Existing wikis must appear — and that needs no new code | `SHIPPED` |
 | [D13](#d13--the-existing-users-path-is-three-steps-that-already-exist) | The existing user's path is three steps that already exist | `SHIPPED` |
-| [D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch) | The MCP launcher shim is generated at every app launch | `SHIPPED` |
-| [D15](#d15----domains-path-is-dropped-in-bundle-mode) | `--domains-path` is dropped in bundle mode | `DECIDED` |
+| [D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch) | The MCP launcher shim is generated at every app launch | `PARTIAL` |
+| [D15](#d15----domains-path-is-dropped-in-bundle-mode) | `--domains-path` is dropped in bundle mode | `SHIPPED` |
 
 ---
 
@@ -87,7 +92,7 @@ Exactly four things genuinely differ between the two shells:
 
 | | Browser install | Mac app shell |
 |---|---|---|
-| **Launch** | `node src/server.js`, or the AppleScript `.app` the installer builds | The desktop shell starts the same server as a child |
+| **Launch** | `node src/server.js`, or the AppleScript `.app` the installer builds | The desktop shell **imports** `src/server.js` into its own process — same Node realm, no child, no second runtime |
 | **Update** | `git fetch` + `git reset --hard` + `npm install` (`POST /api/config/update`) | A signed bundle cannot rewrite its own source — the shell's own updater |
 | **Data location** | `APP_ROOT` — the checkout itself | A user-data directory outside the read-only bundle |
 | **MCP entry** | `<node> <APP_ROOT>/mcp/server.js` | A launcher script ([D14](#d14--the-mcp-launcher-shim-is-generated-at-every-app-launch)) |
@@ -102,16 +107,17 @@ because two hand-maintained copies of one guard drifted (`v3.2.0`, `v3.24.0`).
 A second copy of `src/` would reproduce that class at the scale of the whole app.
 One test suite covering both is only possible if there is one codebase to cover.
 
-**Status.** `PARTIAL`. The *fork points* are built and named — `paths.js` for
-data location, `install-mode.js` for the rest ([D4](#d4--branch-on-capability-never-on-install-form)).
-The *shell* is not. Every bundle arm in the code is currently unreachable,
-because no bundle exists to reach it.
+**Status.** `SHIPPED`. The fork points were built first — `paths.js` for data
+location, `install-mode.js` for the rest ([D4](#d4--branch-on-capability-never-on-install-form))
+— and `desktop/` is now the shell that consumes them. There is no second copy of
+`src/`, no forked route and no desktop-only business logic.
 
-> **Honest consequence of that:** the bundle arms of the MCP entry, the updater
-> and the install-mode fork have **never run end to end**. They are covered by
-> offline tests that materialise a fake `.app`-shaped tree
-> (`scripts/test-install-mode.js`), which proves the branch is taken — not that
-> the branch works in a real signed bundle.
+> **Honest consequence, unchanged in substance:** the bundle arms of the MCP
+> entry, the updater and the install-mode fork have **never run end to end in a
+> signed, notarized build**. They are covered by offline tests that materialise a
+> fake `.app`-shaped tree (`scripts/test-install-mode.js`), which proves the
+> branch is taken — not that the branch works in a real bundle. A git checkout is
+> `repo` mode, so running the suite exercises the unchanged arm every time.
 
 ---
 
@@ -151,7 +157,7 @@ Chrome specifically so that `git diff package.json` is **0 lines** — a rule
 **Evidence.** `package.json` (8 runtime dependencies, no `devDependencies` key);
 the `npm install` call in `POST /api/config/update`.
 
-**Status.** `DECIDED`. `desktop/` does not exist in the repository.
+**Status.** `SHIPPED`. `desktop/package.json` is `private: true`, declares no `dependencies`, and carries `electron` and `electron-builder` as its own pinned devDependencies. `git diff package.json package-lock.json` at the repo root is 0 lines.
 
 ---
 
@@ -247,7 +253,7 @@ own verification, not a default to inherit.
 **Evidence.** The three code excerpts above, all quoted verbatim from the
 current tree. Verify with `grep -n "APP_ROOT" src/brain/paths.js src/brain/sync.js src/routes/config.js`.
 
-**Status.** `DECIDED`. No Electron build configuration exists.
+**Status.** `SHIPPED`. `desktop/electron-builder.yml` sets `asar: false`, with the three hazards written out above the key so a future size optimisation has to read them first.
 
 ---
 
@@ -314,11 +320,11 @@ load-bearing**: `scripts/release.js` refuses with `ci-not-reachable` if a
 release branch that gets no run turns the gate into something that only *looks*
 like one.
 
-**Status.** `DECIDED`. No tag-triggered workflow exists — `.github/workflows/`
-holds exactly one file. `scripts/release.js` does create and push an annotated
-tag, specifically so a future `electron-updater` has something to depend on,
-while explicitly declining to wire a release workflow before anything consumes
-it.
+**Status.** `SHIPPED`. `.github/workflows/desktop-dmg.yml` triggers on a tag
+push only — no `branches:`, no bare `push:`, no `workflow_dispatch`, and its
+token is read-only. It **publishes nothing**: the DMG is kept as a build artifact
+(`actions/upload-artifact`), which is why [D6](#d6--the-dmg-goes-to-github-releases-never-into-the-repo)
+remains `DECIDED`.
 
 > **The tag history is not continuous, and a trigger would need to know that.**
 > Measured on origin: **42 tags**, running from `v2.1.0` to `v3.24.2`, then a
@@ -607,10 +613,13 @@ gets the old path. Launching The Curator once fixes it. This is recorded rather
 than engineered around, because the alternative — a login item or a watcher —
 is a much larger commitment than the failure justifies.
 
-**Status.** `DECIDED`. Today `mcpLaunchStyle` is a **descriptive string only**:
-`'node-script'` for repo, `'launcher-script'` for bundle. **Nothing branches on
-it, and no launcher is generated anywhere.** `GET /api/mcp/config` reports the
-current entry and has no launcher fields.
+**Status.** `PARTIAL`. `mcpLaunchStyle` now has real branches: `src/routes/mcp.js`
+reads it at three sites and `src/brain/mcp-launcher.js` writes the shim.
+`scripts/test-mcp-launcher.js` owns the behavioural coverage. What is **not**
+proven is the part that matters most — **the bundle arm has never run end to
+end.** The shim is asserted as text and never executed, App Translocation is
+simulated by a path string, and nothing demonstrates that Claude Desktop accepts
+the generated entry.
 
 ---
 
@@ -648,7 +657,7 @@ both processes resolve through the same stored setting.
 that function, in order); `buildCuratorEntry()` in `src/routes/mcp.js`, which
 today **always** emits `args: [MCP_SERVER_PATH, '--domains-path', domainsDir]`.
 
-**Status.** `DECIDED`. `buildCuratorEntry` has no bundle arm.
+**Status.** `SHIPPED`. `buildCuratorEntry()` in `src/routes/mcp.js` branches on `getCapabilities().mcpLaunchStyle` and the `launcher-script` arm omits `--domains-path` entirely. The repo arm is unchanged, deliberately — changing it would mark every existing user's config stale overnight.
 
 > **Correction on the record.** This decision has been summarised elsewhere as
 > *"the flag sits at rung 2, above the user's live Settings choice at rung 3"*.
@@ -666,10 +675,10 @@ Recorded so nobody mistakes silence for a decision.
 | Question | State |
 |---|---|
 | **How the app updates itself** | Open. `canSelfUpdateViaGit: false` means the repo updater refuses on the bundle arm with a `501`. `scripts/release.js` creates tags now so `electron-updater` has something to depend on later, but **nothing consumes them** and no updater is chosen. |
-| **What "restart" means in the app** | `restartStyle: 'app-relaunch'` is recorded as a string with **no branch behind it**. `POST /api/restart` still respawns `process.execPath`, which under a shell would leave a windowless app. |
-| **Quit-while-writing** | `GET /api/write-status` ships and answers `{safeToQuit, activeWrites, operations[]}` — built for a `before-quit` handler that does not exist. **Nothing in repo mode consumes it.** |
+| **What "restart" means in the app** | **Decided and built.** `src/brain/restart.js`'s `planRestart()` forks on `restartStyle`, and `desktop/main.js` registers a `relaunch` hook through `src/brain/desktop-host.js`. The bundle arm **refuses with a 501** when no hook is registered rather than falling back to the spawn, which under Electron would open a second window instead of a server. The earlier `webRequest` interception in `main.js` was **removed**, not kept as belt-and-braces: it cancelled the request before Express, so the workaround would always have beaten the fix. |
+| **Quit-while-writing** | **Built.** `desktop/main.js`'s `before-quit` handler consumes `GET /api/write-status` via `lib/write-status.js` and `lib/quit-decision.js`; `safeToQuit: null` is kept as its own case and returns `ask`. Still open: **the `ask` branches have never run against a real write** — only the `quit` branch was exercised end to end, and the rest only as pure functions. Nothing in *repo* mode consumes the route, which is correct: a browser install has no quit to intercept. |
 | **Windows and Linux shells** | Not planned. Those platforms use the browser install ([D3](#d3--the-browser-install-is-not-a-legacy-path)). |
-| **Notarization and Gatekeeper** | Open. No entitlements file, no hardened-runtime configuration, no notarization step exists. Without notarization a downloaded DMG shows Gatekeeper's "unidentified developer" dialog. |
+| **Notarization and Gatekeeper** | Open. `hardenedRuntime: true`, `build/entitlements.mac.plist` and four `NS*UsageDescription` strings are **written and entirely inert** — entitlements apply at codesign time and `mac.identity: null` forces an explicitly unsigned build. There is no Apple Developer enrolment, no certificate and no `afterSign` hook. Without notarization a downloaded DMG shows Gatekeeper's "unidentified developer" dialog. Whether `choose folder` needs the apple-events entitlement is **inferred, not measured**, and granted defensively. |
 | **Where user data lives in the bundle** | The *mechanism* is decided and built (`paths.js` resolves a user-data directory outside `APP_ROOT`, and the detection is a **positive test for "bundle"** so an unrecognised layout keeps data where it is). The exact directory the shell will present has not been exercised by a real bundle. |
 
 ---
@@ -685,14 +694,23 @@ the code itself refuses:
 | [D7](#d7--the-dmg-workflow-gates-on-a-tag-push-never-on-main) | `scripts/release.js` refuses `ci-not-reachable` if `.github/workflows/test.yml` gains a `branches:` filter; `scripts/test-release-preconditions.js` asserts it against the real file |
 | [D8](#d8--release-through-a-gate-branch--ci--fast-forward--tag) | `scripts/release.js` — a `git merge` without `--ff-only` is refused as an unsafe command; the landed SHA is re-read and mismatch refuses `ff-failed` |
 | [D10](#d10--releasechannel-ships-with-stable-as-its-only-valid-value) | `resolveReleaseChannel()` is total by construction; `scripts/test-release-channel.js` pins the resulting git commands as literals |
-| [D2](#d2--desktop-gets-its-own-packagejson) | Nothing automated. **This is a gap** — see below. |
+| [D2](#d2--desktop-gets-its-own-packagejson) | `scripts/test-desktop-packaging.js` §2 — enumerates dependency names out of **both** manifests and asserts the root gained nothing; §3 asserts `desktop/` is self-contained; §4 asserts nothing in `src/` or `mcp/` reaches into it |
+| [D5](#d5--asar-false-for-the-first-dmg) / packaged layout | `scripts/test-desktop-packaging.js` §11 — refuses both the old `node_modules` glob and the absence of the `extraResources` mapping |
+| [D7](#d7--the-dmg-workflow-gates-on-a-tag-push-never-on-main) | `scripts/test-desktop-packaging.js` §8 — the DMG workflow triggers on tags and cannot join the release gate |
 
 **Not enforced, and worth knowing:**
 
-- **Nothing fails if a `devDependency` is added to the root manifest.** [D2](#d2--desktop-gets-its-own-packagejson)
-  rests on discipline plus the repeated per-release check that `git diff package.json`
-  is 0 lines for tooling work. A guard asserting the root manifest has no
-  `devDependencies` would close it.
+- **Nothing in `desktop/` can be EXECUTED by `npm test`.** Electron is not an
+  offline-suite dependency and never will be, so `main.js` and
+  `electron-builder.yml` are **source-scanned**, not run;
+  `scripts/test-desktop-packaging.js` says so in its own NOT ENFORCED block. Only
+  the four Electron-free `lib/` modules are genuinely executed. Treat a green
+  suite as proof about the **config**, never about the app.
+- **Nothing catches the `node_modules` class by launching the app.** A build
+  missing its dependency tree launches perfectly while it sits inside the
+  checkout, because Node walks *up* and finds the repo root's `node_modules`. The
+  only test that catches it is launching a **copy** of the `.app` from a
+  directory with no `node_modules` above it, and nothing automated does that.
 - `scripts/release.js` declares **30** refusal ids. `CLAUDE.md`'s `v3.29.0` row
   says 25 and `CONTRIBUTING.md`'s table lists the notable ones; the only
   automated check is an anti-vacuity floor of `>= 20`. Derive the list from the
