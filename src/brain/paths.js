@@ -310,6 +310,56 @@ export function getLogsDir() {
   return path.join(os.homedir(), 'Library', 'Logs', APP_LOGS_DIR_NAME);
 }
 
+// Test-only override for the MCP launcher directory. Separate from the other
+// two overrides for the same reason __setLogDirOverride is separate from
+// __setUserDataDirOverride: a suite exercising shim generation must isolate
+// ONLY where the shim lands, and a real run must never be able to drop an
+// executable into the maintainer's actual Application Support tree.
+let _mcpLauncherDirOverride = null;
+
+/** Test seam — force the MCP launcher dir (e.g. a tempdir). Pass null to clear. */
+export function __setMcpLauncherDirOverride(p) {
+  _mcpLauncherDirOverride = p ? path.resolve(p) : null;
+}
+
+/**
+ * Absolute path to the directory holding the MCP launcher shim — the small
+ * shell script Claude Desktop is pointed at in bundle mode, instead of at
+ * `process.execPath` and a file inside an asar archive.
+ *
+ * Like getLogsDir(), this does NOT fork on install mode, and the reason is the
+ * same one that has bitten this project twice. In repo mode getUserDataDir()
+ * IS the checkout, so anchoring the shim on userDataPath() would drop a
+ * generated executable into a live git working tree — the `.DS_Store`
+ * (v3.0.16) and `.write-lock` (v3.0.15) class, both of which shipped. Worse,
+ * a user whose `domainsPath` points at the user-data dir would have it land
+ * inside Personal Sync's git WORK-TREE and be committed and pushed. The shim
+ * is machine-local operational exhaust that names an absolute path on THIS
+ * Mac; it is meaningless on any other machine and must never travel.
+ *
+ * ~/Library/Application Support/The Curator/bin is therefore unconditional.
+ * It is not TCC-protected (same reasoning as getAppSupportDir() above), which
+ * matters here more than anywhere else in this module: the file at this path
+ * is EXECUTED by Claude Desktop, headless, with no UI session in which a
+ * permission prompt could render.
+ *
+ *   __setMcpLauncherDirOverride     → that (test seam)
+ *   CURATOR_TEST_MCP_LAUNCHER_DIR   → that (test seam, crosses process bounds)
+ *   otherwise                       → ~/Library/Application Support/The Curator/bin
+ *
+ * Pure resolver — never creates the directory and never writes. Generation is
+ * owned by src/brain/mcp-launcher.js, which also enforces at write time that
+ * the resolved directory is not inside getDomainsDir() (a check this resolver
+ * cannot make without importing config.js and creating a cycle).
+ */
+export function getMcpLauncherDir() {
+  if (_mcpLauncherDirOverride) return _mcpLauncherDirOverride;
+  if (process.env.CURATOR_TEST_MCP_LAUNCHER_DIR) {
+    return path.resolve(process.env.CURATOR_TEST_MCP_LAUNCHER_DIR);
+  }
+  return path.join(getAppSupportDir(), 'bin');
+}
+
 /**
  * Absolute path to the writable user-data directory.
  *
