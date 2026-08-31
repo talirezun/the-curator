@@ -276,17 +276,16 @@ It builds and it runs. It is still not a shippable product.
   `NSPanel` with no read-back API, and driving the menu item needs assistive
   access — attempted, refused (`-1719`). The suite proves the exact options
   object handed to Electron, not what appears on screen.
-- **The menu is Electron's default**, dumped from a running Electron 43.5.0
-  rather than recalled. ⌘Q is `role: quit` and reaches the write-status check;
-  ⌘R / ⇧⌘R reload the renderer, which since v3.24.0 is not data loss but does
-  discard an in-flight streamed chat; ⌘W is `role: close` and **nothing in the
-  entire menu creates a window**. That last one is why a close on macOS now
-  hides rather than destroys — see `main.js`. Removing ⌘R means building a
-  custom View menu, which is a bigger change than it looks.
-- **No keystroke in this repo is pressed by a test.** The menu was read, not
-  driven, and nothing proves the window drags — a native title bar is dragged
-  by the OS rather than by app code, which is the argument for choosing it, but
-  it is an argument and not a measurement.
+- **The menu is now a real one** — see *The application menu* below — but
+  **nothing has ever displayed it.** Electron is not installed, so
+  `Menu.buildFromTemplate` has never seen the template and
+  `Menu.setApplicationMenu` has never been called. A role name Electron
+  rejects, or an accelerator string it cannot parse, passes every assertion in
+  `scripts/test-desktop-menu.js` and fails at launch.
+- **No keystroke in this repo is pressed by a test.** The menu is built and
+  inspected, not driven, and nothing proves the window drags — a native title
+  bar is dragged by the OS rather than by app code, which is the argument for
+  choosing it, but it is an argument and not a measurement.
 - **No Windows, no Linux.**
 
 ### The existing-user first run, and the one thing that fails silently
@@ -436,6 +435,153 @@ Full screen is deliberately **not** persisted. `maximized` is.
   the script itself.
 (The version item that used to sit here is fixed — see *Version identity*
 above.)
+
+---
+
+## The application menu
+
+Reported from the running packaged app: *"There is no button in the menu that
+you would check if there are any updates. I think we need a button, Check for
+updates. Also the update process should be really fluent."*
+
+Both halves were true. The app shipped **Electron's default menu**, dumped from
+a running Electron 43.5.0 rather than recalled: the File menu held exactly one
+item, "Close Window" (⌘W, `role: close`), and **nothing in the entire menu
+created a window**. There was no Check for Updates, no Settings, and no route
+back to a window ⌘W had taken away.
+
+The structure lives in **`lib/menu.js`** as plain data, for the same reason
+`quit-decision.js` and `app-version.js` are separate modules:
+`Menu.buildFromTemplate` consumes ordinary objects, so every label,
+accelerator, role and ordering decision is something `npm test` can build and
+inspect for real. `main.js` keeps two Electron calls and five handlers.
+
+```
+The Curator   About · Check for Updates… · Settings… (⌘,) · Services ·
+              Hide / Hide Others / Show All · Quit
+Edit          Undo Redo · Cut Copy Paste Paste-and-Match-Style Delete
+              Select All · Speech
+View          Reload · Force Reload · Toggle DevTools ·
+              Actual Size Zoom In Zoom Out · Toggle Full Screen
+Window        Minimize · Zoom · Close (⌘W) · Bring All to Front ·
+              The Curator
+Help          User Guide · Release Notes · Show Logs
+```
+
+### Check for Updates… answers in a dialog. What that rejected, and why
+
+**Chosen: run the check in the shell and show a native dialog.** "Check for
+Updates…" is a macOS idiom with a fixed meaning — Sparkle's, and Apple's — and
+the ellipsis promises a dialog. It works with no window open, it cannot be
+missed, and the one action it offers is the one the user came for.
+
+**Rejected: navigate to Settings ▸ General and start the check there.** The
+panel renders all five outcomes well, and reusing it is the obvious move. It
+loses on two counts. A menu item that silently swaps the visible view has no
+way to *say* the most common answer — "you are up to date"; the user is left
+looking for what changed. And it needs two renderer couplings landing in order
+(mount the view, then click a button that does not exist until that view has
+rendered), which is a race across a re-render rather than one click.
+
+**Rejected: both.** Two things happening from one click is how a menu item
+comes to feel unpredictable.
+
+### One source of truth, stated precisely
+
+`GET /api/config/update-check` is the only side that read the release list, and
+it already decided everything: `pickInstallableRelease()` chose *which*
+release, and `decideInstallerUpdate()` set `updateAvailable`, `localAhead`,
+`comparable` and `noInstallableRelease`. **`lib/update-verdict.js` contains no
+version comparator, no semver parser and no numeric coercion** — it reads those
+flags and picks a sentence.
+
+The suite proves that behaviourally rather than by reading the file: it feeds a
+payload whose *numbers contradict its flags* (`current: 9.9.9`,
+`latest: 1.0.0`, `updateAvailable: true`) and asserts the shell answers
+**available**. A shell that compared versions would answer *local-ahead*. The
+reverse payload is asserted too, so the test cannot be satisfied by a function
+that ignores everything and always says the same thing.
+
+**What IS duplicated, named rather than hidden:** four short headline sentences
+that also exist in `src/public/next/views/settings.js`
+(`classifyInstallerUpdate`). Every failure sentence comes from the route
+verbatim, because `classifyReleaseFailure()` already authored one per failure
+mode and those are the four a user only ever reads when something is wrong.
+
+**One divergence from Settings ▸ General:** the menu does not fetch
+`GET /api/version`, so it cannot report `restart-required` (files on disk newer
+than the running process). That state is unreachable in a packaged build — a
+DMG replaces the app and relaunches it — and reachable only in a source
+checkout, where Settings is one click away. A second network call on every menu
+click was not worth it.
+
+### "Really fluent", as a UX requirement
+
+Not auto-install. That needs a signed, notarized app and paid Apple enrolment,
+and is deferred by decision — the dialog says so in plain words rather than
+implying a capability the build does not have. `scripts/test-desktop-menu.js`
+asserts the menu never issues a POST.
+
+What "fluent" was taken to mean, and how each part is met:
+
+| Requirement | How |
+|---|---|
+| Something happens *immediately* | The item relabels to "Checking for Updates…" and disables. The menu bar **is** the progress indicator — no window needed, nothing painted by the renderer. The check is a live GitHub call with a 12-second ceiling; an item that looked unchanged for ten seconds is the "nothing happens, then suddenly something happens" complaint of v3.11.0. |
+| One click to the thing | When an update exists, **Download is the default button** and opens the release page the route chose. Every other dialog defaults to dismiss. |
+| Never two dialogs | An in-flight check refuses a second one, same shape as `quitCheckInFlight`. |
+| Never an invisible dialog | The message box is window-modal **only when the window is actually on screen**. ⌘W leaves a hidden window behind; a sheet attached to it would be invisible and the app would look frozen with a permanently disabled menu item. |
+| A dead end is never a dead end | Every failure carries the route's own actionable sentence plus an *Open Releases Page* button. |
+| It works before the app is ready | The menu goes up before the port scan. `baseUrl` is still null, and `fetchUpdateCheck(null)` resolves to "wait a moment and try again" — which is exactly true. |
+
+### The one coupling to the app's own markup
+
+⌘, has to reach a view that lives in the renderer. There is no URL for it
+(`src/public/next/app.js` restores its view from `localStorage` and reads
+neither a hash nor a query string), and no IPC channel — `preload.js` exposes
+nothing, and adding a `navigate` channel would need the renderer to listen for
+it, which is a change in `src/`.
+
+So the shell clicks the rail button the user would have clicked, through
+`webContents.executeJavaScript`, keyed on `[data-view="settings"]`.
+
+**This is not the case `main.js` rejects for `insertCSS`.** That rejection
+turns on one property: an injected stylesheet cannot report whether its
+selector matched, so the guard could only ever prove a *string* was inserted.
+`executeJavaScript` **resolves with a value** — `main.js` checks it and shows a
+named error pointing at the gear button when the element is not found. The
+failure is loud and recoverable, not silent.
+
+`data-view` is also the app's own routing primitive rather than a styling hook:
+it is what the rail's click handler reads and what `renderRailActive()` matches
+on. `scripts/test-desktop-menu.js` §10 carries a read-only tripwire that fails
+if `src/public/next/app.js` stops emitting it, and the failure message says
+what to change.
+
+### Decisions worth not re-litigating
+
+- **There is no File menu.** A File menu implies documents; The Curator has
+  none. A File menu whose only member closes a window is the empty shell the
+  default menu already was. ⌘W lives in Window.
+- **⌘O was rejected** for "Add a source". It would navigate to the Ingest view,
+  and a ⌘O that does not open a file picker is a lie about the shortcut.
+- **Quit is `role: 'quit'`, never a hand-rolled `app.exit()`.** The role goes
+  through Electron's normal shutdown, which is what fires `before-quit` — where
+  `main.js` asks `GET /api/write-status` whether a paid, multi-minute ingest is
+  in flight. A hand-rolled exit walks past that guard.
+- **The Edit menu is function, not decoration.** Its roles are what install the
+  ⌘X/⌘C/⌘V accelerators. Replace the default menu without them and clipboard
+  actions stop working in the renderer — including the API-key fields, where
+  pasting a key is the first thing anyone does.
+- **DevTools stays.** In a packaged build there is no other way to answer
+  "what does the console say?".
+- **Help ▸ Show Logs** reads `getLogsDir()` from `src/brain/paths.js` rather
+  than re-typing `~/Library/Logs/The Curator`. The app grew its own log file in
+  v3.29.0 and the frontend button that reveals it was never wired, so until now
+  nothing in the shipped product could open it.
+- **The reveal item in Window has no accelerator.** The first draft claimed ⌘0,
+  which `role: 'resetZoom'` already owns. §2 of the suite now walks the whole
+  template — including the accelerators a *role* implies, which are invisible
+  in the template — and fails on any collision.
 
 ---
 

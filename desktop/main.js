@@ -43,7 +43,7 @@
  * request. The whole app would load and do nothing. Do not go there.
  */
 
-import { app, BrowserWindow, dialog, nativeTheme, screen, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, nativeTheme, screen, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -52,6 +52,9 @@ import { pickFreePort, appUrl } from './lib/port.js';
 import { fetchWriteStatus } from './lib/write-status.js';
 import { decideQuit } from './lib/quit-decision.js';
 import { applyAboutPanel } from './lib/app-version.js';
+import { buildMenuTemplate, SETTINGS_NAV_SELECTOR } from './lib/menu.js';
+import { fetchUpdateCheck } from './lib/update-check.js';
+import { describeUpdate, ACTION_ID } from './lib/update-verdict.js';
 import {
   MIN_WIDTH, MIN_HEIGHT,
   sanitizeWindowState, serializeWindowState, readWindowState, writeWindowState,
@@ -106,6 +109,11 @@ let mainWindow = null;
 let quitAuthorised = false;
 /** Guards against two overlapping ⌘Q presses stacking two dialogs. */
 let quitCheckInFlight = false;
+/** Same shape, for the update check: one dialog, never two. Also drives the
+ *  menu item's label and enabled state — see applyMenu(). */
+let updateCheckInFlight = false;
+/** Resolved in boot() from the app's OWN path resolver, not re-derived here. */
+let logsDir = null;
 
 // ── 1. Single instance ───────────────────────────────────────────────────────
 //
@@ -182,6 +190,14 @@ async function boot() {
   // the first time it is opened. It reads nothing that depends on the server.
   applyAboutPanel(app, APP_ROOT);
 
+  // The menu goes up NOW, before the port scan and before the server import,
+  // so the menu bar is never briefly Electron's default one. Its handlers read
+  // `baseUrl` and `logsDir` at CLICK time, both of which are still null here —
+  // and both of those cases answer honestly rather than throwing
+  // (fetchUpdateCheck(null) resolves to its "wait a moment and try again"
+  // body, which is exactly true during the second this window is open).
+  applyMenu();
+
   const port = await pickFreePort();
   baseUrl = appUrl(port);
 
@@ -212,7 +228,227 @@ async function boot() {
     relaunch: () => { quitAuthorised = true; app.relaunch(); app.exit(0); },
   });
 
+  // Where Help ▸ Show Logs points. Read from the app's OWN resolver — the same
+  // module `src/brain/logger.js` writes through — rather than re-typing
+  // `~/Library/Logs/The Curator` here. Two copies of a path is how they drift,
+  // and getLogsDir() deliberately does NOT fork on install mode, so there is
+  // exactly one right answer and this is it. Resolved through the same
+  // APP_ROOT as everything else so it is the same module instance the server
+  // is using, not a second copy with its own test overrides.
+  try {
+    const { getLogsDir } =
+      await import(pathToFileURL(path.join(APP_ROOT, 'src', 'brain', 'paths.js')).href);
+    logsDir = getLogsDir();
+  } catch {
+    // Non-fatal by design: a shell that cannot resolve the log folder still
+    // runs the app. The menu item says so when it is clicked.
+    logsDir = null;
+  }
+
   createWindow();
+}
+
+// ── 2b. The application menu ─────────────────────────────────────────────────
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  THE STRUCTURE IS IN lib/menu.js. ONLY THE WIRING IS HERE.                ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// Same split, and the same reason, as decideQuit() and applyAboutPanel():
+// Electron is not an offline-suite dependency, so nothing in this file can be
+// executed by `npm test`. `Menu.buildFromTemplate` takes plain objects, so the
+// entire menu — every label, accelerator, role and ordering decision — is
+// ordinary data that scripts/test-desktop-menu.js builds and inspects for
+// real. What is left here is the two Electron calls and the five handlers.
+//
+// The menu is REBUILT rather than mutated when the update check starts and
+// finishes. Mutating a live MenuItem's label works on macOS but is a second
+// mechanism doing the same job as the builder, and the builder is the one the
+// suite can see. Rebuilding is one function call and cannot get out of step
+// with the flag it reads.
+
+/** Build the template from the current state and install it. */
+function applyMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate({
+    appName: app.name,
+    checking: updateCheckInFlight,
+    // Every click handler is wrapped so no promise escapes into Electron's
+    // menu dispatcher. A floating rejection there is an unhandled rejection in
+    // the main process, which in a packaged app is an invisible failure.
+    onCheckForUpdates: () => { void checkForUpdates(); },
+    onOpenSettings: () => { void openSettingsView(); },
+    onRevealWindow: () => { revealWindow(); },
+    onOpenUrl: (url) => { void shell.openExternal(url).catch(() => {}); },
+    onShowLogs: () => { void showLogs(); },
+  })));
+}
+
+/**
+ * The JS the shell runs in the renderer to reach the Settings view.
+ *
+ * Built from the exported selector rather than typed inline, and serialised
+ * with JSON.stringify so the string cannot break out of its own literal.
+ *
+ * IT RETURNS A BOOLEAN, and that is the whole reason this is acceptable where
+ * `insertCSS` was not (see the block above createWindow). An injected
+ * stylesheet cannot report whether its selector matched; this can, so the
+ * shell knows when the coupling has rotted and SAYS so, instead of presenting
+ * a menu item that silently does nothing.
+ */
+const SETTINGS_CLICK_JS =
+  '(() => { const el = document.querySelector(' + JSON.stringify(SETTINGS_NAV_SELECTOR) + ');' +
+  ' if (!el) return false; el.click(); return true; })()';
+
+/**
+ * Resolve once a webContents has stopped loading, or after `timeoutMs`.
+ *
+ * Needed because `revealWindow()` legitimately CREATES the window when the
+ * previous one was destroyed, and `loadURL` is asynchronous — so without this,
+ * ⌘, on a destroyed window injects its click into a blank page, finds nothing,
+ * and shows the "did not respond" error for a window that was about to work.
+ * Found by reading the call path, not by running it.
+ *
+ * A timeout rather than an unbounded wait: a page that never finishes loading
+ * must still produce the honest error instead of a menu item that hangs.
+ */
+function waitForLoad(wc, timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(); };
+    const timer = setTimeout(done, timeoutMs);
+    wc.once('did-finish-load', done);
+    wc.once('did-fail-load', done);
+  });
+}
+
+/** ⌘, — bring the window forward and put the user on the Settings view. */
+async function openSettingsView() {
+  revealWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.webContents.isLoading()) await waitForLoad(mainWindow.webContents);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  let landed = false;
+  try {
+    // `true` = treat as a user gesture. The click itself does not need it, but
+    // this IS a user gesture and mis-declaring it is how a future action that
+    // does need one fails for no visible reason.
+    landed = await mainWindow.webContents.executeJavaScript(SETTINGS_CLICK_JS, true) === true;
+  } catch {
+    landed = false;
+  }
+  if (landed) return;
+  dialog.showErrorBox(
+    'Could not open Settings',
+    'The Curator’s window did not respond to the menu.\n\n' +
+    'Open Settings with the gear button at the bottom of the left-hand rail.'
+  );
+}
+
+/** Help ▸ Show Logs. */
+async function showLogs() {
+  if (!logsDir) {
+    dialog.showErrorBox(
+      'The log folder is not available yet',
+      'The Curator has not finished starting up. Try again in a moment.'
+    );
+    return;
+  }
+  // openPath resolves with an ERROR STRING rather than rejecting, and it
+  // returns one when the folder does not exist — which is the normal state
+  // until the logger's first lazy write. Reported with the path, so the user
+  // can look for it themselves rather than being told "it failed".
+  let err = '';
+  try { err = await shell.openPath(logsDir); } catch (e) { err = (e && e.message) || String(e); }
+  if (err) {
+    dialog.showErrorBox('Could not open the log folder', `${logsDir}\n\n${err}`);
+  }
+}
+
+/**
+ * ── "Check for Updates…", and why it answers HERE rather than navigating ────
+ *
+ * The three options, and what each one costs:
+ *
+ *   (a) Navigate to Settings ▸ General and start the check there.
+ *       Rejected. The panel renders five states well, but a menu item that
+ *       silently swaps the visible view has no way to say the most common
+ *       answer — "you are up to date" — without the user hunting for where it
+ *       appeared. And it needs TWO renderer couplings landing in order (mount
+ *       the view, then click a button inside it that does not exist until the
+ *       view has rendered), which is a race across a re-render.
+ *
+ *   (b) Answer in a native dialog. CHOSEN. "Check for Updates…" is a macOS
+ *       idiom with a fixed meaning, and the ellipsis promises a dialog. It
+ *       works with no window open, it cannot be missed, and the one action it
+ *       offers is the one the user came for.
+ *
+ *   (c) Both. Rejected — two things happening from one click is how a menu
+ *       item comes to feel unpredictable.
+ *
+ * WHAT IS NOT DUPLICATED, which is the constraint this had to satisfy: which
+ * release is newest, whether it is newer than this build, whether the versions
+ * can be compared at all, whether anything is published, the release URL, and
+ * every failure sentence. All of those arrive on the wire from
+ * GET /api/config/update-check, which is the only side that read the release
+ * list. lib/update-verdict.js contains no version comparator, and the suite
+ * asserts that.
+ *
+ * WHAT IS: four short headline sentences that also exist in Settings ▸ General.
+ * Bounded, named in desktop/README.md, and accepted.
+ */
+async function checkForUpdates() {
+  if (updateCheckInFlight) return;
+  updateCheckInFlight = true;
+  // The menu bar IS the progress indicator: the item relabels to "Checking for
+  // Updates…" and disables. This costs nothing, needs no window, and closes
+  // the gap the maintainer would otherwise see — a live GitHub call with a
+  // 12-second ceiling behind a menu item that looked unchanged.
+  applyMenu();
+
+  try {
+    const verdict = describeUpdate(await fetchUpdateCheck(baseUrl));
+
+    const opts = {
+      type: verdict.type,
+      buttons: verdict.buttons,
+      defaultId: verdict.defaultId,
+      cancelId: verdict.cancelId,
+      title: 'Software Update',
+      message: verdict.message,
+      detail: verdict.detail,
+      // Stop macOS pulling a button out of the row and rendering it as a link
+      // because its label happens to look like one.
+      noLink: true,
+    };
+
+    // Window-modal ONLY when the window is actually on screen. A sheet
+    // attached to a hidden window (⌘W leaves one behind — see the close
+    // handler) or a minimised one is invisible, so the app would appear frozen
+    // with a permanently disabled menu item and no way to dismiss anything.
+    const attachable = mainWindow && !mainWindow.isDestroyed()
+      && mainWindow.isVisible() && !mainWindow.isMinimized();
+    const { response } = attachable
+      ? await dialog.showMessageBox(mainWindow, opts)
+      : await dialog.showMessageBox(opts);
+
+    if (response !== ACTION_ID || !verdict.action) return;
+    if (verdict.action.type === 'open-url') {
+      await shell.openExternal(verdict.action.url);
+    } else if (verdict.action.type === 'open-settings') {
+      await openSettingsView();
+    }
+  } catch (err) {
+    // fetchUpdateCheck never rejects and describeUpdate is pure, so reaching
+    // here means Electron's own dialog or shell call failed. Say so rather
+    // than leaving a menu item that appears to do nothing.
+    dialog.showErrorBox(
+      'Could not check for updates',
+      (err && err.message) ? err.message : String(err)
+    );
+  } finally {
+    updateCheckInFlight = false;
+    applyMenu();
+  }
 }
 
 // ── 3. The window ────────────────────────────────────────────────────────────
