@@ -120,10 +120,25 @@ async function briefStat(project) {
  * Response:
  *   { ok, projects: [{ project, hasBrief, briefUpdatedAt, scopeCount,
  *                      distinctScopeCount, savedCopies, scopesTruncated,
- *                      lastWriteAt, ageSeconds,
- *                      headline, newestScope, newestMachine,
+ *                      lastWriteAt, ageSeconds, writtenAt, writtenAgeSeconds,
+ *                      headline, harness, lastSaveKind, lastSaveNotes,
+ *                      newestScope, newestMachine,
+ *                      harnessShared, harnessSharedScopes, harnessScanned,
  *                      unlistedEntries, unlistedReason }],
  *     total, truncated }
+ *
+ * TWO CLOCKS AND WHY BOTH SHIP: `lastWriteAt`/`ageSeconds` are filesystem
+ * mtime, which git rewrites on checkout, so on a machine that pulls state from
+ * another they are the time of the PULL. `writtenAt`/`writtenAgeSeconds` come
+ * from the journal line the agent wrote and are the save's own clock. Neither
+ * replaces the other — "when did this arrive here" is a real question too —
+ * and `writtenAt` is nullable, so a consumer that falls back must say so.
+ *
+ * STILL CHEAP. Every new field on this row comes out of the journal tail
+ * `listWorkingScopes` has always read to recover the headline; nothing here
+ * opens a file the index did not already open, and nothing here touches the
+ * network or an LLM. The badge that polls this route costs exactly what it
+ * cost before.
  *
  * `scopeCount` counts DISTINCT SCOPES (work-streams); `savedCopies` counts
  * (scope, machine) pairs. See the comment at the derivation for why those are
@@ -205,11 +220,46 @@ router.get('/', async (_req, res) => {
         unlistedReason: (idx.ok && idx.unlistedReason) ? idx.unlistedReason : null,
         // A fact and its ABSENCE stay distinguishable: null means "nothing
         // has ever been saved", never "saved at the epoch" or "0 seconds ago".
+        //
+        // TWO CLOCKS, BOTH NAMED. `lastWriteAt`/`ageSeconds` are `st.mtime` —
+        // when the file last changed on THIS disk, which for state that
+        // arrived over Personal Sync is the moment of the pull. The store now
+        // also returns the agent's own clock from the journal line, and this
+        // row carries both rather than silently swapping one for the other:
+        // an older client keeps reading the field it always read, and a
+        // consumer that wants the truth reads `writtenAt` and says so when it
+        // falls back. `writtenAt` is nullable by design (see the store).
         lastWriteAt: newest ? newest.lastWriteAt : null,
         ageSeconds: newest ? newest.ageSeconds : null,
+        writtenAt: newest ? (newest.writtenAt ?? null) : null,
+        writtenAgeSeconds: newest ? (newest.writtenAgeSeconds ?? null) : null,
         headline: newest ? newest.headline : null,
+        // Which tool saved it, and whether that save was complete. Both come
+        // out of the journal line the store already parsed for the headline,
+        // so this row costs no extra read.
+        harness: newest ? (newest.harness ?? null) : null,
+        lastSaveKind: newest ? (newest.lastSaveKind ?? null) : null,
+        lastSaveNotes: newest && Array.isArray(newest.lastSaveNotes) ? newest.lastSaveNotes : [],
         newestScope: newest ? newest.scope : null,
         newestMachine: newest ? newest.machine : null,
+        // ── TWO HARNESSES WRITING ONE FOLDER ────────────────────────────
+        //
+        // `state/<scope>/<machine>/` has no harness segment and `<machine>` is
+        // per INSTALLATION, so two agent tools on one computer share a folder
+        // and each save overwrites the other's handoff. The journal survives
+        // it (append-only, and every line carries `harness`), which is what
+        // makes it reportable at all — see the store's own block for why the
+        // fix is a reading rather than a path change.
+        //
+        // SCOPED HONESTLY: the store computes this only for the pairs whose
+        // journal it read, which is the capped `scopes` slice. So this is a
+        // statement about the newest pairs, and `harnessScanned` beside it
+        // says how many that was rather than letting a cap read as a census.
+        harnessShared: scopes.some((s) => s.harnessShared === true),
+        harnessSharedScopes: scopes.filter((s) => s.harnessShared === true)
+          .slice(0, 10)
+          .map((s) => ({ scope: s.scope, machine: s.machine, harnesses: s.harnesses || [] })),
+        harnessScanned: scopes.length,
       });
     }
 

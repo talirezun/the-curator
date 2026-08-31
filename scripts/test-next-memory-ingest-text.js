@@ -192,8 +192,13 @@ function lift(names, src, label) {
 }
 
 function memRenderers(stateObj) {
-  const body = lift(['formatAge', 'splitHandoffPreamble', 'renderHandoff', 'renderJournal',
-    'renderBrief', 'renderAbout'], memSrc, 'memory.js');
+  // `effectiveSave` joins the list because renderHandoff now reads the save
+  // time through it: the shipped field `current.savedAt` is filesystem mtime,
+  // which git rewrites on checkout, so the byline was dating every synced
+  // handoff to the moment of the pull. It falls back to mtime when no journal
+  // entry carried a time, which is what the fixtures below exercise.
+  const body = lift(['formatAge', 'effectiveSave', 'splitHandoffPreamble', 'renderHandoff',
+    'renderJournal', 'renderBrief', 'renderAbout'], memSrc, 'memory.js');
   return new Function('state', 'escapeHtml', 'icon', 'renderMarkdown', 'gatedLoader', 'loadGate',
     'JOURNAL_PAGE', 'JOURNAL_MORE',
     'renderDescription', 'renderStatus', 'renderReadout', 'renderExplainer', body)(

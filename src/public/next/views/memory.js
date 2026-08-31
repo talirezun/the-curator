@@ -414,6 +414,44 @@ function screenSignature() {
   const pickerScopes = pr && Array.isArray(pr.scopes)
     ? [...new Set(pr.scopes.map((s) => s.scope))]
     : null;
+  // ── THE SAVE-STATUS STRIP IS A CLOCK, AND A CLOCK HAS TO TICK ──────────
+  //
+  // The same lesson as `pickerScopes` directly above, one pane over: a no-op
+  // guard that cannot see a pane is not a guard for that pane. The strip reads
+  // from `state.detail` and from every row of `state.projectRead.scopes`, and
+  // NOTHING the signature looked at could see either — so a save into a
+  // different scope of the same project, or the reading simply ageing from
+  // "59 min ago" into "1 hr ago", would leave the strip painting a figure that
+  // had stopped being true.
+  //
+  // Folded through `formatAge` for the same reason `projectMetaLine` is: the
+  // signature has to change exactly when the PIXELS would. A raw timestamp
+  // would never change on its own (so the age would freeze), and a raw age in
+  // seconds would change every single tick (so every poll would re-render,
+  // closing an open picker and churning focus on a screen nobody touched).
+  // The rendered word changes when — and only when — the freshness step does,
+  // because both are cut on formatAge's own unit bands.
+  const cur = state.detail && state.detail.current && state.detail.current.present
+    ? state.detail.current : null;
+  const savedMark = cur
+    ? [formatAge(effectiveSave(cur).seconds), effectiveSave(cur).source, cur.lastSaveKind || null]
+    : null;
+  // EXACTLY WHAT THE STRIP PAINTS FROM THE PAIR LIST, and nothing else. The
+  // first draft folded in every row, which made a DUPLICATED pair read as a
+  // change while the strip's output was byte-identical — the over-firing side
+  // of this guard, and the one that closes a picker somebody has open. The
+  // strip reads two things out of `scopes`: which pair is newest, and which
+  // pairs two harnesses are sharing.
+  const newest = pr && Array.isArray(pr.scopes) ? newestPair(pr.scopes) : null;
+  const newestMark = newest
+    ? [newest.scope, newest.machine || null, formatAge(effectiveSave(newest).seconds)] : null;
+  const sharedMark = pr && Array.isArray(pr.scopes)
+    ? pr.scopes.filter((s) => s && s.harnessShared === true)
+      .map((s) => [s.scope, (s.harnesses || []).join('|')])
+    : null;
+  const briefMark = pr && pr.brief && pr.brief.present
+    ? formatAge(effectiveSave({ savedAt: pr.brief.updatedAt }).seconds) : null;
+
   return JSON.stringify([
     state.activeProject,
     state.staleWrite,
@@ -421,6 +459,10 @@ function screenSignature() {
     state.scope,
     state.machine,
     pickerScopes,
+    savedMark,
+    newestMark,
+    sharedMark,
+    briefMark,
     state.projects.map((p) => [p.project, p.hasBrief, p.scopeCount > 0, projectMetaLine(p)]),
   ]);
 }
@@ -745,6 +787,89 @@ export function formatAge(seconds) {
 }
 
 /**
+ * WHICH CLOCK A ROW'S AGE CAME FROM, and how many seconds it is.
+ *
+ * ── THE DEFECT THIS EXISTS FOR ───────────────────────────────────────────
+ * Every age on this screen used to come from `ageSeconds` / `savedAt`, which
+ * the store derives from filesystem mtime. **git sets mtime to the moment it
+ * wrote the file locally**, so state that arrives over Personal Sync — by
+ * clone and by incremental pull alike — carries the mtime of the PULL. On a
+ * two-machine setup that made every incoming handoff read as brand new, and
+ * "just now" over a day-old handoff is worse than no reading at all: it is the
+ * exact reading that stops someone looking.
+ *
+ * The store now returns the agent's own clock beside it (`writtenAt`,
+ * `writtenAgeSeconds`, from the journal line the save wrote). It is NULLABLE —
+ * the journal append is best-effort, a hand-edited line may carry no usable
+ * `at`, and a folder can predate journalling — so this function returns the
+ * SOURCE alongside the number and every caller is expected to say which one it
+ * showed. That is the rule the rest of this view already follows: a fact and
+ * its absence must not collapse into one value.
+ *
+ * ONE function, every surface. The sidebar row, the freshness strip, the
+ * handoff card's byline and the machine picker all read through here, so they
+ * cannot come to disagree about what "2 min ago" means on one screen.
+ *
+ * Accepts either shape the API returns — an index row (`writtenAgeSeconds` /
+ * `ageSeconds` / `lastWriteAt`) or `current` (`writtenAgeSeconds` / `savedAt`)
+ * — because they are the same two facts under two names, and a second
+ * hand-maintained accessor per shape is how they would drift apart.
+ *
+ * @returns {{seconds: number|null, at: string|null, source: 'agent'|'filesystem'|null}}
+ */
+export function effectiveSave(row, now = Date.now()) {
+  const none = { seconds: null, at: null, source: null };
+  if (!row || typeof row !== 'object') return none;
+  const secs = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const fromStamp = (s) => {
+    if (typeof s !== 'string' || !s) return null;
+    const t = Date.parse(s);
+    return Number.isFinite(t) ? Math.max(0, Math.round((now - t) / 1000)) : null;
+  };
+  // The agent's clock wins whenever it is there at all.
+  const wAge = secs(row.writtenAgeSeconds) ?? fromStamp(row.writtenAt);
+  if (wAge !== null) return { seconds: wAge, at: row.writtenAt || null, source: 'agent' };
+  const fsAt = row.savedAt || row.arrivedAt || row.lastWriteAt || null;
+  const fAge = secs(row.ageSeconds) ?? fromStamp(fsAt);
+  if (fAge !== null) return { seconds: fAge, at: fsAt, source: 'filesystem' };
+  return none;
+}
+
+/**
+ * THE FIVE FRESHNESS STEPS, and why they are exactly these five.
+ *
+ * The question this screen has to answer in about a second is "am I saved?",
+ * asked by someone whose context is running out and who is least able to go
+ * reading. A word alone does not do it — "5 min ago" and "4 hr ago" are the
+ * same shape at a glance — so the reading carries a pre-attentive mark too.
+ *
+ * The steps are NOT tuned constants. They are formatAge's own unit bands, so
+ * the mark and the word change at the same instant and can never contradict
+ * each other on screen:
+ *
+ *   4  under a minute   "just now"        an agent is saving right now
+ *   3  minutes          "N min ago"       this session
+ *   2  hours            "N hr ago"        today
+ *   1  days             "N days ago"      this week
+ *   0  weeks and older  "N weeks ago"+    dormant
+ *
+ * A NULL AGE IS NULL, not step 0. "We do not know when this was saved" and
+ * "this was saved a long time ago" are different facts and the mark must not
+ * merge them.
+ *
+ * NOT a bar and not a percentage: "how old" has no maximum, so a half-full
+ * meter would be inventing one. Five discrete states, always beside the words.
+ */
+export function freshnessStep(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds < 60) return 4;
+  if (seconds < 3600) return 3;
+  if (seconds < 86400) return 2;
+  if (seconds < 604800) return 1;
+  return 0;
+}
+
+/**
  * One-line summary of a project's memory for the sidebar row.
  *
  * "No state saved yet" and "a brief, no sessions yet" are DIFFERENT facts and
@@ -754,7 +879,12 @@ export function formatAge(seconds) {
  */
 export function projectMetaLine(p) {
   if (!p) return '';
-  const age = formatAge(p.ageSeconds);
+  // THE AGENT'S CLOCK WHERE THERE IS ONE. This row said "just now" for every
+  // project pulled from another machine, because `ageSeconds` is mtime and git
+  // rewrites mtime on checkout. effectiveSave falls back to mtime when the
+  // journal carries no usable time, so a row that never had a journal reads
+  // exactly as it did before.
+  const age = formatAge(effectiveSave(p).seconds);
   if (p.scopeCount > 0) {
     const scopes = p.scopeCount + ' scope' + (p.scopeCount === 1 ? '' : 's');
     return age ? scopes + ' · ' + age : scopes;
@@ -1026,6 +1156,13 @@ function renderProject() {
   // "Scope main" label affirms "there is exactly one scope", and it must not
   // say that while a second scope directory sits unread on disk.
   const unlistedNote = renderUnlistedNote(read, d);
+  // FIRST, ABOVE EVERYTHING IT COULD BE QUALIFIED BY, and that placement is
+  // the feature. It answers "am I saved?" — asked by someone with almost no
+  // context left — so it must not sit under two conditional notes and a pair
+  // of pickers on the days those appear. The stale notice renders directly
+  // beneath it, so when a save has landed since the page loaded the reading
+  // and the offer to reload read as one block.
+  const saveStatus = renderSaveStatus(read, d);
   // Sits with the unlisted note, above the controls, for the same reason: it
   // qualifies the claim everything below it is about to make. Present in
   // every content branch — the empty-project one most of all, where "nothing
@@ -1033,7 +1170,7 @@ function renderProject() {
   const staleNote = renderStaleNotice();
 
   if (!scopes.length && !hasBrief) {
-    return header + staleNote + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
+    return header + saveStatus + staleNote + unlistedNote + renderEmptyProject(unlisted) + renderAbout();
   }
 
   // A brief with no handoff: the store says so (`message`) and the view used
@@ -1045,13 +1182,14 @@ function renderProject() {
   // let agents save), so it is a common first experience.
   if (!scopes.length) {
     return (
-      header + staleNote + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
+      header + saveStatus + staleNote + unlistedNote + renderBriefOnlyNotice(read, unlisted) +
       renderBrief(read, true) + renderAbout()
     );
   }
 
   return (
     header +
+    saveStatus +
     staleNote +
     unlistedNote +
     renderScopeControls(scopes) +
@@ -1093,6 +1231,224 @@ function renderStaleNotice() {
       '<button type="button" class="btn btn-secondary btn-xs mem-stale-btn" id="mem-reload">Reload</button>' +
     '</div>'
   );
+}
+
+/**
+ * "AM I SAVED?" — the one question this screen has to answer in a second.
+ *
+ * ── WHY IT IS A STRIP AT THE TOP AND NOT A FIELD ON THE DOCUMENT ─────────
+ * Reported from real use: *"when I'm using the Curator memory I'm worried all
+ * the time about whether the scopes are updated. When we are approaching the
+ * end of the context window I'm always wondering if we have updated the scope,
+ * and if the standing brief is up to date."* That is asked by someone with
+ * very little context left to spend, so the answer has to be above everything
+ * that qualifies it and has to survive a one-second glance.
+ *
+ * ── THE FOUR THINGS IT SAYS, AND WHY EACH EARNS ITS LINE ────────────────
+ *
+ *  1. THIS SCOPE. Pip + age + which scope + which harness. The pip is the
+ *     pre-attentive half (freshnessStep); the words are the exact half. This
+ *     is the whole answer on a healthy day and it is one line.
+ *
+ *  2. ANY SCOPE IN THIS PROJECT. Rendered ONLY when some other (scope,
+ *     machine) in this project holds something NEWER than what you are
+ *     looking at. That is a different question from 1 and the difference is
+ *     the one that bites: an agent told to "reuse an existing scope" can be
+ *     saving beside you into a scope you are not watching, and the screen
+ *     would otherwise look calm.
+ *
+ *  3. WHETHER THAT SAVE WAS COMPLETE. A save is not the same as a *complete*
+ *     save. The store trims an over-budget handoff rather than refusing it —
+ *     the right call, because a refused save near the end of a context loses
+ *     the handoff outright — and it discloses the trim in the journal line's
+ *     notes. "Saved 2 minutes ago" over a trimmed handoff is a comforting
+ *     lie, so the reading carries the verdict the store already computed
+ *     (`lastSaveKind`) and never renders a bare age over `trimmed`.
+ *
+ *  4. THE STANDING BRIEF, on its own much slower clock. It changes on the
+ *     order of weeks and it is deliberately NOT given a freshness pip: an old
+ *     brief is not a stale one, and marking it the way a handoff is marked
+ *     would say something false. It gets a plain line, always, because it is
+ *     the second half of the question that was asked.
+ *
+ * ── WHAT IT REFUSES TO SAY ───────────────────────────────────────────────
+ * It never says "you are saved". It cannot know that: it knows when the last
+ * save happened, not whether anything has changed since. The label is "Last
+ * saved" for that reason, and the inference is left where it belongs.
+ *
+ * Nothing here writes, polls, or fetches; it is a projection of the two reads
+ * this view already has.
+ */
+function renderSaveStatus(read, d) {
+  const scopes = (read && Array.isArray(read.scopes)) ? read.scopes : [];
+  const brief = read && read.brief;
+  const doc = d && d.current && d.current.present ? d.current : null;
+
+  // ── THE READING SURVIVES A SCOPE SWITCH ──────────────────────────────────
+  // loadScope drops `state.detail` before it paints, deliberately, so the old
+  // machine list and the old handoff are never shown under the new scope's
+  // label. That would take the reading off screen for the length of every
+  // fetch — a figure that blinks out whenever you touch the picker is not an
+  // instrument. The index row for the same (scope, machine) carries every
+  // field this needs, and it is already in hand, so it stands in. Anything
+  // computed from it is the SAME store fields under the same names; there is
+  // no second measurement here that could disagree with the first.
+  const shownScope = (d && d.scope) || state.scope || null;
+  const shownMachine = (d && d.machine) || state.machine || null;
+  const row = !doc && shownScope
+    ? (scopes.find((s) => s && s.scope === shownScope && (!shownMachine || s.machine === shownMachine))
+      || scopes.find((s) => s && s.scope === shownScope) || null)
+    : null;
+  const cur = doc || row;
+
+  const lines = [];
+  let primary = '';
+
+  if (cur) {
+    const eff = effectiveSave(cur);
+    const step = freshnessStep(eff.seconds);
+    const age = formatAge(eff.seconds);
+    // Provenance is the scope you are in and the tool that wrote it — the two
+    // facts that turn "2 min ago" into "2 min ago, by the thing I am running".
+    const prov = [shownScope, doc ? harnessOf(d) : (row && row.harness) || null]
+      .filter(Boolean).join(' · ');
+    // SAY WHICH CLOCK. `filesystem` means no journal line carried a usable
+    // time, so the figure is the file's own timestamp — which on a computer
+    // that syncs is when the file ARRIVED. Stated in the reading itself, not
+    // in a tooltip: this view has already had to promote two `title=` facts
+    // into visible text for exactly this reason.
+    const clock = eff.source === 'filesystem' ? 'file time' : null;
+    const kind = cur.lastSaveKind || null;
+
+    if (age) {
+      primary =
+        '<div class="mem-save-main">' +
+          '<span class="mem-save-pip' + (step === null ? ' mem-save-pip-unknown' : ' mem-save-pip-s' + step) +
+            '" aria-hidden="true"></span>' +
+          renderReadout({
+            label: 'Last saved',
+            value: age,
+            provenance: [prov, clock].filter(Boolean).join(' · ') || undefined,
+          }) +
+          // The badge is on the READING, not in a note underneath it. A
+          // completeness caveat that lives below the figure is a caveat the
+          // one-second glance never reaches.
+          (kind === 'trimmed'
+            ? '<span class="mem-badge mem-badge-attn">incomplete</span>' : '') +
+        '</div>';
+    }
+
+    if (kind === 'trimmed') {
+      lines.push(saveLine('alertTriangle', 'loud',
+        'That save did not fit the state budget, so part of it was trimmed before it was written. '
+        + 'The handoff below is missing what the note names — ask the agent to save again, shorter. '
+        + firstNote(cur.lastSaveNotes), true));
+    } else if (kind === 'replaced') {
+      lines.push(saveLine('alertTriangle', '',
+        'That save deliberately replaced a larger handoff. Nothing the agent sent was lost, '
+        + 'but the longer document it overwrote is not recoverable. ' + firstNote(cur.lastSaveNotes), true));
+    }
+
+    if (eff.source === 'filesystem') {
+      lines.push(saveLine('alertTriangle', '',
+        'No journal entry carried a save time for this handoff, so the reading above is the file’s own '
+        + 'timestamp. On a computer that syncs, that is when the file arrived here, not when it was written.'));
+    } else {
+      // BOTH CLOCKS, when they genuinely disagree. Under two minutes they are
+      // the same event to a human — a save's own write takes milliseconds — so
+      // a gap larger than that means the file changed on this disk well after
+      // the agent wrote it, which is what a pull looks like.
+      const arrived = effectiveSave({ savedAt: cur.arrivedAt || cur.savedAt || cur.lastWriteAt });
+      if (arrived.seconds !== null && eff.seconds !== null && eff.seconds - arrived.seconds > 120) {
+        lines.push(saveLine('', '',
+          'This file arrived on this computer ' + (formatAge(arrived.seconds) || 'recently')
+          + ' — the reading above is the agent’s own clock, not the file’s.'));
+      }
+    }
+  }
+
+  // ── TWO HARNESSES, ONE HANDOFF FILE ─────────────────────────────────────
+  // `state/<scope>/<machine>/` has no harness segment and `<machine>` is per
+  // INSTALLATION, so two agent tools on one computer write the same
+  // `current.md` and each save silently replaces the other's. The store
+  // detects it from the append-only journal, which survives the collision
+  // because every line carries `harness`. Named here because the remedy is the
+  // user's — give each tool its own scope — and nothing else on this screen
+  // would ever show it.
+  for (const s of scopes.filter((x) => x && x.harnessShared === true).slice(0, 3)) {
+    const who = (s.harnesses || []).slice(0, 4).map((h) => escapeHtml(h)).join(' and ');
+    lines.push(saveLine('alertTriangle', 'loud',
+      '<b>Two tools are writing <span class="mono">' + escapeHtml(s.scope) + '</span>.</b> '
+      + (who ? who + ' have ' : 'They have ')
+      + 'both saved into the same handoff file, and a save overwrites — so each one has replaced the '
+      + 'other’s. The journal below keeps both trails. Give each tool its own scope and they stop colliding.',
+      true));
+  }
+
+  // ── NEWER STATE SOMEWHERE ELSE IN THIS PROJECT ──────────────────────────
+  const newest = newestPair(scopes);
+  if (newest && cur) {
+    const here = effectiveSave(cur).seconds;
+    const there = effectiveSave(newest).seconds;
+    const samePair = newest.scope === shownScope && newest.machine === shownMachine;
+    if (!samePair && there !== null && (here === null || there < here - 60)) {
+      lines.push(saveLine('', '',
+        'Newer state in this project: <span class="mono">' + escapeHtml(newest.scope) + '</span>'
+        + (newest.machine && newest.machine !== shownMachine
+          ? ' on <span class="mono">' + escapeHtml(newest.machine) + '</span>' : '')
+        + ' — ' + escapeHtml(formatAge(there) || 'unknown age') + '.', true));
+    }
+  }
+
+  // ── THE STANDING BRIEF — always, and on its own terms ───────────────────
+  if (read) {
+    const briefAge = brief && brief.present
+      ? formatAge(effectiveSave({ savedAt: brief.updatedAt }).seconds) : null;
+    lines.push(saveLine('', 'brief',
+      'Standing brief — ' + (brief && brief.present
+        ? escapeHtml(briefAge || 'updated at an unknown time')
+        : 'not written yet'), true));
+  }
+
+  if (!primary && !lines.length) return '';
+  return '<section class="mem-save" aria-label="Save status">' + primary + lines.join('') + '</section>';
+}
+
+/** The newest (scope, machine) in a project by the AGENT'S clock where it exists. */
+function newestPair(scopes) {
+  let best = null, bestAge = null;
+  for (const s of scopes) {
+    const age = effectiveSave(s).seconds;
+    if (age === null) continue;
+    if (bestAge === null || age < bestAge) { best = s; bestAge = age; }
+  }
+  return best;
+}
+
+/** The harness that wrote the handoff on screen, from the journal's newest entry. */
+function harnessOf(d) {
+  const j0 = d && d.journal && d.journal.entries && d.journal.entries.length ? d.journal.entries[0] : null;
+  return (j0 && typeof j0.harness === 'string' && j0.harness) ? j0.harness : null;
+}
+
+/** The first of a save's disclosure notes, escaped, or nothing. */
+function firstNote(notes) {
+  const n = Array.isArray(notes) ? notes.find((x) => typeof x === 'string' && x) : null;
+  return n ? escapeHtml(String(n)) : '';
+}
+
+/**
+ * One qualifying line in the strip.
+ *
+ * `html` is opt-in and the CALLER owns escaping when it opts in — the same
+ * contract renderDescription uses, and every interpolated value above goes
+ * through escapeHtml at its own site.
+ */
+function saveLine(iconName, tone, text, html = false) {
+  const cls = 'mem-save-line' + (tone === 'loud' ? ' mem-save-line-loud' : '')
+    + (tone === 'brief' ? ' mem-save-line-brief' : '');
+  return '<div class="' + cls + '">' + (iconName ? icon(iconName, 13) : '')
+    + '<span>' + (html ? text : escapeHtml(text)) + '</span></div>';
 }
 
 /**
@@ -1289,7 +1645,12 @@ function renderScopeControls(scopes) {
       return {
         value: m.machine,
         label: m.machine + (sel && selectedIsMine ? MINE : ''),
-        detail: formatAge(m.ageSeconds) || 'unknown age',
+        // THE AGENT'S CLOCK, where the store could recover one. This detail
+        // was mtime, so on the one control whose entire job is "which computer
+        // wrote this, and when" every machine that arrived over sync showed
+        // the age of the pull. effectiveSave falls back to mtime and the strip
+        // above says when it had to.
+        detail: formatAge(effectiveSave(m).seconds) || 'unknown age',
         typeahead: m.machine,
       };
     }),
@@ -1355,9 +1716,14 @@ function renderHandoff() {
     );
   }
 
-  const savedAge = formatAge(
-    d.current.savedAt ? Math.max(0, Math.round((Date.now() - Date.parse(d.current.savedAt)) / 1000)) : null
-  );
+  // Through effectiveSave, exactly as the strip above does, so the document's
+  // own byline and the freshness reading at the top of the pane are ONE
+  // measurement rendered twice rather than two that can disagree. The byline
+  // stays because it is the document's provenance — which machine, harness and
+  // model produced THIS text — and the strip answers a wider question; what
+  // they must never do is name two different times for one save.
+  const savedWhen = effectiveSave(d.current);
+  const savedAge = formatAge(savedWhen.seconds);
   // WHEN this was saved and WHO saved it are one measurement, and they were
   // two elements in two places (`.mem-doc-stamp` in the head, `.mem-doc-who`
   // under the headline) styled to look like quiet chrome. renderReadout is the
@@ -1380,8 +1746,14 @@ function renderHandoff() {
   // The exact ISO stamp stays reachable on hover, which formatAge's own
   // docblock relies on when it rounds to "2 hr ago". A wrapper carries it
   // because a readout states a reading and takes no tooltip of its own.
-  const stamp = readout && d.current.savedAt
-    ? '<span class="mem-doc-stamp" title="' + escapeHtml(d.current.savedAt) + '">' + readout + '</span>'
+  // When the two clocks are both known the tooltip names BOTH, because that is
+  // the one place the exact pair is worth having; when only the file's time is
+  // known it carries that alone, unqualified, exactly as it always did.
+  const stampTitle = savedWhen.source === 'agent' && savedWhen.at
+    ? 'Saved ' + savedWhen.at + (d.current.arrivedAt ? ' · arrived here ' + d.current.arrivedAt : '')
+    : (d.current.savedAt || null);
+  const stamp = readout && stampTitle
+    ? '<span class="mem-doc-stamp" title="' + escapeHtml(stampTitle) + '">' + readout + '</span>'
     : readout;
 
   const notes = [];

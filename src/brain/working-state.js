@@ -197,6 +197,19 @@ export const MAX_PROSE_CHARS = 8000;
 export const MAX_STATE_BYTES = 48 * 1024;
 export const MAX_BRIEF_BYTES = 32 * 1024;
 export const MAX_JOURNAL_TAIL_BYTES = 1024 * 1024;
+/**
+ * The tail an INDEX row reads, which is a much smaller budget than a targeted
+ * read's. It was an unnamed `16 * 1024` at the one call site; it is named here
+ * because a second call site now reads the same tail for the same reason (see
+ * readPairJournalFacts), and two hand-typed copies of one bound is the shape
+ * this repo keeps re-learning.
+ *
+ * It bounds what the harness-sharing signal can SEE, and that is stated on the
+ * field rather than implied: `entriesScanned` is returned beside every verdict
+ * derived from it, so a caller can tell "no second harness in the recent
+ * journal" from "no second harness ever".
+ */
+export const INDEX_JOURNAL_TAIL_BYTES = 16 * 1024;
 export const DEFAULT_JOURNAL_ENTRIES = 10;
 export const MAX_JOURNAL_ENTRIES = 50;
 export const MAX_INDEX_ENTRIES = 60;
@@ -1962,14 +1975,223 @@ export function findDuplicateHeadings(text, sections) {
   return out;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// TWO FACTS THE JOURNAL ALREADY CARRIED AND NOBODY READ
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Every index row already parses the tail of `journal.jsonl` to recover the
+// headline, keeps `last.headline`, and throws the rest of the parsed object
+// away. Two of the fields it threw away answer questions the surfaces above
+// were getting WRONG:
+//
+// (1) `at` — WHEN AN AGENT SAVED, as against when the file last changed on
+//     this disk. `lastWriteAt`/`ageSeconds` come from `st.mtime`, and git
+//     sets mtime to the moment IT wrote the file locally. So on a second
+//     machine every handoff that arrives over Personal Sync — by clone and by
+//     incremental pull alike — has an mtime of the moment of the pull, and
+//     the app has been reporting a day-old handoff as "just now". Both facts
+//     are real and they answer different questions; neither replaces the
+//     other, so both are returned and named for what they are:
+//
+//         lastWriteAt / ageSeconds     this disk's clock — when it ARRIVED
+//         writtenAt   / writtenAgeSeconds   the agent's clock — when it was SAVED
+//
+//     `writtenAt` is NULLABLE. The journal append is best-effort (it never
+//     fails a save), a hand-edited or merge-mangled line may carry no usable
+//     `at`, and a folder can predate journalling entirely. A consumer that
+//     falls back to mtime must SAY it fell back — an unqualified age that is
+//     sometimes one clock and sometimes the other is worse than either.
+//
+// (2) `harness` — WHICH TOOL WROTE IT. The state path is
+//     `state/<scope>/<machine>/`, and `<machine>` is per INSTALLATION
+//     (`<hostname-slug>-<install-id>`), not per process. Two harnesses on one
+//     computer — opencode and Claude Code, say — therefore resolve to the
+//     SAME folder, and `skills/curator-continuity` tells both of them to
+//     "reuse an existing scope whenever the work continues", so both land on
+//     `main`. Each save overwrites the other's `current.md`, silently: from
+//     the store's point of view an overwrite is the correct behaviour, and
+//     the one guard that could refuse it (`would-replace-larger-state`) only
+//     fires under REPLACE_RATIO of the stored body — two working handoffs are
+//     both substantial, so neither is refused.
+//
+//     THE JOURNAL SURVIVES THE COLLISION, because it is append-only and every
+//     line already carries `harness`. That is the only reason the condition is
+//     detectable at all, and it is why the fix is a READING rather than a
+//     write: adding a `<harness>` path segment would change the layout of a
+//     SYNCED store that already has data on real machines, and the
+//     per-machine path is load-bearing for the sync-merge guarantee
+//     (docs/working-state.md, "Why <machine> is in the path"). Making the
+//     collision VISIBLE costs no I/O, no migration and no new failure mode;
+//     the remedy — give each tool its own scope — is the user's to apply.
+// ─────────────────────────────────────────────────────────────────────────
+
 /**
- * Index every (scope, machine) pair that has state, newest first.
+ * A note that reports CONTENT LOSS, and one that reports a deliberate
+ * replacement. Kept next to each other because they are the two verdicts
+ * `classifySaveNotes` must not collapse into the neutral one.
  *
- * This is a HARD requirement, not a convenience: an agent starting cold with
- * no cwd signal, asked to "carry on with the auth work", cannot resolve that
- * to a scope slug it has never seen. Without the index it would have to
- * guess. Bounded at MAX_INDEX_ENTRIES.
+ * The word lists are the store's OWN vocabulary — `finaliseNotes`, the
+ * per-field sanitisers and the over-budget omission notes are the only things
+ * that write these strings — so classifying by text is reading our own output,
+ * not guessing at somebody else's. The invariant that makes it sound is that
+ * no note which is NOT a loss may use a loss word; `scripts/test-memory-truth.js`
+ * asserts that over the real notes the real save path produces.
  */
+const SAVE_NOTE_LOSS_RE = /\b(dropped|omitted|truncated|rejected|discarded|lost)\b/i;
+const SAVE_NOTE_REPLACED_RE = /\boverwrote\b/i;
+
+/**
+ * What a save's notes say about whether the save was COMPLETE.
+ *
+ * Four verdicts and a null, and the null is the important one:
+ *
+ *   null          there is no journal line, so we do not know. NOT "complete".
+ *   'complete'    a journal line with no notes at all — nothing to disclose.
+ *   'noted'       notes, none of which report content loss. The commonest is
+ *                 an observation saved without a time: the save time was
+ *                 filled in AND disclosed, which is the store doing its job.
+ *                 Also where the machine-identity warning lands — that note is
+ *                 about the FOLDER, not about the content, and the content was
+ *                 stored in full.
+ *   'replaced'    a larger prior handoff was deliberately overwritten
+ *                 (`replace: true`). Nothing the caller sent was lost, but
+ *                 something was, so 'complete' would be false comfort.
+ *   'trimmed'     content was dropped, omitted or truncated. This is the one
+ *                 that must never be rendered as "saved, you are fine".
+ *
+ * The bucket for "notes, but nothing lost" is `noted` rather than
+ * `normalised` deliberately: not every such note is a normalisation, and a
+ * name that is right for the common case and wrong for the machine-identity
+ * warning is the kind of almost-true label this module exists to refuse.
+ */
+export function classifySaveNotes(notes) {
+  if (!Array.isArray(notes)) return null;
+  const list = notes.filter((n) => typeof n === 'string' && n);
+  if (!list.length) return 'complete';
+  if (list.some((n) => SAVE_NOTE_LOSS_RE.test(n))) return 'trimmed';
+  if (list.some((n) => SAVE_NOTE_REPLACED_RE.test(n))) return 'replaced';
+  return 'noted';
+}
+
+/**
+ * Everything an index row can learn from a (scope, machine)'s journal tail.
+ *
+ * PURE, and exported, so the harness-sharing rule can be driven over crafted
+ * sequences offline rather than inferred from a live tree. `now` is a
+ * parameter for the same reason.
+ *
+ * `entries` arrives OLDEST-FIRST, exactly as `parseJournalLines` returns it.
+ *
+ * ── THE HARNESS-SHARING RULE, and why it is ALTERNATION and not a clock ───
+ * The tempting test is "two harnesses saved close together in time", which
+ * needs a window, and a window is a tuned constant that will be wrong on
+ * somebody's machine. The structural test needs none:
+ *
+ *   · a user who MIGRATED from one tool to another produces exactly ONE
+ *     transition ever — A A A B B B — and the single overwrite that happened
+ *     at the handover is history, not a live condition;
+ *   · two tools working the same scope INTERLEAVE — A B A B — so each has
+ *     overwritten the other at least once and will do so again.
+ *
+ * So `harnessShared` requires at least two distinct harnesses AND at least
+ * two transitions. One transition is reported through `harnessSwitches` and
+ * is deliberately not escalated.
+ *
+ * Entries with no `harness` are skipped when counting transitions rather than
+ * treated as a third value: an unnamed save is missing evidence, and letting
+ * it break an A…A run would manufacture transitions out of silence. They are
+ * counted in `entriesWithoutHarness` so a caller can see how much of the
+ * window was blind.
+ */
+export function journalFacts(entries, now = Date.now()) {
+  const facts = {
+    headline: null,
+    writtenAt: null,
+    writtenAgeSeconds: null,
+    harness: null,
+    model: null,
+    lastSaveKind: null,
+    lastSaveNotes: [],
+    harnesses: [],
+    harnessSwitches: 0,
+    harnessShared: false,
+    entriesScanned: 0,
+    entriesWithoutHarness: 0,
+  };
+  if (!Array.isArray(entries) || !entries.length) return facts;
+  facts.entriesScanned = entries.length;
+
+  const meta = (v) => (typeof v === 'string' && v.trim()
+    ? neutraliseProtocol(v).slice(0, MAX_META_CHARS) : null);
+
+  const last = entries[entries.length - 1];
+  if (last && typeof last.headline === 'string') {
+    facts.headline = neutraliseProtocol(last.headline).slice(0, MAX_HEADLINE_CHARS);
+  }
+  if (last && isIsoish(last.at)) {
+    facts.writtenAt = new Date(last.at).toISOString();
+    // Clamped at 0. A save stamped in the future (a machine with a skewed
+    // clock, which sync makes reachable) must read as "just now" rather than
+    // as a negative age that every downstream formatter renders as absent.
+    facts.writtenAgeSeconds = Math.max(0, Math.round((now - Date.parse(facts.writtenAt)) / 1000));
+  }
+  facts.harness = last ? meta(last.harness) : null;
+  facts.model = last ? meta(last.model) : null;
+
+  const notes = Array.isArray(last?.rejections)
+    ? last.rejections.filter((n) => typeof n === 'string' && n)
+      .slice(0, MAX_NOTES).map((n) => neutraliseProtocol(n).slice(0, MAX_ITEM_CHARS))
+    : [];
+  facts.lastSaveNotes = notes;
+  // The verdict is taken over the notes AS PERSISTED, not over the trimmed
+  // copy above: a note pushed past MAX_NOTES still happened. `rejections` is
+  // already capped at MAX_NOTES by finaliseNotes on the write side, so the two
+  // agree in practice; classifying the raw array keeps that true if it stops.
+  facts.lastSaveKind = classifySaveNotes(
+    Array.isArray(last?.rejections) ? last.rejections : (last ? [] : null));
+
+  const named = [];
+  for (const e of entries) {
+    const h = meta(e && e.harness);
+    if (h) named.push(h); else facts.entriesWithoutHarness++;
+  }
+  const distinct = [];
+  for (let i = named.length - 1; i >= 0; i--) {          // newest-first
+    if (!distinct.includes(named[i])) distinct.push(named[i]);
+  }
+  facts.harnesses = distinct;
+  let switches = 0;
+  for (let i = 1; i < named.length; i++) if (named[i] !== named[i - 1]) switches++;
+  facts.harnessSwitches = switches;
+  // `distinct.length > 1` is REDUNDANT WITH `switches >= 2`, and that is
+  // measured rather than assumed: `switches` counts adjacent differences among
+  // the NAMED entries, so any switch at all already implies two distinct
+  // values. A mutation deleting the first clause runs GREEN across every suite
+  // — reported rather than filed, and kept for the same reason
+  // `refreshScopeList`'s `!state.scope` check is kept in views/memory.js: it
+  // says what the rule MEANS, and it is what still holds if the transition
+  // count is ever loosened to 1 (a mutation removing THAT clause reds).
+  facts.harnessShared = distinct.length > 1 && switches >= 2;
+  return facts;
+}
+
+/**
+ * Read one (scope, machine)'s journal tail and reduce it to `journalFacts`.
+ *
+ * ONE reader, two call sites (the project index and the per-scope machine
+ * list), so the two surfaces cannot come to disagree about what the journal
+ * says. Never throws; a missing or unreadable journal yields the empty facts,
+ * which is the honest answer — `writtenAt: null`, `lastSaveKind: null` — and
+ * not a fabricated one.
+ */
+async function readPairJournalFacts(project, scopeDir, machine, now) {
+  const jAbs = resolveInsideState(project, `${scopeDir}/${machine}/${JOURNAL_FILENAME}`);
+  if (!jAbs) return journalFacts(null, now);
+  const tail = await readTail(jAbs, INDEX_JOURNAL_TAIL_BYTES);
+  if (!tail) return journalFacts(null, now);
+  return journalFacts(parseJournalLines(tail.text), now);
+}
+
 /**
  * Every machine that has state under ONE scope, newest first.
  *
@@ -2042,10 +2264,33 @@ export async function listScopeMachines(project, scope) {
   for (const m of shown) {
     m.ageSeconds = Math.max(0, Math.round((now - m.mtimeMs) / 1000));
     delete m.mtimeMs;
+    // THE MACHINE PICKER IS EXACTLY WHERE THE MTIME LIE HURTS MOST: every
+    // entry in it that arrived over sync carried the age of the pull, so the
+    // one control whose whole job is "which computer wrote this, and when"
+    // showed every remote machine as freshly written. One tail read per shown
+    // machine, bounded by MAX_INDEX_ENTRIES and by INDEX_JOURNAL_TAIL_BYTES —
+    // the same budget the project index has always spent per pair, and NOT on
+    // the polled `GET /api/memory` path, which never calls this function.
+    const f = await readPairJournalFacts(project, dirName, m.machine, now);
+    m.writtenAt = f.writtenAt;
+    m.writtenAgeSeconds = f.writtenAgeSeconds;
+    m.harness = f.harness;
   }
   return { machines: shown, total, truncated: total > shown.length, unlistedMachines, dirName };
 }
 
+/**
+ * Index every (scope, machine) pair that has state, newest first.
+ *
+ * This is a HARD requirement, not a convenience: an agent starting cold with
+ * no cwd signal, asked to "carry on with the auth work", cannot resolve that
+ * to a scope slug it has never seen. Without the index it would have to
+ * guess. Bounded at MAX_INDEX_ENTRIES.
+ *
+ * (This docblock sat above `listScopeMachines`, describing the function AFTER
+ * that one. It is moved rather than rewritten — the words were always right,
+ * they were two functions out of place.)
+ */
 export async function listWorkingScopes(project) {
   if (!isSafeSegment(project)) {
     return { ok: false, reason: 'invalid-project', message: `"${project}" is not a valid project name.`, scopes: [] };
@@ -2103,21 +2348,37 @@ export async function listWorkingScopes(project) {
   const shown = pairs.slice(0, MAX_INDEX_ENTRIES);
   const now = Date.now();
 
+  // THE JOURNAL TAIL IS READ ONCE AND KEPT WHOLE.
+  //
+  // This loop used to parse the tail, keep `last.headline`, and discard the
+  // rest of the same parsed object — including the two fields that answer
+  // "when did an agent actually save this?" and "which tool wrote it?". Both
+  // now ride out of `journalFacts` at ZERO additional I/O: same file, same
+  // read, same parse. See the block above readPairJournalFacts for why those
+  // two questions were being answered wrongly and silently.
+  //
+  // NOTE THE SCOPE OF THE HARNESS SIGNAL, stated rather than implied: these
+  // facts are computed for the pairs in `shown` only, because the journal is
+  // read only for those — which has always been true of `headline`. So
+  // `harnessShared` on a project with more than MAX_INDEX_ENTRIES pairs is a
+  // statement about the newest ones, and a caller that wants to say so has
+  // `truncated` sitting beside it.
   for (const p of shown) {
     p.ageSeconds = Math.max(0, Math.round((now - p.mtimeMs) / 1000));
-    p.headline = null;
-    const jAbs = resolveInsideState(project, `${p.scope}/${p.machine}/${JOURNAL_FILENAME}`);
-    if (!jAbs) continue;
-    const tail = await readTail(jAbs, 16 * 1024);
-    if (!tail) continue;
-    const entries = parseJournalLines(tail.text);
-    const last = entries[entries.length - 1];
-    if (last && typeof last.headline === 'string') {
-      p.headline = neutraliseProtocol(last.headline).slice(0, MAX_HEADLINE_CHARS);
-    }
     delete p.mtimeMs;
+    const f = await readPairJournalFacts(project, p.scope, p.machine, now);
+    p.headline = f.headline;
+    p.writtenAt = f.writtenAt;
+    p.writtenAgeSeconds = f.writtenAgeSeconds;
+    p.harness = f.harness;
+    p.model = f.model;
+    p.lastSaveKind = f.lastSaveKind;
+    p.lastSaveNotes = f.lastSaveNotes;
+    p.harnesses = f.harnesses;
+    p.harnessSwitches = f.harnessSwitches;
+    p.harnessShared = f.harnessShared;
+    p.journalEntriesScanned = f.entriesScanned;
   }
-  for (const p of shown) delete p.mtimeMs;
 
   return {
     ok: true, project, scopes: shown, total, distinctScopeCount, truncated: total > shown.length,
@@ -2223,7 +2484,21 @@ export async function readWorkingState(project, opts = {}) {
   const inScopeIdx = await listScopeMachines(project, wantScope);
   const inScope = inScopeIdx.machines;
   out.scope = wantScope;
-  out.machines = inScope.map(p => ({ machine: p.machine, lastWriteAt: p.lastWriteAt, ageSeconds: p.ageSeconds }));
+  // The projection is EXPLICIT, so every field added to a machine row upstream
+  // has to be named here or it is silently dropped — which is precisely the
+  // class `scripts/test-working-state-disclosure.js` guards one layer up, and
+  // this line is where it would happen one layer down. `writtenAt` and
+  // `harness` are the two the machine picker needs: without the first it dates
+  // every synced machine to the moment of the pull, and without the second it
+  // cannot say which tool a folder's newest save came from.
+  out.machines = inScope.map(p => ({
+    machine: p.machine,
+    lastWriteAt: p.lastWriteAt,
+    ageSeconds: p.ageSeconds,
+    writtenAt: p.writtenAt ?? null,
+    writtenAgeSeconds: p.writtenAgeSeconds ?? null,
+    harness: p.harness ?? null,
+  }));
   out.machineCount = inScopeIdx.total;
   out.machinesTruncated = inScopeIdx.truncated;
   out.unlistedMachines = inScopeIdx.unlistedMachines || 0;
@@ -2293,7 +2568,27 @@ export async function readWorkingState(project, opts = {}) {
       const dups = findDuplicateHeadings(clean, STATE_SECTIONS);
       out.current = {
         present: true, text: clean, bytes: r.bytes, truncated: r.truncated,
-        savedAt: r.mtime, sanitisedOnRead: clean !== r.text,
+        // ── `savedAt` IS A FILESYSTEM TIME AND ITS NAME SAYS OTHERWISE ────
+        // It is `st.mtime`: when this file last changed ON THIS DISK. For a
+        // handoff that arrived over Personal Sync that is the moment of the
+        // pull, not the moment of the save, so on any multi-machine setup this
+        // field has been reporting day-old state as brand new.
+        //
+        // The name is KEPT — it is on the shipped MCP contract and pinned by
+        // suites — and an unambiguous pair is added beside it rather than
+        // either field being redefined. This is the same resolution
+        // `scopeCount`/`distinctScopeCount` took, for the same reason: a
+        // consumer reading the two new names does not have to know which of
+        // the two clocks the old one meant.
+        //
+        //   arrivedAt  — identical to savedAt, honestly named
+        //   writtenAt  — the agent's own clock, from the journal line, and
+        //                NULL when there is no usable one
+        //
+        // Filled in below, once the journal has been read: it is the same
+        // file that produces `journal.entries`, so there is no second read.
+        savedAt: r.mtime, arrivedAt: r.mtime, writtenAt: null, writtenAgeSeconds: null,
+        sanitisedOnRead: clean !== r.text,
         // D3: say WHAT was escaped, never that the content is safe.
         sanitisedOnReadNote: clean !== r.text ? READ_SANITISE_NOTE : null,
         // D5: our writer emits each heading at most once, so a repeat is a
@@ -2343,6 +2638,39 @@ export async function readWorkingState(project, opts = {}) {
         ? `journal is ${tail.bytes} bytes — only the most recent ${MAX_JOURNAL_TAIL_BYTES} were read`
         : null,
     };
+  }
+
+  // ── THE TRUE SAVE TIME, from the file we have already read ──────────────
+  //
+  // The newest journal line is the newest save into this (scope, machine), and
+  // that save is the one that wrote the current.md above. Its `at` is the
+  // agent's own clock and is immune to git rewriting mtime on checkout.
+  //
+  // THE ONE CASE WHERE THIS UNDERSTATES FRESHNESS, stated rather than left to
+  // be discovered: the journal append is best-effort and never fails a save,
+  // so if the newest save's append failed, the newest LINE belongs to an
+  // earlier save and `writtenAt` is older than the document. That direction is
+  // the safe one — a handoff reported as older than it is prompts another
+  // save, which is free and idempotent, whereas the defect being fixed here
+  // reports stale state as current and stops the user looking. Both clocks are
+  // returned either way, so a consumer can show the disagreement rather than
+  // pick a winner in silence.
+  if (out.current && out.current.present) {
+    const newest = out.journal && out.journal.entries && out.journal.entries.length
+      ? out.journal.entries[0] : null;
+    if (newest && isIsoish(newest.at)) {
+      out.current.writtenAt = new Date(newest.at).toISOString();
+      out.current.writtenAgeSeconds = Math.max(0, Math.round(
+        (Date.now() - Date.parse(out.current.writtenAt)) / 1000));
+    }
+    // The completeness of that same save, from the same line. "Saved 2 minutes
+    // ago" over a handoff the store had to TRIM is a comforting lie, and the
+    // fact was already on disk — it just stopped one layer short of any
+    // surface that answers "am I saved?".
+    out.current.lastSaveKind = newest ? classifySaveNotes(
+      Array.isArray(newest.rejections) ? newest.rejections : []) : null;
+    out.current.lastSaveNotes = newest && Array.isArray(newest.rejections)
+      ? newest.rejections.filter((n) => typeof n === 'string' && n) : [];
   }
 
   return out;
