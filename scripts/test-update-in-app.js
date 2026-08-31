@@ -108,8 +108,17 @@ const REPO_CAPS = installMode.getCapabilities('repo');
 const BUNDLE_CAPS = installMode.getCapabilities('bundle');
 const workConfigSrc = read('src/routes/config.js');
 const workSettingsSrc = read('src/public/next/views/settings.js');
-const headConfigSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/routes/config.js'], { encoding: 'utf8' });
-const headSettingsSrc = execFileSync('git', ['-C', ROOT, 'show', 'HEAD:src/public/next/views/settings.js'], { encoding: 'utf8' });
+// PINNED TO A REAL SHA, NOT `HEAD`. `HEAD` means "before this change" only while
+// the change is uncommitted; the moment it is committed HEAD CONTAINS it, and this
+// section then compares a function against itself and passes while proving nothing.
+// That is not hypothetical — `test-update-installer.js` shipped with exactly this
+// defect earlier the same day, where the crash was the LUCKY outcome and two sibling
+// comparisons were silently vacuous. 32cb410 is v3.32.0, the commit both halves of
+// the in-app updater branched from. The CONTROL below asserts the two texts DIFFER,
+// so a wrong pin fails loudly instead of going green.
+const BASELINE_REF = '32cb410';
+const headConfigSrc = execFileSync('git', ['-C', ROOT, 'show', `${BASELINE_REF}:src/routes/config.js`], { encoding: 'utf8' });
+const headSettingsSrc = execFileSync('git', ['-C', ROOT, 'show', `${BASELINE_REF}:src/public/next/views/settings.js`], { encoding: 'utf8' });
 
 // ── THE FORK IS EXHAUSTIVE OVER THE CAPABILITY TABLE ────────────────────────
 // A third install form (a Homebrew cask, a Windows MSI) that names a new
