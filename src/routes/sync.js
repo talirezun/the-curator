@@ -3,6 +3,7 @@ import {
   isConfigured, getStatus, getRemoteStatus, remoteErrorMessage, setup, preflightSetup, syncRefusalOf,
   SETUP_MODES, push, pull, sync, disconnect, friendlyError,
 } from '../brain/sync.js';
+import { noteRemoteStatus } from '../brain/tray-summary.js';
 import { hasActiveWrites, conflictResponse } from '../brain/write-registry.js';
 
 const router = Router();
@@ -65,7 +66,18 @@ router.get('/status', async (req, res) => {
  */
 router.get('/remote-status', async (req, res) => {
   try {
-    res.json(await getRemoteStatus());
+    const payload = await getRemoteStatus();
+    // Feed the menubar widget's observation cache from the check the sync
+    // badge is ALREADY making. brain/sync.js exposes no non-fetching
+    // accessor — getRemoteStatus() is "cache hit ? return : git fetch", and
+    // maxAgeMs: 0 does not help because remoteCacheTtl returns 0 for a
+    // successful payload, so the freshness test fails and it fetches. So the
+    // tray does not read that cache; it renders whatever a completed check
+    // last reported. This line is what keeps that observation warm, and it
+    // adds NO fetch of its own — a second fetch site is the recorded
+    // incident where the user's own pull aborted 11 times out of 12.
+    noteRemoteStatus(payload);
+    res.json(payload);
   } catch (err) {
     // getRemoteStatus() already converts a failed CHECK into a well-formed
     // "unknown" payload; reaching here means something outside that (e.g.
